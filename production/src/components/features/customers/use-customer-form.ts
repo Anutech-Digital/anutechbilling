@@ -300,11 +300,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
             const res = await fetch(`/api/customers/${created.id}/provision-customer-panel`, { method: "POST" });
             const body = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(body.error || "Could not create Customer Panel account");
-            toast.success(
-              body.created
-                ? "Customer Panel account created — setup email sent"
-                : "Linked to an existing Customer Panel account"
-            );
+            // emailSent reflects whether the setup email actually sent, not just
+            // whether the account was created — those used to be conflated, so a
+            // silent email failure looked identical to a successful setup.
+            if (!body.created) {
+              toast.success("Linked to an existing Customer Panel account");
+            } else if (body.emailSent) {
+              toast.success("Customer Panel account created — setup email sent");
+            } else {
+              toast.warning(
+                "Customer Panel account created, but the setup email failed to send. Ask the customer to use \"Forgot password\" on the Customer Panel login page instead."
+              );
+            }
           } catch (e) {
             toast.error((e as Error).message || "Could not create Customer Panel account");
           }
