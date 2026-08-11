@@ -18,9 +18,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { cn, rupee, formatDate } from "@/lib/utils";
+import { cn, rupee, formatDate, toWhatsAppDigits } from "@/lib/utils";
 import { useTasks } from "@/lib/queries/tasks";
 import { useLeads } from "@/lib/queries/leads";
+import { useCelebrations } from "@/lib/queries/contacts";
 
 type NotifTone = "emerald" | "indigo" | "amber" | "rose" | "slate";
 
@@ -33,6 +34,8 @@ interface Notification {
   unread: boolean;
   link: string;
   when: number; // ms, for sorting
+  /** When set, the item shows a 1-tap WhatsApp "Wish" button (birthdays). */
+  wishHref?: string;
 }
 
 const READ_KEY = "ros_notif_read";
@@ -55,6 +58,7 @@ export function NotificationPanel({
   const router = useRouter();
   const { data: tasks } = useTasks("all");
   const { data: leads } = useLeads();
+  const { data: celebrations } = useCelebrations(7);
 
   // Persisted read-state so "Mark all read" survives refresh.
   const [readIds, setReadIds] = React.useState<Set<string>>(new Set());
@@ -109,8 +113,33 @@ export function NotificationPanel({
       });
     }
 
+    // 3. Relationship: upcoming birthdays / anniversaries (next 7 days).
+    //    Today's celebration drives the unread dot ("wish them NOW"); the rest
+    //    are a gentle heads-up. Each carries a 1-tap WhatsApp wish.
+    for (const c of celebrations ?? []) {
+      const first = c.name.split(" ")[0] || c.name;
+      const isBday = c.kind === "birthday";
+      const whenLabel = c.inDays === 0 ? "Today" : c.inDays === 1 ? "Tomorrow" : `in ${c.inDays} days`;
+      const wa = toWhatsAppDigits(c.phone);
+      const wishText = isBday
+        ? `Happy Birthday ${first}! 🎂🎉 Aapka din shubh aur mangalmay ho.`
+        : `Happy Anniversary ${first}! 💐🎉 Dher saari shubhkaamnaayein.`;
+      out.push({
+        id: `celebration-${c.id}`,
+        title: `${isBday ? "🎂" : "💍"} ${c.name}'s ${c.kind}`,
+        meta: `${whenLabel}${c.age != null ? ` · turning ${c.age}` : ""} · ${formatDate(c.dateISO)}`,
+        icon: "sparkles",
+        tone: isBday ? "amber" : "indigo",
+        unread: c.inDays === 0,           // only today's nudges the badge
+        link: `/contacts/${c.contactId}`,
+        // Sort so nearer celebrations sit higher, just under today's tasks.
+        when: Date.now() - c.inDays * 3_600_000,
+        wishHref: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(wishText)}` : undefined,
+      });
+    }
+
     return out.sort((a, b) => b.when - a.when).slice(0, 30);
-  }, [tasks, leads, readIds]);
+  }, [tasks, leads, celebrations, readIds]);
 
   const unreadCount = items.filter((n) => n.unread).length;
 
@@ -176,42 +205,54 @@ export function NotificationPanel({
             />
           ) : (
             items.map((n) => (
-              <button
+              <div
                 key={n.id}
-                onClick={() => openItem(n)}
                 className={cn(
-                  "w-full px-4 py-3 border-b border-hairline last:border-0 flex gap-3 items-start text-left",
+                  "w-full px-4 py-3 border-b border-hairline last:border-0 flex gap-3 items-start",
                   "hover:bg-paper-2 transition-colors",
                   n.unread && "bg-paper-2/60",
                 )}
               >
-                <div
-                  className={cn(
-                    "w-8 h-8 rounded-full grid place-items-center flex-shrink-0",
-                    n.tone === "emerald" && "bg-emerald-soft text-emerald",
-                    n.tone === "indigo" && "bg-indigo-soft text-indigo",
-                    n.tone === "amber" && "bg-amber-soft text-amber",
-                    n.tone === "rose" && "bg-rose-soft text-rose",
-                    n.tone === "slate" && "bg-slate-soft text-slate",
-                  )}
-                >
-                  <Icon name={n.icon} size={14} />
-                </div>
-                <div className="flex-1 min-w-0">
+                <button onClick={() => openItem(n)} className="flex gap-3 items-start text-left flex-1 min-w-0">
                   <div
                     className={cn(
-                      "text-sm leading-snug text-ink",
-                      n.unread ? "font-semibold" : "font-normal",
+                      "w-8 h-8 rounded-full grid place-items-center flex-shrink-0",
+                      n.tone === "emerald" && "bg-emerald-soft text-emerald",
+                      n.tone === "indigo" && "bg-indigo-soft text-indigo",
+                      n.tone === "amber" && "bg-amber-soft text-amber",
+                      n.tone === "rose" && "bg-rose-soft text-rose",
+                      n.tone === "slate" && "bg-slate-soft text-slate",
                     )}
                   >
-                    {n.title}
+                    <Icon name={n.icon} size={14} />
                   </div>
-                  <div className="text-[11px] text-ink-3 mt-1 leading-snug">{n.meta}</div>
-                </div>
-                {n.unread && (
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className={cn(
+                        "text-sm leading-snug text-ink",
+                        n.unread ? "font-semibold" : "font-normal",
+                      )}
+                    >
+                      {n.title}
+                    </div>
+                    <div className="text-[11px] text-ink-3 mt-1 leading-snug">{n.meta}</div>
+                  </div>
+                </button>
+                {n.wishHref ? (
+                  <a
+                    href={n.wishHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="shrink-0 self-center inline-flex items-center gap-1 rounded-md border border-emerald/30 text-emerald text-[11px] font-medium px-2 py-1 hover:bg-emerald-soft/50 transition-colors"
+                    aria-label="Send WhatsApp wish"
+                  >
+                    <Icon name="whatsapp" size={13} /> Wish
+                  </a>
+                ) : n.unread ? (
                   <span className="w-2 h-2 rounded-full bg-indigo flex-shrink-0 mt-1.5" aria-hidden="true" />
-                )}
-              </button>
+                ) : null}
+              </div>
             ))
           )}
         </div>

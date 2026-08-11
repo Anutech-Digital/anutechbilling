@@ -123,6 +123,21 @@ export function formatDate(
 }
 
 /**
+ * Normalise an Indian phone to bare E.164 digits (no `+`, no spaces).
+ * Accepts free-form input ("+91 98765 43210", "9876543210", "098765 43210").
+ * A bare 10-digit number is assumed Indian and prefixed with 91.
+ * Returns null when there aren't enough digits to be a real number.
+ */
+export function toWhatsAppDigits(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  let d = phone.replace(/\D/g, "");
+  if (d.startsWith("0")) d = d.replace(/^0+/, "");     // strip STD leading zeros
+  if (d.length === 10) d = "91" + d;                    // bare Indian mobile → add country code
+  if (d.length < 10) return null;
+  return d;
+}
+
+/**
  * Days between two dates, IST-aware and date-only (ignores time of day).
  *
  * Old impl used millisecond diff + Math.round which was off-by-one for the
@@ -246,6 +261,25 @@ export function validateGstin(gstin: string):
  *  - 97/99 are administrative (Other Territory / Centre)
  * Kept here as the single lookup table for the whole app.
  */
+/**
+ * Format a foreign (non-INR) vendor-bill amount in the supplier's own currency,
+ * derived from the ₹ figure + the stored exchange rate. Returns null for
+ * domestic (INR) bills or when there's no usable rate — callers show only ₹ then.
+ * @example foreignAmount("USD", 24293, 91.5) // "$265.50"
+ */
+export function formatForeignAmount(currency: string | null | undefined, amount: number): string | null {
+  const cur = (currency || "INR").toUpperCase();
+  if (cur === "INR") return null;
+  const sym: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", AUD: "A$", CAD: "C$", SGD: "S$", JPY: "¥" };
+  const prefix = sym[cur] ?? `${cur} `;
+  return prefix + amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function foreignAmount(currency: string | null | undefined, inr: number, fxRate: number | null | undefined): string | null {
+  if (!fxRate || fxRate <= 0) return null;
+  return formatForeignAmount(currency, inr / fxRate);
+}
+
 export const GST_STATE_BY_CODE: Record<string, string> = {
   "01": "Jammu and Kashmir",
   "02": "Himachal Pradesh",
@@ -386,4 +420,24 @@ export function cleanDisplayName(raw: string): string {
 export function phoneSuffixOf(raw: string): string | null {
   const m = raw.match(NAME_NUM_SUFFIX);
   return m ? m[1].replace(/\s+/g, " ").trim() : null;
+}
+
+/**
+ * Title-case a person's name for DISPLAY only (never mutate the stored value).
+ * Fixes mixed-casing data (e.g. "HITESH BABU" / "prashant" → "Hitesh Babu" /
+ * "Prashant"). Handles hyphens and apostrophes ("d'souza" → "D'Souza",
+ * "sai-kiran" → "Sai-Kiran"). A token that is ALL-CAPS and short (≤3 chars,
+ * e.g. "HR", "IT") is left as-is so genuine acronyms aren't broken.
+ */
+export function toTitleCase(raw: string): string {
+  const s = (raw ?? "").trim();
+  if (!s) return s;
+  const capWord = (w: string): string => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w);
+  return s
+    .split(/\s+/)
+    .map((word) => {
+      if (word.length <= 3 && word === word.toUpperCase() && /[A-Z]/.test(word)) return word; // keep HR, IT, CEO
+      return word.split(/([-'])/).map((part) => (part === "-" || part === "'" ? part : capWord(part))).join("");
+    })
+    .join(" ");
 }

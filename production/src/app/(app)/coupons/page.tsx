@@ -166,7 +166,6 @@ export default function CouponsPage() {
         <>
           {/* Desktop table */}
           <Card flush className="hidden md:block">
-          <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-paper-2 border-b border-hairline">
                 <tr>
@@ -255,7 +254,6 @@ export default function CouponsPage() {
                 })}
               </tbody>
             </table>
-          </div>
           </Card>
 
           {/* Mobile card list */}

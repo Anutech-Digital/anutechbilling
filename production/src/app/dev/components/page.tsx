@@ -157,15 +157,15 @@ export default function ComponentsShowcase() {
         <div className="grid md:grid-cols-2 gap-6">
           <div className="space-y-4">
             <FormField label="Company name" required htmlFor="company">
-              <Input id="company" placeholder="Acme Corp Pvt Ltd" />
+              <Input id="company" placeholder="e.g. Acme Corp Pvt Ltd" />
             </FormField>
 
             <FormField label="GSTIN" htmlFor="gstin">
-              <Input id="gstin" placeholder="27AABCE9876D1Z3" className="font-mono uppercase" />
+              <Input id="gstin" placeholder="e.g. 27AABCE9876D1Z3" className="font-mono uppercase" />
             </FormField>
 
             <FormField label="Domain" htmlFor="domain">
-              <Input id="domain" placeholder="acmecorp" suffix=".com" />
+              <Input id="domain" placeholder="e.g. acmecorp" suffix=".com" />
             </FormField>
 
             <FormField label="Search" htmlFor="search">
@@ -173,7 +173,7 @@ export default function ComponentsShowcase() {
             </FormField>
 
             <FormField label="Email with error" htmlFor="email-err">
-              <Input id="email-err" placeholder="you@example.com" defaultValue="invalid" error="Please enter a valid email" />
+              <Input id="email-err" placeholder="e.g. you@example.com" defaultValue="invalid" error="Please enter a valid email" />
             </FormField>
           </div>
 

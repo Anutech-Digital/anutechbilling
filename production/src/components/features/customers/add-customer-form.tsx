@@ -102,7 +102,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
           <FormField label="GSTIN (recommended)" htmlFor="gstin">
             <Input
               id="gstin"
-              placeholder="07ABDCA0298H1ZP"
+              placeholder="e.g. 07ABDCA0298H1ZP"
               className="font-mono uppercase"
               error={errors.gstin?.message}
               {...register("gstin")}
@@ -152,7 +152,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
 
           {/* Company name — auto-filled by Fill from GST, manually editable too. */}
           <FormField label="Company name" required htmlFor="name">
-            <Input id="name" placeholder="Acme Corp Pvt Ltd" error={errors.name?.message} {...register("name")} />
+            <Input id="name" placeholder="e.g. Acme Corp Pvt Ltd" error={errors.name?.message} {...register("name")} />
           </FormField>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -202,7 +202,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
           </FormField>
 
           <FormField label="Company website (optional)" htmlFor="domain">
-            <Input id="domain" placeholder="acmecorp.com" {...register("domain")} />
+            <Input id="domain" placeholder="e.g. acmecorp.com" {...register("domain")} />
           </FormField>
 
           <div className="h-px bg-hairline" />
@@ -224,28 +224,28 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
               </select>
             </FormField>
             <FormField label="First name" htmlFor="contact_first_name">
-              <Input id="contact_first_name" placeholder="Rajesh" {...register("contact_first_name")} />
+              <Input id="contact_first_name" placeholder="e.g. Rajesh" {...register("contact_first_name")} />
             </FormField>
             <FormField label="Last name" htmlFor="contact_last_name">
-              <Input id="contact_last_name" placeholder="Kumar" {...register("contact_last_name")} />
+              <Input id="contact_last_name" placeholder="e.g. Kumar" {...register("contact_last_name")} />
             </FormField>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <FormField label="Designation" htmlFor="contact_title">
-              <Input id="contact_title" placeholder="CTO" {...register("contact_title")} />
+              <Input id="contact_title" placeholder="e.g. CTO" {...register("contact_title")} />
             </FormField>
             <FormField label="Email" htmlFor="contact_email">
-              <Input id="contact_email" type="email" placeholder="rajesh@acme.com" error={errors.contact_email?.message} {...register("contact_email")} />
+              <Input id="contact_email" type="email" placeholder="e.g. rajesh@acme.com" error={errors.contact_email?.message} {...register("contact_email")} />
             </FormField>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <FormField label="Work phone" htmlFor="contact_phone">
-              <Input id="contact_phone" placeholder="+91 98765 43210" {...register("contact_phone")} />
+              <Input id="contact_phone" placeholder="e.g. +91 98765 43210" {...register("contact_phone")} />
             </FormField>
             <FormField label="Mobile" htmlFor="contact_mobile">
-              <Input id="contact_mobile" placeholder="+91 98765 43210" {...register("contact_mobile")} />
+              <Input id="contact_mobile" placeholder="e.g. +91 98765 43210" {...register("contact_mobile")} />
             </FormField>
           </div>
 

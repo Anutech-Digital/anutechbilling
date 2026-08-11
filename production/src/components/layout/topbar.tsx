@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { Icon } from "@/components/ui/icon";
@@ -20,6 +20,7 @@ import { QuickActionsPanel } from "./quick-actions-panel";
 import { getCrumb, getSectionPrimaryHref } from "@/lib/nav";
 import type { Route } from "next";
 import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
+import { logLoginOnce } from "@/lib/queries/activity";
 
 interface TopBarProps {
   /** Open the mobile sidebar */
@@ -30,7 +31,14 @@ interface TopBarProps {
 
 export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  // Record a login once per browser session (fire-and-forget) for the activity log.
+  React.useEffect(() => { void logLoginOnce(); }, []);
   const crumb = crumbOverride ?? getCrumb(pathname);
+  // On phones the breadcrumb is hidden (no room), so detail/sub pages (≥2 path
+  // segments, e.g. /quotes/Q-123 or /customers/abc/edit) get a Back chevron so
+  // users aren't stranded relying on the OS back gesture.
+  const isDetailPage = pathname.split("/").filter(Boolean).length >= 2;
   const { setTheme, resolvedTheme } = useTheme();
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
@@ -56,6 +64,19 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       >
         <Icon name="list" size={18} />
       </button>
+
+      {/* Mobile-only Back affordance on detail pages (breadcrumb is hidden
+          < sm, and each detail/form page already renders its own H1 title, so
+          we only need the way *up* here — not a duplicate title). */}
+      {isDetailPage && (
+        <button
+          onClick={() => router.back()}
+          className="sm:hidden p-2 -ml-1 rounded-md hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber shrink-0"
+          aria-label="Go back"
+        >
+          <Icon name="arrow_left" size={18} />
+        </button>
+      )}
 
       {/* Breadcrumb — every item navigable except the current page (last).
           The home icon goes to /dashboard. Section names (Workspace, Revenue,

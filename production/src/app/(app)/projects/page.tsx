@@ -13,11 +13,12 @@ import type { Route } from "next";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FAB } from "@/components/ui/fab";
 import { useProjectSales, type ProjectSaleWithTotals } from "@/lib/queries/projects";
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate, daysBetween } from "@/lib/utils";
 import { CreateProjectDialog } from "@/components/features/projects/create-project-dialog";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 
@@ -101,6 +102,8 @@ function Stat({ label, value, tone = "ink" }: { label: string; value: string; to
 
 function ProjectCard({ project, onOpen }: { project: ProjectSaleWithTotals; onOpen: () => void }) {
   const pct = project.total_amount > 0 ? Math.round((project.paid / project.total_amount) * 100) : 0;
+  const done = project.status === "completed" || project.status === "cancelled";
+  const daysLeft = project.target_date ? daysBetween(new Date().toISOString().slice(0, 10), project.target_date) : null;
   return (
     <button
       type="button"
@@ -131,11 +134,41 @@ function ProjectCard({ project, onOpen }: { project: ProjectSaleWithTotals; onOp
             {rupee(project.receivable)}
           </span>
         </div>
+        {/* Costing — cost (external + labour) + profit/margin */}
+        {((project.costTotal ?? 0) + (project.labourTotal ?? 0) > 0) && (
+          <>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-ink-3">Cost</span>
+              <span className="font-mono text-sm text-ink-2">{rupee((project.costTotal ?? 0) + (project.labourTotal ?? 0))}</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-ink-3">Profit</span>
+              <span className={`font-mono text-sm ${(project.profit ?? 0) >= 0 ? "text-emerald" : "text-rose"}`}>
+                {rupee(project.profit ?? 0)} <span className="text-[10px]">({project.marginPct ?? 0}%)</span>
+              </span>
+            </div>
+          </>
+        )}
         {/* collected progress */}
         <div className="h-1.5 rounded-full bg-paper-2 overflow-hidden">
           <div className="h-full bg-emerald" style={{ width: `${pct}%` }} />
         </div>
         <p className="text-[10px] text-ink-3">{pct}% collected</p>
+
+        {/* Timeline — start → target with days left / overdue */}
+        {(project.start_date || project.target_date) && (
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <span className="text-[10px] text-ink-3 inline-flex items-center gap-1">
+              <Icon name="clock" size={11} className="text-ink-3" />
+              {project.start_date ? formatDate(project.start_date) : "—"} → {project.target_date ? formatDate(project.target_date) : "—"}
+            </span>
+            {project.target_date && !done && daysLeft != null && (
+              <span className={`text-[10px] font-medium rounded-full px-1.5 py-0.5 ${daysLeft < 0 ? "bg-rose-soft text-rose" : daysLeft <= 7 ? "bg-amber-soft text-amber-ink" : "bg-emerald-soft text-emerald"}`}>
+                {daysLeft < 0 ? `${-daysLeft}d overdue` : daysLeft === 0 ? "due today" : `${daysLeft}d left`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </button>
   );

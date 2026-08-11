@@ -125,7 +125,7 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder="SAVE10"
+              placeholder="e.g. SAVE10"
               className="font-mono uppercase"
               maxLength={50}
             />
@@ -136,7 +136,7 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Diwali Sale 2026"
+              placeholder="e.g. Diwali Sale 2026"
               maxLength={120}
             />
           </div>

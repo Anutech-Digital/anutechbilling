@@ -7,10 +7,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { GstinVerification } from "@/lib/supabase/database.types";
+import { isPlatformAdmin } from "@/lib/platform";
 
 export interface CurrentUserInfo {
   userId:        string;
   authEmail:     string;
+  /** ResellerOS founder (cross-tenant signups panel). Server re-checks too. */
+  isPlatformAdmin: boolean;
   fullName:      string | null;
   initials:      string | null;
   color:         string | null;
@@ -30,6 +33,9 @@ export interface CurrentUserInfo {
   tenantStateCode: string | null;
   /** Owner / signing person on the GST invoice */
   tenantContactName: string | null;
+  /** LUT number + validity for zero-rated exports (CGST Rule 96A). */
+  tenantLutNumber: string | null;
+  tenantLutValidUpto: string | null;
   /** Days of buffer between renewal_date and auto-suspend (0–30). */
   tenantGracePeriodDays: number;
   /** When Setup Wizard's final step ran. NULL = wizard never completed. */
@@ -51,7 +57,7 @@ export function useCurrentUser() {
 
       const { data: me, error } = await supabase
         .from("users")
-        .select("id, tenant_id, full_name, initials, color, role, can_view_deals, tenants(name, logo_url, gstin, email, phone, address, pin_code, contact_name, state, state_code, grace_period_days, setup_completed_at, gstin_verified_at, gstin_verification)")
+        .select("id, tenant_id, full_name, initials, color, role, can_view_deals, tenants(name, logo_url, gstin, email, phone, address, pin_code, contact_name, state, state_code, lut_number, lut_valid_upto, grace_period_days, setup_completed_at, gstin_verified_at, gstin_verification)")
         .eq("id", authData.user.id)
         .single();
 
@@ -62,6 +68,7 @@ export function useCurrentUser() {
       return {
         userId:          me.id,
         authEmail:       authData.user.email ?? "",
+        isPlatformAdmin: isPlatformAdmin(authData.user.email),
         fullName:        me.full_name,
         initials:        me.initials,
         color:           me.color,
@@ -78,6 +85,8 @@ export function useCurrentUser() {
         tenantState:     tenant?.state     ?? null,
         tenantStateCode: tenant?.state_code ?? null,
         tenantContactName: tenant?.contact_name ?? null,
+        tenantLutNumber:    (tenant as { lut_number?: string | null } | null)?.lut_number ?? null,
+        tenantLutValidUpto: (tenant as { lut_valid_upto?: string | null } | null)?.lut_valid_upto ?? null,
         tenantGracePeriodDays: tenant?.grace_period_days ?? 0,
         tenantSetupCompletedAt: tenant?.setup_completed_at ?? null,
         tenantGstinVerifiedAt:  tenant?.gstin_verified_at  ?? null,

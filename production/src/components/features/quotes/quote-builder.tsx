@@ -902,7 +902,7 @@ export function QuoteBuilder() {
                     value={leadPhone}
                     onChange={(e) => setLeadPhone(e.target.value)}
                     className="font-mono"
-                    placeholder="+91 98765 43210"
+                    placeholder="e.g. +91 98765 43210"
                   />
                 </FormField>
               </div>
@@ -914,7 +914,7 @@ export function QuoteBuilder() {
                   value={leadEmail}
                   onChange={(e) => setLeadEmail(e.target.value)}
                   className="font-mono"
-                  placeholder="contact@company.com"
+                  placeholder="e.g. contact@company.com"
                 />
               </FormField>
 
@@ -942,7 +942,7 @@ export function QuoteBuilder() {
                     value={leadGstin}
                     onChange={(e) => setLeadGstin(e.target.value.toUpperCase())}
                     className="font-mono"
-                    placeholder="27AABCE9876D1Z3"
+                    placeholder="e.g. 27AABCE9876D1Z3"
                   />
                 </FormField>
               </div>
@@ -1033,7 +1033,7 @@ export function QuoteBuilder() {
               <FormField label="Prospect name" required htmlFor="prospectName">
                 <Input
                   id="prospectName"
-                  placeholder="Acme Corp Pvt Ltd"
+                  placeholder="e.g. Acme Corp Pvt Ltd"
                   value={prospectName}
                   onChange={(e) => setProspectName(e.target.value)}
                 />
@@ -1772,11 +1772,16 @@ export function QuoteBuilder() {
                 </div>
               </div>
 
-              {/* Margin pill */}
+              {/* Margin pill — flagged as an ESTIMATE: line costs default to an
+                  assumed ≈70% (or catalog wholesale), not your actual procurement
+                  cost, so we never show a guessed margin as hard fact. */}
               <div className="pt-3 mt-2 border-t border-hairline flex items-center justify-between">
-                <span className="text-xs text-ink-3 uppercase tracking-wider font-semibold">Your margin</span>
-                <MarginPill margin={margin} variant="default" period="one-time" />
+                <span className="text-xs text-ink-3 uppercase tracking-wider font-semibold">Est. margin</span>
+                <MarginPill margin={margin} variant="default" period="one-time" estimated />
               </div>
+              <p className="mt-1 text-[10px] text-ink-3 text-right">
+                Estimate — edit each line&apos;s cost to make this exact.
+              </p>
             </div>
           </div>
         )}

@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Term } from "@/components/shared/term";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
@@ -52,23 +53,29 @@ function fiscalYearStart(d: Date): Date {
 
 interface DateRange { from: string; to: string }
 
+// Presets span the FULL calendar period (1st → last day) to match the GST and
+// Expenses reports exactly — so the same month/quarter/FY reconciles across pages.
+// (Future days carry no transactions, so month-to-date totals are unchanged.)
 function thisMonth(): DateRange {
   const t = istToday();
   const first = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1));
-  return { from: yyyymmdd(first), to: yyyymmdd(t) };
+  const last  = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0));
+  return { from: yyyymmdd(first), to: yyyymmdd(last) };
 }
 
 function thisQuarter(): DateRange {
   const t = istToday();
-  const m = t.getUTCMonth();
-  const qStart = Math.floor(m / 3) * 3;
+  const qStart = Math.floor(t.getUTCMonth() / 3) * 3;
   const first = new Date(Date.UTC(t.getUTCFullYear(), qStart, 1));
-  return { from: yyyymmdd(first), to: yyyymmdd(t) };
+  const last  = new Date(Date.UTC(t.getUTCFullYear(), qStart + 3, 0));
+  return { from: yyyymmdd(first), to: yyyymmdd(last) };
 }
 
 function thisFY(): DateRange {
   const t = istToday();
-  return { from: yyyymmdd(fiscalYearStart(t)), to: yyyymmdd(t) };
+  const fy = fiscalYearStart(t);
+  const last = new Date(Date.UTC(fy.getUTCFullYear() + 1, 3, 0));   // 31 Mar next year
+  return { from: yyyymmdd(fy), to: yyyymmdd(last) };
 }
 
 const QUICK_RANGES: { label: string; build: () => DateRange }[] = [
@@ -89,6 +96,7 @@ interface PnLNumbers {
   grossMargin:    number;
   expenses:       number;
   expensesCount:  number;
+  expensesByCategory: { category: string; total: number; count: number }[];
   commissions:      number;   // referral / channel-partner commissions (gross)
   commissionsCount: number;
   netProfit:      number;
@@ -159,7 +167,7 @@ function usePnL(range: DateRange) {
       // ── Expenses: non-COGS ─────────────────────────────────────────
       const { data: expenses, error: eErr } = await supabase
         .from("expenses")
-        .select("amount, gst_paid")
+        .select("amount, gst_paid, category")
         .gte("expense_date", range.from)
         .lte("expense_date", range.to);
       if (eErr) throw eErr;
@@ -167,6 +175,18 @@ function usePnL(range: DateRange) {
       const expensesTotal = (expenses ?? []).reduce((s, e) => s + (e.amount ?? 0), 0);
       const expensesCount = (expenses ?? []).length;
       const expensesGst   = (expenses ?? []).reduce((s, e) => s + (e.gst_paid ?? 0), 0);
+
+      // Break operating expenses down by category (Salaries, Rent, Software…),
+      // biggest first — so you can see where the money went at a glance.
+      const catAgg = (expenses ?? []).reduce<Record<string, { total: number; count: number }>>((m, e) => {
+        const c = e.category || "Uncategorised";
+        (m[c] ??= { total: 0, count: 0 }).total += e.amount ?? 0;
+        m[c].count += 1;
+        return m;
+      }, {});
+      const expensesByCategory = Object.entries(catAgg)
+        .map(([category, v]) => ({ category, total: v.total, count: v.count }))
+        .sort((a, b) => b.total - a.total);
 
       // ── Referral commissions earned in the period (operating expense) ──
       // The GROSS commission is the expense; TDS is only a withholding, not a
@@ -193,7 +213,7 @@ function usePnL(range: DateRange) {
         revenue, revenueCount,
         cogs, cogsCount,
         grossMargin,
-        expenses: expensesTotal, expensesCount,
+        expenses: expensesTotal, expensesCount, expensesByCategory,
         commissions, commissionsCount,
         netProfit,
         outputGST, inputGST, netGST,
@@ -208,9 +228,10 @@ function usePnL(range: DateRange) {
 // ────────────────────────────────────────────────────────────────
 
 export default function PnLPage() {
-  const [range, setRange] = React.useState<DateRange>(thisFY());
+  const [range, setRange] = React.useState<DateRange>(thisMonth());
   const { data, isLoading } = usePnL(range);
   const [drill, setDrill] = React.useState<PnLDrillKind | null>(null);
+  const [drillExpenseCat, setDrillExpenseCat] = React.useState<string | null>(null);
 
   // Export the statement as a CSV the owner can hand to their CA (mirrors GST export).
   function exportCSV() {
@@ -308,20 +329,40 @@ export default function PnLPage() {
           ) : data ? (
             <div className="space-y-2.5">
               <Row label="Revenue"        amount={data.revenue}     hint={`${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"}`} onHint={() => setDrill("revenue")} tone="ink" />
-              <Row label="− COGS"         amount={-data.cogs}       hint={`${data.cogsCount} vendor bill${data.cogsCount === 1 ? "" : "s"}`} onHint={() => setDrill("cogs")} tone="rose" />
+              <Row label={<>− <Term k="cogs">COGS</Term></>}         amount={-data.cogs}       hint={`${data.cogsCount} vendor bill${data.cogsCount === 1 ? "" : "s"}`} onHint={() => setDrill("cogs")} tone="rose" />
 
               <Divider />
-              <Row label="Gross Margin"
+              <Row label={<Term k="gross_margin">Gross Margin</Term>}
                    amount={data.grossMargin}
                    hint={`${data.marginPct.toFixed(1)}% margin`}
                    tone={data.grossMargin >= 0 ? "emerald" : "rose"}
                    emphasis />
 
-              <Row label="− Operating expenses"
+              <Row label={<>− <Term k="opex">Operating expenses</Term></>}
                    amount={-data.expenses}
                    hint={`${data.expensesCount} ${data.expensesCount === 1 ? "entry" : "entries"}`}
-                   onHint={() => setDrill("expenses")}
+                   onHint={() => { setDrillExpenseCat(null); setDrill("expenses"); }}
                    tone="rose" />
+
+              {/* Category breakdown — click a group to see its entries. */}
+              {data.expensesByCategory.length > 0 && (
+                <div className="mt-1 mb-1 space-y-0.5">
+                  {data.expensesByCategory.map((c) => (
+                    <button
+                      key={c.category}
+                      type="button"
+                      onClick={() => { setDrillExpenseCat(c.category); setDrill("expenses"); }}
+                      title={`See ${c.category} entries`}
+                      className="w-full flex items-center justify-between gap-3 rounded pl-6 pr-1 py-1 text-left transition-colors hover:bg-paper-2/60"
+                    >
+                      <span className="text-[13px] text-ink-2">
+                        {c.category} <span className="text-[11px] text-ink-3">· {c.count}</span>
+                      </span>
+                      <span className="font-mono text-[13px] tabular-nums text-rose">-{rupee(c.total)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {data.commissions > 0 && (
                 <Row label="− Referral commissions"
@@ -353,15 +394,15 @@ export default function PnLPage() {
           ) : data ? (
             <div className="space-y-3 text-sm">
               <div className="flex justify-between items-baseline">
-                <span className="text-ink-3">Output GST (on sales)</span>
+                <span className="text-ink-3"><Term k="output_gst">Output GST</Term> (on sales)</span>
                 <span className="font-mono text-ink font-semibold">{rupee(data.outputGST)}</span>
               </div>
               <div className="flex justify-between items-baseline">
-                <span className="text-ink-3">− Input GST paid</span>
+                <span className="text-ink-3">− <Term k="input_gst">Input GST</Term> paid</span>
                 <span className="font-mono text-emerald">−{rupee(data.inputGST)}</span>
               </div>
               <div className="border-t-2 border-ink pt-3 flex justify-between items-baseline">
-                <span className="text-[11px] uppercase tracking-wider text-ink-3 font-semibold">Net liability</span>
+                <span className="text-[11px] uppercase tracking-wider text-ink-3 font-semibold"><Term k="net_liability">Net liability</Term></span>
                 <span className={`font-serif text-2xl ${data.netGST >= 0 ? "text-rose" : "text-emerald"}`}>
                   {rupee(data.netGST)}
                 </span>
@@ -399,9 +440,10 @@ export default function PnLPage() {
 
       <PnLDrilldownDialog
         open={drill !== null}
-        onOpenChange={(o) => { if (!o) setDrill(null); }}
+        onOpenChange={(o) => { if (!o) { setDrill(null); setDrillExpenseCat(null); } }}
         kind={drill}
         range={range}
+        expenseCategory={drillExpenseCat}
       />
     </div>
   );
@@ -414,7 +456,7 @@ export default function PnLPage() {
 function Row({
   label, amount, hint, onHint, tone, emphasis, xl,
 }: {
-  label: string;
+  label: React.ReactNode;
   amount: number;
   hint?: string;
   /** When set, the hint becomes a button that opens the drill-down popup. */

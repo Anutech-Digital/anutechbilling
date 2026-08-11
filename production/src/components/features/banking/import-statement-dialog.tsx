@@ -26,7 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
-import { useImportBankTransactions } from "@/lib/queries/bank";
+import { useImportBankTransactions, useExistingTxnKeys, bankTxnKey } from "@/lib/queries/bank";
 import { rupee, formatDate } from "@/lib/utils";
 
 interface Props {
@@ -214,27 +214,83 @@ function parseStatement(text: string): { rows: ParsedRow[]; skipped: number; war
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
   const [csvText, setCsvText] = React.useState("");
   const [parsed, setParsed]   = React.useState<{ rows: ParsedRow[]; skipped: number; warnings: string[] } | null>(null);
+  // "csv" = parsed from pasted/CSV text; "ai" = read from a PDF/photo via Gemini.
+  const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
+  const [reading, setReading] = React.useState(false);
+  const [readMsgIdx, setReadMsgIdx] = React.useState(0);
   const importMut = useImportBankTransactions();
 
+  // Rotating status while the AI reads — so a multi-second read never looks stuck.
+  const READ_MSGS = ["PDF khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
   React.useEffect(() => {
-    if (!open) { setCsvText(""); setParsed(null); }
+    if (!reading) { setReadMsgIdx(0); return; }
+    const t = setInterval(() => setReadMsgIdx((i) => Math.min(i + 1, READ_MSGS.length - 1)), 1600);
+    return () => clearInterval(t);
+  }, [reading]);
+  const { data: existingKeys } = useExistingTxnKeys(open ? accountId : null);
+
+  // How many parsed rows are already in the books (will be skipped on import).
+  const dupCount = React.useMemo(() => {
+    if (!parsed || !existingKeys) return 0;
+    return parsed.rows.filter((r) => existingKeys.has(bankTxnKey(r))).length;
+  }, [parsed, existingKeys]);
+  const freshCount = (parsed?.rows.length ?? 0) - dupCount;
+
+  React.useEffect(() => {
+    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); }
   }, [open]);
 
-  // Re-parse whenever the textarea changes (cheap)
+  // Re-parse the textarea (CSV mode only — don't clobber an AI/PDF result).
   React.useEffect(() => {
+    if (mode !== "csv") return;
     if (!csvText.trim()) { setParsed(null); return; }
     setParsed(parseStatement(csvText));
-  }, [csvText]);
+  }, [csvText, mode]);
+
+  // Read a bank-statement PDF/photo with AI → transaction rows (operator reviews).
+  const readPdf = async (file: File) => {
+    setReading(true);
+    setMode("ai");
+    setCsvText("");
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = () => resolve((r.result as string).split(",")[1] ?? "");
+        r.onerror = () => reject(new Error("read failed"));
+        r.readAsDataURL(file);
+      });
+      const res = await fetch("/api/ai/extract-statement", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
+      });
+      const json = await res.json();
+      if (!res.ok) { toast.error(json.error ?? "Couldn't read the statement."); setParsed(null); return; }
+      setParsed({
+        rows: (json.rows ?? []) as ParsedRow[],
+        skipped: json.skipped ?? 0,
+        warnings: (json.rows ?? []).length === 0 ? ["AI ne koi transaction nahi padha — CSV download try karo."] : [],
+      });
+    } catch {
+      toast.error("Upload failed — try again, ya CSV daalo.");
+      setParsed(null);
+    } finally {
+      setReading(false);
+    }
+  };
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("File too large (>5 MB). Paste the CSV instead.");
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("File too large (>8 MB). Paste the CSV instead.");
       return;
     }
-    const text = await file.text();
-    setCsvText(text);
+    // PDF / image → AI reader; CSV / text → parse in the browser.
+    if (/pdf|image/i.test(file.type)) { await readPdf(file); return; }
+    setMode("csv");
+    setCsvText(await file.text());
   };
 
   const handleImport = async () => {
@@ -259,26 +315,40 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         <SheetHeader>
           <SheetTitle>Import bank statement</SheetTitle>
           <SheetDescription>
-            Upload a .csv / .xlsx file or paste the statement text below. We&apos;ll
-            auto-detect the columns (Date / Description / Debit / Credit) and
-            import the rows.
+            Upload a <b>PDF</b> statement or a <b>.csv</b> file (or paste the text
+            below). PDF ko AI padh ke rows nikaal deta hai; CSV auto-detect hoti
+            hai (Date / Description / Debit / Credit). Aap import se pehle preview
+            check karo.
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* File upload */}
+          {/* File upload — PDF/photo (AI) or CSV. Shows a live progress state
+              while the AI reads, so a multi-second read never looks frozen. */}
           <div className="rounded-md border border-dashed border-hairline-strong bg-paper-2/30 p-4">
-            <label className="cursor-pointer flex flex-col items-center text-center gap-2">
-              <Icon name="upload" size={20} className="text-ink-3" />
-              <span className="text-sm font-medium">Choose file (CSV or paste)</span>
-              <span className="text-[11px] text-ink-3">.csv up to 5 MB · or paste the table below</span>
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={onFileChange}
-              />
-            </label>
+            <style>{"@keyframes ros-loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}"}</style>
+            {reading ? (
+              <div className="flex flex-col items-center text-center gap-3 py-1">
+                <Icon name="sparkles" size={22} className="text-amber-ink animate-pulse" />
+                <span className="text-sm font-medium text-ink">{READ_MSGS[readMsgIdx]}</span>
+                <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
+                  <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
+                </div>
+                <span className="text-[11px] text-ink-3">Bade statement mein thoda zyada waqt lag sakta hai — ruko mat 😊</span>
+              </div>
+            ) : (
+              <label className="cursor-pointer flex flex-col items-center text-center gap-2">
+                <Icon name="upload" size={20} className="text-ink-3" />
+                <span className="text-sm font-medium">Choose file — PDF / CSV</span>
+                <span className="text-[11px] text-ink-3">Bank statement PDF (AI reads it) · ya .csv · up to 8 MB</span>
+                <input
+                  type="file"
+                  accept=".csv,text/csv,application/pdf,image/*"
+                  className="hidden"
+                  onChange={onFileChange}
+                />
+              </label>
+            )}
           </div>
 
           {/* OR paste */}
@@ -287,9 +357,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             <textarea
               rows={6}
               placeholder={"Date,Description,Debit,Credit,Balance\n28/05/2026,UPI/RAZORPAY/...,0,521088,..."}
-              className="mt-1 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-xs font-mono text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+              className="mt-1 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-xs font-mono text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
               value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
+              onChange={(e) => { setMode("csv"); setCsvText(e.target.value); }}
             />
           </div>
 
@@ -314,6 +384,12 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               {parsed.skipped > 0 && (
                 <p className="text-[11px] text-ink-3 mb-2">
                   Skipped {parsed.skipped} row{parsed.skipped === 1 ? "" : "s"} (missing date or both amounts zero — usually opening-balance / sub-total lines)
+                </p>
+              )}
+              {dupCount > 0 && (
+                <p className="text-[11px] text-amber-ink mb-2 flex items-start gap-1.5">
+                  <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+                  {dupCount} line{dupCount === 1 ? "" : "s"} pehle se books me hain — ye <b>skip</b> ho jaayengi{freshCount > 0 ? ` (sirf ${freshCount} nayi import hongi)` : " (kuch naya nahi)"}.
                 </p>
               )}
               {parsed.rows.length > 0 && (
@@ -349,9 +425,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           )}
 
           <div className="rounded-md bg-indigo-50 border border-indigo/20 px-3 py-2 text-[11px] text-indigo-ink">
-            <b>Tip:</b> Most Indian banks let you download a 30-day statement
-            from net banking as CSV. We support HDFC, ICICI, SBI, Axis, Kotak,
-            IndusInd, Yes Bank header formats.
+            <b>Tip:</b> Net banking se statement <b>PDF</b> ya <b>CSV</b> dono chalti hai —
+            PDF ko AI padh leta hai, CSV auto-detect hoti hai (HDFC, ICICI, SBI, Axis,
+            Kotak, IndusInd, Yes Bank). Import se pehle preview zaroor check karo.
           </div>
         </div>
 
@@ -362,11 +438,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <Button
             variant="primary"
             icon="upload"
-            disabled={!parsed || parsed.rows.length === 0}
+            disabled={freshCount === 0}
             loading={importMut.isPending}
             onClick={handleImport}
           >
-            Import {parsed?.rows.length ?? 0} row{(parsed?.rows.length ?? 0) === 1 ? "" : "s"}
+            {dupCount > 0 && freshCount === 0
+              ? "Sab pehle se hain"
+              : `Import ${freshCount} row${freshCount === 1 ? "" : "s"}`}
           </Button>
         </SheetFooter>
       </SheetContent>

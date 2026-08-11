@@ -277,7 +277,7 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="block text-xs font-medium text-ink-2 mb-1">Loan amount (₹)</label>
-              <Input type="number" min={1} value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="1000000" />
+              <Input type="number" min={1} value={principal} onChange={(e) => setPrincipal(e.target.value)} placeholder="e.g. 1000000" />
             </div>
           </div>
           <div>
@@ -308,7 +308,7 @@ function AddLoanDialog({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="block text-xs font-medium text-ink-2 mb-1">EMI (₹)</label>
-              <Input type="number" min={0} value={emi} onChange={(e) => setEmi(e.target.value)} placeholder="46000" />
+              <Input type="number" min={0} value={emi} onChange={(e) => setEmi(e.target.value)} placeholder="e.g. 46000" />
             </div>
           </div>
           <p className="text-[11px] text-ink-3">Interest %, tenure aur EMI optional hai — sirf reference ke liye. Zaroori hai: lender, amount, account.</p>

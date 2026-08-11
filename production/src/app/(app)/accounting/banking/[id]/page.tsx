@@ -17,6 +17,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -30,6 +31,7 @@ import {
   useBankAccount,
   useBankTransactions,
   useReconcileTransaction,
+  useAutoReconcile,
   type BankTransactionRow,
 } from "@/lib/queries/bank";
 import { rupee, formatDate } from "@/lib/utils";
@@ -41,9 +43,15 @@ import { useBankAaConnection, useFetchAaNow } from "@/lib/queries/bank-aa";
 type FilterTab = "all" | "unmatched" | "matched";
 
 // Column order (left→right) + default widths (px) for the resizable table.
-const BANK_COL_ORDER = ["date", "description", "amount", "status", "action"];
+// Status is folded into the last column: an unmatched row just shows the
+// "Reconcile" button (so "Unmatched" is implied — no separate column needed);
+// a reconciled row shows WHAT it matched (green pill) + "Un-reconcile". That
+// frees a whole column for the description + amounts.
+const BANK_COL_ORDER = ["date", "description", "nikasi", "jama", "reconcile"];
+// Widths tuned to fit a laptop content area WITHOUT a horizontal scrollbar
+// (≈830px total). Description flexes widest; users can still drag any column.
 const BANK_COL_DEFAULTS: Record<string, number> = {
-  date: 130, description: 380, amount: 150, status: 140, action: 150,
+  date: 118, description: 340, nikasi: 116, jama: 116, reconcile: 140,
 };
 
 export default function BankAccountDetailPage() {
@@ -52,14 +60,16 @@ export default function BankAccountDetailPage() {
 
   const { data: account,      isLoading: accLoading } = useBankAccount(accountId);
   const { data: transactions, isLoading: txnLoading } = useBankTransactions(accountId);
+  const autoReconcile = useAutoReconcile();
 
   const [tab,           setTab]           = React.useState<FilterTab>("all");
+  const [search,        setSearch]        = React.useState("");
   const [importOpen,    setImportOpen]    = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
 
   // Resizable columns — drag the full-height divider between any two columns.
-  const { colW, startResize, totalWidth: bankTableW } = useResizableColumns("ros_bank_colw", BANK_COL_DEFAULTS);
+  const { colW, startResize, totalWidth: bankTableW } = useResizableColumns("ros_bank_colw_v3", BANK_COL_DEFAULTS);
 
   // AA connection state (returns null if not connected yet)
   const { data: aaConn } = useBankAaConnection(accountId);
@@ -81,10 +91,41 @@ export default function BankAccountDetailPage() {
 
   const visibleTxns = React.useMemo(() => {
     if (!transactions) return [];
-    if (tab === "unmatched") return transactions.filter((t) => t.matched_to_type === null);
-    if (tab === "matched")   return transactions.filter((t) => t.matched_to_type !== null);
-    return transactions;
-  }, [transactions, tab]);
+    let list = transactions;
+    if (tab === "unmatched") list = list.filter((t) => t.matched_to_type === null);
+    else if (tab === "matched") list = list.filter((t) => t.matched_to_type !== null);
+    const q = search.trim().toLowerCase();
+    if (q) list = list.filter((t) =>
+      [t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
+        .some((f) => (f ?? "").toString().toLowerCase().includes(q)));
+    return list;
+  }, [transactions, tab, search]);
+
+  // Deep-link from elsewhere (e.g. Payroll "Reconcile in Banking →"):
+  //   ?focus=<txnId>   → open that transaction's reconcile
+  //   ?match=<amount>  → open the matching unmatched debit's reconcile
+  // Runs once, after transactions load; cleans the URL so a refresh won't repeat.
+  const focusedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (focusedRef.current || !transactions || transactions.length === 0) return;
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const focus = sp.get("focus");
+    const match = sp.get("match");
+    if (!focus && !match) return;
+    focusedRef.current = true;
+    let target: BankTransactionRow | undefined;
+    if (focus) target = transactions.find((t) => t.id === focus);
+    else if (match) {
+      const amt = Math.round(Number(match));
+      target = transactions.find((t) => t.matched_to_type === null && (t.debit ?? 0) === amt)
+            ?? transactions.find((t) => t.matched_to_type === null && (t.credit ?? 0) === amt);
+    }
+    setTab("unmatched");
+    if (target) setReconcileTxn(target);
+    else toast("Us amount ki koi unmatched bank line nahi mili — neeche se manually reconcile karo.");
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [transactions]);
 
   if (accLoading) {
     return <div className="p-8"><Skeleton className="h-32" /></div>;
@@ -213,9 +254,39 @@ export default function BankAccountDetailPage() {
         </div>
       </Card>
 
-      {/* Filter tabs */}
-      <div className="mb-4">
+      {/* Filter tabs + one-tap auto-reconcile */}
+      <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
         <TabBar items={tabs} value={tab} onChange={(v) => setTab(v as FilterTab)} />
+        {counts.unmatched > 0 && (
+          <Button
+            icon="sparkles"
+            variant="default"
+            loading={autoReconcile.isPending}
+            onClick={() => autoReconcile.mutate(account.id)}
+            title="Auto-match every unmatched line to its expense / salary / payment where the match is unambiguous"
+          >
+            {autoReconcile.isPending ? "Matching…" : `Auto-reconcile (${counts.unmatched})`}
+          </Button>
+        )}
+      </div>
+
+      {/* Search transactions */}
+      <div className="mb-3 relative">
+        <Icon name="search" size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search transactions — description, reference or amount…"
+          aria-label="Search transactions"
+          className="w-full pl-8 pr-8 py-2 text-sm rounded-md border border-hairline bg-paper focus:outline-none focus:border-hairline-strong"
+        />
+        {search && (
+          <button type="button" onClick={() => setSearch("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink" aria-label="Clear search">
+            <Icon name="x" size={14} />
+          </button>
+        )}
       </div>
 
       {/* Transactions list */}
@@ -252,19 +323,23 @@ export default function BankAccountDetailPage() {
               full-height divider between any two columns and drag; widen
               Description to read a full transaction line. Container scrolls if the
               table grows past it; widths are remembered per device. */}
-          <Card flush className="hidden lg:block overflow-x-auto">
+          <Card flush className="hidden lg:block">
+            {/* Viewport-capped scroller so BOTH scrollbars sit inside the visible
+                frame — the horizontal bar is reachable without scrolling the whole
+                page to the bottom. Sticky header stays put while rows scroll. */}
+            <div className="overflow-auto max-h-[calc(100vh-24rem)]">
             <div className="relative" style={{ width: bankTableW }}>
               <table className="text-sm table-fixed w-full">
                 <colgroup>
                   {BANK_COL_ORDER.map((id) => <col key={id} style={{ width: colW[id] }} />)}
                 </colgroup>
-                <thead>
+                <thead className="[&>tr>th]:sticky [&>tr>th]:top-0 [&>tr>th]:z-10 [&>tr>th]:bg-paper-2">
                   <tr className="border-b border-hairline text-left text-[11px] uppercase tracking-wider text-ink-3">
                     <th className="px-4 py-2 font-semibold whitespace-nowrap">Date</th>
                     <th className="px-4 py-2 font-semibold whitespace-nowrap">Description</th>
-                    <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Amount</th>
-                    <th className="px-4 py-2 font-semibold whitespace-nowrap">Status</th>
-                    <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Action</th>
+                    <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Nikasi (Dr.)</th>
+                    <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Jama (Cr.)</th>
+                    <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Reconcile</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -278,6 +353,7 @@ export default function BankAccountDetailPage() {
                 </tbody>
               </table>
               <ResizableHandles colW={colW} order={BANK_COL_ORDER} startResize={startResize} />
+            </div>
             </div>
           </Card>
 
@@ -317,12 +393,12 @@ function TxnAmount({ txn }: { txn: BankTransactionRow }) {
 }
 
 function txnStatusLabel(t: BankTransactionRow["matched_to_type"]): string {
-  return t === "payment"     ? "Matched payment" :
-         t === "expense"     ? "Matched expense" :
-         t === "vendor_bill" ? "Matched bill"    :
-         t === "transfer"    ? "Inter-account"   :
-         t === "split"       ? "Split · salaries" :
-         t                   ? "Reconciled"      : "Unmatched";
+  return t === "payment"     ? "Payment" :
+         t === "expense"     ? "Expense" :
+         t === "vendor_bill" ? "Bill"    :
+         t === "transfer"    ? "Inter-account" :
+         t === "split"       ? "Salaries" :
+         t                   ? "Reconciled" : "Unmatched";
 }
 
 function TxnStatusBadge({ txn }: { txn: BankTransactionRow }) {
@@ -348,39 +424,45 @@ function TransactionRow({
       <td className="px-4 py-3 text-ink-2 whitespace-nowrap truncate">
         {formatDate(txn.txn_date)}
       </td>
-      <td className="px-4 py-3 overflow-hidden">
-        <div className="font-medium text-ink truncate" title={txn.description ?? undefined}>{txn.description}</div>
+      <td className="px-4 py-3 align-top">
+        {/* Wrap (not truncate) so the full narration is readable at the default
+            width — no need to widen the column and push other columns off. */}
+        <div className="font-medium text-ink break-words leading-snug">{txn.description}</div>
         {txn.reference && (
-          <div className="text-[10px] text-ink-3 font-mono mt-0.5 truncate">{txn.reference}</div>
+          <div className="text-[10px] text-ink-3 font-mono mt-0.5 break-all">{txn.reference}</div>
         )}
       </td>
-      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium">
-        <TxnAmount txn={txn} />
+      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium text-rose">
+        {txn.debit > 0 ? rupee(txn.debit) : <span className="text-ink-4">—</span>}
       </td>
-      <td className="px-4 py-3"><TxnStatusBadge txn={txn} /></td>
+      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium text-emerald">
+        {txn.credit > 0 ? rupee(txn.credit) : <span className="text-ink-4">—</span>}
+      </td>
       <td className="px-4 py-3 text-right">
         {txn.matched_to_type === "transfer" ? (
           // Inter-account transfers are auto-reconciled self-balancing pairs —
           // un-reconciling one leg would orphan it, so no action here.
-          <span className="text-[11px] text-ink-3">Auto</span>
+          <div className="flex flex-col items-end gap-0.5">
+            <Badge kind="success" size="sm" dot>Inter-account</Badge>
+            <span className="text-[10px] text-ink-3">Auto</span>
+          </div>
         ) : txn.matched_to_type ? (
-          <button
-            type="button"
-            onClick={() =>
-              reconcile.mutate({ transactionId: txn.id, matchedToType: null, matchedToId: null })
-            }
-            className="text-xs text-ink-3 hover:text-rose"
-            disabled={reconcile.isPending}
-          >
-            Un-reconcile
-          </button>
+          // Reconciled: show WHAT it matched (this replaces the Status column)
+          // plus a quiet way to undo it.
+          <div className="flex flex-col items-end gap-0.5">
+            <Badge kind="success" size="sm" dot>{txnStatusLabel(txn.matched_to_type)}</Badge>
+            <button
+              type="button"
+              onClick={() => reconcile.mutate({ transactionId: txn.id, matchedToType: null, matchedToId: null })}
+              className="text-[10px] text-ink-3 hover:text-rose"
+              disabled={reconcile.isPending}
+            >
+              Un-reconcile
+            </button>
+          </div>
         ) : (
-          <Button
-            size="sm"
-            variant="default"
-            onClick={onReconcile}
-            disabled={reconcile.isPending}
-          >
+          // Unmatched: the button alone conveys the status.
+          <Button size="sm" variant="default" onClick={onReconcile} disabled={reconcile.isPending}>
             Reconcile
           </Button>
         )}

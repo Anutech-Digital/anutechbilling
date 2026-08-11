@@ -73,6 +73,8 @@ export default function AttendanceKioskPage() {
         </div>
       </div>
 
+      {net?.requirePresence && <PresenceCodeBanner />}
+
       {empQ.isLoading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{[1, 2, 3, 4, 5, 6].map((i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : employees.length === 0 ? (
@@ -112,6 +114,55 @@ export default function AttendanceKioskPage() {
 
       {pinFor && <PinPad employee={pinFor} requireSelfie={net?.requireSelfie ?? true} onClose={() => setPinFor(null)} />}
     </div>
+  );
+}
+
+/**
+ * The rotating office code — shown big on the office tablet. Employees checking
+ * in from their OWN phones (My Attendance) must type this current code, so they
+ * can only do it while physically in the office reading this screen.
+ */
+function PresenceCodeBanner() {
+  const [code, setCode] = React.useState<string | null>(null);
+  const [secs, setSecs] = React.useState(0);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/attendance/presence-code");
+      if (!res.ok) return;
+      const j = (await res.json()) as { code: string; secondsRemaining: number };
+      setCode(j.code); setSecs(j.secondsRemaining);
+    } catch { /* transient — next tick retries */ }
+  }, []);
+
+  React.useEffect(() => {
+    void refresh();
+    const tick = setInterval(() => {
+      setSecs((s) => {
+        if (s <= 1) { void refresh(); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [refresh]);
+
+  return (
+    <Card className="mb-5 p-4 md:p-5 border-amber/40 bg-amber-soft/30">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-amber-ink font-semibold">Office check-in code</div>
+          <p className="text-xs text-ink-3 mt-0.5 max-w-md">
+            Apne phone se attendance mark karne wale employees ye code daalenge. Har {secs > 0 ? "" : "kuch"} second me badalta hai — office me hi dikhega.
+          </p>
+        </div>
+        <div className="text-center">
+          <div className="font-mono text-4xl md:text-5xl font-bold tracking-[0.25em] tabular-nums text-ink">
+            {code ?? "······"}
+          </div>
+          <div className="text-[11px] text-ink-3 mt-1">refreshes in {secs}s</div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -197,7 +248,10 @@ function PinPad({ employee, requireSelfie, onClose }: { employee: Employee; requ
     }
     try {
       const action = await mark.mutateAsync({ employeeId: employee.id, pin, photo });
-      const msg = action === "checked_in" ? "Checked in ✓" : action === "checked_out" ? "Checked out ✓" : "Already done for today";
+      const msg = action === "checked_in" ? "Checked in ✓"
+        : action === "checked_out" ? "Checked out ✓"
+        : action === "too_soon" ? "Abhi to check-in hua — ignore kiya"
+        : "Already done for today";
       setResult({ ok: true, msg });
       setTimeout(onClose, 1400);
     } catch (e) {

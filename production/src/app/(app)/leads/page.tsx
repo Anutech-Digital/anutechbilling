@@ -22,7 +22,8 @@
 import * as React from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
-import { useLeads, useUpdateLeadStage, useDeleteLead } from "@/lib/queries/leads";
+import { useLeads, useUpdateLeadStage, useDeleteLead, useSetLeadJunk } from "@/lib/queries/leads";
+import { looksLikeJunk } from "@/lib/leads/junk";
 import { useLeadActivities, useLogLeadActivity } from "@/lib/queries/lead-activities";
 import { LeadsBulkBar } from "@/components/features/leads/leads-bulk-bar";
 import { useQuotesByLead } from "@/lib/queries/quotes";
@@ -45,6 +46,7 @@ import CampaignComposerDialog from "@/components/features/campaigns/campaign-com
 import GoogleContactsImportDialog from "@/components/features/contacts/google-contacts-import-dialog";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
+import { JunkAIReview } from "@/components/features/leads/junk-ai-review";
 import { EmptyState } from "@/components/shared/empty-state";
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -283,10 +285,25 @@ function LeadsPageInner() {
   // Non-destructive: it only flags; merging is an explicit action in the dialog.
   const dup = React.useMemo(() => computeDuplicates(leads ?? []), [leads]);
 
+  // Junk (spam/fake) — a stored flag. junkCount drives the Junk chip; suspects
+  // are non-junk leads the heuristic flags for review (surfaced in the Junk view).
+  const junkCount = React.useMemo(() => (leads ?? []).filter((l) => l.is_junk).length, [leads]);
+  const junkSuspectCount = React.useMemo(
+    () => (leads ?? []).filter((l) => !l.is_junk && looksLikeJunk(l).suspect).length,
+    [leads],
+  );
+
   // Search + filter both apply BEFORE the tab cut so each view respects them.
   const searched = React.useMemo(() => {
     if (!leads) return [];
     let list = leads;
+    // 0. Junk cut — confirmed junk is hidden from EVERY working view. The "Junk"
+    //    view is the cleanup workspace: confirmed junk + heuristic SUSPECTS (so
+    //    you can review + mark them). Suspects still appear in working views
+    //    (they're only flagged, not confirmed) until you mark them.
+    list = smartView === "junk"
+      ? list.filter((l) => l.is_junk || looksLikeJunk(l).suspect)
+      : list.filter((l) => !l.is_junk);
     // 1. Text search across company / contact name / email / plan
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -348,7 +365,9 @@ function LeadsPageInner() {
   const qualifiedDeals = React.useMemo(() => searched.filter((l) => !isRaw(l)), [searched]);
 
   // The Kanban / List views consume this — points at whichever tab is active.
-  const filtered = tab === "leads" ? rawLeads : qualifiedDeals;
+  // Junk is stage-agnostic (spam is spam at any stage), so its view bypasses the
+  // raw/deals cut and shows every junk + suspect — matching the chip's count.
+  const filtered = smartView === "junk" ? searched : (tab === "leads" ? rawLeads : qualifiedDeals);
 
   // Tab-scoped UNFILTERED subset for the insight band, Smart Views chips,
   // Today strip, and right rail. Without this they show tenant-wide counts
@@ -632,6 +651,8 @@ function LeadsPageInner() {
           leads={leadsForTab}
           currentUserId={currentUser?.userId}
           duplicateCount={duplicateCountForTab}
+          junkCount={junkCount}
+          junkSuspectCount={junkSuspectCount}
           active={smartView}
           onChange={setSmartView}
         />
@@ -649,6 +670,13 @@ function LeadsPageInner() {
           so they aren't constrained by the split. */}
       <div className="flex gap-6 flex-1 min-h-0">
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
+      {/* AI junk review — only in the Junk view. Lets the operator ask AI to
+          decide across the spam pile (verdict + reason + confidence), then
+          confirm with one tap. Reversible, human-in-the-loop. */}
+      {smartView === "junk" && filtered.length > 0 && (
+        <JunkAIReview leads={filtered} />
+      )}
+
       {/* AI lead intelligence
           "Hot leads" = highest-value rows in quote/trial stages — these
           convert at the highest rate per the prototype-era data, and they're
@@ -1233,6 +1261,32 @@ function LeadDetailSheet({
   const [drawerTab, setDrawerTab] = React.useState<"details" | "followups" | "activity">("details");
   React.useEffect(() => { setDrawerTab("details"); }, [lead?.id]);
 
+  // Drag-to-resize the drawer (desktop only): the left edge is a grab handle;
+  // the chosen width is remembered per browser. Mobile stays full-width.
+  const [panelWidth, setPanelWidth] = React.useState<number | null>(null);
+  const widthRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    const saved = Number(localStorage.getItem("lead_drawer_w"));
+    if (saved >= 360) { setPanelWidth(saved); widthRef.current = saved; }
+  }, []);
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(360, Math.min(window.innerWidth - ev.clientX, window.innerWidth * 0.95));
+      widthRef.current = w;
+      setPanelWidth(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      if (widthRef.current) localStorage.setItem("lead_drawer_w", String(Math.round(widthRef.current)));
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   // History: every quote that's been sent to this lead
   const { data: quotesForLead = [] } = useQuotesByLead(lead?.id);
 
@@ -1413,7 +1467,21 @@ function LeadDetailSheet({
 
   return (
     <Sheet open={!!lead} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full sm:max-w-md p-0 flex flex-col" hideClose>
+      <SheetContent
+        side="right"
+        className="w-full sm:w-[var(--lead-w)] sm:max-w-[95vw] p-0 flex flex-col"
+        style={{ ["--lead-w" as string]: panelWidth ? `${panelWidth}px` : "28rem" } as React.CSSProperties}
+        hideClose
+      >
+        {/* Drag handle on the left edge — grab to widen/narrow the panel (desktop). */}
+        <div
+          onMouseDown={startResize}
+          className="hidden sm:block absolute inset-y-0 left-0 z-30 w-2 -ml-1 cursor-ew-resize group"
+          title="Drag to resize"
+          aria-hidden
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-hairline group-hover:bg-amber group-hover:w-1 transition-all" />
+        </div>
         <SheetHeader className="!p-5 flex flex-row items-start justify-between gap-3 border-b border-hairline">
           <div className="min-w-0 flex-1">
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Lead detail</p>
@@ -1639,6 +1707,52 @@ function LeadDetailSheet({
             <Fact label="Email" value={lead.contact_email} mono />
             <Fact label="Phone" value={lead.contact_phone} mono />
             <Fact label="Created" value={formatDate(lead.created_at)} />
+          </div>
+
+          {/* Recent communication — surfaced right here on the main Details view
+              (not hidden in the Activity tab) so every call / WhatsApp / email /
+              inbound reply is visible the moment you open the lead. Shows the
+              latest 3; "See all" opens the full timeline. */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-xs uppercase tracking-wider text-ink-3 font-semibold">Recent communication</div>
+              {activities.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setDrawerTab("activity")}
+                  className="text-[11px] font-medium text-amber-ink hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded"
+                >
+                  See all ({activities.length})
+                </button>
+              )}
+            </div>
+            {activities.length === 0 ? (
+              <div className="text-sm text-ink-3 italic p-3 bg-paper-2 rounded-md">
+                No communication yet. Call / WhatsApp / Email from here — it logs automatically.
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {[...activities]
+                  .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
+                  .slice(0, 3)
+                  .map((a) => {
+                    const meta = ACTIVITY_META[a.kind] ?? { icon: "clock" as const, label: a.kind };
+                    return (
+                      <li key={a.id} className="flex items-start gap-2.5">
+                        <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-paper-2 text-ink-3">
+                          <Icon name={meta.icon} size={12} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-ink truncate">{a.detail || meta.label}</div>
+                          <div className="text-[11px] text-ink-3">
+                            {meta.label} · {formatDate(a.created_at)} {fmtActTime(a.created_at)}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
           </div>
 
           {/* Notes */}
@@ -2092,6 +2206,7 @@ function RowActions({
   const hasPhone = phoneDigits.length >= 10;
   const hasEmail = Boolean(lead.contact_email);
   const logActivity = useLogLeadActivity();
+  const setJunk = useSetLeadJunk();
 
   const itemCls = "gap-2.5 py-2 cursor-pointer";
   // Primary quick actions inline (Call · WhatsApp · Quote) — ALWAYS fully visible
@@ -2193,6 +2308,17 @@ function RowActions({
               </a>
             </DropdownMenuItem>
           )}
+
+          <DropdownMenuSeparator />
+          {lead.is_junk ? (
+            <DropdownMenuItem className={itemCls} onClick={() => setJunk.mutate({ ids: [lead.id], isJunk: false })}>
+              <Icon name="check_circle" size={20} /> Restore from junk
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem className={cn(itemCls, "text-rose")} onClick={() => setJunk.mutate({ ids: [lead.id], isJunk: true })}>
+              <Icon name="alert" size={20} /> Mark as junk
+            </DropdownMenuItem>
+          )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -2267,6 +2393,7 @@ function LeadListView({
   // needing to open the full detail drawer.
   const updateStage = useUpdateLeadStage();
   const deleteLead  = useDeleteLead();
+  const setJunkBulk = useSetLeadJunk();
 
   // Open follow-up tasks per lead — surfaced as a chip on the row so the rep
   // sees at a glance which leads have a pending task (earliest/most-overdue).
@@ -2326,6 +2453,14 @@ function LeadListView({
     }
     clearSelection();
   };
+
+  /** Bulk-mark selected leads as junk — one update, they leave the working views. */
+  const bulkMarkJunk = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    try { await setJunkBulk.mutateAsync({ ids, isJunk: true }); } catch { /* hook toasts */ }
+    clearSelection();
+  };
   // Apply sort (memo so we don't resort on every render).
   // Pre-sort layer (always wins): leads with follow_up_date <= today get
   // hoisted to the top regardless of the user's chosen column sort. Within
@@ -2335,21 +2470,11 @@ function LeadListView({
   const sorted = React.useMemo(() => {
     const out = [...leads];
     const dir = sortDir === "asc" ? 1 : -1;
-    const today = new Date().toISOString().slice(0, 10);
-    const dueRank = (l: Lead) => {
-      if (!l.follow_up_date || l.follow_up_date > today) return 1;       // not due → bottom group
-      if (l.stage === "won" || l.stage === "lost") return 1;              // closed leads — skip
-      return 0;                                                            // due / overdue → top group
-    };
+    // Sort strictly by the chosen column — default is "created" desc, so the
+    // newest lead is always on top. (Due/overdue follow-ups are surfaced by the
+    // banner + the Today/Overdue filter chips, so we don't secretly re-pin them
+    // here — a sortable table should obey its sort.)
     out.sort((a, b) => {
-      // 1. Due-today group first
-      const ra = dueRank(a), rb = dueRank(b);
-      if (ra !== rb) return ra - rb;
-      // 2. Within due-today, older follow_up_date first (most overdue)
-      if (ra === 0 && a.follow_up_date && b.follow_up_date && a.follow_up_date !== b.follow_up_date) {
-        return a.follow_up_date.localeCompare(b.follow_up_date);
-      }
-      // 3. User-chosen sort
       switch (sortBy) {
         case "value":   return ((a.value ?? 0) - (b.value ?? 0)) * dir;
         case "company": return a.company.localeCompare(b.company) * dir;
@@ -2629,10 +2754,13 @@ function LeadListView({
                 </td>
                 <td className="px-3 py-2 text-sm">
                   <span className={cn(
-                    "tabular-nums",
+                    "tabular-nums block",
                     stale ? "text-rose font-medium" : "text-ink-3",
                   )}>
                     {age === 0 ? "today" : age === 1 ? "1d ago" : `${age}d ago`}
+                  </span>
+                  <span className="block text-[10px] text-ink-4 tabular-nums">
+                    {formatDate(lead.updated_at)} · {fmtActTime(lead.updated_at)}
                   </span>
                 </td>
                 {/* Quick actions — dark panel that opens from the ⋯ (hover/click/
@@ -2658,6 +2786,7 @@ function LeadListView({
       onChangeStage={bulkChangeStage}
       onDeselectAll={clearSelection}
       onDelete={bulkDelete}
+      onMarkJunk={bulkMarkJunk}
     />
     </>
   );

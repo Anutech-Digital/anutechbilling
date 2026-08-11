@@ -48,7 +48,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={innerRef}
           className={cn(
             "w-full rounded-md border bg-paper px-3 py-2 text-sm text-ink",
-            "placeholder:text-ink-3 transition-colors resize-y",
+            "placeholder:text-ink-4 transition-colors resize-y",
             "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-paper",
             hasError
               ? "border-rose focus:ring-rose"

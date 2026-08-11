@@ -28,6 +28,12 @@ const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <o
 const APP_URL        = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+// Which tenant inbound enquiry-emails belong to. Defaults to the buy-page
+// tenant, but set INBOUND_EMAIL_TENANT_ID to route a specific reseller's
+// forwarded Gmail enquiries to their own tenant (e.g. Anutech) without
+// disturbing the public buy-page routing.
+const INBOUND_TENANT_ID =
+  process.env.INBOUND_EMAIL_TENANT_ID?.trim() || BUY_PAGE_TENANT_ID;
 
 interface ExtractedLead {
   isEnquiry: boolean;
@@ -132,7 +138,7 @@ export async function POST(request: NextRequest) {
   }
 
   const admin    = createAdminClient();
-  const tenantId = BUY_PAGE_TENANT_ID;
+  const tenantId = INBOUND_TENANT_ID;
 
   // ── 3. Idempotency claim — insert the message_id; UNIQUE blocks replays ─
   const { error: claimErr } = await admin.from("inbound_emails").insert({

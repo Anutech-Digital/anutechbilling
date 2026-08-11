@@ -299,9 +299,101 @@ export function useBankTransactions(accountId: string | null | undefined) {
   });
 }
 
+/** An unmatched debit line + its account name — candidates to reconcile an expense to. */
+export type UnmatchedDebit = {
+  id: string;
+  bank_account_id: string;
+  account_name: string;
+  txn_date: string;
+  description: string | null;
+  debit: number;
+};
+
 /**
- * Bulk insert bank transactions from a parsed CSV/Excel upload.
- * Skips rows where both debit and credit are zero. Auto-assigns
+ * All unreconciled money-OUT (debit) lines across the tenant's accounts — the
+ * candidate list when reconciling a paid expense TO its bank line (expense-first
+ * reconcile). RLS scopes to the tenant. Newest first; the dialog ranks by
+ * amount/date closeness to the expense.
+ */
+export function useUnmatchedBankDebits() {
+  return useQuery({
+    queryKey: ["bank_transactions", "unmatched-debits"],
+    queryFn: async (): Promise<UnmatchedDebit[]> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("bank_transactions")
+        .select("id, bank_account_id, txn_date, description, debit, bank_accounts(name)")
+        .is("matched_to_id", null)
+        .gt("debit", 0)
+        .order("txn_date", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return (data ?? []).map((r) => {
+        const acc = (r as { bank_accounts?: { name?: string } | { name?: string }[] }).bank_accounts;
+        const name = Array.isArray(acc) ? acc[0]?.name : acc?.name;
+        return {
+          id: r.id as string,
+          bank_account_id: r.bank_account_id as string,
+          account_name: name ?? "Account",
+          txn_date: r.txn_date as string,
+          description: (r.description ?? null) as string | null,
+          debit: (r.debit ?? 0) as number,
+        };
+      });
+    },
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * Natural key for a bank line — used to skip a statement row that's already in
+ * the books (re-uploaded statement / overlapping date range). A UTR/reference
+ * is the most stable; else fall back to date + both amounts + description.
+ */
+export function bankTxnKey(r: { txn_date?: string | null; debit?: number | null; credit?: number | null; description?: string | null }): string {
+  const d = (r.txn_date ?? "").slice(0, 10);
+  // date + amount + description only. Reference is NOT used — a re-uploaded
+  // statement often omits it while the stored row has one (or vice-versa),
+  // which would make the same line look "new". Description is normalised by
+  // REMOVING ALL whitespace + lowercasing so re-parsed spacing/masking variants
+  // of the SAME line still match — e.g. "EXCEL TECHNO LOGIES" == "EXCEL
+  // TECHNOLOGIES" and "ICIC-XX XXXXXX4658" == "ICIC-XXXXXX4658". (Collapsing to a
+  // single space, as before, left those different and let duplicates slip in.)
+  // A SHORT prefix (first 25 non-space chars) — this captures the stable leading
+  // bank txn/UTR number (e.g. "50100784857219-TPT-SALARY", "IMPS-621856395591-")
+  // while EXCLUDING the variable tail where re-parses differ: payee name
+  // ("...-ABHI" vs "...-ABHISHEK") and masked account digits ("ICIC-XX XXXXXX4658"
+  // vs "ICIC-XXXXXX4658"). A longer prefix (60) let those tails break the match
+  // and duplicated the line on re-upload. Genuinely different lines still differ
+  // in this prefix (different UTR / party), so they stay separate.
+  const desc = (r.description ?? "").toLowerCase().replace(/\s+/g, "").slice(0, 25);
+  return `${d}|${Math.round(r.debit ?? 0)}|${Math.round(r.credit ?? 0)}|${desc}`;
+}
+
+/** Existing bank-line keys for an account — to flag/skip duplicate imports. */
+export function useExistingTxnKeys(accountId: string | null) {
+  return useQuery({
+    queryKey: ["bank_transactions", accountId, "keys"],
+    enabled: !!accountId,
+    queryFn: async (): Promise<Set<string>> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("bank_transactions")
+        .select("txn_date, debit, credit, description, reference")
+        .eq("bank_account_id", accountId as string)
+        .limit(5000);
+      if (error) throw error;
+      return new Set((data ?? []).map((r) => bankTxnKey(r as never)));
+    },
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * Bulk insert bank transactions from a parsed CSV/PDF upload.
+ * Skips rows where both debit and credit are zero, AND skips DUPLICATES already
+ * in the account (same date + amount + description/reference) — so re-uploading
+ * a statement, or an overlapping date range, never double-counts. Auto-assigns
  * source='csv_upload' for the whole batch.
  */
 export function useImportBankTransactions() {
@@ -321,7 +413,7 @@ export function useImportBankTransactions() {
         .single();
       if (meErr) throw meErr;
 
-      const validRows = input.rows
+      const cleaned = input.rows
         .map((r) => {
           // A bank line is debit XOR credit — coerce to non-negative integers so
           // a stray minus/decimal can't break the integer column or the
@@ -330,15 +422,33 @@ export function useImportBankTransactions() {
           const credit = Math.max(0, Math.round(r.credit ?? 0));
           return { ...r, debit, credit };
         })
-        .filter((r) => (r.debit > 0) !== (r.credit > 0))   // exactly one side positive
-        .map((r) => ({
-          ...r,
-          tenant_id:       me!.tenant_id,
-          bank_account_id: input.accountId,
-          source:          "csv_upload" as const,
-        }));
+        .filter((r) => (r.debit > 0) !== (r.credit > 0));   // exactly one side positive
+
+      // Skip lines already in this account (re-uploaded / overlapping statement).
+      const { data: existing } = await supabase
+        .from("bank_transactions")
+        .select("txn_date, debit, credit, description, reference")
+        .eq("bank_account_id", input.accountId)
+        .limit(5000);
+      const seen = new Set((existing ?? []).map((r) => bankTxnKey(r as never)));
+      const fresh: typeof cleaned = [];
+      let duplicates = 0;
+      for (const r of cleaned) {
+        const k = bankTxnKey(r as never);
+        if (seen.has(k)) { duplicates++; continue; }
+        seen.add(k);   // also dedup within the same batch
+        fresh.push(r);
+      }
+
+      const validRows = fresh.map((r) => ({
+        ...r,
+        tenant_id:       me!.tenant_id,
+        bank_account_id: input.accountId,
+        source:          "csv_upload" as const,
+      }));
 
       if (validRows.length === 0) {
+        if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported
         throw new Error("No valid transactions to import (each row needs exactly one of debit or credit > 0)");
       }
 
@@ -347,12 +457,14 @@ export function useImportBankTransactions() {
         .insert(validRows)
         .select("id");
       if (error) throw error;
-      return { inserted: data?.length ?? 0 };
+      return { inserted: data?.length ?? 0, duplicates };
     },
-    onSuccess: ({ inserted }, vars) => {
+    onSuccess: ({ inserted, duplicates }, vars) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
-      toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported`);
+      const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicate skip` : "";
+      if (inserted === 0 && duplicates > 0) toast.success(`Sab ${duplicates} lines pehle se hain — kuch naya nahi mila`);
+      else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
     },
     onError: (err) => {
       // Supabase/PostgREST errors aren't Error instances — dig out their message
@@ -374,6 +486,225 @@ export function useImportBankTransactions() {
  *
  * Pass matched_to_type=null to UN-reconcile.
  */
+/**
+ * One-step income booking from a money-IN bank line: a customer paid for a sale
+ * that wasn't invoiced yet. Raises the GST invoice (+ its one-off quote) via
+ * create_direct_invoice, records the payment against it, then reconciles THIS
+ * bank credit to that payment. `taxableAmount` is the ex-GST line value — the
+ * RPC adds GST per the customer's place of supply, so the invoice total may be
+ * higher than the taxable figure.
+ */
+export function useBookCreditAsInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      transactionId: string;
+      bankAccountId: string;
+      customerId: string;
+      lineName: string;
+      taxableAmount: number;   // ex-GST ₹
+      reference?: string | null;
+    }) => {
+      const supabase = createClient();
+      // 1. Invoice + one-off quote (atomic).
+      const { data: invData, error: e1 } = await supabase.rpc("create_direct_invoice", {
+        p_customer_id: input.customerId,
+        p_line_items:  [{ id: "line-1", name: input.lineName.trim() || "Sale", qty: 1, rate: Math.round(input.taxableAmount), cost: 0 }],
+        p_notes:       "Raised from a bank receipt (reconcile)",
+        p_recurring:   false,
+      });
+      if (e1) throw e1;
+      const inv = (Array.isArray(invData) ? invData[0] : invData) as { invoice_id: string; quote_id: string; net_payable: number };
+
+      // 2. Record the payment (full) against that quote. record_payment needs a
+      //    non-empty reference for bank methods — use the line's UTR, else derive
+      //    one from the bank-txn id (also makes the call idempotent per line).
+      const ref = (input.reference ?? "").trim() || `BANK-${input.transactionId}`;
+      const { data: payData, error: e2 } = await supabase.rpc("record_payment", {
+        p_quote_id:  inv.quote_id,
+        p_amount:    inv.net_payable,
+        p_method:    "bank_transfer",
+        p_reference: ref,
+        p_notes:     "Reconciled from bank receipt",
+      });
+      if (e2) throw e2;
+      const pay = (Array.isArray(payData) ? payData[0] : payData) as { payment_id?: string };
+      if (!pay?.payment_id) throw new Error("Payment record nahi bana.");
+
+      // 3. Tag the receiving account + reconcile THIS bank line to the payment.
+      await supabase.from("payments").update({ bank_account_id: input.bankAccountId }).eq("id", pay.payment_id);
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error: e3 } = await supabase.from("bank_transactions").update({
+        matched_to_type:  "payment",
+        matched_to_id:    pay.payment_id,
+        matched_at:       new Date().toISOString(),
+        matched_by:       user?.id ?? null,
+        match_confidence: "manual",
+      }).eq("id", input.transactionId);
+      if (e3) throw e3;
+      return inv;
+    },
+    onSuccess: (inv) => {
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["aging"] });
+      toast.success(`Invoice ${inv.invoice_id} bana & reconcile ho gaya`);
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+}
+
+/**
+ * Overpaid-salary split: reconcile ONE money-out line as salary + a recoverable
+ * employee advance in one atomic RPC (migration 0186). The salary portion (line
+ * − advance) settles the chosen salary; the excess becomes a salary-advance with
+ * NO new cash leg (this line is the cash-out). Recover it later via a salary
+ * deduction in Loans & Advances.
+ */
+export function useReconcileSalaryAdvanceSplit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      transactionId: string;
+      salaryId: string;
+      advanceAmount: number;
+      employeeName: string;
+      notes?: string | null;
+    }) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("reconcile_salary_advance_split", {
+        p_txn_id:         input.transactionId,
+        p_salary_id:      input.salaryId,
+        p_advance_amount: Math.round(input.advanceAmount),
+        p_employee_name:  input.employeeName,
+        p_notes:          input.notes ?? null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["salary-payments"] });
+      qc.invalidateQueries({ queryKey: ["employee-loans"] });
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      toast.success("Reconciled — salary paid + advance booked");
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+}
+
+/** Reconcile input shape — shared by the single-match hook and auto-reconcile. */
+type ReconcileInput = {
+  transactionId: string;
+  matchedToType: "payment" | "project" | "expense" | "vendor_bill" | "transfer" | "salary" | "split" | "manual" | null;
+  matchedToId:   string | null;
+  confidence?:   "exact" | "high" | "low" | "manual";
+};
+
+/** Core reconcile write — sets the match on the bank line AND keeps the reverse
+ *  links (project_payments.bank_txn_id, expenses.reconciled_txn_id) + statutory /
+ *  balance-sheet reversals in sync. The single source of truth used by both the
+ *  manual dialog (useReconcileTransaction) and the batch auto-reconcile below, so
+ *  they can never drift apart. Salary paid_amount is handled by a DB trigger on
+ *  the bank_transactions update, so no extra client work is needed for salaries. */
+async function applyReconcile(
+  supabase: ReturnType<typeof createClient>,
+  input: ReconcileInput,
+  matchedBy: string | null,
+): Promise<BankTransactionRow> {
+  const patch = input.matchedToType
+    ? {
+        matched_to_type:  input.matchedToType,
+        matched_to_id:    input.matchedToId,
+        matched_at:       new Date().toISOString(),
+        matched_by:       matchedBy,
+        match_confidence: input.confidence ?? "manual",
+      }
+    : {
+        matched_to_type:  null,
+        matched_to_id:    null,
+        matched_at:       null,
+        matched_by:       null,
+        match_confidence: null,
+      };
+  const { data, error } = await supabase
+    .from("bank_transactions").update(patch).eq("id", input.transactionId).select().single();
+  if (error) throw error;
+  await supabase.from("project_payments").update({ bank_txn_id: null }).eq("bank_txn_id", input.transactionId);
+  if (input.matchedToType === "project" && input.matchedToId) {
+    await supabase.from("project_payments").update({ bank_txn_id: input.transactionId }).eq("id", input.matchedToId);
+  }
+  await supabase.from("expenses").update({ reconciled_txn_id: null }).eq("reconciled_txn_id", input.transactionId);
+  if (input.matchedToType === "expense" && input.matchedToId) {
+    await supabase.from("expenses").update({ reconciled_txn_id: input.transactionId }).eq("id", input.matchedToId);
+  }
+  if (!input.matchedToType) {
+    await supabase.from("balance_sheet_items").delete().eq("bank_txn_id", input.transactionId);
+    await supabase.from("statutory_dues_payments").delete().eq("bank_txn_id", input.transactionId);
+  }
+  return data as BankTransactionRow;
+}
+
+/**
+ * Auto-reconcile — for every UNMATCHED line in the account, ask the server for
+ * match suggestions and auto-apply ONLY an UNAMBIGUOUS 'exact' one (a single
+ * exact candidate — if two records share the amount, it's left for manual review
+ * so we never guess wrong on money). Reuses applyReconcile, so the links + salary
+ * trigger fire exactly as in the manual flow. Returns how many were reconciled vs
+ * left for review.
+ */
+export function useAutoReconcile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (accountId: string): Promise<{ reconciled: number; review: number }> => {
+      const supabase = createClient();
+      const { data: authData } = await supabase.auth.getUser();
+      const matchedBy = authData?.user?.id ?? null;
+      const { data: txns, error } = await supabase
+        .from("bank_transactions")
+        .select("id")
+        .eq("bank_account_id", accountId)
+        .is("matched_to_id", null);
+      if (error) throw error;
+
+      let reconciled = 0, review = 0;
+      for (const t of txns ?? []) {
+        const { data: sugg } = await supabase.rpc("suggest_bank_transaction_matches", { p_bank_txn_id: t.id });
+        const list = (sugg ?? []) as MatchSuggestion[];
+        const top = list[0];
+        // Auto-apply only a CONFIDENT ('exact' or 'high') and UNAMBIGUOUS match —
+        // i.e. no second candidate sharing the top confidence. Two records with
+        // the same score (e.g. two months' salary of equal amount) are left for
+        // manual review so we never guess wrong on money. Everything applied is
+        // reversible via Un-reconcile.
+        const conf = top?.match_confidence;
+        const confident = conf === "exact" || conf === "high";
+        const unambiguous = list.length === 1 || list[1]?.match_confidence !== conf;
+        if (top && confident && unambiguous) {
+          try {
+            await applyReconcile(supabase, { transactionId: t.id, matchedToType: top.match_type, matchedToId: top.match_id, confidence: "high" }, matchedBy);
+            reconciled++;
+          } catch { review++; }
+        } else {
+          review++;
+        }
+      }
+      return { reconciled, review };
+    },
+    onSuccess: ({ reconciled, review }) => {
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["salary-payments"] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      if (reconciled === 0) toast.info(review > 0 ? `Koi pakka (exact) match nahi mila — ${review} manual review ke liye` : "Sab pehle se reconciled");
+      else toast.success(`${reconciled} auto-reconcile ho gaye${review > 0 ? ` · ${review} manual review ke liye` : ""}`);
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+}
+
 export function useReconcileTransaction() {
   const qc = useQueryClient();
   return useMutation({

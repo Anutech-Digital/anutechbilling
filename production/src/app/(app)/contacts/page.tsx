@@ -8,7 +8,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { useAllContacts } from "@/lib/queries/contacts";
+import { useAllContacts, contactKind, type ContactKind } from "@/lib/queries/contacts";
 import ImportContactsDialog from "@/components/features/contacts/import-contacts-dialog";
 import { ContactForm } from "@/components/features/contacts/contact-form";
 import CampaignComposerDialog from "@/components/features/campaigns/campaign-composer-dialog";
@@ -25,12 +25,23 @@ import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
 
-const SOURCE_TABS: TabBarItem[] = [
-  { id: "all",      label: "All" },
-  { id: "lead",     label: "From Leads",     dot: "amber"   },
-  { id: "customer", label: "From Customers", dot: "emerald" },
-  { id: "imported", label: "Imported",       dot: "indigo"  },
-];
+// Contacts are grouped by their unified "kind" (see contactKind): leads +
+// customers come from their own tables; partners / vendors / personal / other
+// are standalone contacts classified by their `relationship` field.
+const KIND_META: Record<ContactKind, { label: string; dot: TabBarItem["dot"]; badge: "success" | "warning" | "info" | "muted" }> = {
+  lead:     { label: "Leads",     dot: "amber",   badge: "warning" },
+  customer: { label: "Customers", dot: "emerald", badge: "success" },
+  partner:  { label: "Partners",  dot: "indigo",  badge: "info"    },
+  vendor:   { label: "Vendors",   dot: "slate",   badge: "muted"   },
+  employee: { label: "Employees", dot: "emerald", badge: "success" },
+  personal: { label: "Personal",  dot: "rose",    badge: "info"    },
+  other:    { label: "Not decided", dot: "slate", badge: "muted"   },
+};
+const KIND_ORDER: ContactKind[] = ["lead", "customer", "partner", "vendor", "employee", "personal", "other"];
+// Singular label for the per-row badge.
+const KIND_BADGE_LABEL: Record<ContactKind, string> = {
+  lead: "Lead", customer: "Customer", partner: "Partner", vendor: "Vendor", employee: "Employee", personal: "Personal", other: "Not decided",
+};
 
 const CONTACT_COL_ORDER = ["select", "name", "company", "email", "phone", "source", "action"];
 // Fluid percentage widths (sum = 100%) so the table always fits its container
@@ -51,6 +62,7 @@ export default function ContactsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = React.useState(false);
   const [addOpen, setAddOpen] = React.useState(false);
+  const [syncing, setSyncing] = React.useState(false);
   const [emailComposerOpen, setEmailComposerOpen] = React.useState(false);
   const [composerRecipients, setComposerRecipients] = React.useState<{ email: string; name?: string; company?: string }[]>([]);
   const [composerTotalSelected, setComposerTotalSelected] = React.useState(0);
@@ -77,37 +89,85 @@ export default function ContactsPage() {
     }
   }
 
+  // Two-way sync with Google Contacts (leads + customers + standalone contacts).
+  // If Google isn't connected yet, guide the operator to Settings to connect.
+  async function syncGoogle() {
+    setSyncing(true);
+    try {
+      const st = await fetch("/api/integrations/google-contacts").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (!st?.configured) {
+        toast.error("Google Contacts abhi set up nahi — Settings → Integrations me keys chahiye");
+        router.push("/settings?tab=integrations" as never);
+        return;
+      }
+      if (!st?.connected) {
+        toast.info("Pehle Google Contacts connect karo — Settings khol raha hoon");
+        router.push("/settings?tab=integrations" as never);
+        return;
+      }
+      const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(j?.error ?? "Sync failed");
+        return;
+      }
+      toast.success(`Google se sync ho gaya — ${j.pulled} aaye, ${j.pushed + j.created} bheje${j.deleted ? `, ${j.deleted} hataye` : ""}`);
+      qc.invalidateQueries({ queryKey: ["contacts", "all"] });
+      refetch();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   // Open a contact — standalone contacts get the rich detail page; lead/customer
   // people open their own record (which already has a full page).
   const openContact = (c: { source: string; refId: string }) => {
     const path =
       c.source === "imported" ? `/contacts/${c.refId}`
-      : c.source === "lead"   ? `/leads?lead=${c.refId}`
-      :                         `/customers/${c.refId}`;
+      : c.source === "lead"     ? `/leads?lead=${c.refId}`
+      : c.source === "vendor"   ? `/accounting/vendors`
+      : c.source === "partner"  ? `/referrals`
+      :                           `/customers/${c.refId}`;
     router.push(path as never);
   };
 
   // Filter
   const filtered = (contacts ?? []).filter((c) => {
-    if (tab !== "all" && c.source !== tab) return false;
+    if (tab !== "all" && contactKind(c) !== tab) return false;
     if (search.trim()) {
       const s = search.toLowerCase();
+      const inArr = (arr?: string[]) => (arr ?? []).some((v) => v.toLowerCase().includes(s));
       if (
         !c.name?.toLowerCase().includes(s) &&
         !c.email?.toLowerCase().includes(s) &&
         !c.phone?.toLowerCase().includes(s) &&
-        !c.company.toLowerCase().includes(s)
+        !c.company.toLowerCase().includes(s) &&
+        !inArr(c.emails) &&
+        !inArr(c.phones)
       ) return false;
     }
     return true;
   });
 
-  // Counts
+  // Counts by unified kind
   const counts: Record<string, number> = { all: contacts?.length ?? 0 };
   for (const c of contacts ?? []) {
-    counts[c.source] = (counts[c.source] ?? 0) + 1;
+    const k = contactKind(c);
+    counts[k] = (counts[k] ?? 0) + 1;
   }
-  const tabsWithCounts = SOURCE_TABS.map((t) => ({ ...t, count: counts[t.id] ?? 0 }));
+  // "All" always; each kind chip only when it has members (keeps the bar clean —
+  // no empty "Vendors 0" until the owner actually adds one).
+  const tabsWithCounts: TabBarItem[] = [
+    { id: "all", label: "All", count: counts.all ?? 0 },
+    ...KIND_ORDER.filter((k) => (counts[k] ?? 0) > 0).map((k) => ({
+      id: k,
+      label: KIND_META[k].label,
+      dot: KIND_META[k].dot,
+      count: counts[k] ?? 0,
+    })),
+  ];
 
   // Selection helpers
   const allFilteredSelected =
@@ -188,8 +248,8 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button icon="upload" onClick={() => setImportOpen(true)}>
-            Import from Google
+          <Button icon="refresh" onClick={syncGoogle} loading={syncing}>
+            {syncing ? "Syncing…" : "Sync with Google Contacts"}
           </Button>
           <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
             Add contact
@@ -334,11 +394,11 @@ export default function ContactsPage() {
                 </div>
                 <div className="shrink-0">
                   <Badge
-                    kind={c.source === "customer" ? "success" : c.source === "imported" ? "info" : "warning"}
+                    kind={KIND_META[contactKind(c)].badge}
                     size="sm"
                     dot
                   >
-                    {c.source === "customer" ? "Customer" : c.source === "imported" ? "Imported" : "Lead"}
+                    {KIND_BADGE_LABEL[contactKind(c)]}
                   </Badge>
                 </div>
               </div>
@@ -420,16 +480,24 @@ export default function ContactsPage() {
                       </div>
                     </td>
                     <td className="p-3 text-sm text-ink-2 truncate" title={c.company}>{c.company}</td>
-                    <td className="p-3 text-xs font-mono text-ink-2 truncate" title={c.email ?? undefined}>
+                    <td className="p-3 text-xs font-mono text-ink-2 truncate" title={(c.emails ?? []).join(", ") || undefined}>
                       {c.email ?? "—"}
+                      {(c.emails?.length ?? 0) > 1 && (
+                        <span className="ml-1 text-ink-3 font-sans" title={`${c.emails!.length} emails`}>+{c.emails!.length - 1}</span>
+                      )}
                     </td>
-                    <td className="p-3 text-xs font-mono text-ink-2 truncate">{c.phone ?? "—"}</td>
+                    <td className="p-3 text-xs font-mono text-ink-2 truncate" title={(c.phones ?? []).join(", ") || undefined}>
+                      {c.phone ?? "—"}
+                      {(c.phones?.length ?? 0) > 1 && (
+                        <span className="ml-1 text-ink-3 font-sans" title={`${c.phones!.length} phones`}>+{c.phones!.length - 1}</span>
+                      )}
+                    </td>
                     <td className="p-3">
                       <Badge
-                        kind={c.source === "customer" ? "success" : c.source === "imported" ? "info" : "warning"}
+                        kind={KIND_META[contactKind(c)].badge}
                         dot
                       >
-                        {c.source === "customer" ? "Customer" : c.source === "imported" ? "Imported" : "Lead"}
+                        {KIND_BADGE_LABEL[contactKind(c)]}
                       </Badge>
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>

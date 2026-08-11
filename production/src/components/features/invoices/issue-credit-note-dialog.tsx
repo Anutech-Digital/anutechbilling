@@ -147,7 +147,7 @@ export function IssueCreditNoteDialog({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder={isDebit ? "e.g. Billed 8 seats, actual usage 10 — adding 2" : "e.g. Reduced from 10 to 6 seats effective this month"}
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
             />
           </FormField>
 

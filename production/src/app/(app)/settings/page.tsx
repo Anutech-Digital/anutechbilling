@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
-import { isValidGstin, gstStateFromGstin, validateGstin } from "@/lib/utils";
+import { isValidGstin, gstStateFromGstin, validateGstin, formatDate } from "@/lib/utils";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
 import WhatsAppConfigureDialog from "@/components/features/integrations/whatsapp-configure-dialog";
@@ -94,6 +94,8 @@ const companySchema = z.object({
   phone:      z.string().trim().max(20).optional(),
   address:    z.string().trim().max(300).optional(),
   pin_code:   z.string().trim().regex(/^\d{0,6}$/, "6-digit PIN (or blank)").optional(),
+  lut_number:     z.string().trim().max(40).optional(),
+  lut_valid_upto: z.string().trim().optional(),
   grace_period_days: z.coerce
     .number({ invalid_type_error: "Must be a number" })
     .int("Whole days only")
@@ -118,6 +120,8 @@ function CompanyTab() {
       phone:        me?.tenantPhone       ?? "",
       address:      me?.tenantAddress     ?? "",
       pin_code:     me?.tenantPinCode     ?? "",
+      lut_number:     me?.tenantLutNumber    ?? "",
+      lut_valid_upto: me?.tenantLutValidUpto ?? "",
       grace_period_days: me?.tenantGracePeriodDays ?? 0,
     }),
     [me],
@@ -160,6 +164,8 @@ function CompanyTab() {
       phone:        values.phone?.trim()        || null,
       address:      values.address?.trim()      || null,
       pin_code:     values.pin_code?.trim()     || null,
+      lut_number:     values.lut_number?.trim()     || null,
+      lut_valid_upto: values.lut_valid_upto?.trim() || null,
       grace_period_days: values.grace_period_days,
     };
     updateTenant.mutate(patch, { onSuccess: () => reset(values) });
@@ -207,7 +213,7 @@ function CompanyTab() {
               <Field label="GSTIN">
                 <Input
                   className="font-mono uppercase"
-                  placeholder="27AABCE1234D1Z9"
+                  placeholder="e.g. 27AABCE1234D1Z9"
                   error={errors.gstin?.message}
                   {...register("gstin")}
                 />
@@ -269,7 +275,7 @@ function CompanyTab() {
                   <Input
                     type="email"
                     className="font-mono"
-                    placeholder="billing@example.in"
+                    placeholder="e.g. billing@example.in"
                     error={errors.email?.message}
                     {...register("email")}
                   />
@@ -277,7 +283,7 @@ function CompanyTab() {
                 <Field label="Phone">
                   <Input
                     className="font-mono"
-                    placeholder="+91 98765 43210"
+                    placeholder="e.g. +91 98765 43210"
                     error={errors.phone?.message}
                     {...register("phone")}
                   />
@@ -312,6 +318,24 @@ function CompanyTab() {
                   <p className="mt-1 text-xs text-rose">{errors.address.message}</p>
                 )}
               </Field>
+
+              {/* LUT — for exporters shipping without IGST (CGST Rule 96A). */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-4">
+                <Field label="LUT number (exports — optional)">
+                  <Input
+                    placeholder="e.g. AD290425000000X — for zero-rated exports"
+                    className="font-mono"
+                    error={errors.lut_number?.message}
+                    {...register("lut_number")}
+                  />
+                  <p className="mt-1 text-xs text-ink-3">
+                    Have an LUT for exports? Store its ARN here — it lets you bill international clients at 0% GST (no IGST) legally and label those sales correctly for GSTR-1.
+                  </p>
+                </Field>
+                <Field label="Valid up to">
+                  <Input type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
+                </Field>
+              </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 {isDirty && (
@@ -631,6 +655,85 @@ function GoogleResellerIntegrationCard() {
   );
 }
 
+/**
+ * Google Contacts — per-user two-way sync. Connect kicks off the dedicated OAuth
+ * flow (full-page redirect); once connected we show the account + last-sync and
+ * offer "Sync now" / "Disconnect".
+ */
+function GoogleContactsIntegrationCard() {
+  const [busy, setBusy] = React.useState(false);
+  const { data: status, refetch } = useQuery({
+    queryKey: ["integrations", "google-contacts"],
+    queryFn: async () => {
+      const res = await fetch("/api/integrations/google-contacts");
+      return res.ok ? res.json() : null;
+    },
+  });
+  const configured = Boolean(status?.configured);
+  const connected = Boolean(status?.connected);
+  const lastSynced: string | null = status?.last_synced_at ?? null;
+
+  async function syncNow() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(body?.error ?? "Sync failed"); return; }
+      toast.success(`Synced — ${body.pulled} in, ${body.pushed + body.created} out${body.deleted ? `, ${body.deleted} deleted` : ""}`);
+      refetch();
+    } finally { setBusy(false); }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/integrations/google-contacts", { method: "DELETE" });
+      if (!res.ok) { toast.error("Could not disconnect"); return; }
+      toast.success("Google Contacts disconnected");
+      refetch();
+    } finally { setBusy(false); }
+  }
+
+  const sub = !configured
+    ? "Add Google OAuth keys in env to enable"
+    : connected
+      ? (status?.email ? `${status.email}` : "Connected") + (lastSynced ? ` · synced ${formatDate(lastSynced)}` : " · not synced yet")
+      : "Two-way sync with your Google Contacts";
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-hairline p-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-2 text-ink-3">
+          <Icon name="users" size={16} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-ink inline-flex items-center gap-1.5">
+            Google Contacts
+            {connected
+              ? <Badge size="sm" kind="success">Connected</Badge>
+              : configured
+                ? <Badge size="sm" kind="warning">Connect</Badge>
+                : <Badge size="sm" kind="muted">Setup</Badge>}
+          </p>
+          <p className="text-xs text-ink-3 truncate">{sub}</p>
+        </div>
+      </div>
+      {connected ? (
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Button variant="primary" size="sm" onClick={syncNow} loading={busy}>{busy ? "Syncing…" : "Sync now"}</Button>
+          <Button variant="ghost" size="sm" onClick={disconnect} disabled={busy}>Disconnect</Button>
+        </div>
+      ) : configured ? (
+        <Button asChild variant="primary" size="sm">
+          <a href="/api/integrations/google-contacts/connect">Connect</a>
+        </Button>
+      ) : (
+        <Button variant="ghost" size="sm" disabled>Setup</Button>
+      )}
+    </div>
+  );
+}
+
 function IntegrationsTab() {
   return (
     <>
@@ -642,6 +745,7 @@ function IntegrationsTab() {
         <SandboxIntegrationCard />
         <WhatsAppIntegrationCard />
         <GoogleResellerIntegrationCard />
+        <GoogleContactsIntegrationCard />
         {INTEGRATIONS.map((it) => (
           <div
             key={it.name}

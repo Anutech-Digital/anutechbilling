@@ -58,6 +58,8 @@ interface LeadsBulkBarProps {
   onDeselectAll: () => void;
   /** Optional — opens a confirm dialog before mutating. */
   onDelete?: () => void;
+  /** Optional — mark all selected as junk (spam/fake). */
+  onMarkJunk?: () => void;
 }
 
 export function LeadsBulkBar({
@@ -65,6 +67,7 @@ export function LeadsBulkBar({
   onChangeStage,
   onDeselectAll,
   onDelete,
+  onMarkJunk,
 }: LeadsBulkBarProps) {
   // Confirm-on-delete state. Two-step prevents an accidental click on a
   // dense toolbar from nuking a stage-worth of leads.
@@ -132,6 +135,18 @@ export function LeadsBulkBar({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Mark as junk — moves selected out of the working views */}
+      {onMarkJunk && (
+        <button
+          type="button"
+          onClick={onMarkJunk}
+          className="px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 rounded-full hover:bg-paper/10 transition-colors"
+        >
+          <Icon name="alert" size={13} />
+          Mark junk
+        </button>
+      )}
 
       {/* Delete with confirm */}
       {onDelete && (

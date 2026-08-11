@@ -104,7 +104,7 @@ export function CustomerCombobox({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search customers…"
-              className="w-full bg-transparent text-sm focus:outline-none placeholder:text-ink-3"
+              className="w-full bg-transparent text-sm focus:outline-none placeholder:text-ink-4"
             />
           </div>
         </div>

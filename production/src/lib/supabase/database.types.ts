@@ -60,12 +60,15 @@ type TenantRow = {
   contact_name: string | null;
   email: string;
   phone: string | null;
+  lut_number: string | null;       // migration 0185 — LUT for zero-rated exports
+  lut_valid_upto: string | null;   // LUT validity end date
   grace_period_days: number;
   setup_completed_at: string | null;
   gstin_verified_at: string | null;
   gstin_verification: GstinVerification | null;
   parent_tenant_id: string | null;
   tier: TenantTier;
+  attendance_ingest_key: string | null;   // migration 0215 — biometric bridge key
   created_at: string;
   updated_at: string;
 }
@@ -81,12 +84,15 @@ type TenantInsert = {
   contact_name?: string | null;
   email: string;
   phone?: string | null;
+  lut_number?: string | null;
+  lut_valid_upto?: string | null;
   grace_period_days?: number;
   setup_completed_at?: string | null;
   gstin_verified_at?: string | null;
   gstin_verification?: GstinVerification | null;
   parent_tenant_id?: string | null;
   tier?: TenantTier;
+  attendance_ingest_key?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -157,7 +163,7 @@ type TenantSecretsUpdate = Partial<Omit<TenantSecretsInsert, "tenant_id">>;
 // ============================================================
 // team_invites — owner pre-authorizes an email to join the tenant (migration 0073)
 // ============================================================
-export type TeamInviteRole = "owner" | "sales" | "sales_senior" | "accountant" | "support";
+export type TeamInviteRole = "owner" | "manager" | "sales" | "sales_senior" | "billing" | "accountant" | "delivery" | "support";
 export type TeamInviteRow = {
   id:          string;
   tenant_id:   string;
@@ -417,12 +423,13 @@ type UserRow = {
   email: string;
   full_name: string | null;
   initials: string | null;
-  role: "owner" | "sales" | "sales_senior" | "accountant" | "support";
+  role: "owner" | "manager" | "sales" | "sales_senior" | "billing" | "accountant" | "delivery" | "support";
   color: string | null;
   avatar_url: string | null;
   is_active: boolean;
   /** Migration 0045 — sales-role extension: when true, user also sees /deals. */
   can_view_deals: boolean;
+  employee_id: string | null;   // migration 0216 — self check-in link
   created_at: string;
 }
 type UserInsert = {
@@ -431,11 +438,12 @@ type UserInsert = {
   email: string;
   full_name?: string | null;
   initials?: string | null;
-  role?: "owner" | "sales" | "sales_senior" | "accountant" | "support";
+  role?: "owner" | "manager" | "sales" | "sales_senior" | "billing" | "accountant" | "delivery" | "support";
   color?: string | null;
   avatar_url?: string | null;
   is_active?: boolean;
   can_view_deals?: boolean;
+  employee_id?: string | null;
   created_at?: string;
 }
 type UserUpdate = Partial<UserInsert>;
@@ -697,6 +705,7 @@ type LeadRow = {
   seats: number | null;
   value: number | null;
   stage: "new" | "contact" | "demo" | "trial" | "quote" | "won" | "lost";
+  is_junk: boolean;                 // migration 0187 — spam/fake; hidden from working views
   owner_id: string | null;
   source: string | null;
   /** Migration 0018 — structured domain captured at lead intake (trial / buy page) */
@@ -721,6 +730,9 @@ type LeadRow = {
   /** Migration 0108 — 'fresh' = net-new subscription · 'switch' = already
    *  subscribed elsewhere, moving vendor/reseller to us (migration/transfer). */
   subscription_type: "fresh" | "switch" | null;
+  /** Migration 0197 — the master contact (person) this lead belongs to.
+   *  Auto-linked on insert via resolve_or_create_contact. */
+  contact_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -750,6 +762,8 @@ type LeadInsert = {
   state?:              string | null;
   country?:            string;
   subscription_type?:  "fresh" | "switch" | null;
+  is_junk?:            boolean;
+  contact_id?:         string | null;
 }
 type LeadUpdate = Partial<LeadInsert>;
 
@@ -947,6 +961,7 @@ type InvoiceRow = {
   // Advance adjustment (CGST Section 31 + Rule 53) — populated at invoice issue time
   adjusted_advances: InvoiceAdvanceAdjustment[];
   net_payable:       number | null;        // amount - sum(adjusted_advances.amount), floor 0
+  paid_amount:       number;               // migration 0184 — ₹ received (project invoices synced by trigger)
   first_advance_at:  string | null;        // Drives 30-day GST clock (Sec 13(2))
   quote_id:          string | null;        // FK to source quote
   // GST breakdown persisted at issue time (migration 0116). taxable_value + tax_amount = amount.
@@ -1230,6 +1245,8 @@ export type VendorBillRow = {
   due_date:         string | null;
   category:         string;                  // 'COGS-Workspace' | 'COGS-M365' | 'COGS-Zoho' | 'COGS-Other'
   line_items:       VendorBillLine[];
+  currency:         string;                  // migration 0177 — 'INR' | 'USD' | … (INR = domestic)
+  fx_rate:          number;                  // ₹ per 1 unit of currency (1 for INR); foreign amt = total / fx_rate
   subtotal:         number;
   cgst:             number;
   sgst:             number;
@@ -1254,6 +1271,10 @@ export type VendorRow = {
   contact_email:    string | null;
   contact_phone:    string | null;
   default_category: string | null;
+  address:          string | null;
+  city:             string | null;
+  state:            string | null;
+  pincode:          string | null;
   notes:            string | null;
   created_at:       string;
   updated_at:       string;
@@ -1272,6 +1293,8 @@ type VendorBillInsert = {
   due_date?:        string | null;
   category?:        string;
   line_items?:      VendorBillLine[];
+  currency?:        string;
+  fx_rate?:         number;
   subtotal?:        number;
   cgst?:            number;
   sgst?:            number;
@@ -1290,13 +1313,28 @@ export type ExpenseRow = {
   tenant_id:        string;
   category:         string;                  // 'Hosting' | 'Software' | 'Salaries' | 'Office' | 'Marketing' | 'Travel' | 'Professional' | 'Bank' | 'Other'
   vendor_name:      string | null;
+  vendor_id:        string | null;           // migration 0178 — link to the vendors master
+  currency:         string;                  // migration 0179 — 'INR' | 'USD' | … (INR = domestic)
+  fx_rate:          number;                  // ₹ per 1 unit of currency (1 for INR); foreign amt = amount / fx_rate
+  bill_type:        string;                  // migration 0180 — 'gst' | 'kaccha' | 'none'
+  line_items:       VendorBillLine[];        // migration 0181 — itemised lines in the bill's own currency
+  bill_no:          string | null;           // migration 0182 — supplier invoice no. (duplicate detection)
   expense_date:     string;                  // YYYY-MM-DD
   amount:           number;
   gst_paid:         number;
   payment_method:   string | null;           // 'bank_transfer' | 'upi' | 'cash' | 'card' | 'cheque'
+  paid:             boolean;                  // migration 0183 — false = payable (pay later)
+  paid_date:        string | null;            // date settled (null while unpaid)
+  due_date:         string | null;            // date owed (optional; while unpaid)
   description:      string | null;
   attachment_url:   string | null;
   reconciled_txn_id: string | null;          // bank line this expense is reconciled to (migration 0123)
+  project_id:       string | null;           // migration 0192 — cost of a specific project (per-project P&L)
+  tds_section:      string | null;           // migration 0202 — TDS deducted section (26Q); null = none
+  tds_amount:       number;                   // migration 0202 — TDS deducted (₹) on this payment
+  bank_account_id:  string | null;            // migration 0203 — source bank account (bank/UPI/card/cheque)
+  notes:            string | null;            // migration 0204 — free-text comment / extra detail
+  prepaid_advance_id: string | null;          // migration 0209 — advance this expense was consumed from
   created_at:       string;
   updated_at:       string;
 };
@@ -1305,13 +1343,27 @@ type ExpenseInsert = {
   tenant_id:        string;
   category:         string;
   vendor_name?:     string | null;
+  vendor_id?:       string | null;
+  currency?:        string;
+  fx_rate?:         number;
+  bill_type?:       string;
+  line_items?:      VendorBillLine[];
+  bill_no?:         string | null;
   expense_date:     string;
   amount:           number;
   gst_paid?:        number;
   payment_method?:  string | null;
+  paid?:            boolean;
+  paid_date?:       string | null;
+  due_date?:        string | null;
   description?:     string | null;
   attachment_url?:  string | null;
   reconciled_txn_id?: string | null;
+  project_id?:      string | null;
+  tds_section?:     string | null;
+  tds_amount?:      number;
+  bank_account_id?: string | null;
+  notes?:           string | null;
 };
 type ExpenseUpdate = Partial<ExpenseInsert>;
 
@@ -1421,6 +1473,11 @@ type EmployeeRow = {
   address:                  string | null;
   emergency_contact_name:   string | null;
   emergency_contact_phone:  string | null;
+  biometric_id:             string | null;   // migration 0215 — device user number
+  attendance_consent_at:     string | null;  // migration 0218 — DPDP consent for selfie/attendance
+  attendance_consent_source: string | null;  // 'self' | 'owner'
+  face_enrolled_at:          string | null;  // migration 0220 — Phase 4 face-verification seam
+  face_ref_path:             string | null;
   created_at:      string;
   updated_at:      string;
 };
@@ -1445,6 +1502,11 @@ type EmployeeInsert = {
   address?:                  string | null;
   emergency_contact_name?:   string | null;
   emergency_contact_phone?:  string | null;
+  biometric_id?:             string | null;
+  attendance_consent_at?:     string | null;
+  attendance_consent_source?: string | null;
+  face_enrolled_at?:          string | null;
+  face_ref_path?:             string | null;
 };
 type EmployeeUpdate = Partial<Omit<EmployeeInsert, "tenant_id">>;
 
@@ -1566,10 +1628,69 @@ export type ProjectSaleRow = {
   status:         "draft" | "quoted" | "active" | "completed" | "cancelled";
   line_items:     ProjectQuoteLine[];
   accepted_at:    string | null;
+  start_date:     string | null;   // migration 0194
+  target_date:    string | null;   // migration 0194 — deadline
   created_at:     string;
   updated_at:     string;
 };
 export type ProjectQuoteLine = { name: string; qty: number; rate: number; amount: number };
+
+// ── Project labour allocation (migration 0193) — employee time as project cost ──
+export type ProjectLabourRow = {
+  id:          string;
+  tenant_id:   string;
+  project_id:  string;
+  employee_id: string;
+  percent:     number;   // % of the employee's monthly gross on THIS project
+  months:      number;
+  start_date:  string | null;   // migration 0195 — this person's period on the project
+  end_date:    string | null;
+  note:        string | null;
+  created_at:  string;
+  updated_at:  string;
+};
+type ProjectLabourInsert = {
+  id?:         string;
+  tenant_id:   string;
+  project_id:  string;
+  employee_id: string;
+  percent?:    number;
+  months?:     number;
+  start_date?: string | null;
+  end_date?:   string | null;
+  note?:       string | null;
+};
+type ProjectLabourUpdate = Partial<Omit<ProjectLabourInsert, "id" | "tenant_id" | "project_id" | "employee_id">>;
+
+// ── Project task roadmap — migration 0214 ────────────────────────────────────
+export type ProjectTaskStatus = "todo" | "in_progress" | "done";
+export type ProjectTaskRow = {
+  id:                   string;
+  tenant_id:            string;
+  project_id:           string;
+  title:                string;
+  description:          string | null;
+  status:               ProjectTaskStatus;
+  assignee_employee_id: string | null;
+  due_date:             string | null;
+  seq:                  number;
+  created_by:           string | null;
+  created_at:           string;
+  updated_at:           string;
+};
+type ProjectTaskInsert = {
+  id?:                   string;
+  tenant_id:             string;
+  project_id:            string;
+  title:                 string;
+  description?:          string | null;
+  status?:               ProjectTaskStatus;
+  assignee_employee_id?: string | null;
+  due_date?:             string | null;
+  seq?:                  number;
+  created_by?:           string | null;
+};
+type ProjectTaskUpdate = Partial<Omit<ProjectTaskInsert, "tenant_id" | "project_id">>;
 
 // ── Company Document Vault — migration 0107 ──────────────────────────────────
 export type DocumentCategory = "legal" | "finance" | "hr" | "operations" | "sales_marketing" | "admin" | "branding" | "other";
@@ -1799,6 +1920,13 @@ type AttendanceRow = {
   marked_ip:   string | null;
   selfie_in:   string | null;
   selfie_out:  string | null;
+  geo_in:      string | null;
+  geo_out:     string | null;
+  flags:            string[];
+  check_in_device:  string | null;
+  check_out_device: string | null;
+  reviewed_at:      string | null;
+  reviewed_by:      string | null;
   created_at:  string;
 };
 type AttendanceInsert = {
@@ -1812,22 +1940,57 @@ type AttendanceInsert = {
   marked_ip?:  string | null;
   selfie_in?:  string | null;
   selfie_out?: string | null;
+  geo_in?:     string | null;
+  geo_out?:    string | null;
+  flags?:            string[];
+  check_in_device?:  string | null;
+  check_out_device?: string | null;
+  reviewed_at?:      string | null;
+  reviewed_by?:      string | null;
 };
 type AttendanceUpdate = Partial<Omit<AttendanceInsert, "tenant_id">>;
 
 type AttendanceSettingsRow = {
-  tenant_id:      string;
-  allowed_ips:    string[];
-  require_selfie: boolean;
-  updated_at:     string;
+  tenant_id:             string;
+  allowed_ips:           string[];
+  require_selfie:        boolean;
+  require_presence:      boolean;
+  presence_secret:       string | null;
+  selfie_retention_days: number;
+  require_face_match:    boolean;
+  updated_at:            string;
 };
 type AttendanceSettingsInsert = {
-  tenant_id:      string;
-  allowed_ips?:   string[];
-  require_selfie?: boolean;
-  updated_at?:    string;
+  tenant_id:              string;
+  allowed_ips?:           string[];
+  require_selfie?:        boolean;
+  require_presence?:      boolean;
+  presence_secret?:       string | null;
+  selfie_retention_days?: number;
+  require_face_match?:    boolean;
+  updated_at?:            string;
 };
 type AttendanceSettingsUpdate = Partial<Omit<AttendanceSettingsInsert, "tenant_id">>;
+
+// Activity log (migration 0222).
+type ActivityLogRow = {
+  id:         number;
+  tenant_id:  string;
+  user_id:    string | null;
+  action:     string;
+  entity:     string;
+  entity_id:  string | null;
+  label:      string | null;
+  created_at: string;
+};
+type ActivityLogInsert = {
+  tenant_id:  string;
+  user_id?:   string | null;
+  action:     string;
+  entity:     string;
+  entity_id?: string | null;
+  label?:     string | null;
+};
 
 // Assets bought on EMI (migration 0092).
 type EmiPurchaseRow = {
@@ -2246,8 +2409,11 @@ type CampaignTemplateUpdate = Partial<Omit<CampaignTemplateInsert, "tenant_id" |
 // ============================================================
 // Contacts — standalone directory (migration 0030)
 // ============================================================
-export type ContactSource     = "manual" | "google_csv" | "google_api" | "outlook" | "linkedin" | "event" | "other";
+export type ContactSource     = "manual" | "google_csv" | "google_api" | "outlook" | "linkedin" | "event" | "other" | "enquiry";
 export type ContactStatus     = "pending" | "engaged" | "promoted" | "archived";
+
+/** One email/phone entry on a contact. label ∈ mobile|work|home|other. */
+export type ContactChannel = { value: string; label: string };
 
 export type ContactRow = {
   id:                  string;
@@ -2255,6 +2421,9 @@ export type ContactRow = {
   full_name:           string;
   email:               string | null;
   phone:               string | null;
+  /** All emails/phones (each with a label). email/phone above mirror index 0. */
+  emails:              ContactChannel[];
+  phones:              ContactChannel[];
   company:             string | null;
   title:               string | null;
   source:              ContactSource;
@@ -2274,6 +2443,21 @@ export type ContactRow = {
   website:             string | null;
   address:             string | null;
   city:                string | null;
+  // Optional link to a customer company (migration 0188). null = no company /
+  // free-text `company` only. FK is ON DELETE SET NULL.
+  customer_id:         string | null;
+  // Relationship classification for standalone contacts (migration 0196):
+  // 'partner' | 'vendor' | 'personal' | 'other'. null = unclassified.
+  relationship:        string | null;
+  // Personal-profile fields (migration 0198) — what you keep about a real
+  // relationship. birthday/anniversary are DATE (YYYY-MM-DD).
+  birthday:            string | null;
+  anniversary:         string | null;
+  nickname:            string | null;
+  family:              string | null;
+  // Google Contacts sync (migration 0189). external_id holds the resourceName.
+  google_etag:         string | null;
+  google_synced_at:    string | null;
   created_at:          string;
   updated_at:          string;
 };
@@ -2283,6 +2467,8 @@ type ContactInsert = {
   full_name:           string;
   email?:              string | null;
   phone?:              string | null;
+  emails?:             ContactChannel[];
+  phones?:             ContactChannel[];
   company?:            string | null;
   title?:              string | null;
   source?:             ContactSource;
@@ -2301,8 +2487,232 @@ type ContactInsert = {
   website?:            string | null;
   address?:            string | null;
   city?:               string | null;
+  customer_id?:        string | null;
+  relationship?:       string | null;
+  birthday?:           string | null;
+  anniversary?:        string | null;
+  nickname?:           string | null;
+  family?:             string | null;
+  google_etag?:        string | null;
+  google_synced_at?:   string | null;
 };
 type ContactUpdate = Partial<Omit<ContactInsert, "id" | "tenant_id">>;
+
+// Birthday / anniversary greeting audit + idempotency (migration 0199).
+export type ContactGreetingLogRow = {
+  id:            number;
+  tenant_id:     string;
+  contact_id:    string;
+  kind:          "birthday" | "anniversary";
+  channel:       string;
+  greeting_year: number;
+  recipient:     string | null;
+  subject:       string | null;
+  status:        string;
+  provider_id:   string | null;
+  error_message: string | null;
+  sent_at:       string;
+};
+type ContactGreetingLogInsert = {
+  id?:            number;
+  tenant_id:      string;
+  contact_id:     string;
+  kind:           "birthday" | "anniversary";
+  channel?:       string;
+  greeting_year:  number;
+  recipient?:     string | null;
+  subject?:       string | null;
+  status:         string;
+  provider_id?:   string | null;
+  error_message?: string | null;
+  sent_at?:       string;
+};
+type ContactGreetingLogUpdate = Partial<ContactGreetingLogInsert>;
+
+// Prepaid / vendor advances (migration 0205).
+export type PrepaidAdvanceRow = {
+  id:              string;
+  tenant_id:       string;
+  vendor_name:     string;
+  vendor_id:       string | null;
+  category:        string;
+  total_amount:    number;
+  consumed_amount: number;
+  paid_date:       string;
+  payment_method:  string | null;
+  bank_account_id: string | null;
+  notes:           string | null;
+  created_by:      string | null;
+  created_at:      string;
+  updated_at:      string;
+};
+type PrepaidAdvanceInsert = {
+  id?:              string;
+  tenant_id:        string;
+  vendor_name:      string;
+  vendor_id?:       string | null;
+  category?:        string;
+  total_amount:     number;
+  consumed_amount?: number;
+  paid_date?:       string;
+  payment_method?:  string | null;
+  bank_account_id?: string | null;
+  notes?:           string | null;
+  created_by?:      string | null;
+};
+type PrepaidAdvanceUpdate = Partial<PrepaidAdvanceInsert>;
+
+// Employee reasoning assessments (migration 0207).
+export type AssessmentRow = {
+  id: string; tenant_id: string; title: string; topic: string | null;
+  difficulty: string; questions: unknown; public_token: string; pass_pct: number;
+  status: string; created_by: string | null; created_at: string;
+};
+type AssessmentInsert = {
+  id?: string; tenant_id: string; title: string; topic?: string | null;
+  difficulty?: string; questions?: unknown; public_token: string; pass_pct?: number;
+  status?: string; created_by?: string | null;
+};
+type AssessmentUpdate = Partial<AssessmentInsert>;
+
+export type AssessmentAttemptRow = {
+  id: string; tenant_id: string; assessment_id: string; employee_id: string | null;
+  candidate_name: string; answers: unknown; score: number; total: number; pct: number;
+  grade: string; submitted_at: string;
+  duration_seconds: number | null; focus_lost_count: number; focus_lost_seconds: number; paste_count: number;
+};
+type AssessmentAttemptInsert = {
+  id?: string; tenant_id: string; assessment_id: string; employee_id?: string | null;
+  candidate_name: string; answers?: unknown; score: number; total: number; pct: number;
+  grade: string;
+  duration_seconds?: number | null; focus_lost_count?: number; focus_lost_seconds?: number; paste_count?: number;
+};
+type AssessmentAttemptUpdate = Partial<AssessmentAttemptInsert>;
+
+// Statutory-compliance filing log (migration 0201).
+export type ComplianceLogRow = {
+  id:             string;
+  tenant_id:      string;
+  obligation_key: string;
+  period_key:     string;
+  period_label:   string | null;
+  due_date:       string | null;
+  filed_date:     string;
+  reference:      string | null;
+  notes:          string | null;
+  created_by:     string | null;
+  created_at:     string;
+  updated_at:     string;
+};
+type ComplianceLogInsert = {
+  id?:             string;
+  tenant_id:       string;
+  obligation_key:  string;
+  period_key:      string;
+  period_label?:   string | null;
+  due_date?:       string | null;
+  filed_date?:     string;
+  reference?:      string | null;
+  notes?:          string | null;
+  created_by?:     string | null;
+  created_at?:     string;
+  updated_at?:     string;
+};
+type ComplianceLogUpdate = Partial<ComplianceLogInsert>;
+
+// Inbound purchase capture — Amazon & co. order emails staged for review (migration 0200).
+export type InboundPurchaseItem = { name: string; qty: number; amount: number };
+export type InboundPurchaseRow = {
+  id:          number;
+  tenant_id:   string;
+  source:      string;
+  message_id:  string | null;
+  order_id:    string | null;
+  from_email:  string | null;
+  subject:     string | null;
+  order_date:  string | null;
+  currency:    string;
+  total:       number | null;
+  gst:         number | null;
+  items:       InboundPurchaseItem[];
+  raw_text:    string | null;
+  status:      "pending" | "imported" | "ignored";
+  expense_id:  string | null;
+  created_at:  string;
+  updated_at:  string;
+};
+type InboundPurchaseInsert = {
+  id?:          number;
+  tenant_id:    string;
+  source?:      string;
+  message_id?:  string | null;
+  order_id?:    string | null;
+  from_email?:  string | null;
+  subject?:     string | null;
+  order_date?:  string | null;
+  currency?:    string;
+  total?:       number | null;
+  gst?:         number | null;
+  items?:       InboundPurchaseItem[];
+  raw_text?:    string | null;
+  status?:      "pending" | "imported" | "ignored";
+  expense_id?:  string | null;
+};
+type InboundPurchaseUpdate = Partial<InboundPurchaseInsert>;
+
+// ── Per-user Google OAuth tokens (Contacts sync, migration 0190) ────────────
+export type UserGoogleTokenRow = {
+  user_id:         string;
+  tenant_id:       string;
+  google_email:    string | null;
+  access_token:    string | null;
+  refresh_token:   string | null;
+  token_expiry:    string | null;
+  scopes:          string | null;
+  sync_token:      string | null;
+  last_synced_at:  string | null;
+  last_error:      string | null;
+  created_at:      string;
+  updated_at:      string;
+};
+type UserGoogleTokenInsert = {
+  user_id:         string;
+  tenant_id:       string;
+  google_email?:   string | null;
+  access_token?:   string | null;
+  refresh_token?:  string | null;
+  token_expiry?:   string | null;
+  scopes?:         string | null;
+  sync_token?:     string | null;
+  last_synced_at?: string | null;
+  last_error?:     string | null;
+};
+type UserGoogleTokenUpdate = Partial<Omit<UserGoogleTokenInsert, "user_id">>;
+
+// ── App person ↔ Google resourceName link (migration 0191) ──────────────────
+export type GoogleContactLinkRow = {
+  id:            string;
+  tenant_id:     string;
+  user_id:       string;
+  source_type:   "contact" | "lead" | "customer";
+  source_id:     string;
+  resource_name: string;
+  etag:          string | null;
+  synced_at:     string;
+  created_at:    string;
+  updated_at:    string;
+};
+type GoogleContactLinkInsert = {
+  id?:           string;
+  tenant_id:     string;
+  user_id:       string;
+  source_type:   "contact" | "lead" | "customer";
+  source_id:     string;
+  resource_name: string;
+  etag?:         string | null;
+  synced_at?:    string;
+};
+type GoogleContactLinkUpdate = Partial<Omit<GoogleContactLinkInsert, "id">>;
 
 // ============================================================
 // Coupons — public buy-page promo codes (migration 0031)
@@ -2433,7 +2843,9 @@ export type Database = {
       leave_entries:{ Row: LeaveEntryRow; Insert: LeaveEntryInsert; Update: LeaveEntryUpdate; Relationships: [] };
       salary_payments:{ Row: SalaryPaymentRow; Insert: SalaryPaymentInsert; Update: SalaryPaymentUpdate; Relationships: [] };
       project_sales:     { Row: ProjectSaleRow;      Insert: ProjectSaleInsert;      Update: ProjectSaleUpdate;      Relationships: [] };
+      project_labour:    { Row: ProjectLabourRow;    Insert: ProjectLabourInsert;    Update: ProjectLabourUpdate;    Relationships: [] };
       project_milestones:{ Row: ProjectMilestoneRow; Insert: ProjectMilestoneInsert; Update: ProjectMilestoneUpdate; Relationships: [] };
+      project_tasks:     { Row: ProjectTaskRow;      Insert: ProjectTaskInsert;      Update: ProjectTaskUpdate;      Relationships: [] };
       project_payments:  { Row: ProjectPaymentRow;   Insert: ProjectPaymentInsert;   Update: ProjectPaymentUpdate;   Relationships: [] };
       documents:         { Row: DocumentRow;         Insert: DocumentInsert;         Update: DocumentUpdate;         Relationships: [] };
       statutory_dues_payments:{ Row: StatutoryDuesPaymentRow; Insert: StatutoryDuesPaymentInsert; Update: StatutoryDuesPaymentUpdate; Relationships: [] };
@@ -2442,6 +2854,7 @@ export type Database = {
       debit_notes:     { Row: DebitNoteRow;       Insert: DebitNoteInsert;       Update: DebitNoteUpdate;       Relationships: [] };
       holidays:{ Row: HolidayRow; Insert: HolidayInsert; Update: HolidayUpdate; Relationships: [] };
       attendance:{ Row: AttendanceRow; Insert: AttendanceInsert; Update: AttendanceUpdate; Relationships: [] };
+      activity_log:{ Row: ActivityLogRow; Insert: ActivityLogInsert; Update: Partial<ActivityLogInsert>; Relationships: [] };
       attendance_settings:{ Row: AttendanceSettingsRow; Insert: AttendanceSettingsInsert; Update: AttendanceSettingsUpdate; Relationships: [] };
       emi_purchases:{ Row: EmiPurchaseRow; Insert: EmiPurchaseInsert; Update: EmiPurchaseUpdate; Relationships: [] };
       emi_payments:{ Row: EmiPaymentRow; Insert: EmiPaymentInsert; Update: EmiPaymentUpdate; Relationships: [] };
@@ -2449,6 +2862,12 @@ export type Database = {
       business_loan_payments:{ Row: BusinessLoanPaymentRow; Insert: BusinessLoanPaymentInsert; Update: BusinessLoanPaymentUpdate; Relationships: [] };
       expense_claims:{ Row: ExpenseClaimRow; Insert: ExpenseClaimInsert; Update: ExpenseClaimUpdate; Relationships: [] };
       lead_activities:{ Row: LeadActivityRow; Insert: LeadActivityInsert; Update: LeadActivityUpdate; Relationships: [] };
+      contact_greeting_log:{ Row: ContactGreetingLogRow; Insert: ContactGreetingLogInsert; Update: ContactGreetingLogUpdate; Relationships: [] };
+      compliance_log:{ Row: ComplianceLogRow; Insert: ComplianceLogInsert; Update: ComplianceLogUpdate; Relationships: [] };
+      prepaid_advances:{ Row: PrepaidAdvanceRow; Insert: PrepaidAdvanceInsert; Update: PrepaidAdvanceUpdate; Relationships: [] };
+      assessments:{ Row: AssessmentRow; Insert: AssessmentInsert; Update: AssessmentUpdate; Relationships: [] };
+      assessment_attempts:{ Row: AssessmentAttemptRow; Insert: AssessmentAttemptInsert; Update: AssessmentAttemptUpdate; Relationships: [] };
+      inbound_purchases:{ Row: InboundPurchaseRow; Insert: InboundPurchaseInsert; Update: InboundPurchaseUpdate; Relationships: [] };
       tds_receivable:     { Row: TdsReceivableRow;     Insert: TdsReceivableInsert;     Update: TdsReceivableUpdate;     Relationships: [] };
       customer_users:     { Row: CustomerUserRow;      Insert: CustomerUserInsert;      Update: CustomerUserUpdate;      Relationships: [] };
       support_tickets:    { Row: SupportTicketRow;     Insert: SupportTicketInsert;     Update: SupportTicketUpdate;     Relationships: [] };
@@ -2458,6 +2877,8 @@ export type Database = {
       campaign_sends:     { Row: CampaignSendRow;      Insert: CampaignSendInsert;      Update: CampaignSendUpdate;      Relationships: [] };
       campaign_templates: { Row: CampaignTemplateRow;  Insert: CampaignTemplateInsert;  Update: CampaignTemplateUpdate;  Relationships: [] };
       contacts:           { Row: ContactRow;           Insert: ContactInsert;           Update: ContactUpdate;           Relationships: [] };
+      user_google_tokens: { Row: UserGoogleTokenRow;   Insert: UserGoogleTokenInsert;   Update: UserGoogleTokenUpdate;   Relationships: [] };
+      google_contact_links: { Row: GoogleContactLinkRow; Insert: GoogleContactLinkInsert; Update: GoogleContactLinkUpdate; Relationships: [] };
       coupons:            { Row: CouponRow;            Insert: CouponInsert;            Update: CouponUpdate;            Relationships: [] };
       coupon_redemptions: { Row: CouponRedemptionRow;  Insert: CouponRedemptionInsert;  Update: CouponRedemptionUpdate;  Relationships: [] };
       site_promos:        { Row: SitePromoRow;         Insert: SitePromoInsert;         Update: SitePromoUpdate;         Relationships: [] };
@@ -2478,6 +2899,48 @@ export type Database = {
       v_tenant_with_parent: { Row: TenantWithParent; Relationships: [] };
     };
     Functions: {
+      /** Consume part of a prepaid advance → books an expense (with optional GST + bill) + reduces balance (migrations 0205/0206). */
+      consume_prepaid_advance: {
+        Args: { p_advance_id: string; p_amount: number; p_date?: string; p_note?: string | null; p_gst?: number; p_attachment?: string | null };
+        Returns: number;
+      };
+      /** In-app backup (migration 0211) — owner-only, tenant-scoped snapshot of the caller's own data. */
+      create_tenant_backup: {
+        Args: { p_label?: string | null };
+        Returns: { id: string; table_count: number; bytes: number; created_at: string };
+      };
+      list_tenant_backups: {
+        Args: Record<string, never>;
+        Returns: { id: string; created_at: string; label: string | null; kind: string; table_count: number; bytes: number }[];
+      };
+      get_tenant_backup: {
+        Args: { p_id: string };
+        Returns: unknown;
+      };
+      delete_tenant_backup: {
+        Args: { p_id: string };
+        Returns: undefined;
+      };
+      /** Restore points (migration 0212). */
+      auto_backup_if_stale: {
+        Args: Record<string, never>;
+        Returns: { created: boolean };
+      };
+      restore_tenant_backup: {
+        Args: { p_id: string };
+        Returns: { restored_tables: number; restored_at: string };
+      };
+      /** Self attendance for logged-in users (migration 0216). */
+      set_my_employee: { Args: { p_employee_id: string }; Returns: undefined };
+      my_attendance_today: { Args: Record<string, never>; Returns: unknown };
+      mark_self_attendance: { Args: Record<string, never>; Returns: string };
+      undo_my_last_punch: { Args: Record<string, never>; Returns: string };
+      log_activity: { Args: { p_action: string; p_entity?: string; p_entity_id?: string | null; p_label?: string | null }; Returns: undefined };
+      record_attendance_consent: { Args: Record<string, never>; Returns: undefined };
+      my_attendance_history: {
+        Args: { p_days?: number };
+        Returns: { work_date: string; check_in: string | null; check_out: string | null; source: string }[];
+      };
       /**
        * Returns the caller's tenant joined with its parent's display fields.
        * SECURITY DEFINER — bypasses RLS for the parent JOIN, but the WHERE
@@ -3257,6 +3720,10 @@ export type Database = {
         Args: { p_bank_txn_id: string; p_expense_ids: string[] };
         Returns: undefined;
       };
+      reconcile_salary_advance_split: {
+        Args: { p_txn_id: string; p_salary_id: string; p_advance_amount: number; p_employee_name: string; p_notes?: string | null };
+        Returns: undefined;
+      };
       pay_statutory_dues: {
         Args: {
           p_amount:          number;
@@ -3277,7 +3744,7 @@ export type Database = {
       };
     };
     Enums: {
-      user_role: "owner" | "sales" | "sales_senior" | "accountant" | "support";
+      user_role: "owner" | "manager" | "sales" | "sales_senior" | "billing" | "accountant" | "delivery" | "support";
       vendor: "google" | "microsoft" | "zoho" | "other";
       lead_stage: "new" | "contact" | "demo" | "trial" | "quote" | "won" | "lost";
       quote_status: "draft" | "sent" | "viewed" | "accepted" | "rejected" | "expired";

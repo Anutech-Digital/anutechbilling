@@ -114,24 +114,24 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
           <FormField label="Customer" required htmlFor="p_customer">
-            <Input id="p_customer" autoFocus placeholder="Excel Technologies" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+            <Input id="p_customer" autoFocus placeholder="e.g. Excel Technologies" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
           </FormField>
 
           <FormField label="Project title" required htmlFor="p_title">
-            <Input id="p_title" placeholder="Custom accounting software" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input id="p_title" placeholder="e.g. Custom accounting software" value={title} onChange={(e) => setTitle(e.target.value)} />
           </FormField>
 
           <FormField label="Description" htmlFor="p_desc">
             <textarea
               id="p_desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Scope / notes (optional)"
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
             />
           </FormField>
 
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Contract value (taxable ₹)" required htmlFor="p_taxable">
-              <Input id="p_taxable" inputMode="numeric" prefix="₹" placeholder="2200000" value={taxable} onChange={(e) => setTaxable(e.target.value)} />
+              <Input id="p_taxable" inputMode="numeric" prefix="₹" placeholder="e.g. 2200000" value={taxable} onChange={(e) => setTaxable(e.target.value)} />
             </FormField>
             <FormField label="GST rate %" htmlFor="p_gst">
               <Input id="p_gst" inputMode="numeric" placeholder="18" value={gstRate} onChange={(e) => setGstRate(e.target.value)} />

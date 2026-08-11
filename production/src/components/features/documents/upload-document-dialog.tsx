@@ -72,7 +72,7 @@ export function UploadDocumentDialog({ open, onOpenChange }: Props) {
           </FormField>
 
           <FormField label="Title" required htmlFor="doc_title">
-            <Input id="doc_title" placeholder="GST registration certificate" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input id="doc_title" placeholder="e.g. GST registration certificate" value={title} onChange={(e) => setTitle(e.target.value)} />
           </FormField>
 
           <FormField label="Category" htmlFor="doc_cat">
@@ -93,7 +93,7 @@ export function UploadDocumentDialog({ open, onOpenChange }: Props) {
             <textarea
               id="doc_notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
               placeholder="Optional note (reference no., who to contact, …)"
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
             />
           </FormField>
         </div>

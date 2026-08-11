@@ -620,6 +620,34 @@ new event in Sentry within ~10 seconds.
 
 ---
 
+## 24. Actionable errors — no dead ends (CRITICAL for non-technical users)
+
+Whenever the app **blocks or stops** a user (a guard, a disabled action, a failed
+save, a validation error), it must never dead-end with only "can't / not allowed".
+Every block gives three things:
+
+1. **What happened** — plain language ("Ye quote delete nahi ho sakta").
+2. **Why** — the reason ("Ispe payment + invoice laga hai").
+3. **What to do next** — the concrete next step, **with a button/link to that place**
+   whenever a destination exists ("Open invoice" → /invoices).
+
+Patterns to use:
+- **Blocking dialog** when there are specific records to act on — list them with
+  Open buttons (see the quote-detail "Can't delete — why?" dialog in
+  `app/(app)/quotes/[id]/page.tsx`).
+- **Actionable toast** for inline failures — `toast.error(msg, { description, action: { label, onClick } })`
+  (see the Payments delete `onBlocked` handler). RPC guard messages already state
+  the next step in words — surface them AND add the button.
+- **EmptyState** always gets an `action` (already the norm).
+
+Backend guards (`raise exception` in SECURITY DEFINER RPCs) must phrase the message
+as a next step ("… un-reconcile that bank line first", "… credit-note that invoice
+before deleting") — never a bare "not allowed". Owner-trap check: if a guard blocks
+an action, make sure there's ALWAYS a reachable way to complete/undo it (the
+add-seats orphan trap in migration 0213 was a bug because there wasn't).
+
+**"Done" for any guard/block = reason + next-step hint + (where possible) a button.**
+
 ## 23. Updates
 
 This file is updated whenever a new convention is established. Last updated: 2026-05-29.

@@ -1,11 +1,11 @@
 /**
  * Setup Wizard — matches prototype screen "setup-wizard".
  *
- * 5-step first-run wizard:
+ * 5-step first-run wizard (order = first-value-first):
  *   1. Company details (legal name, GSTIN, state, address)  → SAVES to tenants
- *   2. Connect Razorpay
- *   3. Google CSP API
- *   4. Import customers (CSV / sample / fresh)
+ *   2. Import customers (CSV / fresh) — opens the real ImportCustomersDialog
+ *   3. Razorpay — preview only; real connect lives in Settings → Integrations
+ *   4. Google CSP API — preview of the 5–7 day application
  *   5. All set — celebration + next steps  → stamps setup_completed_at
  *
  * Step 1 pre-fills from `useCurrentUser` so re-running the wizard never wipes
@@ -27,6 +27,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { GST_STATE_BY_CODE, gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
+import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 
 // ─── Step config ──────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ interface WizardData {
   razorpayConnected: boolean;
   cspId:         string;
   cspStage:      "intro" | "applied" | "approved";
-  importMode:    "csv" | "sample" | "skip";
+  importMode:    "csv" | "skip";
 }
 
 // ─── Field wrapper ────────────────────────────────────────────────────────────
@@ -105,7 +106,7 @@ function StepCompany({
       <div className="grid grid-cols-2 gap-3">
         <Field label="Legal company name" className="col-span-2">
           <Input
-            placeholder="Excel Technologies Pvt Ltd"
+            placeholder="e.g. Excel Technologies Pvt Ltd"
             value={data.companyName}
             onChange={(e) => update("companyName", e.target.value)}
           />
@@ -113,7 +114,7 @@ function StepCompany({
         <Field label="GSTIN">
           <Input
             className="font-mono"
-            placeholder="27AABCE9876D1Z3"
+            placeholder="e.g. 27AABCE9876D1Z3"
             value={data.gstin}
             onChange={(e) => {
               const v = e.target.value.toUpperCase();
@@ -197,7 +198,7 @@ function StepCompany({
         <Field label="Contact email">
           <Input
             type="email"
-            placeholder="owner@yourcompany.in"
+            placeholder="e.g. owner@yourcompany.in"
             className="font-mono"
             value={data.contactEmail}
             onChange={(e) => update("contactEmail", e.target.value)}
@@ -226,13 +227,7 @@ function StepCompany({
 
 // ─── Step 2: Razorpay ────────────────────────────────────────────────────────
 
-function StepRazorpay({
-  data,
-  update,
-}: {
-  data: WizardData;
-  update: (k: keyof WizardData, v: string | boolean) => void;
-}) {
+function StepRazorpay() {
   return (
     <div className="space-y-4">
       <div>
@@ -243,80 +238,36 @@ function StepRazorpay({
         </p>
       </div>
 
-      {!data.razorpayConnected ? (
-        <>
-          <div
-            className="flex items-center justify-between gap-4 rounded-xl p-5"
-            style={{ background: "linear-gradient(135deg, #001A47 0%, #002B5C 100%)" }}
-          >
-            <div>
-              <p className="text-lg font-semibold text-white">Razorpay</p>
-              <p className="text-sm text-white/80">
-                India's #1 payment gateway · 2% per transaction · T+2 settlement
-              </p>
-            </div>
-            <Button
-              variant="primary"
-              onClick={() => update("razorpayConnected", true)}
-              className="shrink-0"
-            >
-              <Icon name="external" size={14} />
-              Connect with OAuth
-            </Button>
-          </div>
-
-          <p className="text-center text-xs text-ink-3">or enter API keys manually</p>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Razorpay Key ID">
-              <Input
-                className="font-mono"
-                placeholder="rzp_live_xxxxxxxxxxxx"
-                onChange={(e) => update("razorpayKey", e.target.value)}
-              />
-            </Field>
-            <Field label="Razorpay Secret">
-              <Input type="password" placeholder="••••••••••••" />
-            </Field>
-          </div>
-
-          <div className="flex items-start gap-2.5 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            <Icon name="info" size={14} className="mt-0.5 shrink-0 text-amber" />
-            <p>
-              Get your keys from{" "}
-              <code className="font-mono text-xs">
-                dashboard.razorpay.com → Settings → API Keys
-              </code>
-              . We never see your secret — it's stored encrypted in your tenant only.
-            </p>
-          </div>
-        </>
-      ) : (
-        <div className="flex items-center gap-4 rounded-xl border border-emerald-300 bg-emerald-50 p-5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
-            <Icon name="check" size={20} />
-          </div>
-          <div>
-            <p className="font-semibold text-emerald-700">Razorpay marked as set up</p>
-            <p className="text-sm text-ink-3">
-              Finish + verify the live connection in Settings → Integrations before taking real payments.
-            </p>
-          </div>
+      <div
+        className="flex items-center justify-between gap-4 rounded-xl p-5"
+        style={{ background: "linear-gradient(135deg, #001A47 0%, #002B5C 100%)" }}
+      >
+        <div>
+          <p className="text-lg font-semibold text-white">Razorpay</p>
+          <p className="text-sm text-white/80">
+            India's #1 payment gateway · 2% per transaction · T+2 settlement
+          </p>
         </div>
-      )}
+      </div>
+
+      {/* Honest: this wizard step is a preview. The real connection (keys +
+          verify) lives in Settings → Integrations — we don't fake a "connected"
+          state here or capture keys that wouldn't be saved. */}
+      <div className="flex items-start gap-2.5 rounded-lg bg-amber-soft p-3 text-sm text-amber-ink">
+        <Icon name="info" size={14} className="mt-0.5 shrink-0" />
+        <p>
+          You don't need Razorpay right now. After setup, add your Razorpay keys in{" "}
+          <strong>Settings → Integrations</strong> to turn on live payments in 2 minutes.
+          Until then you can still create quotes/invoices and send them on WhatsApp.
+        </p>
+      </div>
     </div>
   );
 }
 
 // ─── Step 3: Google CSP ──────────────────────────────────────────────────────
 
-function StepCsp({
-  data,
-  update,
-}: {
-  data: WizardData;
-  update: (k: keyof WizardData, v: string | boolean) => void;
-}) {
+function StepCsp() {
   return (
     <div className="space-y-4">
       <div>
@@ -327,91 +278,38 @@ function StepCsp({
         </p>
       </div>
 
-      {data.cspStage === "intro" && (
-        <>
-          <div className="rounded-xl border border-hairline bg-paper-2 p-5">
-            <div className="mb-3 flex items-center gap-3">
-              {/* Google G */}
-              <svg width="40" height="40" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC04" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              <div>
-                <p className="font-semibold text-ink">Google Workspace Reseller</p>
-                <p className="text-xs text-ink-3">
-                  Auto-provision tenants · sync subscriptions · pull billing
-                </p>
-              </div>
-            </div>
-            <ul className="ml-4 list-disc space-y-1 text-sm text-ink-3">
-              <li>Application takes 5–7 business days for Google approval</li>
-              <li>Required: existing Premier Partner status (✅ you have this)</li>
-              <li>Required: 5+ customers already provisioned manually</li>
-              <li>Required: business verification (PAN, GST, agreement)</li>
-            </ul>
-          </div>
-
-          <Field label="Your Google Partner ID (CSP ID)">
-            <Input
-              className="font-mono"
-              placeholder="C0xxxxxxxxx"
-              onChange={(e) => update("cspId", e.target.value)}
-            />
-          </Field>
-
-          <Button
-            variant="primary"
-            onClick={() => update("cspStage", "applied")}
-          >
-            <Icon name="external" size={14} />
-            Submit API access application
-          </Button>
-        </>
-      )}
-
-      {data.cspStage === "applied" && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber text-white">
-              <Icon name="clock" size={16} />
-            </div>
-            <div>
-              <p className="font-semibold text-amber-800">Application submitted</p>
-              <p className="text-sm text-amber-700">Google will email you in 5–7 days</p>
-            </div>
-          </div>
-          <p className="text-sm text-ink-3">
-            In the meantime, you can still send quotes, accept payments, and manually
-            provision tenants from your Partner Console. We'll notify you the moment
-            approval comes through.
-          </p>
-          {process.env.NODE_ENV !== "production" && (
-            <button
-              onClick={() => update("cspStage", "approved")}
-              className="mt-3 text-xs text-indigo-600 underline hover:no-underline"
-            >
-              [Demo] Simulate approval received
-            </button>
-          )}
-        </div>
-      )}
-
-      {data.cspStage === "approved" && (
-        <div className="flex items-center gap-4 rounded-xl border border-emerald-300 bg-emerald-50 p-5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
-            <Icon name="check" size={20} />
-          </div>
+      <div className="rounded-xl border border-hairline bg-paper-2 p-5">
+        <div className="mb-3 flex items-center gap-3">
+          {/* Google G */}
+          <svg width="40" height="40" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC04" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+          </svg>
           <div>
-            <p className="font-semibold text-emerald-700">Google CSP connected</p>
-            <p className="text-sm text-ink-3">
-              You can reconcile subscriptions against Google from the Subscriptions page.
-              Provisioning new licenses is still done in your Google Partner console for now.
+            <p className="font-semibold text-ink">Google Workspace Reseller</p>
+            <p className="text-xs text-ink-3">
+              Auto-provision tenants · sync subscriptions · pull billing
             </p>
           </div>
         </div>
-      )}
+        <ul className="ml-4 list-disc space-y-1 text-sm text-ink-3">
+          <li>The application is made directly with Google — approval takes 5–7 business days</li>
+          <li>Needs: Partner status, a few customers already provisioned, and business verification (PAN, GST, agreement)</li>
+        </ul>
+      </div>
+
+      {/* Honest: there's no in-app CSP application yet — this step is a preview
+          so we don't fake a "submitted / connected" state. */}
+      <div className="flex items-start gap-2.5 rounded-lg bg-amber-soft p-3 text-sm text-amber-ink">
+        <Icon name="info" size={14} className="mt-0.5 shrink-0" />
+        <p>
+          You don't need CSP right now. You can keep provisioning tenants manually from
+          the Google Partner console, and quotes/invoices/renewals all work without it.
+          The option to connect CSP will live in <strong>Settings → Integrations</strong> later.
+        </p>
+      </div>
     </div>
   );
 }
@@ -422,16 +320,9 @@ const IMPORT_OPTIONS = [
   {
     id:   "csv"    as const,
     icon: "upload",
-    title: "CSV Import",
-    body:  "Upload Excel/CSV with customer + subscription data",
-    cta:   "Choose file",
-  },
-  {
-    id:   "sample" as const,
-    icon: "sparkles",
-    title: "Sample data",
-    body:  "Pre-loaded with 7 demo customers · explore first",
-    cta:   "Load sample",
+    title: "CSV / Excel import",
+    body:  "Upload your existing customer list — Zoho/Tally exports work too",
+    cta:   "Open importer",
   },
   {
     id:   "skip"   as const,
@@ -449,6 +340,8 @@ function StepImport({
   data: WizardData;
   update: (k: keyof WizardData, v: string | boolean) => void;
 }) {
+  const [importOpen, setImportOpen] = React.useState(false);
+
   return (
     <div className="space-y-4">
       <div>
@@ -461,14 +354,18 @@ function StepImport({
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         {IMPORT_OPTIONS.map((opt) => {
           const active = data.importMode === opt.id;
           return (
             <button
               key={opt.id}
               type="button"
-              onClick={() => update("importMode", opt.id)}
+              onClick={() => {
+                update("importMode", opt.id);
+                // CSV is the real path — open the actual importer straight away.
+                if (opt.id === "csv") setImportOpen(true);
+              }}
               className={cn(
                 "rounded-xl border p-4 text-left transition-all",
                 active
@@ -500,18 +397,21 @@ function StepImport({
       </div>
 
       {data.importMode === "csv" && (
-        <div className="flex items-center justify-between rounded-lg bg-paper-2 p-3 text-sm text-ink-3">
-          <span>📎 Need the template? Download our CSV template with sample rows.</span>
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-paper-2 p-3 text-sm text-ink-3">
+          <span>📎 The importer has a downloadable template + Zoho/Tally header matching.</span>
           <Button
-            variant="ghost"
+            variant="primary"
             size="sm"
-            onClick={() => toast.info("Template download coming soon")}
+            className="shrink-0"
+            onClick={() => setImportOpen(true)}
           >
-            <Icon name="download" size={13} />
-            Template
+            <Icon name="upload" size={13} />
+            Open importer
           </Button>
         </div>
       )}
+
+      <ImportCustomersDialog open={importOpen} onOpenChange={setImportOpen} />
     </div>
   );
 }
@@ -860,8 +760,8 @@ export default function SetupPage() {
         <Card className="p-6">
           {step === 0 && <StepCompany  data={data} update={update} />}
           {step === 1 && <StepImport   data={data} update={update} />}
-          {step === 2 && <StepRazorpay data={data} update={update} />}
-          {step === 3 && <StepCsp      data={data} update={update} />}
+          {step === 2 && <StepRazorpay />}
+          {step === 3 && <StepCsp />}
           {step === 4 && <StepDone />}
         </Card>
 

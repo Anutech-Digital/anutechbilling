@@ -183,7 +183,7 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
             <Input
               id="q-company"
               autoFocus
-              placeholder="Acme Corp Pvt Ltd"
+              placeholder="e.g. Acme Corp Pvt Ltd"
               error={errors.company?.message}
               {...register("company")}
             />
@@ -213,7 +213,7 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
           <FormField label="Contact name" htmlFor="q-contact-name">
             <Input
               id="q-contact-name"
-              placeholder="Rajesh K"
+              placeholder="e.g. Rajesh K"
               {...register("contact_name")}
             />
           </FormField>
@@ -224,7 +224,7 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
               <Input
                 id="q-contact-email"
                 type="email"
-                placeholder="rajesh@acme.com"
+                placeholder="e.g. rajesh@acme.com"
                 error={errors.contact_email?.message}
                 {...register("contact_email")}
               />
@@ -234,7 +234,7 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
                 id="q-contact-phone"
                 type="tel"
                 inputMode="tel"
-                placeholder="+91 98765 43210"
+                placeholder="e.g. +91 98765 43210"
                 {...register("contact_phone")}
               />
             </FormField>

@@ -81,6 +81,24 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
   // The uploaded file is kept and attached to the bill on save (proof).
   const [attachFile, setAttachFile] = React.useState<File | null>(null);
 
+  // Currency of the bill. Books are in ₹, so a foreign bill (USD etc.) needs an
+  // exchange rate the operator confirms — we never push raw foreign amounts
+  // into the INR P&L. rate = ₹ per 1 unit of `currency` (1 for INR).
+  const [currency, setCurrency] = React.useState("INR");
+  const [fxRate, setFxRate]     = React.useState("");        // string for the input; "" until entered
+  const [fxError, setFxError]   = React.useState<string | null>(null);
+  const isForeign = currency !== "INR";
+  const rate = isForeign ? Number(fxRate || 0) : 1;
+
+  // Line items (products/services on the bill) — amounts stay in the bill's own
+  // currency, faithful to the document; the ₹ books use the converted totals.
+  type Line = { description: string; qty: string; unit_price: string; amount: string };
+  const [lines, setLines] = React.useState<Line[]>([]);
+  const addLine    = () => setLines((ls) => [...ls, { description: "", qty: "", unit_price: "", amount: "" }]);
+  const removeLine = (i: number) => setLines((ls) => ls.filter((_, idx) => idx !== i));
+  const setLine    = (i: number, patch: Partial<Line>) =>
+    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
   async function handleBillFile(file: File) {
     setAiError(null); setAiNote(null);
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
@@ -114,7 +132,24 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
       if (f.category_guess && (VENDOR_BILL_CATEGORIES as readonly string[]).includes(String(f.category_guess))) {
         setValue("category", String(f.category_guess));
       }
-      setAiNote(`AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`);
+      // Currency + line items
+      const cur = String((f as Record<string, unknown>).currency ?? "INR") || "INR";
+      setCurrency(cur);
+      if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
+      const items = Array.isArray((f as Record<string, unknown>).line_items)
+        ? ((f as Record<string, unknown>).line_items as Array<Record<string, unknown>>)
+        : [];
+      setLines(items.map((it) => ({
+        description: String(it.description ?? ""),
+        qty:         it.qty        != null ? String(it.qty)        : "",
+        unit_price:  it.unit_price != null ? String(it.unit_price) : "",
+        amount:      it.amount     != null ? String(it.amount)     : "",
+      })));
+      setAiNote(
+        cur !== "INR"
+          ? `AI ne bhar diya · bill ${cur} me hai — neeche exchange rate (₹/${cur}) daalo taaki books ₹ me sahi rahein. 📎 "${file.name}" attach ho jayega.`
+          : `AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`,
+      );
     } catch {
       setAiError("Upload failed — try again, ya fields haath se bhar do.");
     } finally {
@@ -163,6 +198,32 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
   }
 
   async function onSubmit(values: FormData) {
+    // Foreign bill must have an exchange rate before it can hit the ₹ books.
+    if (isForeign && rate <= 0) {
+      setFxError(`Enter today's exchange rate (₹ per 1 ${currency}) to save — the ₹ books need it.`);
+      return;
+    }
+    setFxError(null);
+    // Convert the bill's own-currency amounts to ₹ for the books (rate = 1 for INR).
+    const inr = (n: number) => Math.round(n * rate);
+
+    // Line items — keep amounts in the bill's OWN currency (faithful to the
+    // document); drop blank rows.
+    const line_items = lines
+      .map((l) => ({
+        name:   l.description.trim(),
+        qty:    l.qty ? Number(l.qty) : undefined,
+        rate:   l.unit_price ? Number(l.unit_price) : undefined,
+        amount: Number(l.amount || 0),
+      }))
+      .filter((l) => l.name || l.amount > 0);
+
+    // Record the FX basis in notes so the ₹ figures are auditable later.
+    const fxNote = isForeign
+      ? `Foreign bill: ${currency} ${values.total.toLocaleString()} @ ₹${rate}/${currency} = ₹${inr(values.total).toLocaleString("en-IN")}.`
+      : "";
+    const notes = [fxNote, values.notes?.trim()].filter(Boolean).join(" ") || null;
+
     // Link to the vendors master — reuse the picked vendor, else find-or-create
     // one from the typed name (keeps the master clean + dedup'd).
     const vId = vendorId ?? await ensureVendor({
@@ -183,14 +244,16 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
       bill_date:    values.bill_date,
       due_date:     values.due_date     || null,
       category:     values.category,
-      subtotal:     Math.round(values.subtotal),
-      cgst:         Math.round(values.cgst),
-      sgst:         Math.round(values.sgst),
-      igst:         Math.round(values.igst),
-      total:        Math.round(values.total),
-      notes:        values.notes        || null,
+      currency,
+      fx_rate:      rate,
+      subtotal:     inr(values.subtotal),
+      cgst:         inr(values.cgst),
+      sgst:         inr(values.sgst),
+      igst:         inr(values.igst),
+      total:        inr(values.total),
+      notes,
       status:       "unpaid",
-      line_items:   [],
+      line_items,
     });
     onClose();
   }
@@ -207,7 +270,7 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Add Vendor Bill</DialogTitle>
+          <DialogTitle>Add COGS Bill</DialogTitle>
           <DialogDescription>
             Record a bill received from a supplier — Google CSP, Microsoft Partner, Zoho Partner, etc.
           </DialogDescription>
@@ -274,7 +337,7 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
               <div className="relative">
                 <Input
                   id="vendor_name"
-                  placeholder="Google Cloud"
+                  placeholder="e.g. Google Cloud"
                   autoComplete="off"
                   error={errors.vendor_name?.message}
                   {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorOpen(true); } })}
@@ -313,13 +376,13 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
               </div>
             </FormField>
             <FormField label="Vendor GSTIN (optional)" htmlFor="vendor_gstin">
-              <Input id="vendor_gstin" placeholder="27ABCDE1234F1Z5" {...register("vendor_gstin")} />
+              <Input id="vendor_gstin" placeholder="e.g. 27ABCDE1234F1Z5" {...register("vendor_gstin")} />
             </FormField>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <FormField label="Bill # (vendor's)" htmlFor="bill_no">
-              <Input id="bill_no" placeholder="INV-12345" {...register("bill_no")} />
+              <Input id="bill_no" placeholder="e.g. INV-12345" {...register("bill_no")} />
             </FormField>
             <FormField label="Bill date" required htmlFor="bill_date">
               <Input id="bill_date" type="date" error={errors.bill_date?.message} {...register("bill_date")} />
@@ -348,20 +411,75 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
             </p>
           </FormField>
 
+          {/* Line items — products/services on the bill (auto-filled from AI). */}
+          <div className="p-3 rounded-lg border border-hairline bg-paper-2/30">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] uppercase tracking-wider text-ink-3 font-semibold">
+                Items on this bill{isForeign ? ` · amounts in ${currency}` : ""}
+              </p>
+              <Button type="button" variant="ghost" size="sm" icon="plus" onClick={addLine}>Add item</Button>
+            </div>
+            {lines.length === 0 ? (
+              <p className="text-[11px] text-ink-3">No items yet — upload a bill to auto-fill, or add rows manually.</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase tracking-wider text-ink-3">
+                  <span className="col-span-5">Description</span>
+                  <span className="col-span-2 text-right">Qty</span>
+                  <span className="col-span-2 text-right">Unit price</span>
+                  <span className="col-span-2 text-right">Amount</span>
+                  <span className="col-span-1" />
+                </div>
+                {lines.map((l, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                    <Input wrapperClassName="col-span-12 sm:col-span-5" placeholder="e.g. Team plan - Premium"
+                      value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                    <Input wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" min={0} step="any" placeholder="Qty"
+                      value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
+                    <Input wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Unit"
+                      value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} />
+                    {/* Amount allows negatives — credit / unused-time lines are refunds. */}
+                    <Input wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Amount"
+                      value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} />
+                    <button type="button" onClick={() => removeLine(i)} aria-label="Remove item"
+                      className="col-span-3 sm:col-span-1 justify-self-center text-ink-3 hover:text-rose">
+                      <Icon name="x" size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Amounts grid */}
           <div className="p-3 rounded-lg border border-hairline bg-paper-2/30">
+            {isForeign && (
+              <div className="mb-3 rounded-md bg-amber-soft/40 p-2.5">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="text-[11px] text-amber-ink leading-snug max-w-[55%]">
+                    Bill is in <b>{currency}</b>. Enter today's rate — the ₹ books use the converted amounts.
+                  </div>
+                  <FormField label={`Exchange rate (₹ per 1 ${currency})`} required>
+                    <Input type="number" min={0} step="any" placeholder="e.g. 83.50"
+                      value={fxRate}
+                      error={fxError ?? undefined}
+                      onChange={(e) => { setFxRate(e.target.value); if (fxError) setFxError(null); }} />
+                  </FormField>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <FormField label="Pre-GST subtotal (₹)" required htmlFor="subtotal">
-                <Input id="subtotal" type="number" min={0} step={1} error={errors.subtotal?.message} {...register("subtotal")} />
+              <FormField label={`Pre-GST subtotal (${isForeign ? currency : "₹"})`} required htmlFor="subtotal">
+                <Input id="subtotal" type="number" min={0} step="any" error={errors.subtotal?.message} {...register("subtotal")} />
               </FormField>
-              <FormField label="CGST (₹)" htmlFor="cgst">
-                <Input id="cgst" type="number" min={0} step={1} {...register("cgst")} />
+              <FormField label={`CGST (${isForeign ? currency : "₹"})`} htmlFor="cgst">
+                <Input id="cgst" type="number" min={0} step="any" {...register("cgst")} />
               </FormField>
-              <FormField label="SGST (₹)" htmlFor="sgst">
-                <Input id="sgst" type="number" min={0} step={1} {...register("sgst")} />
+              <FormField label={`SGST (${isForeign ? currency : "₹"})`} htmlFor="sgst">
+                <Input id="sgst" type="number" min={0} step="any" {...register("sgst")} />
               </FormField>
-              <FormField label="IGST (₹)" htmlFor="igst">
-                <Input id="igst" type="number" min={0} step={1} {...register("igst")} />
+              <FormField label={`${isForeign ? "GST/IGST" : "IGST"} (${isForeign ? currency : "₹"})`} htmlFor="igst">
+                <Input id="igst" type="number" min={0} step="any" {...register("igst")} />
               </FormField>
             </div>
             <div className="flex flex-wrap gap-1.5 mt-3">
@@ -376,15 +494,20 @@ export function AddVendorBillDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <FormField label="Total (₹) incl GST" required htmlFor="total">
+          <FormField label={`Total (${isForeign ? currency : "₹"}) incl GST`} required htmlFor="total">
             <div className="flex items-center gap-2">
-              <Input id="total" type="number" min={1} step={1} error={errors.total?.message} {...register("total")} />
+              <Input id="total" type="number" min={1} step="any" error={errors.total?.message} {...register("total")} />
               {computedTotal > 0 && Number(watch("total")) !== computedTotal && (
                 <Button type="button" variant="ghost" size="sm" onClick={syncTotalToComputed}>
-                  = ₹{computedTotal.toLocaleString("en-IN")}
+                  = {isForeign ? currency + " " : "₹"}{computedTotal.toLocaleString("en-IN")}
                 </Button>
               )}
             </div>
+            {isForeign && rate > 0 && Number(watch("total")) > 0 && (
+              <p className="mt-1 text-[11px] text-emerald">
+                ≈ ₹{Math.round(Number(watch("total")) * rate).toLocaleString("en-IN")} in books (@ ₹{rate}/{currency})
+              </p>
+            )}
           </FormField>
 
           <FormField label="Notes (optional)" htmlFor="notes">

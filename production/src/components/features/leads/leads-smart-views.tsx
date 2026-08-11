@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { isHotLead } from "@/lib/leads/heat";
 import type { Lead } from "@/lib/supabase/database.types";
 
-export type SmartView = "all" | "mine" | "today" | "overdue" | "hot" | "new" | "won-mtd" | "duplicates";
+export type SmartView = "all" | "mine" | "today" | "overdue" | "hot" | "new" | "won-mtd" | "duplicates" | "junk";
 
 interface LeadsSmartViewsProps {
   leads: Lead[];
@@ -43,27 +43,33 @@ interface LeadsSmartViewsProps {
   /** Count of leads flagged as likely duplicates (computed on the page). The
    *  Duplicates chip only appears when this is > 0 — no noise when clean. */
   duplicateCount?: number;
+  /** Count of leads marked junk. Junk chip shows when > 0 (or suspects exist). */
+  junkCount?: number;
+  /** Count of NON-junk leads the heuristic suspects as junk — nudges review. */
+  junkSuspectCount?: number;
   active: SmartView;
   onChange: (view: SmartView) => void;
 }
 
-export function LeadsSmartViews({ leads, currentUserId, duplicateCount = 0, active, onChange }: LeadsSmartViewsProps) {
+export function LeadsSmartViews({ leads, currentUserId, duplicateCount = 0, junkCount = 0, junkSuspectCount = 0, active, onChange }: LeadsSmartViewsProps) {
   const today = new Date().toISOString().slice(0, 10);
 
   // ── Compute counts for each view ──────────────────────────
-  const all      = leads.length;
-  const mine     = currentUserId ? leads.filter((l) => l.owner_id === currentUserId).length : 0;
+  // Working views never count junk — it lives only under the Junk chip.
+  const working  = leads.filter((l) => !l.is_junk);
+  const all      = working.length;
+  const mine     = currentUserId ? working.filter((l) => l.owner_id === currentUserId).length : 0;
   // Count leads that ARRIVED today (created today) — matches the
   // operator's mental model of "what came in today?". Follow-up due
   // belongs to the Overdue KPI in the insight band, not here.
-  const todayDue = leads.filter((l) => l.created_at?.slice(0, 10) === today).length;
+  const todayDue = working.filter((l) => l.created_at?.slice(0, 10) === today).length;
   // Overdue = follow-up date in the past, still open (not won/lost). The most
   // actionable bucket for a rep — surfaced as its own chip (was a separate KPI row).
-  const overdue  = leads.filter((l) => l.follow_up_date && l.follow_up_date < today && l.stage !== "won" && l.stage !== "lost").length;
+  const overdue  = working.filter((l) => l.follow_up_date && l.follow_up_date < today && l.stage !== "won" && l.stage !== "lost").length;
   // "Hot" = priority high OR late-funnel stage — same isHotLead the row tags use,
   // so the chip count always matches the number of Hot-tagged rows.
-  const hot      = leads.filter(isHotLead).length;
-  const newCt    = leads.filter((l) => l.stage === "new").length;
+  const hot      = working.filter(isHotLead).length;
+  const newCt    = working.filter((l) => l.stage === "new").length;
 
   return (
     <div className="mb-4 flex items-center gap-2 overflow-x-auto pb-1">
@@ -83,6 +89,17 @@ export function LeadsSmartViews({ leads, currentUserId, duplicateCount = 0, acti
       <ViewChip label="New"        count={newCt}    active={active === "new"}      onClick={() => onChange("new")} />
       {duplicateCount > 0 && (
         <ViewChip label="Duplicates" count={duplicateCount} active={active === "duplicates"} onClick={() => onChange("duplicates")} tone="rose" />
+      )}
+      {/* Junk — shows once there's junk OR the heuristic suspects some, so the
+          operator can clean the inbox. Count = marked junk. */}
+      {(junkCount > 0 || junkSuspectCount > 0) && (
+        <ViewChip
+          label={junkSuspectCount > 0 && junkCount === 0 ? `Junk · ${junkSuspectCount} to review` : "Junk"}
+          count={junkCount > 0 ? junkCount : undefined}
+          active={active === "junk"}
+          onClick={() => onChange("junk")}
+          tone="rose"
+        />
       )}
     </div>
   );

@@ -13,8 +13,11 @@
  *   - bg-paper with top border
  *   - 3–5 equal-width slots (depending on role + permissions)
  *
- * Role-aware tab set (since 2026-05-27):
- *   • Owner / Manager  →  Home · Leads · Deals · Tasks · More   (5 tabs)
+ * Role-aware tab set:
+ *   • Owner / Manager  →  Home · Payments · Customers · Renewals · More (5 tabs)
+ *       (money-first — an owner checking the business from their phone cares
+ *        about cash-in / who owes / renewals, not the rep's pipeline. Leads &
+ *        Deals stay one tap away in More.)
  *   • Sales (+deals)   →  Leads · Deals · Tasks · More           (4 tabs)
  *   • Sales (no deals) →  Leads · Tasks · More                   (3 tabs)
  *
@@ -44,11 +47,15 @@ interface BottomNavItem {
 }
 
 // Tab templates. We pick a subset of these based on role + permissions.
-const TAB_HOME:   BottomNavItem = { id: "home",   href: "/dashboard", label: "Home",   icon: "home"   };
-const TAB_LEADS:  BottomNavItem = { id: "leads",  href: "/leads",     label: "Leads",  icon: "inbox"  };
-const TAB_DEALS:  BottomNavItem = { id: "deals",  href: "/deals",     label: "Deals",  icon: "target" };
-const TAB_TASKS:  BottomNavItem = { id: "tasks",  href: "/tasks",     label: "Tasks",  icon: "clock"  };
-const TAB_MORE:   BottomNavItem = { id: "more",   href: "#",          label: "More",   icon: "more_h", action: "menu" };
+const TAB_HOME:      BottomNavItem = { id: "home",      href: "/dashboard",     label: "Home",      icon: "home"   };
+const TAB_LEADS:     BottomNavItem = { id: "leads",     href: "/leads",         label: "Leads",     icon: "inbox"  };
+const TAB_DEALS:     BottomNavItem = { id: "deals",     href: "/deals",         label: "Deals",     icon: "target" };
+const TAB_TASKS:     BottomNavItem = { id: "tasks",     href: "/tasks",         label: "Tasks",     icon: "clock"  };
+// Owner/manager money-first tabs
+const TAB_PAYMENTS:  BottomNavItem = { id: "payments",  href: "/payments",      label: "Payments",  icon: "rupee"  };
+const TAB_CUSTOMERS: BottomNavItem = { id: "customers", href: "/customers",     label: "Customers", icon: "users"  };
+const TAB_RENEWALS:  BottomNavItem = { id: "renewals",  href: "/renewals",      label: "Renewals",  icon: "refresh"};
+const TAB_MORE:      BottomNavItem = { id: "more",      href: "#",              label: "More",      icon: "more_h", action: "menu" };
 
 interface Props {
   /** Called when the "More" tab is tapped — opens the MobileSidebar drawer. */
@@ -72,11 +79,13 @@ export function MobileBottomNav({ onMoreClick }: Props) {
     tabs.push(TAB_MORE);
   } else {
     // owner / manager (default for unknown / loading state too — safest
-    // surface while useCurrentUser settles).
+    // surface while useCurrentUser settles). Money-first: an owner on their
+    // phone wants cash-in / who-owes / renewals, not the rep pipeline.
+    // Leads & Deals stay reachable from the More drawer.
     tabs.push(TAB_HOME);
-    tabs.push(TAB_LEADS);
-    tabs.push(TAB_DEALS);
-    tabs.push(TAB_TASKS);
+    tabs.push(TAB_PAYMENTS);
+    tabs.push(TAB_CUSTOMERS);
+    tabs.push(TAB_RENEWALS);
     tabs.push(TAB_MORE);
   }
 

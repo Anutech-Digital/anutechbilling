@@ -241,6 +241,13 @@ function BankAccountCard({
               {rupee(balance)}
             </p>
           )}
+          {/* Data-integrity guard: cash-in-hand can never be negative in reality. */}
+          {account.account_type === "cash" && balance < 0 && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-md bg-rose/10 px-2 py-1.5 text-[11px] text-rose">
+              <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+              <span>Cash can&apos;t be negative — you likely missed a cash deposit/top-up. Add it via <b>Move money</b>, or reconcile the missing entry.</span>
+            </div>
+          )}
           <p className="text-[11px] text-ink-3 mt-1 inline-flex items-center gap-1">
             <Icon name="arrow_right" size={11} /> View transactions
           </p>

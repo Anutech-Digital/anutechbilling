@@ -121,29 +121,29 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <Label>Company name *</Label>
-            <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Acme Pvt Ltd" />
+            <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g. Acme Pvt Ltd" />
           </div>
           <div>
             <Label>Contact name *</Label>
-            <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Ramesh Kumar" />
+            <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Ramesh Kumar" />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <Label>Email *</Label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ramesh@acme.in" />
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e.g. ramesh@acme.in" />
           </div>
           <div>
             <Label>Phone *</Label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="98765 43210" />
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 98765 43210" />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div>
             <Label>Domain *</Label>
-            <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.in" className="font-mono" />
+            <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. acme.in" className="font-mono" />
             <p className="text-[10px] text-ink-3 mt-1">For provisioning in Google CSP</p>
           </div>
           <div>

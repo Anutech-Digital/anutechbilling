@@ -254,10 +254,11 @@ export default function PaymentsPage() {
               <div className="flex items-center gap-2.5">
                 <Icon name="alert" size={18} className="text-rose" />
                 <div>
-                  <h2 className="font-semibold text-ink">Outstanding receivables · {rupee(totalDue)} due</h2>
+                  <h2 className="font-semibold text-ink">Subscription dues · {rupee(totalDue)}</h2>
                   <p className="text-xs text-ink-3">
-                    {outstanding.length} customer{outstanding.length === 1 ? "" : "s"} have outstanding balance
+                    {outstanding.length} subscription{outstanding.length === 1 ? "" : "s"} with a balance
                     {overdueCount > 0 && <> · <b className="text-rose">{overdueCount} overdue 30+ days</b></>}
+                    {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
                   </p>
                 </div>
               </div>
@@ -300,14 +301,14 @@ export default function PaymentsPage() {
               })}
             </ul>
 
-            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-x-auto">
+            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
               <table className="w-full">
-                <thead className="bg-paper-2 border-b border-hairline">
+                <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
                   <tr>
                     <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Customer</th>
                     <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Paid</th>
-                    <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Outstanding</th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Aging</th>
+                    <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Balance due</th>
+                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Age</th>
                     <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Status</th>
                     <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Last reminder</th>
                     <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3 w-72">Actions</th>
@@ -349,7 +350,7 @@ export default function PaymentsPage() {
 
             <p className="text-[11px] text-ink-3 mt-2 flex items-center gap-1">
               <Icon name="info" size={11} />
-              0–15 days: friendly reminder · 16–30 days: stronger nudge · 30+ days: consider suspending service · 60+ days: write off as bad debt
+              0–15 days: friendly reminder · 16–30 days: stronger nudge · 30+ days: consider suspending service · 60+ days: accept it as a loss (bad debt)
             </p>
           </Card>
         );
@@ -759,7 +760,16 @@ function PaymentRowView({
   const router = useRouter();
   const methodInfo = METHOD_META[p.method];
   const [receiptOpen, setReceiptOpen] = React.useState(false);
-  const del = useDeletePayment();
+  // When a delete is blocked (invoice issued / bank-reconciled / add-seats / etc.),
+  // don't dead-end: show the reason AND a button to where the next step happens
+  // (the quote, which lists the exact blocking records + how to clear them).
+  const del = useDeletePayment({
+    onBlocked: (msg) =>
+      toast.error(msg, {
+        description: "Yahin se nahi hata sakte — quote khol ke aage ka step wahan se karo.",
+        action: { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) },
+      }),
+  });
   const confirm = useConfirm();
 
   // Delete = correct a wrong entry. Explains the reversal, then reverses via RPC

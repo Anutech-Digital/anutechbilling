@@ -381,7 +381,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
         <div className="border-t border-hairline pt-3 space-y-2">
           <div>
             <Label>Campaign name (internal)</Label>
-            <Input placeholder="May month-end sale" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input placeholder="e.g. May month-end sale" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
             <Label>Subject *</Label>

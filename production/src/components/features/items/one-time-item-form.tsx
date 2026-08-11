@@ -97,7 +97,7 @@ export function OneTimeItemForm({ open, onOpenChange, item }: Props) {
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
             <FormField label="Name" required htmlFor="ot_name">
-              <Input id="ot_name" autoFocus placeholder="Custom software development" error={errors.name?.message} {...register("name")} />
+              <Input id="ot_name" autoFocus placeholder="e.g. Custom software development" error={errors.name?.message} {...register("name")} />
             </FormField>
 
             <div className="grid grid-cols-2 gap-3">
@@ -112,7 +112,7 @@ export function OneTimeItemForm({ open, onOpenChange, item }: Props) {
             </div>
 
             <FormField label="HSN / SAC code" htmlFor="ot_hsn">
-              <Input id="ot_hsn" className="font-mono" placeholder="998314" {...register("hsn")} />
+              <Input id="ot_hsn" className="font-mono" placeholder="e.g. 998314" {...register("hsn")} />
               <p className="text-[10px] text-ink-3 mt-1">
                 998314 = IT software design & development. GST 18% applies at quote/invoice time.
               </p>

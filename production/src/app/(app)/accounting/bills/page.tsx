@@ -31,7 +31,7 @@ import { FormField } from "@/components/ui/label";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import {
   useVendorBills,
   useVendorBillsTotals,
@@ -42,6 +42,7 @@ import {
 } from "@/lib/queries/vendor-bills";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { AddVendorBillDialog } from "@/components/features/accounting/add-vendor-bill-dialog";
+import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 
@@ -67,6 +68,7 @@ export default function VendorBillsPage() {
   const [statusFilter, setStatusFilter] = React.useState<"" | "unpaid" | "paid" | "partial">("");
   const [addOpen, setAddOpen] = React.useState(false);
   const [payBill, setPayBill] = React.useState<VendorBill | null>(null);
+  const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
 
   const billsQ  = useVendorBills({
     from:   range.from,
@@ -87,9 +89,10 @@ export default function VendorBillsPage() {
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
-          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Vendor Bills</h1>
+          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">COGS Bills</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Bills you receive from Google CSP, Microsoft Partner, Zoho Partner — your COGS source.
+            Bills for products you <b>resell</b> — Google CSP, Microsoft Partner, Zoho — your COGS source.
+            <span className="block mt-0.5 text-[12px] text-ink-3">Office/overhead bills (stationery, your own software, rent) go in <b>Expenses</b> instead.</span>
           </p>
         </div>
         <Button
@@ -160,19 +163,23 @@ export default function VendorBillsPage() {
         </Card>
       ) : (
         <>
-          {/* Desktop table */}
-          <Card flush className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
+          {/* Desktop table — 6 tidy columns that fit without horizontal scroll */}
+          <Card flush className="hidden md:block overflow-hidden">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col className="w-[30%]" />
+                <col className="w-[14%]" />
+                <col className="w-[13%]" />
+                <col className="w-[15%]" />
+                <col className="w-[11%]" />
+                <col className="w-[17%]" />
+              </colgroup>
               <thead className="bg-paper-2 border-b border-hairline-strong text-[11px] uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
                   <th className="text-left  px-4 py-2.5">Vendor</th>
-                  <th className="text-left  px-3 py-2.5">Category</th>
                   <th className="text-left  px-3 py-2.5">Bill #</th>
-                  <th className="text-left  px-3 py-2.5">Bill date</th>
-                  <th className="text-left  px-3 py-2.5">Due date</th>
-                  <th className="text-right px-3 py-2.5">Pre-GST</th>
-                  <th className="text-right px-3 py-2.5">GST</th>
-                  <th className="text-right px-3 py-2.5">Total</th>
+                  <th className="text-left  px-3 py-2.5">Date</th>
+                  <th className="text-right px-3 py-2.5">Amount</th>
                   <th className="text-left  px-3 py-2.5">Status</th>
                   <th className="text-right px-2 py-2.5"><span className="sr-only">Actions</span></th>
                 </tr>
@@ -190,25 +197,29 @@ export default function VendorBillsPage() {
                   const dueDays = b.due_date ? Math.ceil((new Date(`${b.due_date}T00:00:00`).getTime() - Date.now()) / 86400000) : null;
                   const showAging = b.status !== "paid" && dueDays !== null && (dueDays < 0 || dueDays <= 15);
                   return (
-                    <tr key={b.id} className="border-b border-hairline last:border-0 hover:bg-paper-2/50 transition-colors">
-                      <td className="px-4 py-2.5 align-top">
-                        <div className="font-medium text-ink inline-flex items-center gap-2 flex-wrap">
-                          {b.vendor_name}
+                    <tr key={b.id} onClick={() => setDetailBill(b)} className="cursor-pointer border-b border-hairline last:border-0 hover:bg-paper-2/50 transition-colors">
+                      {/* Vendor — identity + category + items */}
+                      <td className="px-4 py-3 align-top">
+                        <div className="font-medium text-ink flex items-center gap-2 flex-wrap">
+                          <span className="truncate">{b.vendor_name}</span>
                           {b.source_tenant_invoice_id && (
-                            <Badge color="indigo" title="Auto-imported from your distributor — created when they invoiced you">
-                              From distributor
-                            </Badge>
+                            <Badge color="indigo" title="Auto-imported from your distributor — created when they invoiced you">From distributor</Badge>
                           )}
                         </div>
-                        {b.vendor_gstin && (
-                          <div className="text-[11px] text-ink-3 font-mono">{b.vendor_gstin}</div>
-                        )}
+                        <div className="mt-0.5 flex items-center gap-2 flex-wrap text-[11px] text-ink-3">
+                          {b.vendor_gstin && <span className="font-mono">{b.vendor_gstin}</span>}
+                          {b.category && <Badge kind="muted" size="sm">{b.category}</Badge>}
+                          {(b.line_items?.length ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-1"><Icon name="file" size={11} />{b.line_items.length} item{b.line_items.length === 1 ? "" : "s"}</span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-3 py-2.5 align-top">{b.category ? <Badge kind="muted" size="sm">{b.category}</Badge> : <span className="text-ink-3">—</span>}</td>
-                      <td className="px-3 py-2.5 font-mono text-ink-2 align-top whitespace-nowrap">{b.bill_no || "—"}</td>
-                      <td className="px-3 py-2.5 text-ink-2 align-top whitespace-nowrap">{formatDate(b.bill_date)}</td>
-                      <td className="px-3 py-2.5 align-top whitespace-nowrap">
-                        <div className="text-ink-2">{b.due_date ? formatDate(b.due_date) : "—"}</div>
+                      {/* Bill # */}
+                      <td className="px-3 py-3 font-mono text-[11px] text-ink-2 align-top truncate" title={b.bill_no || undefined}>{b.bill_no || "—"}</td>
+                      {/* Date + aging */}
+                      <td className="px-3 py-3 align-top whitespace-nowrap">
+                        <div className="text-ink-2">{formatDate(b.bill_date)}</div>
+                        {b.due_date && <div className="text-[11px] text-ink-3">due {formatDate(b.due_date)}</div>}
                         {showAging && (
                           <div className="mt-0.5">
                             <Badge kind={dueDays! < 0 ? "danger" : dueDays! <= 7 ? "warning" : "muted"} dot>
@@ -217,16 +228,19 @@ export default function VendorBillsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-ink-2 font-mono align-top tabular-nums">{rupee(b.subtotal)}</td>
-                      <td className="px-3 py-2.5 text-right text-emerald font-mono align-top tabular-nums cursor-help" title={gstTitle}>{gst > 0 ? rupee(gst) : "—"}</td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-ink font-mono align-top tabular-nums">{rupee(b.total)}</td>
-                      <td className="px-3 py-2.5 align-top">
-                        <Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge>
+                      {/* Amount — total prominent, GST + foreign as sublines */}
+                      <td className="px-3 py-3 text-right align-top whitespace-nowrap">
+                        <div className="font-semibold text-ink font-mono tabular-nums">{rupee(b.total)}</div>
+                        {(() => { const fx = foreignAmount(b.currency, b.total, b.fx_rate); return fx ? <div className="text-[11px] font-normal text-ink-3 font-mono">{fx}</div> : null; })()}
+                        {gst > 0 && <div className="text-[11px] text-emerald cursor-help" title={gstTitle}>incl {rupee(gst)} GST</div>}
                         {b.status !== "paid" && (b.total - (b.paid_amount ?? 0)) > 0 && (b.paid_amount ?? 0) > 0 && (
-                          <div className="text-[10px] text-rose tabular-nums mt-0.5">{rupee(b.total - (b.paid_amount ?? 0))} due</div>
+                          <div className="text-[10px] text-rose tabular-nums">{rupee(b.total - (b.paid_amount ?? 0))} due</div>
                         )}
                       </td>
-                      <td className="px-2 py-2.5 text-right align-top">
+                      {/* Status */}
+                      <td className="px-3 py-3 align-top"><Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge></td>
+                      {/* Actions */}
+                      <td className="px-2 py-3 text-right align-top" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end">
                           <BillActions
                             bill={b}
@@ -248,9 +262,12 @@ export default function VendorBillsPage() {
               const gst = (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0);
               return (
                 <li key={b.id}>
-                  <Card className="p-4">
+                  <Card className="p-4 cursor-pointer" onClick={() => setDetailBill(b)}>
                     <div className="flex items-start justify-between gap-2 mb-1">
-                      <div className="font-medium text-ink leading-tight">{b.vendor_name}</div>
+                      <div className="font-medium text-ink leading-tight">
+                        {b.vendor_name}
+                        {(b.line_items?.length ?? 0) > 0 && <span className="ml-1 text-[11px] font-normal text-ink-3">· {b.line_items.length} items</span>}
+                      </div>
                       <Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge>
                     </div>
                     <div className="text-[11px] text-ink-3 font-mono mb-2">
@@ -260,15 +277,18 @@ export default function VendorBillsPage() {
                     <div className="flex items-end justify-between">
                       <div>
                         <div className="font-serif text-xl text-ink leading-none">{rupee(b.total)}</div>
+                        {(() => { const fx = foreignAmount(b.currency, b.total, b.fx_rate); return fx ? <div className="text-[11px] text-ink-3 mt-1">{fx} @ ₹{b.fx_rate}/{b.currency}</div> : null; })()}
                         {gst > 0 && (
                           <div className="text-[11px] text-emerald mt-1">+{rupee(gst)} input GST</div>
                         )}
                       </div>
-                      <BillActions
-                        bill={b}
-                        onPay={() => setPayBill(b)}
-                        onDelete={async () => { if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}
-                      />
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <BillActions
+                          bill={b}
+                          onPay={() => setPayBill(b)}
+                          onDelete={async () => { if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}
+                        />
+                      </span>
                     </div>
                   </Card>
                 </li>
@@ -284,9 +304,11 @@ export default function VendorBillsPage() {
       {/* Add dialog */}
       {addOpen && <AddVendorBillDialog onClose={() => setAddOpen(false)} />}
       {payBill && <PayBillDialog bill={payBill} onClose={() => setPayBill(null)} />}
+      {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
     </div>
   );
 }
+
 
 // ─── Row actions — View bill (attachment) · Record payment · Delete ─────────
 function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () => void; onDelete: () => void }) {

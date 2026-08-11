@@ -113,7 +113,6 @@ export default function CampaignsPage() {
         <>
           {/* Desktop table */}
           <Card flush className="hidden md:block">
-            <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-paper-2 border-b border-hairline">
                   <tr>
@@ -161,7 +160,6 @@ export default function CampaignsPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
           </Card>
 
           {/* Mobile card list */}

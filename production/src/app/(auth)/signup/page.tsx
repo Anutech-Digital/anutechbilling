@@ -100,7 +100,7 @@ export default function SignupPage() {
         <FormField label="Company name" required htmlFor="companyName">
           <Input
             id="companyName"
-            placeholder="Excel Technologies Pvt Ltd"
+            placeholder="e.g. Excel Technologies Pvt Ltd"
             error={errors.companyName?.message}
             disabled={!configured}
             {...register("companyName")}
@@ -110,7 +110,7 @@ export default function SignupPage() {
         <FormField label="GSTIN (optional)" htmlFor="gstin">
           <Input
             id="gstin"
-            placeholder="27AABCE9876D1Z3"
+            placeholder="e.g. 27AABCE9876D1Z3"
             className="font-mono uppercase"
             helper="You can add this later in Settings"
             error={errors.gstin?.message}
@@ -125,7 +125,7 @@ export default function SignupPage() {
           <Input
             id="fullName"
             autoComplete="name"
-            placeholder="Pardeep A"
+            placeholder="e.g. Pardeep A"
             error={errors.fullName?.message}
             disabled={!configured}
             {...register("fullName")}
@@ -137,7 +137,7 @@ export default function SignupPage() {
             id="email"
             type="email"
             autoComplete="email"
-            placeholder="you@yourcompany.in"
+            placeholder="e.g. you@yourcompany.in"
             error={errors.email?.message}
             disabled={!configured}
             {...register("email")}

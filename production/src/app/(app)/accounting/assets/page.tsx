@@ -232,11 +232,11 @@ function PurchaseDialog({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-ink-2 mb-1">Total cost (₹)</label>
-              <Input type="number" min={1} value={total} onChange={(e) => setTotal(e.target.value)} placeholder="500000" />
+              <Input type="number" min={1} value={total} onChange={(e) => setTotal(e.target.value)} placeholder="e.g. 500000" />
             </div>
             <div>
               <label className="block text-xs font-medium text-ink-2 mb-1">Down payment (₹)</label>
-              <Input type="number" min={0} value={down} onChange={(e) => setDown(e.target.value)} placeholder="200000" />
+              <Input type="number" min={0} value={down} onChange={(e) => setDown(e.target.value)} placeholder="e.g. 200000" />
             </div>
           </div>
           {downN > 0 && (

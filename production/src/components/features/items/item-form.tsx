@@ -246,7 +246,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
             <FormField label="Item ID (SKU)" required htmlFor="id">
               <Input
                 id="id"
-                placeholder="GW-STD"
+                placeholder="e.g. GW-STD"
                 disabled={isEdit}
                 className="font-mono uppercase"
                 error={errors.id?.message}
@@ -293,7 +293,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
             <FormField label="HSN code" htmlFor="hsn">
               <Input
                 id="hsn"
-                placeholder="998313"
+                placeholder="e.g. 998313"
                 className="font-mono"
                 {...register("hsn")}
               />
@@ -303,7 +303,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
           <FormField label="Product name" required htmlFor="name">
             <Input
               id="name"
-              placeholder="Google Workspace Standard"
+              placeholder="e.g. Google Workspace Standard"
               error={errors.name?.message}
               {...register("name")}
             />

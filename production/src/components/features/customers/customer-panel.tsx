@@ -21,6 +21,7 @@ import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { useCustomerProjects } from "@/lib/queries/projects";
+import { usePayments } from "@/lib/queries/payments";
 import { Badge } from "@/components/ui/badge";
 import { Button, IconButton } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -51,6 +52,7 @@ export function CustomerPanel({ customerId, onClose }: { customerId: string; onC
   const { data: invoices } = useCustomerInvoices(customerId);
   const { data: quotes } = useCustomerQuotes(customerId);
   const { data: projects } = useCustomerProjects(customerId);
+  const { data: allPayments } = usePayments();
   const [tab, setTab] = React.useState("activity");
   const [invoiceOpen, setInvoiceOpen] = React.useState(false);
   const [projInvoiceOpen, setProjInvoiceOpen] = React.useState(false);
@@ -78,7 +80,12 @@ export function CustomerPanel({ customerId, onClose }: { customerId: string; onC
   const allSubs = subs ?? [];
   const allInvoices = invoices ?? [];
   const allQuotes = quotes ?? [];
-  const insights = deriveCustomerInsights(c, allSubs, allInvoices, projects ?? [], allQuotes);
+  // Received payments (subscription/direct) — same 6th arg the 360 page passes,
+  // so "Lifetime paid" here matches it (was silently 0, dropping all receipts).
+  const receivedPaymentsTotal = (allPayments ?? [])
+    .filter((p) => p.customer_id === c.id && p.status === "received")
+    .reduce((s, p) => s + (p.amount ?? 0), 0);
+  const insights = deriveCustomerInsights(c, allSubs, allInvoices, projects ?? [], allQuotes, receivedPaymentsTotal);
 
   const tenureDays = daysBetween(c.since, new Date());
   const tenure =

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "backup:code": "node scripts/backup-code.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -25,6 +25,9 @@ interface MarginPillProps {
   period?: "monthly" | "annual" | "one-time";
   /** Override the tier thresholds */
   thresholds?: { healthy: number; squeeze: number };
+  /** When true, flags this as an ESTIMATE (cost is assumed/catalog, not actual
+   *  procurement cost yet) so we never present a guessed margin as hard fact. */
+  estimated?: boolean;
   className?: string;
 }
 
@@ -33,8 +36,12 @@ export function MarginPill({
   variant = "default",
   period,
   thresholds = { healthy: 18, squeeze: 14 },
+  estimated = false,
   className,
 }: MarginPillProps) {
+  const estHint = estimated
+    ? " · estimate (based on assumed/catalog cost — edit each line's cost to make it exact)"
+    : "";
   const tier =
     margin.marginPct >= thresholds.healthy
       ? "healthy"
@@ -63,9 +70,9 @@ export function MarginPill({
           colors,
           className
         )}
-        title={`Margin: ${rupee(margin.margin)} / ${margin.marginPct}% (cost: ${rupee(margin.cost)}, price: ${rupee(margin.price)})`}
+        title={`Margin: ${rupee(margin.margin)} / ${margin.marginPct}% (cost: ${rupee(margin.cost)}, price: ${rupee(margin.price)})${estHint}`}
       >
-        {margin.marginPct}%
+        {estimated ? "~" : ""}{margin.marginPct}%
       </span>
     );
   }
@@ -82,7 +89,7 @@ export function MarginPill({
           {rupee(margin.margin)}
         </span>
         <span className="text-[10px] text-ink-3 tabular-nums">
-          {margin.marginPct}% margin · ₹{margin.cost.toLocaleString("en-IN")} cost
+          {margin.marginPct}%{estimated ? " est." : ""} margin · ₹{margin.cost.toLocaleString("en-IN")} cost
           {period && ` · ${period}`}
         </span>
       </div>
@@ -96,11 +103,11 @@ export function MarginPill({
         "inline-flex flex-col items-end tabular-nums leading-tight",
         className
       )}
-      title={`Cost: ${rupee(margin.cost)} · Price: ${rupee(margin.price)} · Margin: ${rupee(margin.margin)} (${margin.marginPct}%)`}
+      title={`Cost: ${rupee(margin.cost)} · Price: ${rupee(margin.price)} · Margin: ${rupee(margin.margin)} (${margin.marginPct}%)${estHint}`}
     >
       <span className={cn("font-semibold text-sm", colors)}>{rupee(margin.margin)}</span>
       <span className="text-[10px] text-ink-3">
-        {margin.marginPct}%
+        {estimated ? "~" : ""}{margin.marginPct}%{estimated ? " est." : ""}
         {period && ` ${period === "monthly" ? "/mo" : period === "annual" ? "/yr" : ""}`}
       </span>
     </span>

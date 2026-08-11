@@ -20,6 +20,7 @@ import { useLeads } from "@/lib/queries/leads";
 import { useCustomers } from "@/lib/queries/customers";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
 import { useTasks } from "@/lib/queries/tasks";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useQuery } from "@tanstack/react-query";
@@ -88,6 +89,7 @@ export default function DashboardPage() {
   const { data: customers }     = useCustomers();
   const { data: quotes }        = useQuotes();
   const { data: subscriptions } = useSubscriptions();
+  const { data: projRecv = {} } = useProjectReceivablesByCustomer();
   const { data: tasksToday }    = useTasks("today");
   const { data: tasksOverdue }  = useTasks("overdue");
   const { data: currentUser }   = useCurrentUser();
@@ -140,12 +142,12 @@ export default function DashboardPage() {
   );
   const closedThisMonthValue = closedThisMonth.reduce((s, q) => s + (q.amount ?? 0), 0);
 
-  // "Chase the cash" — the seller's daily worklist: money owed to us + urgent
-  // to-dos. Accepted quotes not yet fully paid = money to collect.
-  const collectQuotes = (quotes ?? []).filter(
-    (q) => q.status === "accepted" && q.payment_status !== "received" && q.payment_status !== "invoiced",
-  );
-  const toCollect = collectQuotes.reduce((s, q) => s + Math.max(0, (q.amount ?? 0) - (q.payment_amount ?? 0)), 0);
+  // "Chase the cash" — money owed to us. Real receivables = subscription dues +
+  // project invoiced-but-unpaid (same basis as the Customers list / Aging), not
+  // just accepted-quote balances (which missed projects entirely).
+  const subsOutstanding = (subscriptions ?? []).reduce((s, x) => s + (x.outstanding_amount ?? 0), 0);
+  const projectReceivable = Object.values(projRecv).reduce((s, v) => s + v, 0);
+  const toCollect = subsOutstanding + projectReceivable;
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const overdueFollowups = (leads ?? []).filter(
     (l) => l.follow_up_date && l.stage !== "won" && l.stage !== "lost"
@@ -389,8 +391,8 @@ export default function DashboardPage() {
         <div className="space-y-1">
           {toCollect > 0 && (
             <ChaseRow icon="rupee" tone="emerald" title={`${rupee(toCollect, { compact: true })} to collect`}
-              note={`${collectQuotes.length} accepted quote${collectQuotes.length === 1 ? "" : "s"} unpaid`}
-              onClick={() => router.push("/quotes" as any)} />
+              note={projectReceivable > 0 ? `subscription dues + ${rupee(projectReceivable, { compact: true })} project` : "subscription dues + project invoices"}
+              onClick={() => router.push("/accounting/aging" as any)} />
           )}
           {overdueFollowups > 0 && (
             <ChaseRow icon="phone" tone="rose" title={`${overdueFollowups} follow-up${overdueFollowups === 1 ? "" : "s"} overdue`}
@@ -584,7 +586,7 @@ export default function DashboardPage() {
           icon="target"
         />
         <KPI
-          label="MRR"
+          label="Monthly revenue"
           value={subscriptions ? rupee(activeMRR, { compact: true }) : "—"}
           accent={activeMRR > 0 ? "emerald" : "ink"}
           trend={

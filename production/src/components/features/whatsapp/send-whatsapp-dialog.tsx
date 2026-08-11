@@ -109,7 +109,7 @@ export default function SendWhatsAppDialog({
             <Label>To (E.164)</Label>
             <Input
               className="font-mono"
-              placeholder="+91 98765 43210"
+              placeholder="e.g. +91 98765 43210"
               value={to}
               onChange={(e) => setTo(e.target.value)}
             />

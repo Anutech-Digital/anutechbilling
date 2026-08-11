@@ -37,8 +37,21 @@ export interface PerfRow {
   paymentsCount: number;
   tasksOnTime: number;
   tasksLate: number;
+  presentDays: number;   // reliability (attendance) — this month
+  activityCount: number; // leading signal (activity log) — this month
   score: number;
   breakdown: PerfBreakdown[];
+}
+
+/** What each role is PRIMARILY judged on — the scorecard highlights this. */
+export function roleFocus(role: string): { label: string; hint: string } {
+  switch (role) {
+    case "sales":
+    case "sales_senior": return { label: "Deals won + revenue", hint: "Leads close karna + paisa laana" };
+    case "accountant":   return { label: "Payments collected", hint: "Receivables collect karna" };
+    case "support":      return { label: "Tasks on-time", hint: "Tickets/tasks time pe" };
+    default:             return { label: "Overall results", hint: "Revenue, deals, tasks — sab" };
+  }
 }
 
 function monthWindow(period: string): { start: string; end: string } {
@@ -60,7 +73,7 @@ export function usePerformance(period: string) {
       const supabase = createClient();
       const { start, end } = monthWindow(period);
 
-      const [leadsR, quotesR, paymentsR, tasksR] = await Promise.all([
+      const [leadsR, quotesR, paymentsR, tasksR, usersR, attR, actR] = await Promise.all([
         supabase.from("leads").select("owner_id, value, stage, updated_at")
           .eq("stage", "won").gte("updated_at", start).lt("updated_at", end),
         supabase.from("quotes").select("owner_id, created_at")
@@ -69,7 +82,23 @@ export function usePerformance(period: string) {
           .eq("status", "received").gte("received_at", start).lt("received_at", end),
         supabase.from("tasks").select("owner_id, status, due_at, completed_at")
           .eq("status", "done").gte("completed_at", start).lt("completed_at", end),
+        supabase.from("users").select("id, employee_id"),
+        supabase.from("attendance").select("employee_id, work_date, check_in")
+          .gte("work_date", start).lt("work_date", end),
+        supabase.from("activity_log").select("user_id, created_at")
+          .gte("created_at", start).lt("created_at", end),
       ]);
+
+      // user → employee, then present-days per user (reliability).
+      const empOf = new Map<string, string | null>((usersR.data ?? []).map((u) => [u.id, u.employee_id]));
+      const presentByEmp = new Map<string, number>();
+      for (const a of attR.data ?? []) {
+        if (a.check_in && a.employee_id) presentByEmp.set(a.employee_id, (presentByEmp.get(a.employee_id) ?? 0) + 1);
+      }
+      const activityByUser = new Map<string, number>();
+      for (const a of actR.data ?? []) {
+        if (a.user_id) activityByUser.set(a.user_id, (activityByUser.get(a.user_id) ?? 0) + 1);
+      }
 
       const rows: PerfRow[] = members.map((mem) => {
         const dealsWon = (leadsR.data ?? []).filter((l) => l.owner_id === mem.id).length;
@@ -92,9 +121,14 @@ export function usePerformance(period: string) {
         ];
         const score = Math.max(0, breakdown.reduce((s, b) => s + b.points, 0));
 
+        const empId = empOf.get(mem.id);
+        const presentDays = empId ? (presentByEmp.get(empId) ?? 0) : 0;
+        const activityCount = activityByUser.get(mem.id) ?? 0;
+
         return {
           userId: mem.id, name: memberLabel(mem), role: mem.role,
-          dealsWon, revenue, quotesSent, paymentsCount, tasksOnTime, tasksLate, score, breakdown,
+          dealsWon, revenue, quotesSent, paymentsCount, tasksOnTime, tasksLate,
+          presentDays, activityCount, score, breakdown,
         };
       });
 

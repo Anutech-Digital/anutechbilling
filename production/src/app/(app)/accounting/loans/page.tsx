@@ -10,6 +10,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,8 +62,21 @@ const METHOD_LABEL: Record<LoanRepaymentMethod, string> = {
 };
 
 export default function EmployeeLoansPage() {
+  // useSearchParams (in the inner component) needs a Suspense boundary so the
+  // production build doesn't bail out of static rendering.
+  return (
+    <React.Suspense fallback={null}>
+      <EmployeeLoansInner />
+    </React.Suspense>
+  );
+}
+
+function EmployeeLoansInner() {
   const q = useEmployeeLoans();
+  const params = useSearchParams();
   const [disburseOpen, setDisburseOpen] = React.useState(false);
+  const [giveKind, setGiveKind] = React.useState<EmployeeLoanKind | null>(null);
+  const giveOpenedRef = React.useRef(false);
   const [repayFor, setRepayFor] = React.useState<EmployeeLoan | null>(null);
   const [settleFor, setSettleFor] = React.useState<EmployeeLoan | null>(null);
   const [purposeFor, setPurposeFor] = React.useState<EmployeeLoan | null>(null);
@@ -76,6 +90,19 @@ export default function EmployeeLoansPage() {
   const confirm = useConfirm();
   const pendingClaimsQ = useExpenseClaims("pending");
   const pendingClaims = pendingClaimsQ.data ?? [];
+
+  // Deep-link: /accounting/loans?give=salary_advance opens the give dialog
+  // pre-set to that kind (used by the Payroll "Give salary advance" button).
+  React.useEffect(() => {
+    if (giveOpenedRef.current) return;
+    const g = params.get("give");
+    if (g === "loan" || g === "salary_advance" || g === "expense_advance") {
+      giveOpenedRef.current = true;
+      setGiveKind(g);
+      setDisburseOpen(true);
+      if (g !== "loan") setTypeFilter(g);
+    }
+  }, [params]);
 
   const confirmDelete = async (l: EmployeeLoan) => {
     if (await confirm({
@@ -117,7 +144,7 @@ export default function EmployeeLoansPage() {
             Expense claim link
           </Button>
           <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setDisburseOpen(true)}>
-            Give loan
+            Give loan / advance
           </Button>
         </div>
       </div>
@@ -166,7 +193,7 @@ export default function EmployeeLoansPage() {
             icon="rupee"
             title="No employee loans yet"
             body="Record a loan or advance you've given a team member. It's tracked as money owed back — repayments reduce it, and the balance shows as an asset."
-            action={<Button variant="primary" icon="plus" onClick={() => setDisburseOpen(true)}>Give a loan</Button>}
+            action={<Button variant="primary" icon="plus" onClick={() => setDisburseOpen(true)}>Give loan / advance</Button>}
           />
         </Card>
       ) : (
@@ -282,8 +309,8 @@ export default function EmployeeLoansPage() {
         </>
       )}
 
-      <FAB icon="plus" label="Loan" onClick={() => setDisburseOpen(true)} ariaLabel="Give loan" />
-      {disburseOpen && <DisburseDialog onClose={() => setDisburseOpen(false)} />}
+      <FAB icon="plus" label="Loan / advance" onClick={() => setDisburseOpen(true)} ariaLabel="Give loan or advance" />
+      {disburseOpen && <DisburseDialog initialKind={giveKind ?? undefined} onClose={() => { setDisburseOpen(false); setGiveKind(null); }} />}
       {repayFor && <RepaymentDialog loan={repayFor} onClose={() => setRepayFor(null)} />}
       {settleFor && <SettleDialog loan={settleFor} onClose={() => setSettleFor(null)} />}
       {purposeFor && <EditPurposeDialog loan={purposeFor} onClose={() => setPurposeFor(null)} />}
@@ -728,7 +755,7 @@ function KPI({ label, value, tone }: { label: string; value: string; tone?: "amb
 
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 
-function DisburseDialog({ onClose }: { onClose: () => void }) {
+function DisburseDialog({ onClose, initialKind }: { onClose: () => void; initialKind?: EmployeeLoanKind }) {
   const accountsQ = useBankAccounts();
   const disburse  = useDisburseLoan();
   const empQ      = useEmployees();
@@ -740,7 +767,7 @@ function DisburseDialog({ onClose }: { onClose: () => void }) {
   const [amount, setAmount]     = React.useState("");
   const [date, setDate]         = React.useState(todayISO());
   const [accountId, setAccountId] = React.useState("");
-  const [kind, setKind]         = React.useState<EmployeeLoanKind>("loan");
+  const [kind, setKind]         = React.useState<EmployeeLoanKind>(initialKind ?? "loan");
   const [notes, setNotes]       = React.useState("");
 
   React.useEffect(() => {
@@ -765,6 +792,7 @@ function DisburseDialog({ onClose }: { onClose: () => void }) {
       : kind === "salary_advance"
         ? "Advance pay, recovered later — usually deducted from salary."
         : "A personal loan, repaid back in cash / bank / salary deduction.";
+  const kindNoun = kind === "salary_advance" ? "salary advance" : kind === "expense_advance" ? "expense advance" : "loan";
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -776,13 +804,28 @@ function DisburseDialog({ onClose }: { onClose: () => void }) {
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-ink-2 mb-1">Type</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value as EmployeeLoanKind)} className={selectCls}>
-              <option value="loan">Loan (repaid back)</option>
-              <option value="salary_advance">Salary advance (recovered from pay)</option>
-              <option value="expense_advance">Expense advance (to spend on company work)</option>
-            </select>
-            <p className="mt-1 text-[11px] text-ink-3">{kindHint}</p>
+            <label className="block text-xs font-medium text-ink-2 mb-1.5">What are you giving?</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {([
+                { k: "loan", label: "Loan", desc: "Repaid back" },
+                { k: "salary_advance", label: "Salary advance", desc: "Recovered from pay" },
+                { k: "expense_advance", label: "Expense advance", desc: "Spent on company work" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.k}
+                  type="button"
+                  onClick={() => setKind(opt.k)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-left transition-colors",
+                    kind === opt.k ? "border-amber bg-amber-soft" : "border-hairline hover:bg-paper-2",
+                  )}
+                >
+                  <div className={cn("text-sm font-medium", kind === opt.k ? "text-amber-ink" : "text-ink")}>{opt.label}</div>
+                  <div className="text-[10px] text-ink-3 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-ink-3">{kindHint}</p>
           </div>
           <div className="relative">
             <label className="block text-xs font-medium text-ink-2 mb-1">Employee</label>
@@ -792,7 +835,6 @@ function DisburseDialog({ onClose }: { onClose: () => void }) {
               onFocus={() => setNameOpen(true)}
               onBlur={() => setTimeout(() => setNameOpen(false), 130)}
               placeholder={employees.length ? "Search employees…" : "Type a name"}
-              autoFocus
             />
             {nameOpen && employees.length > 0 && (() => {
               const q = name.trim().toLowerCase();
@@ -851,7 +893,7 @@ function DisburseDialog({ onClose }: { onClose: () => void }) {
             disabled={!name.trim() || !(amt > 0) || !accountId}
             onClick={submit}
           >
-            Give {amt > 0 ? rupee(amt) : "loan"}
+            Give {kindNoun}{amt > 0 ? ` · ${rupee(amt)}` : ""}
           </Button>
         </DialogFooter>
       </DialogContent>

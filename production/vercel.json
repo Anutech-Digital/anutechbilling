@@ -4,6 +4,14 @@
     {
       "path": "/api/cron/renewals",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/google-contacts-sync",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/birthday-greetings",
+      "schedule": "31 15 * * *"
     }
   ]
 }

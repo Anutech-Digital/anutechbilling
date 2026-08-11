@@ -41,11 +41,14 @@ import {
   useBookBankCredit,
   useBookBankAdvance,
   useBookBankTxnAsStatutory,
+  useBookCreditAsInvoice,
+  useReconcileSalaryAdvanceSplit,
   type BankTransactionRow,
   type MatchSuggestion,
 } from "@/lib/queries/bank";
 import { EXPENSE_CATEGORIES, useUnreconciledExpenses } from "@/lib/queries/expenses";
 import { useUnreconciledSalaries } from "@/lib/queries/payroll";
+import { useCustomers } from "@/lib/queries/customers";
 import { rupee, formatDate } from "@/lib/utils";
 
 interface Props {
@@ -108,6 +111,29 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     } catch { /* hook toasts */ }
   };
 
+  // Overpaid a salary: split THIS line into salary (its remaining) + a recoverable
+  // advance (the excess), in one atomic RPC. Only offered when the line is bigger
+  // than the picked salary's balance.
+  const salarySplit = useReconcileSalaryAdvanceSplit();
+  const [splitSalaryId, setSplitSalaryId] = React.useState("");
+  React.useEffect(() => { setSplitSalaryId(""); }, [transaction?.id]);
+  const handleSalarySplit = async () => {
+    if (!transaction || !splitSalaryId) return;
+    const sal = (payableSalaries ?? []).find((s) => s.id === splitSalaryId);
+    if (!sal) return;
+    const advance = (transaction.debit ?? 0) - sal.remaining;
+    if (advance <= 0) return;
+    try {
+      await salarySplit.mutateAsync({
+        transactionId: transaction.id,
+        salaryId: sal.id,
+        advanceAmount: advance,
+        employeeName: sal.employee_name,
+      });
+      onOpenChange(false);
+    } catch { /* hook toasts */ }
+  };
+
   // "Book as expense" form (money-out lines only).
   const [bookCategory, setBookCategory] = React.useState("");
   const [bookVendor, setBookVendor]     = React.useState("");
@@ -129,6 +155,33 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       });
       onOpenChange(false);
     } catch { /* hook toasts the error */ }
+  };
+
+  // "Book as income / invoice" (credit lines): raise a GST invoice (+ its
+  // one-off quote), record its payment, and reconcile this line — one step.
+  const bookInvoice = useBookCreditAsInvoice();
+  const { data: customers } = useCustomers();
+  const [showInvoice, setShowInvoice]   = React.useState(false);
+  const [invCustomer, setInvCustomer]   = React.useState("");
+  const [invLineName, setInvLineName]   = React.useState("");
+  const [invTaxable, setInvTaxable]     = React.useState("");
+  React.useEffect(() => {
+    setShowInvoice(false); setInvCustomer(""); setInvLineName(""); setInvTaxable("");
+  }, [transaction?.id]);
+
+  const handleBookInvoice = async () => {
+    if (!transaction || !invCustomer || !(Number(invTaxable) > 0)) return;
+    try {
+      await bookInvoice.mutateAsync({
+        transactionId: transaction.id,
+        bankAccountId: transaction.bank_account_id,
+        customerId:    invCustomer,
+        lineName:      invLineName || transaction.description || "Sale",
+        taxableAmount: Math.round(Number(invTaxable)),
+        reference:     transaction.reference,
+      });
+      onOpenChange(false);
+    } catch { /* hook toasts */ }
   };
 
   // "Book this money-in as…" (credit lines): capital / director's loan. Books
@@ -329,6 +382,74 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
               )}
             </div>
 
+            {/* Income from a sale — credit lines only. Most money-in with no
+                match is a customer paying for a sale that wasn't invoiced yet.
+                Route to the proper invoice/project builder (amount prefilled);
+                once the payment is recorded it shows here as a suggested match
+                to reconcile. Kept FIRST — it's the commonest money-in. */}
+            {isCredit && (
+              <div className="rounded-md border border-amber/50 bg-amber-soft/25 p-3">
+                <p className="text-xs font-semibold text-ink-2 mb-1">Kisi sale / customer ka paisa?</p>
+                <p className="text-[11px] text-ink-3 mb-3 leading-relaxed">
+                  Income aksar invoice se aati hai. Is {rupee(amount)} ki invoice abhi nahi bani? Yahan se invoice (ya project payment) banao — uska payment record karte hi ye line neeche <b>suggested match</b> me aa jayegi, phir ek click me reconcile.
+                </p>
+                {!showInvoice ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      icon="file"
+                      onClick={() => {
+                        setShowInvoice(true);
+                        setInvLineName(transaction?.description ?? "");
+                        setInvTaxable(String(Math.round(amount / 1.18)));
+                      }}
+                    >
+                      Invoice banao
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      icon="external"
+                      onClick={() => {
+                        onOpenChange(false);
+                        router.push(`/projects?amount=${Math.round(amount)}&reconcile=${transaction?.id ?? ""}` as never);
+                      }}
+                    >
+                      Project payment
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <select
+                      value={invCustomer}
+                      onChange={(e) => setInvCustomer(e.target.value)}
+                      className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+                    >
+                      <option value="" disabled>Customer chuno…</option>
+                      {(customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <Input value={invLineName} onChange={(e) => setInvLineName(e.target.value)} placeholder="Kya becha? (e.g. Website / Setup fee)" />
+                    <Input value={invTaxable} onChange={(e) => setInvTaxable(e.target.value)} type="number" min={0} placeholder="Taxable amount ₹ (ex-GST)" />
+                    <p className="text-[10px] text-ink-3">GST customer ke place-of-supply se apne-aap lagega. {rupee(amount)} received ka taxable (÷1.18) prefill kiya — theek kar lena.</p>
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon="check"
+                        loading={bookInvoice.isPending}
+                        disabled={!invCustomer || !(Number(invTaxable) > 0)}
+                        onClick={handleBookInvoice}
+                      >
+                        Invoice banao &amp; reconcile
+                      </Button>
+                      <Button size="sm" variant="default" onClick={() => setShowInvoice(false)}>Cancel</Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Book money-IN as capital / a director's loan — credit lines only.
                 Adds the Balance-Sheet line AND reconciles, in one step. */}
             {isCredit && (
@@ -422,6 +543,44 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                   : (isCredit ? "a loan received (liability)" : "a loan you repaid (liability)")}
               </Button>
             </div>
+
+            {/* Overpaid a salary — split THIS line into salary + recoverable
+                advance (one atomic RPC). Only when the line exceeds a salary's due. */}
+            {!isCredit && (payableSalaries ?? []).some((s) => s.remaining > 0 && s.remaining < amount) && (
+              <div className="rounded-md border border-indigo/40 bg-indigo-soft/20 p-3">
+                <p className="text-xs font-semibold text-ink-2 mb-1">Overpaid a salary? (salary + advance)</p>
+                <p className="text-[11px] text-ink-3 mb-2.5 leading-relaxed">
+                  Paid more than the salary by mistake? Pick the salary — its balance is settled and the EXTRA is booked as a recoverable <b>advance</b> (recover it later via a salary deduction). No double cash-out — this line is the payment.
+                </p>
+                <select
+                  value={splitSalaryId}
+                  onChange={(e) => setSplitSalaryId(e.target.value)}
+                  className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-indigo/40 mb-2"
+                >
+                  <option value="">Choose the salary…</option>
+                  {(payableSalaries ?? []).filter((s) => s.remaining > 0 && s.remaining < amount).map((s) => (
+                    <option key={s.id} value={s.id}>{s.employee_name} · {s.period} · {rupee(s.remaining)} due</option>
+                  ))}
+                </select>
+                {(() => {
+                  const sal = (payableSalaries ?? []).find((s) => s.id === splitSalaryId);
+                  if (!sal) return null;
+                  const advance = amount - sal.remaining;
+                  return (
+                    <>
+                      <p className="text-[11px] text-ink-2 mb-2">
+                        <span className="text-emerald font-medium">{rupee(sal.remaining)}</span> → salary (paid)
+                        {" · "}
+                        <span className="text-amber-ink font-medium">{rupee(advance)}</span> → advance (recoverable)
+                      </p>
+                      <Button size="sm" variant="primary" icon="check" loading={salarySplit.isPending} onClick={handleSalarySplit}>
+                        Pay salary + book {rupee(advance)} advance
+                      </Button>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* Book directly as an expense — money-out lines only. Creates the
                 expense (P&L) and reconciles this line, with NO extra cash leg. */}

@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { endOfDayIST, isQuoteExpired } from "./utils";
+import { endOfDayIST, isQuoteExpired, foreignAmount } from "./utils";
+
+describe("foreignAmount", () => {
+  it("returns null for domestic INR bills or missing rate", () => {
+    expect(foreignAmount("INR", 1000, 1)).toBeNull();
+    expect(foreignAmount(null, 1000, 83)).toBeNull();
+    expect(foreignAmount("USD", 1000, 0)).toBeNull();
+    expect(foreignAmount("USD", 1000, null)).toBeNull();
+  });
+  it("derives the supplier-currency amount from ₹ ÷ rate with the right symbol", () => {
+    expect(foreignAmount("USD", 24293, 91.5)).toBe("$265.50");
+    expect(foreignAmount("USD", 5304, 91.5)).toBe("$57.97");
+    expect(foreignAmount("GBP", 10000, 100)).toBe("£100.00");
+    expect(foreignAmount("AED", 8300, 22.6)).toBe("AED 367.26");
+  });
+});
 
 describe("endOfDayIST", () => {
   it("maps a YYYY-MM-DD to 23:59:59.999 IST == 18:29:59.999 UTC same date", () => {

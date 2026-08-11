@@ -17,7 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
-import { cn, formatDate, daysBetween, isValidGstin } from "@/lib/utils";
+import { cn, formatDate, daysBetween, isValidGstin, validateGstin } from "@/lib/utils";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -60,6 +60,26 @@ export default function GstinVerifyCard({
 
   const cleanGstin = (gstin || "").trim().toUpperCase();
   const canVerify  = isValidGstin(cleanGstin);
+
+  // Foreign online-service suppliers (OIDAR — e.g. Anthropic, Google, Microsoft)
+  // register under state code "99" (Centre Jurisdiction). Their GSTIN does NOT
+  // follow the domestic PAN-based format/checksum, and GSTN online-verify does
+  // not cover them — so we recognise it, skip the "invalid" error, and let the
+  // vendor be saved as-is.
+  const isOidar = cleanGstin.length === 15 && /^99/.test(cleanGstin);
+
+  // Friendly, specific reason the Verify button is still locked — so the user
+  // knows what to do instead of staring at a disabled button.
+  const gstinHint = React.useMemo(() => {
+    if (!cleanGstin) return { tone: "muted" as const, text: "Enter the supplier's GSTIN to verify & auto-fill their details." };
+    if (isOidar)     return { tone: "info" as const,  text: "Foreign supplier (OIDAR) GSTIN — online GSTN verification isn't available for these. You can still save this vendor; place of supply is set to Centre Jurisdiction." };
+    const v = validateGstin(cleanGstin);
+    if (v.ok) return null;
+    if (v.reason === "length")   return { tone: "bad" as const, text: `A GSTIN is 15 characters — you've typed ${cleanGstin.length}.` };
+    if (v.reason === "format")   return { tone: "bad" as const, text: "This GSTIN doesn't look right — it should be 2 digits, 5 letters, 4 digits, then 4 more characters." };
+    if (v.reason === "checksum") return { tone: "bad" as const, text: "This GSTIN's check digit doesn't match — please re-check the number." };
+    return { tone: "bad" as const, text: "Enter a valid GSTIN to verify." };
+  }, [cleanGstin, isOidar]);
 
   // Staleness: if the cached verification is > 30 days old, surface a
   // gentle nudge to re-verify. (We don't auto-invalidate — GSTN status
@@ -130,9 +150,12 @@ export default function GstinVerifyCard({
             Cached {ageDays} days ago — consider re-verifying
           </span>
         )}
-        {!canVerify && (
-          <span className="text-[10px] text-ink-3">
-            Verify unlocks once the GSTIN passes checksum.
+        {!canVerify && gstinHint && (
+          <span className={cn(
+            "text-[11px] leading-snug",
+            gstinHint.tone === "bad" ? "text-rose" : gstinHint.tone === "info" ? "text-amber-ink" : "text-ink-3"
+          )}>
+            {gstinHint.text}
           </span>
         )}
       </div>

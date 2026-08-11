@@ -15,6 +15,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCustomers, useOpenCreditsByCustomer } from "@/lib/queries/customers";
+import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { FAB } from "@/components/ui/fab";
@@ -100,8 +101,10 @@ export default function CustomersPage() {
   const { data: subscriptions } = useSubscriptions();
   const { data: outstanding } = useOutstandingReceivables();
   const { data: creditsByCustomer = {} } = useOpenCreditsByCustomer();
+  const { data: projRecv = {} } = useProjectReceivablesByCustomer();
 
-  // customer_id → worst-case outstanding across their subs.
+  // customer_id → outstanding = subscription dues + project invoiced-but-unpaid,
+  // so project receivables show on the list too (matches the customer 360 page).
   const outstandingByCustomer = React.useMemo(() => {
     const map = new Map<string, { days: number; amount: number }>();
     for (const o of outstanding ?? []) {
@@ -111,8 +114,14 @@ export default function CustomersPage() {
         map.set(o.customer_id, { days: o.days_outstanding, amount: o.outstanding_amount });
       }
     }
+    // Add project receivables (invoiced milestones not yet paid).
+    for (const [custId, amt] of Object.entries(projRecv)) {
+      if (!amt) continue;
+      const prev = map.get(custId);
+      map.set(custId, { days: prev?.days ?? 0, amount: (prev?.amount ?? 0) + amt });
+    }
     return map;
-  }, [outstanding]);
+  }, [outstanding, projRecv]);
 
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
@@ -215,10 +224,10 @@ export default function CustomersPage() {
   const stats: React.ComponentProps<typeof StatStrip>["items"] = [];
   if (!isLoading && customers) {
     stats.push({ label: "Customers", value: total });
-    if (totalMRR > 0) stats.push({ label: "Active MRR", value: rupee(totalMRR, { compact: true }) });
-    if (totalARR > 0) stats.push({ label: "ARR", value: rupee(totalARR, { compact: true }) });
+    if (totalMRR > 0) stats.push({ label: "Monthly revenue", value: rupee(totalMRR, { compact: true }) });
+    if (totalARR > 0) stats.push({ label: "Yearly revenue", value: rupee(totalARR, { compact: true }) });
     stats.push({
-      label: "Receivables due",
+      label: "To collect",
       value: rupee(totalReceivables, { compact: true }),
       tone: totalReceivables > 0 ? "rose" : "default",
       // The money-owed number is the action figure — tap it to see who owes.
@@ -452,8 +461,8 @@ export default function CustomersPage() {
                     <SortHead label="Customer"        sortKey="name"        sort={sort} onSort={toggleSort} />
                     <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-ink-3 uppercase tracking-wider">Status</th>
                     <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-ink-3 uppercase tracking-wider">Place of supply</th>
-                    <SortHead label="MRR"             sortKey="mrr"         sort={sort} onSort={toggleSort} align="right" />
-                    <SortHead label="Receivables"     sortKey="receivables" sort={sort} onSort={toggleSort} align="right" />
+                    <SortHead label="Monthly"         sortKey="mrr"         sort={sort} onSort={toggleSort} align="right" />
+                    <SortHead label="To collect"      sortKey="receivables" sort={sort} onSort={toggleSort} align="right" />
                     <SortHead label="Unused credits"  sortKey="credits"     sort={sort} onSort={toggleSort} align="right" />
                     <th className="px-2 py-2.5"><span className="sr-only">Actions</span></th>
                   </tr>

@@ -33,6 +33,7 @@ const config: Config = {
           DEFAULT: "hsl(var(--ink) / <alpha-value>)",
           2: "hsl(var(--ink-2) / <alpha-value>)",
           3: "hsl(var(--ink-3) / <alpha-value>)",
+          4: "hsl(var(--ink-4) / <alpha-value>)",
         },
         hairline: {
           DEFAULT: "hsl(var(--hairline) / <alpha-value>)",

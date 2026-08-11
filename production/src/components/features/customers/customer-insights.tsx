@@ -55,11 +55,16 @@ export function deriveCustomerInsights(
   c: Customer,
   subs: Subscription[],
   invoices: Invoice[],
-  /** Accepted/active project sales — used to add project money to Outstanding. */
-  projects: { status: string; receivable: number }[] = [],
+  /** Accepted/active project sales — used to add project money to Outstanding
+   *  (receivable) AND to Lifetime paid (paid = milestone receipts). */
+  projects: { status: string; receivable: number; paid?: number }[] = [],
   /** Existing quotes — so the next-best-action doesn't say "first quote" when
    *  the customer already has drafts/sent quotes sitting there. */
   quotes: { id: string; status: string; created_date?: string | null }[] = [],
+  /** Sum of RECEIVED customer payments (the `payments` table — subscription /
+   *  direct invoices). Project milestone receipts come from projects[].paid;
+   *  the two tables never overlap, so adding them = true cash collected. */
+  receivedPayments = 0,
 ): CustomerInsights {
   const activeSubs = subs.filter((s) => s.status === "active");
   const totalMRR = activeSubs.reduce((s, x) => s + (x.mrr ?? 0), 0);
@@ -90,7 +95,11 @@ export function deriveCustomerInsights(
     .reduce((s, i) => s + Math.max(0, i.net_payable ?? i.amount ?? 0), 0);
   const outstanding = subsOutstanding + projectReceivable + standaloneUnpaid;
 
-  const lifetimePaid = invoices.filter((i) => i.status === "paid").reduce((s, x) => s + (x.amount ?? 0), 0);
+  // Actual cash collected = project milestone receipts + received payments
+  // (subscription/direct). NOT the sum of "paid" invoices — that missed
+  // partial receipts (a part-paid project invoice sits at status='pending').
+  const projectPaid = projects.reduce((s, p) => s + Math.max(0, p.paid ?? 0), 0);
+  const lifetimePaid = projectPaid + Math.max(0, receivedPayments);
   const overdueCount = invoices.filter((i) => i.status === "overdue").length;
 
   const nearestRenewal = activeSubs
@@ -130,12 +139,20 @@ function computeNBA(args: {
 
   // 1. Money owed — subscriptions AND/OR project payments.
   if (outstanding > 0 || overdueCount > 0) {
-    const projPart = projectReceivable > 0 ? ` · ${rupee(projectReceivable)} project` : "";
+    const allProject = projectReceivable > 0 && projectReceivable >= outstanding;
+    // Only break out the project figure when it's a PART of the total — when the
+    // whole outstanding IS the project, tag it "project" without repeating the ₹.
+    const projPart =
+      projectReceivable <= 0 ? "" :
+      allProject          ? " · project" :
+                            ` · ${rupee(projectReceivable)} project`;
     return {
       tone: "danger",
       icon: "alert",
       title: `${rupee(outstanding)} outstanding${projPart}${overdueCount > 0 ? ` · ${overdueCount} overdue invoice${overdueCount > 1 ? "s" : ""}` : ""}`,
-      body: projectReceivable > 0
+      body: allProject
+        ? "This is a project payment still owed — collect it before it ages. AI can draft a friendly reminder."
+        : projectReceivable > 0
         ? "Includes a project payment still owed — collect it before it ages. AI can draft a friendly reminder."
         : "Collect this before it ages further — let AI draft a friendly reminder you can edit and send.",
       cta: canMessage ? { label: "Draft reminder with AI", kind: "draft", channel, purpose: "reminder" } : undefined,
@@ -215,7 +232,7 @@ export type CustomerEvent = { date: string; icon: string; color: string; title: 
 export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[], quotes: Quote[]): CustomerEvent[] {
   const events: CustomerEvent[] = [];
   for (const s of subs) {
-    if (s.start_date) events.push({ date: s.start_date, icon: "refresh", color: "text-emerald", title: "Subscription started", sub: `${s.plan} · ${s.seats} seats` });
+    if (s.start_date) events.push({ date: s.start_date, icon: "refresh", color: "text-emerald", title: "Subscription started", sub: `${s.plan}${s.domain ? ` · ${s.domain}` : ""} · ${s.seats} seats` });
   }
   for (const q of quotes) {
     if (q.created_date) events.push({ date: q.created_date, icon: "file", color: "text-indigo", title: `Quote ${q.id} ${q.status}`, sub: q.plan ?? undefined });
@@ -234,9 +251,12 @@ export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[],
 /** 4-KPI answer-bar — health / owed / value in one glance (real numbers). */
 export function CustomerMetricBar({ insights }: { insights: CustomerInsights }) {
   const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, seatsUsed, seatsTotal, nearestRenewal, renewalDays } = insights;
+  // Exact figures (not compact lakh) for the money KPIs so they match the
+  // Next-Best-Action + Transactions to the rupee — "₹15.2L" vs "₹15,16,000"
+  // for the same number read as two different amounts.
   const outHint = [
     overdueCount > 0 ? `${overdueCount} overdue` : null,
-    projectReceivable > 0 ? `${rupee(projectReceivable, { compact: projectReceivable >= 100000 })} project` : null,
+    projectReceivable > 0 ? `${rupee(projectReceivable)} project` : null,
   ].filter(Boolean).join(" · ") || undefined;
   // auto-fit → columns follow the CONTAINER width (not the viewport), so this
   // strip fits whether it's in the narrow split-view panel, the full-width panel,
@@ -245,11 +265,11 @@ export function CustomerMetricBar({ insights }: { insights: CustomerInsights }) 
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <MetricCard
         label="Outstanding"
-        value={outstanding > 0 ? rupee(outstanding, { compact: outstanding >= 100000 }) : "All clear"}
+        value={outstanding > 0 ? rupee(outstanding) : "All clear"}
         tone={outstanding > 0 ? "danger" : "success"}
         hint={outHint}
       />
-      <MetricCard label="Lifetime paid" value={lifetimePaid > 0 ? rupee(lifetimePaid, { compact: lifetimePaid >= 100000 }) : "—"} />
+      <MetricCard label="Lifetime paid" value={lifetimePaid > 0 ? rupee(lifetimePaid) : "—"} />
       <MetricCard
         label="MRR"
         value={totalMRR > 0 ? rupee(totalMRR) : "—"}
@@ -443,6 +463,11 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
                 {term && <Badge kind="muted" size="sm">{term}</Badge>}
               </div>
               <div className="text-[11px] text-ink-3 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                {s.domain && (
+                  <span className="inline-flex items-center gap-1 font-mono text-amber-ink" title="Domain this subscription is provisioned on">
+                    <Icon name="globe" size={11} /> {s.domain}
+                  </span>
+                )}
                 <span>{s.used ?? 0}/{s.seats} seats</span>
                 {s.start_date && s.renewal_date ? (
                   <span>{formatDate(s.start_date)} → {formatDate(s.renewal_date)}</span>

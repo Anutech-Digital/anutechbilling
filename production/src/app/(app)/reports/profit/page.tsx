@@ -166,7 +166,7 @@ export default function ProfitByProductPage() {
         </ul>
 
         {/* Desktop table */}
-        <Card flush className="hidden md:block overflow-x-auto">
+        <Card flush className="hidden md:block">
           <table className="w-full">
             <thead className="bg-paper-2 border-b border-hairline">
               <tr>

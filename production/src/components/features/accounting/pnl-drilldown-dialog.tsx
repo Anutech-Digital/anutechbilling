@@ -46,6 +46,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   kind:         PnLDrillKind | null;
   range:        { from: string; to: string };
+  /** When set on an "expenses" drill, show only this category's entries. */
+  expenseCategory?: string | null;
 }
 
 const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hrefLabel: string; tone: "ink" | "rose"; groupLabel: string }> = {
@@ -75,9 +77,9 @@ const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hr
   },
 };
 
-function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: string }, enabled: boolean) {
+function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: string }, enabled: boolean, expenseCategory?: string | null) {
   return useQuery({
-    queryKey: ["accounting", "pnl-drill", kind, range],
+    queryKey: ["accounting", "pnl-drill", kind, range, expenseCategory ?? null],
     enabled:  enabled && !!kind,
     queryFn: async (): Promise<DrillRow[]> => {
       const supabase = createClient();
@@ -119,12 +121,13 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
       }
 
       // expenses
-      const { data, error } = await supabase
+      let q = supabase
         .from("expenses")
         .select("id, category, vendor_name, description, expense_date, amount, payment_method")
         .gte("expense_date", range.from)
-        .lte("expense_date", range.to)
-        .order("expense_date", { ascending: false });
+        .lte("expense_date", range.to);
+      if (expenseCategory) q = q.eq("category", expenseCategory);
+      const { data, error } = await q.order("expense_date", { ascending: false });
       if (error) throw error;
       return (data ?? []).map((e) => {
         // Primary = who we paid (the employee for salaries, the vendor otherwise)
@@ -144,10 +147,11 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, kind, range }: Props) {
-  const { data: rows, isLoading } = useDrilldown(kind, range, open);
+export function PnLDrilldownDialog({ open, onOpenChange, kind, range, expenseCategory }: Props) {
+  const { data: rows, isLoading } = useDrilldown(kind, range, open, expenseCategory);
   const meta = kind ? META[kind] : null;
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
+  const title = kind === "expenses" && expenseCategory ? `${expenseCategory} — this period` : (meta?.title ?? "Details");
 
   const [search, setSearch] = React.useState("");
   const [grouped, setGrouped] = React.useState(false);
@@ -161,7 +165,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range }: Props) {
       return next;
     });
   // Fresh controls each time the dialog opens or the line changes.
-  React.useEffect(() => { setSearch(""); setGrouped(false); setOpenGroups(new Set()); }, [kind, open]);
+  React.useEffect(() => { setSearch(""); setGrouped(false); setOpenGroups(new Set()); }, [kind, open, expenseCategory]);
   // Collapse everything again whenever grouping is toggled on.
   React.useEffect(() => { if (grouped) setOpenGroups(new Set()); }, [grouped]);
 
@@ -194,7 +198,7 @@ export function PnLDrilldownDialog({ open, onOpenChange, kind, range }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[560px] p-0 gap-0 flex flex-col max-h-[85vh]">
         <DialogHeader className="px-5 pt-5 pb-3 border-b border-hairline">
-          <DialogTitle className="text-lg">{meta?.title ?? "Details"}</DialogTitle>
+          <DialogTitle className="text-lg">{title}</DialogTitle>
           <DialogDescription className="text-[12px] leading-relaxed">
             {meta?.desc}
           </DialogDescription>

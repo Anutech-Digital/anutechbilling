@@ -14,45 +14,41 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
+import { sanitizeExtractedBill, type ExtractedBill } from "./sanitize";
 
 const bodySchema = z.object({
   fileBase64: z.string().min(20, "Empty file"),
   mimeType: z.string().min(3),
 });
 
-// The shape we ask Gemini to return (all optional — a bill may hide some fields).
-interface ExtractedBill {
-  vendor_name?:  string | null;
-  vendor_gstin?: string | null;
-  bill_no?:      string | null;
-  bill_date?:    string | null;   // YYYY-MM-DD
-  subtotal?:     number | null;   // pre-GST, ₹ integer
-  cgst?:         number | null;
-  sgst?:         number | null;
-  igst?:         number | null;
-  total?:        number | null;   // incl GST
-  category_guess?: string | null;
-}
-
 const PROMPT =
-  "You are reading an INDIAN vendor/supplier tax invoice (e.g. Google Cloud/Workspace, " +
-  "Microsoft, Zoho, or any supplier) for a cloud reseller's books. Extract these fields " +
-  "and return ONLY JSON, no prose:\n" +
+  "You are reading a vendor/supplier tax invoice for a cloud reseller's books. The " +
+  "supplier may be INDIAN (Google Cloud/Workspace, Microsoft, Zoho, etc.) billing in " +
+  "rupees with GST (CGST+SGST or IGST), OR a FOREIGN online-service provider (e.g. " +
+  "Anthropic, OpenAI, Google LLC) billing in USD/other currency — these carry an India " +
+  "GST registration under state code 99 (OIDAR) and may show GST as a single line. " +
+  "Extract and return ONLY JSON, no prose:\n" +
   "{\n" +
-  '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (not the buyer)\n' +
-  '  "vendor_gstin": string|null,       // 15-char GSTIN of the supplier if printed\n' +
+  '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (the seller, NOT the buyer)\n' +
+  '  "vendor_gstin": string|null,       // 15-char India GST/VAT registration of the supplier if printed\n' +
   '  "bill_no": string|null,            // the invoice/bill number\n' +
-  '  "bill_date": string|null,          // invoice date as YYYY-MM-DD\n' +
-  '  "subtotal": number|null,           // taxable value BEFORE GST, in rupees, integer (round)\n' +
-  '  "cgst": number|null,               // CGST amount in rupees, integer (0 if not shown)\n' +
-  '  "sgst": number|null,               // SGST amount in rupees, integer (0 if not shown)\n' +
-  '  "igst": number|null,               // IGST amount in rupees, integer (0 if not shown)\n' +
-  '  "total": number|null,              // grand total INCLUDING GST, in rupees, integer\n' +
-  '  "category_guess": string|null      // "COGS-Workspace" for Google, "COGS-M365" for Microsoft, "COGS-Zoho" for Zoho, else null\n' +
+  '  "bill_date": string|null,          // invoice/issue date as YYYY-MM-DD\n' +
+  '  "currency": string|null,           // ISO code of the amounts on the bill: "INR", "USD", etc.\n' +
+  '  "subtotal": number|null,           // taxable value BEFORE tax, in the bill\'s currency (keep decimals)\n' +
+  '  "cgst": number|null,               // CGST amount (0 if not shown)\n' +
+  '  "sgst": number|null,               // SGST amount (0 if not shown)\n' +
+  '  "igst": number|null,               // IGST or a single GST/tax amount (0 if not shown)\n' +
+  '  "total": number|null,              // grand total INCLUDING tax, in the bill\'s currency\n' +
+  '  "line_items": [                    // every product/service row on the bill (empty array if none)\n' +
+  '    { "description": string, "qty": number|null, "unit_price": number|null, "amount": number }\n' +
+  "  ],\n" +
+  '  "category_guess": string|null      // "COGS-Workspace" Google, "COGS-M365" Microsoft, "COGS-Zoho" Zoho, else "COGS-Other" or null\n' +
   "}\n" +
-  "RULES: amounts are integer rupees (drop paise/decimals, round to nearest rupee). " +
-  "Never invent a value — use null if the bill does not clearly show it. " +
-  "A bill has EITHER (CGST+SGST) for intra-state OR IGST for inter-state, not both. " +
+  "RULES: Keep amounts in the bill's OWN currency (do NOT convert). Keep decimals (e.g. 265.50). " +
+  "Never invent a value — use null (or [] for line_items) if the bill does not clearly show it. " +
+  "A single foreign 'GST - India' / 'VAT' line goes in igst. " +
+  "CREDIT lines are NEGATIVE: a refund / 'unused time' / proration credit / discount row must have a NEGATIVE amount (and negative unit_price), e.g. -61.41 — never 0. " +
+  "The line_items amounts must sum to the pre-tax subtotal (total minus tax), so keep signs correct. " +
   "vendor_name is the SELLER, never the reseller/buyer.";
 
 async function extractWithGemini(apiKey: string, model: string, mimeType: string, base64: string): Promise<ExtractedBill | null> {
@@ -89,11 +85,6 @@ async function extractWithGemini(apiKey: string, model: string, mimeType: string
   }
 }
 
-const toInt = (v: unknown): number | null => {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : null;
-};
-
 export async function POST(request: NextRequest) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -125,20 +116,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Couldn't read this bill. Try a clearer photo/PDF, or enter it by hand." }, { status: 502 });
   }
 
-  // Sanitise → integers / trimmed strings. Everything stays a suggestion the
-  // operator verifies in the form.
-  const fields = {
-    vendor_name:  (ai.vendor_name ?? "").toString().trim() || null,
-    vendor_gstin: (ai.vendor_gstin ?? "").toString().trim().toUpperCase() || null,
-    bill_no:      (ai.bill_no ?? "").toString().trim() || null,
-    bill_date:    /^\d{4}-\d{2}-\d{2}$/.test((ai.bill_date ?? "").toString()) ? (ai.bill_date as string) : null,
-    subtotal:     toInt(ai.subtotal),
-    cgst:         toInt(ai.cgst) ?? 0,
-    sgst:         toInt(ai.sgst) ?? 0,
-    igst:         toInt(ai.igst) ?? 0,
-    total:        toInt(ai.total),
-    category_guess: (ai.category_guess ?? "").toString().trim() || null,
-  };
+  // Everything stays a suggestion the operator verifies in the form.
+  const fields = sanitizeExtractedBill(ai);
 
   return NextResponse.json({ fields, mode: "gemini" });
 }

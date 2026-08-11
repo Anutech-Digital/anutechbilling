@@ -28,8 +28,18 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type = "text", prefix, suffix, error, helper, wrapperClassName, ...props }, ref) => {
+  ({ className, type = "text", prefix, suffix, error, helper, wrapperClassName, onFocus, ...props }, ref) => {
     const hasError = !!error;
+    // Number fields default to "0"; selecting the value on focus means the first
+    // keystroke replaces it (no manual delete). Deferred so a mouse-click's caret
+    // placement doesn't wipe the selection. Text/search fields keep normal focus.
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+      if (type === "number") {
+        const el = e.currentTarget;
+        requestAnimationFrame(() => el.select());
+      }
+      onFocus?.(e);
+    };
     return (
       <div className={cn("w-full", wrapperClassName)}>
         <div
@@ -51,7 +61,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             ref={ref}
             type={type}
             className={cn(
-              "flex-1 bg-transparent border-0 outline-none text-sm text-ink placeholder:text-ink-3",
+              "flex-1 bg-transparent border-0 outline-none text-sm text-ink placeholder:text-ink-4",
               "px-3 py-2 min-w-0",
               prefix && "pl-2",
               suffix && "pr-2",
@@ -60,6 +70,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             )}
             aria-invalid={hasError || undefined}
             aria-describedby={error ? `${props.id}-error` : helper ? `${props.id}-helper` : undefined}
+            onFocus={handleFocus}
             {...props}
           />
           {suffix && (

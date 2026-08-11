@@ -144,13 +144,13 @@ function InvoicesPageInner() {
     return true;
   });
 
-  // KPIs
+  // KPIs — use net_payable (after any advance adjustment) to match the Aging report.
   const outstanding = (invoices ?? [])
     .filter((i) => i.status !== "paid")
-    .reduce((s, i) => s + i.amount, 0);
+    .reduce((s, i) => s + (i.net_payable ?? i.amount), 0);
   const overdueTotal = (invoices ?? [])
     .filter((i) => i.status === "overdue")
-    .reduce((s, i) => s + i.amount, 0);
+    .reduce((s, i) => s + (i.net_payable ?? i.amount), 0);
   const overdueCount = counts.overdue ?? 0;
   const collectedMTD = (invoices ?? [])
     .filter((i) => {
@@ -235,7 +235,10 @@ function InvoicesPageInner() {
           else if (days <= 60)  buckets.urgent.push({ ...q, days });
           else                  buckets.overdue.push({ ...q, days });
         }
-        const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + (q.amount ?? 0), 0);
+        // Outstanding, not face value — subtract anything already received
+        // (paid_amount: project-milestone receipts, migration 0184) so a
+        // part-paid invoice doesn't overstate the receivable bucket.
+        const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + Math.max(0, (q.amount ?? 0) - (q.paid_amount ?? 0)), 0);
         const totalAmt = sumAmt(pending);
 
         const togglePending = (id: string) => {
@@ -343,9 +346,9 @@ function InvoicesPageInner() {
             </ul>
 
             {/* Table of pending quotes */}
-            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-x-auto">
+            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
               <table className="w-full">
-                <thead className="bg-paper-2 border-b border-hairline">
+                <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
                   <tr>
                     <th className="p-2 w-10">
                       <input
@@ -671,7 +674,6 @@ function InvoiceRow({
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
 }) {
-  const router = useRouter();
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
@@ -734,6 +736,12 @@ function InvoiceRow({
               Net due <span className="text-ink-2">{rupee(inv.net_payable)}</span>
             </span>
           )}
+          {/* Part-received (project milestone receipts) — show what's still due. */}
+          {(inv.paid_amount ?? 0) > 0 && inv.status !== "paid" && (
+            <span className="text-[10px] font-medium tabular-nums leading-tight text-emerald">
+              {rupee(inv.paid_amount)} paid · <span className="text-amber-ink">{rupee(Math.max(0, inv.amount - inv.paid_amount))} due</span>
+            </span>
+          )}
         </div>
       </td>
       <td className="px-3 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
@@ -744,11 +752,14 @@ function InvoiceRow({
           // bare "Pending" misleads the user into thinking nothing's been
           // received. Same for status='overdue' with advances applied —
           // "Overdue · Partial" reflects reality.
+          // Partial when advances were adjusted OR some money is already in
+          // (paid_amount — project invoices' milestone receipts, migration 0184).
           const hasAdvancesApplied = Array.isArray(inv.adjusted_advances) && inv.adjusted_advances.length > 0;
+          const partial = (hasAdvancesApplied || (inv.paid_amount ?? 0) > 0) && inv.status !== "paid";
           const badge =
               inv.status === "paid"    ? <Badge kind="success" dot>Paid</Badge>
-            : inv.status === "pending" ? (hasAdvancesApplied ? <Badge kind="warning" dot>Partial</Badge> : <Badge kind="warning" dot>Pending</Badge>)
-            : inv.status === "overdue" ? (hasAdvancesApplied ? <Badge kind="danger" dot>Overdue · Partial · {inv.overdue_days}d</Badge> : <Badge kind="danger" dot>Overdue {inv.overdue_days}d</Badge>)
+            : inv.status === "pending" ? (partial ? <Badge kind="warning" dot>Partial</Badge> : <Badge kind="warning" dot>Pending</Badge>)
+            : inv.status === "overdue" ? (partial ? <Badge kind="danger" dot>Overdue · Partial · {inv.overdue_days}d</Badge> : <Badge kind="danger" dot>Overdue {inv.overdue_days}d</Badge>)
             : inv.status === "draft"   ? <Badge kind="muted">Draft</Badge>
             : inv.status === "void"    ? <Badge kind="muted">Void</Badge>
             : null;
@@ -807,13 +818,9 @@ function InvoiceRow({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer"
-                    onClick={() =>
-                      inv.customer_id
-                        ? router.push(`/customers/${inv.customer_id}` as any)
-                        : toast.info("This invoice has no linked customer to remind")
-                    }
+                    onClick={() => setPreviewOpen(true)}
                   >
-                    <Icon name="mail" size={15} /> Send reminder
+                    <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>
                 </>
               )}
@@ -958,6 +965,7 @@ function InvoicePreviewContainer({
       interState={interState}
       customerGstin={customer?.gstin}
       customerEmail={customer?.contact_email}
+      customerPhone={customer?.contact_phone}
       customerState={customer?.state}
       customerCountry={customer?.country}
       currency={quote?.currency}

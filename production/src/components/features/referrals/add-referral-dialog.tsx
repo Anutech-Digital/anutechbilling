@@ -135,7 +135,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
                   <Input id="ref_new_phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="+91…" />
                 </FormField>
                 <FormField label="PAN (for TDS)" htmlFor="ref_new_pan">
-                  <Input id="ref_new_pan" value={newPan} onChange={(e) => setNewPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" />
+                  <Input id="ref_new_pan" value={newPan} onChange={(e) => setNewPan(e.target.value.toUpperCase())} placeholder="e.g. ABCDE1234F" />
                 </FormField>
               </div>
             </div>
@@ -151,7 +151,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
               {basis === "percent" ? (
                 <Input type="text" inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value.replace(/[^\d.]/g, ""))} placeholder="10" suffix="%" />
               ) : (
-                <Input type="text" inputMode="numeric" prefix="₹" value={fixedAmount} onChange={(e) => setFixedAmount(e.target.value.replace(/[^\d]/g, ""))} placeholder="5000" />
+                <Input type="text" inputMode="numeric" prefix="₹" value={fixedAmount} onChange={(e) => setFixedAmount(e.target.value.replace(/[^\d]/g, ""))} placeholder="e.g. 5000" />
               )}
             </div>
             <p className="mt-1 text-[11px] text-ink-3">

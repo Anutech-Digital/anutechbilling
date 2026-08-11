@@ -148,7 +148,7 @@ function LoginPageInner() {
             id="email"
             type="email"
             autoComplete="email"
-            placeholder="you@example.com"
+            placeholder="e.g. you@example.com"
             error={errors.email?.message}
             disabled={!configured}
             {...register("email")}

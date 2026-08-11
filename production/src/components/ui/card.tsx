@@ -60,9 +60,13 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
           // `flush` is for full-bleed tables — wrap in a horizontal scroll
           // container so a wide table scrolls *within* the card on narrow
           // (tablet) widths instead of overflowing and breaking the whole
-          // page layout. Radix dialogs/menus render in portals, so this
-          // does not clip row-level popovers.
-          <div className="overflow-x-auto">{children}</div>
+          // page layout. `relative` is REQUIRED: it makes this the containing
+          // block for absolutely-positioned descendants (e.g. `.sr-only`
+          // labels in table headers) so they're clipped inside the scroller
+          // instead of escaping to their static x-position past the viewport
+          // and forcing a phantom page-level horizontal scrollbar. Radix
+          // dialogs/menus render in portals, so this does not clip row popovers.
+          <div className="overflow-x-auto relative">{children}</div>
         ) : (
           <div className={cn(tight ? "p-3" : "p-4")}>{children}</div>
         )}

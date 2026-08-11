@@ -168,7 +168,7 @@ export function SendQuoteDialog({
               id="send-to"
               type="email"
               className="font-mono"
-              placeholder="customer@example.com"
+              placeholder="e.g. customer@example.com"
               error={errors.to?.message}
               autoFocus
               {...register("to")}

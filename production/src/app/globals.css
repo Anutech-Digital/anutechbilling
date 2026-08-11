@@ -13,6 +13,7 @@
     --ink:             24 13% 9%;        /* #1A1815 */
     --ink-2:           28 9% 32%;        /* #4F4A40 */
     --ink-3:           33 7% 41%;        /* #6B6457 */
+    --ink-4:           35 9% 64%;        /* #ABA290 — placeholders / hint text (clearly lighter than real input text) */
 
     /* Hairlines & dividers */
     --hairline:        38 25% 87%;       /* #E8E2D4 */
@@ -53,6 +54,7 @@
     --ink:             45 33% 97%;
     --ink-2:           33 7% 75%;
     --ink-3:           33 7% 55%;
+    --ink-4:           33 6% 42%;        /* placeholders / hint text (dimmer than real text on dark) */
 
     --hairline:        28 8% 20%;
     --hairline-strong: 28 8% 30%;
@@ -82,6 +84,13 @@
   body {
     @apply bg-paper text-ink font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1, "tnum" 0;
+  }
+
+  /* Placeholders read as hints, not filled-in values — clearly lighter than
+     real input text. Explicit `placeholder:text-*` utilities still override. */
+  ::placeholder {
+    color: hsl(var(--ink-4));
+    opacity: 1; /* Firefox dims placeholders by default; keep our color exact */
   }
 
   /* Tabular numerals for money + counters */
@@ -128,5 +137,24 @@
   }
   .no-print {
     display: none !important;
+  }
+}
+
+/* Resizable dialogs (desktop) — when the user drags a dialog edge/corner,
+   DialogContent gets `.dlg-resizable` + --dlg-w/--dlg-h vars. The doubled
+   class raises specificity so these win over Tailwind's `!max-w-*` / `!w-auto`
+   utilities on the dialog (equal specificity + !important → source order is
+   unreliable, so we out-specify instead). Mobile keeps the bottom sheet. */
+@media (min-width: 768px) {
+  .dlg-resizable.dlg-resizable {
+    width:      var(--dlg-w) !important;
+    height:     var(--dlg-h) !important;
+    max-width:  none !important;
+    max-height: none !important;
+  }
+  /* Drag-to-move: offset from the centred position. Out-specifies Tailwind's
+     `-translate-x/y-1/2` centring utilities so the user's offset wins. */
+  .dlg-movable.dlg-movable {
+    transform: translate(calc(-50% + var(--dlg-x, 0px)), calc(-50% + var(--dlg-y, 0px))) !important;
   }
 }

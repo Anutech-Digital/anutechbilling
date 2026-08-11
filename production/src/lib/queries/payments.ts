@@ -139,7 +139,7 @@ export function useRefundPayment() {
 // it also removes the subscription + auto-created PO this sale spun up and
 // reverts the won lead. Blocks when a GST invoice was issued, the payment is
 // bank-reconciled, or a linked PO has progressed — those must be handled first.
-export function useDeletePayment() {
+export function useDeletePayment(opts?: { onBlocked?: (message: string) => void }) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -156,7 +156,13 @@ export function useDeletePayment() {
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success("Payment deleted & reversed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    // When the caller wants to surface blockers in a dialog (dependency-aware
+    // delete), route the RPC's block message there instead of a toast.
+    onError: (err) => {
+      const msg = (err as Error).message;
+      if (opts?.onBlocked) opts.onBlocked(msg);
+      else toast.error(msg);
+    },
   });
 }
 

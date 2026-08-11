@@ -239,13 +239,13 @@ export default function CreateBillFromPODialog({ po, open, onOpenChange }: Props
               <Input id="vendor_name" error={errors.vendor_name?.message} {...register("vendor_name")} />
             </FormField>
             <FormField label="Vendor GSTIN" htmlFor="vendor_gstin">
-              <Input id="vendor_gstin" placeholder="27ABCDE1234F1Z5" {...register("vendor_gstin")} />
+              <Input id="vendor_gstin" placeholder="e.g. 27ABCDE1234F1Z5" {...register("vendor_gstin")} />
             </FormField>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <FormField label="Bill # (vendor's)" required htmlFor="bill_no">
-              <Input id="bill_no" placeholder="GW-INV-12345" error={errors.bill_no?.message} {...register("bill_no")} />
+              <Input id="bill_no" placeholder="e.g. GW-INV-12345" error={errors.bill_no?.message} {...register("bill_no")} />
             </FormField>
             <FormField label="Bill date" required htmlFor="bill_date">
               <Input id="bill_date" type="date" error={errors.bill_date?.message} {...register("bill_date")} />

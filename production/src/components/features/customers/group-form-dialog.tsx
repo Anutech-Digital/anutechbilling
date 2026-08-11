@@ -119,7 +119,7 @@ export function GroupFormDialog({
           </div>
 
           <FormField label="Contact email" htmlFor="grp-cemail">
-            <Input id="grp-cemail" type="email" placeholder="name@example.com" error={errors.contact_email?.message} {...register("contact_email")} />
+            <Input id="grp-cemail" type="email" placeholder="e.g. name@example.com" error={errors.contact_email?.message} {...register("contact_email")} />
           </FormField>
 
           <div className="flex items-start gap-2.5 rounded-lg border border-hairline p-3">

@@ -81,11 +81,21 @@ async function isRazorpayConfigured(): Promise<boolean> {
 
 export default async function BuyWorkspacePage() {
   const catalogItems = await fetchGoogleWorkspaceItems();
-  // Live when Razorpay is fully configured; otherwise simulation — Buy now
-  // stays visible and walks the full pipeline (lead → quote → record_payment
-  // → emails) but skips the real Razorpay widget.
-  const paymentMode: "live" | "simulation" =
-    (await isRazorpayConfigured()) ? "live" : "simulation";
+  // Live when Razorpay is fully configured. When it isn't:
+  //  · non-prod (or ALLOW_SIMULATED_CHECKOUT=1) → "simulation": Buy now stays
+  //    visible for Pardeep to walk the full pipeline, clearly TEST-MODE banded.
+  //  · production without that flag → "disabled": the online-buy CTA is hidden
+  //    so a REAL customer never sees a "Simulate payment" button on a public
+  //    storefront before Razorpay go-live. They get "Get a GST quote" instead.
+  const configured = await isRazorpayConfigured();
+  const allowSim =
+    process.env.ALLOW_SIMULATED_CHECKOUT === "1" ||
+    process.env.NODE_ENV !== "production";
+  const paymentMode: "live" | "simulation" | "disabled" = configured
+    ? "live"
+    : allowSim
+      ? "simulation"
+      : "disabled";
   return (
     <BuyWorkspaceClient
       catalogItems={catalogItems}

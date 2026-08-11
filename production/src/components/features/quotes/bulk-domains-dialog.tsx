@@ -46,15 +46,16 @@ function parseLine(line: string): string[] {
 export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onAdd }: Props) {
   const [itemId, setItemId] = React.useState("");
   const [rate, setRate] = React.useState(0);          // ₹/seat/year
-  const [tab, setTab] = React.useState<"csv" | "pick">("csv");
-  const [csvDomains, setCsvDomains] = React.useState<DomainSeat[]>([]);
+  const [tab, setTab] = React.useState<"manual" | "csv" | "pick">("manual");
+  const [manual, setManual] = React.useState<DomainSeat[]>([{ domain: "", seats: 1 }]);
   const [csvName, setCsvName] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState<Array<{ domain: string; seats: number; on: boolean }>>([]);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (!open) {
-      setItemId(""); setRate(0); setTab("csv"); setCsvDomains([]); setCsvName(null); setSaved([]);
+      setItemId(""); setRate(0); setTab("manual"); setManual([{ domain: "", seats: 1 }]);
+      setCsvName(null); setSaved([]);
       if (fileRef.current) fileRef.current.value = "";
       return;
     }
@@ -86,18 +87,43 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
       let text = await file.text();
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length < 2) { toast.error("CSV needs a header + data rows."); return; }
-      const header = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
-      const iDom = header.findIndex((h) => h.includes("domain") || h === "website");
-      const iSeat = header.findIndex((h) => h.includes("seat") || h === "qty" || h.includes("licen") || h.includes("quantity"));
-      if (iDom === -1) { toast.error("Couldn't find a 'Domain' column."); return; }
-      const rows = lines.slice(1).map((l) => {
+      if (lines.length === 0) { toast.error("The file is empty."); return; }
+
+      const first = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
+      const findDom  = (hs: string[]) => hs.findIndex((h) => h.includes("domain") || h === "website" || h === "url");
+      const findSeat = (hs: string[]) => hs.findIndex((h) => h.includes("seat") || h === "qty" || h.includes("licen") || h.includes("quantity") || h.includes("user"));
+
+      // Is row 0 a header (has keyword columns) or already data? A non-technical
+      // user's CSV often has no header at all — handle both.
+      const hasHeader = findDom(first) !== -1 || findSeat(first) !== -1;
+      let iDom: number, iSeat: number, dataLines: string[];
+      if (hasHeader) {
+        iDom = findDom(first); iSeat = findSeat(first);
+        if (iDom === -1) iDom = 0;                 // header present but no domain col → first col
+        dataLines = lines.slice(1);
+      } else {
+        iDom = 0; iSeat = first.length > 1 ? 1 : -1; // no header → col0=domain, col1=seats
+        dataLines = lines;
+      }
+
+      const seatsMissing = iSeat === -1;
+      const rows = dataLines.map((l) => {
         const c = parseLine(l);
-        return { domain: c[iDom] ?? "", seats: iSeat >= 0 ? Number(c[iSeat]) || 1 : 1 };
+        const n = iSeat >= 0 ? Math.floor(Number(String(c[iSeat] ?? "").trim())) : 0;
+        return { domain: c[iDom] ?? "", seats: n > 0 ? n : 1 };
       });
       const clean = dedupeDomains(rows);
       if (clean.length === 0) { toast.error("No domains found in the file."); return; }
-      setCsvDomains(clean);
+
+      // Load into the editable list so seats are always VISIBLE and correctable —
+      // never a silent 1-per-domain default that surprises the user later.
+      setManual(clean);
+      setTab("manual");
+      if (seatsMissing) {
+        toast.warning(`Loaded ${clean.length} domains — no seat column found, so each is 1. Review the seats below.`);
+      } else {
+        toast.success(`Loaded ${clean.length} domains from ${file.name} — review the seats below.`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't read the file");
     }
@@ -105,9 +131,10 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
 
   // The domains the bulk line will use, from the active tab.
   const domains: DomainSeat[] = React.useMemo(() => {
-    if (tab === "csv") return csvDomains;
-    return dedupeDomains(saved.filter((s) => s.on).map((s) => ({ domain: s.domain, seats: s.seats })));
-  }, [tab, csvDomains, saved]);
+    // CSV upload loads into `manual`, so both share one source of truth.
+    if (tab === "pick") return dedupeDomains(saved.filter((s) => s.on).map((s) => ({ domain: s.domain, seats: s.seats })));
+    return dedupeDomains(manual.filter((m) => m.domain.trim().length > 0));
+  }, [tab, manual, saved]);
 
   const totalSeats = domains.reduce((s, d) => s + d.seats, 0);
   const lineNet = rate * totalSeats; // ex-GST annual; GST added at quote level
@@ -157,11 +184,51 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
 
           {/* Tabs */}
           <div className="flex items-center gap-1 border-b border-hairline">
+            <TabBtn active={tab === "manual"} onClick={() => setTab("manual")}>Type domains</TabBtn>
             <TabBtn active={tab === "csv"} onClick={() => setTab("csv")}>Upload CSV</TabBtn>
             <TabBtn active={tab === "pick"} onClick={() => setTab("pick")} disabled={!customerId}>
               Customer&apos;s domains{customerId ? "" : " (select customer first)"}
             </TabBtn>
           </div>
+
+          {tab === "manual" && (
+            <div className="space-y-2">
+              <div className="max-h-[240px] overflow-y-auto rounded-md border border-hairline divide-y divide-hairline">
+                {manual.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2 px-2 py-1.5">
+                    <Input
+                      className="flex-1 h-8 text-sm font-mono"
+                      placeholder="e.g. domain.in"
+                      value={row.domain}
+                      onChange={(e) => setManual((arr) => arr.map((x, i) => i === idx ? { ...x, domain: e.target.value } : x))}
+                    />
+                    <Input
+                      type="number" min={1}
+                      aria-label="Seats for this domain"
+                      className="w-20 h-8 text-sm tabular-nums"
+                      value={row.seats}
+                      onChange={(e) => setManual((arr) => arr.map((x, i) => i === idx ? { ...x, seats: Math.max(0, Number(e.target.value) || 0) } : x))}
+                    />
+                    <span className="text-[10px] text-ink-3 w-8 shrink-0">seats</span>
+                    <button
+                      type="button" aria-label="Remove domain"
+                      onClick={() => setManual((arr) => arr.length > 1 ? arr.filter((_, i) => i !== idx) : [{ domain: "", seats: 1 }])}
+                      className="text-ink-3 hover:text-rose p-1 shrink-0"
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <Button type="button" size="sm" variant="default" icon="plus"
+                onClick={() => setManual((arr) => [...arr, { domain: "", seats: 1 }])}>
+                Add domain
+              </Button>
+              <p className="text-[11px] text-ink-3">
+                Each domain has its own seat count — that seat count is what carries to its subscription on payment.
+              </p>
+            </div>
+          )}
 
           {tab === "csv" && (
             <div className="space-y-2">
@@ -170,10 +237,9 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
               )}>
                 <Icon name="upload" size={22} className="text-ink-3 mx-auto mb-1" />
                 <p className="text-sm font-medium text-ink">{csvName ?? "Choose CSV (domain, seats)"}</p>
-                <p className="text-[11px] text-ink-3 mt-0.5">Header needs a Domain column; Seats optional (defaults to 1)</p>
+                <p className="text-[11px] text-ink-3 mt-0.5">Two columns: <b>domain</b>, <b>seats</b>. We load them into the list so you can review before adding.</p>
                 <input ref={fileRef} id="bulk-csv" type="file" accept=".csv,text/csv" onChange={handleCsv} className="sr-only" />
               </label>
-              {csvDomains.length > 0 && <p className="text-[11px] text-ink-3">{csvDomains.length} domains · {csvDomains.reduce((s, d) => s + d.seats, 0)} seats parsed.</p>}
             </div>
           )}
 

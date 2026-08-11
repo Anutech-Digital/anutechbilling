@@ -18,8 +18,8 @@ import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCr
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
-import { usePayments } from "@/lib/queries/payments";
-import { useCustomerProjects } from "@/lib/queries/projects";
+import { usePayments, useDeletePayment } from "@/lib/queries/payments";
+import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -40,6 +40,7 @@ import {
 import { AddReferralDialog } from "@/components/features/referrals/add-referral-dialog";
 import { useReferralAgreements } from "@/lib/queries/referral-partners";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
+import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 
 export default function CustomerDetailPage() {
@@ -53,6 +54,7 @@ export default function CustomerDetailPage() {
   const { data: invoices } = useCustomerInvoices(params.id);
   const { data: quotes }   = useCustomerQuotes(params.id);
   const { data: projects } = useCustomerProjects(params.id);
+  const { data: projPay } = useCustomerProjectPayments(params.id);
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   const { data: allPayments } = usePayments();
 
@@ -61,6 +63,9 @@ export default function CustomerDetailPage() {
   // Segment filter inside the Transactions tab so quotes / invoices / payments
   // can each be viewed on their own (not just the combined feed).
   const [txnFilter, setTxnFilter] = React.useState<"all" | "invoices" | "quotes" | "payments" | "projects">("all");
+  // Collapsed parent keys in the hierarchical "All" view (default: all expanded).
+  const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
+  const toggleCollapse = (key: string) => setCollapsed((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const [svcView, setSvcView] = React.useState<"subscription" | "project">("subscription");
   const [projQuoteOpen, setProjQuoteOpen] = React.useState(false);
   const [referralOpen, setReferralOpen] = React.useState(false);
@@ -69,6 +74,17 @@ export default function CustomerDetailPage() {
   const { data: agreements } = useReferralAgreements(params.id);
   const deleteCustomer = useDeleteCustomer();
   const setActive = useSetCustomerActive();
+  // Blocked-delete dialog (dependency-aware): when a payment can't be deleted
+  // because a document depends on it, show what's linked + where to resolve it.
+  const [payBlock, setPayBlock] = React.useState<string | null>(null);
+  const deletePayment = useDeletePayment({ onBlocked: (msg) => setPayBlock(msg) });
+
+  // Delete a customer payment (from the Transactions tab). The delete_payment RPC
+  // reverses balances and blocks if unsafe (GST invoice issued / bank-reconciled).
+  async function handleDeletePayment(id: string) {
+    if (!(await confirm({ title: "Delete this payment?", body: "This reverses the receipt and increases the customer's outstanding again. It can't be undone.", confirmLabel: "Delete", danger: true }))) return;
+    deletePayment.mutate(id);
+  }
 
   // Deep-link: /customers/[id]?edit=1 sends straight to the full-page edit form
   // (used by the "Complete customer" nudge on a project with missing GST info).
@@ -124,16 +140,82 @@ export default function CustomerDetailPage() {
   const allInvoices = invoices ?? [];
   const allQuotes = quotes ?? [];
   const allProjects = projects ?? [];
-  const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes);
   const customerPayments = (allPayments ?? []).filter((p) => p.customer_id === c.id);
+  const receivedPaymentsTotal = customerPayments
+    .filter((p) => p.status === "received")
+    .reduce((s, p) => s + (p.amount ?? 0), 0);
+  const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes, receivedPaymentsTotal);
+
+  // Project milestone receipts live in project_payments (not `payments`) — pull
+  // them so the customer's Transactions/Statement + a project invoice's status
+  // reflect them (else a part-paid project invoice looks fully "Pending" here).
+  const invoicePaid = projPay?.invoicePaid ?? {};
+  const projPayments = projPay?.payments ?? [];
 
   // Unified transactions feed (Zoho "Transactions" tab) — every money record.
   const txns = [
-    ...allInvoices.map((i) => ({ date: i.invoice_date, type: "Invoice" as const, ref: i.id, amount: i.amount, status: i.status, onClick: undefined as (() => void) | undefined })),
-    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, onClick: undefined as (() => void) | undefined })),
+    ...allInvoices.map((i) => {
+      // A project invoice's real state comes from project_payments against its
+      // milestone: fully covered = paid, some = partially paid, else its own status.
+      const pPaid = invoicePaid[i.id] ?? 0;
+      const status = pPaid <= 0 ? i.status : pPaid >= i.amount ? "paid" : "partially paid";
+      return { date: i.invoice_date, type: "Invoice" as const, ref: i.id, amount: i.amount, status, onClick: undefined as (() => void) | undefined };
+    }),
+    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, onClick: undefined as (() => void) | undefined, payId: p.id })),
+    // Project milestone receipts — show as Payment rows so they're not invisible.
+    ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", onClick: undefined as (() => void) | undefined })),
     ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as const, ref: q.id, amount: q.amount, status: q.status, onClick: () => router.push(`/quotes/${q.id}` as never) })),
     ...allProjects.map((p) => ({ date: p.created_at, type: "Project" as const, ref: p.title, amount: p.total_amount, status: p.status, onClick: () => router.push(`/projects/${p.id}` as never) })),
   ].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+
+  // Hierarchical view (the "All" tab): Project → its invoices → their receipts,
+  // so the relationship is obvious. Standalone invoices / subscription payments /
+  // quotes sit at the top level. indent drives the left-inset in the render.
+  const invoiceProject = projPay?.invoiceProject ?? {};
+  type HRow = {
+    key: string; parentKey: string | null; indent: number;
+    date: string; type: "Invoice" | "Payment" | "Refund" | "Quote" | "Project";
+    ref: string; amount: number; status: string; due?: number; onClick?: () => void;
+    /** Set only on rows from the `payments` table → enables the delete action. */
+    payId?: string;
+  };
+  const hierRows: HRow[] = [];
+  const usedInv = new Set<string>();
+  const usedPay = new Set<string>();
+  for (const pr of allProjects) {
+    const projKey = `proj:${pr.id}`;
+    const projDue = Math.max(0, (pr.total_amount ?? 0) - (pr.paid ?? 0));
+    hierRows.push({ key: projKey, parentKey: null, indent: 0, date: pr.created_at, type: "Project", ref: pr.title, amount: pr.total_amount, status: pr.status, due: projDue > 0 ? projDue : undefined, onClick: () => router.push(`/projects/${pr.id}` as never) });
+    for (const i of allInvoices.filter((iv) => invoiceProject[iv.id]?.projectId === pr.id)) {
+      usedInv.add(i.id);
+      const pPaid = invoicePaid[i.id] ?? 0;
+      const st = pPaid <= 0 ? i.status : pPaid >= i.amount ? "paid" : "partially paid";
+      const invKey = `inv:${i.id}`;
+      hierRows.push({ key: invKey, parentKey: projKey, indent: 1, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: st, due: pPaid > 0 && pPaid < i.amount ? i.amount - pPaid : undefined });
+      for (const p of projPayments.filter((pp) => pp.invoice_id === i.id)) {
+        usedPay.add(p.id);
+        hierRows.push({ key: `pay:${p.id}`, parentKey: invKey, indent: 2, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Payment", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received" });
+      }
+    }
+    // Advance receipts recorded before their milestone was invoiced.
+    for (const p of projPayments.filter((pp) => pp.project_id === pr.id && !pp.invoice_id && !usedPay.has(pp.id))) {
+      usedPay.add(p.id);
+      hierRows.push({ key: `pay:${p.id}`, parentKey: projKey, indent: 1, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Advance", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received" });
+    }
+  }
+  for (const i of allInvoices.filter((iv) => !usedInv.has(iv.id))) {
+    hierRows.push({ key: `inv:${i.id}`, parentKey: null, indent: 0, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: i.status });
+  }
+  for (const p of customerPayments) {
+    hierRows.push({ key: `cpay:${p.id}`, parentKey: null, indent: 0, date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? "Refund" : "Payment", ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, payId: p.id });
+  }
+  for (const q of allQuotes) {
+    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, onClick: () => router.push(`/quotes/${q.id}` as never) });
+  }
+  // Which rows are parents (have children) + parent lookup for the collapse walk.
+  const parentOf: Record<string, string | null> = {};
+  const hasKids = new Set<string>();
+  for (const r of hierRows) { parentOf[r.key] = r.parentKey; if (r.parentKey) hasKids.add(r.parentKey); }
 
   // Running-balance ledger (Zoho "Statement" tab). Invoice = debit (owed),
   // payment = credit; positive closing balance = receivable still owed.
@@ -141,6 +223,8 @@ export default function CustomerDetailPage() {
     ...allInvoices.map((i) => ({ date: i.invoice_date, desc: `Invoice ${i.id}`, debit: i.amount, credit: 0 })),
     ...customerPayments.filter((p) => p.status === "received").map((p) => ({ date: p.received_at, desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}`, debit: 0, credit: p.amount })),
     ...customerPayments.filter((p) => p.status === "refunded").map((p) => ({ date: p.refunded_at ?? p.received_at, desc: `Refund${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}`, debit: p.amount, credit: 0 })),
+    // Project milestone receipts credit the ledger against their raised invoices.
+    ...projPayments.map((p) => ({ date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`, debit: 0, credit: p.amount })),
   ].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
   let runningBal = 0;
   const ledger = ledgerRaw.map((e) => { runningBal += e.debit - e.credit; return { ...e, balance: runningBal }; });
@@ -407,17 +491,62 @@ export default function CustomerDetailPage() {
                 </div>
                 {filteredTxns.length > 0 ? (
                   <RecordTable
-                    head={["Date", "Type", "Reference", "Amount", "Status"]}
-                    rows={filteredTxns.map((t) => ({
+                    head={["Date", "Type", "Reference", "Amount", "Status", ""]}
+                    rows={(txnFilter === "all"
+                      // Hierarchical: hide a row if any ancestor is collapsed.
+                      ? hierRows.filter((r) => {
+                          let pk = r.parentKey;
+                          while (pk) { if (collapsed.has(pk)) return false; pk = parentOf[pk] ?? null; }
+                          return true;
+                        })
+                      : filteredTxns.map((t) => ({ key: "", parentKey: null, indent: 0, due: undefined, ...t }))
+                    ).map((t) => {
+                      const canExpand = txnFilter === "all" && hasKids.has(t.key);
+                      const isCollapsed = collapsed.has(t.key);
+                      const payId = (t as { payId?: string }).payId;
+                      return {
                       onClick: t.onClick,
                       cells: [
                         formatDate(t.date),
                         <Badge key="ty" kind={TXN_BADGE[t.type]} dot>{t.type}</Badge>,
-                        <span key="r" className="font-mono text-xs">{t.ref}</span>,
-                        <span key="a" className="tabular-nums font-medium">{rupee(t.amount)}</span>,
+                        // Indent children with a tree connector; parents get a
+                        // chevron to expand/collapse their nested rows inline.
+                        <span key="r" className="font-mono text-xs inline-flex items-center" style={{ paddingLeft: t.indent * 18 }}>
+                          {canExpand ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); toggleCollapse(t.key); }}
+                              className="mr-1 -ml-1 p-0.5 rounded hover:bg-paper-2 text-ink-3"
+                              aria-label={isCollapsed ? "Expand" : "Collapse"}
+                            >
+                              <Icon name={isCollapsed ? "chevron_right" : "chevron_down"} size={13} />
+                            </button>
+                          ) : t.indent > 0 ? (
+                            <span className="text-ink-4 mr-1">└</span>
+                          ) : null}
+                          {t.ref}
+                        </span>,
+                        <span key="a" className="inline-flex flex-col">
+                          <span className={cn("tabular-nums", t.indent === 0 ? "font-semibold" : "font-medium text-ink-2")}>{rupee(t.amount)}</span>
+                          {t.due != null && t.due > 0 && (
+                            <span className="text-[10px] text-amber-ink tabular-nums">{rupee(t.due)} due</span>
+                          )}
+                        </span>,
                         <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
+                        // Delete — only on payments from the `payments` table.
+                        payId ? (
+                          <IconButton
+                            key="del"
+                            icon="trash"
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Delete payment"
+                            title="Delete this payment"
+                            onClick={(e) => { e.stopPropagation(); handleDeletePayment(payId); }}
+                          />
+                        ) : <span key="del" />,
                       ],
-                    }))}
+                    };})}
                   />
                 ) : (
                   <EmptyState icon="receipt" title="Nothing here" body="No records of this type for this customer." compact />
@@ -469,6 +598,16 @@ export default function CustomerDetailPage() {
       <AddReferralDialog open={referralOpen} onOpenChange={setReferralOpen} customerId={c.id} customerName={c.name} />
       <InvoiceChooserDialog open={invoiceOpen} onOpenChange={setInvoiceOpen} customerId={c.id} onChooseProject={() => setProjInvoiceOpen(true)} />
       <CreateProjectQuoteDialog open={projInvoiceOpen} onOpenChange={setProjInvoiceOpen} mode="invoice" prefillCustomerId={c.id} />
+      <DeleteBlockedDialog
+        open={payBlock !== null}
+        onClose={() => setPayBlock(null)}
+        title="Can't delete this payment yet"
+        reason={payBlock ?? ""}
+        links={[
+          { label: "Open Invoices", href: "/invoices" },
+          { label: "Open Banking (to un-reconcile)", href: "/accounting/banking" },
+        ]}
+      />
     </div>
   );
 }

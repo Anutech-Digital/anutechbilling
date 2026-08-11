@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type Employee = Database["public"]["Tables"]["employees"]["Row"];
@@ -427,7 +428,8 @@ export function useDeleteSalaryPayment() {
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
       toast.success("Salary undone — you can pay it again");
     },
-    onError: (err) => toast.error((err as Error).message),
+    // Blocked (bank-reconciled)? Point to Banking to un-reconcile first.
+    onError: (err) => guardErrorToast(err, { label: "Open Banking", href: "/accounting/banking" }),
   });
 }
 
@@ -576,7 +578,7 @@ export function useAttendanceNetwork() {
     queryFn: async () => {
       const res = await fetch("/api/attendance/network");
       if (!res.ok) throw new Error("Failed to load network settings");
-      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean }>;
+      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean; requirePresence: boolean; retentionDays: number; requireFaceMatch: boolean }>;
     },
     staleTime: 10_000,
   });
@@ -585,7 +587,7 @@ export function useAttendanceNetwork() {
 export function useSetAttendanceNetwork() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { action: "lock" | "clear" | "remove" | "require_selfie"; ip?: string; value?: boolean }) => {
+    mutationFn: async (input: { action: "lock" | "clear" | "remove" | "require_selfie" | "require_presence" | "set_retention" | "require_face_match"; ip?: string; value?: boolean | number }) => {
       const res = await fetch("/api/attendance/network", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

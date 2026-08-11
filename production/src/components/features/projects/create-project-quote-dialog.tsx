@@ -294,12 +294,12 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
           )}
 
           <FormField label="Project title" required htmlFor="q_title">
-            <Input id="q_title" placeholder="Custom accounting software" value={title} onChange={(e) => setTitle(e.target.value)} disabled={partialLock} />
+            <Input id="q_title" placeholder="e.g. Custom accounting software" value={title} onChange={(e) => setTitle(e.target.value)} disabled={partialLock} />
           </FormField>
           <FormField label="Description" htmlFor="q_desc">
             <textarea id="q_desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Scope / notes (optional)" disabled={partialLock}
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y disabled:opacity-60 disabled:cursor-not-allowed" />
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y disabled:opacity-60 disabled:cursor-not-allowed" />
           </FormField>
 
           {/* Line items */}

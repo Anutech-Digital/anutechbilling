@@ -46,7 +46,7 @@ const selectClass =
 // Borderless cell input for the Zoho-style contact-persons table — the table
 // cell borders draw the grid; the input fills the cell and highlights on focus.
 const cellInput =
-  "w-full bg-transparent px-3 py-2 text-sm text-ink placeholder:text-ink-3/70 focus:outline-none focus:bg-amber-soft/25";
+  "w-full bg-transparent px-3 py-2 text-sm text-ink placeholder:text-ink-4/70 focus:outline-none focus:bg-amber-soft/25";
 
 /** Label-left / field-right row (Zoho parity). Stacks on mobile. */
 function Row({
@@ -258,7 +258,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             <Row label="GSTIN" htmlFor="gstin" hint="Verify to auto-fill legal name, address & place of supply.">
               <Input
                 id="gstin"
-                placeholder="07ABDCA0298H1ZP"
+                placeholder="e.g. 07ABDCA0298H1ZP"
                 className="font-mono uppercase"
                 error={errors.gstin?.message}
                 {...register("gstin")}
@@ -306,7 +306,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
 
           {!isIndividual && (
             <Row label="Company name" htmlFor="name" required hint="The business you invoice.">
-              <Input id="name" placeholder="Acme Corp Pvt Ltd" error={errors.name?.message} {...register("name")} />
+              <Input id="name" placeholder="e.g. Acme Corp Pvt Ltd" error={errors.name?.message} {...register("name")} />
             </Row>
           )}
 
@@ -357,7 +357,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           </Row>
 
           <Row label="Email" htmlFor="contact_email">
-            <Input id="contact_email" type="email" placeholder="rajesh@acme.com" error={errors.contact_email?.message} {...register("contact_email")} />
+            <Input id="contact_email" type="email" placeholder="e.g. rajesh@acme.com" error={errors.contact_email?.message} {...register("contact_email")} />
           </Row>
 
           <Row label="Phone" htmlFor="contact_phone">
@@ -390,7 +390,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           </Row>
 
           <Row label="Website" htmlFor="domain">
-            <Input id="domain" placeholder="acmecorp.com" {...register("domain")} />
+            <Input id="domain" placeholder="e.g. acmecorp.com" {...register("domain")} />
           </Row>
 
           <Row label="Parent account / group" htmlFor="group_id" hint="Link companies routed by one common reseller/coordinator. Each company still keeps its own GSTIN + invoices.">
@@ -537,13 +537,13 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                         <input className={cellInput} placeholder="Last name" aria-label="Last name" {...register(`contact_persons.${i}.last_name`)} />
                       </td>
                       <td className="border-r border-hairline p-0">
-                        <input className={cellInput} type="email" placeholder="name@company.com" aria-label="Email address" {...register(`contact_persons.${i}.email`)} />
+                        <input className={cellInput} type="email" placeholder="e.g. name@company.com" aria-label="Email address" {...register(`contact_persons.${i}.email`)} />
                       </td>
                       <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="+91 98765 43210" aria-label="Work phone" {...register(`contact_persons.${i}.phone`)} />
+                        <input className={cellInput} placeholder="e.g. +91 98765 43210" aria-label="Work phone" {...register(`contact_persons.${i}.phone`)} />
                       </td>
                       <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="+91 98765 43210" aria-label="Mobile" {...register(`contact_persons.${i}.mobile`)} />
+                        <input className={cellInput} placeholder="e.g. +91 98765 43210" aria-label="Mobile" {...register(`contact_persons.${i}.mobile`)} />
                       </td>
                       <td className="text-center">
                         <DropdownMenu>

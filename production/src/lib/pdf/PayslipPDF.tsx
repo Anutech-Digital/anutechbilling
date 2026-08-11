@@ -19,6 +19,10 @@ import {
 } from "@react-pdf/renderer";
 import { rupee, formatDate } from "@/lib/utils";
 
+/** PDF-safe rupee. The built-in PDF fonts (Helvetica/Courier) have no ₹ (U+20B9)
+ *  glyph, so it renders as a broken mark — use "Rs " instead. */
+const inrPdf = (n: number) => rupee(n).replace("₹", "Rs ");
+
 // ─── Amount in words (Indian numbering) ─────────────────────────────────────
 
 const ONES = [
@@ -289,23 +293,23 @@ export function PayslipPDF(props: PayslipPDFProps) {
             <View style={s.colHead}><Text style={s.colHeadText}>Earnings</Text></View>
             <View style={s.row}>
               <Text style={s.rowLabel}>Gross salary</Text>
-              <Text style={s.rowValue}>{rupee(gross)}</Text>
+              <Text style={s.rowValue}>{inrPdf(gross)}</Text>
             </View>
             {lopAmount > 0 && (
               <View style={s.row}>
                 <Text style={s.rowLabel}>Less: Loss of pay ({lopDays}d)</Text>
-                <Text style={s.rowValueNeg}>-{rupee(lopAmount)}</Text>
+                <Text style={s.rowValueNeg}>-{inrPdf(lopAmount)}</Text>
               </View>
             )}
             {incentive > 0 && (
               <View style={s.row}>
                 <Text style={s.rowLabel}>Bonus / Incentive</Text>
-                <Text style={s.rowValue}>{rupee(incentive)}</Text>
+                <Text style={s.rowValue}>{inrPdf(incentive)}</Text>
               </View>
             )}
             <View style={s.subtotal}>
               <Text style={s.subLabel}>Earned</Text>
-              <Text style={s.subValue}>{rupee(earned)}</Text>
+              <Text style={s.subValue}>{inrPdf(earned)}</Text>
             </View>
           </View>
 
@@ -318,13 +322,13 @@ export function PayslipPDF(props: PayslipPDFProps) {
               deductions.map((d) => (
                 <View key={d.label} style={s.row}>
                   <Text style={s.rowLabel}>{d.label}</Text>
-                  <Text style={s.rowValue}>{rupee(d.amount)}</Text>
+                  <Text style={s.rowValue}>{inrPdf(d.amount)}</Text>
                 </View>
               ))
             )}
             <View style={s.subtotal}>
               <Text style={s.subLabel}>Total deductions</Text>
-              <Text style={s.subValue}>{rupee(totalDeductions)}</Text>
+              <Text style={s.subValue}>{inrPdf(totalDeductions)}</Text>
             </View>
           </View>
         </View>
@@ -333,7 +337,7 @@ export function PayslipPDF(props: PayslipPDFProps) {
         <View style={s.netBox}>
           <View style={s.netRow}>
             <Text style={s.netLabel}>Net pay</Text>
-            <Text style={s.netValue}>{rupee(net)}</Text>
+            <Text style={s.netValue}>{inrPdf(net)}</Text>
           </View>
           <Text style={s.netWords}>{rupeesInWords(net)}</Text>
           <Text style={s.netPaid}>
@@ -346,7 +350,7 @@ export function PayslipPDF(props: PayslipPDFProps) {
           <Text style={s.footerBold}>For {company.name}</Text>
           <Text style={s.footerLine}>
             This is a computer-generated payslip and does not require a signature.
-            Earned salary (gross − loss of pay) is the company&apos;s expense; only the net amount was paid out — statutory deductions (TDS/PF/ESI) are held and remitted to the authorities.
+            Earned salary (gross minus loss of pay) is the company&apos;s expense; only the net amount was paid out. Statutory deductions (TDS/PF/ESI) are held and remitted to the authorities.
           </Text>
         </View>
       </Page>

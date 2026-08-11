@@ -166,7 +166,7 @@ function PortalLoginInner() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@yourcompany.in"
+                placeholder="e.g. you@yourcompany.in"
                 error={emailForm.formState.errors.email?.message}
                 {...emailForm.register("email")}
               />

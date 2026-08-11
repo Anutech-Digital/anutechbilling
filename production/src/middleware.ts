@@ -31,7 +31,9 @@ const PROTECTED_PREFIXES = [
   "/purchase-orders",
   "/projects",        // Project Sales (financials) — was missing from the gate
   "/performance",     // Team performance / bonus — was missing
+  "/assessments",     // employee reasoning tests (owner view; public take page is /assessment/[token])
   "/enquiries",       // inbound enquiries inbox — was missing
+  "/compliance",      // Pvt Ltd statutory compliance tracker
   "/accounting",      // /accounting/bills, /accounting/pnl, etc.
   "/whatsapp",
   "/automations",

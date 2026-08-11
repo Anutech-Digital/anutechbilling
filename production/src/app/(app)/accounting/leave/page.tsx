@@ -9,7 +9,7 @@ import { LeaveTab, HrPageShell } from "../payroll/screens";
 export default function LeavePage() {
   return (
     <HrPageShell
-      title="Leave"
+      title="Leave Register"
       sub="Record leave and loss-of-pay. Unpaid leave becomes LOP in that month's payroll."
     >
       <LeaveTab />

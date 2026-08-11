@@ -81,7 +81,7 @@ export function EditSubscriptionDialog({
 
         <div className="space-y-4">
           <FormField label="Plan" htmlFor="sub_plan">
-            <Input id="sub_plan" value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="Google Workspace Business Starter" />
+            <Input id="sub_plan" value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="e.g. Google Workspace Business Starter" />
           </FormField>
 
           <div className="grid grid-cols-2 gap-3">

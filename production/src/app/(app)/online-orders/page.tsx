@@ -636,36 +636,22 @@ export default function OnlineOrdersPage() {
         <div>
           <h1 className="font-serif text-3xl text-ink">Online Orders</h1>
           <p className="mt-1 text-sm text-ink-3">
-            Live pipeline from <strong>buy-workspace-v2</strong> · Paid + Trial ·{" "}
-            {orders.length} total
+            Incoming orders from your online store · Paid + Trial
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.success("Refreshed")}
-          >
-            <Icon name="refresh" size={14} />
-            Refresh
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info("Exporting CSV…")}
-          >
-            <Icon name="download" size={14} />
-            Export
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => toast.info("Opening automation rules")}
-          >
-            <Icon name="settings" size={14} />
-            Automation rules
-          </Button>
-        </div>
+      </div>
+
+      {/* Honest disclosure: this screen is a PREVIEW of the online-store order
+          pipeline. The rows below are sample data — real orders appear here once
+          the buy page (buy-workspace-v2) is live. Better to say so than to let a
+          non-technical owner mistake demo rows for real money. */}
+      <div className="mb-6 rounded-md border border-amber/30 bg-amber-soft px-4 py-3 text-sm text-amber-ink flex items-start gap-2">
+        <Icon name="info" size={16} className="mt-0.5 shrink-0" />
+        <span>
+          <strong>Preview — sample data.</strong> This is a preview of your online-store
+          order pipeline. Real orders will appear here once your online buy page is live.
+          The rows below are demo data only.
+        </span>
       </div>
 
       {/* ── Gemini AI ── */}

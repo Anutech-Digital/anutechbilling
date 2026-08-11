@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -131,7 +132,8 @@ export function useDeleteSubscription() {
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success("Subscription deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    // Blocked (came from a paid quote)? Point to where the fix happens.
+    onError: (err) => guardErrorToast(err, { label: "Open Payments", href: "/payments" }),
   });
 }
 

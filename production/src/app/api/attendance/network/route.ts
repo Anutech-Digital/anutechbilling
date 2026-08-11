@@ -8,6 +8,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { newPresenceSecret } from "@/lib/attendance/presence";
 
 function clientIp(req: NextRequest): string {
   const fwd = req.headers.get("x-forwarded-for");
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
   const u = await me(supabase);
   if (!u) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie").maybeSingle();
+  const { data } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, selfie_retention_days, require_face_match").maybeSingle();
   const allowedIps: string[] = data?.allowed_ips ?? [];
   const currentIp = clientIp(request);
   return NextResponse.json({
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
     currentIp,
     onAllowedNetwork: allowedIps.length === 0 || allowedIps.includes(currentIp),
     requireSelfie: data?.require_selfie ?? true,
+    requirePresence: data?.require_presence ?? false,
+    retentionDays: data?.selfie_retention_days ?? 180,
+    requireFaceMatch: data?.require_face_match ?? false,
   });
 }
 
@@ -50,9 +54,13 @@ export async function POST(request: NextRequest) {
   const action = body?.action as string | undefined;
   const currentIp = clientIp(request);
 
-  const { data: existing } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie").maybeSingle();
+  const { data: existing } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, presence_secret, selfie_retention_days, require_face_match").maybeSingle();
   let allowed: string[] = existing?.allowed_ips ?? [];
   let requireSelfie: boolean = existing?.require_selfie ?? true;
+  let requirePresence: boolean = existing?.require_presence ?? false;
+  let presenceSecret: string | null = existing?.presence_secret ?? null;
+  let retentionDays: number = existing?.selfie_retention_days ?? 180;
+  let requireFaceMatch: boolean = existing?.require_face_match ?? false;
 
   if (action === "lock") {
     if (!currentIp) return NextResponse.json({ error: "Couldn't read this network's IP" }, { status: 400 });
@@ -64,14 +72,26 @@ export async function POST(request: NextRequest) {
     allowed = [];
   } else if (action === "require_selfie") {
     requireSelfie = Boolean(body?.value);
+  } else if (action === "require_presence") {
+    requirePresence = Boolean(body?.value);
+    // Enabling for the first time → mint the rotating-code seed.
+    if (requirePresence && !presenceSecret) presenceSecret = newPresenceSecret();
+  } else if (action === "set_retention") {
+    const v = Number(body?.value);
+    if (!Number.isFinite(v) || v < 30 || v > 3650) {
+      return NextResponse.json({ error: "Retention 30–3650 din ke beech hona chahiye" }, { status: 400 });
+    }
+    retentionDays = Math.round(v);
+  } else if (action === "require_face_match") {
+    requireFaceMatch = Boolean(body?.value);
   } else {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("attendance_settings")
-    .upsert({ tenant_id: u.tenant_id, allowed_ips: allowed, require_selfie: requireSelfie, updated_at: new Date().toISOString() });
+    .upsert({ tenant_id: u.tenant_id, allowed_ips: allowed, require_selfie: requireSelfie, require_presence: requirePresence, presence_secret: presenceSecret, selfie_retention_days: retentionDays, require_face_match: requireFaceMatch, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ allowedIps: allowed, currentIp, requireSelfie });
+  return NextResponse.json({ allowedIps: allowed, currentIp, requireSelfie, requirePresence, retentionDays, requireFaceMatch });
 }

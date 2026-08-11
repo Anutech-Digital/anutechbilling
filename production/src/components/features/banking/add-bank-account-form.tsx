@@ -321,7 +321,7 @@ export function AddBankAccountForm({ open, onOpenChange, account }: Props) {
                 id="notes"
                 rows={2}
                 placeholder="Internal note (optional) — e.g. main operational account, branch contact, …"
-                className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+                className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
                 {...register("notes")}
               />
             </FormField>

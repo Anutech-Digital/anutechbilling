@@ -40,7 +40,7 @@ import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/
 import { useCustomer } from "@/lib/queries/customers";
 import { useLead } from "@/lib/queries/leads";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { rupee, formatDate, daysBetween } from "@/lib/utils";
+import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment } from "@/lib/supabase/database.types";
 
@@ -89,9 +89,12 @@ export default function QuoteDetailPage() {
   const [paymentOpen, setPaymentOpen] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
+  const [sharingWa, setSharingWa] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
   const [sendOpen,    setSendOpen]    = React.useState(false);
   const [whatsOpen,   setWhatsOpen]   = React.useState(false);
+  // "Can't delete" → show WHICH related records block it (invoice + payments).
+  const [blockedOpen, setBlockedOpen] = React.useState(false);
   // In-app confirm dialog — native window.confirm() is suppressed in some
   // embeds/webviews and silently returns false, which made destructive actions
   // (Reopen, Delete) look dead. See tasks/page.tsx for the same fix.
@@ -121,6 +124,8 @@ export default function QuoteDetailPage() {
   }, [sendIntent, quote, router]);
 
   const totalReceivedSoFar = sumReceived(paymentHistory ?? []);
+  // Records that keep this quote un-deletable (must be voided/refunded first).
+  const receivedPayments = (paymentHistory ?? []).filter((p) => p.status === "received");
 
   // Inter-state? Compare customer state code vs tenant (seller) state code.
   const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode);
@@ -257,6 +262,83 @@ export default function QuoteDetailPage() {
   const tax = Math.round(taxable * (quote.tax_rate / 100));
   const total = quote.amount ?? taxable + tax;
   const margin = computeMargin(quote.total_cost, taxable);
+
+  const acceptUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}`;
+
+  /** Render + download the quote PDF. Shared by the Download button and the
+   *  free WhatsApp share (so the file is ready for the owner to attach). */
+  const downloadQuotePdfFile = async (): Promise<void> => {
+    const { downloadQuotePDF } = await import("@/lib/pdf");
+    await downloadQuotePDF({
+      tenantName:    me?.tenantName    ?? "Workspace",
+      tenantGstin:   me?.tenantGstin,
+      tenantEmail:   me?.tenantEmail,
+      tenantPhone:   me?.tenantPhone,
+      tenantAddress: me?.tenantAddress,
+      quoteId:       quote.id,
+      customerName:  quote.customer_name,
+      contactName:   null,
+      contactEmail:  null,
+      contactPhone:  null,
+      createdDate:   quote.created_at,
+      expiresDate:   quote.expires_date,
+      validityDays:  quote.expires_date
+        ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
+        : 30,
+      lineItems:     items,
+      subtotal:      quote.subtotal,
+      discountPct:   quote.discount_pct,
+      discount,
+      taxable,
+      taxRate:       quote.tax_rate,
+      tax,
+      total,
+      interState,
+      notes:         quote.notes ?? "",
+    });
+  };
+
+  /** Free wa.me share — opens WhatsApp with a prefilled Hinglish message (quote
+   *  no · total · accept link) and downloads the PDF so the owner can attach it.
+   *  No Cloud API / keys needed, so it works day one. */
+  const shareQuoteOnWhatsApp = async (): Promise<void> => {
+    const message =
+      `Namaste ${quote.customer_name},\n\n` +
+      `Aapka quotation ${quote.id} taiyaar hai.\n` +
+      `Total: ${rupee(total)} (GST included)\n\n` +
+      `Online review + accept yahan kar sakte hain:\n${acceptUrl}\n\n` +
+      `PDF bhi attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
+      `Dhanyavaad,\n${me?.tenantName ?? ""}`;
+    const digits = toWhatsAppDigits(recipientPhone);
+    if (!digits) {
+      toast.error("No phone number for this customer/lead", {
+        description: "Add a phone on the customer or lead to send on WhatsApp.",
+      });
+      return;
+    }
+    // Device-aware target (matches the leads screen): mobile → wa.me deep link;
+    // desktop → web.whatsapp.com/send (wa.me shows a landing page on desktop).
+    const q = encodeURIComponent(message);
+    const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+    const link = isMobile
+      ? `https://wa.me/${digits}?text=${q}`
+      : `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
+    // Open WhatsApp synchronously (inside the click gesture) so pop-up blockers
+    // don't eat it, THEN download the PDF for the owner to attach.
+    window.open(link, "_blank", "noopener,noreferrer");
+    setSharingWa(true);
+    try {
+      await downloadQuotePdfFile();
+      toast.success("Quote PDF downloaded", {
+        description: "Attach this PDF in the WhatsApp chat.",
+      });
+    } catch (err) {
+      console.error("Quote PDF failed:", err);
+      toast.error("PDF didn't download — WhatsApp opened; download the PDF separately.");
+    } finally {
+      setSharingWa(false);
+    }
+  };
   const daysLeft = quote.expires_date ? daysBetween(new Date(), quote.expires_date) : null;
 
   // Activity timeline
@@ -311,7 +393,19 @@ export default function QuoteDetailPage() {
               {quote.id}
             </h1>
             <p className="text-sm text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
-              <span>For <b className="text-ink">{quote.customer_name}</b></span>
+              <span>
+                For{" "}
+                {quote.customer_id ? (
+                  <Link
+                    href={`/customers/${quote.customer_id}` as any}
+                    className="font-semibold text-ink hover:text-amber-ink hover:underline"
+                  >
+                    {quote.customer_name}
+                  </Link>
+                ) : (
+                  <b className="text-ink">{quote.customer_name}</b>
+                )}
+              </span>
               <span>·</span>
               <Badge kind={status.kind} dot>{status.label}</Badge>
               {quote.is_extension ? (
@@ -340,39 +434,21 @@ export default function QuoteDetailPage() {
             Preview
           </Button>
           <Button
+            variant="primary"
+            icon="whatsapp"
+            loading={sharingWa}
+            onClick={shareQuoteOnWhatsApp}
+            title="WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"
+          >
+            Send on WhatsApp
+          </Button>
+          <Button
             icon="download"
             loading={downloadingPdf}
             onClick={async () => {
               setDownloadingPdf(true);
               try {
-                const { downloadQuotePDF } = await import("@/lib/pdf");
-                await downloadQuotePDF({
-                  tenantName:    me?.tenantName    ?? "Workspace",
-                  tenantGstin:   me?.tenantGstin,
-                  tenantEmail:   me?.tenantEmail,
-                  tenantPhone:   me?.tenantPhone,
-                  tenantAddress: me?.tenantAddress,
-                  quoteId:       quote.id,
-                  customerName:  quote.customer_name,
-                  contactName:   null,
-                  contactEmail:  null,
-                  contactPhone:  null,
-                  createdDate:   quote.created_at,
-                  expiresDate:   quote.expires_date,
-                  validityDays:  quote.expires_date
-                    ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
-                    : 30,
-                  lineItems:     items,
-                  subtotal:      quote.subtotal,
-                  discountPct:   quote.discount_pct,
-                  discount,
-                  taxable,
-                  taxRate:       quote.tax_rate,
-                  tax,
-                  total,
-                  interState,
-                  notes:         quote.notes ?? "",
-                });
+                await downloadQuotePdfFile();
                 toast.success(`${quote.id}.pdf downloaded`);
               } catch (err) {
                 toast.error(`PDF generation failed: ${(err as Error).message}`);
@@ -395,8 +471,7 @@ export default function QuoteDetailPage() {
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => {
-                  const url = `${window.location.origin}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}`;
-                  navigator.clipboard?.writeText(url);
+                  navigator.clipboard?.writeText(acceptUrl);
                   toast.success("Customer link copied · share via email or WhatsApp");
                 }}
               >
@@ -412,7 +487,7 @@ export default function QuoteDetailPage() {
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => setWhatsOpen(true)}
               >
-                <Icon name="whatsapp" size={15} /> {quote.status === "sent" || quote.status === "viewed" ? "Resend via WhatsApp" : "Send via WhatsApp"}
+                <Icon name="whatsapp" size={15} /> Send via WhatsApp automation (Cloud API)
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
@@ -428,14 +503,22 @@ export default function QuoteDetailPage() {
                 <Icon name="copy" size={15} /> Duplicate & edit
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                destructive
-                className="gap-2.5 py-2 cursor-pointer"
-                disabled={Boolean(deleteBlock)}
-                onClick={handleDelete}
-              >
-                <Icon name="trash" size={15} /> {deleteBlock ? "Can't delete" : "Delete quote"}
-              </DropdownMenuItem>
+              {deleteBlock ? (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer text-ink-2"
+                  onClick={() => setBlockedOpen(true)}
+                >
+                  <Icon name="lock" size={15} /> Can&apos;t delete — why?
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  destructive
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={handleDelete}
+                >
+                  <Icon name="trash" size={15} /> Delete quote
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -669,7 +752,7 @@ export default function QuoteDetailPage() {
           </div>
         </Card>
 
-        <Card title="Your margin" sub="Post-discount">
+        <Card title="Est. margin" sub="Post-discount · assumed cost">
           <div className="text-center py-3">
             <div className={cn(
               "font-serif text-5xl leading-none mb-2",
@@ -679,8 +762,8 @@ export default function QuoteDetailPage() {
             )}>
               {rupee(margin.margin, { compact: true })}
             </div>
-            <div className="text-sm text-ink-3 mb-3 tabular-nums">{margin.marginPct}% margin</div>
-            <MarginPill margin={margin} period="one-time" />
+            <div className="text-sm text-ink-3 mb-3 tabular-nums">{margin.marginPct}% est. margin</div>
+            <MarginPill margin={margin} period="one-time" estimated />
             <div className="text-[11px] text-ink-3 mt-3 tabular-nums">
               Cost: {rupee(margin.cost)} · Price: {rupee(margin.price)}
             </div>
@@ -909,6 +992,67 @@ export default function QuoteDetailPage() {
           }}
         />
       )}
+
+      {/* "Can't delete — why?" — shows the related records that block deletion
+          (the invoice + recorded payments) so the owner knows what to void first. */}
+      <Dialog open={blockedOpen} onOpenChange={setBlockedOpen}>
+        <DialogContent className="max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Icon name="lock" size={18} className="text-amber" />
+              Ye quote abhi delete nahi ho sakta
+            </DialogTitle>
+            <DialogDescription>
+              Is quote pe paisa laga hua hai. Delete karne se payment ledger + audit trail mit jaayega.
+              Pehle in related records ko hatana / void karna padega:
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            {quote.invoice_id && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-hairline p-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Icon name="receipt" size={16} className="text-emerald shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-ink truncate">Invoice {quote.invoice_id}</div>
+                    <div className="text-[11px] text-ink-3">Pehle ise credit-note / void karo</div>
+                  </div>
+                </div>
+                <Button asChild variant="ghost" size="sm" icon="external" className="shrink-0">
+                  <Link href={"/invoices" as any}>Open</Link>
+                </Button>
+              </div>
+            )}
+
+            {receivedPayments.length > 0 && (
+              <div className="rounded-lg border border-hairline p-3">
+                <div className="flex items-center gap-2.5 mb-1.5">
+                  <Icon name="rupee" size={16} className="text-emerald shrink-0" />
+                  <div className="text-sm font-medium text-ink">
+                    {receivedPayments.length} payment{receivedPayments.length === 1 ? "" : "s"} · {rupee(totalReceivedSoFar)} received
+                  </div>
+                </div>
+                <ul className="space-y-0.5 pl-6">
+                  {receivedPayments.map((p, i) => (
+                    <li key={p.id} className="text-[11px] text-ink-3 tabular-nums">
+                      #{i + 1} · {rupee(p.amount)} · {p.method.replace("_", " ")} · {formatDate(p.received_at)}
+                    </li>
+                  ))}
+                </ul>
+                <div className="text-[11px] text-ink-3 mt-1.5 pl-6">Pehle inhe refund / void karo (Payment history se).</div>
+              </div>
+            )}
+
+            {!quote.invoice_id && receivedPayments.length === 0 && (
+              <p className="text-sm text-ink-3">{deleteBlock}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="primary" onClick={() => setBlockedOpen(false)}>Samajh gaya</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reusable confirm dialog (replaces native window.confirm, which is
           suppressed in some embeds and silently returns false). */}

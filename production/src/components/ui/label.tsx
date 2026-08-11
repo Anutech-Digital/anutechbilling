@@ -47,14 +47,17 @@ function FormField({
   required,
   children,
   htmlFor,
+  className,
 }: {
   label: string;
   required?: boolean;
   children: React.ReactNode;
   htmlFor?: string;
+  /** Applied to the field wrapper — e.g. grid column spans. */
+  className?: string;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className={className ? `space-y-1.5 ${className}` : "space-y-1.5"}>
       <Label htmlFor={htmlFor} required={required}>
         {label}
       </Label>

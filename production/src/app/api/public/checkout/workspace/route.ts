@@ -222,9 +222,23 @@ export async function POST(request: NextRequest) {
     const razorpayConfigured = Boolean(rzKeyId) && Boolean(rzKeySecret);
     const isSimulation       = simulate === true;
 
+    // Simulated checkout is a preview tool — only when explicitly allowed
+    // (non-prod, or ALLOW_SIMULATED_CHECKOUT=1). In production without that
+    // flag, a crafted simulate:true must NOT create a fake "paid" customer,
+    // even if the UI button is already hidden. Server is the real gate.
+    const simulationAllowed =
+      process.env.ALLOW_SIMULATED_CHECKOUT === "1" ||
+      process.env.NODE_ENV !== "production";
+
     if (!razorpayConfigured && !isSimulation) {
       return NextResponse.json(
         { error: "Razorpay is not configured yet. Please use the 'Get a quote' option for now." },
+        { status: 503 },
+      );
+    }
+    if (isSimulation && !simulationAllowed) {
+      return NextResponse.json(
+        { error: "Online payment isn't available yet. Please use the 'Get a quote' option." },
         { status: 503 },
       );
     }

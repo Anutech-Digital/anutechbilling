@@ -19,9 +19,10 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, toWhatsAppDigits } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
@@ -65,6 +66,8 @@ interface Props {
   /** Customer info */
   customerGstin?:   string | null;
   customerEmail?:   string | null;
+  /** Recipient WhatsApp/phone — enables the free wa.me "Share on WhatsApp" action. */
+  customerPhone?:   string | null;
   customerAddress?: string | null;
   customerState?:   string | null;
   /** Recipient country — a foreign country marks an export (zero-rated under LUT). */
@@ -98,6 +101,7 @@ export function TaxInvoiceDialog({
   interState = false,
   customerGstin,
   customerEmail,
+  customerPhone,
   customerAddress,
   customerState,
   customerCountry,
@@ -162,6 +166,65 @@ export function TaxInvoiceDialog({
   // Prefer frozen net_payable from invoice — guaranteed to match what was issued
   const netPayable       = invoice.net_payable ?? Math.max(0, fTotal - advancesAdjusted);
 
+  const [sharing, setSharing] = React.useState(false);
+
+  /** Render + download the invoice PDF. Shared by the Download button and the
+   *  WhatsApp share flow (so the file is ready for the owner to attach). */
+  async function downloadPdf(): Promise<void> {
+    const { downloadInvoicePDF } = await import("@/lib/pdf");
+    await downloadInvoicePDF({
+      invoice, lineItems, subtotal, discountPct, discount,
+      taxable: fTaxable, taxRate: fRate, tax: fTax, total: fTotal, interState: fInter,
+      customerGstin, customerEmail, customerAddress, customerState, customerCountry,
+      currency, exchangeRate,
+      tenantName, tenantGstin, tenantEmail, tenantPhone,
+      tenantAddress, tenantState,
+    });
+  }
+
+  /** Free wa.me share — opens WhatsApp with a prefilled Hinglish message, and
+   *  downloads the PDF so the owner can attach it in the chat. No Cloud API /
+   *  keys needed, so it works on day one. */
+  async function shareOnWhatsApp(): Promise<void> {
+    const dueLine = invoice.due_date ? `\nDue date: ${formatDate(invoice.due_date)}` : "";
+    const amountLabel = advancesAdjusted > 0 ? "Net payable" : "Amount";
+    const message =
+      `Namaste ${invoice.customer_name},\n\n` +
+      `Aapka Tax Invoice ${invoice.id} taiyaar hai.\n` +
+      `${amountLabel}: ${money(netPayable)}${dueLine}\n\n` +
+      `PDF attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
+      `Dhanyavaad,\n${tenantName}`;
+    const digits = toWhatsAppDigits(customerPhone);
+    if (!digits) {
+      toast.error("No phone number for this customer", {
+        description: "Add a phone on the customer profile to send on WhatsApp.",
+      });
+      return;
+    }
+    // Device-aware target (matches the leads screen): mobile → wa.me deep link;
+    // desktop → web.whatsapp.com/send (wa.me shows a landing page on desktop).
+    const q = encodeURIComponent(message);
+    const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+    const link = isMobile
+      ? `https://wa.me/${digits}?text=${q}`
+      : `https://web.whatsapp.com/send?phone=${digits}&text=${q}`;
+    // Open WhatsApp synchronously (inside the click gesture) so pop-up blockers
+    // don't eat it, THEN download the PDF for the owner to attach.
+    window.open(link, "_blank", "noopener,noreferrer");
+    setSharing(true);
+    try {
+      await downloadPdf();
+      toast.success("Invoice PDF downloaded", {
+        description: "Attach this PDF in the WhatsApp chat.",
+      });
+    } catch (err) {
+      console.error("Invoice PDF failed:", err);
+      toast.error("PDF didn't download — WhatsApp opened; download the PDF separately.");
+    } finally {
+      setSharing(false);
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0">
@@ -181,20 +244,22 @@ export function TaxInvoiceDialog({
           <div className="flex gap-2">
             <Button
               size="sm"
+              variant="primary"
+              icon="whatsapp"
+              loading={sharing}
+              onClick={shareOnWhatsApp}
+              title="WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"
+            >
+              Send on WhatsApp
+            </Button>
+            <Button
+              size="sm"
               icon="download"
               loading={downloadingPdf}
               onClick={async () => {
                 setDownloadingPdf(true);
                 try {
-                  const { downloadInvoicePDF } = await import("@/lib/pdf");
-                  await downloadInvoicePDF({
-                    invoice, lineItems, subtotal, discountPct, discount,
-                    taxable: fTaxable, taxRate: fRate, tax: fTax, total: fTotal, interState: fInter,
-                    customerGstin, customerEmail, customerAddress, customerState, customerCountry,
-                    currency, exchangeRate,
-                    tenantName, tenantGstin, tenantEmail, tenantPhone,
-                    tenantAddress, tenantState,
-                  });
+                  await downloadPdf();
                 } catch (err) {
                   console.error("Invoice PDF failed:", err);
                 } finally {

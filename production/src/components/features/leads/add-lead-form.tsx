@@ -507,7 +507,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
             <Input
               id="company"
               autoFocus
-              placeholder="Acme Corp Pvt Ltd"
+              placeholder="e.g. Acme Corp Pvt Ltd"
               error={errors.company?.message}
               {...register("company")}
             />
@@ -562,7 +562,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
             <FormField label="Contact name" htmlFor="contact_name">
               <Input
                 id="contact_name"
-                placeholder="Rajesh K"
+                placeholder="e.g. Rajesh K"
                 {...register("contact_name")}
               />
             </FormField>
@@ -570,7 +570,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
               <Input
                 id="contact_email"
                 type="email"
-                placeholder="rajesh@acme.com"
+                placeholder="e.g. rajesh@acme.com"
                 error={errors.contact_email?.message}
                 {...register("contact_email")}
               />
@@ -578,7 +578,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
             <FormField label="Phone" htmlFor="contact_phone">
               <Input
                 id="contact_phone"
-                placeholder="+91 98765 43210"
+                placeholder="e.g. +91 98765 43210"
                 {...register("contact_phone")}
               />
             </FormField>
@@ -590,7 +590,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
             <Input
               id="gstin"
               className="font-mono uppercase"
-              placeholder="27AABCE1234D1Z9"
+              placeholder="e.g. 27AABCE1234D1Z9"
               error={errors.gstin?.message}
               {...register("gstin")}
             />
@@ -819,7 +819,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
               id="notes"
               rows={4}
               placeholder="Decision maker, timeline, budget, objections, next-step plan…"
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
               {...register("notes")}
             />
           </FormField>
