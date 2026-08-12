@@ -35,7 +35,7 @@ export interface AddSeatsInput {
   customerId:         string | null;
   customerName:       string;
   plan:               string;
-  vendor:             "google" | "microsoft" | "zoho" | "other";
+  vendor:             "google" | "microsoft" | "zoho" | "support" | "other";
   domain:             string | null;
   currentSeats:       number;
   currentMrr:         number;     // ₹/month per existing sub

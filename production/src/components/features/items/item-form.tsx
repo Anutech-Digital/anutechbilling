@@ -39,13 +39,14 @@ const VENDORS = [
   { value: "google",    label: "Google" },
   { value: "microsoft", label: "Microsoft" },
   { value: "zoho",      label: "Zoho" },
+  { value: "support",   label: "Support (DSP)" },
   { value: "other",     label: "Other" },
 ] as const;
 
 const schema = z.object({
   id:        z.string().min(2, "Item ID required").max(50).regex(/^[A-Za-z0-9_-]+$/, "Only A-Z, 0-9, _ and - allowed"),
   name:      z.string().min(2, "Name required"),
-  vendor:    z.enum(["google", "microsoft", "zoho", "other"]),
+  vendor:    z.enum(["google", "microsoft", "zoho", "support", "other"]),
   kind:      z.enum(["main", "addon"]),
   hsn:       z.string().optional(),
 });

@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { useUpdateSubscription } from "@/lib/queries/subscriptions";
 import type { Subscription } from "@/lib/supabase/database.types";
 
-const VENDORS: Subscription["vendor"][] = ["google", "microsoft", "zoho", "other"];
+const VENDORS: Subscription["vendor"][] = ["google", "microsoft", "zoho", "support", "other"];
 const STATUSES: Subscription["status"][] = ["active", "paused", "expired", "cancelled"];
 
 export function EditSubscriptionDialog({

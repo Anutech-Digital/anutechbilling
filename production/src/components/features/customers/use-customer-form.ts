@@ -304,7 +304,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
             // whether the account was created — those used to be conflated, so a
             // silent email failure looked identical to a successful setup.
             if (!body.created) {
-              toast.success("Linked to an existing Customer Panel account");
+              toast.success(
+                body.emailSent
+                  ? "Linked to an existing Customer Panel account — they've been notified by email"
+                  : "Linked to an existing Customer Panel account"
+              );
             } else if (body.emailSent) {
               toast.success("Customer Panel account created — setup email sent");
             } else {

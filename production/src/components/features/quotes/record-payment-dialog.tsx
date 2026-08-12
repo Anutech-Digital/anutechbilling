@@ -489,6 +489,11 @@ export function RecordPaymentDialog({
       };
     },
     onSuccess: (res) => {
+      // Best-effort instant nudge — if this payment created/changed a support
+      // subscription, don't make the customer wait for the next scheduled
+      // flush. Silent on failure: the scheduled flush is the real safety net.
+      fetch("/api/internal/support-sync-nudge", { method: "POST" }).catch(() => {});
+
       // Invalidate everything that this touches
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", quoteId] });

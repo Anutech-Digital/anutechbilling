@@ -105,6 +105,40 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     }
   };
 
+  // Edit-mode counterpart to the create-time "Also create Customer Panel
+  // account" checkbox — an existing customer never got that opt-in at
+  // creation time (or it failed), so this fires the same provisioning call
+  // immediately, independent of the form's save button. Same endpoint the
+  // create path uses — safe to call again for a customer who's already
+  // linked (returns "linked to existing" rather than duplicating anything).
+  const [provisioningExisting, setProvisioningExisting] = React.useState(false);
+  const handleProvisionExisting = async () => {
+    if (!customer) return;
+    setProvisioningExisting(true);
+    try {
+      const res = await fetch(`/api/customers/${customer.id}/provision-customer-panel`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Could not create Customer Panel account");
+      if (!body.created) {
+        toast.success(
+          body.emailSent
+            ? "Linked to an existing Customer Panel account — they've been notified by email"
+            : "Linked to an existing Customer Panel account"
+        );
+      } else if (body.emailSent) {
+        toast.success("Customer Panel account created — setup email sent");
+      } else {
+        toast.warning(
+          "Customer Panel account created, but the setup email failed to send. Ask the customer to use \"Forgot password\" on the Customer Panel login page instead."
+        );
+      }
+    } catch (e) {
+      toast.error((e as Error).message || "Could not create Customer Panel account");
+    } finally {
+      setProvisioningExisting(false);
+    }
+  };
+
   // Promote an "other contact" to the primary slot. We SWAP — the old primary
   // becomes an other-contact row so nothing is lost (unless it was empty, in
   // which case we just drop the now-blank row). Note the primary uses
@@ -589,6 +623,14 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               />
               Also create Customer Panel account for this customer
             </label>
+          ) : customer ? (
+            <Button
+              type="button" variant="default" size="sm" icon="link"
+              loading={provisioningExisting}
+              onClick={handleProvisionExisting}
+            >
+              Assign Customer Panel account
+            </Button>
           ) : <span />}
           <div className="flex items-center gap-2">
             <Button type="button" variant="ghost" onClick={cancel}>Cancel</Button>

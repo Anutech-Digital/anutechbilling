@@ -621,7 +621,7 @@ type ItemRow = {
   id: string;
   tenant_id: string;
   name: string;
-  vendor: "google" | "microsoft" | "zoho" | "other";
+  vendor: "google" | "microsoft" | "zoho" | "support" | "other";
   /** "main" = core plan offered standalone · "addon" = upsell paired with a main plan */
   kind: "main" | "addon";
   /** "subscription" = recurring per-seat/mo · "one_time" = one-off product/service */
@@ -647,7 +647,7 @@ type ItemInsert = {
   id: string;
   tenant_id: string;
   name: string;
-  vendor: "google" | "microsoft" | "zoho" | "other";
+  vendor: "google" | "microsoft" | "zoho" | "support" | "other";
   kind?: "main" | "addon";
   item_type?: "subscription" | "one_time";
   hsn?: string | null;
@@ -681,7 +681,7 @@ export type PartnerCatalogRow = {
   id: string;
   tenant_id: string;
   name: string;
-  vendor: "google" | "microsoft" | "zoho" | "other";
+  vendor: "google" | "microsoft" | "zoho" | "support" | "other";
   kind: "main" | "addon";
   hsn: string | null;
   msrp: number;
@@ -1014,7 +1014,7 @@ type SubscriptionRow = {
   customer_name: string;
   domain: string | null;
   plan: string;
-  vendor: "google" | "microsoft" | "zoho" | "other";
+  vendor: "google" | "microsoft" | "zoho" | "support" | "other";
   seats: number;
   used: number;
   mrr: number;
@@ -1053,7 +1053,7 @@ type SubscriptionInsert = {
   customer_name: string;
   domain?: string | null;
   plan: string;
-  vendor: "google" | "microsoft" | "zoho" | "other";
+  vendor: "google" | "microsoft" | "zoho" | "support" | "other";
   seats: number;
   used?: number;
   mrr: number;
@@ -1192,6 +1192,35 @@ type RenewalEmailLogInsert = {
   sent_at?:         string;
 };
 type RenewalEmailLogUpdate = Partial<RenewalEmailLogInsert>;
+
+// ============================================================
+// Support sync outbox (migration 0224) — queued Billing→DSP plan pushes
+// ============================================================
+type SupportSyncOutboxRow = {
+  id:              string;
+  tenant_id:       string;
+  subscription_id: string;
+  customer_id:     string;
+  payload:         Record<string, unknown>;
+  status:          "pending" | "sent" | "failed";
+  attempts:        number;
+  last_error:      string | null;
+  created_at:      string;
+  sent_at:         string | null;
+};
+type SupportSyncOutboxInsert = {
+  id?:              string;
+  tenant_id:        string;
+  subscription_id:  string;
+  customer_id:      string;
+  payload:          Record<string, unknown>;
+  status?:          "pending" | "sent" | "failed";
+  attempts?:        number;
+  last_error?:      string | null;
+  created_at?:      string;
+  sent_at?:         string | null;
+};
+type SupportSyncOutboxUpdate = Partial<SupportSyncOutboxInsert>;
 
 // ============================================================
 // Quote send log (migration 0009) — audit of every quote email sent
@@ -2258,7 +2287,7 @@ export type PurchaseOrderRow = {
   customer_id:      string | null;
   customer_name:    string;
   domain:           string | null;     // e.g. acme.in
-  vendor:           "google" | "microsoft" | "zoho" | "other";
+  vendor:           "google" | "microsoft" | "zoho" | "support" | "other";
   vendor_order_id:  string | null;     // Google CSP order ID etc.
   plan:             string;
   seats:            number;
@@ -2281,7 +2310,7 @@ type PurchaseOrderInsert = {
   customer_id?:     string | null;
   customer_name:    string;
   domain?:          string | null;
-  vendor:           "google" | "microsoft" | "zoho" | "other";
+  vendor:           "google" | "microsoft" | "zoho" | "support" | "other";
   vendor_order_id?: string | null;
   plan:             string;
   seats:            number;
@@ -2830,6 +2859,7 @@ export type Database = {
       api_keys:           { Row: ApiKeyRow;            Insert: ApiKeyInsert;            Update: ApiKeyUpdate;            Relationships: [] };
       tasks:              { Row: TaskRow;              Insert: TaskInsert;              Update: TaskUpdate;              Relationships: [] };
       renewal_email_log:  { Row: RenewalEmailLogRow;   Insert: RenewalEmailLogInsert;   Update: RenewalEmailLogUpdate;   Relationships: [] };
+      support_sync_outbox: { Row: SupportSyncOutboxRow; Insert: SupportSyncOutboxInsert; Update: SupportSyncOutboxUpdate; Relationships: [] };
       quote_send_log:     { Row: QuoteSendLogRow;      Insert: QuoteSendLogInsert;      Update: QuoteSendLogUpdate;      Relationships: [] };
       vendors:            { Row: VendorRow;             Insert: VendorInsert;            Update: VendorUpdate;            Relationships: [] };
       vendor_bills:       { Row: VendorBillRow;        Insert: VendorBillInsert;        Update: VendorBillUpdate;        Relationships: [] };
@@ -3745,7 +3775,7 @@ export type Database = {
     };
     Enums: {
       user_role: "owner" | "manager" | "sales" | "sales_senior" | "billing" | "accountant" | "delivery" | "support";
-      vendor: "google" | "microsoft" | "zoho" | "other";
+      vendor: "google" | "microsoft" | "zoho" | "support" | "other";
       lead_stage: "new" | "contact" | "demo" | "trial" | "quote" | "won" | "lost";
       quote_status: "draft" | "sent" | "viewed" | "accepted" | "rejected" | "expired";
       invoice_status: "draft" | "pending" | "paid" | "overdue" | "void";
