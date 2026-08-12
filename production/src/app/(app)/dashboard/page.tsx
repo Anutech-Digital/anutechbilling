@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { TrialsExpiringCard } from "@/components/features/trials/trials-expiring-card";
 import { GettingStartedCard } from "@/components/features/dashboard/getting-started-card";
+import { PriorityActionHub } from "@/components/features/dashboard/priority-action-hub";
 import { Badge } from "@/components/ui/badge";
 
 // ============================================================
@@ -562,6 +563,14 @@ export default function DashboardPage() {
         hasQuote={(quotes?.length ?? 0) > 0}
         hasSale={(subscriptions?.length ?? 0) > 0}
         workspaceName={currentUser?.tenantName ?? ""}
+      />
+
+      {/* Priority Action Hub for actionable alerts */}
+      <PriorityActionHub
+        expiringRenewalsCount={urgentRenewals.length}
+        expiringRenewalsValue={urgentRenewals.reduce((s, r) => s + (r.sub.mrr ?? 0) * 12, 0)}
+        draftQuotesCount={draftQuotes}
+        pendingCollectValue={toCollect}
       />
 
       {/* KPI — money-first, 2-tier. The three ₹ metrics get big coloured tiles

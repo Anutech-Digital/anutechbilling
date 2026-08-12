@@ -11,6 +11,7 @@ import * as React from "react";
 import { Sidebar, MobileSidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
+import { GlobalBugReporter } from "@/components/shared/global-bug-reporter";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -32,6 +33,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Sticky mobile bottom tab bar (phone only) */}
       <MobileBottomNav onMoreClick={() => setMobileNavOpen(true)} />
+
+      {/* Always-on-top Global Floating Bug Reporter (z-[9999]) */}
+      <GlobalBugReporter />
     </div>
   );
 }

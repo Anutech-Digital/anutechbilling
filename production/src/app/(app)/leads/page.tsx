@@ -77,7 +77,7 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Lead } from "@/lib/supabase/database.types";
 import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
 import { FAB } from "@/components/ui/fab";
-import { StatStrip } from "@/components/shared/stat-strip";
+import { WhatsAppActionDialog } from "@/components/shared/whatsapp-action-dialog";
 
 // ============================================================
 // Stage config (matches prototype LEAD_STAGES)
@@ -202,6 +202,7 @@ function LeadsPageInner() {
   const [editingLead, setEditingLead] = React.useState<Lead | null>(null);
   // Row "Follow-up" quick action → opens AddTaskDialog scoped to this lead.
   const [followUpLead, setFollowUpLead] = React.useState<Lead | null>(null);
+  const [waLead, setWaLead] = React.useState<Lead | null>(null);
   // Merge-duplicates dialog — holds the cluster (a lead + its matches) to fold.
   const [mergeCluster, setMergeCluster] = React.useState<Lead[] | null>(null);
   // "Follow-ups due today" banner — click to expand the list of due leads.
@@ -223,6 +224,7 @@ function LeadsPageInner() {
   // Sort state for the list view (kanban ignores this)
   const [sortBy, setSortBy] = React.useState<"created" | "value" | "company" | "stage" | "age">("created");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+  const [kpiOpen, setKpiOpen] = React.useState(true);
 
   // ── Deep-link: open the drawer for the lead in ?lead=<id> ──
   // Runs once when leads load and the URL param is present.
@@ -429,233 +431,259 @@ function LeadsPageInner() {
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto min-h-[calc(100vh-3.5rem)] md:h-[calc(100vh-3.5rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
+      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">
             {isDealsPage ? "Deal Pipeline" : "Leads"}
           </h1>
-          {!isLoading && leads && (
-            isDealsPage ? (
-              <div className="mt-2">
-                <StatStrip
-                  items={[
-                    { label: "Active deals",  value: openDeals.length },
-                    { label: "Open pipeline", value: rupee(totalValue, { compact: true }), tone: "amber" },
-                    { label: "Won",           value: `${conversion}%`, tone: conversion > 0 ? "emerald" : "default" },
-                  ]}
-                />
-              </div>
-            ) : (
-              <p className="text-sm text-ink-3 mt-1 tabular-nums">
-                <b>{rawLeads.length}</b> open lead{rawLeads.length === 1 ? "" : "s"} · call them, email them, update status
-              </p>
-            )
-          )}
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <div className="w-56">
-            <Input
-              prefix={<Icon name="search" size={14} />}
-              placeholder={isDealsPage ? "Search deals…" : "Search leads…"}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          {/* View toggle — Kanban for stage flow, List for scale (50+ leads).
-              Hidden on the Leads tab because raw leads can only sit in 'new' /
-              'contacted', making Kanban mostly empty columns. Leads tab always
-              renders as a list (triage queue, not stage flow). Also hidden
-              entirely for sales role (lead-only users don't need Kanban). */}
-          {!isSales && (
-            <div className={cn(
-              // Hidden on mobile (Kanban makes no sense on phone, list is forced)
-              // Hidden on Leads tab (always list anyway)
-              "hidden md:inline-flex rounded-md border border-hairline overflow-hidden",
-              tab === "leads" && "md:hidden",
-            )}>
-              <button
-                type="button"
-                onClick={() => setView("kanban")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 transition-colors",
-                  view === "kanban" ? "bg-ink text-paper" : "bg-paper text-ink-2 hover:bg-paper-2",
-                )}
-                aria-pressed={view === "kanban"}
-                title="Kanban view — best for stage flow"
-              >
-                <Icon name="layout" size={13} /> Kanban
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("list")}
-                className={cn(
-                  "px-2.5 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 transition-colors border-l border-hairline",
-                  view === "list" ? "bg-ink text-paper" : "bg-paper text-ink-2 hover:bg-paper-2",
-                )}
-                aria-pressed={view === "list"}
-                title="List view — best for scanning many leads by value/age"
-              >
-                <Icon name="more_h" size={13} /> List
-              </button>
-            </div>
-          )}
-          {/* Filter dropdown — multi-select stage + priority. Active count
-              shows as a badge on the button. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button icon="filter">
-                Filter
-                {activeFilterCount > 0 && (
-                  <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-amber text-paper text-[10px] font-semibold px-1">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-ink-3">Stage</DropdownMenuLabel>
-              {filterStages.map((s) => (
-                <DropdownMenuCheckboxItem
-                  key={s.id}
-                  checked={stageFilter.includes(s.id)}
-                  onCheckedChange={(checked) => {
-                    setStageFilter((prev) =>
-                      checked ? [...prev, s.id] : prev.filter((x) => x !== s.id),
-                    );
-                  }}
-                  className="text-sm"
-                >
-                  <span className={cn("inline-block w-2 h-2 rounded-full mr-2", s.dot)} />
-                  {s.label}
-                </DropdownMenuCheckboxItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-ink-3">Priority</DropdownMenuLabel>
-              {(["high","medium","low"] as const).map((p) => (
-                <DropdownMenuCheckboxItem
-                  key={p}
-                  checked={priorityFilter.includes(p)}
-                  onCheckedChange={(checked) => {
-                    setPriorityFilter((prev) =>
-                      checked ? [...prev, p] : prev.filter((x) => x !== p),
-                    );
-                  }}
-                  className="text-sm capitalize"
-                >
-                  <span className={cn("inline-block w-2 h-2 rounded-full mr-2",
-                    p === "high"   && "bg-rose",
-                    p === "medium" && "bg-amber",
-                    p === "low"    && "bg-slate",
-                  )} />
-                  {p}
-                </DropdownMenuCheckboxItem>
-              ))}
-              {activeFilterCount > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onSelect={() => { setStageFilter([]); setPriorityFilter([]); }}
-                    className="text-sm text-rose"
-                  >
-                    Clear all filters
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {/* Advanced controls — hidden for sales role to keep the inbox
-              focused on call/email/update. Owner/manager get the full set. */}
-          {/* Secondary toolbar — desktop-only (hidden md:flex) so a phone's
-              header doesn't wrap into a wall of buttons. "Start trial" shows
-              ONLY on /deals: per the quote-first funnel a trial follows a quote,
-              so offering it on the raw Leads inbox contradicts the model. */}
-          {/* Secondary actions rolled into one "More" menu so the header stays
-              clean — only Search / Filter / + Add Lead compete for attention. */}
-          {!isSales && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="default" icon="more_h" className="hidden md:inline-flex">More</Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCsvImportOpen(true)}>
-                  <Icon name="download" size={14} className="text-ink-3" /> Import CSV
-                </DropdownMenuItem>
-                <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCampaignOpen(true)}>
-                  <Icon name="send" size={14} className="text-ink-3" /> Send campaign
-                </DropdownMenuItem>
-                <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setGoogleImportOpen(true)}>
-                  <Icon name="globe" size={14} className="text-ink-3" /> Import from Google
-                </DropdownMenuItem>
-                {isDealsPage && (
-                  <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setTrialOpen(true)}>
-                    <Icon name="clock" size={14} className="text-ink-3" /> Start trial
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setShareOpen(true)}>
-                  <Icon name="link" size={14} className="text-ink-3" /> Share enquiry form
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {/* Add Lead / Deal split-button — hidden on mobile because the
-              floating FAB at the bottom-right already provides the same
-              action in a more thumb-friendly position.
-
-              The primary button opens the full lead form (12+ fields). On the
-              Leads tab a caret opens a dropdown that ALSO offers "Quick add"
-              (4 fields). This replaced an earlier hover-reveal popup that was
-              undiscoverable, not keyboard-accessible, and impossible to
-              trigger on touch devices (no hover) — users reported clicking
-              "Quick add" did nothing because the popup vanished on mouse-move. */}
-          <div className="hidden md:inline-flex">
-            <Button
-              variant="primary"
-              icon="plus"
-              onClick={() => setAddOpen(true)}
-              className={tab === "leads" ? "rounded-r-none" : undefined}
-            >
-              {tab === "leads" ? "Add Lead" : "Add Deal"}
-            </Button>
-            {tab === "leads" && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="primary"
-                    icon="chevron_down"
-                    aria-label="More ways to add a lead"
-                    className="rounded-l-none border-l border-white/25 px-2"
-                  />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-60">
-                  <DropdownMenuItem onSelect={() => setAddOpen(true)}>
-                    <Icon name="plus" size={14} className="mr-2 text-ink-3" />
-                    Full form · all fields
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setQuickOpen(true)}>
-                    <Icon name="zap" size={14} className="mr-2 text-amber" />
-                    Quick add · 4 fields
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
+          <p className="text-sm text-ink-3 mt-1 tabular-nums">
+            {isDealsPage
+              ? `Manage active opportunities, track stage velocity, close deals`
+              : `Raw inquiries queue — qualify, call, email, and convert to deals`}
+          </p>
         </div>
       </div>
 
-      {/* Smart Views chip bar — saved filter combos as primary nav.
-          Close/Attio/HubSpot pattern. Each chip = one work mode. */}
+      {/* Collapsible Leads & Deals Intelligence Banner */}
       {!isLoading && leads && leads.length > 0 && (
-        <LeadsSmartViews
-          leads={leadsForTab}
-          currentUserId={currentUser?.userId}
-          duplicateCount={duplicateCountForTab}
-          junkCount={junkCount}
-          junkSuspectCount={junkSuspectCount}
-          active={smartView}
-          onChange={setSmartView}
-        />
+        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+          <button
+            type="button"
+            onClick={() => setKpiOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <Icon name="bar_chart" size={15} className="text-amber-ink" />
+              <span className="font-semibold text-ink">{isDealsPage ? "Deals Pipeline Analytics" : "Inbound Leads Intelligence"}</span>
+              <span className="text-ink-3">·</span>
+              <span className="text-ink-2 font-mono font-medium">Open Pipeline: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Active Deals: <b className="text-ink">{openDeals.length}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Raw Leads: <b className="text-ink">{rawLeads.length}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Win Rate: <b className="text-emerald">{conversion}%</b></span>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+            </div>
+          </button>
+
+          {kpiOpen && (
+            <div className="p-3 border-t border-hairline bg-paper">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Open Pipeline</p>
+                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(totalValue, { compact: true })}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Active Deals</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{openDeals.length}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Raw Inquiries</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rawLeads.length}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Win Rate</p>
+                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{conversion}%</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">High Priority</p>
+                  <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{leads.filter((l) => l.priority === "high").length}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Total Inquiries</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{leads.length}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {/* Sticky Controls & Smart Views Toolbar */}
+      {!isLoading && leads && (
+        <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <div className="w-full sm:w-64">
+              <Input
+                prefix={<Icon name="search" size={14} />}
+                placeholder={isDealsPage ? "Search deals…" : "Search leads…"}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap ml-auto">
+              {!isSales && (
+                <div className={cn(
+                  "hidden md:inline-flex rounded-md border border-hairline overflow-hidden",
+                  tab === "leads" && "md:hidden",
+                )}>
+                  <button
+                    type="button"
+                    onClick={() => setView("kanban")}
+                    className={cn(
+                      "px-2.5 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer",
+                      view === "kanban" ? "bg-ink text-paper" : "bg-paper text-ink-2 hover:bg-paper-2",
+                    )}
+                    aria-pressed={view === "kanban"}
+                    title="Kanban view — best for stage flow"
+                  >
+                    <Icon name="layout" size={13} /> Kanban
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView("list")}
+                    className={cn(
+                      "px-2.5 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 transition-colors border-l border-hairline cursor-pointer",
+                      view === "list" ? "bg-ink text-paper" : "bg-paper text-ink-2 hover:bg-paper-2",
+                    )}
+                    aria-pressed={view === "list"}
+                    title="List view — best for scanning many leads by value/age"
+                  >
+                    <Icon name="more_h" size={13} /> List
+                  </button>
+                </div>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button icon="filter">
+                    Filter
+                    {activeFilterCount > 0 && (
+                      <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-amber text-paper text-[10px] font-semibold px-1">
+                        {activeFilterCount}
+                      </span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-ink-3">Stage</DropdownMenuLabel>
+                  {filterStages.map((s) => (
+                    <DropdownMenuCheckboxItem
+                      key={s.id}
+                      checked={stageFilter.includes(s.id)}
+                      onCheckedChange={(checked) => {
+                        setStageFilter((prev) =>
+                          checked ? [...prev, s.id] : prev.filter((x) => x !== s.id),
+                        );
+                      }}
+                      className="text-sm"
+                    >
+                      <span className={cn("inline-block w-2 h-2 rounded-full mr-2", s.dot)} />
+                      {s.label}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-ink-3">Priority</DropdownMenuLabel>
+                  {(["high","medium","low"] as const).map((p) => (
+                    <DropdownMenuCheckboxItem
+                      key={p}
+                      checked={priorityFilter.includes(p)}
+                      onCheckedChange={(checked) => {
+                        setPriorityFilter((prev) =>
+                          checked ? [...prev, p] : prev.filter((x) => x !== p),
+                        );
+                      }}
+                      className="text-sm capitalize"
+                    >
+                      <span className={cn("inline-block w-2 h-2 rounded-full mr-2",
+                        p === "high"   && "bg-rose",
+                        p === "medium" && "bg-amber",
+                        p === "low"    && "bg-slate",
+                      )} />
+                      {p}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  {activeFilterCount > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => { setStageFilter([]); setPriorityFilter([]); }}
+                        className="text-sm text-rose"
+                      >
+                        Clear all filters
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {!isSales && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="default" icon="more_h" className="hidden md:inline-flex">More</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCsvImportOpen(true)}>
+                      <Icon name="download" size={14} className="text-ink-3" /> Import CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setCampaignOpen(true)}>
+                      <Icon name="send" size={14} className="text-ink-3" /> Send campaign
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setGoogleImportOpen(true)}>
+                      <Icon name="globe" size={14} className="text-ink-3" /> Import from Google
+                    </DropdownMenuItem>
+                    {isDealsPage && (
+                      <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setTrialOpen(true)}>
+                        <Icon name="clock" size={14} className="text-ink-3" /> Start trial
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={() => setShareOpen(true)}>
+                      <Icon name="link" size={14} className="text-ink-3" /> Share enquiry form
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              <div className="inline-flex">
+                <Button
+                  variant="primary"
+                  icon="plus"
+                  onClick={() => setAddOpen(true)}
+                  className={tab === "leads" ? "rounded-r-none" : undefined}
+                >
+                  {tab === "leads" ? "Add Lead" : "Add Deal"}
+                </Button>
+                {tab === "leads" && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="primary"
+                        icon="chevron_down"
+                        aria-label="More ways to add a lead"
+                        className="rounded-l-none border-l border-white/25 px-2"
+                      />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-60">
+                      <DropdownMenuItem onSelect={() => setAddOpen(true)}>
+                        <Icon name="plus" size={14} className="mr-2 text-ink-3" />
+                        Full form · all fields
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setQuickOpen(true)}>
+                        <Icon name="zap" size={14} className="mr-2 text-amber" />
+                        Quick add · 4 fields
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Smart Views chip bar */}
+          <LeadsSmartViews
+            leads={leadsForTab}
+            currentUserId={currentUser?.userId}
+            duplicateCount={duplicateCountForTab}
+            junkCount={junkCount}
+            junkSuspectCount={junkSuspectCount}
+            active={smartView}
+            onChange={setSmartView}
+          />
+        </div>
       )}
 
 
@@ -1050,6 +1078,7 @@ function LeadsPageInner() {
           onRowClick={(l) => setSelected(l)}
           onSendQuote={goSendQuote}
           onFollowUp={setFollowUpLead}
+          onWhatsApp={(l) => setWaLead(l)}
           onMerge={openMergeFor}
           dupIds={dup.flagged}
           isDealsPage={isDealsPage}
@@ -1149,6 +1178,23 @@ function LeadsPageInner() {
           onOpenChange={(o) => { if (!o) setFollowUpLead(null); }}
           linkLabel={followUpLead.company}
           linkTo={{ lead_id: followUpLead.id }}
+        />
+      )}
+
+      {/* WhatsApp Action & Templates Dialog */}
+      {waLead && (
+        <WhatsAppActionDialog
+          open
+          onOpenChange={(o) => { if (!o) setWaLead(null); }}
+          phone={waLead.contact_phone}
+          recipientName={waLead.contact_name}
+          companyName={waLead.company}
+          category="quote"
+          vars={{
+            productName: waLead.plan || "Cloud Service",
+            seats: waLead.seats || 10,
+            amount: waLead.value ? rupee(waLead.value) : undefined,
+          }}
         />
       )}
 
@@ -2192,12 +2238,13 @@ function LeadDetailSheet({
 // the cell (which is why the old hover-slide panel needed a JS hover-intent).
 // ============================================================
 function RowActions({
-  lead, isSelected, onSendQuote, onFollowUp,
+  lead, isSelected, onSendQuote, onFollowUp, onWhatsApp,
 }: {
   lead: Lead;
   isSelected: boolean;
   onSendQuote: (l: Lead) => void;
   onFollowUp: (l: Lead) => void;
+  onWhatsApp?: (l: Lead) => void;
 }) {
   const phoneDigits = (lead.contact_phone ?? "").replace(/\D/g, "");
   const waNumber = phoneDigits.startsWith("91")
@@ -2239,7 +2286,11 @@ function RowActions({
             aria-label={`WhatsApp ${lead.company}`}
             className={cn(iconBtn, "hover:text-emerald")}
             onClick={() => {
-              openWhatsApp(waNumber);
+              if (onWhatsApp) {
+                onWhatsApp(lead);
+              } else {
+                openWhatsApp(waNumber);
+              }
               logActivity.mutate({ leadId: lead.id, kind: "whatsapp", detail: `WhatsApp to ${lead.contact_phone}` });
             }}
           >
@@ -2365,6 +2416,7 @@ function LeadListView({
   onRowClick,
   onSendQuote,
   onFollowUp,
+  onWhatsApp,
   onMerge,
   dupIds,
   isDealsPage,
@@ -2376,6 +2428,7 @@ function LeadListView({
   onRowClick: (l: Lead) => void;
   onSendQuote: (l: Lead) => void;
   onFollowUp: (l: Lead) => void;
+  onWhatsApp?: (l: Lead) => void;
   onMerge: (l: Lead) => void;
   dupIds: Set<string>;
   isDealsPage: boolean;
@@ -2511,15 +2564,8 @@ function LeadListView({
 
   return (
     <>
-    {/* Mobile card list — phones only.
-        Each card is a SwipeLeadCard:
-          - Tap → open drawer
-          - Drag right ≥ 80px → Call
-          - Drag left  ≥ 80px → WhatsApp
-        Dense 3-row layout: header (co/value), contact, meta+actions.
-        Stage quick-change chip + inline action icons are tap-isolated
-        from the card via stopPropagation. */}
-    <ul className="md:hidden space-y-3 pb-2">
+    {/* Adaptive card list — viewports < 1280px */}
+    <ul className="xl:hidden space-y-3 pb-2">
       {sorted.map((lead) => {
         const stale = daysSince(lead.updated_at) > 14 && lead.stage !== "won" && lead.stage !== "lost";
         return (
@@ -2540,25 +2586,8 @@ function LeadListView({
     </ul>
     {/* ─── End of mobile list — old inline card markup retired ─── */}
 
-    {/* Desktop / tablet power table.
-        New columns vs v1:
-          - leading checkbox  → bulk select
-          - trailing actions  → row-hover Call / WhatsApp / Email icons
-        Selecting any row reveals the floating LeadsBulkBar at the
-        viewport bottom (stage change, delete). */}
-    {/* min-h-[400px] guarantees the table never collapses below a usable
-        height even when the rail-below section is tall (sparse-data flex
-        competition bug — table had been crushing to 1.6px on /deals when
-        only 1-3 deals existed and rail-below's quick-actions grid was
-        taking all the flex space). */}
-    {/* flex-1 + min-h-0 caps this to the space the flex chain leaves, so the table
-        scrolls INTERNALLY (both axes) instead of growing as tall as all its rows.
-        Before, the container grew unbounded and the horizontal scrollbar sat at the
-        very bottom of that tall element — you had to scroll the whole page down just
-        to reach it (Pardeep's dogfood complaint). Capped + sticky header = header
-        stays put and the h-scrollbar is always on screen. The md+ fixed-height page
-        wrapper is what makes flex-1 resolve to a real cap. */}
-    <div className="hidden md:block w-full max-w-full border border-hairline rounded-md overflow-auto bg-paper flex-1 min-h-0">
+    {/* Desktop / tablet power table — viewports >= 1280px */}
+    <div className="hidden xl:block w-full max-w-full border border-hairline rounded-md overflow-auto bg-paper flex-1 min-h-0">
       {/* Fluid percentage columns — the table fills the container width with no
           horizontal scrollbar at desktop widths. */}
       <table className="w-full table-fixed">
@@ -2765,7 +2794,7 @@ function LeadListView({
                 </td>
                 {/* Quick actions — dark panel that opens from the ⋯ (hover/click/
                     focus) and stays open while the panel itself is hovered. */}
-                <RowActions lead={lead} isSelected={isSelected} onSendQuote={onSendQuote} onFollowUp={onFollowUp} />
+                <RowActions lead={lead} isSelected={isSelected} onSendQuote={onSendQuote} onFollowUp={onFollowUp} onWhatsApp={onWhatsApp} />
               </tr>
             );
           })}

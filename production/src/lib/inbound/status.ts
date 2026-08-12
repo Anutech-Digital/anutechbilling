@@ -17,13 +17,13 @@ export interface InboundStatusMeta {
 /** Map a raw inbound status to a human label + badge tone. */
 export function inboundStatusMeta(status: string): InboundStatusMeta {
   switch (status) {
-    case "lead_created":        return { label: "Lead created",   kind: "success" };
-    case "appended_to_lead":    return { label: "Added to lead",  kind: "info" };
-    case "received":            return { label: "New",            kind: "warning" };
-    case "skipped_non_enquiry": return { label: "Not an enquiry", kind: "muted" };
-    case "duplicate":           return { label: "Duplicate",      kind: "muted" };
-    case "error":               return { label: "Error",          kind: "danger" };
-    default:                    return { label: status || "—",    kind: "muted" };
+    case "lead_created":        return { label: "Lead Created",    kind: "success" };
+    case "appended_to_lead":    return { label: "Follow-up Reply",  kind: "info" };
+    case "received":            return { label: "New Enquiry",     kind: "warning" };
+    case "skipped_non_enquiry": return { label: "System / Non-Sales", kind: "muted" };
+    case "duplicate":           return { label: "Duplicate",       kind: "muted" };
+    case "error":               return { label: "Error",           kind: "danger" };
+    default:                    return { label: status || "—",     kind: "muted" };
   }
 }
 

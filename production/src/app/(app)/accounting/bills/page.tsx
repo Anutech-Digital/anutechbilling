@@ -152,6 +152,15 @@ export default function VendorBillsPage() {
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : billsQ.isError ? (
+        <Card className="py-2">
+          <EmptyState
+            icon="alert"
+            title="Bills load nahi ho paye"
+            body="Ye data load karne me dikkat aayi — aapke bills safe hain, bas dikh nahi rahe. Dobara try karo."
+            action={<Button variant="primary" icon="refresh" onClick={() => billsQ.refetch()}>Try again</Button>}
+          />
+        </Card>
       ) : bills.length === 0 ? (
         <Card className="py-2">
           <EmptyState

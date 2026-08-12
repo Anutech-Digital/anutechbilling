@@ -30,6 +30,7 @@ import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { computeEsi, isEsiEligible, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, PF_WAGE_CEILING } from "@/lib/payroll/pf";
+import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -236,7 +237,11 @@ export function EmployeesTab() {
                     >
                       <td className="px-4 py-3">
                         <div className="font-medium text-ink group-hover:text-amber-ink transition-colors">{toTitleCase(e.name)}</div>
-                        {employeeSubline(e) && <div className="text-[11px] text-ink-3 mt-0.5">{employeeSubline(e)}</div>}
+                        <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                          {employeeSubline(e) && <span>{employeeSubline(e)}</span>}
+                          {employeeSubline(e) && e.email && <span className="text-ink-4">·</span>}
+                          {e.email && <span className="font-mono text-ink-2">{e.email}</span>}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         {e.monthly_gross > 0 ? (
@@ -284,6 +289,12 @@ export function EmployeesTab() {
                       <div className="min-w-0">
                         <div className="font-medium text-ink leading-tight">{toTitleCase(e.name)}</div>
                         {employeeSubline(e) && <div className="text-[11px] text-ink-3 mt-0.5">{employeeSubline(e)}</div>}
+                        {e.email && (
+                          <div className="text-[11px] font-mono text-amber-ink mt-0.5 flex items-center gap-1">
+                            <Icon name="mail" size={11} className="text-amber-ink shrink-0" />
+                            <span className="truncate">{e.email}</span>
+                          </div>
+                        )}
                       </div>
                       {e.monthly_gross > 0 ? (
                         <div className="font-serif text-xl leading-none text-ink shrink-0">{rupee(e.monthly_gross)}</div>
@@ -390,6 +401,41 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [esiApplicable, setEsiApplicable] = React.useState<boolean>(employee?.esi_applicable ?? false);
   const [esiTouched, setEsiTouched] = React.useState(false);
   const [pfApplicable, setPfApplicable] = React.useState<boolean>(employee?.pf_applicable ?? false);
+
+  // Tab state
+  const [empTab, setEmpTab] = React.useState<"basic" | "ctc" | "statutory">("basic");
+
+  // CTC Calculator State & Overrides
+  const [annualCtc, setAnnualCtc] = React.useState<string>(
+    employee?.monthly_gross ? String(employee.monthly_gross * 12) : "600000"
+  );
+  const [isMetro, setIsMetro] = React.useState(false);
+  const [basicPct, setBasicPct] = React.useState<number>(0.5);
+  const [customBasic, setCustomBasic] = React.useState<string>("");
+  const [customHra, setCustomHra] = React.useState<string>("");
+  const [customConveyance, setCustomConveyance] = React.useState<string>("1600");
+  const [customMedical, setCustomMedical] = React.useState<string>("1250");
+  const [customSpecial, setCustomSpecial] = React.useState<string>("");
+  const [customPt, setCustomPt] = React.useState<string>("200");
+  const [capPfCeiling, setCapPfCeiling] = React.useState<boolean>(true);
+  const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
+  const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
+
+  const ctcBreakdown = React.useMemo(() => {
+    const val = Number(annualCtc) || (Number(gross) > 0 ? Number(gross) * 12 : 600000);
+    return calculateCtcBreakdown(val, {
+      isMetro,
+      basicPct,
+      customBasicMonthly: Number(customBasic) || undefined,
+      customHraMonthly: Number(customHra) || undefined,
+      customConveyanceMonthly: Number(customConveyance) || 0,
+      customMedicalMonthly: Number(customMedical) || 0,
+      customSpecialMonthly: Number(customSpecial) || undefined,
+      customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
+      capPfWageCeiling: capPfCeiling,
+      includeGratuity,
+    });
+  }, [annualCtc, gross, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves. Existing employees keep their saved value.
   React.useEffect(() => {
@@ -415,7 +461,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="md:!max-w-2xl">
+      <DialogContent className="sm:!max-w-3xl md:!max-w-4xl">
         <DialogHeader>
           <DialogTitle>{employee ? "Edit employee" : "Add employee"}</DialogTitle>
           <DialogDescription>
@@ -423,104 +469,392 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
-          {/* Basics */}
-          <section className="space-y-3">
-            <p className="text-[10px] uppercase tracking-wider text-ink-3 font-semibold">Basics</p>
-            <Field label="Full name" required>
-              <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. Abhishek Sharma" />
-            </Field>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Designation">
-                <Input value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="e.g. Sales Executive" />
-              </Field>
-              <Field label="Date of birth">
-                <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
-              </Field>
-              <Field label="Mobile">
-                <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. +91 98765 43210" />
-              </Field>
-              <Field label="Email">
-                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e.g. name@company.com" />
-              </Field>
-            </div>
-            <Field label="Address">
-              <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Residential address" />
-            </Field>
-          </section>
+        {/* Tab Navigation */}
+        <div className="flex items-center gap-1 p-1 bg-paper-2/80 border border-hairline rounded-xl text-xs font-bold my-2">
+          <button
+            type="button"
+            onClick={() => setEmpTab("basic")}
+            className={`flex-1 py-2 px-3 rounded-lg text-center transition-all cursor-pointer ${
+              empTab === "basic" ? "bg-paper text-primary shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
+            }`}
+          >
+            👤 Basic Profile
+          </button>
+          <button
+            type="button"
+            onClick={() => setEmpTab("ctc")}
+            className={`flex-1 py-2 px-3 rounded-lg text-center transition-all cursor-pointer ${
+              empTab === "ctc" ? "bg-primary text-white shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
+            }`}
+          >
+            💼 CTC &amp; Salary Breakdown
+          </button>
+          <button
+            type="button"
+            onClick={() => setEmpTab("statutory")}
+            className={`flex-1 py-2 px-3 rounded-lg text-center transition-all cursor-pointer ${
+              empTab === "statutory" ? "bg-paper text-primary shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
+            }`}
+          >
+            🛡️ Statutory &amp; Access
+          </button>
+        </div>
 
-          {/* Payroll & statutory */}
-          <section className="space-y-3 border-t border-hairline pt-4">
-            <p className="text-[10px] uppercase tracking-wider text-ink-3 font-semibold">Payroll &amp; statutory</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Monthly salary (₹, gross)">
-                <Input type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} />
+        <div className="space-y-4 py-1">
+          {/* TAB 1: BASIC PROFILE */}
+          {empTab === "basic" && (
+            <section className="space-y-3">
+              <Field label="Full name" required>
+                <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. Abhishek Sharma" />
               </Field>
-              <Field label="Paid leave / year">
-                <Input type="number" min={0} value={allowance} onChange={(e) => setAllowance(e.target.value)} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Designation">
+                  <Input value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="e.g. Sales Executive" />
+                </Field>
+                <Field label="Date of birth">
+                  <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
+                </Field>
+                <Field label="Mobile">
+                  <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. +91 98765 43210" />
+                </Field>
+                <Field label="Email">
+                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e.g. name@company.com" />
+                </Field>
+                <Field label="Joining date">
+                  <Input type="date" value={joined} onChange={(e) => setJoined(e.target.value)} />
+                </Field>
+                <Field label="Paid leave / year">
+                  <Input type="number" min={0} value={allowance} onChange={(e) => setAllowance(e.target.value)} />
+                </Field>
+              </div>
+              <Field label="Address">
+                <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Residential address" />
               </Field>
-              <Field label="Joining date">
-                <Input type="date" value={joined} onChange={(e) => setJoined(e.target.value)} />
-              </Field>
-              <Field label="PAN">
-                <Input value={pan} onChange={(e) => setPan(e.target.value)} placeholder="e.g. ABCDE1234F" className="uppercase" maxLength={10} />
-              </Field>
-              <Field label="PF number">
-                <Input value={pfNo} onChange={(e) => setPfNo(e.target.value)} placeholder="Optional" />
-              </Field>
-              <Field label="ESI number">
-                <Input value={esiNo} onChange={(e) => setEsiNo(e.target.value)} placeholder="Optional" />
-              </Field>
-            </div>
-            <label className="flex items-start gap-2 rounded-md border border-hairline p-3 cursor-pointer hover:border-hairline-strong">
-              <input
-                type="checkbox"
-                checked={esiApplicable}
-                onChange={(e) => { setEsiTouched(true); setEsiApplicable(e.target.checked); }}
-                className="mt-0.5 rounded border-hairline"
-              />
-              <span className="text-xs text-ink-2">
-                <b className="text-ink">ESI applicable</b> — deduct 0.75% from salary + accrue 3.25% employer share each month.
-                <span className="block text-ink-3 mt-0.5">Auto-suggested for gross ≤ ₹{ESI_WAGE_CEILING.toLocaleString("en-IN")}/month. Uncheck if this employee is exempt.</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2 rounded-md border border-hairline p-3 cursor-pointer hover:border-hairline-strong">
-              <input
-                type="checkbox"
-                checked={pfApplicable}
-                onChange={(e) => setPfApplicable(e.target.checked)}
-                className="mt-0.5 rounded border-hairline"
-              />
-              <span className="text-xs text-ink-2">
-                <b className="text-ink">PF applicable</b> — deduct 12% from salary + accrue 12% employer share each month.
-                <span className="block text-ink-3 mt-0.5">Computed on wage capped at ₹{PF_WAGE_CEILING.toLocaleString("en-IN")}. Tick for employees with an EPFO account.</span>
-              </span>
-            </label>
-          </section>
+            </section>
+          )}
 
-          {/* Emergency & access */}
-          <section className="space-y-3 border-t border-hairline pt-4">
-            <p className="text-[10px] uppercase tracking-wider text-ink-3 font-semibold">Emergency &amp; access</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Emergency contact">
-                <Input value={ecName} onChange={(e) => setEcName(e.target.value)} placeholder="Name" />
+          {/* TAB 2: CTC & SALARY BREAKDOWN */}
+          {empTab === "ctc" && (
+            <section className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Annual CTC (₹/yr)">
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="e.g. 600000"
+                    value={annualCtc}
+                    onChange={(e) => setAnnualCtc(e.target.value)}
+                  />
+                </Field>
+                <Field label="City HRA Standard">
+                  <select
+                    value={isMetro ? "metro" : "nonmetro"}
+                    onChange={(e) => setIsMetro(e.target.value === "metro")}
+                    className={selectCls}
+                  >
+                    <option value="nonmetro">Non-Metro (40% HRA)</option>
+                    <option value="metro">Metro City (50% HRA)</option>
+                  </select>
+                </Field>
+              </div>
+
+              <Field label="Monthly Gross Salary (₹, Base for Pay Slip)">
+                <Input type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} placeholder="e.g. 46997" />
               </Field>
-              <Field label="Emergency phone">
-                <Input inputMode="tel" value={ecPhone} onChange={(e) => setEcPhone(e.target.value)} placeholder="+91 …" />
+
+              {/* Custom Component Override Accordion Toggle */}
+              <div className="border-t border-hairline pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomControls(!showCustomControls)}
+                  className="text-xs text-primary font-extrabold flex items-center gap-1 hover:underline cursor-pointer"
+                >
+                  <Icon name={showCustomControls ? "chevron_up" : "chevron_down"} size={14} />
+                  <span>{showCustomControls ? "Hide Component Customizer" : "⚙️ Custom Edit Basic %, Allowances & Retirals"}</span>
+                </button>
+
+                {showCustomControls && (
+                  <div className="mt-3 p-3.5 bg-paper-2/90 border border-hairline rounded-2xl space-y-3 text-xs shadow-2xs">
+                    <p className="text-[10px] uppercase tracking-wider text-ink-3 font-bold">⚙️ Component Overrides &amp; Custom Allowances</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                      <Field label="Basic Salary %">
+                        <select
+                          value={basicPct}
+                          onChange={(e) => { setBasicPct(Number(e.target.value)); setCustomBasic(""); }}
+                          className={selectCls}
+                        >
+                          <option value={0.30}>30% Basic</option>
+                          <option value={0.40}>40% Basic</option>
+                          <option value={0.50}>50% Basic (Default)</option>
+                          <option value={0.60}>60% Basic</option>
+                        </select>
+                      </Field>
+
+                      <Field label="Custom Basic (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customBasic}
+                          onChange={(e) => setCustomBasic(e.target.value)}
+                          placeholder={`Auto (${rupee(ctcBreakdown?.basicMonthly ?? 0)})`}
+                        />
+                      </Field>
+
+                      <Field label="Custom HRA (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customHra}
+                          onChange={(e) => setCustomHra(e.target.value)}
+                          placeholder={`Auto (${rupee(ctcBreakdown?.hraMonthly ?? 0)})`}
+                        />
+                      </Field>
+
+                      <Field label="Conveyance (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customConveyance}
+                          onChange={(e) => setCustomConveyance(e.target.value)}
+                          placeholder="1600"
+                        />
+                      </Field>
+
+                      <Field label="Medical (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customMedical}
+                          onChange={(e) => setCustomMedical(e.target.value)}
+                          placeholder="1250"
+                        />
+                      </Field>
+
+                      <Field label="Special Allowance (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customSpecial}
+                          onChange={(e) => setCustomSpecial(e.target.value)}
+                          placeholder={`Auto (${rupee(ctcBreakdown?.specialAllowanceMonthly ?? 0)})`}
+                        />
+                      </Field>
+
+                      <Field label="Professional Tax (₹/mo)">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={customPt}
+                          onChange={(e) => setCustomPt(e.target.value)}
+                          placeholder="200"
+                        />
+                      </Field>
+
+                      <div className="flex flex-col justify-center space-y-1.5 pt-2">
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={includeGratuity}
+                            onChange={(e) => setIncludeGratuity(e.target.checked)}
+                            className="rounded border-hairline accent-amber"
+                          />
+                          <span>Include Gratuity (4.81%)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={capPfCeiling}
+                            onChange={(e) => setCapPfCeiling(e.target.checked)}
+                            className="rounded border-hairline accent-amber"
+                          />
+                          <span>Cap PF Ceiling at ₹1,800/mo</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {ctcBreakdown ? (
+                <div className="p-4 bg-paper-2/80 border border-hairline rounded-2xl space-y-4 text-xs shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-hairline">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-ink text-sm">Monthly CTC: {rupee(ctcBreakdown.monthlyCtc)}/mo</span>
+                        <Badge kind="info" size="sm">Annual {rupee(ctcBreakdown.annualCtc)}</Badge>
+                      </div>
+                      <span className="text-[11px] text-ink-3 block mt-0.5">Itemized Indian Wage Code &amp; Statutory Breakdown</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setGross(String(ctcBreakdown.grossMonthly));
+                        setPfApplicable(true);
+                        if (ctcBreakdown.employerEsiMonthly > 0) setEsiApplicable(true);
+                        toast.success(`Applied Monthly Gross ${rupee(ctcBreakdown.grossMonthly)} & PF/ESI settings!`);
+                      }}
+                      className="text-xs font-extrabold"
+                    >
+                      ⚡ Apply Salary Structure
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
+                    {/* Column 1: Gross Monthly Salary Breakdown */}
+                    <div className="bg-paper p-3.5 rounded-xl border border-blue-200/60 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between pb-2 border-b border-hairline">
+                        <span className="font-extrabold text-blue-900 uppercase tracking-wider text-[10px]">1. Gross Earnings</span>
+                        <Badge kind="info" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.grossMonthly)}/mo</Badge>
+                      </div>
+                      <div className="space-y-1.5 text-ink-2 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Basic Salary ({Math.round(ctcBreakdown.basicPct * 100)}%):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.basicMonthly)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">HRA ({isMetro ? "50%" : "40%"}):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.hraMonthly)}</span>
+                        </div>
+                        {ctcBreakdown.conveyanceMonthly > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-ink-3">Conveyance:</span>
+                            <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.conveyanceMonthly)}</span>
+                          </div>
+                        )}
+                        {ctcBreakdown.medicalMonthly > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-ink-3">Medical Allowance:</span>
+                            <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.medicalMonthly)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between pt-1 border-t border-hairline/60">
+                          <span className="text-ink-3">Special Allowance:</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.specialAllowanceMonthly)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 2: Employer Retirals & Benefits */}
+                    <div className="bg-paper p-3.5 rounded-xl border border-amber-200/60 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between pb-2 border-b border-hairline">
+                        <span className="font-extrabold text-amber-900 uppercase tracking-wider text-[10px]">2. Employer Retirals</span>
+                        <Badge kind="warning" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.totalEmployerContributionMonthly)}/mo</Badge>
+                      </div>
+                      <div className="space-y-1.5 text-ink-2 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">EPF Share (3.67%):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.employerEpfShareMonthly)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">EPS Pension (8.33%):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.employerEpsMonthly)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-3">Employer ESI (3.25%):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.employerEsiMonthly)}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-hairline/60">
+                          <span className="text-ink-3">Gratuity Fund (4.81%):</span>
+                          <span className="font-mono font-bold text-ink">{rupee(ctcBreakdown.gratuityMonthly)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 3: Employee Deductions & Net Take Home */}
+                    <div className="bg-paper p-3.5 rounded-xl border border-emerald-200/60 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between pb-2 border-b border-hairline">
+                        <span className="font-extrabold text-emerald-900 uppercase tracking-wider text-[10px]">3. Employee Net In-Hand</span>
+                        <Badge kind="success" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.netTakeHomeMonthly)}/mo</Badge>
+                      </div>
+                      <div className="space-y-1.5 text-ink-2 text-[11px]">
+                        <div className="flex items-center justify-between text-rose-700">
+                          <span>Employee PF (12%):</span>
+                          <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeePfMonthly)}</span>
+                        </div>
+                        {ctcBreakdown.employeeEsiMonthly > 0 && (
+                          <div className="flex items-center justify-between text-rose-700">
+                            <span>Employee ESI (0.75%):</span>
+                            <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeeEsiMonthly)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between pt-2 border-t border-emerald-200 text-emerald-800 font-extrabold text-xs">
+                          <span>Annual Net Take Home:</span>
+                          <span className="font-mono">{rupee(ctcBreakdown.netTakeHomeAnnual)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          )}
+
+          {/* TAB 3: STATUTORY & ACCESS */}
+          {empTab === "statutory" && (
+            <section className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="PAN">
+                  <Input value={pan} onChange={(e) => setPan(e.target.value)} placeholder="e.g. ABCDE1234F" className="uppercase" maxLength={10} />
+                </Field>
+                <Field label="PF number">
+                  <Input value={pfNo} onChange={(e) => setPfNo(e.target.value)} placeholder="Optional" />
+                </Field>
+                <Field label="ESI number">
+                  <Input value={esiNo} onChange={(e) => setEsiNo(e.target.value)} placeholder="Optional" />
+                </Field>
+              </div>
+
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 rounded-md border border-hairline p-3 cursor-pointer hover:border-hairline-strong">
+                  <input
+                    type="checkbox"
+                    checked={esiApplicable}
+                    onChange={(e) => { setEsiTouched(true); setEsiApplicable(e.target.checked); }}
+                    className="mt-0.5 rounded border-hairline"
+                  />
+                  <span className="text-xs text-ink-2">
+                    <b className="text-ink">ESI applicable</b> — deduct 0.75% from salary + accrue 3.25% employer share each month.
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2 rounded-md border border-hairline p-3 cursor-pointer hover:border-hairline-strong">
+                  <input
+                    type="checkbox"
+                    checked={pfApplicable}
+                    onChange={(e) => setPfApplicable(e.target.checked)}
+                    className="mt-0.5 rounded border-hairline"
+                  />
+                  <span className="text-xs text-ink-2">
+                    <b className="text-ink">PF applicable</b> — deduct 12% from salary + accrue 12% employer share each month.
+                  </span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-hairline pt-3">
+                <Field label="Emergency contact name">
+                  <Input value={ecName} onChange={(e) => setEcName(e.target.value)} placeholder="Name" />
+                </Field>
+                <Field label="Emergency phone">
+                  <Input inputMode="tel" value={ecPhone} onChange={(e) => setEcPhone(e.target.value)} placeholder="+91 …" />
+                </Field>
+              </div>
+
+              <Field label={<>Attendance Kiosk PIN {employee?.pin_hash ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
+                <Input inputMode="numeric" value={pin} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
+                  placeholder={employee?.pin_hash ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
+                {!pinValid
+                  ? <p className="mt-1 text-[11px] text-rose">PIN must be 4–6 digits.</p>
+                  : <p className="mt-1 text-[11px] text-ink-3">Used at the attendance kiosk to check in / out.</p>}
               </Field>
-            </div>
-            <Field label={<>Attendance PIN {employee?.pin_hash ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
-              <Input inputMode="numeric" value={pin} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
-                placeholder={employee?.pin_hash ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
-              {!pinValid
-                ? <p className="mt-1 text-[11px] text-rose">PIN must be 4–6 digits.</p>
-                : <p className="mt-1 text-[11px] text-ink-3">Used at the attendance kiosk to check in / out.</p>}
-            </Field>
-            <label className="flex items-center gap-2 text-sm text-ink-2">
-              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-amber" />
-              Active employee
-            </label>
-          </section>
+
+              <label className="flex items-center gap-2 text-sm text-ink-2 pt-2 border-t border-hairline">
+                <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-amber" />
+                Active employee
+              </label>
+            </section>
+          )}
         </div>
 
         <DialogFooter>

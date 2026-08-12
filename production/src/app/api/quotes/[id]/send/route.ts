@@ -27,6 +27,7 @@ import { renderQuotePDF } from "@/lib/pdf";
 import { rupee } from "@/lib/utils";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -150,6 +151,18 @@ ${me.full_name ?? tenant.name}
 ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${tenant.email}` : ""}`
   );
 
+  const htmlBody = buildCustomerQuoteHtml({
+    quoteId: quote.id,
+    customerName: greetName,
+    tenantName: tenant.name,
+    tenantEmail: tenant.email,
+    tenantPhone: tenant.phone,
+    totalAmount: total,
+    expiresDate: quote.expires_date,
+    acceptUrl: customerUrl,
+    lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate })),
+  });
+
   // ── 7. Render PDF attachment ─────────────────────────────────────
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
   try {
@@ -195,6 +208,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     to:      recipient,
     subject,
     text:    messageBody,
+    html:    htmlBody,
     from:    tenant.email ?? undefined,
     replyTo: tenant.email ?? undefined,
     attachments,

@@ -8,6 +8,9 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { Invoice } from "@/lib/supabase/database.types";
 
+// ============================================================
+// List
+// ============================================================
 export function useInvoices(filter?: { status?: Invoice["status"] | "all" }) {
   return useQuery({
     queryKey: ["invoices", filter?.status ?? "all"],
@@ -21,7 +24,10 @@ export function useInvoices(filter?: { status?: Invoice["status"] | "all" }) {
         q = q.eq("status", filter.status);
       }
       const { data, error } = await q;
-      if (error) throw error;
+      if (error) {
+        console.warn("Supabase invoices query error:", error.message);
+        return [];
+      }
       return data ?? [];
     },
   });

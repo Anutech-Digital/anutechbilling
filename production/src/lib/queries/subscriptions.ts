@@ -74,7 +74,9 @@ export function useSetSubscriptionDomain() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
+      toast.success("Domain saved");
     },
+    onError: (e) => toast.error((e as Error).message || "Domain save nahi hua"),
   });
 }
 

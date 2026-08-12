@@ -13,6 +13,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 
 import {
   Dialog,
@@ -114,6 +115,7 @@ export function TaxInvoiceDialog({
   tenantAddress,
   tenantState,
 }: Props) {
+  const router = useRouter();
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
 
   // ── Immutable GST figures (CGST Sec 31 — an issued invoice cannot change) ──
@@ -242,6 +244,19 @@ export function TaxInvoiceDialog({
             )}
           </div>
           <div className="flex gap-2">
+            {invoice.quote_id && (
+              <Button
+                size="sm"
+                variant="outline"
+                icon="edit"
+                onClick={() => {
+                  onOpenChange(false);
+                  router.push(`/quotes/${invoice.quote_id}` as any);
+                }}
+              >
+                Edit Quote
+              </Button>
+            )}
             <Button
               size="sm"
               variant="primary"

@@ -9,6 +9,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { ContactRow, ContactStatus } from "@/lib/supabase/database.types";
 
@@ -46,6 +47,7 @@ export function useUpdateContactStatus() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
     },
+    onError: (e) => toast.error((e as Error).message || "Status update nahi hua"),
   });
 }
 
@@ -60,6 +62,8 @@ export function useDeleteContact() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
+      toast.success("Contact deleted");
     },
+    onError: (e) => toast.error((e as Error).message || "Delete nahi hua"),
   });
 }

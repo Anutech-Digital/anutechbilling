@@ -7,8 +7,10 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { isQuoteExpired } from "@/lib/utils";
+import { isQuoteExpired, rupee } from "@/lib/utils";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
+import { sendEmail } from "@/lib/email/send";
+import { buildSalesAcknowledgementHtml } from "@/lib/email/quote-template";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createAdminClient();
@@ -16,7 +18,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   // 1. Fetch the quote to validate state + authorize the caller by token
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
-    .select("id, status, payment_status, expires_date, customer_name, tenant_id, public_token")
+    .select("id, status, payment_status, expires_date, customer_name, tenant_id, public_token, amount")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -62,8 +64,34 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: acceptErr.message }, { status: 500 });
   }
 
-  // 4. TODO: send notification email to the reseller (P3 Resend integration)
-  //    For now this is just logged.
+  // 4. Send Sales Team Acknowledgement Notification Email to Reseller / Sales Exec
+  try {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("name, email")
+      .eq("id", quote.tenant_id)
+      .single();
+
+    if (tenant?.email) {
+      const ackHtml = buildSalesAcknowledgementHtml({
+        quoteId: params.id,
+        customerName: quote.customer_name,
+        tenantName: tenant.name,
+        totalAmount: quote.amount ?? 0,
+        acceptedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      });
+
+      await sendEmail({
+        to: tenant.email,
+        subject: `🎉 Sales Alert: Quotation #${params.id} Accepted by ${quote.customer_name}`,
+        text: `Customer ${quote.customer_name} accepted quotation #${params.id} for ${rupee(quote.amount ?? 0)}. Lead converted to Won customer & PO/Invoice drafts created.`,
+        html: ackHtml,
+      });
+    }
+  } catch (emailErr) {
+    console.error(`[quote-accept] Failed sending sales acknowledgement email for ${params.id}:`, emailErr);
+  }
+
   console.info(`[quote-accept] ${params.id} accepted by ${quote.customer_name} (tenant ${quote.tenant_id})`);
 
   return NextResponse.json({ ok: true });

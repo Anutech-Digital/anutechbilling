@@ -27,6 +27,7 @@ export default function ProjectsPage() {
   const { data: projects, isLoading } = useProjectSales();
   const [addOpen, setAddOpen] = React.useState(false);
   const [quoteOpen, setQuoteOpen] = React.useState(false);
+  const [kpiOpen, setKpiOpen] = React.useState(true);
 
   const totalValue = (projects ?? []).reduce((s, p) => s + p.total_amount, 0);
   const totalRecv  = (projects ?? []).reduce((s, p) => s + p.receivable, 0);
@@ -51,15 +52,43 @@ export default function ProjectsPage() {
         </div>
       </div>
 
+      {/* Collapsible Project Sales Analytics Banner */}
       {!isLoading && projects && projects.length > 0 && (
-        <Card className="mb-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Stat label="Projects" value={String(projects.length)} />
-            <Stat label="Total contract value" value={rupee(totalValue, { compact: true })} />
-            <Stat label="Outstanding" value={rupee(totalRecv, { compact: true })} tone={totalRecv > 0 ? "rose" : "ink"} />
-            <Stat label="Collected" value={rupee(totalValue - totalRecv, { compact: true })} tone="emerald" />
-          </div>
-        </Card>
+        <div className="mb-6 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+          <button
+            type="button"
+            onClick={() => setKpiOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <Icon name="bar_chart" size={15} className="text-amber-ink" />
+              <span className="font-semibold text-ink">Project Sales Revenue &amp; Profit</span>
+              <span className="text-ink-3">·</span>
+              <span className="text-ink-2 font-mono font-medium">Projects: <b className="text-ink">{projects.length}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Contract Value: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Outstanding: <b className="text-rose-600">{rupee(totalRecv, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Collected: <b className="text-emerald">{rupee(totalValue - totalRecv, { compact: true })}</b></span>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+            </div>
+          </button>
+
+          {kpiOpen && (
+            <div className="p-3 border-t border-hairline bg-paper">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <Stat label="Projects" value={String(projects.length)} />
+                <Stat label="Total contract value" value={rupee(totalValue, { compact: true })} />
+                <Stat label="Outstanding" value={rupee(totalRecv, { compact: true })} tone={totalRecv > 0 ? "rose" : "ink"} />
+                <Stat label="Collected" value={rupee(totalValue - totalRecv, { compact: true })} tone="emerald" />
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {isLoading ? (

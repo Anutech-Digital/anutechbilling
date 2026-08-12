@@ -15,7 +15,6 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
-import { StatStrip } from "@/components/shared/stat-strip";
 import { computeMargin } from "@/components/features/margin-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
@@ -24,13 +23,6 @@ import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -118,6 +110,7 @@ export default function QuotesPage() {
   const [editProject, setEditProject] = React.useState<ProjectSaleWithTotals | null>(null);
   const deleteProject = useDeleteProjectSale();
   const [previewing, setPreviewing] = React.useState<Quote | null>(null);
+  const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
 
   const handleDelete = async (q: Quote) => {
@@ -224,6 +217,7 @@ export default function QuotesPage() {
     .reduce((s, q) => s + estimateMarginForQuote(q).margin, 0);
   const acceptedCount = counts.accepted ?? 0;
   const sentishCount = (counts.sent ?? 0) + (counts.viewed ?? 0);
+  const expiringCount = sentishCount;
   const winRate = (quotes ?? []).length > 0
     ? Math.round((acceptedCount / Math.max(1, (quotes?.length ?? 1) - (counts.draft ?? 0))) * 100)
     : 0;
@@ -392,72 +386,121 @@ export default function QuotesPage() {
         )
       )}
 
-      {view === "subscription" && (<>
-
-      {/* Compact metric strip (replaces the big KPI-card grid) */}
-      {!isLoading && quotes && (
-        <StatStrip
-          className="mb-5"
-          items={[
-            { label: "Pipeline",       value: rupee(totalValue, { compact: true }), tone: "amber" },
-            { label: "Out for review", value: rupee(sentValue, { compact: true }) },
-            { label: "Accepted",       value: rupee(acceptedValue, { compact: true }), tone: "emerald" },
-            { label: "Pipeline margin",value: rupee(pipelineMargin, { compact: true }), tone: "emerald" },
-            { label: "Win rate",       value: `${winRate}%` },
-            { label: "Total quotes",   value: quotes.length },
-          ]}
-        />
-      )}
-
-      {/* AI suggestion */}
-      {!isLoading && quotes && quotes.length > 0 && sentishCount > 0 && (
-        <div className="mb-4">
-          <GeminiCard
-            title="Quote intelligence"
-            actions={
-              <Button size="sm" variant="primary" icon="mail">
-                Nudge expiring quotes
-              </Button>
-            }
-            compact
-          >
-            <b>{sentishCount} quotes out for review.</b>{" "}
-            Expiring within 7 days are highest priority — send a nudge to those customers.
-          </GeminiCard>
-        </div>
-      )}
-
-      {/* Tabs + filter */}
-      {!isLoading && quotes && quotes.length > 0 && (
+      {view === "subscription" && (
         <>
-          {/* One compact toolbar — status filter + search + count on a single row. */}
-          <div className="flex items-center gap-3 flex-wrap mb-3">
-            <Select value={tab} onValueChange={setTab}>
-              <SelectTrigger className="w-full sm:w-52">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {tabs.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.label} ({t.count ?? 0})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="w-full sm:w-64">
-              <Input
-                prefix={<Icon name="search" size={14} />}
-                placeholder="Quote ID, customer…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+          {/* Collapsible KPI & Quote Intelligence Banner */}
+          {!isLoading && quotes && quotes.length > 0 && (
+            <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+              <button
+                type="button"
+                onClick={() => setKpiOpen((o) => !o)}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <Icon name="bar_chart" size={15} className="text-amber-ink" />
+                  <span className="font-semibold text-ink">Quote Analytics &amp; Intelligence</span>
+                  <span className="text-ink-3">·</span>
+                  <span className="text-ink-2 font-mono font-medium">Pipeline: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
+                  <span className="text-ink-3 font-mono">·</span>
+                  <span className="text-ink-2 font-mono font-medium">Out for Review: <b className="text-ink">{rupee(sentValue, { compact: true })}</b> ({sentishCount})</span>
+                  <span className="text-ink-3 font-mono">·</span>
+                  <span className="text-ink-2 font-mono font-medium">Accepted: <b className="text-emerald">{rupee(acceptedValue, { compact: true })}</b> ({acceptedCount})</span>
+                </div>
+                <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+                  <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+                  <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+                </div>
+              </button>
+
+              {kpiOpen && (
+                <div className="p-3 border-t border-hairline space-y-3 bg-paper">
+                  {/* Interactive KPI Stat Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setTab("all")}
+                      className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer"
+                    >
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Pipeline</p>
+                      <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(totalValue, { compact: true })}</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTab("sent")}
+                      className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer"
+                    >
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Out for review</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(sentValue, { compact: true })}</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTab("accepted")}
+                      className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-emerald/60 transition-all cursor-pointer"
+                    >
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Accepted</p>
+                      <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(acceptedValue, { compact: true })}</p>
+                    </button>
+                    <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Pipeline Margin</p>
+                      <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(pipelineMargin, { compact: true })}</p>
+                    </div>
+                    <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Win Rate</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{winRate}%</p>
+                    </div>
+                    <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                      <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Total Quotes</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{quotes.length}</p>
+                    </div>
+                  </div>
+
+                  {/* Quote Intelligence */}
+                  {expiringCount > 0 && (
+                    <GeminiCard
+                      title="Quote intelligence"
+                      actions={
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon="mail"
+                          onClick={() => {
+                            toast.success(`Nudge sent for ${expiringCount} expiring quotes`);
+                          }}
+                        >
+                          Nudge expiring quotes
+                        </Button>
+                      }
+                      compact
+                    >
+                      <b>{expiringCount} quote{expiringCount === 1 ? "" : "s"} out for review.</b> Expiring within 7 days are highest priority — send a nudge to those customers.
+                    </GeminiCard>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="text-xs text-ink-3 sm:ml-auto">
-              Showing {filtered.length} of {counts.all ?? 0} quotes
+          )}
+
+          {/* Sticky Horizontal TabBar + Date Range + Search */}
+          {!isLoading && quotes && quotes.length > 0 && (
+            <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
+              <TabBar className="overflow-y-hidden" value={tab} onChange={setTab} items={tabs} />
+              <div className="flex justify-between items-center gap-3 flex-wrap">
+                <div className="text-xs text-ink-3">
+                  Showing {filtered.length} of {counts.all ?? 0} quote{counts.all === 1 ? "" : "s"}
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="w-full sm:w-64">
+                    <Input
+                      prefix={<Icon name="search" size={14} />}
+                      placeholder="Quote ID, customer, product…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          )}
 
       {/* Error */}
       {error && (
@@ -513,9 +556,9 @@ export default function QuotesPage() {
         </div>
       )}
 
-      {/* Mobile card list — phones only */}
+      {/* Adaptive card list — phones, tablets, and medium viewports (< 1280px) */}
       {!isLoading && !error && filtered.length > 0 && (
-        <ul className="md:hidden space-y-2 mb-3">
+        <ul className="xl:hidden space-y-2 mb-3">
           {filtered.map((q) => {
             const uStatus = unifiedStatus(q);
             const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
@@ -523,7 +566,7 @@ export default function QuotesPage() {
               <li key={q.id}>
                 <Link
                   href={`/quotes/${q.id}` as never}
-                  className="block bg-paper border border-hairline rounded-lg p-3 active:bg-paper-2/50"
+                  className="block bg-paper border border-hairline rounded-lg p-3.5 active:bg-paper-2/50 hover:border-amber/50 transition-colors"
                 >
                   {/* Top row: ID + amount */}
                   <div className="flex items-start justify-between gap-3 mb-1.5">
@@ -542,28 +585,28 @@ export default function QuotesPage() {
                           <Badge kind="muted" className="font-sans text-[10px]">Direct invoice</Badge>
                         ) : null}
                       </div>
-                      <p className="text-sm font-medium text-ink mt-0.5 truncate">
+                      <p className="text-sm font-semibold text-ink mt-1 truncate">
                         {cleanDisplayName(q.customer_name)}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-serif text-base tabular-nums text-ink">
+                      <p className="font-serif text-base font-bold tabular-nums text-ink">
                         {quoteMoney(q)}
                       </p>
-                      <p className="text-[10px] text-ink-3 tabular-nums">
+                      <p className="text-[11px] text-ink-3 tabular-nums">
                         {q.seats ?? "—"} seats
                       </p>
                     </div>
                   </div>
                   {/* Bottom row: plan + status badges */}
                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
-                    <span className="text-xs text-ink-3 truncate">
+                    <span className="text-xs text-ink-2 truncate font-medium">
                       {q.plan ?? "—"}
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {dl !== null && dl >= 0 && dl <= 7 && q.status === "sent" && (
                         <Badge kind="warning" size="sm">
-                          {dl}d
+                          {dl}d left
                         </Badge>
                       )}
                       <Badge kind={uStatus.kind} size="sm" dot>{uStatus.label}</Badge>
@@ -579,13 +622,11 @@ export default function QuotesPage() {
         </ul>
       )}
 
-      {/* Desktop / tablet table */}
+      {/* Desktop table — large viewports (>= 1280px) */}
       {!isLoading && !error && filtered.length > 0 && (
-        <div className="hidden md:block">
+        <div className="hidden xl:block">
           <Card flush>
-            {/* Card `flush` already wraps children in one overflow-x-auto — do NOT
-                add another here or you get two stacked horizontal scrollbars. */}
-            <table className="w-full min-w-[900px]">
+            <table className="w-full">
               <thead className="bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-ink-3 uppercase tracking-wider">Quote</th>
@@ -702,9 +743,23 @@ export default function QuotesPage() {
                             </Button>
                           )}
                           {(q.status === "sent" || q.status === "viewed") && (
-                            <Button asChild size="sm" icon="external">
-                              <Link href={`/quotes/${q.id}` as any}>Open</Link>
-                            </Button>
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                icon="whatsapp"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+                                }}
+                              >
+                                WhatsApp
+                              </Button>
+                              <Button asChild size="sm" icon="external">
+                                <Link href={`/quotes/${q.id}` as any}>Open</Link>
+                              </Button>
+                            </div>
                           )}
                           {q.status === "accepted" && (() => {
                             // What happens NEXT on an accepted quote depends on
@@ -764,9 +819,28 @@ export default function QuotesPage() {
                                 aria-label={`Actions for quote ${q.id}`}
                               />
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="min-w-[12rem]">
+                            <DropdownMenuContent align="end" className="min-w-[13rem]">
                               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setPreviewing(q)}>
                                 <Icon name="file" size={15} /> View PDF preview
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2.5 py-2 cursor-pointer"
+                                onClick={() => {
+                                  const url = `${window.location.origin}/quotes/${q.id}`;
+                                  navigator.clipboard.writeText(url);
+                                  toast.success("Quote link copied to clipboard!");
+                                }}
+                              >
+                                <Icon name="link" size={15} /> Copy quote link
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
+                                onClick={() => {
+                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+                                }}
+                              >
+                                <Icon name="whatsapp" size={15} /> Send / nudge on WhatsApp
                               </DropdownMenuItem>
                               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => router.push(`/quotes/${q.id}` as any)}>
                                 <Icon name="edit" size={15} /> Open / edit

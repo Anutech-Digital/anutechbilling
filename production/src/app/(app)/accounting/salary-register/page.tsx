@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryPayment } from "@/lib/queries/payroll";
+import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 
 /** Previous month (YYYY-MM) — the register shows the month that was just paid. */
 function prevPeriod(): string {
@@ -118,6 +119,7 @@ function TotalsRow({ label, rows, leadSpan }: { label: string; rows: SalaryPayme
 // ── All employees for one month ──────────────────────────────────────────────
 function MonthRegister() {
   const router = useRouter();
+  const [registerTab, setRegisterTab] = React.useState<"paid" | "ctc">("paid");
   const [period, setPeriod] = React.useState(prevPeriod());
   const empQ = useEmployees();
   const payQ = useSalaryPayments(period);
@@ -138,6 +140,39 @@ function MonthRegister() {
         ];
       }),
     );
+  };
+
+  const exportCtcRegisterCsv = () => {
+    const ctcRows = (empQ.data ?? []).map((e) => {
+      const ctc = calculateCtcBreakdown(e.monthly_gross * 12);
+      return [
+        toTitleCase(e.name),
+        e.designation ?? "",
+        ctc.annualCtc,
+        ctc.monthlyCtc,
+        ctc.grossMonthly,
+        ctc.basicMonthly,
+        ctc.hraMonthly,
+        ctc.specialAllowanceMonthly,
+        ctc.employerPfMonthly,
+        ctc.employerEsiMonthly,
+        ctc.gratuityMonthly,
+        ctc.employeePfMonthly,
+        ctc.professionalTaxMonthly,
+        ctc.netTakeHomeMonthly,
+      ];
+    });
+
+    downloadCsv(
+      `CTC-Master-Structure-Register.csv`,
+      [
+        "Employee", "Designation", "Annual CTC (₹)", "Monthly CTC (₹)", "Gross Salary (₹/mo)",
+        "Basic Salary (50%)", "HRA (40%)", "Special Allowance", "Employer PF (12%)", "Employer ESI",
+        "Gratuity Provision", "Employee PF", "Prof. Tax (PT)", "Net Take Home (₹/mo)"
+      ],
+      ctcRows
+    );
+    toast.success("Exported CTC Master Salary Structure Register!");
   };
 
   // 24Q working — salary TDS (section 192), deductee-wise for the whole quarter
@@ -178,20 +213,99 @@ function MonthRegister() {
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-ink-3 font-semibold uppercase tracking-wide">Month</label>
-          <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
-            className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper" />
-        </div>
-        {rows.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" icon="download" onClick={exportCsv}>Export CSV (for CA)</Button>
-            <Button variant="outline" size="sm" icon="download" onClick={export24Q} title="Salary-TDS deductee working for this month's quarter (section 192)">24Q working (TDS)</Button>
-            <Button variant="ghost" size="sm" icon="file" onClick={() => window.print()}>Print</Button>
-          </div>
-        )}
+      {/* Register Tab Selector */}
+      <div className="flex items-center gap-2 mb-4 bg-paper-2/70 p-1 rounded-xl border border-hairline w-fit">
+        <button
+          type="button"
+          onClick={() => setRegisterTab("paid")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            registerTab === "paid" ? "bg-paper text-primary shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
+          }`}
+        >
+          🧾 Paid Salary Register
+        </button>
+        <button
+          type="button"
+          onClick={() => setRegisterTab("ctc")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            registerTab === "ctc" ? "bg-primary text-white shadow-2xs font-extrabold" : "text-ink-3 hover:text-ink"
+          }`}
+        >
+          💼 CTC (Cost to Company) Master Register ({empQ.data?.length ?? 0})
+        </button>
       </div>
+
+      {registerTab === "ctc" ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-serif font-bold text-ink">Cost to Company (CTC) Salary Matrix</h2>
+              <p className="text-xs text-ink-3">Comprehensive breakdown of Gross Salary, Employer Retirals (EPF/ESI/Gratuity), Deductions &amp; Net In-Hand Take Home.</p>
+            </div>
+            <Button variant="outline" size="sm" icon="download" onClick={exportCtcRegisterCsv}>
+              Export CTC Register CSV
+            </Button>
+          </div>
+
+          <Card flush>
+            <table className="w-full text-xs">
+              <thead className="bg-paper-2/60 text-[10px] uppercase tracking-wider text-ink-3 font-semibold">
+                <tr>
+                  <th className="text-left px-3 py-3">Employee</th>
+                  <th className="text-right px-3 py-3">Annual CTC</th>
+                  <th className="text-right px-3 py-3">Monthly CTC</th>
+                  <th className="text-right px-3 py-3">Gross Base</th>
+                  <th className="text-right px-3 py-3">Basic (50%)</th>
+                  <th className="text-right px-3 py-3">HRA (40%)</th>
+                  <th className="text-right px-3 py-3">Conveyance</th>
+                  <th className="text-right px-3 py-3">Medical</th>
+                  <th className="text-right px-3 py-3">Special Allow.</th>
+                  <th className="text-right px-3 py-3">Employer Retirals</th>
+                  <th className="text-right px-3 py-3 font-bold text-emerald-700">Net Take Home</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-hairline">
+                {(empQ.data ?? []).map((e) => {
+                  const ctc = calculateCtcBreakdown(e.monthly_gross * 12);
+                  return (
+                    <tr key={e.id} className="hover:bg-paper-2/40 transition-colors">
+                      <td className="px-3 py-2.5">
+                        <div className="font-bold text-ink">{toTitleCase(e.name)}</div>
+                        <div className="text-[10px] text-ink-3">{e.designation || "Staff"}</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-bold text-ink">{rupee(ctc.annualCtc)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-2">{rupee(ctc.monthlyCtc)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink">{rupee(ctc.grossMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.basicMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.hraMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.conveyanceMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.medicalMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.specialAllowanceMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-amber-700 font-semibold">{rupee(ctc.totalEmployerContributionMonthly)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700 text-sm">{rupee(ctc.netTakeHomeMonthly)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-ink-3 font-semibold uppercase tracking-wide">Month</label>
+              <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
+                className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper" />
+            </div>
+            {rows.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" icon="download" onClick={exportCsv}>Export CSV (for CA)</Button>
+                <Button variant="outline" size="sm" icon="download" onClick={export24Q} title="Salary-TDS deductee working for this month's quarter (section 192)">24Q working (TDS)</Button>
+                <Button variant="ghost" size="sm" icon="file" onClick={() => window.print()}>Print</Button>
+              </div>
+            )}
+          </div>
 
       {payQ.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
@@ -237,6 +351,8 @@ function MonthRegister() {
       <p className="mt-3 text-[11px] text-ink-3">
         Net pay = Gross − LOP − TDS − PF − ESI − other. These are the real amounts paid — the same figures your CA files.
       </p>
+        </>
+      )}
     </>
   );
 }

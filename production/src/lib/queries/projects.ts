@@ -758,16 +758,41 @@ export function useDeleteProjectTask() {
 
 /** AI project planner — returns a detailed explanation + a suggested task list. */
 export type PlannedTask = { title: string; phase?: string; assignee?: string };
-export type ProjectPlan = { explanation: string; tasks: PlannedTask[]; mode: string };
+export type QuestionOption = { labelEn: string; labelHi: string };
+export type QuestionItem = { en: string; hi: string; options?: QuestionOption[] };
+export type ProjectPlan = {
+  explanation: string;
+  clientProposal?: string;
+  tasks: PlannedTask[];
+  questions?: QuestionItem[];
+  mode: string;
+};
+
+export async function fetchProjectQuestions(input: {
+  title: string; customer?: string; details?: string;
+}): Promise<QuestionItem[]> {
+  const res = await fetch("/api/ai/plan-project", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "questions",
+      title: input.title, customer: input.customer, details: input.details,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error ?? "Could not generate questions.");
+  return json.questions ?? [];
+}
+
 export async function generateProjectPlan(input: {
-  title: string; customer?: string; value?: number; startDate?: string | null; targetDate?: string | null; details?: string; team?: string[];
+  title: string; customer?: string; value?: number; startDate?: string | null; targetDate?: string | null; details?: string; qaAnswers?: string; team?: string[];
 }): Promise<ProjectPlan> {
   const res = await fetch("/api/ai/plan-project", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      action: "plan",
       title: input.title, customer: input.customer, value: input.value,
       startDate: input.startDate ?? undefined, targetDate: input.targetDate ?? undefined,
-      details: input.details, team: input.team,
+      details: input.details, qaAnswers: input.qaAnswers, team: input.team,
     }),
   });
   const json = await res.json();

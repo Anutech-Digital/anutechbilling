@@ -312,11 +312,15 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             <DropdownMenuLabel>
               {me?.authEmail ?? "Account"}
             </DropdownMenuLabel>
-            <DropdownMenuItem>
-              <Icon name="user" size={14} /> Profile
+            <DropdownMenuItem asChild>
+              <Link href="/login">
+                <Icon name="user" size={14} /> Login / Switch Account
+              </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Icon name="settings" size={14} /> Settings
+            <DropdownMenuItem asChild>
+              <Link href="/settings">
+                <Icon name="settings" size={14} /> Settings
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuItem>
               <Icon name="users" size={14} /> Team

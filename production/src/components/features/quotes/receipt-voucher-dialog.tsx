@@ -87,6 +87,17 @@ export function ReceiptVoucherDialog({
           <div className="flex gap-2">
             <Button
               size="sm"
+              variant="primary"
+              icon="whatsapp"
+              onClick={() => {
+                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (₹${payment.amount.toLocaleString("en-IN")}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
+                window.open(`https://web.whatsapp.com/send?text=${q}`, "_blank");
+              }}
+            >
+              WhatsApp
+            </Button>
+            <Button
+              size="sm"
               icon="download"
               loading={downloadingPdf}
               onClick={async () => {

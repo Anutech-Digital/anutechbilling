@@ -1,12 +1,6 @@
-/**
- * TopBar — sticky header with breadcrumb, ⌘K search, theme toggle, bell.
- *
- * Mounted by the (app) layout group.
- */
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
@@ -17,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel } from "./notification-panel";
 import { QuickActionsPanel } from "./quick-actions-panel";
+import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { getCrumb, getSectionPrimaryHref } from "@/lib/nav";
 import type { Route } from "next";
 import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
@@ -43,6 +38,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
+  const [feedbackOpen, setFeedbackOpen] = React.useState(false);
 
   // Bell badge = open tasks due by end of today (today + overdue). When push
   // notifications + WhatsApp reminders arrive in Phase 2 they'll feed the
@@ -58,74 +54,73 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
     <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-2 px-3 md:px-4">
       {/* Mobile hamburger */}
       <button
-        className="md:hidden p-2 -ml-2 rounded-md hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        type="button"
         onClick={onMobileMenuClick}
+        className="md:hidden p-1.5 -ml-1 text-ink-3 hover:text-ink rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         aria-label="Open menu"
       >
-        <Icon name="list" size={18} />
+        <Icon name="menu" size={20} />
       </button>
 
-      {/* Mobile-only Back affordance on detail pages (breadcrumb is hidden
-          < sm, and each detail/form page already renders its own H1 title, so
-          we only need the way *up* here — not a duplicate title). */}
+      {/* Back chevron on detail pages on phone (since breadcrumbs hidden on mobile) */}
       {isDetailPage && (
         <button
-          onClick={() => router.back()}
-          className="sm:hidden p-2 -ml-1 rounded-md hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber shrink-0"
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+            } else {
+              const primary = getSectionPrimaryHref(pathname);
+              router.push(primary as Route);
+            }
+          }}
+          className="md:hidden p-1.5 -ml-1 text-ink-3 hover:text-ink rounded-md focus:outline-none focus:ring-1 focus:ring-primary flex items-center gap-1 text-xs font-medium"
           aria-label="Go back"
         >
-          <Icon name="arrow_left" size={18} />
+          <Icon name="chevron-left" size={18} />
+          <span>Back</span>
         </button>
       )}
 
-      {/* Breadcrumb — every item navigable except the current page (last).
-          The home icon goes to /dashboard. Section names (Workspace, Revenue,
-          Accounting, etc.) link to that section's primary page so power users
-          can jump up the tree. The final crumb stays as bold text — it
-          represents the current page, by convention non-clickable. */}
-      <nav aria-label="Breadcrumb" className="hidden sm:flex items-center gap-1.5 text-xs text-ink-3">
-        <Link href="/dashboard" className="hover:text-ink transition-colors" aria-label="Home">
-          <Icon name="home" size={13} />
-        </Link>
-        {crumb.map((label, i) => {
-          const isLast = i === crumb.length - 1;
-          // First crumb is the section name — link to that section's primary
-          // page. Intermediate crumbs (rare, e.g., GST > Output) may not map
-          // to a section; in that case we render plain text.
-          const sectionHref = !isLast ? getSectionPrimaryHref(label) : null;
-          return (
-            <React.Fragment key={i}>
-              <span className="text-ink-3" aria-hidden>/</span>
-              {sectionHref ? (
-                <Link
-                  href={sectionHref as Route}
-                  className="text-ink-3 hover:text-ink hover:underline underline-offset-2 transition-colors"
-                >
-                  {label}
-                </Link>
-              ) : (
-                <span
-                  className={isLast ? "font-semibold text-ink" : "text-ink-3"}
-                  aria-current={isLast ? "page" : undefined}
-                >
-                  {label}
-                </span>
-              )}
-            </React.Fragment>
-          );
-        })}
+      {/* Breadcrumb — hidden on phone */}
+      <nav aria-label="Breadcrumb" className="hidden md:flex items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
+        {crumb.map((c, i) => (
+          <React.Fragment key={c}>
+            {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4 flex-shrink-0" />}
+            <span className={i === crumb.length - 1 ? "font-semibold text-ink truncate" : "truncate"}>
+              {c}
+            </span>
+          </React.Fragment>
+        ))}
       </nav>
 
       <div className="flex-1" />
 
-      {/* ⌘K Search trigger */}
+      {/* Team Testing & Feedback / Bug Report Trigger */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
+          >
+            <Icon name="bug" size={14} className="text-rose-ink" />
+            <span className="hidden sm:inline">Report Bug</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Report a bug or suggest a new feature</TooltipContent>
+      </Tooltip>
+
+      {/* Search button (triggers ⌘K) */}
       <button
-        onClick={cmdk.open}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-hairline hover:border-hairline-strong bg-paper-2 text-ink-3 text-xs min-w-0 shrink lg:min-w-[240px] xl:min-w-[280px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2"
+        type="button"
+        onClick={() => cmdk.setOpen(true)}
+        className="flex items-center gap-2 h-8 px-2.5 rounded-md border border-hairline bg-paper-2 hover:bg-paper-3 text-xs text-ink-3 transition-colors"
+        aria-label="Search dashboard (Cmd+K)"
       >
-        <Icon name="search" size={13} className="shrink-0" />
-        <span className="flex-1 text-left truncate">Search customers, leads, quotes…</span>
-        <kbd className="hidden md:inline-block text-[10px] px-1.5 py-0.5 rounded bg-paper border border-hairline text-ink-3 font-mono">
+        <Icon name="search" size={14} />
+        <span className="hidden lg:inline">Search...</span>
+        <kbd className="hidden sm:inline-flex items-center gap-0.5 text-[10px] font-mono px-1 rounded bg-paper border border-hairline text-ink-3">
           ⌘K
         </kbd>
       </button>
@@ -182,6 +177,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       <CommandPalette open={cmdk.isOpen} onOpenChange={cmdk.setOpen} />
       <NotificationPanel open={notifOpen} onOpenChange={setNotifOpen} />
       <QuickActionsPanel open={actionsOpen} onOpenChange={setActionsOpen} />
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </header>
   );
 }

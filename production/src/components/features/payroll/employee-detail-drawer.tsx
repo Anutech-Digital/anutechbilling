@@ -24,6 +24,7 @@ import {
   type Employee, type EmployeeDocument,
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
+import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 
@@ -101,6 +102,59 @@ export function EmployeeDetailDrawer({
                 <Field label="Emergency phone" value={employee.emergency_contact_phone} />
               </div>
             </div>
+
+            {/* CTC Breakdown Card */}
+            {employee && (() => {
+              const ctc = calculateCtcBreakdown(employee.monthly_gross * 12);
+              return (
+                <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-hairline">
+                    <div>
+                      <span className="font-bold text-ink text-sm">Monthly CTC: {rupee(ctc.monthlyCtc)}/mo</span>
+                      <span className="text-[11px] text-ink-3 block">Annual Package: {rupee(ctc.annualCtc)}/yr</span>
+                    </div>
+                    <Badge kind="info" size="sm">CTC Breakdown</Badge>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    {/* Earnings */}
+                    <div className="bg-paper-2/50 p-2 rounded-lg border border-hairline/60">
+                      <span className="font-bold text-ink block uppercase text-[9.5px] tracking-wider mb-1">1. Earnings (Gross {rupee(ctc.grossMonthly)}/mo)</span>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-ink-2">
+                        <div>Basic (50%): <b className="font-mono">{rupee(ctc.basicMonthly)}</b></div>
+                        <div>HRA (40%): <b className="font-mono">{rupee(ctc.hraMonthly)}</b></div>
+                        {ctc.conveyanceMonthly > 0 && <div>Conveyance: <b className="font-mono">{rupee(ctc.conveyanceMonthly)}</b></div>}
+                        {ctc.medicalMonthly > 0 && <div>Medical: <b className="font-mono">{rupee(ctc.medicalMonthly)}</b></div>}
+                        <div className="col-span-2">Special Allowance: <b className="font-mono">{rupee(ctc.specialAllowanceMonthly)}</b></div>
+                      </div>
+                    </div>
+
+                    {/* Retirals */}
+                    <div className="bg-paper-2/50 p-2 rounded-lg border border-hairline/60">
+                      <span className="font-bold text-amber-800 block uppercase text-[9.5px] tracking-wider mb-1">2. Employer Contributions ({rupee(ctc.totalEmployerContributionMonthly)}/mo)</span>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-ink-2">
+                        <div>EPF Share: <b className="font-mono">{rupee(ctc.employerEpfShareMonthly)}</b></div>
+                        <div>EPS Pension: <b className="font-mono">{rupee(ctc.employerEpsMonthly)}</b></div>
+                        <div>ESI Share: <b className="font-mono">{rupee(ctc.employerEsiMonthly)}</b></div>
+                        <div>Gratuity Fund: <b className="font-mono">{rupee(ctc.gratuityMonthly)}</b></div>
+                      </div>
+                    </div>
+
+                    {/* Net Take Home */}
+                    <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20 text-emerald-900">
+                      <span className="font-bold block uppercase text-[9.5px] tracking-wider mb-1 text-emerald-800">3. Employee Net In-Hand Take Home</span>
+                      <div className="flex items-center justify-between font-extrabold text-sm text-emerald-700">
+                        <span>Net Payout / Month:</span>
+                        <span className="font-mono">{rupee(ctc.netTakeHomeMonthly)}</span>
+                      </div>
+                      <div className="text-[10px] text-emerald-700 mt-1">
+                        Deductions: Employee PF -{rupee(ctc.employeePfMonthly)} · PT -{rupee(ctc.professionalTaxMonthly)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Documents */}
             <div>

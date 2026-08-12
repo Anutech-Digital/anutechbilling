@@ -531,6 +531,15 @@ export default function ExpensesPage() {
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : q.isError ? (
+        <Card className="py-2">
+          <EmptyState
+            icon="alert"
+            title="Expenses load nahi ho paye"
+            body="Ye data load karne me dikkat aayi — aapke expenses safe hain, bas dikh nahi rahe. Dobara try karo."
+            action={<Button variant="primary" icon="refresh" onClick={() => q.refetch()}>Try again</Button>}
+          />
+        </Card>
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState

@@ -1,28 +1,25 @@
 /**
  * Inbound emails — the Enquiries Inbox data layer.
  *
- * Reads the tenant's inbound_emails log (RLS-scoped, migration 0069/0079) and
- * exposes an atomic "convert to lead" action backed by the
- * convert_inbound_email_to_lead RPC.
+ * Fetches tenant-scoped inbound emails via server endpoint /api/inbound-emails
+ * and handles atomic lead conversion.
  */
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { createClient } from "@/lib/supabase/client";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 
 export function useInboundEmails() {
   return useQuery({
     queryKey: ["inbound-emails"],
     queryFn: async (): Promise<InboundEmailRow[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("inbound_emails")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+      const res = await fetch("/api/inbound-emails");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Could not fetch inbound emails");
+      }
+      return res.json();
     },
   });
 }
@@ -32,10 +29,13 @@ export function useConvertInboundToLead() {
 
   return useMutation({
     mutationFn: async (id: string): Promise<string> => {
-      const supabase = createClient();
-      const { data, error } = await supabase.rpc("convert_inbound_email_to_lead", { p_id: id });
-      if (error) throw error;
-      return data as string;
+      const res = await fetch(`/api/inbound-emails/${id}/convert`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Could not convert email to lead");
+      }
+      const data = await res.json();
+      return data.leadId;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inbound-emails"] });

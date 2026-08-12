@@ -135,6 +135,7 @@ export default function CustomersPage() {
   const [showArchived, setShowArchived] = React.useState(false);
   const [sort, setSort] = React.useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "name", dir: "asc" });
   const [visible, setVisible] = React.useState(60);
+  const [kpiOpen, setKpiOpen] = React.useState(true);
   // Row action → "Create invoice": open the invoice chooser for that customer.
   const [invoiceForCustomer, setInvoiceForCustomer] = React.useState<string | null>(null);
   const [projInvoiceForCustomer, setProjInvoiceForCustomer] = React.useState<string | null>(null);
@@ -287,68 +288,118 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* ── Money-first stat strip ── */}
+      {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (
-        <div className="mb-4">
-          <StatStrip items={stats} />
+        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+          <button
+            type="button"
+            onClick={() => setKpiOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <Icon name="bar_chart" size={15} className="text-amber-ink" />
+              <span className="font-semibold text-ink">Customer Portfolio &amp; Receivables</span>
+              <span className="text-ink-3">·</span>
+              <span className="text-ink-2 font-mono font-medium">Customers: <b className="text-ink">{total}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Monthly Revenue: <b className="text-amber-ink">{rupee(totalMRR, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Yearly Revenue: <b className="text-emerald">{rupee(totalARR, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">To Collect: <b className="text-rose-600">{rupee(totalReceivables, { compact: true })}</b></span>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+            </div>
+          </button>
+
+          {kpiOpen && (
+            <div className="p-3 border-t border-hairline bg-paper">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Total Customers</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{total}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Monthly Revenue</p>
+                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(totalMRR, { compact: true })}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Yearly Revenue</p>
+                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(totalARR, { compact: true })}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setView("unpaid")}
+                  className="bg-paper-2/40 border border-hairline hover:border-rose/60 transition-colors rounded-lg p-3 text-left cursor-pointer"
+                >
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">To Collect (Unpaid)</p>
+                  <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{rupee(totalReceivables, { compact: true })}</p>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* ── Segment chips + search ── */}
+      {/* Sticky Segment chips + search */}
       {!isLoading && customers && customers.length > 0 && !selectedId && (
-        <div className="flex justify-between items-center gap-3 flex-wrap mb-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 py-0.5 min-w-0">
-            {VIEW_DEFS.map((v) => {
-              const active = view === v.id;
-              const isDebt = v.id === "unpaid";
-              return (
+        <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 py-0.5 min-w-0">
+              {VIEW_DEFS.map((v) => {
+                const active = view === v.id;
+                const isDebt = v.id === "unpaid";
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setView(v.id)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer",
+                      active
+                        ? "border-amber bg-amber-soft text-amber-ink"
+                        : "border-hairline text-ink-2 hover:bg-paper-2",
+                    )}
+                  >
+                    {v.label}
+                    <span className={cn(
+                      "rounded-full px-1.5 tabular-nums text-[11px]",
+                      active ? "bg-amber/25 text-amber-ink"
+                        : isDebt && viewCounts[v.id] > 0 ? "bg-rose-soft text-rose"
+                        : "bg-paper-2 text-ink-3",
+                    )}>{viewCounts[v.id]}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+              {(archivedCount > 0 || showArchived) && (
                 <button
-                  key={v.id}
                   type="button"
-                  onClick={() => setView(v.id)}
+                  onClick={() => { setShowArchived((v) => !v); setSelectedId(null); }}
+                  aria-pressed={showArchived}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
-                    active
-                      ? "border-amber bg-amber-soft text-amber-ink"
-                      : "border-hairline text-ink-2 hover:bg-paper-2",
+                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer",
+                    showArchived ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline text-ink-3 hover:text-ink hover:bg-paper-2",
                   )}
+                  title={showArchived ? "Back to active customers" : "Show archived customers"}
                 >
-                  {v.label}
-                  <span className={cn(
-                    "rounded-full px-1.5 tabular-nums text-[11px]",
-                    active ? "bg-amber/25 text-amber-ink"
-                      : isDebt && viewCounts[v.id] > 0 ? "bg-rose-soft text-rose"
-                      : "bg-paper-2 text-ink-3",
-                  )}>{viewCounts[v.id]}</span>
+                  <Icon name="inbox" size={13} />
+                  {showArchived ? "Active" : "Archived"}
+                  <span className="rounded-full bg-paper-2 px-1.5 tabular-nums text-[11px] text-ink-3">{archivedCount}</span>
                 </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {(archivedCount > 0 || showArchived) && (
-              <button
-                type="button"
-                onClick={() => { setShowArchived((v) => !v); setSelectedId(null); }}
-                aria-pressed={showArchived}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
-                  showArchived ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline text-ink-3 hover:text-ink hover:bg-paper-2",
-                )}
-                title={showArchived ? "Back to active customers" : "Show archived customers"}
-              >
-                <Icon name="inbox" size={13} />
-                {showArchived ? "Active" : "Archived"}
-                <span className="rounded-full bg-paper-2 px-1.5 tabular-nums text-[11px] text-ink-3">{archivedCount}</span>
-              </button>
-            )}
-          <div className="w-56">
-            <Input
-              prefix={<Icon name="search" size={14} />}
-              placeholder="Customer or domain…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+              )}
+              <div className="w-full sm:w-56">
+                <Input
+                  prefix={<Icon name="search" size={14} />}
+                  placeholder="Customer or domain…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
           </div>
         </div>
       )}

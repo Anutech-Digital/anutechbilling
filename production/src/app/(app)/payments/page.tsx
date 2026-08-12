@@ -40,7 +40,6 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
-import { StatStrip } from "@/components/shared/stat-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -95,6 +94,7 @@ export default function PaymentsPage() {
   const { data: customers } = useCustomers();
   const { data: bankAccounts } = useBankAccounts();
   const { data: me } = useCurrentUser();
+  const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
 
   // Lookup: bankAccountId → short label (for the "received in" hint on a row)
@@ -232,16 +232,53 @@ export default function PaymentsPage() {
       />
 
       {(view === "subscription" || view === "all") && (<>
-      {/* Compact metric strip (replaces the big KPI-card grid) */}
+      {/* Collapsible Payments Analytics Banner */}
       {!isLoading && payments && (
-        <StatStrip
-          items={[
-            { label: "Collected MTD",    value: rupee(mtdCollected, { compact: true }), tone: "emerald" },
-            { label: "Partial quotes",   value: partialQuotes.length, tone: partialQuotes.length > 0 ? "amber" : "default" },
-            { label: "Awaiting invoice", value: rupee(awaitingInvoiceTotal, { compact: true }), tone: awaitingInvoiceQuotes.length > 0 ? "amber" : "default" },
-            { label: "Top method",       value: topMethod ? METHOD_META[topMethod[0]]?.label ?? topMethod[0] : "—" },
-          ]}
-        />
+        <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+          <button
+            type="button"
+            onClick={() => setKpiOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <Icon name="bar_chart" size={15} className="text-amber-ink" />
+              <span className="font-semibold text-ink">Payments &amp; Collections Analytics</span>
+              <span className="text-ink-3">·</span>
+              <span className="text-ink-2 font-mono font-medium">Collected MTD: <b className="text-emerald">{rupee(mtdCollected, { compact: true })}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Partial Quotes: <b className="text-amber-ink">{partialQuotes.length}</b></span>
+              <span className="text-ink-3 font-mono">·</span>
+              <span className="text-ink-2 font-mono font-medium">Awaiting Invoice: <b className="text-amber-ink">{rupee(awaitingInvoiceTotal, { compact: true })}</b> ({awaitingInvoiceQuotes.length})</span>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+              <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+              <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+            </div>
+          </button>
+
+          {kpiOpen && (
+            <div className="p-3 border-t border-hairline bg-paper">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Collected MTD</p>
+                  <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(mtdCollected, { compact: true })}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Partial Quotes</p>
+                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{partialQuotes.length}</p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Awaiting GST Invoice</p>
+                  <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(awaitingInvoiceTotal, { compact: true })} <span className="text-xs text-ink-3 font-normal">({awaitingInvoiceQuotes.length})</span></p>
+                </div>
+                <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                  <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Top Payment Method</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? METHOD_META[topMethod[0]]?.label ?? topMethod[0] : "—"}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Outstanding Receivables — actionable card ── */}
@@ -301,7 +338,7 @@ export default function PaymentsPage() {
               })}
             </ul>
 
-            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
+            <div className="hidden xl:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
               <table className="w-full">
                 <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
                   <tr>
@@ -386,15 +423,15 @@ export default function PaymentsPage() {
         </GeminiCard>
       )}
 
-      {/* Tabs + Search */}
+      {/* Sticky TabBar + Search */}
       {!isLoading && payments && (
-        <>
+        <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
           <TabBar className="overflow-y-hidden" value={tab} onChange={(v) => setTab(v as typeof tab)} items={tabsWithCounts} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
               Showing {filtered.length} of {payments.length} payments · {rupee(totalCollected)} collected all-time
             </div>
-            <div className="w-72">
+            <div className="w-full sm:w-72">
               <Input
                 prefix={<Icon name="search" size={14} />}
                 placeholder="Quote ID, customer, reference, method…"
@@ -403,7 +440,7 @@ export default function PaymentsPage() {
               />
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* Error */}
@@ -458,9 +495,9 @@ export default function PaymentsPage() {
         />
       )}
 
-      {/* Mobile card list — phones only */}
+      {/* Adaptive card list — viewports < 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
-        <ul className="md:hidden space-y-2 mb-3">
+        <ul className="xl:hidden space-y-2 mb-3">
           {filtered.map((p) => {
             const ctx = quoteById.get(p.quote_id);
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
@@ -527,9 +564,9 @@ export default function PaymentsPage() {
         </ul>
       )}
 
-      {/* Desktop table — fluid % columns so it always fits the viewport (no horizontal scroll). */}
+      {/* Desktop table — viewports >= 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
-        <Card flush className="hidden md:block">
+        <Card flush className="hidden xl:block">
           <table className="w-full table-fixed">
             <colgroup>
               {PAY_COL_ORDER.map((id) => <col key={id} style={{ width: PAY_COL_WIDTHS[id] }} />)}

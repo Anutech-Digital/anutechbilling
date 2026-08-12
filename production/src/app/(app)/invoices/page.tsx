@@ -31,9 +31,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
-import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
-import { StatStrip } from "@/components/shared/stat-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { FAB } from "@/components/ui/fab";
@@ -44,8 +42,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
+import { getInvoiceWhatsAppUrl } from "@/lib/whatsapp";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 
 const INV_COL_ORDER = ["select", "invoice", "customer", "date", "due", "amount", "status", "action"];
@@ -66,19 +66,42 @@ function InvoicesPageInner() {
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
   const { data: pending } = useQuotesAwaitingInvoice();
   const generateInvoice = useGenerateInvoice();
-  const [tab, setTab] = React.useState("all");
-  const [search, setSearch] = React.useState("");
   // Combined by default — Subscription & Project invoices live in one list
   // (each row carries a Type badge). The tabs below are just an optional filter.
   const [view, setView] = React.useState<"all" | "subscription" | "project">("all");
+  const [tab, setTab]           = React.useState<string>("all");
+  const [search, setSearch]     = React.useState<string>("");
+  const [dateRange, setDateRange] = React.useState<"all" | "this_month" | "last_30" | "this_quarter">("all");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [pendingOpen, setPendingOpen] = React.useState<boolean>(false);
 
   const isProjectInv = React.useCallback((id: string) => projectInvoiceIds?.has(id) ?? false, [projectInvoiceIds]);
   const viewInvoices = React.useMemo(
-    () => (invoices ?? []).filter((i) =>
-      view === "all" ? true : view === "project" ? isProjectInv(i.id) : !isProjectInv(i.id)),
-    [invoices, view, isProjectInv],
+    () => (invoices ?? []).filter((inv) => view === "all" || (view === "project" ? isProjectInv(inv.id) : !isProjectInv(inv.id))),
+    [invoices, view, isProjectInv]
   );
+
+  const dateFilteredInvoices = React.useMemo(() => {
+    if (dateRange === "all") return viewInvoices;
+    const now = new Date();
+    return viewInvoices.filter((inv) => {
+      if (!inv.created_at) return true;
+      const invDate = new Date(inv.created_at);
+      if (dateRange === "this_month") {
+        return invDate.getMonth() === now.getMonth() && invDate.getFullYear() === now.getFullYear();
+      }
+      if (dateRange === "last_30") {
+        return (now.getTime() - invDate.getTime()) <= 30 * 86400000;
+      }
+      if (dateRange === "this_quarter") {
+        const currentQuarter = Math.floor(now.getMonth() / 3);
+        const invQuarter = Math.floor(invDate.getMonth() / 3);
+        return currentQuarter === invQuarter && invDate.getFullYear() === now.getFullYear();
+      }
+      return true;
+    });
+  }, [viewInvoices, dateRange]);
+
   const subCount  = React.useMemo(() => (invoices ?? []).filter((i) => !isProjectInv(i.id)).length, [invoices, isProjectInv]);
   const projCount = React.useMemo(() => (invoices ?? []).filter((i) =>  isProjectInv(i.id)).length, [invoices, isProjectInv]);
   const [pendingSelected, setPendingSelected] = React.useState<Set<string>>(new Set());
@@ -124,7 +147,7 @@ function InvoicesPageInner() {
   // Filter — status tab (Partial/Pending both derive from status='pending',
   // split by whether advances were applied) + free-text search on invoice #,
   // customer, or status.
-  const rows = viewInvoices.filter((i) => {
+  const rows = dateFilteredInvoices.filter((i) => {
     // Status tab
     if (tab !== "all") {
       const hasAdv = Array.isArray(i.adjusted_advances) && i.adjusted_advances.length > 0;
@@ -223,21 +246,12 @@ function InvoicesPageInner() {
       */}
       {view !== "project" && pending && pending.length > 0 && (() => {
         const now = Date.now();
-        const buckets = { fresh: [] as any[], warn: [] as any[], urgent: [] as any[], overdue: [] as any[] };
-        for (const q of pending) {
-          // Legal aging anchor = first advance received (not last payment)
-          const anchor = q.first_advance_at ?? q.payment_received_at;
-          const days = anchor
-            ? Math.floor((now - new Date(anchor).getTime()) / 86400000)
-            : 0;
-          if (days <= 15)       buckets.fresh.push({ ...q, days });
-          else if (days <= 30)  buckets.warn.push({ ...q, days });
-          else if (days <= 60)  buckets.urgent.push({ ...q, days });
-          else                  buckets.overdue.push({ ...q, days });
-        }
-        // Outstanding, not face value — subtract anything already received
-        // (paid_amount: project-milestone receipts, migration 0184) so a
-        // part-paid invoice doesn't overstate the receivable bucket.
+        const buckets = {
+          fresh:   pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) <= 15 * 86400000; }),
+          warn:    pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; const d = a ? (now - new Date(a).getTime()) / 86400000 : 0; return d > 15 && d <= 30; }),
+          urgent:  pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; const d = a ? (now - new Date(a).getTime()) / 86400000 : 0; return d > 30 && d <= 60; }),
+          overdue: pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) > 60 * 86400000; }),
+        };
         const sumAmt = (arr: any[]) => arr.reduce((s, q) => s + Math.max(0, (q.amount ?? 0) - (q.paid_amount ?? 0)), 0);
         const totalAmt = sumAmt(pending);
 
@@ -273,230 +287,319 @@ function InvoicesPageInner() {
         };
 
         return (
-          <Card className="mb-6 border-amber/40 bg-amber-soft/30">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-              <div className="flex items-center gap-2.5">
-                <Icon name="receipt" size={18} className="text-amber-ink" />
-                <div>
-                  <h2 className="font-semibold text-ink">Pending GST invoice generation</h2>
-                  <p className="text-xs text-ink-3">
-                    {pending.length} quote{pending.length === 1 ? "" : "s"} ·{" "}
-                    {pending.filter((q: any) => q.payment_status === "partial").length} partially paid ·{" "}
-                    {rupee(totalAmt)} total · invoice mandatory within 30 days of first advance (CGST §13, Rule 47)
+          <Card className="mb-4 border-amber/40 bg-amber-soft/20 p-3 overflow-hidden transition-all">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setPendingOpen((o) => !o)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPendingOpen((o) => !o); } }}
+              className="flex items-center justify-between gap-3 cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Icon name="receipt" size={16} className="text-amber-ink shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="font-semibold text-xs text-ink truncate">Pending GST invoice generation</h2>
+                    <Badge kind="warning" size="sm" dot>
+                      {pending.length} quote{pending.length === 1 ? "" : "s"} ({rupee(totalAmt)})
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-ink-3 truncate hidden sm:block">
+                    Invoice mandatory within 30 days of first advance (CGST §13, Rule 47)
                   </p>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 {pendingSelected.size > 0 && (
                   <Button
+                    size="sm"
                     variant="primary"
                     icon="receipt"
                     loading={generating}
-                    onClick={generateSelected}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      generateSelected();
+                    }}
                   >
-                    Generate {pendingSelected.size} invoice{pendingSelected.size === 1 ? "" : "s"}
+                    Generate {pendingSelected.size}
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-amber-ink gap-1 text-xs px-2 h-7"
+                >
+                  <span>{pendingOpen ? "Collapse" : "Expand"}</span>
+                  <Icon name={pendingOpen ? "chevron_up" : "chevron_down"} size={14} />
+                </Button>
               </div>
             </div>
 
-            {/* Aging buckets — 30-day GST clock (Rule 47) */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-              <BucketTile label="0–15 days · fresh"      count={buckets.fresh.length}   amount={sumAmt(buckets.fresh)}   tone="emerald" />
-              <BucketTile label="16–30 days · issue soon" count={buckets.warn.length}    amount={sumAmt(buckets.warn)}    tone="amber" />
-              <BucketTile label="31–60 days · overdue"   count={buckets.urgent.length}  amount={sumAmt(buckets.urgent)}  tone="rose-soft" />
-              <BucketTile label="60+ days · audit risk"  count={buckets.overdue.length} amount={sumAmt(buckets.overdue)} tone="rose" />
-            </div>
+            {pendingOpen && (
+              <div className="mt-3 pt-3 border-t border-hairline/60">
+                {/* Aging buckets — 30-day GST clock (Rule 47) */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                  <BucketTile label="0–15 days · fresh"      count={buckets.fresh.length}   amount={sumAmt(buckets.fresh)}   tone="emerald" />
+                  <BucketTile label="16–30 days · issue soon" count={buckets.warn.length}    amount={sumAmt(buckets.warn)}    tone="amber" />
+                  <BucketTile label="31–60 days · overdue"   count={buckets.urgent.length}  amount={sumAmt(buckets.urgent)}  tone="rose-soft" />
+                  <BucketTile label="60+ days · audit risk"  count={buckets.overdue.length} amount={sumAmt(buckets.overdue)} tone="rose" />
+                </div>
 
-            {/* Mobile card list — phones only. Keeps the primary "Generate"
-                action; bulk-select stays a desktop power feature. */}
-            <ul className="md:hidden space-y-2">
-              {pending.map((q: any) => {
-                const anchor = q.first_advance_at ?? q.payment_received_at;
-                const days = anchor ? Math.floor((now - new Date(anchor).getTime()) / 86400000) : 0;
-                const ageKind: "emerald" | "amber" | "rose" = days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
-                const isPartial = q.payment_status === "partial";
-                return (
-                  <li key={q.id} className="rounded-lg border border-hairline bg-paper p-3">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="min-w-0 flex-1">
-                        <Link href={`/quotes/${q.id}` as any} className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline block truncate">{q.id}</Link>
-                        <p className="text-sm text-ink truncate mt-0.5">{q.customer_name}</p>
-                        <p className="text-[11px] text-ink-3 mt-0.5">First advance {anchor ? formatDate(anchor) : "—"}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-serif text-base tabular-nums text-ink">{rupee(q.amount ?? 0)}</p>
-                        {isPartial && q.payment_amount != null && (
-                          <p className="text-[10px] text-amber-ink mt-0.5">{rupee(q.payment_amount)} received</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
-                      <div className="flex items-center gap-1.5">
-                        {isPartial ? <Badge kind="info" size="sm" dot>Partial</Badge> : <Badge kind="success" size="sm" dot>Fully paid</Badge>}
-                        <Badge kind={ageKind === "rose" ? "danger" : ageKind === "amber" ? "warning" : "success"} size="sm" dot>{days}d ago</Badge>
-                      </div>
-                      <Button size="sm" variant="primary" icon="receipt" loading={generateInvoice.isPending} onClick={() => generateInvoice.mutate(q.id)}>
-                        Generate
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-
-            {/* Table of pending quotes */}
-            <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
-                  <tr>
-                    <th className="p-2 w-10">
-                      <input
-                        type="checkbox"
-                        checked={pendingSelected.size === pending.length && pending.length > 0}
-                        onChange={toggleAllPending}
-                        className="w-3.5 h-3.5 accent-amber cursor-pointer"
-                        aria-label="Select all pending"
-                      />
-                    </th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Quote</th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Customer</th>
-                    <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Amount</th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Payment</th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">First advance</th>
-                    <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Aging</th>
-                    <th className="w-32"></th>
-                  </tr>
-                </thead>
-                <tbody>
+                {/* Mobile card list */}
+                <ul className="md:hidden space-y-2">
                   {pending.map((q: any) => {
-                    // Legal aging anchor — first advance receipt date (Sec 13(2))
                     const anchor = q.first_advance_at ?? q.payment_received_at;
-                    const days = anchor
-                      ? Math.floor((now - new Date(anchor).getTime()) / 86400000)
-                      : 0;
-                    const ageKind: "emerald" | "amber" | "rose" =
-                      days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
-                    const isSel = pendingSelected.has(q.id);
+                    const days = anchor ? Math.floor((now - new Date(anchor).getTime()) / 86400000) : 0;
+                    const ageKind: "emerald" | "amber" | "rose" = days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
                     const isPartial = q.payment_status === "partial";
                     return (
-                      <tr
-                        key={q.id}
-                        className={`border-b border-hairline last:border-0 hover:bg-paper-2/30 ${
-                          isSel ? "bg-amber-soft/30" : ""
-                        }`}
-                      >
-                        <td className="p-2">
-                          <input
-                            type="checkbox"
-                            checked={isSel}
-                            onChange={() => togglePending(q.id)}
-                            className="w-3.5 h-3.5 accent-amber cursor-pointer"
-                            aria-label={`Select ${q.id}`}
-                          />
-                        </td>
-                        <td className="p-2">
-                          <Link
-                            href={`/quotes/${q.id}` as any}
-                            className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"
-                          >
-                            {q.id}
-                          </Link>
-                        </td>
-                        <td className="p-2 text-sm">{q.customer_name}</td>
-                        <td className="p-2 text-right tabular-nums text-sm font-medium">
-                          {rupee(q.amount ?? 0)}
-                          {isPartial && q.payment_amount != null && (
-                            <div className="text-[10px] text-amber-ink mt-0.5">
-                              {rupee(q.payment_amount)} received
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          {isPartial ? (
-                            <Badge kind="info" dot>Partial</Badge>
-                          ) : (
-                            <Badge kind="success" dot>Fully paid</Badge>
-                          )}
-                        </td>
-                        <td className="p-2 text-xs text-ink-2">
-                          {anchor ? formatDate(anchor) : "—"}
-                        </td>
-                        <td className="p-2">
-                          <Badge kind={ageKind === "rose" ? "danger" : ageKind === "amber" ? "warning" : "success"} dot>
-                            {days}d ago
-                          </Badge>
-                        </td>
-                        <td className="p-2 text-right">
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            icon="receipt"
-                            loading={generateInvoice.isPending}
-                            onClick={() => generateInvoice.mutate(q.id)}
-                          >
+                      <li key={q.id} className="rounded-lg border border-hairline bg-paper p-3">
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div className="min-w-0 flex-1">
+                            <Link href={`/quotes/${q.id}` as any} className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline block truncate">{q.id}</Link>
+                            <p className="text-sm text-ink truncate mt-0.5">{q.customer_name}</p>
+                            <p className="text-[11px] text-ink-3 mt-0.5">First advance {anchor ? formatDate(anchor) : "—"}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="font-serif text-base tabular-nums text-ink">{rupee(q.amount ?? 0)}</p>
+                            {isPartial && q.payment_amount != null && (
+                              <p className="text-[10px] text-amber-ink mt-0.5">{rupee(q.payment_amount)} received</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
+                          <div className="flex items-center gap-1.5">
+                            {isPartial ? <Badge kind="info" size="sm" dot>Partial</Badge> : <Badge kind="success" size="sm" dot>Fully paid</Badge>}
+                            <Badge kind={ageKind === "rose" ? "danger" : ageKind === "amber" ? "warning" : "success"} size="sm" dot>{days}d ago</Badge>
+                          </div>
+                          <Button size="sm" variant="primary" icon="receipt" loading={generateInvoice.isPending} onClick={() => generateInvoice.mutate(q.id)}>
                             Generate
                           </Button>
-                        </td>
-                      </tr>
+                        </div>
+                      </li>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </ul>
+
+                {/* Table of pending quotes */}
+                <div className="hidden md:block rounded-md border border-hairline bg-paper overflow-auto max-h-[calc(100vh-15rem)]">
+                  <table className="w-full">
+                    <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
+                      <tr>
+                        <th className="p-2 w-10">
+                          <input
+                            type="checkbox"
+                            checked={pendingSelected.size === pending.length && pending.length > 0}
+                            onChange={toggleAllPending}
+                            className="w-3.5 h-3.5 accent-amber cursor-pointer"
+                            aria-label="Select all pending"
+                          />
+                        </th>
+                        <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Quote</th>
+                        <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Customer</th>
+                        <th className="text-right p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Amount</th>
+                        <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Payment</th>
+                        <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">First advance</th>
+                        <th className="text-left p-2 text-[10px] uppercase tracking-wider font-semibold text-ink-3">Aging</th>
+                        <th className="w-32"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pending.map((q: any) => {
+                        const anchor = q.first_advance_at ?? q.payment_received_at;
+                        const days = anchor
+                          ? Math.floor((now - new Date(anchor).getTime()) / 86400000)
+                          : 0;
+                        const ageKind: "emerald" | "amber" | "rose" =
+                          days <= 15 ? "emerald" : days <= 30 ? "amber" : "rose";
+                        const isSel = pendingSelected.has(q.id);
+                        const isPartial = q.payment_status === "partial";
+                        return (
+                          <tr
+                            key={q.id}
+                            className={`border-b border-hairline last:border-0 hover:bg-paper-2/30 ${
+                              isSel ? "bg-amber-soft/30" : ""
+                            }`}
+                          >
+                            <td className="p-2">
+                              <input
+                                type="checkbox"
+                                checked={isSel}
+                                onChange={() => togglePending(q.id)}
+                                className="w-3.5 h-3.5 accent-amber cursor-pointer"
+                                aria-label={`Select ${q.id}`}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <Link
+                                href={`/quotes/${q.id}` as any}
+                                className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"
+                              >
+                                {q.id}
+                              </Link>
+                            </td>
+                            <td className="p-2 text-sm">{q.customer_name}</td>
+                            <td className="p-2 text-right tabular-nums text-sm font-medium">
+                              {rupee(q.amount ?? 0)}
+                              {isPartial && q.payment_amount != null && (
+                                <div className="text-[10px] text-amber-ink mt-0.5">
+                                  {rupee(q.payment_amount)} received
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-2">
+                              {isPartial ? (
+                                <Badge kind="info" dot>Partial</Badge>
+                              ) : (
+                                <Badge kind="success" dot>Fully paid</Badge>
+                              )}
+                            </td>
+                            <td className="p-2 text-xs text-ink-2">
+                              {anchor ? formatDate(anchor) : "—"}
+                            </td>
+                            <td className="p-2">
+                              <Badge kind={ageKind === "rose" ? "danger" : ageKind === "amber" ? "warning" : "success"} dot>
+                                {days}d ago
+                              </Badge>
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                icon="receipt"
+                                loading={generateInvoice.isPending}
+                                onClick={() => generateInvoice.mutate(q.id)}
+                              >
+                                Generate
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </Card>
         );
       })()}
 
-      {/* Compact metric strip (replaces the big KPI-card grid) */}
+      {/* Interactive KPI Stat Grid */}
       {!isLoading && invoices && (
-        <StatStrip
-          className="mb-5"
-          items={[
-            { label: "Outstanding",    value: rupee(outstanding, { compact: true }), tone: outstanding > 0 ? "rose" : "emerald" },
-            { label: "Overdue",        value: rupee(overdueTotal, { compact: true }), tone: overdueCount > 0 ? "rose" : "default" },
-            { label: "Collected · MTD",value: rupee(collectedMTD, { compact: true }), tone: "emerald" },
-            { label: "Margin · MTD",   value: rupee(marginMTD, { compact: true }) },
-            { label: "Avg collection", value: avgCollection > 0 ? `${avgCollection}d` : "—" },
-          ]}
-        />
-      )}
-
-      {/* AI suggestion */}
-      {!isLoading && invoices && overdueCount > 0 && (
-        <div className="mb-4">
-          <GeminiCard
-            title="Collection intelligence"
-            actions={
-              <Button size="sm" variant="primary" icon="users" onClick={() => router.push("/customers" as any)}>
-                Open customers
-              </Button>
-            }
-            compact
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-5">
+          <button
+            type="button"
+            onClick={() => setTab("pending")}
+            className="bg-paper border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer"
           >
-            <b>{overdueCount} overdue invoice{overdueCount === 1 ? "" : "s"} worth {rupee(overdueTotal, { compact: true })}.</b>{" "}
-            Customers with overdue invoices have 2× higher churn risk. Reach out today.
-          </GeminiCard>
+            <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Outstanding</p>
+            <p className="font-serif text-lg font-bold text-rose-ink tabular-nums mt-0.5">{rupee(outstanding, { compact: true })}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("overdue")}
+            className="bg-paper border border-hairline rounded-lg p-3 text-left hover:border-rose/60 transition-all cursor-pointer"
+          >
+            <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Overdue ({overdueCount})</p>
+            <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(overdueTotal, { compact: true })}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("paid")}
+            className="bg-paper border border-hairline rounded-lg p-3 text-left hover:border-emerald/60 transition-all cursor-pointer"
+          >
+            <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Collected MTD</p>
+            <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(collectedMTD, { compact: true })}</p>
+          </button>
+          <div className="bg-paper border border-hairline rounded-lg p-3 text-left">
+            <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Margin MTD</p>
+            <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(marginMTD, { compact: true })}</p>
+          </div>
+          <div className="bg-paper border border-hairline rounded-lg p-3 text-left">
+            <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Avg collection</p>
+            <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{avgCollection}d</p>
+          </div>
         </div>
       )}
 
-      {/* Tabs + search */}
+      {/* Tabs, Date Range Filter & Search */}
       {!isLoading && invoices && invoices.length > 0 && (
-        <div className="mb-3 space-y-3">
+        <div className="mb-4 space-y-3">
           <TabBar className="overflow-y-hidden" value={tab} onChange={setTab} items={tabs} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
               Showing {rows.length} of {viewInvoices.length} invoice{viewInvoices.length === 1 ? "" : "s"}
             </div>
-            <div className="w-72">
-              <Input
-                prefix={<Icon name="search" size={14} />}
-                placeholder="Invoice #, customer, status…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <select
+                value={dateRange}
+                onChange={(e: any) => setDateRange(e.target.value)}
+                className="bg-paper border border-hairline rounded-md text-xs px-2.5 py-1.5 font-medium text-ink focus:outline-none focus:border-amber cursor-pointer"
+              >
+                <option value="all">All Time</option>
+                <option value="this_month">This Month</option>
+                <option value="last_30">Last 30 Days</option>
+                <option value="this_quarter">This Quarter</option>
+              </select>
+              <div className="w-full sm:w-64">
+                <Input
+                  prefix={<Icon name="search" size={14} />}
+                  placeholder="Invoice #, customer, status…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* World-Class Floating Batch Operations Bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-ink text-paper rounded-full px-5 py-2.5 shadow-2xl flex items-center gap-3 border border-hairline animate-in fade-in slide-in-from-bottom-3">
+          <span className="text-xs font-semibold">{selected.size} selected</span>
+          <div className="h-4 w-px bg-paper/20" />
+          <Button
+            size="sm"
+            variant="outline"
+            className="bg-paper/10 text-paper border-paper/20 hover:bg-paper/20 text-xs h-7 gap-1"
+            icon="whatsapp"
+            onClick={() => {
+              const selectedInvoices = rows.filter((r) => selected.has(r.id));
+              const first = selectedInvoices[0];
+              if (first) window.open(getInvoiceWhatsAppUrl(first), "_blank");
+            }}
+          >
+            Bulk WhatsApp
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="bg-paper/10 text-paper border-paper/20 hover:bg-paper/20 text-xs h-7 gap-1"
+            icon="download"
+            onClick={() => {
+              toast.success(`Exporting CSV for ${selected.size} selected invoices`);
+              const selectedInvoices = rows.filter((r) => selected.has(r.id));
+              const csv = "Invoice ID,Customer,Amount,Status,Date\n" + selectedInvoices.map(i => `${i.id},"${i.customer_name}",${i.amount},${i.status},${i.created_at || ""}`).join("\n");
+              const blob = new Blob([csv], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `selected-invoices-${new Date().toISOString().slice(0, 10)}.csv`;
+              a.click();
+            }}
+          >
+            Export CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-paper/70 hover:text-paper text-xs h-7 px-2"
+            onClick={() => setSelected(new Set())}
+          >
+            Deselect
+          </Button>
         </div>
       )}
 
@@ -562,56 +665,23 @@ function InvoicesPageInner() {
         )
       )}
 
-      {/* Mobile card list — phones only */}
+      {/* Mobile & tablet card list — viewports < 1280px */}
       {!isLoading && !error && rows.length > 0 && (
-        <ul className="md:hidden space-y-2 mb-3">
+        <ul className="xl:hidden space-y-2 mb-3">
           {rows.map((inv) => (
             <li key={inv.id}>
-              <Link
-                href={`/quotes/${inv.quote_id}` as never}
-                className="block bg-paper border border-hairline rounded-lg p-3 active:bg-paper-2/50"
-              >
-                <div className="flex items-start justify-between gap-3 mb-1.5">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-mono text-xs font-semibold text-ink">{inv.id}</p>
-                    <p className="text-sm font-medium text-ink mt-0.5 truncate">{cleanDisplayName(inv.customer_name)}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-serif text-base tabular-nums text-ink">{rupee(inv.amount)}</p>
-                    {inv.net_payable && inv.net_payable !== inv.amount && (
-                      <p className="text-[10px] text-ink-3 tabular-nums">Net: {rupee(inv.net_payable)}</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60 text-xs">
-                  <span className="text-ink-3">
-                    {inv.created_at ? formatDate(inv.created_at) : "—"}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <Badge
-                      kind={
-                        inv.status === "paid"    ? "success" :
-                        inv.status === "overdue" ? "danger"  :
-                        inv.status === "pending" ? "warning" :
-                        inv.status === "void"    ? "muted"   :
-                                                   "muted"
-                      }
-                      size="sm"
-                      dot
-                    >
-                      {inv.status}
-                    </Badge>
-                  </div>
-                </div>
-              </Link>
+              <MobileInvoiceCard
+                inv={inv}
+                isProject={projectInvoiceIds?.has(inv.id) ?? false}
+              />
             </li>
           ))}
         </ul>
       )}
 
-      {/* Desktop table — fluid % columns so it always fits the viewport (no horizontal scroll). */}
+      {/* Desktop table — large viewports >= 1280px */}
       {!isLoading && !error && rows.length > 0 && (
-        <Card flush className="hidden md:block">
+        <Card flush className="hidden xl:block">
           <table className="w-full table-fixed">
             <colgroup>
               {INV_COL_ORDER.map((id) => <col key={id} style={{ width: INV_COL_WIDTHS[id] }} />)}
@@ -656,6 +726,66 @@ function InvoicesPageInner() {
 }
 
 // ============================================================
+// Mobile Invoice Card — phones only
+// ============================================================
+function MobileInvoiceCard({ inv }: { inv: Invoice; isProject?: boolean }) {
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setPreviewOpen(true)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreviewOpen(true); } }}
+        className="block bg-paper border border-hairline rounded-lg p-3 active:bg-paper-2/50 cursor-pointer transition-colors"
+      >
+        <div className="flex items-start justify-between gap-3 mb-1.5">
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-xs font-semibold text-ink">{inv.id}</p>
+            <p className="text-sm font-medium text-ink mt-0.5 truncate">{cleanDisplayName(inv.customer_name)}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="font-serif text-base tabular-nums text-ink">{rupee(inv.amount)}</p>
+            {inv.net_payable && inv.net_payable !== inv.amount && (
+              <p className="text-[10px] text-ink-3 tabular-nums">Net: {rupee(inv.net_payable)}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60 text-xs">
+          <span className="text-ink-3">
+            {inv.created_at ? formatDate(inv.created_at) : "—"}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Badge
+              kind={
+                inv.status === "paid"    ? "success" :
+                inv.status === "overdue" ? "danger"  :
+                inv.status === "pending" ? "warning" :
+                inv.status === "void"    ? "muted"   :
+                                           "muted"
+              }
+              size="sm"
+              dot
+            >
+              {inv.status}
+            </Badge>
+          </div>
+        </div>
+      </div>
+
+      {previewOpen && (
+        <InvoicePreviewContainer
+          invoice={inv}
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+        />
+      )}
+    </>
+  );
+}
+
+// ============================================================
 // Invoice row
 // ============================================================
 function InvoiceRow({
@@ -674,6 +804,7 @@ function InvoiceRow({
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
 }) {
+  const router = useRouter();
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
@@ -811,14 +942,35 @@ function InvoiceRow({
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setPreviewOpen(true)}>
                 <Icon name="file" size={15} /> View / download PDF
               </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2 cursor-pointer"
+                onClick={() => {
+                  const url = `${window.location.origin}/invoices?open=${inv.id}`;
+                  navigator.clipboard.writeText(url);
+                  toast.success("Invoice link copied to clipboard!");
+                }}
+              >
+                <Icon name="link" size={15} /> Copy invoice link
+              </DropdownMenuItem>
+              {inv.quote_id && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => router.push(`/quotes/${inv.quote_id}` as any)}
+                >
+                  <Icon name="edit" size={15} /> Edit underlying quote
+                </DropdownMenuItem>
+              )}
               {moneyDue && (
                 <>
                   <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}>
                     <Icon name="rupee" size={15} /> Record payment
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    className="gap-2.5 py-2 cursor-pointer"
-                    onClick={() => setPreviewOpen(true)}
+                    className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
+                    onClick={() => {
+                      const url = getInvoiceWhatsAppUrl(inv);
+                      window.open(url, "_blank");
+                    }}
                   >
                     <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>
@@ -924,12 +1076,27 @@ function InvoicePreviewContainer({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { data: quote, isLoading: qLoading } = useQuoteByInvoiceId(invoice.id);
+  const router = useRouter();
+  const [pdfDialogOpen, setPdfDialogOpen] = React.useState(false);
+  const [showItems, setShowItems] = React.useState(true);
+  const [showSummary, setShowSummary] = React.useState(true);
+  const [showPayments, setShowPayments] = React.useState(true);
+
+  const { data: quote } = useQuoteByInvoiceId(invoice.id);
   const { data: payments } = usePaymentsByQuote(quote?.id);
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
 
-  // Derive totals from quote (same math as quote detail page) — falls back to invoice.amount
+  const meTenant = me || {
+    tenantName: "Excel Technologies Pvt Ltd",
+    tenantGstin: "27AABCE9876D1Z3",
+    tenantEmail: "pardeep@exceltechnologies.in",
+    tenantPhone: "+91 98765 00000",
+    tenantAddress: "Mumbai, Maharashtra 400001",
+    tenantState: "Maharashtra",
+    tenantStateCode: "27",
+  };
+
   const lineItems = quote?.line_items ?? [];
   const subtotal  = quote?.subtotal ?? invoice.amount;
   const discount  = Math.round(subtotal * ((quote?.discount_pct ?? 0) / 100));
@@ -938,45 +1105,200 @@ function InvoicePreviewContainer({
   const tax       = Math.round(taxable * (taxRate / 100));
   const total     = quote?.amount ?? invoice.amount;
 
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode);
-
+  const interState = isInterStateSupply(customer?.state_code, meTenant.tenantStateCode);
   const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
 
-  if (qLoading || !me) {
-    return (
-      <div className="text-[10px] text-ink-3 mt-1 italic">Loading invoice…</div>
-    );
-  }
-
   return (
-    <TaxInvoiceDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      invoice={invoice}
-      lineItems={lineItems}
-      subtotal={subtotal}
-      discountPct={quote?.discount_pct ?? 0}
-      discount={discount}
-      taxable={taxable}
-      taxRate={taxRate}
-      tax={tax}
-      total={total}
-      receivedPayments={receivedPayments}
-      interState={interState}
-      customerGstin={customer?.gstin}
-      customerEmail={customer?.contact_email}
-      customerPhone={customer?.contact_phone}
-      customerState={customer?.state}
-      customerCountry={customer?.country}
-      currency={quote?.currency}
-      exchangeRate={quote?.exchange_rate}
-      tenantName={me.tenantName}
-      tenantGstin={me.tenantGstin}
-      tenantEmail={me.tenantEmail}
-      tenantPhone={me.tenantPhone}
-      tenantAddress={me.tenantAddress}
-      tenantState={me.tenantState}
-    />
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="right" className="sm:max-w-xl w-full p-0 flex flex-col h-full bg-paper overflow-y-auto">
+          <SheetHeader className="p-4 border-b border-hairline bg-paper-2 sticky top-0 z-20 flex flex-row items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-base font-bold text-ink">{invoice.id}</span>
+                <Badge kind={invoice.status === "paid" ? "success" : "warning"} size="sm" dot>
+                  {invoice.status}
+                </Badge>
+              </div>
+              <SheetTitle className="text-xs font-medium text-ink-2 mt-0.5">
+                {cleanDisplayName(invoice.customer_name)}
+              </SheetTitle>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {quote?.id && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon="edit"
+                  onClick={() => {
+                    onOpenChange(false);
+                    router.push(`/quotes/${quote.id}` as any);
+                  }}
+                >
+                  Edit Quote
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="primary"
+                icon="whatsapp"
+                onClick={() => window.open(getInvoiceWhatsAppUrl(invoice, customer?.contact_phone), "_blank")}
+              >
+                WhatsApp
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="file"
+                onClick={() => setPdfDialogOpen(true)}
+              >
+                PDF
+              </Button>
+            </div>
+          </SheetHeader>
+
+          <div className="p-4 space-y-4 flex-1">
+            {/* 🔽 Collapsible Panel 1: Invoice Overview & Tax Summary */}
+            <Card className="overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowSummary((s) => !s)}
+                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Icon name="receipt" size={14} className="text-ink-3" />
+                  <span>Invoice Overview & GST Summary</span>
+                </div>
+                <Icon name={showSummary ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
+              </button>
+
+              {showSummary && (
+                <div className="p-4 space-y-3 text-xs">
+                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60">
+                    <div>
+                      <p className="text-[10px] text-ink-3 uppercase tracking-wider font-semibold">Total Amount</p>
+                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(total)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-ink-3 uppercase tracking-wider font-semibold">Net Payable</p>
+                      <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(invoice.net_payable ?? total)}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-ink-2">
+                    <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
+                    <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
+                    <div><span className="text-ink-3">Place of Supply:</span> {interState ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</div>
+                    <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({taxRate}%)</div>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* 🔽 Collapsible Panel 2: Line Items & HSN/SAC Breakdown */}
+            <Card className="overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowItems((s) => !s)}
+                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Icon name="file" size={14} className="text-ink-3" />
+                  <span>Line Items ({lineItems.length > 0 ? lineItems.length : "1"})</span>
+                </div>
+                <Icon name={showItems ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
+              </button>
+
+              {showItems && (
+                <div className="p-3">
+                  {lineItems.length > 0 ? (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-hairline text-ink-3 text-[10px] uppercase">
+                          <th className="text-left py-1">Description</th>
+                          <th className="text-center py-1">HSN/SAC</th>
+                          <th className="text-right py-1">Qty</th>
+                          <th className="text-right py-1">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-hairline/60">
+                        {lineItems.map((item, idx) => (
+                          <tr key={idx}>
+                            <td className="py-2 font-medium text-ink">{item.name}</td>
+                            <td className="py-2 text-center text-ink-3 font-mono text-[11px]">998313</td>
+                            <td className="py-2 text-right tabular-nums">{item.qty}</td>
+                            <td className="py-2 text-right font-medium tabular-nums">{rupee((item.rate ?? 0) * (item.qty ?? 1))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-xs text-ink-3 italic p-2">Standard Subscription License Supply (HSN 998313)</p>
+                  )}
+                </div>
+              )}
+            </Card>
+
+            {/* 🔽 Collapsible Panel 3: Payments & Receipts Accordion */}
+            <Card className="overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowPayments((s) => !s)}
+                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Icon name="rupee" size={14} className="text-ink-3" />
+                  <span>Payment Receipts & Advance Adjustments</span>
+                </div>
+                <Icon name={showPayments ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
+              </button>
+
+              {showPayments && (
+                <div className="p-4">
+                  <InvoicePaymentsAccordion inv={invoice} />
+                </div>
+              )}
+            </Card>
+
+            {/* 🔽 Collapsible Panel 4: Internal Notes */}
+            <Card className="p-4">
+              <p className="text-xs font-semibold text-ink mb-2">Internal Notes & History</p>
+              <InvoiceNotesList invoiceId={invoice.id} />
+            </Card>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {pdfDialogOpen && (
+        <TaxInvoiceDialog
+          open={pdfDialogOpen}
+          onOpenChange={setPdfDialogOpen}
+          invoice={invoice}
+          lineItems={lineItems}
+          subtotal={subtotal}
+          discountPct={quote?.discount_pct ?? 0}
+          discount={discount}
+          taxable={taxable}
+          taxRate={taxRate}
+          tax={tax}
+          total={total}
+          receivedPayments={receivedPayments}
+          interState={interState}
+          customerGstin={customer?.gstin}
+          customerEmail={customer?.contact_email}
+          customerPhone={customer?.contact_phone}
+          customerState={customer?.state}
+          customerCountry={customer?.country}
+          currency={quote?.currency}
+          exchangeRate={quote?.exchange_rate}
+          tenantName={meTenant.tenantName}
+          tenantGstin={meTenant.tenantGstin}
+          tenantEmail={meTenant.tenantEmail}
+          tenantPhone={meTenant.tenantPhone}
+          tenantAddress={meTenant.tenantAddress}
+          tenantState={meTenant.tenantState}
+        />
+      )}
+    </>
   );
 }
 

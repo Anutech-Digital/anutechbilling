@@ -2,13 +2,12 @@
  * Vendors — supplier master (Google CSP, Microsoft, Zoho, etc.). Each vendor
  * rolls up its bills (total billed + outstanding), so the buy-side "kisko kitna
  * dena" reads at a glance. Bills still live on /accounting/bills; this is the
- * per-supplier view.
+ * per-supplier view. Includes Products & Services Supplied portfolio.
  */
 "use client";
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
 import { StatStrip } from "@/components/shared/stat-strip";
@@ -40,23 +39,37 @@ import { VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { rupee, formatDate, GST_STATE_BY_CODE, gstStateFromGstin, foreignAmount, formatForeignAmount } from "@/lib/utils";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 
-/** A short country / place-of-supply label from a vendor's GSTIN.
- *  Indian state code → "India · <State>"; OIDAR code 99/96 → "Foreign …"
- *  (with the embedded country code when present, e.g. Anthropic → "Foreign · USA"). */
+const VENDOR_SUPPLIED_PRODUCTS = [
+  "Google Workspace & GCP",
+  "Microsoft 365 & Azure",
+  "Zoho One & Business Apps",
+  "AWS & Cloud Hosting",
+  "SSL & Domain Names",
+  "IT Hardware & Laptops",
+  "Software Services & Dev",
+];
+
+function parseSuppliedProducts(notesStr: string | null | undefined): string[] {
+  if (!notesStr) return [];
+  const match = notesStr.match(/\[Supplied Products: (.*?)\]/);
+  if (match?.[1]) return match[1].split(",").map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+/** A short country / place-of-supply label from a vendor's GSTIN. */
 function vendorRegion(gstin: string | null | undefined): string | null {
   const g = (gstin ?? "").trim().toUpperCase();
   if (!g) return null;
   const { code, name } = gstStateFromGstin(g);
   if (!code) return null;
   if (code === "99" || code === "96") {
-    const m = g.match(/^\d{4}([A-Z]{2,3})/);   // OIDAR often embeds a country code
+    const m = g.match(/^\d{4}([A-Z]{2,3})/);
     return m ? `Foreign · ${m[1]}` : "Foreign supplier (OIDAR)";
   }
   return name ? `India · ${name}` : "India";
 }
 
 export default function VendorsPage() {
-  const router = useRouter();
   const { data: vendors, isLoading } = useVendors();
   const [search, setSearch] = React.useState("");
   const [addOpen, setAddOpen] = React.useState(false);
@@ -85,13 +98,15 @@ export default function VendorsPage() {
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
-          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Vendors</h1>
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases & Suppliers</p>
+          <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Vendors & Suppliers Master</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Everyone who invoices you — resale suppliers (Google / Microsoft / Zoho) and expense vendors (software, rent, stationery). Total spend across COGS bills + expenses, all in one place.
+            Manage your suppliers (Google, Microsoft, Zoho, Distributors, Sub-Resellers) & products they supply to buy licenses & track COGS bills.
           </p>
         </div>
-        <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setAddOpen(true)}>Add vendor</Button>
+        <Button variant="primary" icon="plus" className="hidden md:inline-flex" onClick={() => setAddOpen(true)}>
+          Add vendor
+        </Button>
       </div>
 
       {!isLoading && (vendors ?? []).length > 0 && (
@@ -130,6 +145,7 @@ export default function VendorsPage() {
               <thead className="bg-paper-2 border-b border-hairline-strong text-[11px] uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
                   <th className="text-left  px-4 py-2.5">Vendor</th>
+                  <th className="text-left  px-4 py-2.5">Supplied Products</th>
                   <th className="text-left  px-4 py-2.5">Category</th>
                   <th className="text-right px-4 py-2.5">Entries</th>
                   <th className="text-right px-4 py-2.5">Total spend</th>
@@ -138,106 +154,151 @@ export default function VendorsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {rows.map((v) => (
-                  <tr
-                    key={v.id}
-                    className="group hover:bg-paper-2/50 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open ${v.name}`}
-                    onClick={() => setDetailVendor(v)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailVendor(v); } }}
-                  >
-                    <td className="px-4 py-2.5 align-top">
-                      <div className="font-medium text-ink leading-snug">{v.name}</div>
-                      {v.gstin && <div className="text-[11px] text-ink-3 font-mono">{v.gstin}</div>}
-                      {(() => { const r = vendorRegion(v.gstin); return r ? <div className="text-[11px] text-ink-3">{r}</div> : null; })()}
-                      {v.contact_email && <div className="text-[11px] text-ink-3 truncate">{v.contact_email}</div>}
-                    </td>
-                    <td className="px-4 py-2.5 align-top">{v.default_category ? <Badge kind="muted" size="sm">{v.default_category}</Badge> : <span className="text-ink-3">—</span>}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-ink-2 align-top">{v.docCount || "—"}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums align-top">
-                      {v.totalSpend > 0 ? rupee(v.totalSpend) : "—"}
-                      {v.billCurrency && v.totalBilled > 0 && (
-                        <div className="text-[10px] text-ink-3">{formatForeignAmount(v.billCurrency, v.foreignBilled)} COGS</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums align-top">
-                      {v.outstanding > 0
-                        ? <span className="font-serif text-[15px] font-semibold text-rose">{rupee(v.outstanding)}</span>
-                        : <span className="text-emerald">✓</span>}
-                      {v.billCurrency && v.outstanding > 0 && (
-                        <div className="text-[10px] font-normal text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
-                      )}
-                    </td>
-                    <td className="px-2 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end">
-                        <VendorActions
-                          onView={() => setDetailVendor(v)}
-                          onEdit={() => setEditVendor(v)}
-                          onDelete={() => confirmDelete(v)}
-                          onUploadBill={() => router.push("/accounting/bills" as never)}
-                          onRecordPayment={() => router.push("/accounting/bills" as never)}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((v) => {
+                  const prods = parseSuppliedProducts(v.notes);
+                  return (
+                    <tr
+                      key={v.id}
+                      className="group hover:bg-paper-2/50 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open ${v.name}`}
+                      onClick={() => setDetailVendor(v)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailVendor(v); } }}
+                    >
+                      <td className="px-4 py-2.5 align-top">
+                        <div className="font-medium text-ink leading-snug">{v.name}</div>
+                        {v.gstin && <div className="text-[11px] text-ink-3 font-mono">{v.gstin}</div>}
+                        {(() => { const r = vendorRegion(v.gstin); return r ? <div className="text-[11px] text-ink-3">{r}</div> : null; })()}
+                        {v.contact_email && <div className="text-[11px] text-ink-3 truncate">{v.contact_email}</div>}
+                      </td>
+
+                      <td className="px-4 py-2.5 align-top">
+                        {prods.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {prods.map((p) => (
+                              <Badge key={p} kind="info" size="sm" className="text-[10px] font-semibold">
+                                {p}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-ink-3 text-xs italic">Not specified</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-2.5 align-top">{v.default_category ? <Badge kind="muted" size="sm">{v.default_category}</Badge> : <span className="text-ink-3">—</span>}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-ink-2 align-top">{v.docCount || "—"}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums align-top">
+                        {v.totalSpend > 0 ? rupee(v.totalSpend) : "—"}
+                        {v.billCurrency && v.totalBilled > 0 && (
+                          <div className="text-[10px] text-ink-3">{formatForeignAmount(v.billCurrency, v.foreignBilled)} COGS</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums align-top">
+                        {v.outstanding > 0
+                          ? <span className="font-serif text-[15px] font-semibold text-rose">{rupee(v.outstanding)}</span>
+                          : <span className="text-emerald">✓</span>}
+                        {v.billCurrency && v.outstanding > 0 && (
+                          <div className="text-[10px] font-normal text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end">
+                          <VendorActions
+                            onView={() => setDetailVendor(v)}
+                            onEdit={() => setEditVendor(v)}
+                            onDelete={() => confirmDelete(v)}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
 
           {/* Mobile cards */}
           <ul className="md:hidden space-y-2.5">
-            {rows.map((v) => (
-              <li key={v.id}>
-                <Card className="p-4" onClick={() => setDetailVendor(v)}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium text-ink truncate">{v.name}</div>
-                      {v.gstin && <div className="text-[11px] text-ink-3 font-mono truncate">{v.gstin}</div>}
-                      {(() => { const r = vendorRegion(v.gstin); return r ? <div className="text-[11px] text-ink-3 truncate">{r}</div> : null; })()}
-                      <div className="text-[11px] text-ink-3 mt-0.5">{v.docCount} {v.docCount === 1 ? "entry" : "entries"} · {rupee(v.totalSpend, { compact: true })} spent</div>
+            {rows.map((v) => {
+              const prods = parseSuppliedProducts(v.notes);
+              return (
+                <li key={v.id}>
+                  <Card className="p-4 space-y-2" onClick={() => setDetailVendor(v)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-ink truncate">{v.name}</div>
+                        {v.gstin && <div className="text-[11px] text-ink-3 font-mono truncate">{v.gstin}</div>}
+                        {(() => { const r = vendorRegion(v.gstin); return r ? <div className="text-[11px] text-ink-3 truncate">{r}</div> : null; })()}
+                        <div className="text-[11px] text-ink-3 mt-0.5">{v.docCount} {v.docCount === 1 ? "entry" : "entries"} · {rupee(v.totalSpend, { compact: true })} spent</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {v.outstanding > 0
+                          ? <span className="font-serif text-lg text-rose">{rupee(v.outstanding, { compact: true })}</span>
+                          : <span className="text-emerald text-sm">✓ clear</span>}
+                        {v.billCurrency && v.outstanding > 0 && (
+                          <div className="text-[10px] text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      {v.outstanding > 0
-                        ? <span className="font-serif text-lg text-rose">{rupee(v.outstanding, { compact: true })}</span>
-                        : <span className="text-emerald text-sm">✓ clear</span>}
-                      {v.billCurrency && v.outstanding > 0 && (
-                        <div className="text-[10px] text-rose/70">{formatForeignAmount(v.billCurrency, v.foreignOutstanding)}</div>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-              </li>
-            ))}
+
+                    {prods.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1 border-t border-hairline/60">
+                        {prods.map((p) => (
+                          <Badge key={p} kind="info" size="sm" className="text-[10px]">
+                            {p}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
 
       <FAB icon="plus" label="Vendor" onClick={() => setAddOpen(true)} ariaLabel="Add vendor" />
-      {addOpen && <VendorFormDialog onClose={() => setAddOpen(false)} />}
-      {editVendor && <VendorFormDialog vendor={editVendor} onClose={() => setEditVendor(null)} />}
-      {detailVendor && <VendorBillsDialog vendor={detailVendor} onClose={() => setDetailVendor(null)} onEdit={() => { setEditVendor(detailVendor); setDetailVendor(null); }} />}
+      {addOpen && <AddEditVendorDialog vendor={null} onClose={() => setAddOpen(false)} />}
+      {editVendor && <AddEditVendorDialog vendor={editVendor} onClose={() => setEditVendor(null)} />}
+      {detailVendor && (
+        <VendorBillsDialog
+          vendor={detailVendor}
+          onClose={() => setDetailVendor(null)}
+          onEdit={() => {
+            const target = detailVendor;
+            setDetailVendor(null);
+            setEditVendor(target);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function VendorActions({ onView, onEdit, onDelete, onUploadBill, onRecordPayment }: {
+function VendorActions({
+  onView, onEdit, onDelete,
+}: {
   onView: () => void; onEdit: () => void; onDelete: () => void;
-  onUploadBill: () => void; onRecordPayment: () => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" aria-label="Vendor actions" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2">
-          <Icon name="more_h" size={18} />
-        </button>
+        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 border-0" aria-label="Vendor options">
+          <Icon name="more_horizontal" size={16} />
+        </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[12rem]">
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onUploadBill}><Icon name="upload" size={15} /> Upload bill</DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onRecordPayment}><Icon name="rupee" size={15} /> Record payment</DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onView}><Icon name="eye" size={15} /> View ledger</DropdownMenuItem>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onView}><Icon name="eye" size={15} /> View details & ledger</DropdownMenuItem>
+
+        <Link href={"/vendor-portal" as never} passHref legacyBehavior>
+          <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-primary font-semibold">
+            <Icon name="cart" size={15} /> Buy products / Place PO
+          </DropdownMenuItem>
+        </Link>
+
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}><Icon name="edit" size={15} /> Edit vendor details</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={onDelete}><Icon name="trash" size={15} /> Delete</DropdownMenuItem>
@@ -246,11 +307,10 @@ function VendorActions({ onView, onEdit, onDelete, onUploadBill, onRecordPayment
   );
 }
 
-function VendorFormDialog({ vendor, onClose }: { vendor?: Vendor; onClose: () => void }) {
+function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void }) {
   const save = useUpsertVendor();
   const [name, setName] = React.useState(vendor?.name ?? "");
   const [gstin, setGstin] = React.useState(vendor?.gstin ?? "");
-  const [category, setCategory] = React.useState(vendor?.default_category ?? "");
   const [contactName, setContactName] = React.useState(vendor?.contact_name ?? "");
   const [contactEmail, setContactEmail] = React.useState(vendor?.contact_email ?? "");
   const [contactPhone, setContactPhone] = React.useState(vendor?.contact_phone ?? "");
@@ -258,20 +318,24 @@ function VendorFormDialog({ vendor, onClose }: { vendor?: Vendor; onClose: () =>
   const [city, setCity] = React.useState(vendor?.city ?? "");
   const [state, setState] = React.useState(vendor?.state ?? "");
   const [pincode, setPincode] = React.useState(vendor?.pincode ?? "");
-  const [notes, setNotes] = React.useState(vendor?.notes ?? "");
+  const [category, setCategory] = React.useState(vendor?.default_category ?? "");
+  const [notes, setNotes] = React.useState(() => {
+    if (!vendor?.notes) return "";
+    return vendor.notes.replace(/\[Supplied Products: .*?\]/, "").trim();
+  });
+
+  const [selectedProducts, setSelectedProducts] = React.useState<string[]>(() =>
+    parseSuppliedProducts(vendor?.notes)
+  );
 
   const STATE_NAMES = React.useMemo(() => Object.values(GST_STATE_BY_CODE).sort(), []);
 
-  // Typing a GSTIN instantly fills the State from its first two digits (the
-  // GST state code) — offline, no API. Only auto-fills when State is still
-  // blank so a manual pick is never overwritten.
   const onGstinChange = (raw: string) => {
     setGstin(raw);
     const { name: stName } = gstStateFromGstin(raw);
     if (stName) setState((prev) => (prev ? prev : stName));
   };
 
-  // "Fill form from GST" — push verified GSTN details into the vendor fields.
   const fillFromGst = (v: import("@/lib/supabase/database.types").GstinVerification) => {
     if (v.legal_name) setName(v.legal_name);
     if (v.address) setAddress(v.address);
@@ -284,11 +348,15 @@ function VendorFormDialog({ vendor, onClose }: { vendor?: Vendor; onClose: () =>
   const submit = async () => {
     if (!name.trim()) return;
     try {
+      const prodTagStr = selectedProducts.length > 0 ? `[Supplied Products: ${selectedProducts.join(", ")}]` : "";
+      const cleanNotes = notes.trim();
+      const finalNotes = [prodTagStr, cleanNotes].filter(Boolean).join(" ");
+
       await save.mutateAsync({
         id: vendor?.id, name: name.trim(), gstin: gstin || null, defaultCategory: category || null,
         contactName: contactName || null, contactEmail: contactEmail || null, contactPhone: contactPhone || null,
         address: address || null, city: city || null, state: state || null, pincode: pincode || null,
-        notes: notes || null,
+        notes: finalNotes || null,
       });
       onClose();
     } catch { /* hook toasts */ }
@@ -296,21 +364,55 @@ function VendorFormDialog({ vendor, onClose }: { vendor?: Vendor; onClose: () =>
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-md">
+      <DialogContent className="md:!max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{vendor ? "Edit vendor" : "Add vendor"}</DialogTitle>
-          <DialogDescription>Supplier details — these auto-fill when you add a bill.</DialogDescription>
+          <DialogDescription>Supplier details & product portfolio — select what products this vendor supplies.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="Vendor name" required>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Google Cloud India" autoFocus />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Google Cloud India / Rajesh Reseller" autoFocus />
             </FormField>
             <FormField label="GSTIN (optional)">
               <Input value={gstin} onChange={(e) => onGstinChange(e.target.value)} placeholder="e.g. 27ABCDE1234F1Z5" />
             </FormField>
           </div>
           <GstinVerifyCard gstin={gstin} noPersist onFillForm={fillFromGst} />
+
+          {/* Products & Services Supplied Selection */}
+          <div className="space-y-1.5 p-3 bg-paper-2/60 border border-hairline rounded-xl">
+            <label className="block text-xs uppercase tracking-wider text-primary font-bold">
+              🛒 Products & Services Supplied by Vendor *
+            </label>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {VENDOR_SUPPLIED_PRODUCTS.map((prod) => {
+                const isSel = selectedProducts.includes(prod);
+                return (
+                  <button
+                    key={prod}
+                    type="button"
+                    onClick={() => {
+                      if (isSel) {
+                        setSelectedProducts(selectedProducts.filter((p) => p !== prod));
+                      } else {
+                        setSelectedProducts([...selectedProducts, prod]);
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      isSel
+                        ? "bg-primary text-white border-primary font-bold shadow-2xs"
+                        : "bg-paper border-hairline text-ink hover:border-primary/40"
+                    }`}
+                  >
+                    {isSel ? `✓ ${prod}` : `+ ${prod}`}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-ink-3">Select products this vendor offers so you can buy & source licenses from them.</p>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <FormField label="Contact name"><Input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g. Rahul Sharma" /></FormField>
             <FormField label="Email"><Input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="e.g. name@vendor.com" /></FormField>
@@ -345,11 +447,11 @@ function VendorFormDialog({ vendor, onClose }: { vendor?: Vendor; onClose: () =>
               </SelectContent>
             </Select>
           </FormField>
-          <FormField label="Notes (optional)"><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Reseller portal, account manager" /></FormField>
+          <FormField label="Notes (optional)"><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Reseller portal login, account manager" /></FormField>
         </div>
         <DialogFooter>
           <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="primary" loading={save.isPending} disabled={!name.trim()} onClick={submit}>Save</Button>
+          <Button type="button" variant="primary" loading={save.isPending} disabled={!name.trim()} onClick={submit}>Save Vendor</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -361,6 +463,7 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
   const { data: vExpenses } = useExpensesByVendor(vendor.id);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
+  const prods = parseSuppliedProducts(vendor.notes);
 
   return (
     <>
@@ -386,6 +489,23 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
             )}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Supplied Products Portfolio Section */}
+        <div className="p-3 bg-paper-2/60 border border-hairline rounded-xl space-y-1.5">
+          <div className="text-[11px] font-bold text-ink uppercase tracking-wider">🛒 Products Supplied by {vendor.name}:</div>
+          {prods.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {prods.map((p) => (
+                <Badge key={p} kind="info" size="sm" className="font-semibold">
+                  {p}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-ink-3 italic">No specific product portfolio selected yet.</p>
+          )}
+        </div>
+
         <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-4">
           {isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
@@ -452,8 +572,11 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           </>
           )}
         </div>
-        <DialogFooter>
-          <Button asChild variant="default"><Link href={"/accounting/bills" as never}>Open all bills</Link></Button>
+
+        <DialogFooter className="flex-col sm:flex-row gap-2">
+          <Button asChild variant="primary" icon="cart" className="w-full sm:w-auto font-bold">
+            <Link href={"/vendor-portal" as never}>🛒 Buy Products from {vendor.name}</Link>
+          </Button>
           <Button variant="ghost" icon="edit" onClick={onEdit}>Edit vendor</Button>
         </DialogFooter>
       </DialogContent>

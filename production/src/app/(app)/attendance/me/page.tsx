@@ -28,6 +28,7 @@ import {
   useEnrollMyFace,
   useUndoLastPunch,
 } from "@/lib/queries/my-attendance";
+import { LeaveRequestDialog } from "@/components/features/attendance/leave-request-dialog";
 
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
@@ -61,14 +62,35 @@ export default function MyAttendancePage() {
   const requireSelfie = netQ.data?.requireSelfie ?? true;
   const requirePresence = netQ.data?.requirePresence ?? false;
   const requireFaceMatch = netQ.data?.requireFaceMatch ?? false;
+  const [leaveOpen, setLeaveOpen] = React.useState(false);
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[560px] mx-auto">
       <div className="mb-6 text-center">
-        <p className="text-[11px] uppercase tracking-wider text-ink-3">Payroll</p>
+        <p className="text-[11px] uppercase tracking-wider text-ink-3">Payroll &amp; HR</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight mt-1">My Attendance</h1>
         <p className="text-sm text-ink-3 mt-1">{todayLabel()}</p>
+
+        {meQ.data?.linked && (
+          <div className="mt-3 flex justify-center">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setLeaveOpen(true)}
+              className="gap-1.5 text-xs rounded-full border-hairline hover:bg-paper-2"
+            >
+              <Icon name="calendar" size={13} className="text-amber-ink" />
+              Apply Leave / Missed Punch
+            </Button>
+          </div>
+        )}
       </div>
+
+      <LeaveRequestDialog
+        open={leaveOpen}
+        onOpenChange={setLeaveOpen}
+        employeeName={meQ.data && meQ.data.linked ? meQ.data.employee_name : undefined}
+      />
 
       {meQ.isLoading ? (
         <Skeleton className="h-64 w-full rounded-xl" />

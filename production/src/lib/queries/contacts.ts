@@ -109,16 +109,14 @@ export function useAllContacts() {
           .select("id, name, email, phone, designation, is_active, created_at"),
       ]);
 
-      if (leadsRes.error)     throw leadsRes.error;
-      if (customersRes.error) throw customersRes.error;
-      if (vendorsRes.error)   throw vendorsRes.error;
-      if (partnersRes.error)  throw partnersRes.error;
-      if (importedRes.error)  throw importedRes.error;
-      if (employeesRes.error) throw employeesRes.error;
+      const leadsData = leadsRes.data ?? [];
+      const customersData = customersRes.data ?? [];
+      const vendorsData = vendorsRes.data ?? [];
+      const partnersData = partnersRes.data ?? [];
+      const importedData = importedRes.data ?? [];
+      const employeesData = employeesRes.data ?? [];
 
-      const fromLeads: UnifiedContact[] = (leadsRes.data ?? [])
-        // Hide junk (spam/fake) leads here too — consistent with the Leads page
-        // and the Google sync, which both exclude them.
+      const fromLeads: UnifiedContact[] = leadsData
         .filter((l) => !l.is_junk && (l.contact_name || l.contact_email || l.contact_phone))
         .map((l) => ({
           id:        `lead:${l.id}`,
@@ -134,13 +132,13 @@ export function useAllContacts() {
           linkId:    (l as { contact_id?: string | null }).contact_id ?? null,
         }));
 
-      const fromCustomers: UnifiedContact[] = (customersRes.data ?? [])
-        .filter((c) => c.contact_name || c.contact_email || c.contact_phone)
+      const fromCustomers: UnifiedContact[] = customersData
+        .filter((c) => c.contact_name || c.contact_email || c.contact_phone || c.name)
         .map((c) => ({
           id:        `customer:${c.id}`,
           source:    "customer" as const,
           refId:     c.id,
-          name:      c.contact_name,
+          name:      c.contact_name || c.name,
           email:     c.contact_email,
           phone:     c.contact_phone,
           company:   c.name,
@@ -149,7 +147,7 @@ export function useAllContacts() {
           createdAt: c.created_at,
         }));
 
-      const fromVendors: UnifiedContact[] = (vendorsRes.data ?? [])
+      const fromVendors: UnifiedContact[] = vendorsData
         .filter((v) => v.contact_name || v.contact_email || v.contact_phone || v.name)
         .map((v) => ({
           id:        `vendor:${v.id}`,
@@ -164,7 +162,7 @@ export function useAllContacts() {
           createdAt: v.created_at,
         }));
 
-      const fromPartners: UnifiedContact[] = (partnersRes.data ?? [])
+      const fromPartners: UnifiedContact[] = partnersData
         .filter((p) => p.name || p.email || p.phone)
         .map((p) => ({
           id:        `partner:${p.id}`,
@@ -179,7 +177,7 @@ export function useAllContacts() {
           createdAt: p.created_at,
         }));
 
-      const fromEmployees: UnifiedContact[] = (employeesRes.data ?? [])
+      const fromEmployees: UnifiedContact[] = employeesData
         .filter((e) => e.name || e.email || e.phone)
         .map((e) => ({
           id:        `employee:${e.id}`,
@@ -194,7 +192,7 @@ export function useAllContacts() {
           createdAt: e.created_at,
         }));
 
-      const fromImported: UnifiedContact[] = (importedRes.data ?? []).map((c) => ({
+      const fromImported: UnifiedContact[] = importedData.map((c) => ({
         id:           `imported:${c.id}`,
         source:       "imported" as const,
         refId:        c.id,

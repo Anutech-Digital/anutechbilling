@@ -25,7 +25,7 @@ const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
 // ── HTTP digest auth request to the device ───────────────────────────────────
 function deviceRequest(method, urlPath, bodyObj) {
   const body = bodyObj ? JSON.stringify(bodyObj) : "";
-  const opts = { host: CFG.device_ip, port: CFG.device_port || 80, path: urlPath, method };
+  const opts = { host: CFG.device_ip, port: CFG.device_port || 80, path: urlPath, method, insecureHTTPParser: true };
   return new Promise((resolve, reject) => {
     const first = http.request(opts, (res) => {
       if (res.statusCode !== 401) { collect(res).then((d) => resolve({ status: res.statusCode, data: d })); return; }

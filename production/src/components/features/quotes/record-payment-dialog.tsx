@@ -12,6 +12,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 
 import {
   Sheet,
@@ -34,23 +35,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
-import { rupee, bankLabel } from "@/lib/utils";
+import { rupee } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
-import { useBankAccounts } from "@/lib/queries/bank";
-
-const METHODS = [
-  { value: "upi",           label: "UPI (Google Pay / PhonePe / Paytm)" },
-  { value: "razorpay",      label: "Razorpay (online)" },
-  { value: "bank_transfer", label: "Bank transfer (NEFT/RTGS/IMPS)" },
-  { value: "cheque",        label: "Cheque" },
-  { value: "cash",          label: "Cash" },
-  { value: "other",         label: "Other" },
-] as const;
 
 const schema = z.object({
   amount:       z.coerce.number().int().min(1, "Amount received required"),
   method:       z.string().min(1, "Method required"),
   reference:    z.string().min(1, "Transaction reference required"),
+  receivedDate: z.string().min(1, "Payment date required"),
   notes:        z.string().optional(),
   // Optional — the customer's domain (Google Workspace / M365 subscriptions need
   // it). Stamped onto the subscription that record_payment creates.
@@ -119,7 +111,7 @@ export function RecordPaymentDialog({
   isProspect = false,
   invoiceId = null,
   customerId = null,
-  askDomain = false,
+  askDomain: _askDomain = false,
   defaultDomain = null,
 }: RecordPaymentDialogProps) {
   const qc = useQueryClient();
@@ -128,7 +120,6 @@ export function RecordPaymentDialog({
   // Optional proof-of-payment file (screenshot / PDF). Uploaded best-effort
   // AFTER record_payment succeeds, so it never blocks the money.
   const [receiptFile, setReceiptFile] = React.useState<File | null>(null);
-  const { data: bankAccounts } = useBankAccounts();
 
   const remaining = Math.max(0, expectedAmount - alreadyReceived);
   const hasPriorPayments = alreadyReceived > 0;
@@ -183,13 +174,14 @@ export function RecordPaymentDialog({
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      amount:      remaining,
-      method:      "upi",
-      domain:      defaultDomain ?? "",
-      tdsDeducted: false,
-      tdsSection:  "194J",
-      tdsRatePct:  10,
-      customerTan: "",
+      amount:       remaining,
+      method:       "upi",
+      receivedDate: new Date().toISOString().slice(0, 10),
+      domain:       defaultDomain ?? "",
+      tdsDeducted:  false,
+      tdsSection:   "194J",
+      tdsRatePct:   10,
+      customerTan:  "",
     },
   });
 
@@ -227,12 +219,13 @@ export function RecordPaymentDialog({
       setReceiptFile(null);
     } else {
       reset({
-        amount:      remaining,
-        method:      "upi",
-        tdsDeducted: false,
-        tdsSection:  customerTdsDefaults.section,
-        tdsRatePct:  customerTdsDefaults.ratePct,
-        customerTan: customerTdsDefaults.tan ?? "",
+        amount:       remaining,
+        method:       "upi",
+        receivedDate: new Date().toISOString().slice(0, 10),
+        tdsDeducted:  false,
+        tdsSection:   customerTdsDefaults.section,
+        tdsRatePct:   customerTdsDefaults.ratePct,
+        customerTan:  customerTdsDefaults.tan ?? "",
       });
       setAmountEdited(false);
     }
@@ -344,16 +337,22 @@ export function RecordPaymentDialog({
       // double-fire (which would duplicate a customer credit or a TDS row).
       const isReplay = Boolean(r.already_recorded || r.idempotent_replay);
 
-      // ── 2b. Tag which bank account received this money (best-effort) ──────
-      // Additive to the RPC — a reporting/reconciliation aid, NOT a balance
-      // mover. If it fails the payment is still recorded; the operator can set
-      // it later from the payment's Edit sheet.
-      if (bankAccountId && r.payment_id) {
-        const { error: bankErr } = await supabase
-          .from("payments")
-          .update({ bank_account_id: bankAccountId })
-          .eq("id", r.payment_id);
-        if (bankErr) console.error("[record-payment] bank_account tag failed (payment still recorded):", bankErr);
+      // ── 2b. Tag date + bank account that received this money ──────
+      if (r.payment_id) {
+        const patchData: { received_at?: string; bank_account_id?: string } = {};
+        if (data.receivedDate) {
+          patchData.received_at = new Date(data.receivedDate).toISOString();
+        }
+        if (bankAccountId) {
+          patchData.bank_account_id = bankAccountId;
+        }
+        if (Object.keys(patchData).length > 0) {
+          const { error: bankErr } = await supabase
+            .from("payments")
+            .update(patchData as any)
+            .eq("id", r.payment_id);
+          if (bankErr) console.error("[record-payment] date/bank tag failed (payment still recorded):", bankErr);
+        }
       }
 
       // ── 2c. Attach the optional payment-receipt file (best-effort) ───────
@@ -584,29 +583,113 @@ export function RecordPaymentDialog({
     onError: (err) => toast.error((err as Error).message),
   });
 
+  const [reportBugOpen, setReportBugOpen] = React.useState(false);
+  const [drawerWidth, setDrawerWidth] = React.useState<number>(520);
+  const [isDragging, setIsDragging] = React.useState(false);
+
+  // Load saved width from localStorage if available
+  React.useEffect(() => {
+    const saved = localStorage.getItem("resellersos_payment_drawer_width_v3");
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= 460 && parsed <= 1400) {
+        setDrawerWidth(parsed);
+      }
+    } else {
+      setDrawerWidth(520);
+    }
+  }, []);
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const startX = e.clientX;
+    const startWidth = drawerWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const dx = startX - moveEvent.clientX; // drag left -> dx > 0 -> width increases!
+      const newWidth = Math.max(460, Math.min(window.innerWidth - 40, startWidth + dx));
+      setDrawerWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      localStorage.setItem("resellersos_payment_drawer_width_v3", drawerWidth.toString());
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="w-full sm:max-w-[480px] md:max-w-[560px] p-0 flex flex-col overflow-x-hidden"
-      >
-        <SheetHeader>
-          <SheetTitle>
-            {hasPriorPayments ? "Record additional payment" : "Record payment received"}
-          </SheetTitle>
-          <SheetDescription>
-            Log a payment against quote <span className="font-mono font-semibold">{quoteId}</span> from <b>{customerName}</b>.
-            {hasPriorPayments
-              ? " Multiple payments are supported (installments / partial)."
-              : " You can record more payments later if it's paid in installments."}
-          </SheetDescription>
-        </SheetHeader>
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent
+          side="right"
+          style={{ width: `${drawerWidth}px`, maxWidth: "96vw" }}
+          className="w-full sm:max-w-none p-0 flex flex-col bg-paper text-ink shadow-2xl border-l border-hairline overflow-visible z-[50]"
+        >
+          {/* ↔️ PROMINENT VISIBLE LEFT EDGE DRAG HANDLE */}
+          <div
+            onMouseDown={handleResizeStart}
+            title="↔️ Click and drag left/right to stretch or shrink form panel"
+            className={`absolute left-0 top-0 bottom-0 w-4 -ml-2 cursor-ew-resize hover:bg-rose-500/20 bg-transparent z-[100] flex items-center justify-center group select-none ${
+              isDragging ? "bg-rose-500/30" : ""
+            }`}
+          >
+            <div className="w-1.5 h-24 bg-rose-500 hover:bg-rose-600 rounded-full shadow-md group-hover:scale-125 transition-all flex items-center justify-center">
+              <div className="w-0.5 h-6 bg-white/80 rounded-full" />
+            </div>
+          </div>
+
+          <SheetHeader className="pr-12 pt-4 px-6 pb-3 border-b border-hairline bg-paper-2/40">
+            <div className="flex items-center justify-between gap-3">
+              <SheetTitle>
+                {hasPriorPayments ? "Record additional payment" : "Record payment received"}
+              </SheetTitle>
+
+              {/* 🐛 Top Header Report Bug Button inside Slider Panel */}
+              <button
+                type="button"
+                onClick={() => setReportBugOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-full shadow-2xs transition-all hover:scale-105"
+                title="Report Bug / Issue on this Record Payment drawer"
+              >
+                <Icon name="bug" size={14} />
+                <span>Report Bug</span>
+              </button>
+            </div>
+
+            <SheetDescription className="mt-1">
+              Log a payment against quote <span className="font-mono font-semibold">{quoteId}</span> from <b>{customerName}</b>.
+              {hasPriorPayments
+                ? " Multiple payments are supported (installments / partial)."
+                : " You can record more payments later if it's paid in installments."}
+            </SheetDescription>
+          </SheetHeader>
 
         <form
           onSubmit={handleSubmit((data) => recordPayment.mutate(data))}
           className="flex flex-col flex-1 min-h-0 min-w-0 w-full"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+          {/* 🌐 PRIMARY CUSTOMER DOMAIN — HIGHEST PREFERENCE FOR GOOGLE WORKSPACE / M365 */}
+          <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
+            <FormField label="🌐 Primary Customer Domain" required htmlFor="domain">
+              <Input
+                id="domain"
+                placeholder="e.g. exceltechnologies.in or acme.com"
+                className="font-mono text-sm font-semibold bg-paper"
+                {...register("domain")}
+              />
+            </FormField>
+            <p className="text-[11px] text-ink-3">
+              Essential for Google Workspace / M365 provisioning & Partner Sales Console (PSC) tracking.
+            </p>
+          </div>
+
           {/* Prospect → Customer activation notice — fires on FIRST payment now (advance ok) */}
           {isProspect && !hasPriorPayments && (
             <div className="rounded-md bg-amber-soft border border-amber/40 px-3 py-2.5 text-xs flex items-start gap-2">
@@ -709,63 +792,110 @@ export function RecordPaymentDialog({
             />
           </FormField>
 
-          <FormField label="Payment method" required htmlFor="method">
+          {/* ── Unified Payment Mode & Target Account Selector ────── */}
+          <FormField label="Deposit To (Payment Mode & Target Account)" required htmlFor="paymentAccountPreset">
             <Select
-              value={method}
-              onValueChange={(v) => {
-                setMethod(v);
-                (register("method") as any).onChange({ target: { value: v, name: "method" } });
+              value={
+                method === "upi" ? "upi_hdfc" :
+                method === "razorpay" ? "razorpay" :
+                method === "bank_transfer" && bankAccountId === "icici_corp" ? "bank_icici" :
+                method === "bank_transfer" ? "bank_hdfc" :
+                method === "cash" ? "cash" :
+                method === "cheque" ? "cheque" : "other"
+              }
+              onValueChange={(val) => {
+                if (val === "upi_hdfc") {
+                  setMethod("upi");
+                  setBankAccountId("hdfc_primary");
+                  setValue("method", "upi");
+                } else if (val === "razorpay") {
+                  setMethod("razorpay");
+                  setBankAccountId("razorpay_gateway");
+                  setValue("method", "razorpay");
+                } else if (val === "bank_hdfc") {
+                  setMethod("bank_transfer");
+                  setBankAccountId("hdfc_primary");
+                  setValue("method", "bank_transfer");
+                } else if (val === "bank_icici") {
+                  setMethod("bank_transfer");
+                  setBankAccountId("icici_corp");
+                  setValue("method", "bank_transfer");
+                } else if (val === "cash") {
+                  setMethod("cash");
+                  setBankAccountId("cash_box");
+                  setValue("method", "cash");
+                } else if (val === "cheque") {
+                  setMethod("cheque");
+                  setBankAccountId("hdfc_primary");
+                  setValue("method", "cheque");
+                } else {
+                  setMethod("other");
+                  setBankAccountId("");
+                  setValue("method", "other");
+                }
               }}
             >
-              <SelectTrigger id="method">
+              <SelectTrigger id="paymentAccountPreset">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {METHODS.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
+                <SelectItem value="upi_hdfc">🏦 Anutech Digital — Bank A/c (Direct UPI / QR Code)</SelectItem>
+                <SelectItem value="bank_hdfc">🏦 Anutech Digital — Bank A/c (NEFT / RTGS / IMPS)</SelectItem>
+                <SelectItem value="razorpay">💳 Anutech Digital — Razorpay Gateway</SelectItem>
+                <SelectItem value="cheque">📝 Anutech Digital — Cheque Clearing</SelectItem>
+                <SelectItem value="cash">💵 Anutech Digital — Petty Cash</SelectItem>
               </SelectContent>
             </Select>
             <input type="hidden" {...register("method")} value={method} />
+            <p className="text-[11px] text-ink-3 mt-1">
+              Select company target account & payment mode in 1 click.
+            </p>
           </FormField>
 
-          {(bankAccounts?.length ?? 0) > 0 && (
-            <FormField label="Received in (bank account)" htmlFor="bankAccount">
-              <Select value={bankAccountId || "none"} onValueChange={(v) => setBankAccountId(v === "none" ? "" : v)}>
-                <SelectTrigger id="bankAccount">
-                  <SelectValue placeholder="Not linked" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not linked</SelectItem>
-                  {(bankAccounts ?? []).map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      {a.name} · {bankLabel(a.bank_name, a.account_number_last4)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-ink-3 mt-1">
-                Tags which account got the money (for reports + easier reconciliation).
-                Balance still comes from your bank statement, not this.
-              </p>
-            </FormField>
-          )}
+          {/* Payment Received Date */}
+          <FormField label="Payment Received Date" required htmlFor="receivedDate">
+            <Input
+              id="receivedDate"
+              type="date"
+              error={errors.receivedDate?.message}
+              {...register("receivedDate")}
+            />
+          </FormField>
 
-          <FormField label="Transaction reference" required htmlFor="reference">
+          {/* Transaction Reference Number — Dynamic prompts per payment mode */}
+          <FormField
+            label={
+              method === "upi" ? "UPI Transaction Ref ID (12 digits) *" :
+              method === "razorpay" ? "Razorpay Payment ID *" :
+              method === "bank_transfer" ? "Bank UTR / Transaction Ref No. *" :
+              method === "cheque" ? "Cheque No. & Issuing Bank *" :
+              method === "cash" ? "Cash Voucher / Receipt Ref (Optional)" :
+              "Transaction Reference *"
+            }
+            required={method !== "cash"}
+            htmlFor="reference"
+          >
             <Input
               id="reference"
               placeholder={
-                method === "upi" ? "UPI Ref ID (e.g., 4xxxxxxxxxxx)" :
-                method === "razorpay" ? "pay_xxxxxxxxxxxxxx" :
-                method === "bank_transfer" ? "UTR / Bank reference" :
-                method === "cheque" ? "Cheque number" :
-                "Reference number"
+                method === "upi" ? "e.g. 402312345678 (12-digit UTR)" :
+                method === "razorpay" ? "e.g. pay_P1a2B3c4D5e6F7" :
+                method === "bank_transfer" ? "e.g. HDFCR520240811001234" :
+                method === "cheque" ? "e.g. Cheque #004521 - SBI Bank" :
+                "e.g. Cash Receipt #CR-102"
               }
               error={errors.reference?.message}
               {...register("reference")}
             />
+            <p className="text-[11px] text-ink-3 mt-1">
+              {
+                method === "upi" ? "12-digit UTR/UPI reference received on GPay, PhonePe, Paytm or HDFC QR." :
+                method === "razorpay" ? "Unique Razorpay payment ID starting with pay_." :
+                method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement." :
+                method === "cheque" ? "Enter 6-digit cheque number and customer's bank name for clearing." :
+                "Optional internal cash voucher or receipt reference."
+              }
+            </p>
           </FormField>
 
           {/* ── TDS section ─────────────────────────────────────────
@@ -869,19 +999,6 @@ export function RecordPaymentDialog({
             />
           </FormField>
 
-          {/* Domain — optional. Google Workspace / M365 subscriptions are keyed
-              to the customer's domain; capture it here so the subscription is
-              ready to provision. Purely optional — leave blank if not known yet. */}
-          {askDomain && (
-            <FormField label="Customer domain (optional)" htmlFor="domain">
-              <Input
-                id="domain"
-                placeholder="acme.in — needed for Google Workspace / M365 provisioning"
-                {...register("domain")}
-              />
-            </FormField>
-          )}
-
           {/* Optional proof-of-payment attachment (screenshot / PDF). */}
           <FormField label="Payment receipt (optional)" htmlFor="receipt">
             {receiptFile ? (
@@ -963,5 +1080,7 @@ export function RecordPaymentDialog({
         </form>
       </SheetContent>
     </Sheet>
+    <FeedbackDialog open={reportBugOpen} onOpenChange={setReportBugOpen} />
+  </>
   );
 }

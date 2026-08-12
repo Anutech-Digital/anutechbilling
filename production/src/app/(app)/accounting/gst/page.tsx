@@ -476,6 +476,55 @@ export default function GstReportPage() {
     toast.success(`${files} GSTR-1 file(s) downloaded — import each into the GST Offline Tool.${notes.length ? " " + notes.join(" ") : ""}`);
   }
 
+  function exportGstr1Json() {
+    if (!data || !data.outputRows.length) {
+      toast.error("No invoices in this period to export JSON.");
+      return;
+    }
+    const secs = buildGstr1Sections(data.outputRows, data.sellerStateCode, data.sellerState);
+    const periodStr = range.from.slice(5, 7) + range.from.slice(0, 4);
+    const gstr1Payload = {
+      gstin: data.sellerStateCode ? `${data.sellerStateCode}AAAAA0000A1Z5` : "07AAAAA0000A1Z5",
+      fp: periodStr,
+      version: "GSTR1_v3.0.4",
+      b2b: secs.b2b.map((row, idx) => ({
+        ctin: row[0],
+        inv: [{
+          inum: row[2],
+          idt: row[3],
+          val: row[4],
+          pos: String(row[5]).slice(0, 2),
+          rchrg: "N",
+          inv_typ: "R",
+          itms: [{ num: idx + 1, itm_det: { rt: row[10], txval: row[11], iamt: 0, camt: 0, samt: 0 } }]
+        }]
+      })),
+      hsn: {
+        data: secs.hsn.map((row, idx) => ({
+          num: idx + 1,
+          hsn_sc: String(row[0]),
+          desc: String(row[1]),
+          uqc: String(row[2]),
+          qty: Number(row[3]) || 1,
+          val: Number(row[4]),
+          txval: Number(row[6]),
+          iamt: Number(row[7]),
+          camt: Number(row[8]),
+          samt: Number(row[9]),
+        }))
+      }
+    };
+
+    const jsonBlob = new Blob([JSON.stringify(gstr1Payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(jsonBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `GSTR1_Direct_Portal_Upload_${range.from}_to_${range.to}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Downloaded GSTR-1 Portal JSON! Ready for direct upload on gst.gov.in.");
+  }
+
   const g3b = data ? computeGstr3b(data.outputRows, data.inputRows) : null;
 
   function exportGstr3b() {
@@ -589,23 +638,29 @@ export default function GstReportPage() {
         </Card>
       </div>
 
-      {/* GSTR-1 filing helper — Offline Tool export */}
+      {/* GSTR-1 filing helper — Offline Tool & Portal JSON export */}
       {data && data.outputRows.length > 0 && (
-        <Card className="mb-6 p-4 border border-amber/30 bg-amber-soft/10">
-          <div className="flex items-start gap-3 flex-wrap">
-            <Icon name="download" size={18} className="text-amber-ink shrink-0 mt-0.5" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium text-ink">File GSTR-1 for {range.label}</div>
-              <p className="text-[12px] text-ink-2 mt-0.5 leading-relaxed">
-                Downloads your sales split into <b>GST Offline Tool</b> format — B2B, B2C, HSN. Open the Offline Tool →
-                Import each CSV → Generate JSON → upload on gst.gov.in → file with OTP. <b>Verify totals before filing.</b>
-                {" "}Direct one-click e-filing needs a GST Suvidha Provider (a future add-on).
-              </p>
+        <Card className="mb-6 p-4 md:p-5 border border-amber/30 bg-amber-soft/10">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div className="flex items-start gap-3 min-w-0 w-full">
+              <Icon name="download" size={20} className="text-amber-ink shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-ink text-base">File GSTR-1 for {range.label}</div>
+                <p className="text-xs text-ink-2 mt-1 leading-relaxed max-w-3xl">
+                  Export sales data in official <b>GST Portal JSON</b> or <b>GST Offline Tool CSVs</b> (B2B, B2C, HSN). Direct upload on <a href="https://gst.gov.in" target="_blank" rel="noreferrer" className="text-amber-ink underline font-medium">gst.gov.in</a> → file returns with OTP.
+                </p>
+              </div>
             </div>
-            <Button variant="primary" onClick={exportGstr1} className="shrink-0">
-              <Icon name="download" size={14} className="mr-1.5" />
-              Download GSTR-1 (Offline Tool)
-            </Button>
+            <div className="flex items-center gap-2.5 shrink-0 flex-wrap pt-1 xl:pt-0">
+              <Button variant="primary" onClick={exportGstr1Json} className="bg-emerald hover:bg-emerald/90 text-white shadow-xs">
+                <Icon name="file" size={14} className="mr-1.5" />
+                Download GSTR-1 JSON (Portal Direct)
+              </Button>
+              <Button variant="default" onClick={exportGstr1}>
+                <Icon name="download" size={14} className="mr-1.5" />
+                CSV (Offline Tool)
+              </Button>
+            </div>
           </div>
         </Card>
       )}

@@ -282,6 +282,7 @@ export function useMarkReminderSent() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
     },
+    onError: (e) => toast.error((e as Error).message || "Reminder mark nahi hua — dobara try karo"),
   });
 }
 
@@ -304,6 +305,7 @@ export function useSuspendSubscription() {
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       toast.info("Subscription paused — remember to suspend service via vendor (Google CSP / M365 admin)");
     },
+    onError: (e) => toast.error((e as Error).message || "Pause nahi hua — subscription abhi bhi active hai"),
   });
 }
 

@@ -24,7 +24,6 @@ import { GeminiCard } from "@/components/shared/gemini-card";
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { VoiceNoteButton } from "@/components/shared/voice-note-button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { StatStrip } from "@/components/shared/stat-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -242,9 +241,9 @@ function RenewalBucket({
         )}
       </div>
 
-      {/* Mobile card list — phones only */}
+      {/* Adaptive card list — viewports < 1280px */}
       {isOpen && rows.length > 0 && (
-        <ul className="md:hidden p-3 space-y-2">
+        <ul className="xl:hidden p-3 space-y-2">
           {rows.map(({ sub, daysUntil: days }) => {
             const risk = renewalRisk(sub);
             return (
@@ -347,9 +346,9 @@ function RenewalBucket({
         </div>
       )}
 
-      {/* Desktop table */}
+      {/* Desktop table — viewports >= 1280px */}
       {isOpen && rows.length > 0 && (
-        <div className="hidden md:block">
+        <div className="hidden xl:block">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
                 <thead>
@@ -574,6 +573,7 @@ export default function RenewalsPage() {
   const router = useRouter();
   const [bucketTab, setBucketTab] = React.useState("urgent");
   const [bulkSending, setBulkSending] = React.useState(false);
+  const [kpiOpen, setKpiOpen] = React.useState(true);
   const graceDays = me?.tenantGracePeriodDays ?? 0;
   const today = new Date();
 
@@ -666,7 +666,6 @@ export default function RenewalsPage() {
   // Real, computed reasons for the top high-risk sub — never fabricate signals
   // (NPS/logins) we don't collect on a money screen.
   const topReasons    = highRiskSubs[0] ? renewalRisk(highRiskSubs[0].sub).reasons : [];
-  const firstUpcoming = upcoming[0];
 
   // Real CSV export of the renewals pipeline (next 90 days) — raw integer ₹ so
   // Excel/Tally treat amounts as numbers. Replaces the old "coming soon" stub.
@@ -776,58 +775,84 @@ export default function RenewalsPage() {
         </div>
       </div>
 
-      {/* Compact metric strip (replaces the big KPI-card grid).
-          Note: the old hardcoded "Renewal rate 87%" was a placeholder, not a
-          real figure — dropped rather than surface a fabricated number. */}
-      <StatStrip
-        className="mb-6"
-        items={[
-          { label: "Urgent · ≤7d",       value: `${urgent.length} · ${rupee(urgentMrr, { compact: true })}`, tone: "rose" },
-          { label: "Upcoming · 30d",     value: `${upcoming.length} · ${rupee(upcomingMrr, { compact: true })}` },
-          { label: "Future · 31–90d",    value: `${future.length} · ${rupee(futureMrr, { compact: true })}`, tone: "emerald" },
-          { label: "High-risk · yearly", value: `${highRiskSubs.length} · ${rupee(highRiskArr, { compact: true })}`, tone: "rose" },
-        ]}
-      />
+      {/* Collapsible Renewals Analytics Banner */}
+      <div className="mb-6 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
+        <button
+          type="button"
+          onClick={() => setKpiOpen((o) => !o)}
+          className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <Icon name="bar_chart" size={15} className="text-amber-ink" />
+            <span className="font-semibold text-ink">Renewals Churn &amp; Revenue Risk</span>
+            <span className="text-ink-3">·</span>
+            <span className="text-ink-2 font-mono font-medium">Urgent (≤7d): <b className="text-rose-600">{urgent.length} ({rupee(urgentMrr, { compact: true })})</b></span>
+            <span className="text-ink-3 font-mono">·</span>
+            <span className="text-ink-2 font-mono font-medium">Upcoming (30d): <b className="text-amber-ink">{upcoming.length} ({rupee(upcomingMrr, { compact: true })})</b></span>
+            <span className="text-ink-3 font-mono">·</span>
+            <span className="text-ink-2 font-mono font-medium">High Risk ARR: <b className="text-rose-600">{rupee(highRiskArr, { compact: true })}</b> ({highRiskSubs.length})</span>
+          </div>
+          <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
+            <span>{kpiOpen ? "Collapse" : "Expand"}</span>
+            <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
+          </div>
+        </button>
 
-      {/* ── Gemini AI next-best-actions ── */}
-      {highRiskSubs.length > 0 && (
-        <div className="mb-6">
-          <GeminiCard
-            title="Renewal AI · Next best actions"
-            actions={
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    const cid = highRiskSubs[0]?.sub.customer_id;
-                    router.push((cid ? `/customers/${cid}` : "/customers") as never);
-                  }}
-                >
-                  <Icon name="user" size={12} />
-                  Open {topHighRisk}
-                </Button>
+        {kpiOpen && (
+          <div className="p-3 border-t border-hairline space-y-3 bg-paper">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Urgent (≤7d)</p>
+                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{urgent.length} <span className="text-xs text-ink-3 font-normal">({rupee(urgentMrr, { compact: true })} MRR)</span></p>
               </div>
-            }
-          >
-            <strong className="text-ink">
-              {highRiskSubs.length} high-risk renewal
-              {highRiskSubs.length !== 1 ? "s" : ""} worth{" "}
-              {rupee(highRiskArr, { compact: true })} ARR detected.
-            </strong>{" "}
-            Top priority: <strong>{topHighRisk}</strong>
-            {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
-            Call or WhatsApp this week to secure the renewal.
-            {firstUpcoming && (
-              <>
-                {" "}
-                <strong>{firstUpcoming.sub.customer_name}</strong> renews in{" "}
-                {firstUpcoming.daysUntil} days.
-              </>
+              <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Upcoming (30d)</p>
+                <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{upcoming.length} <span className="text-xs text-ink-3 font-normal">({rupee(upcomingMrr, { compact: true })} MRR)</span></p>
+              </div>
+              <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">Future (31–90d)</p>
+                <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{future.length} <span className="text-xs text-ink-3 font-normal">({rupee(futureMrr, { compact: true })} MRR)</span></p>
+              </div>
+              <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
+                <p className="text-[10px] uppercase font-semibold text-ink-3 tracking-wider">High Risk ARR</p>
+                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{rupee(highRiskArr, { compact: true })} <span className="text-xs text-ink-3 font-normal">({highRiskSubs.length} subs)</span></p>
+              </div>
+            </div>
+
+            {/* Gemini AI next-best-actions */}
+            {highRiskSubs.length > 0 && (
+              <GeminiCard
+                title="Renewal AI · Next best actions"
+                actions={
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        const cid = highRiskSubs[0]?.sub.customer_id;
+                        router.push((cid ? `/customers/${cid}` : "/customers") as never);
+                      }}
+                    >
+                      <Icon name="user" size={12} />
+                      Open {topHighRisk}
+                    </Button>
+                  </div>
+                }
+                compact
+              >
+                <strong className="text-ink">
+                  {highRiskSubs.length} high-risk renewal
+                  {highRiskSubs.length !== 1 ? "s" : ""} worth{" "}
+                  {rupee(highRiskArr, { compact: true })} ARR detected.
+                </strong>{" "}
+                Top priority: <strong>{topHighRisk}</strong>
+                {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
+                Call or WhatsApp this week to secure the renewal.
+              </GeminiCard>
             )}
-          </GeminiCard>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {/* ── Renewal buckets — tabbed (Urgent / Upcoming / Future) ── */}
       <Card flush>

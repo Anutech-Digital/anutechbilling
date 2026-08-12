@@ -20,7 +20,7 @@
 
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { X, GripVertical } from "lucide-react";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const Dialog = DialogPrimitive.Root;
@@ -241,24 +241,19 @@ const DialogContent = React.forwardRef<
       {/* Drag handle (mobile only — visual affordance that the sheet is dismissible) */}
       <div className="md:hidden mx-auto -mt-1 mb-2 h-1.5 w-12 rounded-full bg-hairline" aria-hidden />
 
-      {/* Move grips (desktop only) — the ONLY way to reposition the dialog: grab
-          the top-left or top-right corner and drag it anywhere on screen. */}
+      {/* Move grips (desktop only) — Invisible top-corner hit areas for drag-moving modal without icon clutter */}
       <div
         onPointerDown={startMove}
-        title="Drag to move"
+        title="Drag corner to move modal"
         aria-hidden
-        className="hidden md:flex absolute left-1.5 top-1.5 z-[61] h-6 w-6 cursor-move items-center justify-center rounded text-ink-3/40 hover:text-ink-2 hover:bg-paper-2 touch-none"
-      >
-        <GripVertical className="h-4 w-4" />
-      </div>
+        className="hidden md:block absolute left-0 top-0 z-[61] h-10 w-24 cursor-move bg-transparent touch-none"
+      />
       <div
         onPointerDown={startMove}
-        title="Drag to move"
+        title="Drag corner to move modal"
         aria-hidden
-        className="hidden md:flex absolute right-12 top-1.5 z-[61] h-6 w-6 cursor-move items-center justify-center rounded text-ink-3/40 hover:text-ink-2 hover:bg-paper-2 touch-none"
-      >
-        <GripVertical className="h-4 w-4" />
-      </div>
+        className="hidden md:block absolute right-12 top-0 z-[61] h-10 w-24 cursor-move bg-transparent touch-none"
+      />
 
       {children}
       {!hideClose && (

@@ -22,8 +22,6 @@ export function useQuotes(filter?: { status?: QuoteStatus | "all" }) {
       let query = supabase
         .from("quotes")
         .select("*")
-        // created_at (timestamp) not created_date (day) so same-day quotes
-        // still sort newest-first; nullsFirst:false keeps any legacy null at bottom.
         .order("created_at", { ascending: false, nullsFirst: false });
 
       if (filter?.status && filter.status !== "all") {
@@ -31,7 +29,10 @@ export function useQuotes(filter?: { status?: QuoteStatus | "all" }) {
       }
 
       const { data, error } = await query;
-      if (error) throw error;
+      if (error) {
+        console.warn("Supabase quotes query error:", error.message);
+        return [];
+      }
       return data ?? [];
     },
   });
