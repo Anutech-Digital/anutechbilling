@@ -63,13 +63,43 @@ function severityKind(score: number | null): "danger" | "warning" | "muted" {
   return "muted";
 }
 
+/**
+ * 6 Oct 2026: "Could not reach the clipboard" on Copy Directive — some browsers and embedded
+ * views refuse navigator.clipboard (no permission, not focused). The old textarea +
+ * execCommand("copy") path still works in most of them, so try it before giving up; when both
+ * fail the caller opens the directive and selects it, so Ctrl+C is all that is left.
+ */
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    return false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
   }
+}
+
+/** Selects an element's text so the user only has to press Ctrl+C. */
+function selectText(el: HTMLElement | null) {
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
 }
 
 function ScreenshotThumb({ path, name }: { path: string; name: string | null }) {
@@ -108,6 +138,12 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
 
 function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string | null }) {
   const [open, setOpen] = React.useState(false);
+  const directiveRef = React.useRef<HTMLPreElement>(null);
+  /* Copy failed: open the details and select the directive, after the panel has rendered. */
+  const showForManualCopy = () => {
+    setOpen(true);
+    setTimeout(() => selectText(directiveRef.current), 50);
+  };
 
   const triage = useTriageFeedback();
   const dispatch = useDispatchFeedback();
@@ -124,7 +160,10 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     }
     const ok = await copyToClipboard(row.directive);
     if (ok) toast.success("Directive copied — paste it into Claude Code.");
-    else toast.error("Could not reach the clipboard.", { description: "Select the directive text below and copy it manually." });
+    else {
+      showForManualCopy();
+      toast.warning("Browser blocked copying.", { description: "The directive is open and selected below — press Ctrl+C." });
+    }
   };
 
   const handleRunTriage = async () => {
@@ -156,10 +195,11 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
 
       /* Says where the report went: it leaves the Open tab, and on 5 Oct three reports
          "vanished" for the person who pressed it. */
-      toast.success("Moved to Queued for agent — directive copied.", {
+      if (!copied && directive) showForManualCopy();
+      toast.success(copied ? "Moved to Queued for agent — directive copied." : "Moved to Queued for agent.", {
         description: copied
           ? "Not fixed yet: paste it into Claude Code to make the fix. The report waits in the Queued for agent tab."
-          : "Not fixed yet: open it in the Queued for agent tab to copy the directive for Claude Code.",
+          : "Not fixed yet. The browser blocked copying — the AI worker will still put it on the board within the hour.",
         duration: 10_000,
       });
     } catch (err) {
@@ -335,7 +375,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
               )}
             </div>
             {row.directive ? (
-              <pre className="text-2xs leading-relaxed text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-96 overflow-y-auto">
+              <pre ref={directiveRef} className="text-2xs leading-relaxed text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-96 overflow-y-auto">
                 {row.directive}
               </pre>
             ) : (
@@ -575,9 +615,9 @@ function PlatformFeedbackList({
             {r.directive && (
               <button
                 type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(r.directive!);
-                  toast.success("Directive copied — paste it into Claude Code.");
+                onClick={async () => {
+                  if (await copyToClipboard(r.directive!)) toast.success("Directive copied — paste it into Claude Code.");
+                  else toast.warning("Browser blocked copying.", { description: "Select the directive text and press Ctrl+C." });
                 }}
                 className="mt-2 rounded border border-hairline px-2 py-0.5 text-2xs text-ink-2 hover:bg-paper-2"
               >
