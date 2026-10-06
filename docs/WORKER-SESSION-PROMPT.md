@@ -10,6 +10,10 @@ code (refused if another live worker holds an overlapping path), checks the file
 changed before every commit/push, and releases after. A lock whose worktree folder is gone is
 removed automatically. `node scripts/ops/worker-lock.mjs list` shows who holds what.
 
+**Max 4 workers at once, no dev server per worker** (6 Oct: 8 workers with 8 dev servers left 2 GB of
+24 GB free and hung the machine). `claim` refuses a 5th worker (exit 3). Workers run only their own
+tests; the manager does every browser check on ONE server after pulling the pushes.
+
 **How to use:** Claude app → New session → **Local** (not cloud) → paste the block below →
 change `R-XXX` on the first line to the card number → Enter. Press Allow when it asks for the folder.
 
@@ -31,15 +35,15 @@ Tum ResellerOS ke WORKER ho: sirf upar wala ek card banao, apne alag folder (wor
    production/.env.local main folder se copy karo.
    LOCK (zaroori, code se PEHLE): card ke files/doneWhen se wo folder ya file chuno jo badlenge (page ka folder, lib ka folder — "src" ya "src/app" jaisa bada nahi), phir worktree ke production/ me:
    node scripts/ops/worker-lock.mjs claim <CARD> C:/Users/mso50/reselleros-w-<card> "<folder1>" "<folder2>"
-   Exit 2 (TAKRAAV) aaye to KUCH mat banao: card par nowDoing "Ruka: <dusra card> same files par", worktree hatao (step 9), owner ko batao, ruk jao. Lock file kabhi delete/edit mat karo.
-   Apna local app: `npm run dev:local -- -p <port>` jahan port = 3010 + (card number ke aakhri 2 ank) — 3001 aur 4320 Pardeep ke hain, kabhi mat use karo.
+   Exit 3 (pehle se 4 worker) ya Exit 2 (TAKRAAV) aaye to KUCH mat banao: card par nowDoing "Ruka: <dusra card> same files par", worktree hatao (step 9), owner ko batao, ruk jao. Lock file kabhi delete/edit mat karo.
+   DEV SERVER MAT CHALAO (RAM bachao — 6 Oct ko 8 servers se computer hang hua). Browser jaanch manager karega.
 5. BANAO (sirf worktree me): pehle bug ho to ek test jo FAIL ho (saboot), phir fix, phir test pass. Feature ho to tests saath. Paise ₹ whole rupees, tenant_id/RLS, koi `any` nahi. Naya DB migration chahiye to production/supabase/migrations me file likho par KAHIN apply mat karo — card par likho "migration: <file> — manager lagayega".
-6. JAANCH: `cd production && npx tsc --noEmit && npx vitest run && npx next lint --quiet` — sab green. Phir apne port par browser pane me dikha kar check karo (screenshot), doneWhen ke hisaab se.
+6. JAANCH (halki, RAM bachao): sirf apni test files `npx vitest run <files>`, commit se pehle ek baar `npx tsc --noEmit`, aur sirf badli files par `npx eslint <files>` — sab green. Browser jaanch NAHI — manager push ke baad apne ek server par karega; aiResult me likho "browser jaanch: manager karega".
 7. COMMIT + PUSH: pehle `node scripts/ops/worker-lock.mjs check <CARD>` (jo files sach me badli, unka takraav) — exit 2 → commit/push mat karo, owner ko batao. Phir commit message "<CARD>: <kya badla>" + aakhri line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Phir `git push anutech w-<card>:manager-pardeep` — reject ho to ek baar `git rebase anutech/manager-pardeep`, gate + check dobara, phir push. Rebase me conflict aaye to `git rebase --abort`, card par likho, ruko — khud se doosre ka code mat hatao. Phir bhi reject → card par likho aur ruko.
 8. CARD BAND: status "review", nextStep "deploy", nowDoing null, commits [sha], finishedAt, aiResult "✓ kya badla, tests, browser me kya dekha", howToCheck (2–4 kadam), liveLog line.
    Card me feedbackId + feedbackEnv ho to app me report fixed karo (token kabhi print mat karo, note sirf ASCII):
    curl -s -X POST -H "Authorization: Bearer $(cat ~/.claude/secrets/agent-queue-token)" -H "content-type: application/json" -d '{"id":"<feedbackId>","note":"AI ne theek kiya: <CARD> (<sha>) - <ek line>. Staging par shaam 5 baje ke merge ke baad. Tab browser test."}' <staging: https://resellersos-staging-njvk4nxhdq-as.a.run.app | live: https://reselleros.anutech.in>/api/agent/feedback-fixed
-9. SAFAI: push ho gaya ho tabhi `node scripts/ops/worker-lock.mjs release <CARD>` (atka ho to lock rehne do — worktree hatate hi wo khud purana maana jaayega). Apna dev server band karo. Junction PEHLE hatao aur pakka karo ki hat gaya:
+9. SAFAI: push ho gaya ho tabhi `node scripts/ops/worker-lock.mjs release <CARD>` (atka ho to lock rehne do — worktree hatate hi wo khud purana maana jaayega). Junction PEHLE hatao aur pakka karo ki hat gaya:
    PowerShell: (Get-Item 'C:\Users\mso50\reselleros-w-<card>\production\node_modules').Delete()
    tabhi `git worktree remove C:/Users/mso50/reselleros-w-<card>` aur `git branch -D w-<card>` (kabhi --force jab junction ho — shared node_modules mit jaata hai).
 10. ANT: 4 line me batao — card, kya badla, tests, push hua ya nahi. Phir ye session archive karo (mcp__ccd_session_mgmt__archive_session, session_id "self") — SIRF agar ye session isi prompt se shuru hua. Kuch atka ho to archive mat karo, wajah batao.

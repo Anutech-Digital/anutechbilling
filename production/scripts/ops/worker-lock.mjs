@@ -19,7 +19,8 @@
  *   node scripts/ops/worker-lock.mjs release R-197
  *   node scripts/ops/worker-lock.mjs list
  *
- * Exit 0 = go. Exit 2 = conflict (message names the other card) — stop, do not work around it.
+ * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 3 = MAX_WORKERS (4) already
+ * running. Either way: stop, do not work around it.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -45,6 +46,14 @@ export function pathsOverlap(a, b) {
 /** A claim like "src" or "src/app" would lock out every other worker — refuse it. */
 export function tooBroad(area) {
   return normPath(area).split("/").filter(Boolean).length < 3;
+}
+
+/** Most workers allowed at once. 6 Oct 2026: 8 at once left 2 GB of 24 GB free and hung the machine. */
+export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
+
+/** True when another worker may not start: the live locks (other cards) already fill every slot. */
+export function queueFull(card, locks, max = MAX_WORKERS) {
+  return locks.filter((l) => l.card !== card).length >= max;
 }
 
 /** Every pair of overlapping paths between my claims and other live locks. */
@@ -113,7 +122,13 @@ function main(argv) {
     if (!worktree || !areas.length) { console.error("claim <CARD> <worktree> <folder/file>..."); process.exit(1); }
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
-    const conflicts = findConflicts(card, areas, readLocks());
+    const locks = readLocks();
+    if (queueFull(card, locks)) {
+      console.error(`✗ PEHLE SE ${MAX_WORKERS} WORKER chal rahe hain (${locks.map((l) => l.card).join(", ")}) — computer hang na ho, isliye ruko.`);
+      console.error("Owner ko batao: \"Ek worker khatam hone ke baad ye card chalaiye.\" Lock ko haath mat lagao.");
+      process.exit(3);
+    }
+    const conflicts = findConflicts(card, areas, locks);
     if (conflicts.length) report(conflicts);
     fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: areas.map(normPath), files: [], claimedAt: new Date().toISOString() }, null, 2));
     console.log(`✓ ${card} ka lock laga: ${areas.map(normPath).join(", ")}`);

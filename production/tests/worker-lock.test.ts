@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -32,5 +32,13 @@ describe("worker locks (two workers must never build in the same files)", () => 
     ]);
     expect(findConflicts("R-301", ["src/lib/ai/app-help.ts"], locks).map((c: { card: string }) => c.card)).toEqual(["R-300"]);
     expect(findConflicts("R-301", ["src/lib/customers"], locks)).toEqual([]);
+  });
+
+  it("lets at most 4 workers run, and a worker re-claiming its own card is not counted", () => {
+    const four = ["R-1", "R-2", "R-3", "R-4"].map((card) => ({ card, areas: [], files: [] }));
+    expect(queueFull("R-5", four.slice(0, 3))).toBe(false);
+    expect(queueFull("R-5", four)).toBe(true);
+    expect(queueFull("R-4", four)).toBe(false);
+    expect(queueFull("R-5", four, 8)).toBe(false);
   });
 });
