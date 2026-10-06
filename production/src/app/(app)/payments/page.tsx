@@ -68,8 +68,11 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 /* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
-import { usePagedRows, LoadMore, PAYMENTS_PAGE_SIZE } from "./load-more";
+import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
+import { useRowOrder } from "./use-row-order";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -86,9 +89,8 @@ const METHOD_META: Record<string, { label: string; icon: string }> = {
   other:         { label: "Other",      icon: "info" },
 };
 
-// Table columns (left→right) + fluid percentage widths. A dedicated LINKED DOCS
+// Table column widths (fluid percentages, DataTable colgroup). A dedicated LINKED DOCS
 // column keeps the source quote / invoice / receipt out of the Status badge.
-const PAY_COL_ORDER = ["date", "customer", "amount", "method", "reference", "linked", "status", "action"];
 const PAY_COL_WIDTHS: Record<string, string> = {
   date: "10%", customer: "19%", amount: "12%", method: "13%", reference: "12%", linked: "16%", status: "10%", action: "8%",
 };
@@ -169,8 +171,9 @@ function PaymentsPageInner() {
     return m;
   }, [customers]);
 
-  // Filter
-  const filtered = (payments ?? []).filter((p) => {
+  // Filter. Memoised: DataTable starts again at one page whenever `rows` is a new array
+  // (R-024), so a fresh array on every render would undo "Load more" (R-215).
+  const filtered = React.useMemo(() => (payments ?? []).filter((p) => {
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     if (customerFilter) {
@@ -191,22 +194,39 @@ function PaymentsPageInner() {
       p.method.toLowerCase().includes(s) ||
       (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
     );
-  });
+  }), [payments, tab, focus, customerFilter, quoteById, search]);
 
-  /* R-104: paint 50 at a time (R-024 rule). Tab counts, KPIs, "collected" and the CSV
-     export still use every payment in `filtered` / `payments`; only the lists are paged. */
-  const paged = usePagedRows(filtered, PAYMENTS_PAGE_SIZE, [tab, focus, customerFilter ?? "", search.trim()].join("|"));
+  /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
+     time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
+     still use every payment in `filtered` / `payments`; only the painting is paged. */
+  const paySort = React.useMemo(
+    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id)?.customerName),
+    [quoteById],
+  );
+  const payColumns: DataTableColumn<Payment>[] = [
+    { id: "date", header: "Date", width: PAY_COL_WIDTHS.date, sortValue: paySort.date },
+    { id: "customer", header: "Customer", width: PAY_COL_WIDTHS.customer, sortValue: paySort.customer },
+    { id: "amount", header: "Amount", width: PAY_COL_WIDTHS.amount, align: "right", sortValue: paySort.amount },
+    { id: "method", header: "Method", width: PAY_COL_WIDTHS.method, sortValue: paySort.method },
+    { id: "reference", header: "Reference", width: PAY_COL_WIDTHS.reference, sortValue: paySort.reference },
+    { id: "linked", header: "Linked docs", width: PAY_COL_WIDTHS.linked },
+    { id: "status", header: "Status", width: PAY_COL_WIDTHS.status, sortValue: paySort.status },
+    { id: "action", header: <span className="sr-only">Actions</span>, width: PAY_COL_WIDTHS.action, align: "right" },
+  ];
 
   /* j / k / Enter / o over the sales-payments table — opens the payment's quote,
      the same target a click uses. Enabled only while that table is on screen
      (it lives inside the subscription/all block, not the project view), so the
-     keys never open a row from a list the user isn't looking at. Keyed by id,
-     like /customers, so only that one table lights up. */
+     keys never open a row from a list the user isn't looking at. The order is read
+     from the painted rows (after a header sort / Load more), so the highlighted row
+     is the one Enter opens. */
+  const payTableRef = React.useRef<HTMLDivElement | null>(null);
+  const shownIds = useRowOrder(payTableRef, view !== "project" && !isLoading && !error && filtered.length > 0);
   const payKeys = useListKeys({
-    count: paged.shown.length,   // only the rows on screen (R-104)
+    count: shownIds.length,   // only the rows on screen (R-104)
     enabled: view !== "project",
     onOpen: (i) => {
-      const p = paged.shown[i];
+      const p = filtered.find((x) => x.id === shownIds[i]);
       if (p) router.push(`/quotes/${p.quote_id}` as never);
     },
   });
@@ -214,7 +234,7 @@ function PaymentsPageInner() {
   React.useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [payKeys.index]);
-  const payKbSelectedId = payKeys.index >= 0 ? paged.shown[payKeys.index]?.id ?? null : null;
+  const payKbSelectedId = payKeys.index >= 0 ? shownIds[payKeys.index] ?? null : null;
 
   const counts: Record<string, number> = { all: payments?.length ?? 0 };
   for (const p of payments ?? []) counts[p.status] = (counts[p.status] ?? 0) + 1;
@@ -567,9 +587,8 @@ function PaymentsPageInner() {
           <TabBar className="overflow-y-hidden" value={tab} onChange={(v) => { setFocus(""); setTab(v as typeof tab); }} items={tabsWithCounts} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
-              {paged.hidden > 0
-                ? <>Showing {paged.shown.length} of {filtered.length} payments</>
-                : <>Showing {filtered.length} of {payments.length} payments</>}
+              {/* How many are painted is the table's own "Showing x of y" (R-215). */}
+              {filtered.length} of {payments.length} payments
               {" · "}{rupee(totalCollected)} collected all-time
             </div>
             <div className="w-full sm:w-72">
@@ -637,14 +656,24 @@ function PaymentsPageInner() {
         />
       )}
 
-      {/* Adaptive card list — viewports < 1280px */}
+      {/* R-215: one shared DataTable — cards below 1280px, the table at xl; header sort;
+          "Load 50 more" (R-104) from its pageSize. Rows carry data-pay-row-id so the
+          keyboard knows the painted order. */}
       {!isLoading && !error && filtered.length > 0 && (
-        <ul className="xl:hidden space-y-2 mb-3">
-          {paged.shown.map((p) => {
+        <div ref={payTableRef}>
+          <DataTable
+            rows={filtered}
+            columns={payColumns}
+            getRowId={(p) => p.id}
+            totalCount={payments?.length}
+            noun="payment"
+            cardsBelow="xl"
+            pageSize={PAYMENTS_PAGE_SIZE}
+            mobileCard={(p) => {
             const ctx = quoteById.get(p.quote_id);
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
-              <li key={p.id} className="bg-paper border border-hairline rounded-lg overflow-hidden">
+              <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
                 <Link
                   href={`/quotes/${p.quote_id}` as never}
                   className="block p-3 active:bg-paper-2/50"
@@ -700,33 +729,10 @@ function PaymentsPageInner() {
                   )}
                 </div>
                 )}
-              </li>
+              </div>
             );
-          })}
-        </ul>
-      )}
-
-      {/* Desktop table — viewports >= 1280px */}
-      {!isLoading && !error && filtered.length > 0 && (
-        <Card flush className="hidden xl:block">
-          <table className="w-full table-fixed">
-            <colgroup>
-              {PAY_COL_ORDER.map((id) => <col key={id} style={{ width: PAY_COL_WIDTHS[id] }} />)}
-            </colgroup>
-            <thead className="bg-paper-2 border-b border-hairline-strong">
-              <tr>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Date</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Customer</th>
-                <th className="text-right px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Amount</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Method</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Reference</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Linked docs</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Status</th>
-                <th className="px-2 py-2.5 text-right"><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.shown.map((p) => {
+            }}
+            renderRow={(p) => {
                 const ctx = quoteById.get(p.quote_id);
                 const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
                 return (
@@ -742,14 +748,9 @@ function PaymentsPageInner() {
                     rowRef={p.id === payKbSelectedId ? selectedRowRef : undefined}
                   />
                 );
-              })}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {!isLoading && !error && (
-        <LoadMore hidden={paged.hidden} pageSize={PAYMENTS_PAGE_SIZE} noun="payments" onLoadMore={paged.loadMore} />
+            }}
+          />
+        </div>
       )}
 
       {/* Help */}
@@ -1042,6 +1043,7 @@ function PaymentRowView({
   return (
     <tr
       ref={rowRef}
+      {...{ [PAY_ROW_ATTR]: p.id }}
       className={cn(
         "group border-b border-hairline last:border-0 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset",
         selected ? "bg-amber-soft/60 ring-1 ring-inset ring-amber/40" : "hover:bg-paper-2/50",
