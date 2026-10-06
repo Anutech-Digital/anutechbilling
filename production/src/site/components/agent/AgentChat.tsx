@@ -14,8 +14,10 @@
  * WhatsApp — never a spinner that outlives its welcome, never an invented answer.
  */
 import Link from "@/site/components/ui/SiteLink";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WHATSAPP_URL } from "@/site/lib/config";
+import { hideFloatingOn } from "@/site/components/chrome/Chrome";
 
 interface Msg {
   role: "user" | "assistant";
@@ -57,6 +59,7 @@ function loadStored(): Stored | null {
 }
 
 export function AgentChat() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([GREETING]);
   const [input, setInput] = useState("");
@@ -122,23 +125,43 @@ export function AgentChat() {
     }
   };
 
+  /* R-230: /checkout aur /done par kuch float nahi karta — phone par launcher Pay button dhak
+     deta tha. Saare hooks upar chal chuke, isliye yahan return safe hai. */
+  if (hideFloatingOn(pathname)) return null;
+
   return (
     <>
-      {/* Launcher — fixed, WhatsApp pill (bottom 22) ke THEEK UPAR. */}
+      {/* Launcher — fixed, WhatsApp pill (bottom 22) ke THEEK UPAR. R-230: 980px se neeche
+          poori text wali pill ki jagah 48px gol icon (naam aria-label me), taaki phone par
+          page ka neeche wala hissa na dhake. Position/size class me — inline style media
+          query ko jeet leta. */}
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="Talk to our live AI sales agent"
+        className="agent-launcher"
         style={{
-          position: "fixed", right: 22, bottom: 78, zIndex: 90,
-          display: "inline-flex", alignItems: "center", gap: 9,
+          position: "fixed", bottom: 78, zIndex: 90,
+          display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9,
           background: "var(--primary)", color: "#fff", border: "none", borderRadius: 999,
-          padding: "12px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer",
+          fontSize: 14, fontWeight: 600, cursor: "pointer",
           boxShadow: "var(--shadow-panel)", fontFamily: "inherit",
         }}
       >
-        <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: "#7EF0B2", animation: "wPulse 1.6s infinite" }} />
-        Talk to our live AI sales agent
+        <span aria-hidden className="agent-launcher-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#7EF0B2", animation: "wPulse 1.6s infinite" }} />
+        <svg aria-hidden className="agent-launcher-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+        <span className="agent-launcher-text">Talk to our live AI sales agent</span>
+        <style jsx>{`
+          .agent-launcher { right: 22px; padding: 12px 18px; }
+          .agent-launcher-icon { display: none; }
+          @media (max-width: 979px) {
+            .agent-launcher { width: 48px; height: 48px; padding: 0; }
+            .agent-launcher-text, .agent-launcher-dot { display: none; }
+            .agent-launcher-icon { display: block; }
+          }
+        `}</style>
       </button>
 
       {open && (

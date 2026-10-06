@@ -167,11 +167,23 @@ export function Footer() {
   );
 }
 
+/**
+ * R-230 (6 Oct 2026): on a phone the floating boxes (AI chat launcher, WhatsApp pill, consent
+ * banner) stacked over the bottom of the page — on /checkout that is the Pay button. Where the
+ * visitor is paying or has just paid, the AI launcher and WhatsApp pill do not float at all:
+ * the page itself is the whole task.
+ */
+export function hideFloatingOn(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return ["/checkout", "/done"].some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
 export function WhatsAppButton() {
+  const pathname = usePathname();
   /* R-078 (4 Oct 2026): the floating button linked to the placeholder 919800000000 on every
      page, and sat over the Google Ads landing page price. Hidden until the real number is set
      in site/lib/config.ts (WHATSAPP_NUMBER), which flips WHATSAPP_READY. */
-  if (!WHATSAPP_READY) return null;
+  if (!WHATSAPP_READY || hideFloatingOn(pathname)) return null;
   return (
     <a
       href={WHATSAPP_URL}
@@ -215,12 +227,21 @@ export function ConsentBanner() {
     <div
       role="dialog"
       aria-label="Cookie consent"
+      className="consent-banner"
       style={{
-        position: "fixed", left: 22, bottom: 22, zIndex: 95, maxWidth: 360,
+        position: "fixed", zIndex: 95,
         background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
         padding: 18, boxShadow: "var(--shadow-panel)",
       }}
     >
+      {/* R-230: left 22 + maxWidth 360 was wider than a 375px phone. Below 980px the banner
+          spans the screen with a 12px gutter instead of hanging off the right edge. */}
+      <style jsx>{`
+        .consent-banner { left: 22px; bottom: 22px; max-width: 360px; }
+        @media (max-width: 979px) {
+          .consent-banner { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+        }
+      `}</style>
       <p style={{ fontSize: 14, lineHeight: 1.5, color: "var(--text-secondary)", margin: "0 0 12px" }}>
         Essential cookies keep the cart working. Analytics cookies are set only if you accept them.
       </p>
