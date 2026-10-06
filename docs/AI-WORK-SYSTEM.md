@@ -59,3 +59,12 @@ Team Pulse (Pardeep ka private page) har insaan ke liye dikhata hai: 30 din mein
 ## 7. Roz ka tareeka — ab TEAM-PROTOCOL mein (1 Oct 2026)
 
 Team ka tareeka ab ek AI custom-software company ka hai: AI code, docs, tests, notes karta hai; 4 log sirf wo karte hain jo AI nahi kar sakta (client, faisla, paisa, login/live). Poora — kaun kya, ek project ke 7 kadam, board: [`docs/TEAM-PROTOCOL.md`](TEAM-PROTOCOL.md) → "Team model". Naye client project ke liye: [`docs/project-template/`](project-template/).
+
+## 8. Card banane ka tareeka — Manager + Workers (6 Oct 2026, ab yahi default)
+
+Pardeep: "ab card isi tarike se handle hon — manager aur worker local session ke saath".
+
+- **Manager session** (Pardeep ke saath wali chat): card chunta hai, group banata hai, board sambhalta hai, 5 PM staging aur live deploy (haan ke saath). Khud card ka code nahi likhta jab worker likh sakta hai.
+- **Worker** (har card ka alag LOCAL session ya background worker): [WORKER-SESSION-PROMPT.md](WORKER-SESSION-PROMPT.md) — apna worktree + port, `scripts/ops/worker-lock.mjs` se lock, fail-first test, gate, apne browser tab me jaanch, push sirf `manager-pardeep`, card "review" + howToCheck.
+- **Group chunna:** sirf code wale cards (koi key / live DB / insaan ka step / bahut bada kaam nahi), aur aise ki folders na takraayein. Ek area (jaise accounting) ka ek hi card ek waqt. Takraav ho bhi jaaye to lock rokta hai.
+- Pehli baar 6 Oct: 8 workers ek saath — R-197, R-179, R-181, R-191, R-187, R-177, R-065, R-104.
