@@ -15,6 +15,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
@@ -293,6 +294,7 @@ export default function SupportPage() {
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <Input
+            aria-label="Search tickets"
             placeholder="🔍 Search reporter, email, keyword..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -418,16 +420,13 @@ export default function SupportPage() {
       )}
 
       {/* Ticket Detail Modal — opens when any bug/ticket card is clicked */}
+      {/* R-289: ui/dialog (focus trap, Esc, focus returns to the card) instead of a hand-made overlay. */}
       {selected && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/50 flex items-center justify-center p-4 backdrop-blur-xs overflow-y-auto"
-          onClick={() => setSelected(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="bg-paper w-full max-w-2xl rounded-xl shadow-2xl border border-hairline p-6 max-h-[90vh] overflow-y-auto space-y-4"
-            onClick={(e) => e.stopPropagation()}
+        <Dialog open onOpenChange={(o) => { if (!o) setSelected(null); }}>
+          <DialogContent
+            hideClose
+            aria-describedby={undefined}
+            className="sm:!max-w-2xl max-h-[90vh] overflow-y-auto space-y-4"
           >
             {/* Modal Header */}
             <div className="flex items-start justify-between gap-3 border-b border-hairline pb-4">
@@ -448,9 +447,9 @@ export default function SupportPage() {
                     </span>
                   )}
                 </div>
-                <h2 className="font-serif text-xl md:text-2xl text-ink leading-snug break-words">
+                <DialogTitle className="text-xl md:text-2xl leading-snug break-words">
                   {selected.subject}
-                </h2>
+                </DialogTitle>
 
                 {/* WHY THE AI HANDED IT OVER — the sentence, not a badge saying there is one.
                     The agent writes a reason a non-engineer can act on ("the customer reports
@@ -487,6 +486,7 @@ export default function SupportPage() {
               <button
                 type="button"
                 onClick={() => setSelected(null)}
+                aria-label="Close ticket"
                 className="text-ink-3 hover:text-ink p-1.5 rounded-md hover:bg-paper-2 transition-colors shrink-0"
               >
                 <Icon name="x" size={20} />
@@ -515,9 +515,9 @@ export default function SupportPage() {
 
             {/* Full Bug Description / Content */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-ink-3 uppercase tracking-wider">
+              <h3 className="block text-xs font-bold text-ink-3 uppercase tracking-wider">
                 Full Bug Description &amp; Details
-              </label>
+              </h3>
               <div className="bg-paper-2/50 border border-hairline rounded-lg p-4 font-mono text-xs text-ink leading-relaxed whitespace-pre-wrap break-words max-h-[350px] overflow-y-auto shadow-inner">
                 {selected.body || "No detailed description provided."}
               </div>
@@ -529,10 +529,10 @@ export default function SupportPage() {
               if (atts.length === 0) return null;
               return (
                 <div className="space-y-2 pt-2 border-t border-hairline">
-                  <label className="block text-xs font-bold text-ink-3 uppercase tracking-wider flex items-center gap-1.5">
+                  <h3 className="text-xs font-bold text-ink-3 uppercase tracking-wider flex items-center gap-1.5">
                     <Icon name="image" size={14} className="text-primary" />
                     <span>Attached Screenshots &amp; Files ({atts.length})</span>
-                  </label>
+                  </h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {atts.map((att, idx) => (
@@ -621,6 +621,7 @@ export default function SupportPage() {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-ink-3 font-medium">Status:</span>
                 <select
+                  aria-label="Ticket status"
                   value={selected.status}
                   onChange={(e) => {
                     const newStatus = e.target.value as SupportTicketStatus;
@@ -673,22 +674,20 @@ export default function SupportPage() {
                 </Button>
               </div>
             </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
 
-      {/* Image Lightbox / File Detail Viewer Modal */}
+      {/* Image Lightbox / File Detail Viewer Modal — R-289: ui/dialog, opens above the ticket dialog. */}
       {previewImage && (
-        <div
-          className="fixed inset-0 z-[9999] bg-ink/80 flex items-center justify-center p-4 backdrop-blur-md"
-          onClick={() => setPreviewImage(null)}
-        >
-          <div
-            className="relative max-w-4xl w-full max-h-[90vh] bg-paper rounded-xl shadow-2xl border border-hairline overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
+        <Dialog open onOpenChange={(o) => { if (!o) setPreviewImage(null); }}>
+          <DialogContent
+            hideClose
+            aria-describedby={undefined}
+            className="sm:!max-w-4xl p-0 gap-0 max-h-[90vh] overflow-hidden flex flex-col"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-hairline bg-paper-2">
-              <span className="text-xs font-bold text-ink font-mono truncate">{previewImage.name}</span>
+              <DialogTitle className="text-xs font-bold font-mono leading-normal truncate">{previewImage.name}</DialogTitle>
               <div className="flex items-center gap-3">
                 {previewImage.url && (
                   <a
@@ -705,6 +704,7 @@ export default function SupportPage() {
                 <button
                   type="button"
                   onClick={() => setPreviewImage(null)}
+                  aria-label="Close preview"
                   className="text-ink-3 hover:text-ink p-1 rounded-md hover:bg-paper-3"
                 >
                   <Icon name="x" size={18} />
@@ -750,8 +750,8 @@ export default function SupportPage() {
                 </Button>
               </div>
             )}
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

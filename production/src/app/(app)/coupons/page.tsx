@@ -244,6 +244,7 @@ export default function CouponsPage() {
                           variant="ghost"
                           size="sm"
                           icon="trash"
+                          aria-label={`Delete coupon ${c.code}`}
                           onClick={() => onDelete(c)}
                           disabled={del.isPending}
                           className="text-rose hover:text-rose"
@@ -302,6 +303,7 @@ export default function CouponsPage() {
                         variant="ghost"
                         size="sm"
                         icon="trash"
+                        aria-label={`Delete coupon ${c.code}`}
                         onClick={() => onDelete(c)}
                         disabled={del.isPending}
                         className="text-rose hover:text-rose ml-auto"

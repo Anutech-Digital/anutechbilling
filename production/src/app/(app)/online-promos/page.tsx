@@ -248,6 +248,7 @@ export default function OnlinePromosPage() {
                           variant="ghost"
                           size="sm"
                           icon="trash"
+                          aria-label={`Delete promo ${p.headline}`}
                           onClick={() => onDelete(p)}
                           disabled={del.isPending}
                           className="text-rose hover:text-rose"
@@ -293,6 +294,7 @@ export default function OnlinePromosPage() {
                         variant="ghost"
                         size="sm"
                         icon="trash"
+                        aria-label={`Delete promo ${p.headline}`}
                         onClick={() => onDelete(p)}
                         disabled={del.isPending}
                         className="text-rose hover:text-rose ml-auto"
