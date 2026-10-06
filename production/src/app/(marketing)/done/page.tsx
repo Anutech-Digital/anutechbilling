@@ -15,11 +15,13 @@
  * the GST tax invoice follows when it is issued; hosting logins arrive in a separate
  * email; a migration starts when the customer replies. It no longer promises a WhatsApp
  * call from a "migration desk", NEFT/RTGS activation (checkout takes Razorpay only), or a
- * client area at /dashboard (that is the staff app; customers sign in at /login).
+ * client area at /dashboard (that is the staff app).
+ * R-233 (6 Oct 2026): /login is the ResellerOS sign-in too — the button now opens the
+ * hosting & domains customer panel (CLIENT_AREA_URL, which falls back to /login if unset).
  */
 import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
-import { COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
+import { CLIENT_AREA_URL, COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 
 type Tone = "success" | "warn";
@@ -237,7 +239,7 @@ export default function DonePage() {
         <HelpBlock subject={orderNo ? `My order ${orderNo}` : "My order"} />
       </>}
       actions={<>
-        <Link href="/login" className="btn btn-primary">Go to client login</Link>
+        <Link href={CLIENT_AREA_URL as never} className="btn btn-primary">Customer login (hosting &amp; domains)</Link>
         <Link href="/" className="btn btn-outline">Back to home</Link>
       </>}
     />

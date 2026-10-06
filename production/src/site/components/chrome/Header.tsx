@@ -249,9 +249,13 @@ export function Header() {
             spot, present on every page. "Get a quote" used to sit here as the
             primary CTA but Pardeep had it removed from the header (3 Sep 2026); it
             still lives in the hero, the mega-menu promos and the footer. With it
-            gone, Log in is the header's right-side action, so it reads as a button. */}
-        <Link href="/login" className="btn btn-sm hide-mobile" aria-label="Log in to ResellerOS"
-          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Log in</Link>
+            gone, Log in is the header's right-side action, so it reads as a button.
+            R-233 (6 Oct 2026): it opened /login — the ResellerOS STAFF app — so a hosting or
+            domain customer landed on the wrong sign-in. On the Anutech site it is the
+            customer panel; the ResellerOS login lives in the ResellerOS menu and pages. */}
+        <Link href={CLIENT_AREA_URL as never} className="btn btn-sm hide-mobile" aria-label="Customer login (hosting & domains)"
+          title="Customer login (hosting & domains)"
+          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Customer login</Link>
         <button
           className="only-mobile"
           aria-label={mobile ? "Close menu" : "Open menu"}
@@ -325,9 +329,10 @@ export function Header() {
             </Link>
           ))}
           {/* Sign-in gets its own emphasised row on mobile — the desktop top-right
-              "Log in" is hidden here, so this is where a returning customer finds it. */}
-          <Link href="/login" style={{ display: "block", padding: "15px 20px", background: "var(--tint)", color: "var(--primary)", fontWeight: 700, fontSize: 15 }}>
-            Log in to ResellerOS →
+              "Log in" is hidden here, so this is where a returning customer finds it.
+              R-233: the customer panel, not the ResellerOS staff login. */}
+          <Link href={CLIENT_AREA_URL as never} style={{ display: "block", padding: "15px 20px", background: "var(--tint)", color: "var(--primary)", fontWeight: 700, fontSize: 15 }}>
+            Customer login (hosting &amp; domains) →
           </Link>
         </nav>
       )}

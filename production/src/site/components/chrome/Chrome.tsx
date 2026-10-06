@@ -32,7 +32,8 @@ export function UtilityBar() {
           <Link href="/rates">All prices</Link>
           <Link href="/contact">Support</Link>
           <Link href="/status">Status</Link>
-          <Link href="/login">Client login</Link>
+          {/* R-233: customers sign in to the hosting/domain panel, not the ResellerOS staff app. */}
+          <Link href={CLIENT_AREA_URL as never}>Customer login</Link>
         </span>
       </div>
     </div>
@@ -47,7 +48,7 @@ const CRUMBS: Record<string, string> = {
   "/email/compare-editions": "Compare editions",
   "/google-workspace/pricing": "Google Workspace pricing",
   "/ssl": "SSL & security",
-  "/login": "Client login",
+  "/login": "Log in",
   "/terms": "Terms of service",
   "/terms-and-conditions": "Terms and conditions",
   "/privacy": "Privacy policy",
@@ -119,7 +120,7 @@ const FOOTER_COLS = [
   { title: "HOSTING", links: [["Shared hosting", "/hosting"], ["Full specification", "/hosting#specs"], ["Client area", CLIENT_AREA_URL], ["System status", "/status"]] },
   { title: "EMAIL & SECURITY", links: [["Compare editions", "/email/compare-editions"], ["Business email", "/email"], ["Google Workspace pricing", "/google-workspace/pricing"], ["Microsoft 365", "/quote"], ["SSL certificates", "/ssl"]] },
   { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#modules"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
-  { title: "COMPANY", links: [["About Anutech", "/about"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["Client login", "/login"], ["Terms", "/terms-and-conditions"], ["Privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
+  { title: "COMPANY", links: [["About Anutech", "/about"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["ResellerOS login", "/login"],["Terms", "/terms-and-conditions"], ["Privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
 ] as const;
 
 export function Footer() {
