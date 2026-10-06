@@ -115,6 +115,7 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
     "",
     "0. FOLDER: agar ye session kisi folder me nahi hai (\"No folder\" / scratch workspace), to sabse pehle change_directory tool se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega), phir aage badho.",
     "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
+    "Asli repo SIRF Anutech-Digital/anutechbilling hai (`git remote -v` me jo remote wahan point kare — Pardeep ke computer par `anutech`). Branch manager-pardeep. Abhicode0to1/new-reselleros PUBLIC purana repo hai — wahan kabhi push mat karo; cloud session usi ko clone kiye ho to ruko aur owner ko batao. staging/deploy mat chhuo (staging shaam 5 baje owner ka session karta hai).",
     `App: ${appUrl}${appUrl.includes("localhost") ? "" : " (ya local http://localhost:3001)"}. Jaanch browser pane me dikha kar karo.`,
     "",
     `Report: ${row.title}`,

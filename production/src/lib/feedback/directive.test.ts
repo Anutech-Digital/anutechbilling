@@ -208,3 +208,16 @@ describe("buildDirective — missing information is stated, not hidden", () => {
     expect(d.startsWith("# Feature request:")).toBe(true);
   });
 });
+
+/* 6 Oct 2026: a cloud session pushed a fix to the old public repo. Every directive names the
+   real repo, the branch, and that the public one must never receive a push. */
+describe("buildDirective — where the work goes", () => {
+  it("names the real repo, the branch, the local folder and forbids the public repo", () => {
+    const d = directiveFor("Invoice PDF does not download");
+    expect(d).toContain("## Where the work goes");
+    expect(d).toContain("Anutech-Digital/anutechbilling");
+    expect(d).toContain("manager-pardeep");
+    expect(d).toContain(String.raw`C:\Users\mso50\new-reselleros`);
+    expect(d).toMatch(/never push to that repo \(it is public\)/);
+  });
+});

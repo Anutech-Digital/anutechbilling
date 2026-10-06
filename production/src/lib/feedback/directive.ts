@@ -190,6 +190,16 @@ export function buildDirective(input: DirectiveInput): string {
     "- **Do not run `supabase db push`.** There are pending migration files in this repo that must not be applied as a side effect; one of them changes a customer-facing amount.",
     "- **Errors need a reason and a next step**, not a raw Postgres string. `src/lib/errors/toast-error.ts` is the helper.",
     "",
+    /* 6 Oct 2026: a fix done in a claude.ai/code session pushed to the OLD, public repo
+       (Abhicode0to1/new-reselleros) and never reached the real one; a local session opened
+       with "No folder". Every directive now says where the work must go. */
+    "## Where the work goes — check this FIRST",
+    "",
+    "- **The only real repo is `Anutech-Digital/anutechbilling`.** Run `git remote -v`. Push only to the remote that points there (on Pardeep's computer it is `anutech`). If no remote points there — e.g. a cloud session cloned `Abhicode0to1/new-reselleros` — STOP and tell the owner; never push to that repo (it is public).",
+    "- **Local (Pardeep's computer):** work in `C:\\Users\\mso50\\new-reselleros`. If the session has no folder, move there first (change_directory). The app runs at http://localhost:3001.",
+    "- **Branch:** `manager-pardeep`. Staging is merged once a day at 5 PM by the owner's session — do not push `staging` or `deploy`.",
+    "- **Card first:** put the work on the board (Kaam ki list) as a card, and the card id (R-…) in every commit message. Write the result on that card when done.",
+    "",
     "## Done when",
     "",
     "```bash",
