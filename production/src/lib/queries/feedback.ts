@@ -331,26 +331,6 @@ export function useUpdateFeedbackStatus() {
   });
 }
 
-/**
- * R-184: ask the AI to re-run a fixed report in a browser. Only stamps the time — the AI
- * worker routine reads it via /api/agent/feedback-queue and the board's AI check does the run.
- */
-export function useRequestFeedbackVerify() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id }: { id: string }) => {
-      const supabase = createClient();
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from("feedback")
-        .update({ verify_requested_at: now, updated_at: now })
-        .eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => invalidate(qc),
-  });
-}
-
 /** A short-lived signed URL for one screenshot. Same pattern as documents/receipts. */
 export async function feedbackScreenshotUrl(path: string): Promise<string | null> {
   const supabase = createClient();

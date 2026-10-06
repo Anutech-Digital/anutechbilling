@@ -37,7 +37,6 @@ import {
   useTriageFeedback,
   useDispatchFeedback,
   useUpdateFeedbackStatus,
-  useRequestFeedbackVerify,
   feedbackScreenshotUrl,
   type FeedbackWithShots,
   type FeedbackStatus,
@@ -149,7 +148,6 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
   const triage = useTriageFeedback();
   const dispatch = useDispatchFeedback();
   const setStatus = useUpdateFeedbackStatus();
-  const verify = useRequestFeedbackVerify();
 
   const type = row.inferred_type ?? row.reported_type;
   const badge = TYPE_BADGE[type] ?? TYPE_BADGE.bug;
@@ -218,19 +216,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     }
   };
 
-  const busy = triage.isPending || dispatch.isPending || setStatus.isPending || verify.isPending;
-
-  /* R-184: a fixed report can be re-run in a browser by the AI (board → AI check). */
-  const handleVerify = async () => {
-    try {
-      await verify.mutateAsync({ id: row.id });
-      toast.success("AI will check this in a browser.", { description: "It goes on the work board within the hour; the result is written on that card.", duration: 8_000 });
-    } catch (err) {
-      toast.error("Could not ask for a check.", {
-        description: `${err instanceof Error ? err.message : "Unknown error"} — try again, or ask Claude in chat to check it.`,
-      });
-    }
-  };
+  const busy = triage.isPending || dispatch.isPending || setStatus.isPending;
 
   return (
     <Card className="p-4 space-y-3">
@@ -261,7 +247,6 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             )}
             {row.status === "agent_queued" && <Badge kind="info" size="sm">queued for agent</Badge>}
             {row.status === "fixed" && <Badge kind="success" size="sm">fixed</Badge>}
-            {row.status === "fixed" && row.verify_requested_at && <Badge kind="info" size="sm">browser check asked</Badge>}
             {row.status === "wont_fix" && <Badge kind="muted" size="sm">won&apos;t fix</Badge>}
           </div>
 
@@ -329,12 +314,6 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
         {row.status !== "open" && (
           <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy}>
             Reopen
-          </Button>
-        )}
-        {row.status === "fixed" && (
-          <Button size="sm" variant="outline" onClick={handleVerify} disabled={busy}>
-            <Icon name="sparkles" size={14} className="mr-1.5" />
-            {row.verify_requested_at ? "Check again in browser" : "Check in browser (AI)"}
           </Button>
         )}
         {row.status !== "wont_fix" && (
