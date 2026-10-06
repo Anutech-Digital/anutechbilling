@@ -39,6 +39,13 @@
     "test:sql:local": "node scripts/test-sql.mjs --local"
   },
   "dependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
+    "@fontsource/dm-serif-display": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-checkbox": "^1.1.2",
     "@radix-ui/react-dialog": "^1.1.2",

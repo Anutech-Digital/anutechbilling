@@ -17,11 +17,10 @@
  * Styled to match the hosting landing (Manrope + Instrument Serif, the cream /
  * orange palette). It renders under (marketing), so the site menu is above it.
  */
-import { Manrope } from "next/font/google";
+import { trialSans as manrope } from "@/lib/fonts";
 import { CLIENT_AREA_URL } from "@/site/lib/config";
 import { TRIAL_STATUSES } from "@/site/lib/trial-statuses";
 
-const manrope = Manrope({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--htf-sans", display: "swap" });
 
 const C = {
   ink: "#17120F", ink2: "#4A403A", paper: "#FDFBF8",

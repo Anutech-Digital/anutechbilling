@@ -66,7 +66,7 @@ steps:
     entrypoint: bash
     args:
       - -c
-      - npm ci --no-audit --no-fund && npx tsc --noEmit && npx vitest run
+      - npm ci --no-audit --no-fund && npx next typegen && npx tsc --noEmit && npx vitest run
 
   # 0b. DEPS CACHE (5 Oct 2026, Pardeep: "cache kar do"). The note on --cache-from below was
   #     right: it never worked because nothing was pulled. Now the deps stage (npm ci, ~43s +
@@ -109,6 +109,8 @@ steps:
       - --build-arg=NEXT_PUBLIC_SUPABASE_ANON_KEY=$_SUPABASE_ANON_KEY
       - --build-arg=NEXT_PUBLIC_APP_URL=$_APP_URL
       - --build-arg=NEXT_PUBLIC_APP_ENV=$_APP_ENV
+      # R-182: the gate above type-checks (typegen + tsc) and push waits for it.
+      - --build-arg=SKIP_BUILD_TYPECHECK=1
       # ⚠️ YE FLAG LAGI HUI HAI PAR KABHI CHALI NAHI. 29 Aug 2026 par naapa: ek build ke
       # poore log me **ek bhi `CACHED` line nahi** — har layer har baar naye sire se banti
       # hai. Yahan pehle likha tha "Reuse the previous image's layers so a typical build is

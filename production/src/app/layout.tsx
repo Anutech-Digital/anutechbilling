@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { SentryBoot } from "@/components/shared/sentry-boot";
-import { DM_Serif_Display, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { appSans as fontSans, appSerif as fontSerif, appMono as fontMono } from "@/lib/fonts";
 
 import "@/app/globals.css";
 import { cn } from "@/lib/utils";
@@ -9,24 +9,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { UxObserver } from "@/components/shared/ux-observer";
 import { Providers } from "@/components/providers";
 
-const fontSans = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap",
-});
 
-const fontSerif = DM_Serif_Display({
-  subsets: ["latin"],
-  weight: ["400"],
-  variable: "--font-serif",
-  display: "swap",
-});
 
-const fontMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: {
