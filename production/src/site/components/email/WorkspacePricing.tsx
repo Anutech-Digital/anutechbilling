@@ -15,6 +15,7 @@
  */
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "@/site/components/ui/SiteLink";
+import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS, offerPercentOff } from "@/site/lib/workspace-offer";
 
 export type PlanKey = "starter" | "standard" | "plus" | "enterprise";
@@ -198,6 +199,8 @@ export function WorkspacePricing({ plans, head, intro }: {
           const isStarterOffer = p.key === "starter" && offerOn;
           const yearTotal = rate == null ? null : isStarterOffer ? FIRST_YEAR_PER_USER * users : rate * 12 * users;
           const edition = p.edition;
+          /* R-232: the online checkout sells the annual plan only; flexible stays quote-first. */
+          const buyHref = edition != null && term === "annual" && p.annual != null ? buyWorkspaceHref(edition, users) : null;
           return (
             <article key={p.key} className={`wp-card${t.tag ? " wp-pop" : ""}`}>
               {t.tag && <span className="wp-tag">{t.tag}</span>}
@@ -235,6 +238,13 @@ export function WorkspacePricing({ plans, head, intro }: {
               <div className="wp-cta">
                 {edition == null ? (
                   <Link href="/contact" className="wp-btn wp-primary">Talk to us</Link>
+                ) : buyHref ? (
+                  /* R-232: ready to pay → Razorpay checkout with this edition and seat count chosen. */
+                  <>
+                    <Link href={buyHref} className="wp-btn wp-primary">Buy now</Link>
+                    <Link href={`/quote?${q({ ed: edition, seats: String(users), term })}`} className="wp-btn wp-ghost">Get a GST quote</Link>
+                    <Link href={`/trial?${q({ ed: edition })}`} className="wp-sub">or start a free 14-day trial</Link>
+                  </>
                 ) : (
                   <>
                     <Link href={`/quote?${q({ ed: edition, seats: String(users), term })}`} className="wp-btn wp-primary">Get this plan</Link>
@@ -343,6 +353,7 @@ const CSS = `
 .wp-offer.on .wp-off{background:var(--wp-green)}
 .wp-link{border:0;background:none;padding:0;font:inherit;color:var(--wp-blue);font-weight:800;text-decoration:underline;cursor:pointer}
 .wp-cta{display:grid;gap:8px;margin-top:4px}
+.wp-sub{display:block;text-align:center;font-size:14px;font-weight:700;color:var(--wp-blue);text-decoration:underline;padding:6px 0}.wp-sub:focus-visible{outline:3px solid var(--wp-blue);outline-offset:2px}
 .wp-btn{display:flex;align-items:center;justify-content:center;min-height:46px;border-radius:999px;font-weight:800;text-decoration:none;font-size:15px}
 .wp-primary{background:var(--wp-blue);color:#fff}.wp-primary:hover{background:var(--wp-blue-h);box-shadow:0 1px 3px rgba(60,64,67,.3)}
 .wp-ghost{border:1px solid var(--wp-line);color:var(--wp-blue);background:#fff}.wp-ghost:hover{background:#F8FAFD;border-color:var(--wp-blue)}

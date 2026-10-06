@@ -29,7 +29,7 @@ import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
-import { buyNowSchema, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
+import { buyNowSchema, buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
@@ -2918,6 +2918,7 @@ function BuyNowDialog({
     // directly instead of creating a Razorpay Order.
     const payload = {
       ...values,
+      companyName: buyerCompany(values),   // R-232: optional; blank → buyer name
       tierId,
       seats,
       simulate:   isSimulation,
@@ -3329,7 +3330,7 @@ function BuyNowDialog({
                 error={errors.fullName?.message} {...register("fullName")} />
             </FormField>
 
-            <FormField label="Company" required htmlFor="buy-companyName">
+            <FormField label="Company (optional)" htmlFor="buy-companyName">
               <Input id="buy-companyName" placeholder="e.g. Acme Pvt Ltd" autoComplete="organization"
                 error={errors.companyName?.message} {...register("companyName")} />
             </FormField>

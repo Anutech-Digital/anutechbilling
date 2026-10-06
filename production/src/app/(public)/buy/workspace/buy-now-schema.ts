@@ -15,7 +15,10 @@ export const BUY_ANNUAL_NOTE = "Annual plan — billed for 12 months; Google doe
 
 export const buyNowSchema = z.object({
   fullName:    z.string().min(2, "Your name"),
-  companyName: z.string().min(2, "Company name"),
+  /* R-232: optional, as on /checkout — a sole proprietor has no company name. Blank → the
+     buyer name goes on the order (buyerCompany below); the server still gets a name. */
+  companyName: z.string().trim().max(200).optional()
+    .refine((v) => !v || v.length >= 2, "Company name — or leave it blank"),
   email:       z.string().email("Valid work email"),
   phone:       z.string().min(10, "10-digit phone"),
   seats:       z.coerce.number().int().min(1).max(10000),
@@ -42,3 +45,8 @@ export const buyNowSchema = z.object({
   }
 });
 export type BuyNowForm = z.infer<typeof buyNowSchema>;
+
+/** The name the order and GST invoice carry: the company, or the buyer when it is left blank. */
+export function buyerCompany(v: Pick<BuyNowForm, "companyName" | "fullName">): string {
+  return v.companyName?.trim() || v.fullName.trim();
+}
