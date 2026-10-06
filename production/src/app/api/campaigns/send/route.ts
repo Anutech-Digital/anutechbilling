@@ -20,11 +20,12 @@
  *   { campaignId, recipientsCount, sentCount, failedCount, mode }
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
+import { createAdminClient } from "@/lib/supabase/server";
+import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
+import { withRoute, dbFail } from "@/lib/api/with-route";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { unsubscribeUrl, unsubscribeFooter, normaliseEmail } from "@/lib/marketing/unsubscribe-token";
 import { fillName, greetingName, NO_NAME } from "@/lib/marketing/greeting-name";
@@ -64,38 +65,20 @@ function applyTemplate(
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
 }
 
-export async function POST(req: NextRequest) {
-  // Authn
-  const userClient = createClient();
-  const { data: authData } = await userClient.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const { data: me } = await userClient
-    .from("users")
-    .select("tenant_id, full_name, email, role")
-    .eq("id", authData.user.id)
-    .single();
-  if (!me?.tenant_id) {
-    return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
-  }
-  /* S19: signed in + same tenant is not enough for this one. */
-  if (!mayDo((me as { role?: string | null }).role, "campaign.send")) {
-    return NextResponse.json({ error: forbiddenMessage("campaign.send") }, { status: 403 });
-  }
+/* R-217 (R-051): withRoute() does sign-in, tenant, the role gate (ACTION_ROLES
+   "campaign.send" = owner/manager) and the zod body in one place — a sales/support user
+   gets 403 before a single lead is read or a mail goes out. */
+export const POST = withRoute(
+  {
+    route: "api/campaigns/send",
+    input: schema,
+    roles: ACTION_ROLES["campaign.send"],
+    roleHint: forbiddenMessage("campaign.send"),
+  },
+  async ({ req, input, user, tenantId }) => {
+  const me = { tenant_id: tenantId };
 
-  // Parse body
-  let body: unknown;
-  try { body = await req.json(); } catch { body = {}; }
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body: " + parsed.error.issues.map((i) => i.message).join(", ") },
-      { status: 400 }
-    );
-  }
-
-  const { name, subject, body: bodyTemplate, body_html: htmlTemplate, audience, offer, recipients: explicitRecipients } = parsed.data;
+  const { name, subject, body: bodyTemplate, body_html: htmlTemplate, audience, offer, recipients: explicitRecipients } = input;
   const admin = createAdminClient();
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -135,9 +118,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { data: leads, error: leadsErr } = await leadsQuery;
-    if (leadsErr) {
-      return NextResponse.json({ error: leadsErr.message }, { status: 500 });
-    }
+    dbFail(leadsErr, "Leads padhe nahi gaye — thodi der baad dobara try kariye.");
     recipients = (leads ?? [])
       .filter((l) => l.contact_email && emailRe.test(l.contact_email))
       .map((l) => ({ lead_id: l.id, contact_name: l.contact_name, contact_email: l.contact_email!, company: l.company }));
@@ -200,11 +181,9 @@ export async function POST(req: NextRequest) {
     sent_count:         0,
     failed_count:       0,
     status:             "sending",
-    created_by:         authData.user.id,
+    created_by:         user.id,
   });
-  if (insertErr) {
-    return NextResponse.json({ error: insertErr.message }, { status: 500 });
-  }
+  dbFail(insertErr, "Campaign save nahi hua — thodi der baad dobara try kariye.");
 
   // ── 4. Per-recipient dispatch loop ────────────────────────────
   const fromAddress = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -312,7 +291,7 @@ export async function POST(req: NextRequest) {
     })
     .eq("id", campaignId);
 
-  return NextResponse.json({
+  return {
     campaignId,
     recipientsCount: recipients.length,
     skippedOptOut,
@@ -320,5 +299,6 @@ export async function POST(req: NextRequest) {
     failedCount:     failed,
     mode:            emailMode,
     status:          finalStatus,
-  });
-}
+  };
+  },
+);
