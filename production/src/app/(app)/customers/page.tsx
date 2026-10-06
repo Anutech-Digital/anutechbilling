@@ -754,10 +754,14 @@ export default function CustomersPage() {
             const mrr = subsByCustomer.get(c.id)?.mrr ?? 0;
             return (
               <li key={c.id}>
-                <Link
-                  href={`/customers/${c.id}` as never}
+                {/* R-191: the card is a plain div, not a <Link>. The customer link sits on
+                    the name and stretches over the whole card (after:inset-0), and the
+                    WhatsApp link is a sibling raised above it (relative z-10) — so there is
+                    no <a> inside an <a> (hydration error) and WhatsApp never opens the card. */}
+                <div
                   className={cn(
-                    "block bg-paper border rounded-lg p-3 active:bg-paper-2/50",
+                    "relative bg-paper border rounded-lg p-3 active:bg-paper-2/50",
+                    "has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-amber",
                     receivable > 0 ? "border-rose/40" : "border-hairline",
                   )}
                 >
@@ -765,7 +769,13 @@ export default function CustomersPage() {
                     <Avatar name={cleanDisplayName(c.display_name || c.name)} color={avatarColor(c.id)} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <p className="font-medium text-ink truncate">{cleanDisplayName(c.display_name || c.name)}</p>
+                        <Link
+                          href={`/customers/${c.id}` as never}
+                          data-card-link
+                          className="block min-w-0 font-medium text-ink truncate focus-visible:outline-none after:absolute after:inset-0 after:rounded-lg after:content-['']"
+                        >
+                          {cleanDisplayName(c.display_name || c.name)}
+                        </Link>
                         {/* Same rule as the desktop table (R-005) — a project client
                             must not read as a dead account on a phone either. The plain
                             "No subscription" state stays badge-less, as it was, so this
@@ -805,8 +815,7 @@ export default function CustomersPage() {
                           href={`https://wa.me/${c.contact_phone.replace(/\D/g, "")}`}
                           target="_blank"
                           rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded bg-emerald-soft text-emerald font-medium hover:bg-emerald hover:text-white transition-colors"
+                          className="relative z-10 inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded bg-emerald-soft text-emerald font-medium hover:bg-emerald hover:text-white transition-colors"
                         >
                           <Icon name="message_square" size={12} /> WhatsApp
                         </a>
@@ -816,7 +825,7 @@ export default function CustomersPage() {
                       </span>
                     </div>
                   </div>
-                </Link>
+                </div>
               </li>
             );
           })}
