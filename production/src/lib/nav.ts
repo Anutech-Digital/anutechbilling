@@ -478,14 +478,14 @@ export const APP_NAV: NavSection[] = [
       {
         id: "acc-overview",        href: "/accounting",               label: "Accounting Overview", icon: "layout", roles: BOOKS,
         children: [
-          { id: "fixed-assets",    href: "/accounting/assets",         label: "Fixed Assets",   icon: "package", roles: BOOKS },
+          { id: "fixed-assets",    href: "/accounting/assets",         label: "Assets & EMIs",  icon: "package", roles: BOOKS },
           { id: "business-loans",  href: "/accounting/business-loans", label: "Business Loans", icon: "wallet",  roles: BOOKS },
         ],
       },
       {
         id: "banking",             href: "/accounting/banking",       label: "Banking",             icon: "rupee", roles: BOOKS,
         children: [
-          { id: "banking-brs",     href: "/accounting/banking/brs",   label: "Bank Reconciliation (BRS)", icon: "check", roles: BOOKS },
+          { id: "banking-brs",     href: "/accounting/banking/brs",   label: "Bank Reconciliation", icon: "check", roles: BOOKS, hint: "BRS — bank statement vs books" },
           { id: "banking-rules",   href: "/accounting/banking/rules", label: "Bank rules",          icon: "list",  roles: BOOKS },
         ],
       },

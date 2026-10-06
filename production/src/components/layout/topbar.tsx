@@ -101,8 +101,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         </button>
       )}
 
-      {/* Breadcrumb — hidden on phone */}
-      <nav aria-label="Breadcrumb" className="hidden md:flex items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
+      {/* Breadcrumb — hidden on phone. R-180: from md up it IS the spacer (flex-1 min-w-0), so it
+          gets every free pixel instead of sharing them with an empty div — at 800px it read
+          "Boo… > Compliance Calen…". */}
+      <nav aria-label="Breadcrumb" className="hidden md:flex flex-1 min-w-0 items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
         {crumb.map((c, i) => (
           <React.Fragment key={c}>
             {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4 flex-shrink-0" />}
@@ -114,7 +116,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       </nav>
 
 
-      <div className="flex-1" />
+      <div className="flex-1 md:hidden" />
 
       {/* Team Testing & Feedback / Bug Report Trigger */}
       <Tooltip>
@@ -122,7 +124,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           <button
             type="button"
             onClick={() => setFeedbackOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
+            className="hidden sm:flex shrink-0 whitespace-nowrap items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
             data-topbar="report-bug"
           >
             <Icon name="bug" size={14} className="text-rose-ink" />

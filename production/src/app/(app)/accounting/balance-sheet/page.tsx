@@ -42,6 +42,7 @@ import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
 import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
 import { istToday } from "@/lib/dates/ist";
+import { fmtBS } from "./format";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading } = useBalanceSheetAuto();
@@ -166,15 +167,15 @@ export default function BalanceSheetPage() {
         <div className="grid grid-cols-3 gap-3 mb-4">
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{rupee(totalAssets, { compact: true })}</div>
+            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalAssets, { compact: true })}</div>
           </Card>
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total liabilities</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{rupee(totalLiab, { compact: true })}</div>
+            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalLiab, { compact: true })}</div>
           </Card>
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Net worth</div>
-            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{rupee(netWorth, { compact: true })}</div>
+            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
           </Card>
         </div>
       )}
@@ -378,11 +379,11 @@ export default function BalanceSheetPage() {
             <div className="flex items-center gap-2">
               <Icon name="check_circle" size={18} className="text-emerald" />
               <span className="text-sm text-ink-2">
-                Balanced: <b>Assets {rupee(totalAssets)}</b> = <b>Liabilities + Equity {rupee(totalLiab + netWorth)}</b>
+                Balanced: <b>Assets {fmtBS(totalAssets)}</b> = <b>Liabilities + Equity {fmtBS(totalLiab + netWorth)}</b>
               </span>
             </div>
             <span className={`font-serif text-2xl ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
-              Net worth {rupee(netWorth)}
+              Net worth {fmtBS(netWorth)}
             </span>
           </Card>
         </>
@@ -403,10 +404,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Indian accounting notation — negatives in parentheses + red, e.g. (₹2,86,708).
-function fmtBS(amount: number): string {
-  return amount < 0 ? `(${rupee(Math.abs(amount))})` : rupee(amount);
-}
 
 /** One solvency ratio chip inside the Financial-health banner. */
 function Ratio({ label, value, good, tip }: { label: string; value: string; good: boolean; tip: string }) {

@@ -313,9 +313,11 @@ function JumpCard({ href, icon, title, sub }: { href: string; icon: string; titl
   return (
     <Link href={href as never}>
       <Card className="p-3.5 h-full hover:border-hairline-strong transition-colors group">
-        <div className="flex items-center gap-2 mb-1">
-          <Icon name={icon} size={15} className="text-amber-ink shrink-0" />
-          <span className="font-medium text-ink text-[13px] truncate">{title}</span>
+        {/* R-180: the title wraps to a second line instead of truncating — at 800px the cards
+            read "Balance Sh…", "Customer …", "Employee …". */}
+        <div className="flex items-start gap-2 mb-1">
+          <Icon name={icon} size={15} className="text-amber-ink shrink-0 mt-px" />
+          <span className="min-w-0 font-medium text-ink text-[13px] leading-snug break-words">{title}</span>
         </div>
         <div className="text-xs text-ink-3 leading-snug">{sub}</div>
       </Card>

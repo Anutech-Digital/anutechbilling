@@ -203,8 +203,10 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       </div>
 
       {/* Nav scroll area — rows filtered by the current user's role, then shown one
-          app at a time (R-088, lib/nav-apps.ts). */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+          app at a time (R-088, lib/nav-apps.ts). overflow-x-hidden (R-180): overflow-y-auto alone
+          makes the browser compute overflow-x as auto too, so one long label drew a left-right
+          scrollbar under the menu. Labels truncate with a title tooltip instead. */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5">
         {/* Mobile-only quick-grid — surface My Expenses & top tools at the top of the "More" drawer */}
         <div className="md:hidden">
           <div className="px-3 py-1 text-3xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">Quick Actions</div>
