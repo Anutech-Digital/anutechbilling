@@ -127,15 +127,15 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { toast.error("File too large (>8 MB)."); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error("File too large (over 8 MB).", { description: "Export a smaller range from the Google Admin console and upload that." }); return; }
     setFileName(file.name);
     try {
       const text = await file.text();
       const p = parseGoogle(text, lookups.current, priceMap);
-      if (p.rows.length === 0) { toast.error("No paid subscriptions found in this file."); return; }
+      if (p.rows.length === 0) { toast.error("No paid subscriptions found in this file.", { description: "Check it is the Google subscriptions export (CSV), not another report." }); return; }
       setParsed(p);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, { fallback: "Could not read the file.", description: "Upload the Google subscriptions export as CSV." });
     }
   }
 
@@ -151,7 +151,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
         queryParams: { access_type: "offline", prompt: "consent" },
       },
     });
-    if (error) toast.error(error.message);
+    if (error) toastError(error, { fallback: "Could not open Google sign-in.", description: "Try again in a moment." });
   }
 
   async function handleSync() {
@@ -163,21 +163,21 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
       if (!res.ok) {
         // Distinct, actionable guidance for the two common setup gaps.
         if (data?.code === "api_disabled") {
-          toast.error("Reseller API not enabled yet — enable it in Google Cloud Console, then retry.", { duration: 8000 });
+          toast.error("Reseller API is not enabled yet.", { description: "Enable it in Google Cloud Console, then sync again.", duration: 8000 });
         } else if (data?.code === "needs_reauth") {
           setNeedsAuth(true);
-          toast.error("Grant Google reseller access to sync — click 'Connect Google'.", { duration: 8000 });
+          toast.error("Google reseller access is needed to sync.", { duration: 8000, action: { label: "Connect Google", onClick: () => { void connectGoogleReseller(); } } });
         } else {
-          toast.error(data?.error ?? "Sync failed");
+          toastError(data?.error, { fallback: "Sync failed.", description: "Try again, or upload the CSV export instead." });
         }
         return;
       }
       const raws: RawSub[] = data.subscriptions ?? [];
-      if (raws.length === 0) { toast.error("Google returned no subscriptions."); return; }
+      if (raws.length === 0) { toast.error("Google returned no subscriptions.", { description: "Check the reseller account has active customers, or upload the CSV export." }); return; }
       setFileName(`Google Reseller API · ${raws.length} subscriptions (live)`);
       setParsed({ rows: classifyRows(raws, lookups.current, priceMap), custNumHeader: "Google API (live)", skippedFree: data.skipped ?? 0 });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sync failed");
+      toastError(err, { fallback: "Sync failed.", description: "Try again, or upload the CSV export instead." });
     } finally {
       setSyncing(false);
     }
@@ -197,7 +197,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
   async function handleAdd() {
     if (!parsed || !me) return;
     const { link, neu, willAdd } = counts;
-    if (willAdd.length === 0) { toast.error("Nothing to add."); return; }
+    if (willAdd.length === 0) { toast.error("Nothing to add.", { description: createNew ? "Every subscription here is already in the app." : "None of these link to an existing customer. Tick 'Also create new customers' to add the unmatched ones." }); return; }
     setImporting(true);
     try {
       const supabase = createClient();
@@ -254,7 +254,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
       onComplete?.();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Add failed");
+      toastError(err, { fallback: "Could not add the subscriptions.", description: "Some rows may already be saved. Reopen the import — rows already added are not added twice." });
     } finally {
       setImporting(false);
     }

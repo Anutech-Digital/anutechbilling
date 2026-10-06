@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isWorkingDay, SIX_DAY_WEEK_SUNDAY_OFF } from "@/lib/attendance/working-day";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type MyAttendanceToday =
@@ -75,7 +76,7 @@ export function useRecordConsent() {
       toast.success("Consent record ho gaya.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Consent fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not save your consent." }),
   });
 }
 
@@ -92,7 +93,7 @@ export function useMarkAttendanceReviewed() {
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Reviewed ✓"); void qc.invalidateQueries({ queryKey: ["attendance"] }); },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Review fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not mark this as reviewed." }),
   });
 }
 
@@ -113,7 +114,7 @@ export function useOwnerSetConsent() {
       toast.success(v.value ? "Consent record ho gaya." : "Consent hata diya + selfies delete.");
       void qc.invalidateQueries({ queryKey: ["employees"] });
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Consent update fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not update your consent." }),
   });
 }
 
@@ -134,7 +135,7 @@ export function useEnrollMyFace() {
       toast.success("Face enroll ho gaya ✅");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Face enroll fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not enrol your face." }),
   });
 }
 
@@ -154,7 +155,7 @@ export function useWithdrawConsent() {
       toast.success("Consent withdraw + aapki selfies delete ho gayi.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Withdraw fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not withdraw your consent." }),
   });
 }
 
@@ -194,7 +195,7 @@ export function useMarkSelfAttendance() {
       void qc.invalidateQueries({ queryKey: ["attendance"] });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : "Attendance mark nahi hui");
+      toastError(err, { fallback: "Could not mark attendance." });
     },
   });
 }
@@ -215,7 +216,7 @@ export function useUndoLastPunch() {
       void qc.invalidateQueries({ queryKey: ["my-attendance-history"] });
       void qc.invalidateQueries({ queryKey: ["attendance"] });
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Undo fail"),
+    onError: (err: unknown) => toastError(err, { fallback: "Could not undo the last punch." }),
   });
 }
 
@@ -232,7 +233,7 @@ export function useSetMyEmployee() {
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : "Link nahi ho paya");
+      toastError(err, { fallback: "Could not link your employee profile." });
     },
   });
 }
@@ -304,7 +305,7 @@ export function useSetMyReminderPrefs() {
       void qc.invalidateQueries({ queryKey: ["my-reminder-prefs"] });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : "Reminder setting save nahi hui");
+      toastError(err, { fallback: "Could not save the reminder setting." });
     },
   });
 }

@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
    eslint all pass it. See CLAUDE.md §25.2. */
 import type { Route } from "next";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { useAllContacts, contactKind, type ContactKind } from "@/lib/queries/contacts";
 import ImportContactsDialog from "@/components/features/contacts/import-contacts-dialog";
@@ -84,7 +85,7 @@ export default function ContactsPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not promote");
+        toastError(json.error, { fallback: "Could not turn this contact into a lead.", description: "Refresh the page and try again." });
         return;
       }
       toast.success(`Promoted → lead ${json.leadId}`);
@@ -92,7 +93,7 @@ export default function ContactsPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       router.push(`/leads?lead=${json.leadId}` as never);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     }
   }
 
@@ -103,26 +104,26 @@ export default function ContactsPage() {
     try {
       const st = await fetch("/api/integrations/google-contacts").then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (!st?.configured) {
-        toast.error("Google Contacts abhi set up nahi — Settings → Integrations me keys chahiye");
+        toast.error("Google Contacts is not set up yet.", { description: "Opening Settings → Integrations — add the Google keys there." });
         router.push("/settings?tab=integrations" as never);
         return;
       }
       if (!st?.connected) {
-        toast.info("Pehle Google Contacts connect karo — Settings khol raha hoon");
+        toast.info("Connect Google Contacts first — opening Settings.");
         router.push("/settings?tab=integrations" as never);
         return;
       }
       const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(j?.error ?? "Sync failed");
+        toastError(j?.error, { fallback: "Google Contacts sync failed.", description: "Try again in a minute. If it keeps failing, reconnect Google in Settings → Integrations." });
         return;
       }
-      toast.success(`Google se sync ho gaya — ${j.pulled} aaye, ${j.pushed + j.created} bheje${j.deleted ? `, ${j.deleted} hataye` : ""}`);
+      toast.success(`Synced with Google — ${j.pulled} in, ${j.pushed + j.created} out${j.deleted ? `, ${j.deleted} removed` : ""}`);
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       refetch();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     } finally {
       setSyncing(false);
     }
@@ -209,7 +210,7 @@ export default function ContactsPage() {
   const startCampaign = (channel: "email" | "whatsapp") => {
     const chosen = (contacts ?? []).filter((c) => selected.has(c.id));
     if (chosen.length === 0) {
-      toast.error("Select at least one contact");
+      toast.error("Select at least one contact.", { description: "Tick the contacts you want to message." });
       return;
     }
 
@@ -218,7 +219,7 @@ export default function ContactsPage() {
         .filter((c) => c.email?.trim())
         .map((c) => ({ email: c.email!.trim(), name: c.name ?? undefined, company: c.company || undefined }));
       if (recips.length === 0) {
-        toast.error("None of the selected contacts have an email");
+        toast.error("None of the selected contacts have an email.", { description: "Add an email to them, or pick other contacts." });
         return;
       }
       setComposerRecipients(recips);
@@ -232,12 +233,12 @@ export default function ContactsPage() {
       .map((c) => (c.phone ?? "").replace(/\D/g, ""))
       .filter((p) => p.length >= 10);
     if (phones.length === 0) {
-      toast.error("None of the selected contacts have a phone number");
+      toast.error("None of the selected contacts have a phone number.", { description: "Add a 10-digit mobile number to them, or pick other contacts." });
       return;
     }
     navigator.clipboard?.writeText(phones.join("\n")).then(
       () => toast.success(`${phones.length} number${phones.length > 1 ? "s" : ""} copied — paste into a WhatsApp broadcast list`),
-      () => toast.error("Clipboard blocked — couldn't copy the numbers"),
+      () => toast.error("Could not copy the numbers.", { description: "The browser blocked the clipboard. Allow clipboard access for this site and try again." }),
     );
   };
 
