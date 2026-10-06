@@ -757,6 +757,17 @@ scan test:
   usual" line (`src/site/busy-feedback.test.ts`).
 - **Success only when it happened.** A form says "check your inbox" only when the server reports the
   email was sent, and a failure says nothing was saved and to try again (`src/site/honest-submit.test.ts`).
+- **A stop at checkout is a pop-up with the fix (1 Oct 2026).** A refused trial or order, a missing
+  domain or state, or a failed payment opens `<CheckoutNotice>` (`site/components/cart/`): what happened,
+  a reassurance line, and the buttons that solve it — e.g. a repeat trial offers "Buy Starter — ₹…",
+  "Ask for more trial time", "Not me — check my details". The wording and buttons per case live in
+  `site/lib/checkout-problem.ts` (tested); a failed payment never says "nothing was charged". The checkout's
+  waits use `<BusyPanel variant="modal">`, a centred card, so the form under it does not move.
+- **A pop-up that locks page scrolling uses `lib/ui/scroll-lock.ts` (3 Oct 2026).** Never save-and-restore
+  `body.style.overflow` yourself: the progress card and Razorpay both did, Razorpay put back the card's
+  "hidden", and `/done` arrived unscrollable after a payment. The lock is counted; the checkout calls
+  `settlePageScroll()` after Razorpay closes, and `/done` settles on arrival
+  (`src/lib/ui/scroll-lock.test.ts`).
 
 ---
 

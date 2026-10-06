@@ -14,7 +14,7 @@
  * verified, never one from a webhook body.
  */
 import { createClient as createBareClient } from "@supabase/supabase-js";
-import type { ProvisioningBlocker, ProvisioningVendor } from "./provisioning";
+import { testPaymentProvisioningAllowed, type ProvisioningBlocker, type ProvisioningVendor } from "./provisioning";
 import { DOMAIN_RENEWAL_PLAN } from "@/lib/domains/renewal";
 import { HOSTING_RENEWAL_PLAN } from "@/lib/hosting/renewal";
 
@@ -35,6 +35,8 @@ export interface ReadyHostingRequest {
   quote_id: string;
   domain: string | null;
   plan: string | null;
+  /** "test" only on a local machine with test provisioning on; DMS is told which. */
+  payment_mode?: string | null;
 }
 
 /**
@@ -60,10 +62,12 @@ async function listReadyHostingRows(kind: "new" | "renewal", limit: number): Pro
   if (!db) return [];
   let q = db
     .from("provisioning_requests")
-    .select("id, tenant_id, quote_id, domain, plan")
+    .select("id, tenant_id, quote_id, domain, plan, payment_mode")
     .eq("vendor", "hosting")
     .eq("status", "queued")
-    .eq("payment_mode", "live")
+    /* A test-payment row reaches here only when it was approved under the local-only switch
+       (provisioning.ts testPaymentProvisioningAllowed) — a production build never lets one in. */
+    .in("payment_mode", testPaymentProvisioningAllowed() ? ["live", "test"] : ["live"])
     .is("blocker", null);
   // As for domains: `neq` alone would drop NULL-plan rows, so the null case is named.
   q = kind === "renewal" ? q.eq("plan", HOSTING_RENEWAL_PLAN) : q.or(`plan.is.null,plan.neq.${HOSTING_RENEWAL_PLAN}`);

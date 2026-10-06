@@ -145,7 +145,9 @@ async function handle(req: Request) {
       command: "hosting.renew",
       subject: domain,
       mode: "live",
-      payload: { months, expiryBefore, paymentMode: "live", sourceRef: row.quote_id },
+      /* Said as it is, as in provision-hosting: only a live row reaches here on a deployed server; a
+         test row only on a laptop with the local test switch, and DMS holds it unless its own twin is on. */
+      payload: { months, expiryBefore, paymentMode: row.payment_mode === "test" ? "test" : "live", sourceRef: row.quote_id },
     });
 
     switch (outcome.kind) {

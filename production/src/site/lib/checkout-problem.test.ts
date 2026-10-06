@@ -68,6 +68,13 @@ describe("the checkout page", () => {
     expect(panels.length).toBe(2);
     for (const p of panels) expect(p).toContain('variant="modal"');
   });
+  it("the Razorpay window wears the storefront blue, the same value as site.css --primary (3 Oct 2026)", () => {
+    const primary = /--primary:\s*(#[0-9A-Fa-f]{6})/.exec(readFileSync(join(process.cwd(), "src/site/site.css"), "utf8"))?.[1];
+    expect(primary).toBe("#1668E3");
+    expect(src).toMatch(new RegExp(`theme:\\s*\\{\\s*color:\\s*"${primary}"`));
+    expect(src).not.toContain("#C2410C");
+  });
+
   it("every field the pop-up can point at has its id", () => {
     for (const f of ["email", "domain", "state"]) expect(src).toContain(`id="checkout-${f}"`);
   });

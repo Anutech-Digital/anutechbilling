@@ -94,6 +94,23 @@ on DMS. The hosting TRIAL goes through the engine as well (`hosting.provision` w
 25 Sep 2026), so DMS is the only DirectAdmin writer. The one exception is the admin test-account
 tool (`api/catalog/directadmin-test-account`), kept on purpose.
 
+**On a laptop, a TEST-mode payment can set up hosting** (Pawan, 3 Oct 2026: "even in test mode allow
+me to create hosting — otherwise how will I test"; ResellerOS `4f54929a`, DMS `82e25019`). Three
+local-only switches, all ignored on the live site:
+- `ALLOW_TEST_PAYMENT_PROVISIONING=1` here: `testPaymentProvisioningAllowed()` in
+  `lib/provisioning/provisioning.ts`, false in any production build. HOSTING only — a domain is never
+  registered on a test payment (real ResellerClub money). The dial and the engine switch still apply.
+- `ENGINE_ALLOW_TEST_PAYMENT_PROVISION=1` on DMS: only when its `RESELLEROS_SERVER_URL` is this machine
+  (localhost / 127.0.0.1 / host.docker.internal). The DMS image is a production build and the live
+  site still takes test-key payments, so neither NODE_ENV nor the key prefix could be the guard.
+- `NO_OWNER_PAYMENT_ALERT_LOCAL=1` here (5 Oct 2026, Pawan: owner alerts "only on my machine" off):
+  `ownerPaymentAlertAllowed()` in `lib/email/storefront-voice.ts` skips the "payment received" email to
+  the owner for local test payments; ignored on any deployed server, so live sales always reach the owner.
+- `node scripts/local-cron.mjs` runs `/api/cron/provision-hosting` every minute (localhost only), as
+  Cloud Scheduler does on the live site every 15 min, 9–21 IST.
+The worker now tells DMS the real `paymentMode` instead of always "live". Measured end to end on
+3 Oct: Razorpay test netbanking → invoice → job → DMS Hosting active → account on server1.
+
 **Domain renewals exist and are OFF** (decision 28, 25 Sep 2026). A paid domain gets a yearly
 vendor-`domain` subscription. Its renewal quote is priced at ResellerClub's LIVE renewal price, full
 price (`lib/domains/renewal.ts`). A paid renewal is queued as `plan = "domain-renewal"`, never a
@@ -118,13 +135,19 @@ There is no trial form any more: `/hosting/trial` is only where the confirm-your
 **One trial per customer across BOTH apps**, matched on email, phone (last 10 digits) or domain.
 This app checks its own `buy-hosting-trial` leads, then asks DMS, which holds the shared record
 (`lib/dms-engine/trials.ts`). If DMS does not answer, the trial is refused. A trial line is
-always quantity 1. **A trial needs a real domain, the same as paid hosting** (owner, 30 Sep 2026;
+always quantity 1. On a laptop, `ALLOW_REPEAT_TRIALS_LOCAL=1` switches the one-trial check off for
+testing (`repeatTrialsAllowed()`, ignored in a production build; 3 Oct 2026). **A trial needs a real domain, the same as paid hosting** (owner, 30 Sep 2026;
 `lib/checkout/hosting-domain.ts`, with a "buy a domain" link when the customer has none).
 **A trial sends the owner no email** (owner, 30 Sep 2026: "Remove this feature completely. That
 will just annoy the owner."): staff see it as a lead, and a setup that fails becomes a `tasks` row.
 `lib/hosting/no-trial-owner-email.test.ts` fails if an owner email comes back, including the "new
 enquiry" alert for a request from the site's trial form (`trial: true`). The nightly
 `cron/trial-expiry` still emails the owner; it is Pardeep's, raised as R-065.
+**The customer's "trial is live" email comes from DMS** (3 Oct 2026): DMS sends "hosting is live"
+(Customer Portal link, nameservers, server IP) whenever `hosting.provision` creates an account, trial
+or paid, so the confirm route sends no email of its own. Once DMS has created it, `/hosting/trial`
+shows **"Log in to the Customer Portal"** (`site/lib/trial-statuses.ts`); while a person still has
+to create it, no login button and "within 1 working day".
 The one rule is `lib/hosting/trial-plan.ts`. DMS enforces the same rule on its in-panel trial,
 which on monthly renews one month at a time (`Hosting.billingCycle`).
 It was **run once against the live DirectAdmin on 24 Sep 2026** (test, create, replay,
@@ -184,6 +207,60 @@ the `SMTP_*` variables) is the platform sender ahead of Resend, and a tenant's o
 still wins. There is no recipient allow-list in either app, and a scan test fails in each if one
 comes back (`lib/email/send-smtp.test.ts` here, `tests/unit/lib/email/no-recipient-filter.test.ts` in DMS). SMTP connects over
 IPv4 with the real host name kept for TLS: the IPv6 attempt hung the first send for 21 s.
+
+**DMS is purely a backend service for ResellerOS; the customer sees ResellerOS everywhere** (Pawan,
+3 Oct 2026: "Wherever user buys from… they should always see the ResellerOS branding — in the emails,
+the panels and any other frontend… Remember that point"). "ResellerOS branding" means the storefront a
+buyer sees at reselleros.anutech.in: **Anutech Digital**, the round blue "A" mark, Archivo + IBM Plex
+Mono, Anutech blue `#1668E3` (`site/site.css`). Built in DMS (`a40887b8`, `03d509c3`, `1f5739d3`,
+`36cdcd88`):
+- **Emails:** every DMS customer email uses ResellerOS's plain pattern (`lib/email/plain.ts` there):
+  "Hi <first name>", plain sentences, the one link, the support line, "— Anutech Digital"; no banners,
+  emoji or "Private Limited Team". New: "hosting is live" on every engine-created account, and "hosting
+  removed" when admin → Hosting → Terminate really deleted the server account.
+- **Customer Portal:** DMS's shared tokens carry the storefront colours and fonts, the logo is the
+  storefront mark, the tab reads "Customer Portal | Anutech Digital". The admin "frontend colour
+  theme" (violet) switch is removed — it defaulted to violet.
+- **Razorpay windows:** storefront blue on the shop checkout and in DMS. The Workspace buy page and
+  the quote-accept page stay orange: their whole pages are in that palette, and the quote page also
+  serves other reseller tenants.
+- **Asking for the profile:** DMS's "complete your profile" banner and the cart's profile gate apply
+  only to domains (a hosting-only customer is never nagged; buying a domain asks for the address),
+  and the banner reads the saved account, so a saved mobile is never called missing (DMS `96a27f82`,
+  `26eecfde`).
+- **ResellerOS's own storefront emails sign the same way (5 Oct 2026):** for the storefront tenant
+  (`BUY_PAGE_TENANT_ID`) the paid-order, payment-failed, trial, trial-ended and enquiry emails sign
+  "— Anutech Digital" and a reply goes to support@anutech.in (`SUPPORT_EMAIL`), via
+  `storefrontVoice()` in `lib/email/storefront-voice.ts`. Every other tenant is a reseller and keeps
+  its own sign-off and reply-to — never sign a reseller's customer email as Anutech.
+- **Admin → Appearance in DMS** holds footer template, GSTIN and social links only; the Support widget
+  and "Phone number (Call Us)" switches changed nothing and were removed (owner, 5 Oct 2026).
+Any new customer-facing email or screen in DMS follows this; never a separate DMS identity.
+The DMS repo's working branch for Pawan is `website-pawan` too (renamed from `pawan-api-system` on
+3 Oct 2026; the old branch is deleted).
+
+**The invoice PDF names each line's website and shows a settled invoice as paid** (3 Oct 2026,
+`add72978`; display only, no stored data changes). `lib/pdf/invoice-display.ts`, used by
+`InvoicePDF` and `QuotePDF`:
+- `lineDomainNote`: a line carrying a `domain` prints "For <domain>" under its name (skipped
+  when the name/detail already shows it, or on a bulk line).
+- `invoicePaidInFull`: nothing left to pay AND (status `paid`, or the adjusted advances cover the
+  total) → the date box reads "Paid on <date>" and the footer "Paid in full on <date>." Anything
+  still owed keeps its due date (R-038).
+The on-screen tax-invoice preview (`components/features/quotes/tax-invoice-dialog.tsx`) is in the
+Billing & Subscriptions section (§13) and still shows the old "Due Date" and no domain line; the
+hand-off note for its owner is in `Todos.md`.
+
+**Every buying path passed end to end on localhost (5–6 Oct 2026, Razorpay TEST, real server1):** shop hosting
+trial (confirm → account → Customer Portal login), shop paid hosting, shop domain, DMS cart with two plans, the
+portal's Buy hosting dialog and Register domain dialog — each with its invoice, subscription and (hosting) the
+server1 account, then terminated and purged. A test payment never registers a domain (it is queued and held).
+Re-run them with the scripts' flow, not by hand: buy → deliver the real webhook (Razorpay cannot reach localhost)
+→ the local cron (`scripts/local-cron.mjs`) sets up hosting within a minute → check server1 → terminate in DMS
+admin → purge the rows.
+**Engine retries reuse one commandId per request per day** (`provisionCommandId` → `rsos-hostprov-<row>-<date>`), so
+DMS replays a stored outcome — except a failure that never reached a provider, which it now runs again (DMS
+`1c6180bf`). Before that, one DirectAdmin timeout turned a paid order into "failed, set it up by hand".
 
 Open items for the integration are tracked in `Todos.md`, not here.
 
@@ -361,10 +438,10 @@ cd production
 npm run typecheck && npm run test && npm run lint
 ```
 
-Lint **warnings** are acceptable; lint **errors** are not. Current baseline: **8,410 tests
-passing across 517 files** (plus 2 files / 10 tests skipped), typecheck clean, **lint exit 0
-with 0 errors** — measured 30 Sep 2026 on `website-pawan` after merging `manager-pardeep` (C-053).
-Earlier markers: 8,242/504 the same day before that merge; 8,193/499 after `9ad95378` (trials send the
+Lint **warnings** are acceptable; lint **errors** are not. Current baseline: **9,117 tests
+passing across 568 files** (plus 2 files / 10 tests skipped), typecheck clean, **lint exit 0
+with 0 errors** — measured 3 Oct 2026 on `website-pawan` at `add72978`.
+Earlier markers: 9,106/567 at `133fd00e` the same day; 9,100/566 at `3b0301ad` the same day; 8,410/517 on 30 Sep after merging `manager-pardeep` (C-053); 8,242/504 the same day before that merge; 8,193/499 after `9ad95378` (trials send the
 owner no email); 8,111/486 on 29 Sep after merging `abhishek-pre-merge` (`3bebf671`: R-012 renewal quote,
 R-018 dunning pay link); 8,049/480 the same day after the fourth
 `pardeep-sir` merge (`ddde2754`); 7,972/477 the same day after the Tailwind dev-server fix; 7,933/472 on 28 Sep

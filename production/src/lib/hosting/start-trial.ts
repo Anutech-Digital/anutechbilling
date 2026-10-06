@@ -19,6 +19,7 @@ import { captureFromRequest } from "@/lib/marketing/utm";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { makeTrialToken } from "@/lib/hosting/trial-token";
 import { TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { checkTrialHistory, recordTrialInDms } from "@/lib/dms-engine/trials";
@@ -311,9 +312,12 @@ export async function startHostingTrial(
     console.error(`[trial/hosting] lead ${leadId} saved, but no owner alert: ${owner.reason}`);
   }
   const ownerName = owner.ok ? owner.ownerName : "";
-  const signOff = `— ${ownerName || ownerTenant?.name?.trim() || "Your hosting team"}${
+  // The storefront signs as the company and takes replies at support (lib/email/storefront-voice.ts).
+  const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
+  const signOff = voice ? voice.signOff : `— ${ownerName || ownerTenant?.name?.trim() || "Your hosting team"}${
     ownerTenant?.name?.trim() && ownerName !== ownerTenant.name.trim() ? `\n   ${ownerTenant.name.trim()}` : ""
   }`;
+  const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
   const customerSubject = confirmUrl
     ? `Confirm your email to start your ${TRIAL_DAYS}-day hosting trial`
     : `Your ${TRIAL_DAYS}-day hosting trial${cleanDomain ? ` — ${cleanDomain}` : ""}`;
@@ -349,7 +353,7 @@ ${signOff}`;
   const confirmation = await sendEmail({
     to: email,
     from: FROM_EMAIL,
-    ...(owner.ok ? { replyTo: owner.to } : {}),
+    ...(customerReplyTo ? { replyTo: customerReplyTo } : {}),
     kind: "buy_page_trial_customer",
     route: { tenantId: BUY_PAGE_TENANT_ID },
     subject: customerSubject,

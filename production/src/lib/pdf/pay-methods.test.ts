@@ -80,7 +80,10 @@ describe("InvoicePDF no longer hardcodes the sentence", () => {
     /* The due date is a fact about the invoice, not about the seller's plumbing. It
        must not vanish with the methods sentence — that would be this fix causing a
        second, quieter defect. */
-    expect(pdf).toContain("{(invoice.due_date || payMethods?.line) && (");
+    // An invoice still owed keeps it; a settled one says "Paid in full on …" instead (3 Oct 2026,
+    // lib/pdf/invoice-display.ts) — nothing is owed, so there is no date to be due by.
+    expect(pdf).toContain(") : (invoice.due_date || payMethods?.line) && (");
+    expect(pdf).toMatch(/paidInFull \? \(/);
   });
 
   it("prints the invoice number as the transfer reference", () => {

@@ -3,6 +3,7 @@ import {
   UNDERPAYMENT_TOLERANCE,
   decideProvisioning,
   queuedLine,
+  testPaymentProvisioningAllowed,
   type ProvisioningInput,
 } from "./provisioning";
 
@@ -284,5 +285,39 @@ describe("the desk's queue line names the right product", () => {
     if (out.action !== "queue") throw new Error("expected a queue");
     const line = queuedLine({ customerName: "Acme", seats: 12, amountPaid: 146_811, outcome: out });
     expect(line).toContain("12 seats waiting to be activated");
+  });
+});
+
+describe("test-mode HOSTING on a local machine (Pawan, 3 Oct 2026)", () => {
+  const HOSTING: ProvisioningInput = { ...READY, vendor: "hosting", seats: 1, engineConnected: true, domainName: "acme.in" };
+
+  it("with the local switch, a test payment sets up hosting", () => {
+    const out = decideProvisioning({ ...HOSTING, paymentMode: "test", allowTestPayment: true });
+    expect(out.action).toBe("activate");
+    expect(out.reason).toMatch(/TEST-mode payment/);
+  });
+
+  it("never a domain: registering one on a test payment spends real money", () => {
+    const out = decideProvisioning({ ...READY, vendor: "domain", seats: 1, engineConnected: true, domainName: "acme.in", paymentMode: "test", allowTestPayment: true });
+    expect(out.action === "queue" && out.blocker).toBe("test_mode_payment");
+  });
+
+  it("still obeys the dial and the engine connection", () => {
+    const held = decideProvisioning({ ...HOSTING, paymentMode: "test", allowTestPayment: true, dialMode: "hold" });
+    expect(held.action === "queue" && held.blocker).toBe("dial_not_auto");
+    const off = decideProvisioning({ ...HOSTING, paymentMode: "test", allowTestPayment: true, engineConnected: false });
+    expect(off.action === "queue" && off.blocker).toBe("engine_not_connected");
+  });
+
+  it("without the switch, the hard gate is unchanged", () => {
+    const out = decideProvisioning({ ...HOSTING, paymentMode: "test" });
+    expect(out.action === "queue" && out.blocker).toBe("test_mode_payment");
+  });
+
+  it("the switch is dead in a production build, whatever the variable says", () => {
+    expect(testPaymentProvisioningAllowed({ NODE_ENV: "development", ALLOW_TEST_PAYMENT_PROVISIONING: "1" })).toBe(true);
+    expect(testPaymentProvisioningAllowed({ NODE_ENV: "production", ALLOW_TEST_PAYMENT_PROVISIONING: "1" })).toBe(false);
+    expect(testPaymentProvisioningAllowed({ NODE_ENV: "development" })).toBe(false);
+    expect(testPaymentProvisioningAllowed({ NODE_ENV: "development", ALLOW_TEST_PAYMENT_PROVISIONING: "true" })).toBe(false);
   });
 });

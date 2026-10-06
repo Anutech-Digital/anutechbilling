@@ -95,6 +95,23 @@ export interface ProvisioningInput {
    * config cannot claim a connection that isn't there.
    */
   engineConnected?: boolean;
+  /**
+   * Local testing only (Pawan, 3 Oct 2026: "even in test mode allow me to create hosting —
+   * otherwise how will I test"). From `testPaymentProvisioningAllowed()`, which is false in
+   * every production build. Lets a TEST-mode payment set up HOSTING, so the whole paid flow
+   * can be tried on a laptop; a domain is never registered on a test payment, because that
+   * spends real money at the registrar.
+   */
+  allowTestPayment?: boolean;
+}
+
+/**
+ * Whether this app may set up hosting against a TEST-mode payment: only with
+ * ALLOW_TEST_PAYMENT_PROVISIONING=1 AND outside a production build. The live site still runs
+ * on test keys (see the test file), so the key prefix cannot be the guard — the build is.
+ */
+export function testPaymentProvisioningAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return env.NODE_ENV !== "production" && env.ALLOW_TEST_PAYMENT_PROVISIONING?.trim() === "1";
 }
 
 /**
@@ -153,7 +170,8 @@ export function decideProvisioning(input: ProvisioningInput): ProvisioningOutcom
      unattended"; this answers "is there anything real to act on". A test-mode payment settles
      nothing, so activating against it gives the product away — and it looks identical to a real
      payment everywhere except the key prefix. */
-  if (input.paymentMode === "test") {
+  const testHostingAllowed = input.paymentMode === "test" && input.allowTestPayment === true && input.vendor === "hosting";
+  if (input.paymentMode === "test" && !testHostingAllowed) {
     return {
       action: "queue",
       blocker: "test_mode_payment",
@@ -221,7 +239,9 @@ export function decideProvisioning(input: ProvisioningInput): ProvisioningOutcom
       : `${input.seats} seats`;
   return {
     action: "activate",
-    reason: `payment verified in live mode, ${subject}, ${isEngineVendor ? "engine connected" : "reseller API connected"}`,
+    reason: testHostingAllowed
+      ? `TEST-mode payment — hosting set up anyway because this is a local machine with test provisioning switched on, ${subject}, engine connected`
+      : `payment verified in live mode, ${subject}, ${isEngineVendor ? "engine connected" : "reseller API connected"}`,
   };
 }
 

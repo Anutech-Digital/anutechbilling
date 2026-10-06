@@ -39,6 +39,14 @@ describe("buyer-facing legal documents", () => {
     expect(text).not.toMatch(/Message us on WhatsApp/); // the site's WhatsApp number is a placeholder
     expect(text).not.toMatch(/address on the About page/); // the About page names no grievance officer
   });
+
+  it("the grievance officer is the company, not a named person (5 Oct 2026)", () => {
+    const grievance = LEGAL.privacy.blocks.find((b) => b.h === "Grievances")?.p ?? "";
+    expect(grievance).toMatch(/Grievance Officer is Anutech Digital Pvt Ltd/);
+    const app = read("src/app/(public)/privacy/page.tsx");
+    expect(app).toMatch(/Grievance Officer \/ Data Protection Officer:<\/strong><br \/>\s*\{PLATFORM_OPERATOR\.legalName\}/);
+    expect(app).not.toMatch(/PLATFORM_OPERATOR\.directors/);
+  });
 });
 
 describe("inside the ResellerOS app", () => {

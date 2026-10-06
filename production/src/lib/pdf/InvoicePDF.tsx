@@ -21,6 +21,7 @@ import {
 import { formatDate } from "@/lib/utils";
 import { pdfRupee } from "./pdf-money";
 import { pdfText } from "./pdf-text";
+import { invoicePaidInFull, lineDomainNote } from "./invoice-display";
 import { isRenderableLogo } from "./logo";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
@@ -449,6 +450,9 @@ export function InvoicePDF(props: InvoicePDFProps) {
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);
   const netPayable    = invoice.net_payable ?? Math.max(0, total - advancesTotal);
+  /* Settled → "Paid on" instead of a due date (3 Oct 2026; invoice-display.ts). Anything still
+     owed keeps its due date. */
+  const paidInFull    = invoicePaidInFull(invoice, total);
 
   return (
     <Document
@@ -501,8 +505,12 @@ export function InvoicePDF(props: InvoicePDFProps) {
             <Text style={s.metaValue}>{formatDate(invoice.invoice_date)}</Text>
           </View>
           <View style={s.metaCell}>
-            <Text style={s.metaLabel}>Due date</Text>
-            <Text style={s.metaValue}>{invoice.due_date ? formatDate(invoice.due_date) : "—"}</Text>
+            <Text style={s.metaLabel}>{paidInFull ? "Paid on" : "Due date"}</Text>
+            <Text style={s.metaValue}>
+              {paidInFull
+                ? (paidInFull.paidOn ? formatDate(paidInFull.paidOn) : "Paid in full")
+                : (invoice.due_date ? formatDate(invoice.due_date) : "—")}
+            </Text>
           </View>
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Place of supply</Text>
@@ -544,6 +552,12 @@ export function InvoicePDF(props: InvoicePDFProps) {
                   {li.description && (
                     <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
                       {li.description}
+                    </Text>
+                  )}
+                  {/* Which website the line is for (3 Oct 2026; invoice-display.ts). */}
+                  {lineDomainNote(li) && (
+                    <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
+                      {pdfText(lineDomainNote(li) ?? "")}
                     </Text>
                   )}
                 </View>
@@ -660,7 +674,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
               that may not exist. It is derived now, and absent when nothing is set up.
               The DUE DATE half is unconditional: that is a fact about this invoice, not
               about the seller's payment plumbing, and it must not disappear with it. */}
-          {(invoice.due_date || payMethods?.line) && (
+          {/* A settled invoice says so instead of "Due by …" (3 Oct 2026). Still owed: unchanged. */}
+          {paidInFull ? (
+            <Text style={s.footerLine}>
+              <Text style={s.footerBold}>Payment terms: </Text>
+              {paidInFull.paidOn ? `Paid in full on ${formatDate(paidInFull.paidOn)}.` : "Paid in full."}
+            </Text>
+          ) : (invoice.due_date || payMethods?.line) && (
             <Text style={s.footerLine}>
               <Text style={s.footerBold}>Payment terms: </Text>
               {invoice.due_date ? `Due by ${formatDate(invoice.due_date)}. ` : ""}

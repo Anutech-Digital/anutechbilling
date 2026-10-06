@@ -20,6 +20,7 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
 import { COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
+import { settlePageScroll } from "@/lib/ui/scroll-lock";
 
 type Tone = "success" | "warn";
 interface Step { title: string; body: ReactNode; done?: boolean }
@@ -141,6 +142,13 @@ export default function DonePage() {
   const [trialEmail, setTrialEmail] = useState<string | null>(null);
   /* False only when the server said the confirmation link did NOT go out (30 Sep 2026). */
   const [trialSent, setTrialSent] = useState(true);
+  /* Nothing on this page locks scrolling, so whatever the checkout or Razorpay left behind is
+     undone here (3 Oct 2026: the page arrived unscrollable after a payment). */
+  useEffect(() => {
+    settlePageScroll();
+    const t = window.setTimeout(settlePageScroll, 1000);
+    return () => window.clearTimeout(t);
+  }, []);
   useEffect(() => {
     try {
       setOrderNo(window.sessionStorage.getItem("anutech.order") || null);

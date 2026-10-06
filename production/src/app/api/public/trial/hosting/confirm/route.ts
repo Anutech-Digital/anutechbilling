@@ -25,18 +25,14 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
-import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { verifyTrialToken } from "@/lib/hosting/trial-token";
 import { isTrialPlan } from "@/lib/hosting/trial-plan";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
-import { dmsPanelUrl } from "@/lib/dms-engine/client";
 import { normalisePhone, splitName } from "@/lib/provisioning/domain-registration";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 const TRIAL_DAYS = 15;
@@ -91,7 +87,6 @@ export async function GET(req: NextRequest) {
       ? "Provision the Starter cPanel account and send the login."
       : "They still need a domain — help them register one, then provision.";
   const email = lead.contact_email || "";
-  const firstName = (lead.contact_name || "there").split(" ")[0];
 
   const canProvision = trialPlanOk && process.env.HOSTING_TRIAL_LIVE === "1" && commandsConfigured() && domain.length >= 3;
 
@@ -165,22 +160,10 @@ export async function GET(req: NextRequest) {
     notes: `${lead.notes || ""}\n\n[${startedAt.toISOString()}] TRIAL ACCOUNT CREATED by the DMS engine · Starter · DirectAdmin user: ${daUser} · domain: ${domain}${already ? " (already existed)" : ""}`,
   }).eq("id", lead.id);
 
-  const { alert: owner } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);
-
-  // The customer: where the account lives. No password is sent from here — DMS emails a
-  // "set your password" link for its customer panel when it creates their account.
-  if (!already) {
-    const panel = dmsPanelUrl("customer");
-    const panelLine = panel
-      ? `Manage it — control panel, email, WordPress — from your customer panel: ${panel}\nIf this is your first time there, use the "set your password" email we just sent you to sign in.`
-      : `We'll send your sign-in details shortly.`;
-    await sendEmail({
-      to: email, from: FROM_EMAIL, kind: "buy_page_trial_customer", route: { tenantId: BUY_PAGE_TENANT_ID },
-      replyTo: owner.ok ? owner.to : undefined,
-      subject: `Your Starter hosting trial is live`,
-      text: `Hi ${firstName},\n\nYour ${TRIAL_DAYS}-day Starter hosting trial for ${domain} is ready.\n\n${panelLine}\n\nMoving from another host? Reply to this email with your current login and we'll migrate you for free — your old site stays live until you approve the switch.\n\nNo credit card. ${TRIAL_DAYS} days fully free. We'll check in before it ends.\n\n— ${owner.ok ? owner.ownerName || "Your hosting team" : "Your hosting team"}`,
-    }).catch(() => {});
-  }
+  /* The customer's "your trial is live" email is sent by DMS when it creates the account
+     (engine-handlers-provision → sendHostingProvisionedEmail), with the nameservers and the
+     Customer Portal link — one email, the same one a panel purchase gets (Pawan, 3 Oct 2026).
+     This route used to send its own as well, so a trial buyer got two. */
 
   // No owner email (owner, 30 Sep 2026); the lead notes record the account.
 

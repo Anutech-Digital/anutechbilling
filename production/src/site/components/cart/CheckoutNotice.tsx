@@ -16,6 +16,7 @@
  */
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { lockPageScroll } from "@/lib/ui/scroll-lock";
 
 export interface NoticeButton {
   label: string;
@@ -51,11 +52,10 @@ export function CheckoutNotice({
     mainRef.current?.focus();
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockPageScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
+      unlock();
       before?.focus?.();
     };
   }, [onClose]);

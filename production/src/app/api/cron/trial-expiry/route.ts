@@ -24,6 +24,7 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import { sendEmail } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { resolveOwnerAlert, type TenantContact } from "@/lib/email/owner-alert";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -157,6 +158,10 @@ async function handle(req: Request) {
       const sellerName   = tenant?.name?.trim() || "";
       const sellerPerson = tenant?.contact_name?.trim() || sellerName;
       const sellerPhone  = (tenant as { phone?: string | null } | null)?.phone?.trim() || "";
+      /* The storefront signs as the company and takes replies at support (lib/email/storefront-voice.ts);
+         a reseller tenant signs as itself. A reply still needs the owner address resolved (owner.ok). */
+      const voice = storefrontVoice(lead.tenant_id);
+      const contactWho = voice ? "us" : sellerPerson || "us";
 
       // ── Hosting trials: a hosting-worded note ─────────────────────────────
       // (The Workspace-worded customer email below is gated to non-hosting leads.)
@@ -172,7 +177,7 @@ async function handle(req: Request) {
             await sendEmail({
               to:        lead.contact_email,
               from:      FROM_EMAIL,
-              replyTo:   owner.to,
+              replyTo:   voice ? voice.replyTo : owner.to,
               kind:      "trial_expiry_customer",
               route:     { tenantId: lead.tenant_id },
               automated: { tenantId: lead.tenant_id, action: "trial.send" },
@@ -184,7 +189,7 @@ Your hosting trial${lead.domain ? ` on ${lead.domain}` : ""} has ended${daysPast
 
 Everything you built is safe. To keep your site live, just reply and we'll convert you to a paid plan — you pick up exactly where you left off, no data loss.
 
-${sellerPhone ? `Prefer to talk? WhatsApp ${sellerPerson || "us"} on ${sellerPhone}.\n\n` : ""}— ${sellerPerson || sellerName || "Your hosting team"}${sellerName && sellerPerson !== sellerName ? `\n   ${sellerName}` : ""}`,
+${sellerPhone ? `Prefer to talk? WhatsApp ${contactWho} on ${sellerPhone}.\n\n` : ""}${voice ? voice.signOff : `— ${sellerPerson || sellerName || "Your hosting team"}${sellerName && sellerPerson !== sellerName ? `\n   ${sellerName}` : ""}`}`,
             });
             result.emails_sent++;
           } catch (e) {
@@ -203,7 +208,7 @@ ${sellerPhone ? `Prefer to talk? WhatsApp ${sellerPerson || "us"} on ${sellerPho
           await sendEmail({
             to:      lead.contact_email,
             from:    FROM_EMAIL,
-            replyTo: owner.to,
+            replyTo: voice ? voice.replyTo : owner.to,
             kind:    "trial_expiry_customer",
             route:   { tenantId: lead.tenant_id },
             /* Customer-facing, so gated by the kill switch + dial. The OWNER copy further
@@ -220,9 +225,9 @@ We hope it gave you a real feel for how it would work day-to-day. We'd love to
 know how it went — and if you'd like to convert to a paid plan, we can pick up
 right where you left off (no data loss, just billing kicks in).
 
-Just reply to this email${sellerPhone ? `, or WhatsApp ${sellerPerson || "us"} on ${sellerPhone}` : ""} — we'll get you sorted quickly.
+Just reply to this email${sellerPhone ? `, or WhatsApp ${contactWho} on ${sellerPhone}` : ""} — we'll get you sorted quickly.
 
-— ${sellerPerson || sellerName || "Your reseller"}${sellerName && sellerPerson !== sellerName ? `\n   ${sellerName}` : ""}`,
+${voice ? voice.signOff : `— ${sellerPerson || sellerName || "Your reseller"}${sellerName && sellerPerson !== sellerName ? `\n   ${sellerName}` : ""}`}`,
           });
           result.emails_sent++;
         } catch (e) {

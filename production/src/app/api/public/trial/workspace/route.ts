@@ -23,6 +23,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -182,6 +183,9 @@ export async function POST(request: NextRequest) {
 
     const { alert: owner, tenant: ownerTenant } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);
     const ownerName = owner.ok ? owner.ownerName : "";
+    // The storefront signs as the company and takes replies at support (lib/email/storefront-voice.ts).
+    const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
+    const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
     if (!owner.ok) {
       console.warn(`[trial/workspace] lead ${leadId}: no owner address, so the customer email has no reply-to: ${owner.reason}`);
     }
@@ -201,7 +205,7 @@ export async function POST(request: NextRequest) {
       sendEmail({
         to:      email,
         from:    FROM_EMAIL,
-        ...(owner.ok ? { replyTo: owner.to } : {}),
+        ...(customerReplyTo ? { replyTo: customerReplyTo } : {}),
         kind:    "buy_page_trial_customer",
         route:   { tenantId: BUY_PAGE_TENANT_ID },
         subject: `Your ${TRIAL_DAYS}-day Google Workspace trial — ${cleanDomain}`,
@@ -227,13 +231,13 @@ DAY 12
 NO CREDIT CARD until you decide to convert. ${TRIAL_DAYS} days fully free, no
 strings attached. Trial period ends ${trialEndsFmt}.
 
-If you want to talk before then, just reply to this email${ownerTenant?.phone?.trim() ? ` — or call/WhatsApp ${ownerName || "us"} on ${ownerTenant.phone.trim()}` : ""}.
+If you want to talk before then, just reply to this email${ownerTenant?.phone?.trim() ? ` — or call/WhatsApp ${voice ? "us" : ownerName || "us"} on ${ownerTenant.phone.trim()}` : ""}.
 
-— ${ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
+${voice ? voice.signOff : `— ${ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
   ownerTenant?.name?.trim() && ownerName !== ownerTenant.name.trim()
     ? `\n   ${ownerTenant.name.trim()}`
     : ""
-}`,
+}`}`,
       }),
     ]).then((results) => {
       const labels = ["customer acknowledgement"];

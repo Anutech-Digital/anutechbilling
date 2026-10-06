@@ -45,6 +45,7 @@ import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { decideAutoSend } from "@/lib/quotes/auto-send-quote";
 import { sendAutoQuote } from "@/lib/quotes/send-auto-quote";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 import {
   fetchWorkspaceCatalogPrice,
   buildWorkspaceLines,
@@ -289,6 +290,9 @@ export async function POST(request: NextRequest) {
     if (!owner.ok) {
       console.error(`[enquiry/workspace] lead ${leadId} saved, but no owner alert: ${owner.reason}`);
     }
+    const ownerName = owner.ok ? owner.ownerName : "";
+    const voice = storefrontVoice(tenantId);
+    const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
 
     /* ── FULL AUTO-SEND — Pardeep's call, 31 Aug 2026 ─────────────────────────
        "poora auto-SEND bhi kar do." Until now this route stopped at a draft and the
@@ -408,12 +412,13 @@ ${autoSent
          storefront owned by any other tenant that is three false statements to a
          stranger — including a partner certification this code cannot know the
          tenant holds. Named from the tenant row now, and anything absent is left
-         out rather than guessed. Needs `owner.ok` because a customer told to reply
-         is owed somewhere for the reply to land. */
-      owner.ok && sendEmail({
+         out rather than guessed. Needs a reply-to because a customer told to reply
+         is owed somewhere for the reply to land: support for the storefront
+         (lib/email/storefront-voice.ts), the owner for a reseller tenant. */
+      customerReplyTo && sendEmail({
         to:      email,
         from:    FROM_EMAIL,
-        replyTo: owner.to,
+        replyTo: customerReplyTo,
         kind:    "buy_page_lead_ack",
         route:   { tenantId },
         subject: `Got it, ${fullName.split(" ")[0]} — your Google Workspace quote is on the way`,
@@ -423,7 +428,7 @@ ${autoSent
 Thanks for the enquiry. Here's what you'll get from us shortly:
 
 • A custom GST quote for ${seats} Google Workspace ${tierName} users
-• Answers to any migration / setup / pricing questions${ownerTenant?.phone?.trim() ? `\n• A call or WhatsApp from ${owner.ownerName || "our team"} on ${ownerTenant.phone.trim()}` : ""}
+• Answers to any migration / setup / pricing questions${ownerTenant?.phone?.trim() ? `\n• A call or WhatsApp from ${voice ? "our team" : ownerName || "our team"} on ${ownerTenant.phone.trim()}` : ""}
 
 WHAT WE HAVE FROM YOU
   Company    ${companyName}
@@ -433,11 +438,11 @@ WHAT WE HAVE FROM YOU
 
 Just reply to this email if anything above is wrong, or if you'd like to add detail.
 
-— ${owner.ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
-  ownerTenant?.name?.trim() && owner.ownerName !== ownerTenant.name.trim()
+${voice ? voice.signOff : `— ${ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
+  ownerTenant?.name?.trim() && ownerName !== ownerTenant.name.trim()
     ? `\n   ${ownerTenant.name.trim()}`
     : ""
-}`,
+}`}`,
       }),
     ]);
     {

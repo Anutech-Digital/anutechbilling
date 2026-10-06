@@ -22,6 +22,7 @@
  */
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { lockPageScroll } from "@/lib/ui/scroll-lock";
 
 export interface BusyPanelProps {
   /** Show it. When this goes false the panel disappears and the clock resets. */
@@ -112,11 +113,8 @@ const SPIN_CSS = `
 
 /** The same content as a centred card over a dimmed page. */
 function BusyModal({ title, steps, secs, slow }: { title: string; steps: string[]; secs: number; slow: boolean }) {
-  React.useEffect(() => {
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = overflow; };
-  }, []);
+  // Counted lock (lib/ui/scroll-lock): a save-and-restore here once left /done unscrollable.
+  React.useEffect(() => lockPageScroll(), []);
   if (typeof document === "undefined") return null;
   /* Into the public site's wrapper when there is one (it carries the colours), else <body>;
      never inside the page section, whose transform would trap the overlay's z-index. */
