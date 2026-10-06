@@ -126,7 +126,7 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
     "3. Bug abhi bhi hai → pehle board par card banao, phir neeche ki directive se theek karo: ek test jo pehle fail ho, fix, poori test suite, local par browser me dikhao, commit me card ka number.",
     "",
     '4. NATEEJA BOARD PAR: kaam ke ant me nateeja "Kaam ki list" board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par likho — theek tha to ek card status "done" aur title "Jaanch: <report>", fix kiya to wahi card review me. Taaki session band hone ke baad bhi nateeja dikhe.',
-    '5. SESSION ARCHIVE: board par likhne ke baad ye session archive kar do (mcp__ccd_session_mgmt__archive_session, session_id "self"). Archive, delete nahi.',
+    '5. SESSION ARCHIVE: board par likhne ke baad ye session archive kar do (mcp__ccd_session_mgmt__archive_session, session_id "self"). Archive, delete nahi. SIRF tab jab ye session ISI prompt se shuru hua ho — agar is session me pehle se koi aur baatcheet/kaam hai (galti se purane session me paste hua), to archive MAT karo, bas nateeja batao.',
     "",
     "Directive (fix ke liye):",
     row.directive || "(directive nahi hai — problem dekh kar khud tay karo)",
