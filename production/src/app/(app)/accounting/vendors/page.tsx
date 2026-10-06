@@ -7,6 +7,7 @@
 "use client";
 
 import * as React from "react";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
@@ -76,7 +77,8 @@ function vendorRegion(gstin: string | null | undefined): string | null {
 
 export default function VendorsPage() {
   const { data: vendors, isLoading } = useVendors();
-  const [search, setSearch] = React.useState("");
+  /* R-287: search in the URL, so Back / reload keeps the filtered vendor list. */
+  const [search, setSearch] = useUrlState("q");
   const [addOpen, setAddOpen] = React.useState(false);
   const [editVendor, setEditVendor] = React.useState<Vendor | null>(null);
   const [detailVendor, setDetailVendor] = React.useState<Vendor | null>(null);

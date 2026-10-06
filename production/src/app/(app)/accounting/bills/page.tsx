@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { BILL_STATUSES } from "@/lib/navigation/drilldown";
 
 import { Card } from "@/components/ui/card";
@@ -66,7 +67,12 @@ const STATUS_COLOR: Record<string, "rose" | "emerald" | "amber" | "slate"> = {
 };
 
 export default function VendorBillsPage() {
-  const [range, setRange]   = React.useState(thisFYRange());
+  /* R-287: date range + search live in the URL (useUrlState) like status already did, so
+     Back / reload / a shared link keeps the same filtered list. */
+  const fy = React.useMemo(() => thisFYRange(), []);
+  const [from, setFrom] = useUrlState("from", fy.from);
+  const [to, setTo]     = useUrlState("to", fy.to);
+  const range = React.useMemo(() => ({ from, to }), [from, to]);
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
   const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
@@ -87,7 +93,7 @@ export default function VendorBillsPage() {
   const totals   = totalsQ.data;
 
   /* R-214: search runs here; sort, count and Load more come from DataTable. */
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlState("q");
   const shownBills = React.useMemo(() => filterBills(bills, search), [bills, search]);
   const viewState = React.useMemo(
     () => ({ from: range.from, to: range.to, status: statusFilter, q: search.trim() }),
@@ -133,14 +139,14 @@ export default function VendorBillsPage() {
       <input id="bills-from"
         type="date"
         value={range.from}
-        onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+        onChange={(e) => setFrom(e.target.value)}
         className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
       />
       <label htmlFor="bills-to" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">To</label>
       <input id="bills-to"
         type="date"
         value={range.to}
-        onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+        onChange={(e) => setTo(e.target.value)}
         className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
       />
       <select aria-label="Status filter"
@@ -223,7 +229,8 @@ export default function VendorBillsPage() {
             current: viewState,
             apply: (s) => {
               const v = readBillsView(s, viewState);
-              setRange({ from: v.from, to: v.to });
+              setFrom(v.from);
+              setTo(v.to);
               setStatusFilter(v.status);
               setSearch(v.q);
             },

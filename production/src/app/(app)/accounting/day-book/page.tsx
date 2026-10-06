@@ -9,6 +9,8 @@
 "use client";
 
 import * as React from "react";
+import { useUrlState } from "@/lib/hooks/use-url-state";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +27,8 @@ import {
   summarizeDayBook, dayBookCsvRows, DAY_BOOK_CSV_HEADERS, DAY_BOOK_VOUCHERS, type DayBookVoucher,
 } from "@/lib/accounting/day-book";
 
+const ONLY_CHOICES: readonly (DayBookVoucher | "all")[] = ["all", ...DAY_BOOK_VOUCHERS];
+
 const TONE: Record<DayBookVoucher, "success" | "info" | "warning" | "danger" | "muted"> = {
   Sales: "success", Receipt: "info", Refund: "warning", "Credit Note": "warning",
   "Debit Note": "muted", Purchase: "danger", Payment: "muted", Journal: "info",
@@ -34,8 +38,11 @@ export default function DayBookPage() {
   const today = React.useMemo(() => localDateISO(new Date()), []);
   const [y, m] = today.split("-").map(Number);
   const thisMonth = monthPeriod(y, m);
-  const [range, setRange] = React.useState({ from: thisMonth.from, to: today });
-  const [only, setOnly] = React.useState<DayBookVoucher | "all">("all");
+  /* R-287: range + voucher filter in the URL, so opening a voucher and pressing Back keeps them. */
+  const [from, setFrom] = useUrlState("from", thisMonth.from);
+  const [to, setTo]     = useUrlState("to", today);
+  const range = React.useMemo(() => ({ from, to }), [from, to]);
+  const [only, setOnly] = useUrlChoice<DayBookVoucher | "all">("only", ONLY_CHOICES, "all");
 
   const valid = !!range.from && !!range.to && range.from <= range.to;
   const q = useDayBook(range, valid);
@@ -65,12 +72,12 @@ export default function DayBookPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {presets.map((p) => (
             <Button key={p.label} size="sm" variant={range.from === p.from && range.to === p.to ? "primary" : "default"}
-              onClick={() => setRange({ from: p.from, to: p.to })} aria-pressed={range.from === p.from && range.to === p.to}>
+              onClick={() => { setFrom(p.from); setTo(p.to); }} aria-pressed={range.from === p.from && range.to === p.to}>
               {p.label}
             </Button>
           ))}
-          <Input type="date" aria-label="From" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} className="w-40" />
-          <Input type="date" aria-label="To" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} className="w-40" />
+          <Input type="date" aria-label="From" value={range.from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
+          <Input type="date" aria-label="To" value={range.to} onChange={(e) => setTo(e.target.value)} className="w-40" />
           <Button size="sm" onClick={exportCsv} disabled={rows.length === 0}>
             <Icon name="download" size={12} /> CSV
           </Button>

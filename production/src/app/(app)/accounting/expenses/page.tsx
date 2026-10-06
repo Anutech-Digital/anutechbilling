@@ -36,12 +36,15 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
+import { useUrlState } from "@/lib/hooks/use-url-state";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { panFromGstin } from "@/lib/accounting/tds-deductor";
 import { istToday } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
 
 type DateRange = { from: string; to: string };
+const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
 
 const iso = (y: number, m: number, d: number) =>
   `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -72,14 +75,23 @@ const RANGE_PRESETS: { id: string; label: string; range: () => DateRange }[] = [
 export default function ExpensesPage() {
   // Default to the "This month" preset itself (not 1st→today) so the chip shows
   // as selected out of the box.
-  const [range, setRange]     = React.useState(RANGE_PRESETS[0].range());
-  const [catFilter, setCatFilter] = React.useState("");
-  const [payeeFilter, setPayeeFilter] = React.useState("");
-  const [unpaidOnly, setUnpaidOnly] = React.useState(false);
-  const [search, setSearch] = React.useState("");
+  /* R-287: every filter lives in the URL (useUrlState), so opening a payroll posting and
+     pressing Back returns to the same filtered list. ?q also serves the Purchase Report
+     deep-link ("Open" on a vendor line), which used to need its own effect. */
+  const monthRange = React.useMemo(() => RANGE_PRESETS[0].range(), []);
+  const [from, setFrom] = useUrlState("from", monthRange.from);
+  const [to, setTo]     = useUrlState("to", monthRange.to);
+  const range = React.useMemo<DateRange>(() => ({ from, to }), [from, to]);
+  const setRange = React.useCallback((r: DateRange) => { setFrom(r.from); setTo(r.to); }, [setFrom, setTo]);
+  const [catFilter, setCatFilter] = useUrlState("category");
+  const [payeeFilter, setPayeeFilter] = useUrlState("payee");
+  const [unpaidParam, setUnpaidParam] = useUrlState("unpaid");
+  const unpaidOnly = unpaidParam === "1";
+  const setUnpaidOnly = React.useCallback((on: boolean) => setUnpaidParam(on ? "1" : ""), [setUnpaidParam]);
+  const [search, setSearch] = useUrlState("q");
   /* Group the list by vendor or category, each with a subtotal. Collapsed groups are
      remembered per key while the view is open. */
-  const [groupBy, setGroupBy] = React.useState<GroupBy>("none");
+  const [groupBy, setGroupBy] = useUrlChoice<GroupBy>("group", GROUP_BY_CHOICES, "none");
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const toggleGroup = (key: string) =>
     setCollapsed((prev) => {
@@ -87,12 +99,6 @@ export default function ExpensesPage() {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
-  // Deep-link from Purchase Report ("Open" on a vendor line) → pre-fill search.
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const q = new URLSearchParams(window.location.search).get("q");
-    if (q) setSearch(q);
-  }, []);
   const [addOpen, setAddOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Expense | null>(null);
   /* ?edit=<expense id> — Payments Made opens a paid expense straight into its edit form
@@ -513,7 +519,7 @@ export default function ExpensesPage() {
         <KPI label="Total spend"  value={totals ? rupee(totals.amount) : "—"} tone="rose" />
         <KPI label="Input GST"    value={totals ? rupee(totals.gstPaid) : "—"} tone="emerald" />
         {/* Outstanding = ALL unpaid payables (any date). Click to filter. */}
-        <button type="button" onClick={() => setUnpaidOnly((v) => !v)} className="text-left"
+        <button type="button" onClick={() => setUnpaidOnly(!unpaidOnly)} className="text-left"
           title="Show only what's still to pay" aria-pressed={unpaidOnly}>
           <KPI label="To pay" value={payableQ.data ? rupee(payableQ.data.amount) : "—"}
                tone={payableQ.data && payableQ.data.amount > 0 ? "amber" : undefined}
@@ -557,7 +563,7 @@ export default function ExpensesPage() {
           <span className="mx-1 h-4 w-px bg-hairline" aria-hidden />
           <button
             type="button"
-            onClick={() => setUnpaidOnly((v) => !v)}
+            onClick={() => setUnpaidOnly(!unpaidOnly)}
             aria-pressed={unpaidOnly}
             className={`rounded-full px-2.5 py-0.5 text-2xs font-medium border transition-colors ${
               unpaidOnly
@@ -595,11 +601,11 @@ export default function ExpensesPage() {
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <input type="date" value={range.from} aria-label="From date"
-            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+            onChange={(e) => setFrom(e.target.value)}
             className="px-2 py-1 text-[13px] rounded-md border border-hairline bg-paper" />
           <span className="text-ink-3 text-xs">–</span>
           <input type="date" value={range.to} aria-label="To date"
-            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+            onChange={(e) => setTo(e.target.value)}
             className="px-2 py-1 text-[13px] rounded-md border border-hairline bg-paper" />
           <select aria-label="Category filter" value={catFilter}
             onChange={(e) => setCatFilter(e.target.value)}
