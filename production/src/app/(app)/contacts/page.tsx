@@ -28,6 +28,7 @@ import { Icon } from "@/components/ui/icon";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 
 
 // Contacts are grouped by their unified "kind" (see contactKind): leads +
@@ -62,8 +63,9 @@ export default function ContactsPage() {
   const qc = useQueryClient();
   const { data: contacts, isLoading, error, refetch } = useAllContacts();
 
-  const [tab, setTab]       = React.useState("all");
-  const [search, setSearch] = React.useState("");
+  /* R-286: tab and search live in the URL — open a contact, press Back, same list. */
+  const [tab, setTab]       = useUrlState("tab", "all");
+  const [search, setSearch] = useUrlState("q");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = React.useState(false);
   const [addOpen, setAddOpen] = React.useState(false);

@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { TASK_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import {
@@ -92,7 +93,7 @@ export default function TasksPage() {
   const { data: members = [] } = useTeamMembers();
   const { data: me } = useCurrentUser();
   const memberById = React.useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
-  const [assignee, setAssignee] = React.useState<string>("all");
+  const [assignee, setAssignee] = useUrlState("assignee", "all"); // R-286: survives Back
 
   // Per-person open (pending) task counts — the "workload at a glance".
   const openByOwner = React.useMemo(() => {

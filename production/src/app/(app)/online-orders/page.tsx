@@ -11,6 +11,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { ORDER_FOCI, ORDER_FOCUS_LABEL, orderInFocus, type OrderFocus } from "@/lib/online-orders/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -519,11 +520,13 @@ function leadToOrder(l: LeadRow, invoiceId: string | null = null): Order {
 }
 
 export default function OnlineOrdersPage() {
-  const [tab, setTab]       = React.useState("all");
+  /* R-286: tab and search live in the URL, so opening an order and pressing Back
+     returns to the same filtered list. */
+  const [tab, setTab]       = useUrlState("tab", "all");
   /* R-118: each KPI's own orders (lib/online-orders/focus.ts) — "" = none. */
   const [focus, setFocus]   = useUrlChoice<OrderFocus>("focus", ORDER_FOCI, "");
   const focusOn = (f: OrderFocus) => { setTab("all"); setFocus(f); };
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlState("q");
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [orders, setOrders]   = React.useState<Order[]>([]);
   const [loading, setLoading] = React.useState(true);

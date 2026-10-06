@@ -35,6 +35,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate, rupee } from "@/lib/utils";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useLead } from "@/lib/queries/leads";
 import { answeredState, answeredNote, quoteButtonLabel, answeredTone } from "@/lib/inbound/answered";
@@ -60,6 +62,8 @@ import { dialable } from "@/lib/leads/call-queue";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 
 /* ── Small presentational helpers ──────────────────────────────────────────── */
+
+const FOLDER_IDS: readonly MailFolder[] = MAIL_FOLDERS.map((f) => f.id);
 
 function senderLabel(e: InboundEmailRow): string {
   /* A reply WE sent has no from_email — it left from the tenant's connected account. The
@@ -192,8 +196,10 @@ export default function EnquiriesPage() {
   const setState = useSetInboundState();
   const convert  = useConvertInboundToLead();
 
-  const [folder, setFolder]         = React.useState<MailFolder>("inbox");
-  const [query, setQuery]           = React.useState("");
+  /* R-286: folder and search live in the URL — open a lead/quote from an enquiry,
+     press Back, and the same folder and search are still there. */
+  const [folder, setFolder]         = useUrlChoice<MailFolder>("folder", FOLDER_IDS, "inbox");
+  const [query, setQuery]           = useUrlState("q");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [snoozeOpen, setSnoozeOpen] = React.useState(false);
   const [helpOpen,   setHelpOpen]   = React.useState(false);
