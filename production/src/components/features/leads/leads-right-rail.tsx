@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { rupee, cn } from "@/lib/utils";
 import type { Lead } from "@/lib/supabase/database.types";
 import { istToday } from "@/lib/dates/ist";
+import { leadTitle } from "@/lib/leads/display-name";
 
 interface LeadsRightRailProps {
   leads: Lead[];
@@ -183,8 +184,8 @@ export function LeadsRightRail({
                     className="w-full text-left p-2 rounded-md hover:bg-paper transition-colors group"
                   >
                     <div className="flex items-center justify-between gap-2 min-w-0">
-                      <div className="font-medium text-sm text-ink truncate flex-1">
-                        {l.company}
+                      <div className="font-medium text-sm text-ink truncate flex-1" title={leadTitle(l).hint ?? undefined}>
+                        {leadTitle(l).label}
                       </div>
                       <Badge
                         kind={isOverdue ? "danger" : "warning"}
@@ -193,10 +194,10 @@ export function LeadsRightRail({
                         {isOverdue ? "Overdue" : "Today"}
                       </Badge>
                     </div>
+                    {/* R-279: when the title already IS the contact's name, show only the phone. */}
                     {l.contact_name && (
                       <div className="text-xs text-ink-3 truncate mt-0.5 group-hover:text-ink-2">
-                        {l.contact_name}
-                        {l.contact_phone && ` · ${l.contact_phone}`}
+                        {[leadTitle(l).source === "contact" ? null : l.contact_name, l.contact_phone].filter(Boolean).join(" · ")}
                       </div>
                     )}
                   </button>
@@ -219,8 +220,8 @@ export function LeadsRightRail({
                   className="w-full text-left p-2 rounded-md hover:bg-paper transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2 min-w-0">
-                    <div className="font-medium text-sm text-ink truncate flex-1">
-                      {l.company}
+                    <div className="font-medium text-sm text-ink truncate flex-1" title={leadTitle(l).hint ?? undefined}>
+                      {leadTitle(l).label}
                     </div>
                     <span className="font-serif text-sm text-ink tabular-nums shrink-0">
                       {l.value ? rupee(l.value, { compact: true }) : "—"}

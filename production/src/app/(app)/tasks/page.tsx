@@ -41,6 +41,14 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import type { TaskKind } from "@/lib/supabase/database.types";
+import { leadTitle } from "@/lib/leads/display-name";
+
+/** R-279: the linked lead's company, else its contact/email/phone; null when it has no name at all. */
+function taskLeadName(task: TaskWithLink): string | null {
+  if (!task.leads) return null;
+  const t = leadTitle(task.leads);
+  return t.source === "none" ? null : t.label;
+}
 
 // ─── Icon + label per kind ────────────────────────────────────────────────
 const KIND_META: Record<TaskKind, { icon: string; label: string }> = {
@@ -207,7 +215,7 @@ export default function TasksPage() {
           open
           onOpenChange={(o) => { if (!o) setEditingTask(null); }}
           linkTo={null}
-          linkLabel={editingTask.leads?.company ?? editingTask.customers?.name ?? editingTask.quotes?.customer_name ?? undefined}
+          linkLabel={taskLeadName(editingTask) ?? editingTask.customers?.name ?? editingTask.quotes?.customer_name ?? undefined}
           task={editingTask}
         />
       )}
@@ -257,7 +265,7 @@ function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: T
     : null;
   // Who the task is about — pulled from the linked lead / customer / quote.
   const relatedName =
-      task.leads?.company        ?? task.customers?.name
+      taskLeadName(task)         ?? task.customers?.name
     ?? task.quotes?.customer_name ?? null;
   // Show the related name (clickable); fall back to a generic label if the
   // linked row has no name or the task is linked only to a subscription.

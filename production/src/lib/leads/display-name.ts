@@ -27,9 +27,11 @@ export interface LeadNameParts {
   company?: string | null;
   contact_name?: string | null;
   contact_email?: string | null;
+  /** R-279: the last thing a lead always has when it has nothing else. */
+  contact_phone?: string | null;
 }
 
-export type LeadNameSource = "company" | "contact" | "email" | "none";
+export type LeadNameSource = "company" | "contact" | "email" | "phone" | "none";
 
 export interface LeadDisplayName {
   /** Screen par jo chhapega. Kabhi khaali nahi hota. */
@@ -78,7 +80,37 @@ export function leadDisplayName(lead: LeadNameParts | null | undefined): LeadDis
     };
   }
 
+  /* R-279: phone after email — a lead from a call or WhatsApp often has only a number. */
+  const phone = clean(lead?.contact_phone);
+  if (phone) {
+    return {
+      label: phone,
+      source: "phone",
+      hint: "No name or email on this lead — showing phone",
+    };
+  }
+
   return { label: NAMELESS, source: "none", hint: "No name on this lead" };
+}
+
+/**
+ * R-279 (Pardeep, 6 Oct 2026): "company ka naam na ho to contact name show karo".
+ *
+ * Wo screens jo lead ko uski COMPANY se bulati hain (Kanban card, lead sheet header, hot
+ * card, call queue, swipe card, right rail, dashboard, tasks) — company ho to company, warna
+ * leadDisplayName ki kram: contact, email, phone, "(no name)". Kabhi khaali nahi.
+ *
+ * Alag function, leadDisplayName ki jagah nahi: wo contact-PEHLE hai (leads table ki
+ * pehchan, 29 Aug), aur in screens par jahan company hai wahi dikhni chahiye — warna har
+ * Kanban card ka title company se aadmi ke naam par badal jaata.
+ */
+export function leadTitle(lead: LeadNameParts | null | undefined): LeadDisplayName {
+  const company = clean(lead?.company);
+  if (company) return { label: company, source: "company", hint: null };
+  const rest = leadDisplayName({ ...lead, company: null });
+  return rest.source === "contact"
+    ? { ...rest, hint: "No company name — showing contact" }
+    : rest;
 }
 
 /**

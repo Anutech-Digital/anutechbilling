@@ -22,7 +22,8 @@ type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
  * "who is this about" without N extra lookups. At most one link is set.
  */
 export type TaskWithLink = Task & {
-  leads?:     { company: string } | null;
+  /* R-279: contact fields too — a lead with no company is named by its contact (leadTitle). */
+  leads?:     { company: string; contact_name?: string | null; contact_email?: string | null; contact_phone?: string | null } | null;
   customers?: { name: string } | null;
   quotes?:    { customer_name: string } | null;
 };
@@ -60,7 +61,7 @@ export function useTasks(bucket: TaskBucket = "all") {
       const supabase = createClient();
       // Embed the linked entity's display name (lead company / customer name /
       // quote customer) so the list can show who each task is about.
-      let q = supabase.from("tasks").select("*, leads(company), customers(name), quotes(customer_name)");
+      let q = supabase.from("tasks").select("*, leads(company, contact_name, contact_email, contact_phone), customers(name), quotes(customer_name)");
 
       const { startISO, endISO } = todayBoundariesIST();
 

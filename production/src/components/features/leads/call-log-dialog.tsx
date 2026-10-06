@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { useDictation } from "@/lib/voice/use-dictation";
 import type { LeadOutcome } from "@/lib/leads/outcomes";
+import { leadTitle } from "@/lib/leads/display-name";
 
 export interface CallLogDialogProps {
   /** Kis lead ka call — `null` matlab popup band. */
@@ -205,7 +206,7 @@ export function useCallLog<T extends { company: string }>(
 
   const dialog = (
     <CallLogDialog
-      companyName={pending?.company ?? null}
+      companyName={pending ? leadTitle(pending).label : null}
       onClose={() => setPending(null)}
       onSave={(note) => { if (pending) void runOutcome("talked", pending, note); }}
     />

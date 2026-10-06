@@ -43,6 +43,7 @@ import { LeadEmailTab } from "@/components/features/leads/lead-detail-email-tab"
 import { LeadFollowupsTab } from "@/components/features/leads/lead-detail-followups-tab";
 import { LeadDetailFooter } from "@/components/features/leads/lead-detail-footer";
 import { LeadDetailHeader } from "@/components/features/leads/lead-detail-header";
+import { leadTitle } from "@/lib/leads/display-name";
 
 const AddTaskDialog = dynamic(() => import("@/components/features/tasks/add-task-dialog").then((m) => m.AddTaskDialog), { ssr: false });
 const LeadEmailComposer = dynamic(() => import("@/components/features/leads/lead-email-composer").then((m) => m.LeadEmailComposer), { ssr: false });
@@ -259,7 +260,7 @@ export function LeadDetailSheet({
       return;
     }
     const confirmed = await confirm({
-      title: `Permanently delete lead "${lead.company}"?`,
+      title: `Permanently delete lead "${leadTitle(lead).label}"?`,
       body: "This cannot be undone.",
       confirmLabel: "Delete",
       danger: true,
@@ -327,7 +328,7 @@ export function LeadDetailSheet({
 
   const handleArchive = () => {
     void changeStage(lead, "lost");
-    toast.success(`${lead.company} archived`);
+    toast.success(`${leadTitle(lead).label} archived`);
     onClose();
   };
 
@@ -588,7 +589,7 @@ export function LeadDetailSheet({
                 type="button"
                 onClick={() => {
                   void changeStage(lead, "contact");
-                  toast.success(`${lead.company} → Contacted`);
+                  toast.success(`${leadTitle(lead).label} → Contacted`);
                 }}
                 className="min-h-11 w-full shrink-0 rounded-md border border-hairline-strong bg-paper px-3 text-xs font-semibold text-ink-2 transition-colors hover:bg-paper-2 sm:w-auto"
               >
@@ -693,7 +694,7 @@ export function LeadDetailSheet({
       <AddTaskDialog
         open={addTaskOpen}
         onOpenChange={setAddTaskOpen}
-        linkLabel={lead.company}
+        linkLabel={leadTitle(lead).label}
         linkTo={{ lead_id: lead.id }}
       />
 
@@ -727,7 +728,7 @@ export function LeadDetailSheet({
             `\n\nLet me know if you'd like to schedule a quick call or get a tailored quote.\n\n` +
             `— ${currentUser?.tenantName ?? "your team"}`
           }
-          title={`WhatsApp · ${lead.company}`}
+          title={`WhatsApp · ${leadTitle(lead).label}`}
           related={{ leadId: lead.id }}
         />
       )}

@@ -52,6 +52,7 @@ import { canSeeDeals } from "@/lib/deals/access";
 import { PendingJoinRequestsCard } from "@/components/features/team/pending-join-requests-card";
 import { Badge } from "@/components/ui/badge";
 import { LoadErrorBanner } from "@/components/shared/load-error";
+import { leadTitle } from "@/lib/leads/display-name";
 
 // ============================================================
 // Helpers
@@ -294,8 +295,8 @@ export default function DashboardPage() {
           icon:  "target",
           tone:  l.stage === "won" ? "emerald" : l.plan ? "indigo" : "amber",
           title: l.stage === "won"
-            ? `Lead won: ${l.company}${l.value ? ` · ${rupee(l.value, { compact: true })}` : ""}`
-            : `New lead: ${l.company}${l.plan ? ` · ${l.plan}` : ""}`,
+            ? `Lead won: ${leadTitle(l).label}${l.value ? ` · ${rupee(l.value, { compact: true })}` : ""}`
+            : `New lead: ${leadTitle(l).label}${l.plan ? ` · ${l.plan}` : ""}`,
           time:  relativeTime(ts, now),
           ts,
         });
@@ -345,7 +346,7 @@ export default function DashboardPage() {
           formatDate(dueDate);
         return {
           type: l.stage === "demo" ? "Demo" : l.stage === "trial" ? "Trial" : "Follow-up",
-          who:  l.company,
+          who:  leadTitle(l).label,
           time: timeLabel,
           icon: l.stage === "demo" ? "users" : l.stage === "trial" ? "rocket" : "phone",
           tone: daysAway < 0 ? "rose" : daysAway === 0 ? "amber" : "indigo",

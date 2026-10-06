@@ -59,6 +59,7 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { istToday } from "@/lib/dates/ist";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
+import { leadTitle } from "@/lib/leads/display-name";
 
 // LEAD_STAGES mirrors the array in leads/page.tsx — kept here as a small
 // constant to avoid coupling the swipe card to that file's internals. If
@@ -268,7 +269,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
                 <span className={cn("w-2 h-2 rounded-full shrink-0", prio.color)} title={prio.title} />
-                <p className="font-medium text-ink truncate text-[15px]">{lead.company}</p>
+                <p className="font-medium text-ink truncate text-[15px]" title={leadTitle(lead).hint ?? undefined}>{leadTitle(lead).label}</p>
                 {/* Intent tier + stale nudge — same lib/leads/heat helpers the
                     desktop table uses, so phone and desktop can never disagree
                     about the same lead. (The old `stale` prop used its own
@@ -426,7 +427,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                 <span
                   role="button"
                   tabIndex={0}
-                  aria-label={`Actions for ${lead.company}`}
+                  aria-label={`Actions for ${leadTitle(lead).label}`}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 active:bg-paper-2/70"
@@ -552,9 +553,12 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
 /** Pre-fill WhatsApp message with greeting + lead context. */
 function buildWaMessage(lead: LeadListRow): string {
   const greeting = lead.contact_name ? `Hi ${lead.contact_name},` : "Hello,";
+  /* R-279: no company → no dangling "for " in a message the customer reads. */
+  const company = lead.company?.trim() ?? "";
+  const forCompany = company ? ` for ${company}` : "";
   const ref = lead.plan
-    ? `our conversation about ${lead.plan} for ${lead.company}`
-    : `your inquiry for ${lead.company}`;
+    ? `our conversation about ${lead.plan}${forCompany}`
+    : `your inquiry${forCompany}`;
   return `${greeting} Following up on ${ref}. When's a good time for a quick call?`;
 }
 
