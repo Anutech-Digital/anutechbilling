@@ -88,6 +88,8 @@ const ADDED_3OCT_SALES = ["/ai-entry"];
 /** R-061 (6 Oct 2026): the accountant could already open these by URL (the guard admits all of
  *  /accounting/* through BOOKS) but had no menu row. A menu row only — the guard answer is unchanged. */
 const ADDED_6OCT_ACCOUNTANT = ["/accounting/payroll", "/accounting/salary-register"];
+/** R-263 (6 Oct 2026): Quality Score, owner / manager — a new page, next to Bug Reports. */
+const ADDED_6OCT_OM = ["/quality"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
  *  so its Balance Sheet showed salary payable and statutory dues as Rs 0 (Pardeep's call). */
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet"] };
@@ -101,6 +103,7 @@ const addedFor = (role: string) => [
   ...(role === "billing" ? ADDED_3OCT_BILLING : []),
   ...(role === "sales" || role === "sales_senior" ? ADDED_3OCT_SALES : []),
   ...(role === "accountant" ? ADDED_6OCT_ACCOUNTANT : []),
+  ...(role === "owner" || role === "manager" ? ADDED_6OCT_OM : []),
   ...(role === "owner" || role === "manager" ? ADDED_FOR_OWNER_MANAGER : []),
   ...(role === "owner" ? ADDED_FOR_OWNER : []),
   ...(DEALS_ROLES.includes(role) ? ADDED_DEALS : []),

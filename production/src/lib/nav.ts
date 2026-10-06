@@ -598,6 +598,9 @@ export const APP_NAV: NavSection[] = [
              bottom of the menu and Pardeep could not find it; the sidebar is at its row cap.
              Owner/manager: reports quote whatever the reporter typed, often a customer's name. */
           { id: "feedback",  href: "/admin/feedback",   label: "Bug Reports & AI Fixes", icon: "bug", roles: OM, hint: "Har report — Report Bug aur AI Help se; sab tenants ek saath" },
+          /* R-263: the real numbers against the targets (first invoice, bug fix time, open bugs,
+             money bugs). Next to Bug Reports — the reports are where its numbers come from. */
+          { id: "quality",   href: "/quality",          label: "Quality Score",    icon: "target", roles: OM, hint: "Real numbers against our targets — first invoice, bug fixes, open bugs" },
         ],
       },
       {

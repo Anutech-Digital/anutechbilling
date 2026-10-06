@@ -22,6 +22,7 @@ const PROTECTED_PREFIXES = [
   "/today",           // S29 ranked inbox across every queue
   "/ux-insights",     // UX observer findings (3 Oct 2026)
   "/ui-insights",     // UI agent design scores (3 Oct 2026)
+  "/quality",         // Quality Score — targets vs real numbers (R-263)
   "/ai-entry",
   "/leads",
   "/deals",
