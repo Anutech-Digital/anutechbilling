@@ -40,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { IST_TZ } from "@/lib/dates/ist";
 import type { TaskKind } from "@/lib/supabase/database.types";
 import { leadTitle } from "@/lib/leads/display-name";
 
@@ -324,7 +325,7 @@ function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: T
             {isOverdue && "⚠ Overdue · "}
             {due.toLocaleString("en-IN", {
               weekday: "short", day: "numeric", month: "short",
-              hour: "2-digit", minute: "2-digit",
+              hour: "2-digit", minute: "2-digit", timeZone: IST_TZ,
             })}
           </span>
           {task.snooze_count > 0 && (

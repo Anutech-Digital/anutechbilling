@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { useBackups, useCreateBackup, useDeleteBackup, useRestoreBackup, downloadBackup, autoBackupIfStale, SNAPSHOT_RETENTION } from "@/lib/queries/backups";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { IST_TZ } from "@/lib/dates/ist";
 import { ResetDataCard } from "@/components/features/settings/reset-data-card";
 
 function humanSize(b: number): string {
@@ -27,7 +28,7 @@ function humanSize(b: number): string {
 }
 function whenLabel(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: IST_TZ });
 }
 
 export default function BackupPage() {
