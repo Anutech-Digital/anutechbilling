@@ -14,6 +14,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import {
   Dialog,
@@ -92,7 +93,7 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
       await markCertReceived.mutateAsync({ id: tds.id, form16aUrl: path });
       toast.success(`${file.name} uploaded · status moved to "Cert received"`);
     } catch (err) {
-      toast.error((err as Error).message);
+      toastError(err, { fallback: "Upload failed.", description: "The certificate was not saved and the status is unchanged. Try again." });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -105,7 +106,7 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
       const url = await getForm16aSignedUrl(tds.form_16a_url);
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (err) {
-      toast.error("Could not open document: " + (err as Error).message);
+      toastError(err, { fallback: "Could not open the document.", description: "The file is still saved. Refresh the page and try again." });
     }
   }
 

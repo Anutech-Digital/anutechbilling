@@ -23,6 +23,7 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -225,7 +226,7 @@ function EntryRow({ entry }: { entry: VaultEntry }) {
       return json as { password: string; username: string | null };
     },
     onSuccess: (d) => setShown({ password: d.password, username: d.username }),
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toastError(e, { fallback: "Could not reveal the password.", description: "Nothing changed. Try again in a moment." }),
   });
 
   return (
@@ -302,7 +303,7 @@ function AddDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bo
       setTitle(""); setUrl(""); setUsername(""); setPassword("");
       onOpenChange(false);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toastError(e, { fallback: "Could not save the credential.", description: "Nothing was saved. Check the fields and try again." }),
   });
 
   return (

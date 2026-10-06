@@ -340,10 +340,10 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
         body: JSON.stringify({ customerId: customer.id, channel: cta.channel ?? "whatsapp", purpose: cta.purpose ?? "followup" }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? "Couldn't draft."); return; }
+      if (!res.ok) { toast.error(data.error ?? "Couldn't draft.", { description: "Try again, or write the message yourself." }); return; }
       setDraft({ subject: data.subject ?? "", message: data.message ?? "", mode: data.mode ?? "stub" });
     } catch {
-      toast.error("Something went wrong. Try again.");
+      toast.error("Couldn't reach the AI service.", { description: "Check your connection and try again, or write the message yourself." });
     } finally {
       setDrafting(false);
     }

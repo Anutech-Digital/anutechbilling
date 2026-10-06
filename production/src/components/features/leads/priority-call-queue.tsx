@@ -119,7 +119,7 @@ function QueueRow({
           <a
             href={`tel:${num ?? ""}`}
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number`); return; }
+              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then call." }); return; }
               onLogCall(lead);
             }}
             className={cn(
@@ -134,7 +134,7 @@ function QueueRow({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number`); return; }
+              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then message on WhatsApp." }); return; }
               onLogWhatsApp(lead);
             }}
             title={waMsg}

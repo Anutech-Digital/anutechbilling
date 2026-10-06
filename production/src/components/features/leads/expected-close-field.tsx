@@ -25,9 +25,9 @@ export function ExpectedCloseField({ lead }: { lead: Pick<Lead, "id" | "stage" |
 
   const save = (raw: string) => {
     const parsed = parseFollowUpDate(raw);
-    if (!parsed.ok) { toast.error(parsed.error); return; }
+    if (!parsed.ok) { toast.error(parsed.error, { description: "Type a date like 15 Oct, or pick one from the calendar." }); return; }
     if (parsed.value === (lead.expected_close_date ?? null)) return;
-    if (parsed.value && parsed.value < today) { toast.error("Pick today or later"); return; }
+    if (parsed.value && parsed.value < today) { toast.error("Pick today or later.", { description: "The expected close date can't be in the past." }); return; }
     if (!parsed.value && required) {
       toast.error("Expected close is required", { description: "Deals from Quote Sent onward need a date. You can change it, not remove it." });
       return;

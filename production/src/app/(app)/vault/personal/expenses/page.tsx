@@ -130,8 +130,8 @@ export default function PersonalExpensesPage() {
 
   const handleSave = async () => {
     const amount = parseRupees(form.amount);
-    if (amount === null) { toast.error("Amount 0 se zyada ek number hona chahiye — comma ya ₹ nahi."); return; }
-    if (!form.occurred_on) { toast.error("Date chuno."); return; }
+    if (amount === null) { toast.error("Enter an amount above 0.", { description: "Numbers only — no commas or ₹ sign, e.g. 1250." }); return; }
+    if (!form.occurred_on) { toast.error("Pick a date.", { description: "Choose the day this expense happened, then save." }); return; }
 
     try {
       await save.mutateAsync({

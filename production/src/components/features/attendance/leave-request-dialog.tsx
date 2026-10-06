@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   Dialog,
   DialogContent,
@@ -40,7 +41,7 @@ export function LeaveRequestDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) {
-      toast.error("Kripya reason enter karein.");
+      toast.error("Enter a reason.", { description: "Your manager sees it when approving the request." });
       return;
     }
 
@@ -59,8 +60,8 @@ export function LeaveRequestDialog({
 
       toast.success(`${typeLabel} request submitted to manager for approval!`);
       onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err?.message || "Could not submit request");
+    } catch (err: unknown) {
+      toastError(err, { fallback: "Could not submit the request.", description: "Nothing was sent to your manager. Try again." });
     }
   };
 

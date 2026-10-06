@@ -42,7 +42,7 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
   const handleCallTop = () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
     if (!topHot.contact_phone) {
-      toast.error(`${leadTitle(topHot).label} has no phone on record · open the lead to add one`);
+      toast.error(`${leadTitle(topHot).label} has no phone on record.`, { description: "Open the lead and add a phone number, then call." });
       return;
     }
     // tel: schemes ignore spaces but be defensive
@@ -52,7 +52,7 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
   const handleSendNudge = () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
     if (!topHot.contact_email) {
-      toast.error(`${leadTitle(topHot).label} has no email on record · open the lead to add one`);
+      toast.error(`${leadTitle(topHot).label} has no email on record.`, { description: "Open the lead and add an email, then send the nudge." });
       return;
     }
     const signoff = currentUser?.tenantName ?? "your team";

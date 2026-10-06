@@ -8,6 +8,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +57,7 @@ export default function ApiKeysCard() {
       qc.invalidateQueries({ queryKey: ["api-keys"] });
       toast.success("API key created — copy it now, it won't be shown again");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e, { fallback: "Could not create the API key.", description: "No key was made. Try again." }),
   });
 
   const revokeKey = useMutation({
@@ -68,7 +69,7 @@ export default function ApiKeysCard() {
       qc.invalidateQueries({ queryKey: ["api-keys"] });
       toast.success("Key revoked");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e, { fallback: "Could not revoke the key.", description: "The key still works. Refresh and try again." }),
   });
 
   const copy = (text: string) => {

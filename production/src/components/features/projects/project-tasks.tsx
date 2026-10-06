@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { formatDate, rupee } from "@/lib/utils";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   useProjectTasks, useCreateProjectTask, useUpdateProjectTask, useDeleteProjectTask,
   useCreateProjectTasksBulk, generateProjectPlan, fetchProjectQuestions, type PlannedTask, type QuestionItem,
@@ -229,7 +230,7 @@ function AiPlanDialog({ projectId, team, project, startSeq, onClose }: {
       setQuestions(qList);
       setStep("questions");
     } catch (e) {
-      toast.error((e as Error).message);
+      toastError(e, { fallback: "Could not get the AI questions.", description: "Nothing was saved. Try again, or skip and add tasks by hand." });
     } finally {
       setLoadingQuestions(false);
     }
@@ -271,7 +272,7 @@ function AiPlanDialog({ projectId, team, project, startSeq, onClose }: {
       setStep("results");
       setActiveTab("proposal");
     } catch (e) {
-      toast.error((e as Error).message);
+      toastError(e, { fallback: "Could not make the plan.", description: "Your answers are still here. Try again." });
     } finally {
       setGeneratingPlan(false);
     }
