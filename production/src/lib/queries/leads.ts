@@ -88,12 +88,13 @@ export function useLeads() {
       // queries, so the retry returns exactly the same rows. All it did was make
       // "no leads yet" indistinguishable from "auth/tenant is broken". One of the
       // three UUIDs also belonged to Delfos Technologies, an unrelated tenant.
-      const { data, error } = await supabase
+      /* R-294: paged past the 1000-row cap; order ends on the unique id. */
+      return fetchAllRows((from, to) => supabase
         .from("leads")
         .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
     },
   });
 }

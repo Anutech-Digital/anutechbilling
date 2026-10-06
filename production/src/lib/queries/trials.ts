@@ -12,6 +12,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Lead } from "@/lib/supabase/database.types";
 
 export type TrialBucket = "in_flight" | "expiring_soon" | "expired_unconverted" | "converted";
@@ -61,15 +62,16 @@ export function useTrials() {
     queryKey: ["trials"],
     queryFn: async (): Promise<TrialWithBucket[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      const data = await fetchAllRows((from, to) => supabase
         .from("leads")
         .select("*")
         .not("trial_started_at", "is", null)
-        .order("trial_expires_at", { ascending: true });
-      if (error) throw error;
+        .order("trial_expires_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
 
       const today = new Date();
-      const rows = (data ?? []).map((l) => bucketize(l as Lead, today));
+      const rows = data.map((l) => bucketize(l as Lead, today));
 
       // Urgency-sorted: expiring_soon < in_flight < expired_unconverted < converted
       const orderOf = (b: TrialBucket) =>
@@ -93,17 +95,18 @@ export function useActiveTrials() {
     queryKey: ["trials", "active"],
     queryFn: async (): Promise<TrialWithBucket[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      const data = await fetchAllRows((from, to) => supabase
         .from("leads")
         .select("*")
         .eq("stage", "trial")
         .is("trial_converted_at", null)
         .is("trial_expired_at", null)
         .not("trial_started_at", "is", null)
-        .order("trial_expires_at", { ascending: true });
-      if (error) throw error;
+        .order("trial_expires_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
       const today = new Date();
-      return (data ?? []).map((l) => bucketize(l as Lead, today));
+      return data.map((l) => bucketize(l as Lead, today));
     },
   });
 }
@@ -116,7 +119,7 @@ export function useTrialsExpiringSoon() {
       const supabase = createClient();
       const now    = new Date();
       const in7    = new Date(now.getTime() + 7 * 86400000);
-      const { data, error } = await supabase
+      const data = await fetchAllRows((from, to) => supabase
         .from("leads")
         .select("*")
         .eq("stage", "trial")
@@ -124,9 +127,10 @@ export function useTrialsExpiringSoon() {
         .is("trial_expired_at", null)
         .gte("trial_expires_at", now.toISOString())
         .lte("trial_expires_at", in7.toISOString())
-        .order("trial_expires_at", { ascending: true });
-      if (error) throw error;
-      return (data ?? []).map((l) => bucketize(l as Lead, now));
+        .order("trial_expires_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
+      return data.map((l) => bucketize(l as Lead, now));
     },
   });
 }
