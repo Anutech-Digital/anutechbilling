@@ -18,6 +18,12 @@
  *   node scripts/ops/worker-lock.mjs release R-197
  *   node scripts/ops/worker-lock.mjs push    R-197      (inside the worktree: waits its turn, rebases, pushes)
  *   node scripts/ops/worker-lock.mjs list
+ *   node scripts/ops/worker-lock.mjs prep    R-197 <path>...   (manager, before a card is given out)
+ *
+ * prep — card prep (6 Oct: R-202's card named a page that does not exist; R-197's page was a
+ * re-export of leads/page.tsx). For every path: does it exist, and if it is a one-line
+ * re-export, where the real code is. Prints the lockAreas to write on the card. Exit 1 if a
+ * path is missing — fix the card before a worker gets it.
  *
  * push — one worker pushes at a time (6 Oct: 6 of 8 workers had their push rejected because
  * another worker pushed in the same minute). Waits for the push turn, then fetch + rebase +
@@ -144,6 +150,44 @@ async function pushWithTurn(card) {
   }
 }
 
+/** "export { default } from '../leads/page'" → "../leads/page"; null when the file has real code. */
+export function reexportTarget(src) {
+  const lines = String(src).split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*"));
+  if (!lines.length || lines.length > 3) return null;
+  const m = lines.map((l) => l.match(/^export\s+(?:\{[^}]*\}|\*)\s+from\s+["']([^"']+)["']/)).find(Boolean);
+  return m && lines.every((l) => /^export\s/.test(l) || /^import\s/.test(l)) ? m[1] : null;
+}
+
+/** Lock area for a path: its folder for a file under src/app or src/lib, else the file itself. */
+export function lockAreaFor(p) {
+  const n = normPath(p);
+  if (/\.[a-z]+$/i.test(n) && /^src\/(app|lib)\//.test(n)) { const d = n.split("/").slice(0, -1).join("/"); return tooBroad(d) ? n : d; }
+  return n;
+}
+
+function prep(card, paths) {
+  const root = process.cwd().replace(/\\/g, "/").endsWith("/production") ? process.cwd() : path.join(process.cwd(), "production");
+  let missing = 0; const areas = new Set();
+  for (const raw of paths) {
+    const n = normPath(raw); const full = path.join(root, n);
+    if (!fs.existsSync(full)) { console.log(`✗ ${n} — NAHI MILA`); missing++; continue; }
+    let real = n;
+    if (fs.statSync(full).isFile()) {
+      const t = reexportTarget(fs.readFileSync(full, "utf8"));
+      if (t) {
+        const base = t.startsWith("@/") ? path.join(root, "src", t.slice(2)) : path.resolve(path.dirname(full), t);
+        const hit = [".tsx", ".ts", "/page.tsx", "/index.ts", ""].map((e) => base + e).find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+        if (hit) { real = normPath(path.relative(root, hit)); console.log(`↪ ${n} sirf re-export hai — asli code: ${real}`); }
+      }
+    }
+    if (real === n) console.log(`✓ ${n}`);
+    areas.add(lockAreaFor(real)); if (real !== n) areas.add(lockAreaFor(n));
+  }
+  console.log(`\nlockAreas (card par likho): ${JSON.stringify([...areas])}`);
+  if (missing) { console.error(`✗ ${card}: ${missing} path nahi mile — card theek karo, tab worker ko do.`); process.exit(1); }
+  console.log(`✓ ${card} taiyaar — card par prepared: true likho.`);
+}
+
 function main(argv) {
   const [cmd, rawCard, ...rest] = argv;
   const card = rawCard?.toUpperCase();
@@ -187,6 +231,7 @@ function main(argv) {
     return;
   }
   if (cmd === "push") return pushWithTurn(card);
+  if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
     fs.rmSync(lockFile(card), { force: true });
     console.log(`✓ ${card} ka lock hata.`);

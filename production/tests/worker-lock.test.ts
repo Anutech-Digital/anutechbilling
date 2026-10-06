@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, reexportTarget, lockAreaFor } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -47,5 +47,18 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(pushTurnFree(null, now)).toBe(true);
     expect(pushTurnFree({ card: "R-1", at: now - 60_000 }, now)).toBe(false);
     expect(pushTurnFree({ card: "R-1", at: now - PUSH_TURN_STALE_MS - 1 }, now)).toBe(true);
+  });
+
+  it("card prep: spots a page that only re-exports another (R-197's deals page)", () => {
+    expect(reexportTarget('export { default } from "../leads/page";\n')).toBe("../leads/page");
+    expect(reexportTarget("// deals = leads\nexport { default, metadata } from '@/app/(app)/leads/page';")).toBe("@/app/(app)/leads/page");
+    expect(reexportTarget("export default function Page() { return null; }")).toBeNull();
+    expect(reexportTarget('import x from "y";\nconst a = 1;\nexport { a } from "z";')).toBeNull();
+  });
+
+  it("card prep: a file's lock area is its folder; never broader than 3 parts", () => {
+    expect(lockAreaFor("production/src/app/(app)/deals/page.tsx")).toBe("src/app/(app)/deals");
+    expect(lockAreaFor("src/lib/nav.ts")).toBe("src/lib/nav.ts");
+    expect(lockAreaFor("src/components/layout/topbar.tsx")).toBe("src/components/layout/topbar.tsx");
   });
 });
