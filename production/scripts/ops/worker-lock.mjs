@@ -61,8 +61,18 @@ export function tooBroad(area) {
 /** Most workers allowed at once. 6 Oct 2026: 8 at once left 2 GB of 24 GB free and hung the machine. */
 export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
 
+/**
+ * Pardeep (6 Oct night): the local app crawled while 4 workers type-checked. While he works
+ * (09:00–21:59 IST) only 2 workers run; at night 4. WORKER_MAX still overrides.
+ */
+export function maxWorkersAt(date) {
+  if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
+  const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
+  return h >= 9 && h < 22 ? 2 : 4;
+}
+
 /** True when another worker may not start: the live locks (other cards) already fill every slot. */
-export function queueFull(card, locks, max = MAX_WORKERS) {
+export function queueFull(card, locks, max = maxWorkersAt(Date.now())) {
   return locks.filter((l) => l.card !== card).length >= max;
 }
 
@@ -123,31 +133,46 @@ export function pushTurnFree(turn, now) {
 
 function sh(cmd) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
 
-async function pushWithTurn(card) {
-  const turnFile = path.join(LOCK_DIR, "_push-turn.json");
+/** Wait for a named turn (one holder at a time across all workers), run fn, release. */
+async function withTurn(name, card, doing, fn) {
+  const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
   for (;;) {
     let turn = null;
     try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+    if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
     if (pushTurnFree(turn, Date.now())) {
       if (turn) fs.rmSync(turnFile, { force: true });
       try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
     }
-    if (Date.now() > waitUntil) { console.error(`✗ 30 min se push ki baari nahi aayi (${turn?.card} push kar raha hai). Owner ko batao.`); process.exit(4); }
-    console.log(`… ${turn?.card ?? "koi"} push kar raha hai — baari ka intezaar`);
+    if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
+    console.log(`… ${turn?.card ?? "koi"} ${doing} — baari ka intezaar`);
     await new Promise((r) => setTimeout(r, 15000));
   }
-  try {
+  try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
+}
+
+/**
+ * One type-check at a time (6 Oct night): each tsc of this repo takes ~2.6 GB; two or three at
+ * once starved the local app on a 24 GB machine. Capping tsc's heap would just crash it.
+ */
+function tscWithTurn(card) {
+  return withTurn("heavy", card, "type-check kar raha hai", async () => {
+    try { sh("npx tsc --noEmit -p ."); return true; }
+    catch (e) { console.error("✗ tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); return false; }
+  });
+}
+
+async function pushWithTurn(card) {
+  await withTurn("push", card, "push kar raha hai", async () => {
     sh("git fetch -q anutech");
     try { sh("git rebase -q anutech/manager-pardeep"); }
     catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
-    try { sh("npx tsc --noEmit -p ."); } catch (e) { console.error("✗ Rebase ke baad tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); process.exit(1); }
+    if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
     const branch = sh("git branch --show-current").trim();
     sh(`git push -q anutech ${branch}:manager-pardeep`);
     console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);
-  } finally {
-    fs.rmSync(turnFile, { force: true });
-  }
+  });
 }
 
 /** "export { default } from '../leads/page'" → "../leads/page"; null when the file has real code. */
@@ -231,6 +256,7 @@ function main(argv) {
     return;
   }
   if (cmd === "push") return pushWithTurn(card);
+  if (cmd === "tsc") return tscWithTurn(card).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
     fs.rmSync(lockFile(card), { force: true });
