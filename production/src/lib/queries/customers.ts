@@ -6,6 +6,7 @@
 import * as React from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { requireTenantId } from "@/lib/queries/require-tenant";
@@ -312,7 +313,7 @@ export function useCreateCustomer() {
       qc.invalidateQueries({ queryKey: ["contacts"] });
       toast.success("Customer added");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -339,7 +340,7 @@ export function useUpdateCustomer() {
       qc.invalidateQueries({ queryKey: ["customers", data.id] });
       toast.success("Customer updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -365,7 +366,7 @@ export function useDeleteCustomer() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Customer deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -387,7 +388,7 @@ export function useSetCustomerActive() {
       qc.invalidateQueries({ queryKey: ["customers", id] });
       toast.success(isActive ? "Customer reactivated" : "Customer archived — hidden from the active list");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

@@ -10,6 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { ContactRow, ContactStatus } from "@/lib/supabase/database.types";
 
@@ -47,7 +48,7 @@ export function useUpdateContactStatus() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
     },
-    onError: (e) => toast.error((e as Error).message || "Status update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Could not update the status." }),
   });
 }
 
@@ -64,6 +65,6 @@ export function useDeleteContact() {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
       toast.success("Contact deleted");
     },
-    onError: (e) => toast.error((e as Error).message || "Delete nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Could not delete." }),
   });
 }

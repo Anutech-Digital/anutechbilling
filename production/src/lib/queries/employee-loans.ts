@@ -12,6 +12,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 export type LoanRepaymentMethod = "cash" | "bank" | "salary_deduction" | "expense";
 export type EmployeeLoanKind = "loan" | "salary_advance" | "expense_advance";
@@ -151,7 +152,7 @@ export function useDisburseLoan() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Loan recorded — cash marked out of the account");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -171,7 +172,7 @@ export function useUpdateLoanNote() {
       qc.invalidateQueries({ queryKey: ["employee-loans"] });
       toast.success("Purpose updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -203,7 +204,7 @@ export function useEditLoan() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Loan updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -224,7 +225,7 @@ export function useDeleteEmployeeLoan() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Loan deleted — cash restored");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -258,7 +259,7 @@ export function useRecordLoanRepayment() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Repayment recorded");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -299,6 +300,6 @@ export function useSettleExpenseAdvance() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Advance settled");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

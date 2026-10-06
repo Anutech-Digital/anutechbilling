@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { DebitNoteRow, DebitNoteReasonCode } from "@/lib/supabase/database.types";
 
@@ -58,6 +59,6 @@ export function useIssueDebitNote() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success(`Debit note ${res.debit_note_id} issued`);
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }

@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, ExpenseRow } from "@/lib/supabase/database.types";
@@ -433,7 +434,7 @@ export function useCreateExpense() {
       qc.invalidateQueries({ queryKey: ["project_sales"] });   // project cost → refresh project P&L
       toast.success("Expense added");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -571,7 +572,7 @@ export function useMarkExpensePaid() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Marked paid");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -601,7 +602,7 @@ export function useBulkMarkExpensesPaid() {
       qc.invalidateQueries({ queryKey: ["employee_expense_advances"] }); // R-101: a spend / delete moves an advance balance
       toast.success(`${count} ${count === 1 ? "expense" : "expenses"} marked paid`);
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -625,7 +626,7 @@ export function useUpdateExpense() {
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       toast.success("Expense updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -644,7 +645,7 @@ export function useDeleteExpense() {
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       toast.success("Expense deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

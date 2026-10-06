@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor, type PrimaryContact } from "@/lib/contacts/primary";
 import {
@@ -520,7 +521,7 @@ export function useCreateContact() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -538,7 +539,7 @@ export function useUpdateContact() {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       qc.invalidateQueries({ queryKey: ["contact", id] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -556,7 +557,7 @@ export function useDeleteContact() {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       toast.success("Contact deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -655,7 +656,7 @@ export function useSetPrimaryContact() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Primary contact updated");
     },
-    onError: (err) => toast.error((err as Error).message, {
+    onError: (err) => toastError(err, {
       description: "The primary contact was not changed. Try again, or reload the page.",
     }),
   });
@@ -702,7 +703,7 @@ export function useDeleteCustomerContact() {
         description: "They are still in your contacts, and on any other customer they serve.",
       });
     },
-    onError: (err) => toast.error((err as Error).message, {
+    onError: (err) => toastError(err, {
       description: "Every customer must keep at least one contact.",
     }),
   });

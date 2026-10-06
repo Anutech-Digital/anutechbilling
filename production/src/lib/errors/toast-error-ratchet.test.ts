@@ -18,10 +18,11 @@
  */
 import { describe, it, expect } from "vitest";
 import { join } from "path";
+import { readFileSync } from "fs";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
 
-/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. */
-const BASELINE = 450;
+/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. */
+const BASELINE = 403;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {
@@ -34,5 +35,24 @@ describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
       `description (kyun) + action (button) — ya toastError() ke hints. ` +
       `Kaunsi files sabse bhaari: node scripts/count-raw-toast-errors.cjs`,
     ).toBeLessThanOrEqual(BASELINE);
+  });
+});
+
+/* R-266 — the first 16 query modules: their mutation onError hands the error to
+   toastError() (which translates raw Postgres text and keeps good business messages),
+   never `toast.error(err.message)` straight onto the screen. Per-file and at ZERO,
+   so a new raw site in these files is caught even while the global count is falling. */
+const R266_FILES = [
+  "assessments", "attendance-biometric", "backups", "balance-sheet", "business-loans",
+  "compliance", "contacts", "credit-notes", "customers", "debit-notes", "emi",
+  "employee-loans", "expense-claims", "expenses", "imported-contacts", "inbound-emails",
+] as const;
+
+describe("R-266 — no raw error text toasted from these query modules", () => {
+  it.each(R266_FILES)("src/lib/queries/%s.ts", (name) => {
+    const src = readFileSync(join(process.cwd(), "src/lib/queries", `${name}.ts`), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/toast\.error\(\s*\(?\s*\w+\s+as\s+Error\s*\)?\s*\.message/);
+    expect(src).not.toMatch(/toast\.error\(\s*\w+\.message/);
   });
 });

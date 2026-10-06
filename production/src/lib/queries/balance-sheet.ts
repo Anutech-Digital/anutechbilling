@@ -17,6 +17,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { balanceSheetFromRpc, rpcRowOrThrow, type BalanceSheetRpcRow } from "@/lib/accounting/report-rpc";
@@ -157,7 +158,7 @@ export function useCreateBalanceSheetItem() {
       qc.invalidateQueries({ queryKey: ["balance-sheet", "items"] });
       toast.success("Line added");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -176,7 +177,7 @@ export function useUpdateBalanceSheetItem() {
       qc.invalidateQueries({ queryKey: ["balance-sheet", "items"] });
       toast.success("Line updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -192,6 +193,6 @@ export function useDeleteBalanceSheetItem() {
       qc.invalidateQueries({ queryKey: ["balance-sheet", "items"] });
       toast.success("Line removed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

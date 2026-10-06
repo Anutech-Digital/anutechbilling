@@ -7,6 +7,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -36,7 +37,7 @@ export function useRegenerateIngestKey() {
       return fresh;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("New key generated — update it in the bridge."); },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }
 
@@ -51,6 +52,6 @@ export function useSetEmployeeBiometricId() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["employees"] }); },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }

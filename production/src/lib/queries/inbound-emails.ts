@@ -9,6 +9,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 import {
   INBOX_NEXT_CURSOR_HEADER, flattenPages, inboxCursorQuery, readInboxNextCursor, type InboxCursor,
@@ -179,7 +180,7 @@ export function useSetInboundState() {
     onError: (err, _input, ctx) => {
       if (ctx?.previous) qc.setQueryData(["inbound-emails"], ctx.previous);
       if (ctx?.previousPages) qc.setQueryData(INBOX_PAGES_KEY, ctx.previousPages);
-      toast.error((err as Error).message, {
+      toastError(err, {
         description: "Nothing was changed — the email is back where it was.",
       });
     },
@@ -210,7 +211,7 @@ export function useConvertInboundToLead() {
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success("Lead created from email");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
