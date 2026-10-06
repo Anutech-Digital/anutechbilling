@@ -49,6 +49,10 @@ import {
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import {
+  subscriptionHref, subscriptionStatusLabel, paymentHref, SUBSCRIPTION_SEARCH_EVENT, searchFromSubscriptionHref,
+} from "@/app/(app)/subscriptions/palette-links";
+import { paymentMethodLabel } from "@/app/(app)/payments/method-label";
 
 // ============================================================
 // Hook to manage open state + register ⌘K shortcut
@@ -424,7 +428,7 @@ export function CommandPalette({
                 <Command.Group heading={`Subscriptions · ${count(fSubs, subscriptions)}`}>
                   {fSubs.map((s) => {
                     const mrr = s.mrr ? `${rupee(s.mrr, { compact: true })}/mo` : "";
-                    const meta = [s.plan, mrr, s.status].filter(Boolean).join(" · ");
+                    const meta = [s.plan, mrr, subscriptionStatusLabel(s.status)].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={s.id}
@@ -432,7 +436,12 @@ export function CommandPalette({
                         label={s.customer_name}
                         meta={meta}
                         keywords={subscriptionKeywords(s)}
-                        onSelect={() => go("/subscriptions")}
+                        onSelect={() => {
+                          const href = subscriptionHref(s);
+                          go(href);
+                          /* Already on /subscriptions: the page stays mounted, so tell it. */
+                          window.dispatchEvent(new CustomEvent(SUBSCRIPTION_SEARCH_EVENT, { detail: searchFromSubscriptionHref(href) }));
+                        }}
                       />
                     );
                   })}
@@ -446,14 +455,14 @@ export function CommandPalette({
                   {fPayments.map((p) => {
                     const who = (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
                     const amount = rupee(p.amount, { compact: true });
-                    const meta = [amount, p.method, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
+                    const meta = [amount, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={p.id}
                         icon="rupee"
                         label={who}
                         meta={meta}
-                        onSelect={() => go("/payments")}
+                        onSelect={() => go(paymentHref(p))}
                       />
                     );
                   })}

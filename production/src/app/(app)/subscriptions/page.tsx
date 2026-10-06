@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
+import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { subscriptionFacts } from "@/lib/subscriptions/facts";
 import { sortSubscriptions, defaultDirFor, type SubSort, type SubSortKey } from "@/lib/subscriptions/sort";
@@ -227,7 +228,17 @@ export default function SubscriptionsPage() {
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
   const [vendor, setVendor] = React.useState("all");
   const [search, setSearch] = React.useState("");
-  const [extendSub,   setExtendSub]   = React.useState<Subscription | null>(null);
+  /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
+     Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = initialSubscriptionSearch(window.location.search);
+    if (q) setSearch(q);
+    const onPick = (e: Event) => setSearch(String((e as CustomEvent<string>).detail ?? ""));
+    window.addEventListener(SUBSCRIPTION_SEARCH_EVENT, onPick);
+    return () => window.removeEventListener(SUBSCRIPTION_SEARCH_EVENT, onPick);
+  }, []);
+  const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
   /** Null = the newest-first default. Set when a column header is clicked. */
   const [sort, setSort] = React.useState<SubSort | null>(null);
