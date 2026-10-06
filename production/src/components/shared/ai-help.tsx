@@ -64,6 +64,56 @@ export function AiHelpButton() {
   );
 }
 
+/* R-223 (tester, staging: "AI Help panel fixed width/height, bada karne ka option nahi"):
+   on a desktop the panel has two sizes ("Bigger" / "Smaller") and can be dragged larger or
+   smaller from its left edge, bottom edge or bottom-left corner (it is pinned top-right, so
+   those are the edges that move). The size is kept in this browser. On a phone the panel is
+   a full-screen sheet — no sizes there. */
+export interface PanelSize { w: number; h: number }
+export const PANEL_NORMAL: PanelSize = { w: 420, h: 600 };
+export const PANEL_LARGE: PanelSize = { w: 760, h: 860 };
+export const PANEL_MIN: PanelSize = { w: 340, h: 360 };
+const PANEL_MAX_W = 1100;
+/** md:top-16 (64px) above the panel + a 16px gap below it. */
+const PANEL_TOP_AND_GAP = 80;
+const PANEL_SIZE_KEY = "reselleros.aiHelp.size";
+
+/** Keep a size inside the window: never below PANEL_MIN, never past the screen edge (the screen wins). */
+export function clampPanelSize(s: PanelSize, vp: { w: number; h: number }): PanelSize {
+  const maxW = Math.min(PANEL_MAX_W, vp.w - 40);
+  const maxH = vp.h - PANEL_TOP_AND_GAP;
+  return {
+    w: Math.round(Math.min(maxW, Math.max(PANEL_MIN.w, s.w))),
+    h: Math.round(Math.min(maxH, Math.max(PANEL_MIN.h, s.h))),
+  };
+}
+
+export type ResizeEdge = "left" | "bottom" | "corner";
+
+/** New size after dragging an edge by (dx, dy) px. Pulling left widens; pulling down makes it taller. */
+export function dragResize(start: PanelSize, edge: ResizeEdge, dx: number, dy: number, vp: { w: number; h: number }): PanelSize {
+  return clampPanelSize({
+    w: edge === "bottom" ? start.w : start.w - dx,
+    h: edge === "left" ? start.h : start.h + dy,
+  }, vp);
+}
+
+/** "Bigger" shows while the panel is at (or near) the normal size; anything larger offers "Smaller". */
+export const isLargePanel = (s: PanelSize) => s.w > PANEL_NORMAL.w + 20 || s.h > PANEL_NORMAL.h + 20;
+
+function readPanelSize(): PanelSize | null {
+  try {
+    const raw = window.localStorage.getItem(PANEL_SIZE_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<PanelSize>;
+    return typeof v.w === "number" && typeof v.h === "number" && Number.isFinite(v.w) && Number.isFinite(v.h) ? { w: v.w, h: v.h } : null;
+  } catch { return null; }
+}
+function savePanelSize(s: PanelSize) {
+  try { window.localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(s)); } catch { /* private window — size just isn't remembered */ }
+}
+const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
+
 /** R-189: one screenshot that goes with the next message (and is filed with the report). */
 interface Shot { dataUrl: string; mimeType: "image/jpeg"; base64: string }
 
@@ -269,6 +319,40 @@ export function AiHelp() {
   const { open } = useHelpUi();
   const setOpen = React.useCallback((v: boolean) => setHelpUi({ open: v }), []);
   React.useEffect(() => { setHelpUi({ alert: unseen?.text ?? null }); }, [unseen]);
+  /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
+  const [size, setSize] = React.useState<PanelSize>(PANEL_NORMAL);
+  const [, setVpTick] = React.useState(0);
+  React.useEffect(() => { const saved = readPanelSize(); if (saved) setSize(saved); }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    const onResize = () => setVpTick((n) => n + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
+  const shownSize = clampPanelSize(size, viewport());
+  const large = isLargePanel(shownSize);
+  function toggleSize() {
+    const next = clampPanelSize(large ? PANEL_NORMAL : PANEL_LARGE, viewport());
+    setSize(next);
+    savePanelSize(next);
+  }
+  const drag = React.useRef<{ edge: ResizeEdge; x: number; y: number; start: PanelSize; last: PanelSize } | null>(null);
+  const startDrag = (edge: ResizeEdge) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    drag.current = { edge, x: e.clientX, y: e.clientY, start: shownSize, last: shownSize };
+  };
+  const moveDrag = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    d.last = dragResize(d.start, d.edge, e.clientX - d.x, e.clientY - d.y, viewport());
+    setSize(d.last);
+  };
+  const endDrag = () => {
+    if (!drag.current) return;
+    savePanelSize(drag.current.last);
+    drag.current = null;
+  };
   const [items, setItems] = React.useState<ChatItem[]>([]);
   const [text, setText] = React.useState("");
   const [busy, setBusy] = React.useState<false | HelpMode>(false);
@@ -454,8 +538,17 @@ export function AiHelp() {
         <section
           role="dialog"
           aria-label="AI Help"
-          className="fixed z-50 right-2 left-2 top-14 md:left-auto md:right-5 md:top-16 md:w-[420px] h-[min(600px,calc(100vh-7rem))] flex flex-col rounded-2xl border border-hairline bg-paper shadow-2xl overflow-hidden"
+          data-size={large ? "large" : "normal"}
+          style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px` } as React.CSSProperties}
+          className="fixed z-50 inset-0 md:inset-auto md:right-5 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] flex flex-col md:rounded-2xl md:border border-hairline bg-paper shadow-2xl overflow-hidden"
         >
+          {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
+          <div aria-hidden="true" data-resize="left" onPointerDown={startDrag("left")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+            className="hidden md:block absolute left-0 top-0 bottom-3 w-1.5 z-10 cursor-ew-resize touch-none hover:bg-amber/30" />
+          <div aria-hidden="true" data-resize="bottom" onPointerDown={startDrag("bottom")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+            className="hidden md:block absolute bottom-0 left-3 right-0 h-1.5 z-10 cursor-ns-resize touch-none hover:bg-amber/30" />
+          <div aria-hidden="true" data-resize="corner" onPointerDown={startDrag("corner")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+            className="hidden md:block absolute left-0 bottom-0 w-3 h-3 z-10 cursor-nesw-resize touch-none hover:bg-amber/40" />
           <header className="flex items-center gap-2 px-4 py-3 border-b border-hairline bg-paper-2/60">
             <Icon name="sparkles" size={16} className="text-amber-ink" />
             <div className="flex-1 min-w-0">
@@ -465,6 +558,9 @@ export function AiHelp() {
             {items.length > 0 && (
               <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); setActed({}); }}>New chat</button>
             )}
+            <button type="button" className="hidden md:inline text-2xs text-ink-3 hover:text-ink"
+              title={large ? "Back to the normal size" : "Make the panel bigger — or drag its left or bottom edge"}
+              onClick={toggleSize}>{large ? "Smaller" : "Bigger"}</button>
             <button type="button" aria-label="Close" className="p-1 text-ink-3 hover:text-ink" onClick={() => setOpen(false)}>
               <Icon name="x" size={16} />
             </button>
