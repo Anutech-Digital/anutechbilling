@@ -701,13 +701,18 @@ function InvoicesPageInner() {
           title="No invoices yet"
           body={canQuotes
             ? "Invoices are generated when a quote is accepted and payment is recorded. Start by creating a quote."
-            : "Invoices are generated when a quote is accepted and payment is recorded. Your owner or sales team creates the quotes."}
+            : "Invoices are generated when a quote is paid. Your owner or sales team creates the quotes; when a customer pays, record it in Payments Received."}
           action={canQuotes ? (
             <Button asChild variant="primary" icon="file">
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- pre-existing plain <a> (full navigation), kept as-is by the Next 15 upgrade; eslint-plugin-next 15 now also scans app/ */}
               <a href="/quotes/new">Create a quote</a>
             </Button>
-          ) : undefined}
+          ) : (
+            /* R-253: billing's way in. Record payment works on Payments Received for every role. */
+            <Button asChild variant="primary" icon="rupee">
+              <Link href="/payments">Record payment</Link>
+            </Button>
+          )}
         />
       )}
 

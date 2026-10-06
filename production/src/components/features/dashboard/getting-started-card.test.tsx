@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, within } from "@testing-library/react";
 import { GettingStartedCard } from "./getting-started-card";
 
-afterEach(cleanup);
+/* R-253: the card reads the signed-in role to leave out steps on pages that role cannot open. */
+let mockRole: string | null = "owner";
+vi.mock("@/lib/hooks/useCurrentUser", () => ({
+  useCurrentUser: () => ({ data: mockRole ? { role: mockRole } : undefined }),
+}));
+
+afterEach(() => { cleanup(); mockRole = "owner"; });
 
 /* A GSTIN that really passes the checksum — ANUTECH's own (CLAUDE.md §1).
    NOT the wizard's placeholder 27AABCE9876D1Z3: that one is fabricated and FAILS the checksum,
@@ -110,5 +116,25 @@ describe("the checklist as a whole", () => {
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(6);
     for (const a of links) expect(a.getAttribute("href")).toMatch(/^\//);
+  });
+});
+
+describe("R-253 billing gets no button that bounces it to /invoices", () => {
+  it("billing sees no /quotes or /items link, and the payment step opens Payments Received", () => {
+    /* THE BUG: billing opens the Dashboard, but middleware sends it away from /quotes and
+       /items. "New quote", "View quotes" and "Load catalog" threw it back to /invoices. */
+    mockRole = "billing";
+    render(<GettingStartedCard {...props} />);
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs.some((h) => h.startsWith("/quotes"))).toBe(false);
+    expect(hrefs.some((h) => h.startsWith("/items"))).toBe(false);
+    expect(within(row("Record your first payment")).getByRole("link").getAttribute("href")).toBe("/payments");
+    expect(within(row("Record your first payment")).getByText("Record payment")).toBeDefined();
+  });
+
+  it("owner keeps all six steps", () => {
+    mockRole = "owner";
+    render(<GettingStartedCard {...props} />);
+    expect(screen.getAllByRole("link")).toHaveLength(6);
   });
 });
