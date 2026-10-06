@@ -50,6 +50,9 @@ const bodySchema = z.object({
 });
 
 const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to upar 'Report Bug' button (Ctrl+Shift+B) se seedha bhej dijiye.";
+/** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
+    Say what is missing and where to add it. */
+const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to 'Report Bug' button (Ctrl+Shift+B) se bhej dijiye.";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
@@ -86,7 +89,7 @@ export async function POST(request: NextRequest) {
   // RLS scopes these reads to the caller's own row and tenant.
   const { data: me } = await supabase.from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
-  if (!gemini.apiKey) return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });
+  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], ai: false, reason: "no_key" });
 
   let failure = "";
   const raw = await geminiJson<unknown>({
