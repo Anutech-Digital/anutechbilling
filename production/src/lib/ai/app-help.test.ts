@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseHelpAnswer, parseHelpActions, askAboutSelection, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
+import { parseHelpAnswer, parseHelpActions, askAboutSelection, buildTestRunPrompt, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
 
 const draft = { title: "Invoice PDF shows IGST for a Delhi customer", type: "bug", severity: "critical", actual: "IGST 18% on a Delhi-to-Delhi invoice", expected: "CGST 9% + SGST 9%", steps: ["Open Invoices", "Open INV-1", "Download PDF"], chatSummary: "Asked why tax looked wrong; same state as ours." };
 
@@ -131,5 +131,28 @@ describe("askAboutSelection", () => {
     const q = askAboutSelection("b".repeat(450))!;
     expect(q).toContain("b".repeat(300) + "…");
     expect(q).not.toContain("b".repeat(301));
+  });
+});
+
+/* R-196: the "Run these tests in browser" prompt. */
+describe("buildTestRunPrompt", () => {
+  const p = buildTestRunPrompt({ pagePath: "/deals", tests: ["Add lead with  ₹0 value", "", "Switch to Kanban view"] });
+  it("lists the tests, numbered, blanks dropped and spaces collapsed", () => {
+    expect(p).toContain("Page: /deals");
+    expect(p).toContain("1. Add lead with ₹0 value");
+    expect(p).toContain("2. Switch to Kanban view");
+    expect(p).not.toContain("3.");
+  });
+  it("keeps the safety rules: local app only, real repo, board, archive only its own session", () => {
+    expect(p).toContain("http://localhost:3001");
+    expect(p).toMatch(/Live\/staging par form submit ya kuch save MAT karo/);
+    expect(p).toContain("Anutech-Digital/anutechbilling");
+    expect(p).toContain(String.raw`C:\Users\mso50\new-reselleros`);
+    expect(p).toMatch(/SIRF agar ye session ISI prompt se shuru hua/);
+  });
+  it("caps at 12 tests", () => {
+    const many = buildTestRunPrompt({ pagePath: "/x", tests: Array.from({ length: 20 }, (_, i) => `t${i}`) });
+    expect(many).toContain("12. t11");
+    expect(many).not.toContain("13. t12");
   });
 });

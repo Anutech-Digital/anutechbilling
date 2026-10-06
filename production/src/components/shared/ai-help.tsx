@@ -29,7 +29,7 @@ import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
-import { bugReportText, AI_FILED_TAG, askAboutSelection, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
+import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
 import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
@@ -299,6 +299,20 @@ export function AiHelp() {
     window.addEventListener("scroll", onScroll, true);
     return () => { document.removeEventListener("mouseup", onUp); document.removeEventListener("touchend", onUp); window.removeEventListener("scroll", onScroll, true); };
   }, []);
+  /* R-196: copy the "Test next" list as a prompt for a new Claude session to run in its browser. */
+  async function copyTestRun(page: string, tests: string[]) {
+    const prompt = buildTestRunPrompt({ pagePath: page, tests });
+    let ok = false;
+    try { await navigator.clipboard.writeText(prompt); ok = true; } catch {
+      try {
+        const ta = document.createElement("textarea"); ta.value = prompt; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); document.body.removeChild(ta);
+      } catch { ok = false; }
+    }
+    if (ok) toast.success("Test prompt copied.", { description: "Open a new Claude Code session and paste it — it runs these tests in its browser on the local app and writes the result on the work board." });
+    else toast.warning("Browser blocked copying.", { description: "Ask Claude in chat to run these tests instead." });
+  }
+
   function askSelection() {
     if (!askAt) return;
     setText(askAt.q);
@@ -533,6 +547,11 @@ export function AiHelp() {
                           );
                         })}
                       </ul>
+                      <Button size="sm" variant="outline" className="mt-2" icon="copy"
+                        title="Copies a prompt — paste it in a new Claude Code session; it runs these tests in its own browser on the local app"
+                        onClick={() => void copyTestRun(m.page ?? pathname, m.checklist ?? [])}>
+                        Run these tests in browser
+                      </Button>
                     </div>
                   )}
                   {m.draft && (
