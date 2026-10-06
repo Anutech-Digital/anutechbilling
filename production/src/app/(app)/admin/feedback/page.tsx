@@ -91,6 +91,37 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+/**
+ * Fixed reports (Pardeep, 6 Oct 2026: "copy directive ke jagah check in browser AI instruction
+ * do, saath me problem ko thik karne ka instruction bhi"). One prompt to paste into a new
+ * Claude Code session: re-run the report in a browser first, and only if it still fails, fix
+ * it from the original directive. Nothing is stored — it is built from the row on screen.
+ */
+function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
+  const page = row.route_pattern ?? row.page_path ?? "(page not recorded)";
+  const lines = [
+    'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo.',
+    "",
+    "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
+    `App: ${appUrl}${appUrl.includes("localhost") ? "" : " (ya local http://localhost:3001)"}. Jaanch browser pane me dikha kar karo.`,
+    "",
+    `Report: ${row.title}`,
+    `Page: ${page}`,
+    `Kya hua tha: ${row.problem_summary || row.title}`,
+  ];
+  if (row.body) lines.push(`Reporter ne likha:\n${row.body}`);
+  lines.push(
+    "",
+    "1. JAANCH: report ke kadam browser me chalao. Screenshot ke saath batao ki ab kya hota hai.",
+    '2. Theek hai → bas batao "✓ browser me theek hai" aur kya dekha. Kuch mat badlo.',
+    "3. Bug abhi bhi hai → pehle board par card banao, phir neeche ki directive se theek karo: ek test jo pehle fail ho, fix, poori test suite, local par browser me dikhao, commit me card ka number.",
+    "",
+    "Directive (fix ke liye):",
+    row.directive || "(directive nahi hai — problem dekh kar khud tay karo)",
+  );
+  return lines.join("\n");
+}
+
 /** Selects an element's text so the user only has to press Ctrl+C. */
 function selectText(el: HTMLElement | null) {
   if (!el) return;
@@ -164,6 +195,12 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
       showForManualCopy();
       toast.warning("Browser blocked copying.", { description: "The directive is open and selected below — press Ctrl+C." });
     }
+  };
+
+  const handleCopyCheck = async () => {
+    const ok = await copyToClipboard(buildCheckPrompt(row, window.location.origin));
+    if (ok) toast.success("Check + fix prompt copied.", { description: "Paste it into a new Claude Code session — it checks in a browser and fixes it if still broken." });
+    else toast.warning("Browser blocked copying.", { description: "Press Copy again, or ask Claude in chat to check this report." });
   };
 
   const handleRunTriage = async () => {
@@ -290,10 +327,17 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             Run AI Auto-Fix
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive}>
-          <Icon name="copy" size={14} className="mr-1.5" />
-          Copy Directive
-        </Button>
+        {row.status === "fixed" ? (
+          <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy}>
+            <Icon name="copy" size={14} className="mr-1.5" />
+            Check in browser
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive}>
+            <Icon name="copy" size={14} className="mr-1.5" />
+            Copy Directive
+          </Button>
+        )}
         {(row.status === "open" || row.status === "agent_queued") && (
           <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
             <Icon name="refresh" size={14} className="mr-1.5" />
