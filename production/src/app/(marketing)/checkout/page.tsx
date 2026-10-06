@@ -33,6 +33,7 @@ import { paidHostingLine } from "@/site/lib/hosting-cart-line";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
+import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -449,9 +450,9 @@ export default function CheckoutPage() {
             <div style={{ maxWidth: 460 }}>
               {/* Required first, optional last (owner, 30 Sep 2026): a buyer fills top to
                   bottom and can stop at the "Optional" line. */}
-              <Field label="YOUR NAME" value={name} onChange={setName} />
-              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" />
-              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" />
+              <Field label="YOUR NAME" value={name} onChange={setName} autoComplete="name" />
+              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" />
+              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" />
               {(hasHosting || hasTrial) && (
                 <>
                   {hostingLines.length > 1 ? (
@@ -487,10 +488,11 @@ export default function CheckoutPage() {
               {!isTrialCart && (
                 /* Required on every paid order (R-091): without it the GST invoice cannot be
                    issued, because GST picks CGST+SGST or IGST by the buyer's state. */
-                <label style={{ display: "block", marginBottom: 14 }}>
-                  <span className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>STATE — DECIDES THE GST ON YOUR INVOICE</span>
+                <div style={{ marginBottom: 14 }}>
+                  <label htmlFor="checkout-state" className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>STATE — DECIDES THE GST ON YOUR INVOICE</label>
                   <select
                     id="checkout-state"
+                    autoComplete="address-level1"
                     value={stateCode}
                     onChange={(e) => setStateCode(e.target.value)}
                     style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
@@ -498,23 +500,23 @@ export default function CheckoutPage() {
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}
                   </select>
-                </label>
+                </div>
               )}
               {hasDomain && (
                 <>
                   <p className="meta" style={{ margin: "6px 0 2px" }}>
                     The domain is registered in your name, so the registry needs the owner&apos;s postal address.
                   </p>
-                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} />
-                  <Field label="CITY" value={addrCity} onChange={setAddrCity} />
-                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono />
+                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" />
+                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" />
+                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" />
                 </>
               )}
 
               <div className="mono-label" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border-hairline)", paddingTop: 16, margin: "8px 0 14px" }}>
                 OPTIONAL
               </div>
-              <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} />
+              <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} autoComplete="organization" />
               <Field label="GSTIN — FOR INPUT CREDIT" value={gstin} onChange={setGstin} mono />
 
               {trialMixed && (
@@ -593,16 +595,13 @@ export default function CheckoutPage() {
                 );
               })}
 
-              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "16px 0", cursor: "pointer" }}>
-                <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--primary)" }} />
-                <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>
+              <TermsCheckbox checked={agreed} onChange={setAgreed} invalid={agreeNudge && !agreed}>
                   I have read the{" "}
                   <a href="/terms-and-conditions" target="_blank" rel="noopener" style={{ color: "var(--primary)", fontWeight: 600 }}>terms and conditions</a>{" "}
                   and the{" "}
                   <a href="/refund" target="_blank" rel="noopener" style={{ color: "var(--primary)", fontWeight: 600 }}>refund policy</a>, including that domain
                   registrations are non-refundable once submitted to the registry.
-                </span>
-              </label>
+              </TermsCheckbox>
 
               {priceCheck && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
@@ -619,7 +618,7 @@ export default function CheckoutPage() {
                 </div>
               )}
               {agreeNudge && !agreed && (
-                <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                <div id={TERMS_NUDGE_ID} role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
                   Please tick the box above to accept the terms and the refund policy, then press Pay.
                 </div>
               )}
@@ -694,21 +693,6 @@ export default function CheckoutPage() {
         </aside>
       </div>
     </section>
-  );
-}
-
-function Field({ id, label, value, onChange, type = "text", mono }: { id?: string; label: string; value: string; onChange: (v: string) => void; type?: string; mono?: boolean }) {
-  return (
-    <label style={{ display: "block", marginBottom: 14 }}>
-      <span className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>{label}</span>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
-      />
-    </label>
   );
 }
 
