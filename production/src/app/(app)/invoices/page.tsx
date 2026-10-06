@@ -16,25 +16,16 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { INVOICE_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useInvoices, useQuotesAwaitingInvoice, useGenerateInvoice, useDeleteProjectInvoice, useDeleteSubscriptionInvoice, useDocumentSeries } from "@/lib/queries/invoices";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoice } from "@/lib/queries/projects";
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
-import { useCustomer } from "@/lib/queries/customers";
-import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
-import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
-import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
 import { useInvoiceNoteTotals } from "@/lib/queries/invoice-note-totals";
 import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
-import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
-import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
-import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 /* R-060. `status = 'overdue'` has no writer anywhere in the product, so the Overdue tab
    and its KPI were permanently empty while invoices ran months late. Derived from
    due_date instead — see the header of lib/invoices/overdue.ts for why not a cron. */
@@ -43,9 +34,6 @@ import {
   invoiceChip, invoiceChipCounts, invoiceKpis, invoiceInFocus, INVOICE_FOCI, INVOICE_FOCUS_LABEL, type InvoiceFocus,
 } from "@/lib/invoices/kpis";
 import { FocusBanner } from "@/components/shared/focus-banner";
-/* R-066. The GST breakdown comes from one place, shared with the server PDF builder —
-   see the header of lib/invoices/display-amounts.ts. */
-import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -60,14 +48,15 @@ import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { getInvoiceWhatsAppUrl } from "@/lib/whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
-import type { Invoice, Payment } from "@/lib/supabase/database.types";
+import type { Invoice } from "@/lib/supabase/database.types";
+import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
+import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
    column they sum to 100) so the table always fits — no horizontal scroll. Clicking a
@@ -88,9 +77,6 @@ function InvoicesPageInner() {
   const searchParams = useSearchParams();
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
-  /** Deep-link target: `?open=INV-XXX` auto-opens that invoice's dialog (set by
-   *  the "Invoiced" button on the Quotes list). Consumed once + URL cleaned. */
-  const openInvoiceId = searchParams.get("open");
 
   const { data: invoices, isLoading, error, refetch } = useInvoices();
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
@@ -215,15 +201,6 @@ function InvoicesPageInner() {
   }, [pendingSelected, generateInvoice]);
   const [generating, setGenerating] = React.useState(false);
 
-  // Strip the ?open param once the invoice list has loaded the target row,
-  // so refreshing the page doesn't keep re-opening the dialog.
-  React.useEffect(() => {
-    if (!openInvoiceId || !invoices) return;
-    if (!invoices.some((i) => i.id === openInvoiceId)) return;
-    // Wait a tick so the InvoiceRow's autoOpen effect fires first
-    const t = setTimeout(() => router.replace("/invoices" as any), 200);
-    return () => clearTimeout(t);
-  }, [openInvoiceId, invoices, router]);
 
   // Counts — split pending into bare-pending vs partial (advances applied).
   // "Partial" is derived (not a DB enum value): status='pending' AND
@@ -727,7 +704,6 @@ function InvoicesPageInner() {
           cardsBelow="xl"
           /* R-024: paint 50 at a time; counts, tabs and KPIs above still use every invoice. */
           pageSize={50}
-          revealId={openInvoiceId}
           views={{ storageKey: "invoices", current: viewState, apply: applyView }}
           toolbar={
             <>
@@ -754,14 +730,13 @@ function InvoicesPageInner() {
             </>
           }
           mobileCard={(inv) => (
-            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} autoOpen={inv.id === openInvoiceId} />
+            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} />
           )}
           renderRow={(inv, ctx) => (
             <InvoiceRow
               inv={inv}
               ctx={ctx}
               notes={noteTotals?.get(inv.id)}
-              autoOpen={inv.id === openInvoiceId}
               isProject={projectInvoiceIds?.has(inv.id) ?? false}
             />
           )}
@@ -843,28 +818,15 @@ function InvoiceNoteLines({ notes, net }: { notes?: NoteTotals; net: number }) {
 // ============================================================
 // Mobile Invoice Card — phones only
 // ============================================================
-function MobileInvoiceCard({ inv, notes, autoOpen = false }: { inv: Invoice; notes?: NoteTotals; autoOpen?: boolean }) {
+function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals }) {
   const net = netAfterNotes(inv.amount, notes);
-  const [previewOpen, setPreviewOpen] = React.useState(false);
-  /* R-085: `?open=INV-…` used to open the dialog only from the desktop row, so below
-     1280px (most laptops, every phone) the shared link landed on the list and nothing
-     opened. Same once-only guard as InvoiceRow. */
-  const autoOpenFired = React.useRef(false);
-  React.useEffect(() => {
-    if (autoOpen && !autoOpenFired.current) {
-      autoOpenFired.current = true;
-      setPreviewOpen(true);
-    }
-  }, [autoOpen]);
 
+  /* R-086: a real link to the invoice's own page (was a sheet over the list). */
   return (
-    <>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setPreviewOpen(true)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreviewOpen(true); } }}
-        className="block bg-paper border border-hairline rounded-lg p-3 active:bg-paper-2/50 cursor-pointer transition-colors"
+      <Link
+        href={invoiceHref(inv.id) as never}
+        aria-label={`Open invoice ${inv.id}`}
+        className="block bg-paper border border-hairline rounded-lg p-3 active:bg-paper-2/50 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
       >
         <div className="flex items-start justify-between gap-3 mb-1.5">
           <div className="min-w-0 flex-1">
@@ -905,16 +867,7 @@ function MobileInvoiceCard({ inv, notes, autoOpen = false }: { inv: Invoice; not
             </Badge>
           </div>
         </div>
-      </div>
-
-      {previewOpen && (
-        <InvoicePreviewContainer
-          invoice={inv}
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-        />
-      )}
-    </>
+      </Link>
   );
 }
 
@@ -925,7 +878,6 @@ function InvoiceRow({
   inv,
   ctx,
   notes,
-  autoOpen = false,
   isProject = false,
 }: {
   inv: Invoice;
@@ -933,15 +885,11 @@ function InvoiceRow({
   ctx: RowCtx;
   /** R-009: credit / debit note totals for this invoice (absent = none). */
   notes?: NoteTotals;
-  /** When true (set by `?open=INV-XX` deep link), opens the preview dialog
-   *  immediately. Fires once via a ref guard so re-renders don't re-open. */
-  autoOpen?: boolean;
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
 }) {
   const router = useRouter();
   const waSender = useWhatsAppSender();
-  const [previewOpen, setPreviewOpen] = React.useState(false);
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
   const [subPayOpen, setSubPayOpen] = React.useState(false);
@@ -952,15 +900,9 @@ function InvoiceRow({
   // Milestone behind this project invoice — lazily loaded when recording payment.
   const { data: payMilestone } = useMilestoneByInvoice(payOpen && isProject ? inv.id : null);
   const [expanded, setExpanded] = React.useState(false);
-  const autoOpenFired = React.useRef(false);
   const net = netAfterNotes(inv.amount, notes);
-
-  React.useEffect(() => {
-    if (autoOpen && !autoOpenFired.current) {
-      autoOpenFired.current = true;
-      setPreviewOpen(true);
-    }
-  }, [autoOpen]);
+  /* R-086: the invoice opens on its own page, /invoices/<id>, instead of a sheet. */
+  const openInvoice = () => router.push(invoiceHref(inv.id) as never);
 
   return (
     <>
@@ -969,8 +911,8 @@ function InvoiceRow({
       role="button"
       tabIndex={0}
       aria-label={`Open invoice ${inv.id}`}
-      onClick={() => setPreviewOpen(true)}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreviewOpen(true); } }}
+      onClick={openInvoice}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openInvoice(); } }}
     >
       {ctx.checkboxCell}
       {/* Full invoice number (mono) + type badge — never truncated. */}
@@ -1076,7 +1018,7 @@ function InvoiceRow({
               Record payment
             </Button>
           ) : inv.status !== "void" ? (
-            <Button size="sm" icon="file" variant="ghost" onClick={() => setPreviewOpen(true)}>
+            <Button size="sm" icon="file" variant="ghost" onClick={openInvoice}>
               View
             </Button>
           ) : null}
@@ -1087,13 +1029,13 @@ function InvoiceRow({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[13rem]">
               {/* Uniform secondary actions for every invoice. */}
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setPreviewOpen(true)}>
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={openInvoice}>
                 <Icon name="file" size={15} /> View / download PDF
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => {
-                  const url = `${window.location.origin}/invoices?open=${inv.id}`;
+                  const url = `${window.location.origin}${invoiceHref(inv.id)}`;
                   navigator.clipboard.writeText(url);
                   toast.success("Invoice link copied to clipboard!");
                 }}
@@ -1170,13 +1112,6 @@ function InvoiceRow({
             });
           }}
         />
-        {previewOpen && (
-          <InvoicePreviewContainer
-            invoice={inv}
-            open={previewOpen}
-            onOpenChange={setPreviewOpen}
-          />
-        )}
         {isProject && payMilestone && (
           <RecordProjectPaymentDialog
             open={payOpen}
@@ -1223,320 +1158,6 @@ function InvoiceRow({
         </td>
       </tr>
     )}
-    </>
-  );
-}
-
-/**
- * InvoicePreviewContainer — lazily loads the parent quote + advances when the
- * dialog opens, then renders TaxInvoiceDialog. Lives in its own component so
- * the network calls only fire on first "View" click (not for every row).
- */
-function InvoicePreviewContainer({
-  invoice,
-  open,
-  onOpenChange,
-}: {
-  invoice: Invoice;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const router = useRouter();
-  const [pdfDialogOpen, setPdfDialogOpen] = React.useState(false);
-  const [showItems, setShowItems] = React.useState(true);
-  const [showSummary, setShowSummary] = React.useState(true);
-  const [showPayments, setShowPayments] = React.useState(true);
-
-  const { data: quote } = useQuoteByInvoiceId(invoice.id);
-  const { data: payments } = usePaymentsByQuote(quote?.id);
-  const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
-  const { data: me } = useCurrentUser();
-  const waSender = useWhatsAppSender();
-
-  /* ── WHO IS SELLING THIS — resolved or refused, never invented ──────────────
-     This used to be `me || { tenantName: "Excel Technologies Pvt Ltd",
-     tenantGstin: "27AABCE9876D1Z3", tenantStateCode: "27", … }` — a fallback that
-     looked like a placeholder and behaved like a false declaration.
-
-     The costly part was `stateCode: "27"`. It feeds isInterStateSupply() four lines
-     below. ANUTECH is Delhi, **07**. So while `useCurrentUser` was still in flight —
-     a deep link into an invoice on a slow connection — a Delhi customer's INTRA-state
-     sale (CGST 9% + SGST 9%) was computed as **IGST 18%**. Same rupees, wrong tax
-     heads, wrong government paid, and the fix is a credit note plus a fresh invoice
-     rather than an edit. Invisible in testing; reproducible in front of a customer.
-
-     The rule now lives in lib/invoices/supplier-identity.ts with its own regression
-     test: there is no safe default for "who is selling this", so an unknown identity
-     is reported and the document is withheld. */
-  const identity = supplierIdentity(me);
-  const supplier = identity.ok ? identity.supplier : null;
-
-  /* R-010. A project-milestone invoice has no quote — it is raised from a milestone — and
-     a subscription instalment deliberately leaves quote_id null. Both write their own
-     `invoices.line_items`, and this read of the quote alone is why the dialog and the PDF
-     printed "No line items recorded on the parent quote." over a correct ₹5,00,000 + GST:
-     right money, a document that did not say what was sold (CGST Rule 46(g)). */
-  const lineItems = quote?.line_items ?? invoice.line_items ?? [];
-  /* R-066. This used to be `subtotal = quote?.subtotal ?? invoice.amount` and then 18%
-     on top — but `invoice.amount` is the GST-INCLUSIVE gross, so a quote-less invoice
-     was taxed on tax: ₹5,90,000 showed "Tax Total ₹1,06,200" instead of ₹90,000.
-     Quote-less is the NORMAL case for project-milestone and subscription-instalment
-     invoices, and `quote` is also undefined on every first render while the query is in
-     flight, so the wrong figure flashed on quote-backed invoices too.
-
-     One call, and it is the same one the server PDF builder makes — these four numbers
-     go straight into TaxInvoiceDialog and both PDF buttons below, so the file a customer
-     receives was wrong in the same way. */
-  const { subtotal, discount, taxable, taxRate, tax } = invoiceDisplayAmounts(invoice, quote);
-  const total     = quote?.amount ?? invoice.amount;
-
-  /* `supplier` is null until the identity is complete, so this cannot silently pick a
-     side. `undefined` makes isInterStateSupply say "I don't know" instead of guessing —
-     and the PDF button below is disabled while that is the case. */
-  const interState = isInterStateSupply(
-    customer?.state_code,
-    supplier?.stateCode,
-    { customerGstin: customer?.gstin, sellerGstin: supplier?.gstin },
-  );
-  const receivedPayments = (payments ?? []).filter((p) => p.status === "received");
-
-  return (
-    <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="sm:max-w-xl w-full p-0 flex flex-col h-full bg-paper overflow-y-auto">
-          {/* R-202. On a 375px phone the three buttons used to sit in one shrink-0 row beside
-              the invoice number, making the sheet 446px wide: PDF off-screen, sideways scroll,
-              and the R-187 preview opened from it cut off. Below sm the row and the button
-              group wrap; from sm up (576px sheet) they stay on one line as before. */}
-          <SheetHeader className="p-4 border-b border-hairline bg-paper-2 sticky top-0 z-20 flex flex-row flex-wrap sm:flex-nowrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-base font-bold text-ink">{invoice.id}</span>
-                <Badge kind={invoice.status === "paid" ? "success" : "warning"} size="sm" dot>
-                  {invoice.status}
-                </Badge>
-              </div>
-              <SheetTitle className="text-xs font-medium text-ink-2 mt-0.5">
-                {cleanDisplayName(invoice.customer_name)}
-              </SheetTitle>
-            </div>
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
-              {quote?.id && (
-                /* "View quote" — same reasoning as tax-invoice-dialog.tsx. This opens the
-                   quote hub, which is a read-only view, and an issued tax invoice is no
-                   place to suggest editing the figures behind it (CGST §31; corrections are
-                   credit/debit notes under §34). */
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon="file"
-                  onClick={() => {
-                    onOpenChange(false);
-                    router.push(`/quotes/${quote.id}` as any);
-                  }}
-                >
-                  View quote
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="primary"
-                icon="whatsapp"
-                onClick={() => window.open(getInvoiceWhatsAppUrl(invoice, customer?.contact_phone, waSender), "_blank")}
-              >
-                WhatsApp
-              </Button>
-              {/* §24 — a block never dead-ends. The button stays visible and clickable so
-                  the operator learns WHY rather than wondering why nothing happens, and
-                  the toast carries the route to the fix. */}
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="file"
-                onClick={() => {
-                  if (!supplier) {
-                    const msg = supplierIdentityMessage(identity)!;
-                    toast.error("Can't issue this Tax Invoice yet", {
-                      description: msg,
-                      action: identity.ok || !identity.hasSession ? undefined : {
-                        label: "Open Settings",
-                        onClick: () => router.push("/settings"),
-                      },
-                    });
-                    return;
-                  }
-                  setPdfDialogOpen(true);
-                }}
-              >
-                PDF
-              </Button>
-            </div>
-          </SheetHeader>
-
-          <div className="p-4 space-y-4 flex-1">
-            {/* 🔽 Collapsible Panel 1: Invoice Overview & Tax Summary */}
-            <Card className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowSummary((s) => !s)}
-                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Icon name="receipt" size={14} className="text-ink-3" />
-                  <span>Invoice Overview & GST Summary</span>
-                </div>
-                <Icon name={showSummary ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-              </button>
-
-              {showSummary && (
-                <div className="p-4 space-y-3 text-xs">
-                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-hairline/60">
-                    <div>
-                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Total Amount</p>
-                      <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(total)}</p>
-                    </div>
-                    <div>
-                      <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Net Payable</p>
-                      <p className="font-serif text-lg font-bold text-emerald tabular-nums mt-0.5">{rupee(invoice.net_payable ?? total)}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-ink-2">
-                    <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
-                    <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
-                    {/* R-043: the place of supply and tax head FROZEN on the invoice (Rule 46 name + code), not today's customer. */}
-                    <div><span className="text-ink-3">Place of Supply:</span> {placeOfSupplyLabel({ posCode: invoice.pos_state_code, interState: invoice.inter_state ?? !!interState, isExport: invoice.pos_state_code === "96", country: invoice.customer_country })}</div>
-                    <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({taxRate}%)</div>
-                  </div>
-                </div>
-              )}
-            </Card>
-
-            {/* 🔽 Collapsible Panel 2: Line Items & HSN/SAC Breakdown */}
-            <Card className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowItems((s) => !s)}
-                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Icon name="file" size={14} className="text-ink-3" />
-                  <span>Line Items ({lineItems.length > 0 ? lineItems.length : "1"})</span>
-                </div>
-                <Icon name={showItems ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-              </button>
-
-              {showItems && (
-                <div className="p-3">
-                  {lineItems.length > 0 ? (
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-hairline text-ink-3 text-3xs uppercase">
-                          <th className="text-left py-1">Description</th>
-                          <th className="text-center py-1">HSN/SAC</th>
-                          <th className="text-right py-1">Qty</th>
-                          <th className="text-right py-1">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-hairline/60">
-                        {lineItems.map((item, idx) => (
-                          <tr key={idx}>
-                            <td className="py-2 font-medium text-ink">{item.name}</td>
-                            <td className="py-2 text-center text-ink-3 font-mono text-2xs">{(item as { hsn?: string | null }).hsn || SAAS_HSN}</td>
-                            <td className="py-2 text-right tabular-nums">{item.qty}</td>
-                            <td className="py-2 text-right font-medium tabular-nums">{rupee((item.rate ?? 0) * (item.qty ?? 1))}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      {/* R-084 (1 Oct 2026): a coupon's discount was invisible here — line ₹600,
-                          total ₹637 (540 + 97) with no −₹60 anywhere on screen, though the PDF
-                          showed it. Same numbers as the PDF (invoiceDisplayAmounts). */}
-                      {discount > 0 && (
-                        <tfoot className="border-t border-hairline text-ink-2">
-                          <tr>
-                            <td colSpan={3} className="pt-2 text-right">Subtotal</td>
-                            <td className="pt-2 text-right tabular-nums">{rupee(subtotal)}</td>
-                          </tr>
-                          <tr>
-                            <td colSpan={3} className="py-1 text-right">Discount{quote?.discount_pct ? ` (${quote.discount_pct}%)` : ""}</td>
-                            <td className="py-1 text-right tabular-nums text-emerald">−{rupee(discount)}</td>
-                          </tr>
-                          <tr className="font-semibold text-ink">
-                            <td colSpan={3} className="text-right">Taxable value</td>
-                            <td className="text-right tabular-nums">{rupee(taxable)}</td>
-                          </tr>
-                        </tfoot>
-                      )}
-                    </table>
-                  ) : (
-                    <p className="text-xs text-ink-3 italic p-2">Standard Subscription License Supply (HSN {SAAS_HSN})</p>
-                  )}
-                </div>
-              )}
-            </Card>
-
-            {/* 🔽 Collapsible Panel 3: Payments & Receipts Accordion */}
-            <Card className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowPayments((s) => !s)}
-                className="w-full px-4 py-3 bg-paper-2/60 border-b border-hairline flex items-center justify-between font-semibold text-xs text-ink hover:bg-paper-2 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Icon name="rupee" size={14} className="text-ink-3" />
-                  <span>Payment Receipts & Advance Adjustments</span>
-                </div>
-                <Icon name={showPayments ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
-              </button>
-
-              {showPayments && (
-                <div className="p-4">
-                  <InvoicePaymentsAccordion inv={invoice} />
-                </div>
-              )}
-            </Card>
-
-            {/* 🔽 Collapsible Panel 4: Internal Notes */}
-            <Card className="p-4">
-              <p className="text-xs font-semibold text-ink mb-2">Internal Notes & History</p>
-              <InvoiceNotesList invoiceId={invoice.id} />
-            </Card>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* `supplier &&` is load-bearing, not defensive. Without a complete identity this
-          dialog would render a Tax Invoice headed by whatever was available — which is
-          how the fabricated GSTIN used to reach the page. No identity, no document. */}
-      {pdfDialogOpen && supplier && (
-        <TaxInvoiceDialog
-          open={pdfDialogOpen}
-          onOpenChange={setPdfDialogOpen}
-          invoice={invoice}
-          lineItems={lineItems}
-          subtotal={subtotal}
-          discountPct={quote?.discount_pct ?? 0}
-          discount={discount}
-          taxable={taxable}
-          taxRate={taxRate}
-          tax={tax}
-          total={total}
-          receivedPayments={receivedPayments}
-          interState={interState}
-          customerGstin={customer?.gstin}
-          customerEmail={customer?.contact_email}
-          customerPhone={customer?.contact_phone}
-          customerState={customer?.state}
-          customerCountry={customer?.country}
-          currency={quote?.currency}
-          exchangeRate={quote?.exchange_rate}
-          tenantName={supplier.name}
-          tenantGstin={supplier.gstin}
-          tenantEmail={supplier.email}
-          tenantPhone={supplier.phone}
-          tenantAddress={supplier.address}
-          tenantState={supplier.state}
-        />
-      )}
     </>
   );
 }
@@ -1699,142 +1320,6 @@ function DeleteInvoiceDialog({
   );
 }
 
-/** Credit / debit notes issued against this invoice — shown in the expand so a
- *  note (which quietly lowered/raised the balance) is auditable. */
-function InvoiceNotesList({ invoiceId }: { invoiceId: string }) {
-  const { data: creditNotes } = useCreditNotesByInvoice(invoiceId);
-  const { data: debitNotes } = useDebitNotesByInvoice(invoiceId);
-  const notes = [
-    ...(creditNotes ?? []).map((n) => ({ ...n, kind: "credit" as const, date: n.credit_date })),
-    ...(debitNotes ?? []).map((n) => ({ ...n, kind: "debit" as const, date: n.debit_date })),
-  ].sort((a, b) => b.date.localeCompare(a.date));
-  if (notes.length === 0) return null;
-
-  return (
-    <div>
-      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-        Credit &amp; debit notes ({notes.length})
-      </div>
-      <ul className="space-y-1.5">
-        {notes.map((n) => (
-          <li key={n.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
-            <span className="flex items-center gap-2 min-w-0">
-              <span className={`text-3xs font-semibold uppercase px-1.5 py-0.5 rounded ${n.kind === "credit" ? "bg-rose/10 text-rose" : "bg-indigo-soft text-indigo-ink"}`}>
-                {n.kind === "credit" ? "Credit" : "Debit"} note
-              </span>
-              <span className="font-mono text-2xs text-ink truncate">{n.id}</span>
-              <span className="text-2xs text-ink-3 capitalize">· {n.reason_code.replace(/_/g, " ")}</span>
-            </span>
-            <span className="flex items-center gap-3 shrink-0">
-              <span className={`tabular-nums text-sm font-medium ${n.kind === "credit" ? "text-rose" : "text-indigo-ink"}`}>
-                {n.kind === "credit" ? "−" : "+"} {rupee(n.amount)}
-              </span>
-              <span className="text-2xs text-ink-3">{formatDate(n.date)}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function InvoicePaymentsAccordion({ inv }: { inv: Invoice }) {
-  const { data: quote } = useQuoteByInvoiceId(inv.id);
-  const { data: payments, isLoading } = usePaymentsByQuote(quote?.id);
-  // Project invoices have no parent quote — their receipts live in project_payments.
-  const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
-  const { data: customer } = useCustomer(inv.customer_id ?? undefined);
-  const { data: me } = useCurrentUser();
-  const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
-
-  const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
-
-  if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
-
-  // Project-sale invoice: render its project payments as the receipts.
-  if (received.length === 0 && (projPays?.length ?? 0) > 0) {
-    return (
-      <div>
-        <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-          Payment receipts ({projPays!.length})
-        </div>
-        <ul className="space-y-1.5">
-          {projPays!.map((p) => (
-            <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
-              <span className="flex items-center gap-2 min-w-0">
-                <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
-                <span className="text-xs text-ink capitalize">{p.method ?? "Payment"}{p.reference ? ` · ${p.reference}` : ""}</span>
-                {p.bank_txn_id && <span className="text-3xs text-emerald">· bank-reconciled</span>}
-              </span>
-              <span className="flex items-center gap-3 shrink-0">
-                <span className="tabular-nums text-sm font-medium text-ink">{rupee(p.amount)}</span>
-                <span className="text-2xs text-ink-3">{formatDate(p.received_at)}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
-
-  if (received.length === 0) {
-    return <div className="text-xs text-ink-3">No payment receipts recorded for this invoice yet.</div>;
-  }
-
-  return (
-    <div>
-      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-        Payment receipts ({received.length})
-      </div>
-      <ul className="space-y-1.5">
-        {received.map((p) => (
-          <li key={p.id}>
-            <button
-              type="button"
-              onClick={() => setReceiptPayment(p)}
-              className="w-full flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2 text-left transition-colors hover:border-amber-soft hover:bg-amber-soft/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-              title="Open receipt voucher"
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <Icon name="receipt" size={14} className="text-amber-ink shrink-0" />
-                <span className="font-mono text-xs text-ink truncate">{p.receipt_voucher_no ?? "Receipt"}</span>
-                <span className="text-2xs text-ink-3 capitalize">· {p.method}</span>
-              </span>
-              <span className="flex items-center gap-3 shrink-0">
-                <span className="tabular-nums text-sm font-medium text-ink">{rupee(p.amount)}</span>
-                <span className="text-2xs text-ink-3">{formatDate(p.received_at)}</span>
-                <Icon name="chevron_right" size={12} className="text-ink-3" />
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      {receiptPayment && me && (
-        <ReceiptVoucherDialog
-          open={!!receiptPayment}
-          onOpenChange={(o) => { if (!o) setReceiptPayment(null); }}
-          payment={receiptPayment}
-          customerName={inv.customer_name}
-          customerGstin={customer?.gstin}
-          customerEmail={customer?.contact_email}
-          customerAddress={customer?.address}
-          tenantName={me.tenantName}
-          tenantGstin={me.tenantGstin}
-          tenantEmail={me.tenantEmail}
-          tenantPhone={me.tenantPhone}
-          tenantAddress={me.tenantAddress}
-          tenantState={me.tenantState}
-          interState={interState}
-          quoteId={quote?.id}
-          gstRate={quote?.tax_rate ?? 18}
-        />
-      )}
-    </div>
-  );
-}
-
 // ============================================================
 // BucketTile — aging bucket summary for pending invoice generation
 // ============================================================
@@ -1863,7 +1348,31 @@ function BucketTile({ label, count, amount, tone }: {
 export default function InvoicesPage() {
   return (
     <React.Suspense fallback={<div className="p-8 text-sm text-ink-3">Loading invoices…</div>}>
-      <InvoicesPageInner />
+      <InvoicesRoute />
     </React.Suspense>
+  );
+}
+
+/* R-086: `?open=<id>` is the OLD deep link — already sent on WhatsApp/email, and still built
+   by the command palette, quotes, payments and deal timelines. It is forwarded to the
+   invoice's own page with replace(), so Back skips the hop and lands where the user was,
+   and the list is not rendered (or fetched) only to be thrown away. */
+function InvoicesRoute() {
+  const searchParams = useSearchParams();
+  const target = legacyOpenRedirect(searchParams.get("open"));
+  if (target) return <LegacyOpenRedirect to={target} />;
+  return <InvoicesPageInner />;
+}
+
+function LegacyOpenRedirect({ to }: { to: string }) {
+  const router = useRouter();
+  React.useEffect(() => {
+    router.replace(to as never);
+  }, [to, router]);
+  return (
+    <div className="p-8 text-sm text-ink-3" role="status">
+      Opening invoice…{" "}
+      <Link href={to as never} className="underline hover:text-ink">Open it now</Link>
+    </div>
   );
 }

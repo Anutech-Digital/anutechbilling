@@ -86,7 +86,10 @@ describe("invoices list wiring", () => {
   const page = readFileSync("src/app/(app)/invoices/page.tsx", "utf8");
   it("reads note totals once for the list, not per-invoice hooks inside rows", () => {
     expect(page).toMatch(/useInvoiceNoteTotals\(\)/);
-    // The per-invoice hooks are only for the expanded notes list.
-    expect(page.match(/useCreditNotesByInvoice\(/g)?.length).toBe(1);
+    // The per-invoice hooks are only for the expanded notes list, which R-086 moved into
+    // invoice-detail.tsx (the list imports InvoiceNotesList from there).
+    expect(page).not.toMatch(/useCreditNotesByInvoice\(/);
+    const detail = readFileSync("src/app/(app)/invoices/invoice-detail.tsx", "utf8");
+    expect(detail.match(/useCreditNotesByInvoice\(/g)?.length).toBe(1);
   });
 });
