@@ -39,6 +39,7 @@ import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.serv
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
+import { buildLinesFromCatalog, type CatalogPriceRow } from "./pricing";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -78,46 +79,7 @@ const checkoutSchema = z.object({
   simulate:    z.boolean().optional(),
 });
 
-// Last-resort fallback ₹/user/month — used only when the catalog lookup
-// returns no row (e.g. SKU was disabled while a visitor was on the page).
-// MUST match the seeded catalog MSRP (retail) defaults so a catalog-miss can
-// never charge a different price than enquiry/quote (audit fix #10).
-// (The enquiry route shares src/lib/pricing/workspace.ts; this in-file copy is
-// kept catalog-aligned — TODO: adopt the shared module here too for full DRY.)
-// R-157: Standard was 864 (an expired 20%-off promo). Enterprise is not sold online at all —
-// see the refusal in POST — so it has no fallback price here.
-const TIER_FALLBACK_MONTHLY: Record<string, number> = {
-  starter:    270,
-  standard:   1080,
-  plus:       1380,
-};
-
-const TIER_DISPLAY_NAME: Record<string, string> = {
-  starter:    "Business Starter",
-  standard:   "Business Standard",
-  plus:       "Business Plus",
-  enterprise: "Enterprise",
-};
-
-interface QuoteLine {
-  id:          string;
-  name:        string;
-  qty:         number;
-  rate:        number;
-  cost:        number;
-  commitment:  "annual_yearly";
-}
-
-interface CatalogPriceRow {
-  id:        string;
-  name:      string;
-  msrp:      number;
-  wholesale: number | null;
-  prices: {
-    annual?:  { msrp: number; wholesale: number };
-    monthly?: { msrp: number; wholesale: number };
-  } | null;
-}
+// R-206: pricing (catalogue row → floored ₹/seat/month → lines → GST total) lives in ./pricing.
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -152,47 +114,6 @@ async function fetchCatalogPrice(
     return null;
   }
   return (data as CatalogPriceRow | null) ?? null;
-}
-
-/**
- * Resolve the ₹/user/month MSRP for a tier. Source of truth = catalog
- * `prices.annual.msrp`, with `items.msrp` and the in-file fallback as
- * defence-in-depth. Returns `0` only if literally nothing is available.
- */
-function resolveMonthlyMsrp(row: CatalogPriceRow | null, tierId: string): number {
-  if (row) {
-    const annualMonthly = row.prices?.annual?.msrp;
-    if (Number.isFinite(annualMonthly) && (annualMonthly ?? 0) > 0) return annualMonthly!;
-    if (Number.isFinite(row.msrp) && row.msrp > 0) return row.msrp;
-  }
-  return TIER_FALLBACK_MONTHLY[tierId] ?? 0;
-}
-
-/**
- * Compose the quote line items + GST-inclusive total from the (catalog,
- * tierId, seats) tuple. Single source of pricing for the whole route.
- */
-function buildLinesFromCatalog(
-  row: CatalogPriceRow | null,
-  tierId: string,
-  seats: number,
-) {
-  const monthly  = resolveMonthlyMsrp(row, tierId);
-  const rate     = monthly * 12;  // ₹/seat/year — what we store on line items
-  const tierName = row?.name?.replace(/^Google Workspace\s*/i, "")
-                || TIER_DISPLAY_NAME[tierId]
-                || "Workspace";
-  const items: QuoteLine[] = [{
-    id:         globalThis.crypto?.randomUUID() ?? Math.random().toString(36).slice(2),
-    name:       row?.name ?? `Google Workspace · ${tierName} (annual)`,
-    qty:        seats,
-    rate,
-    cost:       0,
-    commitment: "annual_yearly",
-  }];
-  const subtotal = items.reduce((s, i) => s + i.qty * i.rate, 0);
-  const amount   = Math.round(subtotal * 1.18);
-  return { items, subtotal, amount, tierName, monthlyMsrp: monthly };
 }
 
 export async function POST(request: NextRequest) {
