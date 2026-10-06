@@ -304,8 +304,8 @@ export function DomainLanding() {
                 </div>
               </div>
               <div style={{ background: C.tint, border: `1px solid ${C.line}`, borderRadius: 12, padding: 18 }}>
-                <div style={{ ...eyebrow, color: C.muted, fontSize: 11 }}>Domains to move — one per line</div>
-                <textarea value={transferText} onChange={(e) => setTransferText(e.target.value)}
+                <label htmlFor="transfer-domains" style={{ ...eyebrow, color: C.muted, fontSize: 11, display: "block" }}>Domains to move — one per line</label>
+                <textarea id="transfer-domains" value={transferText} onChange={(e) => setTransferText(e.target.value)}
                   placeholder={"yourname.in  AUTH-CODE\nanother.com  AUTH-CODE"}
                   style={{ width: "100%", height: 148, marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 8, background: C.card, padding: 12, fontFamily: MONO, fontSize: 13.5, lineHeight: 1.6, resize: "vertical", color: C.ink, outline: "none" }} />
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>

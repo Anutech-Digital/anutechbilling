@@ -86,8 +86,9 @@ export default function CartPage() {
 
         {/* Sticky, quote page ke estimate jaisa — lambi cart me total hamesha dikhe. */}
         <aside className="card" style={{ position: "sticky", top: 84 }}>
-          <label className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 8 }}>COUPON</label>
+          <label htmlFor="cart-coupon" className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 8 }}>COUPON</label>
           <input
+            id="cart-coupon"
             value={cart.coupon}
             onChange={(e) => cart.setCoupon(e.target.value)}
             placeholder="ANUTECH10"

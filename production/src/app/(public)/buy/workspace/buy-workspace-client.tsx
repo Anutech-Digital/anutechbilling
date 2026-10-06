@@ -22,6 +22,7 @@ import { z } from "zod";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
@@ -1444,10 +1445,12 @@ export function BuyWorkspaceClient({
 
               {/* Tier picker — segmented control */}
               <div className="mb-4">
-                <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+                <p id="plan-picker-label" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                   Which plan?
-                </label>
+                </p>
                 <div
+                  role="group"
+                  aria-labelledby="plan-picker-label"
                   className="grid gap-1.5 p-1 rounded-lg bg-paper border border-hairline"
                   style={{ gridTemplateColumns: `repeat(${TIERS.length}, minmax(0, 1fr))` }}
                 >
@@ -2398,13 +2401,14 @@ function TrialDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-center p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-md w-full max-h-[90vh] overflow-y-auto border-2 border-emerald/30"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: on ui/dialog (Radix) — focus stays inside, Esc closes, focus returns to the
+       button that opened it. The hand-made overlay let Tab walk out into the page behind. */
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!w-[min(28rem,calc(100vw-2rem))] border-2 border-emerald/30"
       >
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
@@ -2413,9 +2417,9 @@ function TrialDialog({
                 <Icon name="rocket" size={11} />
                 14-day free trial · no card needed
               </div>
-              <h2 className="font-serif text-2xl leading-tight">
+              <DialogTitle className="font-serif text-2xl leading-tight">
                 Try <GWInline /> free
-              </h2>
+              </DialogTitle>
               <p className="text-sm text-ink-3 mt-1">
                 <span className="font-medium">{tier.name}</span> · {initialSeats} {initialSeats === 1 ? "user" : "users"}
               </p>
@@ -2488,8 +2492,8 @@ function TrialDialog({
             </p>
           </form>
         </div>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2532,13 +2536,13 @@ function EnquiryDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-center p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-md w-full max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: ui/dialog — focus trap, Esc, focus return (see TrialDialog). */
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!w-[min(28rem,calc(100vw-2rem))]"
       >
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
@@ -2546,9 +2550,9 @@ function EnquiryDialog({
               <div className="text-3xs uppercase tracking-wider text-ink-3 mb-1 font-semibold">
                 Quote request
               </div>
-              <h2 className="font-serif text-2xl leading-tight">
+              <DialogTitle className="font-serif text-2xl leading-tight">
                 <GWInline />
-              </h2>
+              </DialogTitle>
               <p className="text-sm text-ink-3 mt-1">
                 <span className="font-medium">{tier.name}</span> · {billing}
               </p>
@@ -2621,8 +2625,8 @@ function EnquiryDialog({
             </p>
           </form>
         </div>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2798,6 +2802,8 @@ function BuyNowDialog({
   const [couponApplied,  setCouponApplied]  = React.useState<AppliedCoupon | null>(null);
   const [couponError,    setCouponError]    = React.useState<string | null>(null);
   const [validatingCoupon, setValidatingCoupon] = React.useState(false);
+  /* R-023: true while Razorpay's window is open — the dialog steps aside (see the return). */
+  const [rzpOpen, setRzpOpen] = React.useState(false);
 
   // Pre-promo subtotal + discount line — needed for the breakdown card.
   // (calc.annual is the post-promo pre-GST subtotal, calc.savings is the
@@ -2993,6 +2999,7 @@ function BuyNowDialog({
       },
       modal: {
         ondismiss: () => {
+          setRzpOpen(false);
           toast.message("Payment cancelled. We've saved your quote — Pardeep will follow up.");
         },
         escape: true,
@@ -3001,6 +3008,7 @@ function BuyNowDialog({
     rzp.on("payment.failed", (resp) => {
       toast.error(`Payment failed: ${resp.error?.description ?? "Please retry or use WhatsApp."}`);
     });
+    setRzpOpen(true);
     rzp.open();
   }
 
@@ -3009,13 +3017,17 @@ function BuyNowDialog({
   const SEAT_PRESETS = [5, 10, 25, 50, 100, 250];
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-start lg:place-items-center p-2 sm:p-4 backdrop-blur-sm overflow-y-auto"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-4xl w-full my-4 lg:my-0 border-2 border-amber/30 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: ui/dialog — focus trap, Esc, focus return. While Razorpay's own window is up
+       this dialog steps aside (rzpOpen): a Radix modal blocks pointer events and focus
+       outside itself, and Razorpay's window lives outside it — the visitor could not have
+       typed a UPI id. Form values survive (react-hook-form keeps them; tier, seats and
+       coupon are this component's state), so dismissing Razorpay brings the form back filled. */
+    <Dialog open={!rzpOpen} onOpenChange={(o) => { if (!o && !rzpOpen) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!max-w-4xl md:!w-[min(56rem,calc(100vw-2rem))] border-2 border-amber/30 shadow-2xl"
       >
         {/* Sticky header — survives the long form scroll on mobile */}
         <div className="sticky top-0 z-10 bg-paper border-b border-hairline px-5 sm:px-6 py-4 flex items-start justify-between rounded-t-xl">
@@ -3031,9 +3043,9 @@ function BuyNowDialog({
                 Instant checkout · UPI / Card / NetBanking
               </div>
             )}
-            <h2 className="font-serif text-2xl leading-tight">
+            <DialogTitle className="font-serif text-2xl leading-tight">
               Buy <GWInline />
-            </h2>
+            </DialogTitle>
             <p className="text-xs text-ink-3 mt-0.5">
               {isSimulation
                 ? "Walks the full pipeline (lead → quote → customer + emails) without taking real money."
@@ -3058,10 +3070,12 @@ function BuyNowDialog({
             {/* Tier picker */}
             {buyableTiers.length > 1 && (
               <div>
-                <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+                <p id="buy-plan-label" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                   1 · Choose your plan
-                </label>
+                </p>
                 <div
+                  role="group"
+                  aria-labelledby="buy-plan-label"
                   className="grid gap-1.5 p-1 rounded-lg bg-paper border border-hairline"
                   style={{ gridTemplateColumns: `repeat(${buyableTiers.length}, minmax(0, 1fr))` }}
                 >
@@ -3094,7 +3108,7 @@ function BuyNowDialog({
 
             {/* Seat stepper */}
             <div>
-              <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+              <label htmlFor="buy-seats" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                 {buyableTiers.length > 1 ? "2 · " : ""}How many users?
               </label>
 
@@ -3109,6 +3123,7 @@ function BuyNowDialog({
                   −
                 </button>
                 <input
+                  id="buy-seats"
                   type="number"
                   min={1}
                   max={10000}
@@ -3233,7 +3248,7 @@ function BuyNowDialog({
                 Validation hits /api/public/coupons/validate (dry-run); actual
                 redemption only happens at checkout. */}
             <div className="p-3 rounded-xl border border-dashed border-hairline bg-paper/60">
-              <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-1.5 inline-flex items-center gap-1.5">
+              <label htmlFor="buy-coupon" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-1.5 inline-flex items-center gap-1.5">
                 <Icon name="rupee" size={11} /> Have a coupon code?
               </label>
               {couponApplied ? (
@@ -3259,6 +3274,7 @@ function BuyNowDialog({
                 <>
                   <div className="flex items-stretch gap-2">
                     <input
+                      id="buy-coupon"
                       type="text"
                       value={couponInput}
                       onChange={(e) => {
@@ -3406,8 +3422,8 @@ function BuyNowDialog({
             </p>
           </div>
         </form>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

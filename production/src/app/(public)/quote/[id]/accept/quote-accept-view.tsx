@@ -8,6 +8,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
@@ -905,27 +906,19 @@ export function QuoteAcceptView({
         </div>
       </div>
 
-      {/* Accept with Purchase Order (PO) Dialog */}
-      {poOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => !accepting && setPoOpen(false)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="bg-paper w-full sm:max-w-md rounded-t-2xl sm:rounded-xl shadow-lg border border-hairline p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Accept with Purchase Order (PO) Dialog — R-023: on ui/dialog (Radix) so focus stays
+          inside, Esc closes and focus returns to the button; not closable mid-submit. */}
+      <Dialog open={poOpen} onOpenChange={(o) => { if (!o && !accepting) setPoOpen(false); }}>
+        <DialogContent hideClose resizable={false} aria-describedby="po-dialog-desc" className="gap-0 md:!w-[min(28rem,calc(100vw-2rem))]">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-full bg-indigo/10 text-indigo grid place-items-center shrink-0">
                 <Icon name="file" size={20} />
               </div>
               <div>
-                <h3 className="font-serif text-xl text-ink leading-tight">
+                <DialogTitle className="font-serif text-xl text-ink leading-tight">
                   Submit Purchase Order (PO)
-                </h3>
-                <p className="text-xs text-ink-3">Accept quote with PO details or request Proforma Invoice</p>
+                </DialogTitle>
+                <p id="po-dialog-desc" className="text-xs text-ink-3">Accept quote with PO details or request Proforma Invoice</p>
               </div>
             </div>
             <div className="space-y-3 mt-4">
@@ -980,30 +973,20 @@ export function QuoteAcceptView({
                 Submit &amp; Accept
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Accept confirmation — styled dialog, not a browser confirm() */}
-      {confirmOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => !accepting && setConfirmOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="accept-confirm-title"
-        >
-          <div
-            className="bg-paper w-full sm:max-w-md rounded-t-2xl sm:rounded-xl shadow-lg border border-hairline p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* R-023: ui/dialog — focus trap, Esc, focus return; not closable mid-submit. */}
+      <Dialog open={confirmOpen} onOpenChange={(o) => { if (!o && !accepting) setConfirmOpen(false); }}>
+        <DialogContent hideClose resizable={false} aria-describedby={undefined} className="gap-0 md:!w-[min(28rem,calc(100vw-2rem))]">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-full bg-emerald/10 text-emerald grid place-items-center shrink-0">
                 <Icon name="check_circle" size={20} />
               </div>
-              <h3 id="accept-confirm-title" className="font-serif text-xl text-ink leading-tight">
+              <DialogTitle className="font-serif text-xl text-ink leading-tight">
                 Accept this quote?
-              </h3>
+              </DialogTitle>
             </div>
             <p className="text-sm text-ink-2 leading-relaxed">
               You&apos;re accepting quote <span className="font-mono text-ink">{quote.id}</span> for{" "}
@@ -1105,9 +1088,8 @@ export function QuoteAcceptView({
                 {liveConfig?.changed && !liveConfig.selfAcceptable ? "Send to reseller" : "Confirm & accept"}
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
