@@ -65,6 +65,7 @@ import { CustomerCombobox } from "@/components/features/customers/customer-combo
 import { useCustomers } from "@/lib/queries/customers";
 import type { Lead, LeadPriority } from "@/lib/supabase/database.types";
 import { formatIstDate, istToday } from "@/lib/dates/ist";
+import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
 
 const STAGES = [
   { value: "new",     label: "New" },
@@ -106,9 +107,11 @@ const PLANS = [
  * Plans not in this map (e.g. Custom) skip auto-calculation.
  */
 const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
-  "Google Workspace Business Starter":          136,
-  "Google Workspace Standard":         736,
-  "Google Workspace Plus":            1380,
+  /* R-205: GW list prices come from ONE place (lib/pricing/workspace.ts) — this map used
+     to carry its own ₹136 / ₹736, under cost. */
+  "Google Workspace Business Starter": WORKSPACE_LIST_PRICE_PM.starter,
+  "Google Workspace Standard":         WORKSPACE_LIST_PRICE_PM.standard,
+  "Google Workspace Plus":             WORKSPACE_LIST_PRICE_PM.plus,
   "Google Workspace Enterprise":      2000,
   "Microsoft 365 Business Basic":      145,
   "Microsoft 365 Business Standard":   735,

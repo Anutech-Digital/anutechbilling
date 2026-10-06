@@ -63,6 +63,7 @@ import {
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
+import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
  *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
@@ -77,9 +78,11 @@ const isRegistrationLine = (l: QuoteLineItem) =>
 // Plan → monthly price per seat (same map used in Add Lead form).
 // Cost approximated at 70% of rate (≈30% reseller margin); user can edit per line.
 const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
-  "Google Workspace Business Starter": 136,
-  "Google Workspace Standard":         736,
-  "Google Workspace Plus":            1380,
+  /* R-205: GW list prices come from ONE place (lib/pricing/workspace.ts) — this map used
+     to carry its own ₹136 / ₹736, under cost. */
+  "Google Workspace Business Starter": WORKSPACE_LIST_PRICE_PM.starter,
+  "Google Workspace Standard":         WORKSPACE_LIST_PRICE_PM.standard,
+  "Google Workspace Plus":             WORKSPACE_LIST_PRICE_PM.plus,
   "Google Workspace Enterprise":      2000,
   "Microsoft 365 Business Basic":      145,
   "Microsoft 365 Business Standard":   735,
@@ -97,7 +100,13 @@ export function QuoteBuilder() {
   // Subscription quotes only pull recurring items — one-time products live in
   // the separate Items Catalog and are quoted via project quotes.
   const { data: allCatalog } = useItems();
-  const catalog = React.useMemo(() => (allCatalog ?? []).filter((c) => c.item_type !== "one_time"), [allCatalog]);
+  /* R-205: a GW Starter/Standard/Plus row under the list price (the old ₹136 seed) is lifted
+     to the list price here, so the product chips, the lead prefill and every added line quote
+     ₹270 / ₹1,080 / ₹1,380 — never a loss-making price. */
+  const catalog = React.useMemo(
+    () => (allCatalog ?? []).filter((c) => c.item_type !== "one_time").map((c) => floorWorkspaceRow(c)),
+    [allCatalog],
+  );
   const { data: currentUser } = useCurrentUser();
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();

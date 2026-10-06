@@ -20,6 +20,8 @@
  * no monthly tier, and the website must show "annual only" rather than invent a number.
  */
 
+import { floorWorkspaceRow } from "./workspace-floor";
+
 export interface PublicWorkspaceItem {
   name: string;
   annualPerSeatMo: number;
@@ -42,15 +44,21 @@ function monthlyMsrp(prices: unknown): number | null {
 
 export function publicWorkspaceCatalog(rows: readonly CatalogRowLike[]): PublicWorkspaceItem[] {
   const out: PublicWorkspaceItem[] = [];
-  for (const r of rows) {
+  for (const raw of rows) {
+    /* R-205: a GW Starter/Standard/Plus row priced under the list price is stale (the old
+       ₹136 seed) — lifted to the list price before it reaches the website. */
+    const r = floorWorkspaceRow(raw);
     /* A row with no name or no positive customer price is not publishable — skipped, not
        nulled, so the website never renders a card it cannot price. */
     if (!r.name?.trim()) continue;
     if (typeof r.msrp !== "number" || !Number.isFinite(r.msrp) || r.msrp <= 0) continue;
+    /* A flexible price at or below the annual one is a stale row too (R-205: Starter flex
+       ₹170 against ₹270 annual) — "annual only" rather than a wrong flexible price. */
+    const flex = monthlyMsrp(r.prices);
     out.push({
       name: r.name.trim(),
       annualPerSeatMo: r.msrp,
-      monthlyPerSeatMo: monthlyMsrp(r.prices),
+      monthlyPerSeatMo: flex != null && flex > r.msrp ? flex : null,
     });
   }
   return out;
