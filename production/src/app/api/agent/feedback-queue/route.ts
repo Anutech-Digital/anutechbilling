@@ -13,6 +13,9 @@
  * a leaked token reads a work list and nothing else. Its own token, not CRON_SECRET: that
  * one can run every cron job; this one cannot run anything.
  *
+ * R-184: also returns `verify` — FIXED reports someone pressed "Check in browser (AI)" on
+ * (verify_requested_at set); the routine puts each on the board with the AI check switched on.
+ *
  * Fails closed: no AGENT_QUEUE_TOKEN configured → 503.
  */
 import { NextResponse } from "next/server";
@@ -23,6 +26,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const LIMIT = 50;
+/* What a card needs — never reporter name/email/body (route.test pins this). */
+const COLUMNS =
+  "id, title, problem_summary, directive, reported_type, inferred_type, reported_severity, severity_score, page_path, target_files, dispatched_at, created_at, filed_via";
 
 export async function GET(req: Request) {
   const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
@@ -36,13 +42,20 @@ export async function GET(req: Request) {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("feedback")
-    .select(
-      "id, title, problem_summary, directive, reported_type, inferred_type, reported_severity, severity_score, page_path, target_files, dispatched_at, created_at, filed_via",
-    )
+    .select(COLUMNS)
     .eq("status", "agent_queued")
     .order("dispatched_at", { ascending: true })
     .limit(LIMIT);
   if (error) return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
 
-  return NextResponse.json({ env: process.env.NEXT_PUBLIC_APP_ENV || "production", items: data ?? [] });
+  const { data: verify, error: verifyErr } = await admin
+    .from("feedback")
+    .select(`${COLUMNS}, verify_requested_at, resolved_at`)
+    .eq("status", "fixed")
+    .not("verify_requested_at", "is", null)
+    .order("verify_requested_at", { ascending: true })
+    .limit(LIMIT);
+  if (verifyErr) return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
+
+  return NextResponse.json({ env: process.env.NEXT_PUBLIC_APP_ENV || "production", items: data ?? [], verify: verify ?? [] });
 }
