@@ -17,6 +17,8 @@ export const COPY = {
   showLess: "Show less",
   check: "Check",
   pending: "Pending",
+  /** R-249: was "Quick add quote" / "New Quote" / "Create new quote" on different screens. */
+  newQuote: "New quote",
 } as const;
 
 export type CopyKey = keyof typeof COPY;

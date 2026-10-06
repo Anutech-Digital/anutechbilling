@@ -53,6 +53,7 @@ import {
   subscriptionHref, subscriptionStatusLabel, paymentHref, SUBSCRIPTION_SEARCH_EVENT, searchFromSubscriptionHref,
 } from "@/app/(app)/subscriptions/palette-links";
 import { paymentMethodLabel } from "@/app/(app)/payments/method-label";
+import { COPY } from "@/lib/copy";
 
 // ============================================================
 // Hook to manage open state + register ⌘K shortcut
@@ -224,7 +225,7 @@ export function CommandPalette({
   const quickActions = [
     { icon: "sparkles", label: "AI Entry",              meta: "Paste or photograph anything — it fills the entry", href: "/ai-entry" },
     { icon: "plus",    label: "Create new lead",        meta: "Open the quick-add form",                     href: "/leads?action=quick-add" },
-    { icon: "file",    label: "Create new quote",       meta: "Open Quote Builder",                          href: "/quotes/new" },
+    { icon: "file",    label: COPY.newQuote,             meta: "Open Quote Builder",                          href: "/quotes/new" },
     { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
     /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
     { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },

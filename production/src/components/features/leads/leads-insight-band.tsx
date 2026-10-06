@@ -39,7 +39,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { rupee, cn } from "@/lib/utils";
 import type { Lead } from "@/lib/supabase/database.types";
 import { istToday } from "@/lib/dates/ist";
-import { STAGE_LABEL } from "@/lib/leads/stage-meta";
+import { LEAD_STAGE_IDS, STAGE_DOT, STAGE_LABEL } from "@/lib/leads/stage-meta";
 
 export type LeadsDueFilter = "all" | "today" | "overdue" | "hot";
 
@@ -60,18 +60,13 @@ interface LeadsInsightBandProps {
 // Pipeline stages, in order. We exclude "lost" so the pulse stays focused
 // on forward-flowing leads (a "lost" graveyard segment just makes the bar
 // noisier for the question "where is my pipeline?").
-const ACTIVE_STAGES: Array<Lead["stage"]> = [
-  "new", "contact", "demo", "trial", "quote", "won",
-];
+// R-249: the funnel order and labels come from lib/leads/stage-meta, as on the board.
+const ACTIVE_STAGES: Array<Lead["stage"]> = LEAD_STAGE_IDS;
 
+const stageMeta = (s: Lead["stage"]) => ({ label: STAGE_LABEL[s], segment: STAGE_DOT[s], dot: STAGE_DOT[s] });
 const STAGE_META: Record<Lead["stage"], { label: string; segment: string; dot: string }> = {
-  new:     { label: "New",       segment: "bg-slate",   dot: "bg-slate" },
-  contact: { label: "Contacted", segment: "bg-amber",   dot: "bg-amber" },
-  demo:    { label: STAGE_LABEL.demo,  segment: "bg-indigo",  dot: "bg-indigo" },
-  trial:   { label: STAGE_LABEL.trial, segment: "bg-rose",    dot: "bg-rose" },
-  quote:   { label: STAGE_LABEL.quote, segment: "bg-indigo",  dot: "bg-indigo" },
-  won:     { label: "Won",       segment: "bg-emerald", dot: "bg-emerald" },
-  lost:    { label: "Lost",      segment: "bg-ink-3",   dot: "bg-ink-3" },
+  new: stageMeta("new"), contact: stageMeta("contact"), quote: stageMeta("quote"), demo: stageMeta("demo"),
+  trial: stageMeta("trial"), won: stageMeta("won"), lost: stageMeta("lost"),
 };
 
 export function LeadsInsightBand({

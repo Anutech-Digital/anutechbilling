@@ -63,6 +63,7 @@ import type { Quote } from "@/lib/supabase/database.types";
 import { usePagedRows, LoadMore } from "../payments/load-more";
 import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { COPY } from "@/lib/copy";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -376,11 +377,11 @@ export default function QuotesPage() {
         <div className="flex gap-2 flex-wrap">
           {view === "project" ? (
             <Button variant="primary" icon="plus" onClick={() => setProjectQuoteOpen(true)}>
-              New Quote
+              {COPY.newQuote}
             </Button>
           ) : (
             <Button asChild variant="primary" icon="plus">
-              <Link href={"/quotes/new" as any}>New Quote</Link>
+              <Link href={"/quotes/new" as any}>{COPY.newQuote}</Link>
             </Button>
           )}
         </div>

@@ -67,16 +67,10 @@ import { useCustomers } from "@/lib/queries/customers";
 import type { Lead, LeadPriority } from "@/lib/supabase/database.types";
 import { formatIstDate, istToday } from "@/lib/dates/ist";
 import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
+import { STAGE_META } from "@/lib/leads/stage-meta";
 
-const STAGES = [
-  { value: "new",     label: "New" },
-  { value: "contact", label: "Contacted" },
-  { value: "demo",    label: "Demo Done" },
-  { value: "trial",   label: "Trial Active" },
-  { value: "quote",   label: "Quote Sent" },
-  { value: "won",     label: "Won" },
-  { value: "lost",    label: "Lost" },
-] as const;
+/* R-249: the same funnel order and labels as the board (lib/leads/stage-meta). */
+const STAGES: { value: Lead["stage"]; label: string }[] = STAGE_META.map((s) => ({ value: s.id, label: s.label }));
 
 // Quote-first funnel. A lead lives in the Leads inbox (pre-quote) until a
 // quotation is sent; only then does it become a deal and unlock Demo/Trial/Won.
@@ -241,7 +235,7 @@ const schema = z.object({
   plan:          z.string().optional().or(z.literal("")),
   seats:         optionalIntField(10000),
   value:         optionalIntField(100_000_000),
-  stage:         z.enum(["new", "contact", "demo", "trial", "quote", "won", "lost"]),
+  stage:         z.enum(["new", "contact", "quote", "demo", "trial", "won", "lost"]),
   source:        z.string(),
   priority:      z.enum(["low", "medium", "high"]),
   follow_up_date: z.string().optional().or(z.literal("")),
