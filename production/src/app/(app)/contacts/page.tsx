@@ -25,6 +25,7 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
 
@@ -572,33 +573,16 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Floating campaign bar — alternative when GeminiCard not visible */}
-      {selected.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink text-paper rounded-full pl-4 pr-2 py-2 shadow-lg flex items-center gap-3 z-40">
-          <span className="text-sm">
-            <b>{selected.size}</b> selected
-          </span>
-          <button
-            onClick={() => startCampaign("email")}
-            className="text-xs px-3 py-1 rounded-full bg-paper/10 hover:bg-paper/20 transition-colors flex items-center gap-1"
-          >
-            <Icon name="mail" size={12} /> Email
-          </button>
-          <button
-            onClick={() => startCampaign("whatsapp")}
-            className="text-xs px-3 py-1 rounded-full bg-amber text-paper hover:bg-amber/90 transition-colors flex items-center gap-1"
-          >
-            <Icon name="whatsapp" size={12} /> WhatsApp blast
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="text-xs px-2 py-1 rounded-full opacity-70 hover:opacity-100"
-            aria-label="Clear selection"
-          >
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-      )}
+      {/* Selection bar — the shared BulkActionBar (R-268), so it clears the phone bottom
+          nav and stays inside 375px like every other list's bar. */}
+      <BulkActionBar count={selected.size} noun="contact" onClear={() => setSelected(new Set())}>
+        <BulkBarButton icon="mail" onClick={() => startCampaign("email")}>
+          Email
+        </BulkBarButton>
+        <BulkBarButton icon="whatsapp" onClick={() => startCampaign("whatsapp")}>
+          WhatsApp blast
+        </BulkBarButton>
+      </BulkActionBar>
     </div>
   );
 }

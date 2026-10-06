@@ -63,16 +63,23 @@ export function BulkActionBar({ count, noun, onClear, children }: BulkActionBarP
   return (
     <div
       className={cn(
-        /* Fixed bottom centre, above any sticky page footer. `pb-safe` matters on iPhone:
-           §20 calls out sticky elements sitting under the home indicator. */
-        "fixed bottom-6 left-1/2 z-40 -translate-x-1/2",
-        "mb-[env(safe-area-inset-bottom)]",
+        /* Fixed bottom centre. On phones it must clear the bottom tab bar (same z-40, 56px +
+           home indicator) — R-268: at bottom-6 it sat underneath it. --bottom-nav-h is set
+           once on the app shell (app/(app)/layout.tsx) and already includes the safe area;
+           desktop has no tab bar, so it keeps bottom-6 plus the safe-area margin (§20). */
+        "fixed bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)] left-1/2 z-40 -translate-x-1/2",
+        "md:bottom-6 md:mb-[env(safe-area-inset-bottom)]",
+        /* Never wider than a 375px phone; extra actions scroll inside the pill. */
+        "max-w-[calc(100vw-1.5rem)] overflow-x-auto",
         /* Dark command surface, so it reads as an overlay rather than as page furniture. */
         "rounded-full bg-ink text-paper shadow-2xl",
         "flex items-center gap-1 px-2 py-1.5",
         "animate-in fade-in slide-in-from-bottom-2 duration-150",
       )}
       role="toolbar"
+      /* The FAB hides itself while this is on screen (fab.tsx) — two floating controls in
+         the same thumb zone is one too many. */
+      data-bulk-bar=""
       aria-label={`Bulk actions on ${count} selected ${plural}`}
     >
       <div className="whitespace-nowrap px-3 py-1.5 text-xs font-semibold tabular-nums">
