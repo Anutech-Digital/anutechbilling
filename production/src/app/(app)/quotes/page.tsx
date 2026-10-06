@@ -6,6 +6,7 @@
 import { istToday } from "@/lib/dates/ist";
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { QUOTE_TABS } from "@/lib/navigation/drilldown";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { useTeamTree } from "@/lib/queries/team-tree";
@@ -123,6 +124,10 @@ function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { 
    here nothing could test them — which is how a quote holding ₹20,000 came to display
    "Out for review". */
 
+/** R-272: allowed values for the URL-held view and team mode (anything else → default). */
+const QUOTE_VIEWS = ["subscription", "project"] as const;
+const TEAM_MODES: readonly TeamViewMode[] = ["team", "mine"];
+
 export default function QuotesPage() {
   const router = useRouter();
   const { data: quotes, isLoading, error, refetch } = useQuotes();
@@ -157,10 +162,12 @@ export default function QuotesPage() {
   const [focus, setFocus] = useUrlChoice<QuoteFocus>("focus", QUOTE_FOCI, "");
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: QuoteFocus) => { setTab("all"); setFocus(f); };
-  const [search, setSearch] = React.useState("");
+  /* R-272: search, view and team mode live in the URL like tab/focus, so opening a quote
+     and pressing Back returns to the same filtered list instead of every quote. */
+  const [search, setSearch] = useUrlState("q", "");
   // Clean split — Subscription is the default (most quotes live here); Project
   // is one tab away. No mixed "All" view, no empty default.
-  const [view, setView] = React.useState<"subscription" | "project">("subscription");
+  const [view, setView] = useUrlChoice<"subscription" | "project">("view", QUOTE_VIEWS, "subscription");
   const [projectQuoteOpen, setProjectQuoteOpen] = React.useState(false);
   const [editProject, setEditProject] = React.useState<ProjectSaleWithTotals | null>(null);
   const deleteProject = useDeleteProjectSale();
@@ -212,7 +219,7 @@ export default function QuotesPage() {
     () => team.find((u) => u.id === me?.userId) ?? null,
     [team, me?.userId],
   );
-  const [teamMode, setTeamMode] = React.useState<TeamViewMode>("team");
+  const [teamMode, setTeamMode] = useUrlChoice<TeamViewMode>("who", TEAM_MODES, "team"); // R-272
 
   const quotesByWorkspace = React.useMemo(() => {
     const rows = quotes ?? [];
