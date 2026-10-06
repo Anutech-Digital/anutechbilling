@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,7 +116,7 @@ export default function PlaceOrderDialog({ po, open, onOpenChange }: Props) {
       toast.success(`PO ${po.id} ${verb}`);
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update PO");
+      toastError(err, { fallback: "Could not update the PO.", description: "The PO is unchanged. Refresh and try again." });
     }
   };
 
@@ -332,7 +333,7 @@ export default function PlaceOrderDialog({ po, open, onOpenChange }: Props) {
                       setSelectedBillId("");
                       setAllocAmount("");
                     } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "Could not allocate");
+                      toastError(err, { fallback: "Could not match the bill.", description: "Nothing was allocated. Check the amount is not more than the bill's balance, then try again." });
                     }
                   }}
                 >
@@ -372,7 +373,7 @@ export default function PlaceOrderDialog({ po, open, onOpenChange }: Props) {
                           await deallocMut.mutateAsync(a.id);
                           toast.success("Allocation removed");
                         } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "Could not remove");
+                          toastError(err, { fallback: "Could not remove the allocation.", description: "The bill is still matched to this PO. Refresh and try again." });
                         }
                       }}
                     />

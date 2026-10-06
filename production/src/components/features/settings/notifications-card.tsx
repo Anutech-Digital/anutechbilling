@@ -22,6 +22,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -133,14 +134,14 @@ export function NotificationsCard() {
       const result = await Notification.requestPermission();
       setPermission(result);
       if (result !== "granted") {
-        toast.error("The browser did not allow notifications for this site.");
+        toast.error("The browser did not allow notifications for this site.", { description: "Click the lock icon next to the address bar, allow Notifications, then try again." });
         return;
       }
       await save(offers ? ["operational", "offers"] : ["operational"]);
       setEnabled(true);
       toast.success("Notifications are on for this device.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not turn notifications on");
+      toastError(err, { fallback: "Could not turn notifications on.", description: "Nothing was changed. Try again — if it keeps failing, try another browser." });
     } finally {
       setBusy(false);
     }
@@ -176,7 +177,7 @@ export function NotificationsCard() {
       toast.success(next ? "Offers will be sent to this device." : "Offers turned off for this device.");
     } catch (err) {
       setOffers(!next);
-      toast.error(err instanceof Error ? err.message : "Could not save that");
+      toastError(err, { fallback: "Could not save that.", description: "Your offers setting is unchanged. Try again." });
     } finally {
       setBusy(false);
     }

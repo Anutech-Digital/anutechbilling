@@ -13,6 +13,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Sheet, SheetContent, SheetFooter } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +57,7 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
 
   const onSubmit = async () => {
     if (!companyName.trim() || !fullName.trim() || !email.trim() || !phone.trim() || !domain.trim()) {
-      toast.error("Company, contact name, email, phone, and domain are required");
+      toast.error("Some details are missing.", { description: "Company, contact name, email, phone and domain are all needed to start a trial." });
       return;
     }
     setSubmitting(true);
@@ -77,7 +78,7 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not start trial");
+        toast.error(json.error ?? "Could not start the trial.", { description: "No trial was created. Fix the details above and try again." });
         return;
       }
       toast.success(
@@ -94,7 +95,7 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
       // Take operator to the lead drawer to verify
       router.push(`/leads?lead=${json.leadId}` as never);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not start the trial.", description: "No trial was created. Check your connection and try again." });
     } finally {
       setSubmitting(false);
     }

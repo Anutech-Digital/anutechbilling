@@ -24,6 +24,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,7 +98,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
 
   const onSubmit = async () => {
     if (additionalSeats < 1) {
-      toast.error("Add at least 1 seat");
+      toast.error("Add at least 1 seat.", { description: "Enter how many seats to add to this subscription." });
       return;
     }
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
@@ -110,7 +111,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not add seats");
+        toast.error(json.error ?? "Could not add seats.", { description: "No seats were added and no quote was made. Try again." });
         return;
       }
       toast.success(
@@ -126,7 +127,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       onOpenChange(false);
       router.push(`/quotes/${json.quoteId}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not add seats.", description: "Check your connection, then try again — pressing again will not add the seats twice." });
     } finally {
       setSubmitting(false);
     }

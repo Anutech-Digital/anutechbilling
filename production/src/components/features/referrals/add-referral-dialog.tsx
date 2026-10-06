@@ -74,9 +74,9 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
 
   async function submit() {
     // Validate
-    if (isNewPartner && !newName.trim()) { toast.error("Partner ka naam daalein."); return; }
-    if (basis === "percent" && (pctNum <= 0 || pctNum > 100)) { toast.error("Percent 0–100 ke beech ho."); return; }
-    if (basis === "fixed" && fixedNum <= 0) { toast.error("Fixed amount ₹0 se zyada ho."); return; }
+    if (isNewPartner && !newName.trim()) { toast.error("Enter the partner's name.", { description: "A new partner needs a name before the referral can be saved." }); return; }
+    if (basis === "percent" && (pctNum <= 0 || pctNum > 100)) { toast.error("Percent must be between 0 and 100.", { description: "Enter the partner's share, e.g. 10 for 10%." }); return; }
+    if (basis === "fixed" && fixedNum <= 0) { toast.error("Fixed amount must be more than ₹0.", { description: "Enter the rupees the partner earns for this referral." }); return; }
 
     try {
       let usePartnerId = partnerId;

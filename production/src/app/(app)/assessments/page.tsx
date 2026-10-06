@@ -19,6 +19,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Badge } from "@/components/ui/badge";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { formatDate } from "@/lib/utils";
 import {
   useAssessments, useCreateAssessment, useAssessmentAttempts, useDeleteAssessment,
@@ -47,7 +48,7 @@ export default function AssessmentsPage() {
 
   async function copyLink(token: string) {
     try { await navigator.clipboard.writeText(testLink(token)); toast.success("Link copied — share it with your team."); }
-    catch { toast.error("Copy failed — select the link manually."); }
+    catch { toast.error("Copy failed.", { description: "Your browser blocked the clipboard. Open the test and copy the link from the address bar." }); }
   }
 
   return (
@@ -138,12 +139,12 @@ function CreateTestDialog({ onClose }: { onClose: () => void }) {
       const r = await generateQuestions({ subject, topic: topic.trim() || undefined, difficulty, count: Number(count) || 8, language });
       setQuestions(r.questions);
       setStub(r.mode === "stub");
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (e) { toastError(e, { fallback: "Could not generate questions.", description: "Nothing was saved. Try again, or lower the question count." }); }
     finally { setGenerating(false); }
   }
 
   async function save() {
-    if (questions.length === 0) { toast.error("Generate questions first."); return; }
+    if (questions.length === 0) { toast.error("Generate questions first.", { description: "Press Generate — the test needs at least one question before it can be saved." }); return; }
     await create.mutateAsync({ title, topic: topic.trim() || undefined, difficulty, questions });
     onClose();
   }

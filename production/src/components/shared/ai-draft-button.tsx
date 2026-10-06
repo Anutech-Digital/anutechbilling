@@ -57,12 +57,12 @@ export function AiDraftButton({
         body: JSON.stringify({ leadId, customerId, channel, purpose }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? "Couldn't draft."); return; }
+      if (!res.ok) { toast.error(data.error ?? "Couldn't draft.", { description: "Try again, or write the message yourself." }); return; }
       setSubject(data.subject ?? "");
       setMessage(data.message ?? "");
       setMode(data.mode ?? "stub");
     } catch {
-      toast.error("Couldn't reach the AI service.");
+      toast.error("Couldn't reach the AI service.", { description: "Check your connection and try again, or write the message yourself." });
     } finally {
       setDrafting(false);
     }
@@ -80,7 +80,7 @@ export function AiDraftButton({
       await navigator.clipboard.writeText(text);
       toast.success("Copied — paste it into WhatsApp / email");
     } catch {
-      toast.error("Couldn't copy");
+      toast.error("Couldn't copy.", { description: "Your browser blocked the clipboard. Select the text and copy it by hand." });
     }
   }
 

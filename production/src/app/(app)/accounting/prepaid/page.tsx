@@ -24,6 +24,7 @@ import { useVendors, ensureVendor, } from "@/lib/queries/vendors";
 import { uploadBillAttachment, getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   usePrepaidAdvances, useCreatePrepaidAdvance, useConsumePrepaidAdvance, useDeletePrepaidAdvance,
   useAdvanceExpenses, useConsumePrepaidFifo, useSetPrepaidAdvanceChannel,
@@ -126,8 +127,8 @@ function AdvanceCard({ r, onConsume, onDelete }: { r: PrepaidAdvance; onConsume:
     try {
       const url = await getBillAttachmentUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Could not create the bill link. Try again.");
-    } catch { toast.error("Could not open the bill."); }
+      else toast.error("Could not create the bill link.", { description: "The file is still saved. Try again in a moment — if it keeps failing, re-upload the bill." });
+    } catch (e) { toastError(e, { fallback: "Could not open the bill.", description: "The file is still saved. Refresh the page and try again." }); }
   }
 
   return (
@@ -445,7 +446,7 @@ function ConsumeDialog({ advance, onClose }: { advance: PrepaidAdvance; onClose:
     if (file) {
       setUploading(true);
       try { attachment = await uploadBillAttachment(file); }
-      catch { toast.error("Bill upload failed — expense still booked without it."); }
+      catch (e) { toastError(e, { fallback: "Bill upload failed.", description: "The expense is still booked without it. Open the advance later and attach the bill again." }); }
       finally { setUploading(false); }
     }
     await consume.mutateAsync({ advanceId: advance.id, amount: amt, gst: gstAmt, attachment, date, note: note.trim() || null });

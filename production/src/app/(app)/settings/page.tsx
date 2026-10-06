@@ -817,7 +817,7 @@ function GoogleContactsIntegrationCard() {
     try {
       const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(body?.error ?? "Sync failed"); return; }
+      if (!res.ok) { toast.error(body?.error ?? "Sync failed.", { description: "Nothing was changed. Try again — if it keeps failing, disconnect and connect Google Contacts again." }); return; }
       toast.success(`Synced — ${body.pulled} in, ${body.pushed + body.created} out${body.deleted ? `, ${body.deleted} deleted` : ""}`);
       refetch();
     } finally { setBusy(false); }
@@ -827,7 +827,7 @@ function GoogleContactsIntegrationCard() {
     setBusy(true);
     try {
       const res = await fetch("/api/integrations/google-contacts", { method: "DELETE" });
-      if (!res.ok) { toast.error("Could not disconnect"); return; }
+      if (!res.ok) { toast.error("Could not disconnect.", { description: "Google Contacts is still connected. Refresh the page and try again." }); return; }
       toast.success("Google Contacts disconnected");
       refetch();
     } finally { setBusy(false); }
@@ -925,7 +925,7 @@ function BrandingTab() {
 
   const onPick = (f: File | null) => {
     if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { toast.error("Logo must be under 5 MB"); return; }
+    if (f.size > 5 * 1024 * 1024) { toast.error("Logo must be under 5 MB.", { description: "Pick a smaller file, or compress it (a PNG or JPG around 500 KB is plenty)." }); return; }
     setLogo.mutate(f);
   };
 

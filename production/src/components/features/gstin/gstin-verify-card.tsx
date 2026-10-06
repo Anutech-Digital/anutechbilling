@@ -13,6 +13,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -89,7 +90,7 @@ export default function GstinVerifyCard({
 
   async function verify() {
     if (!canVerify) {
-      toast.error("Fix the GSTIN format / checksum first");
+      toast.error("Fix the GSTIN first.", { description: "It must be 15 characters (e.g. 27ABCDE1234F1Z5) and the last character must match the checksum." });
       return;
     }
     setVerifying(true);
@@ -101,7 +102,7 @@ export default function GstinVerifyCard({
       });
       const json = await res.json();
       if (!res.ok || !json.ok) {
-        toast.error(json.error ?? "Verification failed");
+        toast.error(json.error ?? "Verification failed.", { description: "Check the GSTIN and try again. You can still save it and verify later." });
         return;
       }
       const verification = json.verification as GstinVerification;
@@ -117,7 +118,7 @@ export default function GstinVerifyCard({
       // the new verification immediately.
       if (!noPersist) await qc.invalidateQueries({ queryKey: ["current-user"] });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, { fallback: "Could not verify the GSTIN.", description: "Nothing was saved. Check your connection and try again." });
     } finally {
       setVerifying(false);
     }
