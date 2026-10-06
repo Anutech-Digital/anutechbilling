@@ -84,12 +84,15 @@ export function ReceiptVoucherDialog({
         <DialogTitle className="sr-only">Receipt voucher · {payment.receipt_voucher_no}</DialogTitle>
 
         {/* Toolbar — hidden when printing */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
-          <div className="flex items-center gap-2">
+        {/* R-187: wraps on a phone so "Download PDF" is never cut off (see tax-invoice-dialog). */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
+          <div className="flex items-center gap-2 min-w-0">
             <Icon name="file" size={16} className="text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Receipt Voucher · GST-compliant</span>
+            <span className="text-sm font-semibold text-ink whitespace-nowrap">
+              Receipt Voucher<span className="hidden sm:inline"> · GST-compliant</span>
+            </span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2" data-toolbar-actions>
             <Button
               size="sm"
               variant="primary"
