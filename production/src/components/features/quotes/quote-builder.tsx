@@ -2362,13 +2362,14 @@ export function QuoteBuilder() {
 
       {/* Bottom action row. On phones it sticks ABOVE the fixed bottom tab bar (56px + safe
           area): at bottom-0 the tab bar covered "Create invoice", so an invoice could not be
-          made on a phone at all (found on staging, 6 Oct 2026).
+          made on a phone at all (found on staging, 6 Oct 2026). R-291: the height comes from
+          the shared --bottom-nav-h (app layout), like the FAB and bulk bar.
           All 3 send-shaped buttons save the quote first
           (status='sent') and then signal the detail page to open the right
           dialog via a ?send= query param. "Duplicate" stays placeholder
           until we wire a real duplicate flow. */}
       {lineItems.length > 0 && (
-        <div className="order-last sticky bottom-[calc(56px+env(safe-area-inset-bottom))] md:bottom-0 z-20-mx-4 -mb-4 flex items-center justify-between gap-3 flex-wrap border-t border-hairline bg-paper px-4 py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8">
+        <div className="order-last sticky bottom-[calc(var(--bottom-nav-h,56px))] md:bottom-0 z-20 -mx-4 -mb-4 flex items-center justify-between gap-3 flex-wrap border-t border-hairline bg-paper px-4 py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8">
           <div className="flex items-baseline gap-2">
             <span className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">
               {!showPerInvoice && billingN === 1 ? "Total payable now" : "Total"}
