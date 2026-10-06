@@ -103,7 +103,7 @@ export default function MyAttendancePage() {
         <Skeleton className="h-64 w-full rounded-xl" />
       ) : meQ.error ? (
         <Card className="p-6 text-center text-sm text-rose">
-          Attendance load nahi ho payi. Page refresh karke dobara try karo.
+          Could not load your attendance. Refresh the page and try again.
         </Card>
       ) : meQ.data && !meQ.data.linked ? (
         <LinkEmployeeCard />
@@ -140,20 +140,20 @@ function ConsentCard({ retentionDays }: { retentionDays: number }) {
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-soft">
           <Icon name="lock" className="h-6 w-6 text-indigo" />
         </div>
-        <h2 className="font-serif text-xl">Attendance ke liye consent</h2>
+        <h2 className="font-serif text-xl">Consent for attendance</h2>
       </div>
       <div className="mt-5 space-y-3 text-sm text-ink-2">
-        <p>Attendance mark karte waqt aapki ek <b>selfie</b> aur <b>location</b> capture hogi. Ye sirf <b>attendance ke liye</b> use hoti hai — aur kuch nahi.</p>
+        <p>When you mark attendance, a <b>selfie</b> and your <b>location</b> are captured. They are used <b>only for attendance</b> — nothing else.</p>
         <ul className="space-y-2 text-[13px]">
-          <li className="flex gap-2"><span className="text-indigo">•</span> Sirf attendance ke liye — koi tracking nahi.</li>
-          <li className="flex gap-2"><span className="text-indigo">•</span> Selfie sirf <b>{months} mahine</b> tak rakhi jaati hai, phir apne-aap delete.</li>
-          <li className="flex gap-2"><span className="text-indigo">•</span> Aap kabhi bhi consent wapas le sakte ho — tab aapki saari selfies delete ho jaayengi.</li>
+          <li className="flex gap-2"><span className="text-indigo">•</span> Only for attendance — no tracking.</li>
+          <li className="flex gap-2"><span className="text-indigo">•</span> Selfies are kept for <b>{months} months</b>, then deleted automatically.</li>
+          <li className="flex gap-2"><span className="text-indigo">•</span> You can withdraw consent at any time — all your selfies are then deleted.</li>
         </ul>
       </div>
       <Button className="w-full mt-6" disabled={record.isPending} onClick={() => record.mutate()}>
-        {record.isPending ? "…" : "Main samajh gaya — consent deta hoon"}
+        {record.isPending ? "…" : "I understand — I give consent"}
       </Button>
-      <p className="text-xs text-ink-3 mt-3 text-center">DPDP Act 2023 ke hisaab se — aapki marzi se hi data liya jaata hai.</p>
+      <p className="text-xs text-ink-3 mt-3 text-center">As per the DPDP Act 2023 — data is collected only with your consent.</p>
     </Card>
   );
 }
@@ -169,7 +169,7 @@ function EnrollFaceCard() {
   const start = React.useCallback(async () => {
     if (streamRef.current) return;
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setErr("Is browser me camera nahi khulta."); return;
+      setErr("The camera does not open in this browser."); return;
     }
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
@@ -177,7 +177,7 @@ function EnrollFaceCard() {
       streamRef.current = s;
       if (videoRef.current) { videoRef.current.srcObject = s; await videoRef.current.play().catch(() => {}); }
       setCamOn(true); setErr(null);
-    } catch { setErr("Camera allow karke dobara try karo."); }
+    } catch { setErr("Allow the camera and try again."); }
   }, []);
 
   React.useEffect(() => {
@@ -209,9 +209,9 @@ function EnrollFaceCard() {
           )}
         </div>
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-ink">Ek baar apna face enroll karo</div>
+          <div className="text-sm font-semibold text-ink">Enroll your face once</div>
           <p className="text-[12px] text-ink-3 mt-0.5">
-            {err ?? "Face verification ON hai. Seedha camera dekho aur enroll karo — aage har check-in isi se match hoga."}
+            {err ?? "Face verification is on. Look straight at the camera and enroll — every future check-in is matched against it."}
           </p>
           <Button size="sm" className="mt-2" disabled={!camOn || enroll.isPending}
             onClick={() => { const p = capture(); if (p) enroll.mutate(p); }}>
@@ -263,21 +263,21 @@ function ReminderSettingsCard() {
             Punch reminder
           </div>
           <p className="mt-1 text-[12px] text-ink-3">
-            App khula ho aur check-in ya check-out reh gaya ho to popup dikhega.
+            Shows a popup when the app is open and a check-in or check-out is missing.
           </p>
         </div>
         <Switch
           checked={enabled}
           disabled={save.isPending}
           onCheckedChange={(v) => save.mutate({ enabled: v })}
-          aria-label="Punch reminder chalu ya band"
+          aria-label="Punch reminder on or off"
         />
       </div>
 
       {enabled && (
         <div className="mt-3 pt-3 border-t border-hairline flex items-center justify-between gap-3">
           <label htmlFor="checkout-reminder-at" className="text-[12px] text-ink-2">
-            Check-out reminder ka time
+            Check-out reminder time
           </label>
           <input
             id="checkout-reminder-at"
@@ -313,10 +313,10 @@ function ConsentStatus({ consentAt, retentionDays }: { consentAt: string; retent
       <div className="flex items-start justify-between gap-3">
         <div className="text-[12px] text-ink-3">
           <div className="flex items-center gap-1.5 text-emerald font-medium">
-            <Icon name="check_circle" size={13} /> Consent diya
+            <Icon name="check_circle" size={13} /> Consent given
           </div>
           <p className="mt-1">
-            {new Date(consentAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })} · selfie {months} mahine tak rakhi jaati hai.
+            {new Date(consentAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })} · selfies kept for {months} months.
           </p>
         </div>
         {confirming ? (
@@ -345,7 +345,7 @@ function HistoryCard() {
   if (!rows.length) return null;
   return (
     <Card className="mt-4 p-4">
-      <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-3">Aapka recent record</div>
+      <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-3">Your recent record</div>
       <ul className="divide-y divide-hairline">
         {rows.map((r) => (
           <li key={r.work_date} className="flex items-center justify-between py-2 text-sm">
@@ -356,7 +356,7 @@ function HistoryCard() {
               {fmtTime(r.check_in)} <span className="text-ink-3/60">→</span> {fmtTime(r.check_out)}
               {fmtDuration(r.check_in, r.check_out)
                 ? <span className="ml-2 text-ink-2">· {fmtDuration(r.check_in, r.check_out)}</span>
-                : r.check_in && !r.check_out ? <span className="ml-2 text-amber-ink">· check-out reh gaya</span> : null}
+                : r.check_in && !r.check_out ? <span className="ml-2 text-amber-ink">· no check-out</span> : null}
             </span>
           </li>
         ))}
@@ -417,7 +417,7 @@ function CheckInCard({
   const startCam = React.useCallback(async () => {
     if (streamRef.current) return;
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setCamErrMsg("Is browser me camera nahi khulta. Site Chrome (https) me kholo, in-app browser me nahi.");
+      setCamErrMsg("The camera does not open in this browser. Open the site in Chrome (https), not an in-app browser.");
       return;
     }
     async function grab(): Promise<MediaStream> {
@@ -444,10 +444,10 @@ function CheckInCard({
       } else {
         setCamErrMsg(
           nm === "NotAllowedError" || nm === "SecurityError"
-            ? "Camera blocked — circle pe tap karke Allow choose karo (ya browser settings me site ke liye camera on karo)."
+            ? "Camera blocked — tap the circle and choose Allow (or turn the camera on for this site in browser settings)."
             : nm === "NotReadableError" || nm === "TrackStartError" || nm === "AbortError"
-              ? "Camera busy hai — Meet/Zoom band karke circle pe dobara tap karo."
-              : `Camera error: ${nm || "unknown"} — circle pe tap karke retry karo.`,
+              ? "Camera is busy — close Meet/Zoom and tap the circle again."
+              : `Camera error: ${nm || "unknown"} — tap the circle to retry.`,
         );
       }
     }
@@ -491,7 +491,7 @@ function CheckInCard({
 
   return (
     <Card className="p-6 md:p-8 text-center">
-      <p className="text-sm text-ink-3">Namaste</p>
+      <p className="text-sm text-ink-3">Hello</p>
       <p className="font-serif text-2xl mt-0.5">{name}</p>
 
       {needsCam && (
@@ -523,11 +523,11 @@ function CheckInCard({
                   className="mx-auto flex h-28 w-28 flex-col items-center justify-center gap-1 rounded-full border border-dashed border-hairline bg-paper-2 text-ink-3 hover:border-amber/50 hover:text-amber-ink"
                 >
                   <Icon name="eye" size={24} />
-                  <span className="text-xs leading-tight">Camera on karne ke liye tap</span>
+                  <span className="text-xs leading-tight">Tap to turn on camera</span>
                 </button>
               )}
               <p className={cn("mt-2 text-xs", camErrMsg ? "text-rose" : "text-ink-3")}>
-                {camErrMsg ?? (camOn ? "Camera dekho — selfie ke saath attendance mark hogi." : "Selfie zaroori hai.")}
+                {camErrMsg ?? (camOn ? "Look at the camera — attendance is marked with a selfie." : "A selfie is required.")}
               </p>
             </>
           )}
@@ -550,7 +550,7 @@ function CheckInCard({
             className="mt-1 w-full rounded-lg border border-hairline bg-paper px-4 py-3 text-center font-mono text-2xl tracking-[0.4em] tabular-nums focus:border-amber focus:outline-none"
           />
           <p className="mt-1.5 text-xs text-ink-3">
-            Office tablet pe abhi jo code chal raha hai wahi daalo — isse pata chalta hai aap office me hi ho.
+            Enter the code showing on the office tablet right now — it confirms you are in the office.
           </p>
         </div>
       )}
@@ -572,22 +572,22 @@ function CheckInCard({
 
       <div className="mt-6">
         {state === "done" && fmtDuration(checkIn, checkOut) && (
-          <p className="mb-3 text-sm text-ink-2">Aaj office me: <b className="text-ink">{fmtDuration(checkIn, checkOut)}</b></p>
+          <p className="mb-3 text-sm text-ink-2">In office today: <b className="text-ink">{fmtDuration(checkIn, checkOut)}</b></p>
         )}
         {confirmQuick ? (
           <div className="rounded-lg border border-amber/40 bg-amber-soft/40 p-4">
             <p className="text-sm text-ink">
-              Aapne sirf <b>{Math.max(1, Math.round(minsSince(checkIn)))} min</b> pehle check-in kiya tha — pakka check-out karna hai?
+              You checked in only <b>{Math.max(1, Math.round(minsSince(checkIn)))} min</b> ago — check out now?
             </p>
             <div className="mt-3 flex gap-2">
-              <Button variant="ghost" className="flex-1" onClick={() => setConfirmQuick(false)}>Nahi, rehne do</Button>
-              <Button className="flex-1" loading={mark.isPending} onClick={onMark}>Haan, check-out</Button>
+              <Button variant="ghost" className="flex-1" onClick={() => setConfirmQuick(false)}>No, keep me in</Button>
+              <Button className="flex-1" loading={mark.isPending} onClick={onMark}>Yes, check out</Button>
             </div>
           </div>
         ) : state === "done" ? (
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-soft px-4 py-2 text-sm text-emerald">
             <Icon name="check_circle" className="h-4 w-4" />
-            Aaj ki attendance complete hai
+            Today's attendance is complete
           </div>
         ) : (
           <Button
@@ -607,7 +607,7 @@ function CheckInCard({
             disabled={undo.isPending}
             onClick={() => undo.mutate()}
           >
-            {undo.isPending ? "Undo ho raha hai…" : `Galti se ${state === "done" ? "check-out" : "check-in"} ho gaya? Undo karo`}
+            {undo.isPending ? "Undoing…" : `${state === "done" ? "Checked out" : "Checked in"} by mistake? Undo`}
           </button>
         )}
       </div>
@@ -620,7 +620,7 @@ function CheckInCard({
           pending && geoState === "ok" ? "location" : null,
         ].filter(Boolean).join(" + ")}
         {" — "}
-        itne proof ke saath aapki attendance record hoti hai.
+        your attendance is recorded with these proofs.
       </p>
     </Card>
   );
@@ -638,20 +638,20 @@ function LinkEmployeeCard() {
       <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft">
         <Icon name="user" className="h-6 w-6 text-amber-ink" />
       </div>
-      <h2 className="font-serif text-xl">Apna profile select karo</h2>
+      <h2 className="font-serif text-xl">Select your profile</h2>
       <p className="text-sm text-ink-3 mt-1">
-        Pehli baar attendance ke liye — list me se apna naam choose karo. Ek baar link hone ke baad dubara nahi poochha jaayega.
+        First time here — pick your name from the list. Once linked, you will not be asked again.
       </p>
 
       {empQ.isLoading ? (
         <Skeleton className="mt-5 h-10 w-full rounded-md" />
       ) : empQ.error ? (
-        <p className="mt-4 text-xs text-rose">Employees load nahi ho paaye.</p>
+        <p className="mt-4 text-xs text-rose">Could not load employees.</p>
       ) : (
         <div className="mt-5 space-y-3">
           <Select value={selectedId} onValueChange={setSelectedId}>
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Apna naam select karo…" />
+              <SelectValue placeholder="Select your name…" />
             </SelectTrigger>
             <SelectContent>
               {rows.map((e) => (
@@ -667,7 +667,7 @@ function LinkEmployeeCard() {
             disabled={!selectedId || setEmp.isPending}
             onClick={() => setEmp.mutate(selectedId)}
           >
-            {setEmp.isPending ? "Link ho raha hai…" : "Save & Continue"}
+            {setEmp.isPending ? "Linking…" : "Save & Continue"}
           </Button>
         </div>
       )}

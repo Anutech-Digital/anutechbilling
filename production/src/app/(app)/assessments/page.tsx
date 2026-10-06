@@ -56,7 +56,7 @@ export default function AssessmentsPage() {
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Payroll</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Reasoning Tests</h1>
-          <p className="text-sm text-ink-2 mt-1 max-w-2xl">AI banata hai reasoning MCQs — link share karo, employee test de, auto grade (A/B/C/D) mil jaye.</p>
+          <p className="text-sm text-ink-2 mt-1 max-w-2xl">AI writes reasoning MCQs — share the link, the employee takes the test, and it is graded A/B/C/D automatically.</p>
         </div>
         <Button variant="primary" icon="plus" className="hidden md:inline-flex shrink-0" onClick={() => setAddOpen(true)}>Create test</Button>
       </div>
@@ -153,7 +153,7 @@ function CreateTestDialog({ onClose }: { onClose: () => void }) {
       <DialogContent className="md:!max-w-lg">
         <DialogHeader>
           <DialogTitle>Create reasoning test</DialogTitle>
-          <DialogDescription>AI reasoning MCQs banayega. Preview dekho, phir Save karke link share karo.</DialogDescription>
+          <DialogDescription>AI writes reasoning MCQs. Check the preview, then save and share the link.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 max-h-[60vh] overflow-y-auto -mx-1 px-1">
           <FormField label="Test about" htmlFor="at_subject">
@@ -172,7 +172,7 @@ function CreateTestDialog({ onClose }: { onClose: () => void }) {
             <Input id="at_topic" placeholder={subject === "software" ? "e.g. billing, leads, GST, accounting" : "e.g. IQ, logical reasoning, verbal, numerical"} value={topic} onChange={(e) => setTopic(e.target.value)} />
           </FormField>
           {subject === "software" && (
-            <p className="text-2xs text-ink-3">App ke features + money-flow ke aadhaar par questions banenge — jaanne ke liye ki employee software kitna samajh chuka hai.</p>
+            <p className="text-2xs text-ink-3">Questions are based on the app's features and money flow — to see how well the employee knows the software.</p>
           )}
           <div className="grid grid-cols-3 gap-3">
             <FormField label="Language" htmlFor="at_lang" className="col-span-1">
@@ -196,13 +196,13 @@ function CreateTestDialog({ onClose }: { onClose: () => void }) {
             </FormField>
           </div>
           {language === "both" && (
-            <p className="text-2xs text-ink-3">Dono bhasha me banega — employee test lete waqt English/Hinglish choose kar sakta hai.</p>
+            <p className="text-2xs text-ink-3">Generated in both languages — the employee picks English or Hinglish when taking the test.</p>
           )}
           <Button variant="default" icon="sparkles" loading={generating} onClick={generate} className="w-full justify-center">
             {questions.length ? "Regenerate with AI" : "Generate with AI"}
           </Button>
           {stub && questions.length > 0 && (
-            <p className="text-2xs text-amber-ink">AI key nahi mili — sample questions dikha rahe hain. Real AI ke liye Settings → Integrations → AI me Gemini key daalo.</p>
+            <p className="text-2xs text-amber-ink">No AI key found — showing sample questions. For real AI, add a Gemini key in Settings → Integrations → AI.</p>
           )}
           {questions.length > 0 && (
             <div className="rounded-lg border border-hairline divide-y divide-hairline">
@@ -252,7 +252,7 @@ function ResultsDialog({ test, onClose }: { test: Assessment; onClose: () => voi
         {q.isLoading ? (
           <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-ink-3 py-6 text-center">Abhi kisi ne test nahi diya. Link share karo.</p>
+          <p className="text-sm text-ink-3 py-6 text-center">No one has taken this test yet. Share the link.</p>
         ) : (
           <div className="rounded-lg border border-hairline divide-y divide-hairline max-h-[55vh] overflow-y-auto">
             {rows.map((a) => {
