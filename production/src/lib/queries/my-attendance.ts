@@ -70,10 +70,10 @@ export function useRecordConsent() {
         body: JSON.stringify({ action: "record" }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? "Consent record nahi hua");
+      if (!res.ok) throw new Error(json.error ?? "Could not record consent");
     },
     onSuccess: () => {
-      toast.success("Consent record ho gaya.");
+      toast.success("Consent recorded.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
     onError: (err: unknown) => toastError(err, { fallback: "Could not save your consent." }),
@@ -111,7 +111,7 @@ export function useOwnerSetConsent() {
       if (!res.ok) throw new Error(json.error ?? "Consent update fail");
     },
     onSuccess: (_d, v) => {
-      toast.success(v.value ? "Consent record ho gaya." : "Consent hata diya + selfies delete.");
+      toast.success(v.value ? "Consent recorded." : "Consent withdrawn and selfies deleted.");
       void qc.invalidateQueries({ queryKey: ["employees"] });
     },
     onError: (err: unknown) => toastError(err, { fallback: "Could not update your consent." }),
@@ -132,7 +132,7 @@ export function useEnrollMyFace() {
       if (!res.ok) throw new Error(json.error ?? "Face enroll fail");
     },
     onSuccess: () => {
-      toast.success("Face enroll ho gaya ✅");
+      toast.success("Face enrolled ✅");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
     onError: (err: unknown) => toastError(err, { fallback: "Could not enrol your face." }),
@@ -152,7 +152,7 @@ export function useWithdrawConsent() {
       if (!res.ok) throw new Error(json.error ?? "Withdraw fail");
     },
     onSuccess: () => {
-      toast.success("Consent withdraw + aapki selfies delete ho gayi.");
+      toast.success("Consent withdrawn and your selfies deleted.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
     onError: (err: unknown) => toastError(err, { fallback: "Could not withdraw your consent." }),
@@ -181,16 +181,16 @@ export function useMarkSelfAttendance() {
       });
       const json = await res.json().catch(() => ({}));
       if (res.status === 428 || json?.needsConsent) {
-        throw new Error("Pehle attendance ke liye consent do (upar wali screen).");
+        throw new Error("Give consent for attendance first (screen above).");
       }
-      if (!res.ok) throw new Error(json.error ?? "Attendance mark nahi hui");
+      if (!res.ok) throw new Error(json.error ?? "Could not mark attendance");
       return json.action as string;
     },
     onSuccess: (result) => {
-      if (result === "checked_in") toast.success("Check-in ho gaya ✅");
-      else if (result === "checked_out") toast.success("Check-out ho gaya 👋");
-      else if (result === "too_soon") toast.info("Abhi to check-in hua — ye tap ignore kiya (galti se double-tap).");
-      else toast.info("Aaj ki attendance already complete hai.");
+      if (result === "checked_in") toast.success("Checked in ✅");
+      else if (result === "checked_out") toast.success("Checked out 👋");
+      else if (result === "too_soon") toast.info("You just checked in — this tap was ignored (double tap).");
+      else toast.info("Today's attendance is already complete.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
       void qc.invalidateQueries({ queryKey: ["attendance"] });
     },
@@ -211,7 +211,7 @@ export function useUndoLastPunch() {
       return data as unknown as string;
     },
     onSuccess: (result) => {
-      toast.success(result === "undo_checkout" ? "Check-out undo — aap fir se checked-in ho." : "Check-in undo ho gaya.");
+      toast.success(result === "undo_checkout" ? "Check-out undone — you are checked in again." : "Check-in undone.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
       void qc.invalidateQueries({ queryKey: ["my-attendance-history"] });
       void qc.invalidateQueries({ queryKey: ["attendance"] });
@@ -229,7 +229,7 @@ export function useSetMyEmployee() {
       if (error) throw error;
     },
     onSuccess: () => {
-      toast.success("Aapka employee profile link ho gaya.");
+      toast.success("Your employee profile is linked.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
     },
     onError: (err: unknown) => {
@@ -288,7 +288,7 @@ export function useSetMyReminderPrefs() {
     mutationFn: async (patch: Partial<ReminderPrefs>): Promise<void> => {
       const supabase = createClient();
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) throw new Error("Aap logged in nahi ho.");
+      if (!auth.user) throw new Error("You are not signed in.");
 
       const update: Database["public"]["Tables"]["users"]["Update"] = {};
       if (patch.enabled !== undefined) update.attendance_reminders_enabled = patch.enabled;
