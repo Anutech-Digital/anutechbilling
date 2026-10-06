@@ -294,6 +294,8 @@ const OMB: UserRole[] = ["owner", "manager", "billing"];
 /** Who may read salaries (RLS on salary_payments since 20260930175000) — and so who gets a
  *  Balance Sheet whose salary lines are real. */
 export const SALARY_ROLES: UserRole[] = ["owner", "manager", "accountant"];
+/** Payroll Overview + Salary Register: the roles that had them, plus the accountant (R-061). */
+const PAYROLL_ROLES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Books: the accountant / CA reads every one of these. */
 const BOOKS: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Everyone on the team except the external partner agent. */
@@ -556,10 +558,14 @@ export const APP_NAV: NavSection[] = [
           { id: "leave-reg",         href: "/accounting/leave",           label: "Leave Register",         icon: "file", roles: OMB, hint: "Casual leave, sick leave & earned leave tracking." },
         ],
       },
+      /* R-061 (6 Oct 2026): the accountant / CA could open Payroll and the Salary Register by URL
+         (the guard admits all of /accounting/* through BOOKS) but had no menu row. The database
+         already lets them read and write salaries (SALARY_ROLES, migration 20260930175000) and a
+         CA needs the register for TDS and ITR, so the menu shows them now — menu and guard agree. */
       {
-        id: "payroll",           href: "/accounting/payroll",         label: "Payroll Overview",       icon: "rupee", roles: OMB,
+        id: "payroll",           href: "/accounting/payroll",         label: "Payroll Overview",       icon: "rupee", roles: PAYROLL_ROLES,
         children: [
-          { id: "salary-register",   href: "/accounting/salary-register", label: "Salary & Payroll Register", icon: "receipt", roles: OMB, hint: "Monthly salary slip register, CTC & net payouts." },
+          { id: "salary-register",   href: "/accounting/salary-register", label: "Salary & Payroll Register", icon: "receipt", roles: PAYROLL_ROLES, hint: "Monthly salary slip register, CTC & net payouts." },
           { id: "emp-loans",         href: "/accounting/loans",           label: "Loans & Salary Advances",icon: "rupee", roles: OMB },
         ],
       },

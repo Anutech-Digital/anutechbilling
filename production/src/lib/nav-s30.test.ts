@@ -85,6 +85,9 @@ const ADDED_3OCT_BOOKS = ["/accounting/banking/brs", "/accounting/banking/rules"
   "/accounting/profitability", "/reports/purchases", "/accounting/tds-receivable/year-end", "/compliance/gst", "/compliance/income-tax", "/compliance/roc"];
 const ADDED_3OCT_BILLING = ["/ai-entry", "/online-orders", "/accounting/advances", "/accounting/reimbursements"];
 const ADDED_3OCT_SALES = ["/ai-entry"];
+/** R-061 (6 Oct 2026): the accountant could already open these by URL (the guard admits all of
+ *  /accounting/* through BOOKS) but had no menu row. A menu row only — the guard answer is unchanged. */
+const ADDED_6OCT_ACCOUNTANT = ["/accounting/payroll", "/accounting/salary-register"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
  *  so its Balance Sheet showed salary payable and statutory dues as Rs 0 (Pardeep's call). */
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet"] };
@@ -97,6 +100,7 @@ const addedFor = (role: string) => [
   ...(BOOKS_ROLES.includes(role) ? ADDED_3OCT_BOOKS : []),
   ...(role === "billing" ? ADDED_3OCT_BILLING : []),
   ...(role === "sales" || role === "sales_senior" ? ADDED_3OCT_SALES : []),
+  ...(role === "accountant" ? ADDED_6OCT_ACCOUNTANT : []),
   ...(role === "owner" || role === "manager" ? ADDED_FOR_OWNER_MANAGER : []),
   ...(role === "owner" ? ADDED_FOR_OWNER : []),
   ...(DEALS_ROLES.includes(role) ? ADDED_DEALS : []),
@@ -357,5 +361,27 @@ describe("5. Website orders sit in Sell next to Deals/Enquiries, not under Payme
     const sellRows = filterNavForRole(APP_NAV, role).find((s) => s.section === "Sell")?.items ?? [];
     expect(sellRows.map((i) => i.href)).toContain("/online-orders");
     expect(isRouteAllowed(role, "/online-orders")).toBe(true);
+  });
+});
+
+describe("R-061: payroll — the menu and the guard give the same answer", () => {
+  const SALARY_PAGES = ["/accounting/payroll", "/accounting/salary-register"];
+  /* The accountant may read and write salaries in the database (role hardening, 20260930175000),
+     and the guard already let them open these pages by URL. The menu must say the same. */
+  it("the accountant sees Payroll and the Salary Register in the menu and may open them", () => {
+    const menu = clickable("accountant");
+    for (const h of SALARY_PAGES) {
+      expect(menu.has(h), `${h} missing from the accountant's menu`).toBe(true);
+      expect(isRouteAllowed("accountant", h), `guard refuses ${h} for the accountant`).toBe(true);
+    }
+  });
+
+  it("no role has a payroll page in its menu that the guard refuses, or the other way round", () => {
+    for (const r of USER_ROLES) {
+      const menu = clickable(r);
+      for (const h of SALARY_PAGES) {
+        expect(menu.has(h), `${r}: menu says ${menu.has(h)}, guard says ${isRouteAllowed(r, h)} for ${h}`).toBe(isRouteAllowed(r, h));
+      }
+    }
   });
 });
