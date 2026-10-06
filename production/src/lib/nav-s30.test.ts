@@ -200,7 +200,8 @@ describe("2. structure", () => {
   it("has ~40 sidebar rows, none of the groups over 8", () => {
     const rows = APP_NAV.reduce((n, s) => n + s.items.length, 0);
     expect(rows).toBeGreaterThanOrEqual(35);
-    expect(rows).toBeLessThanOrEqual(45);
+    // 46 since R-204 (6 Oct 2026): Orders (website) left Payments Received's accordion for its own Sell row.
+    expect(rows).toBeLessThanOrEqual(46);
     for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(8);
   });
 
@@ -287,7 +288,7 @@ describe("3. breadcrumbs come from the nav", () => {
       expect(getCrumb(h), h).toEqual(OLD_CRUMBS[h]);
     }
     expect(getCrumb("/customers/abc/edit")).toEqual(["Billing", "Customers", "Edit"]);
-    expect(getCrumb("/online-orders")).toEqual(["Billing", "Online Orders"]);
+    // /online-orders left Billing on 6 Oct 2026 (R-204) — see block 5 below.
   });
 
   it("gives sub-pages the crumb of the page they sit under", () => {
@@ -325,5 +326,36 @@ describe("4. Deals sits in Sell right after Sales & Pipeline (30 Sep 2026)", () 
     const deals = sell.find((i) => i.href === "/deals")!;
     expect(deals.label).toBe("Deals");
     expect(deals.roles).toEqual(leads.roles);
+  });
+});
+
+describe("5. Website orders sit in Sell next to Deals/Enquiries, not under Payments Received (R-204, 6 Oct 2026)", () => {
+  /* Pardeep: an online order is a sale's journey (cart, trial, DMS) — many have no money
+     yet, and a paid order's money already lands in Payments Received on its own. */
+  const sell = () => APP_NAV.find((s) => s.section === "Sell")!.items;
+
+  it("is a Sell row labelled \"Orders (website)\", right after Enquiries", () => {
+    const hrefs = sell().map((i) => i.href);
+    expect(hrefs[hrefs.indexOf("/enquiries") + 1]).toBe("/online-orders");
+    const row = sell().find((i) => i.href === "/online-orders")!;
+    expect(row.id).toBe("online-orders");
+    expect(row.label).toBe("Orders (website)");
+    expect(row.roles).toEqual(["owner", "manager", "billing"]);
+    expect(row.hint).toBe("Website ke saare orders — cart, checkout, trial");
+  });
+
+  it("is no longer anywhere in Bill (not a child of Payments Received)", () => {
+    const bill = APP_NAV.find((s) => s.section === "Bill")!;
+    expect(flattenNav([bill]).map((e) => e.item.href)).not.toContain("/online-orders");
+  });
+
+  it("has the crumb Sell › Orders (website)", () => {
+    expect(getCrumb("/online-orders")).toEqual(["Sell", "Orders (website)"]);
+  });
+
+  it.each(["owner", "manager", "billing"] as UserRole[])("%s still sees it and the guard lets it through", (role) => {
+    const sellRows = filterNavForRole(APP_NAV, role).find((s) => s.section === "Sell")?.items ?? [];
+    expect(sellRows.map((i) => i.href)).toContain("/online-orders");
+    expect(isRouteAllowed(role, "/online-orders")).toBe(true);
   });
 });

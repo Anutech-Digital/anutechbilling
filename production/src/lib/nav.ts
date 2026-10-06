@@ -349,6 +349,10 @@ export const APP_NAV: NavSection[] = [
          demo / trial / quote). Keep ids unique — the command palette flattens by id. */
       { id: "deals",           href: "/deals",            label: "Deals",         icon: "trending_up", roles: ["owner", "manager", "sales"] },
       { id: "enquiries",       href: "/enquiries",        label: "Enquiries",     icon: "mail",   roles: ["owner", "manager", "sales"] },
+      /* R-204 (6 Oct 2026, Pardeep): was "Online Orders" under Bill › Payments Received. An
+         online order is a sale's journey (cart, trial, DMS) — many have no money yet, and a
+         paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
+      { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "Website ke saare orders — cart, checkout, trial" },
       { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"] },
       /* Contacts is GONE from the nav entirely (10 Sep 2026): a customer's people live ON
          the customer (migration 20260910100000); somebody who is not a customer yet is a
@@ -404,12 +408,8 @@ export const APP_NAV: NavSection[] = [
       { id: "subscriptions", href: "/subscriptions", label: "Subscriptions",     icon: "refresh", roles: OMB },
       { id: "renewals",      href: "/renewals",      label: "Renewals",          icon: "clock",   roles: ["owner", "manager", "billing", "support"] },
       { id: "invoices",      href: "/invoices",      label: "Invoices",          icon: "receipt", roles: OMB },
-      {
-        id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: OMB,
-        children: [
-          { id: "online-orders", href: "/online-orders", label: "Online Orders", icon: "cart", roles: OMB, hint: "Website ke saare orders — cart, checkout, trial" },
-        ],
-      },
+      /* Online Orders was a child of this row until 6 Oct 2026 — moved to Sell (R-204). */
+      { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: OMB },
       { id: "projects",      href: "/projects",      label: "Project Sales",     icon: "package", roles: ["owner", "manager", "sales", "delivery", "billing"] },
       {
         id: "items",     href: "/items",           label: "Catalog & Products", icon: "package", roles: OM,
@@ -652,8 +652,8 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/customers/new":          { tail: ["New"] },
   "/customers/[id]":         { tail: ["Profile"] },
   "/customers/[id]/edit":    { tail: ["Edit"] },
-  // Pawan's page; it has no nav row. Kept on the Billing crumb it always had.
-  "/online-orders":          { tail: ["Online Orders"], under: "Bill" },
+  // NB: /online-orders is a Sell nav row since R-204 (6 Oct 2026), so its crumb comes from
+  //     the nav ("Sell / Orders (website)") — an entry here would override it.
   "/quotes/new":             { tail: ["New"] },
   "/quotes/[id]":            { tail: ["Detail"] },
   "/projects/[id]":          { tail: ["Detail"] },
