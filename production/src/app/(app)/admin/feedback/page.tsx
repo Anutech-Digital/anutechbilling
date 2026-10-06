@@ -55,6 +55,15 @@ const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: s
   ui_improvement: { kind: "warning", label: "UI polish" },
 };
 
+/** What the buttons on a report do, by status — shown under them. */
+const ACTION_HELP: Record<string, string> = {
+  open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board within the hour. Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
+  agent_queued: "Waiting for the AI worker — it becomes a card on the work board within the hour, and the fix is made from there. Reopen takes it back to Open.",
+  fixed: "Still happening? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, fixes it if still broken, notes the result on the work board, then archives itself. Reopen sends it back to Open.",
+  wont_fix: "Closed without a fix. Reopen if it matters again.",
+  duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
+};
+
 /** Severity band → colour. Bands, not a gradient: an operator reads three groups, not 100 shades. */
 function severityKind(score: number | null): "danger" | "warning" | "muted" {
   if (score === null) return "muted";
@@ -301,6 +310,12 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             {row.filed_via === "ai-chat" && <Badge kind="info" size="sm">🤖 AI-drafted after chat</Badge>}
             <span className="text-ink-4">·</span>
             <span>{formatDate(row.created_at)}</span>
+            {row.status === "fixed" && row.resolved_at && (
+              <>
+                <span className="text-ink-4">·</span>
+                <span className="text-emerald">fixed {formatDate(row.resolved_at)}</span>
+              </>
+            )}
             {row.screenshots.length > 0 && (
               <>
                 <span className="text-ink-4">·</span>
@@ -325,18 +340,18 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
         {/* 6 Oct 2026 (Pardeep, Fixed tab): Auto-Fix on a fixed / won't-fix / already queued
             report only re-queued it. It is for open reports; Reopen first to send one again. */}
         {row.status === "open" && (
-          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy}>
+          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy} title="Send to the AI worker — it becomes a card on the work board within the hour">
             <Icon name="sparkles" size={14} className="mr-1.5" />
             Run AI Auto-Fix
           </Button>
         )}
         {row.status === "fixed" ? (
-          <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy}>
+          <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy} title="Copies a prompt: re-test this in a browser, fix it if still broken">
             <Icon name="copy" size={14} className="mr-1.5" />
             Check in browser
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive}>
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive} title="Copies the fix instructions to paste into Claude Code yourself">
             <Icon name="copy" size={14} className="mr-1.5" />
             Copy Directive
           </Button>
@@ -359,16 +374,23 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             and "won't fix", and somebody eventually picks one of those to clear the row.
             A queue you can only leave by lying about the outcome stops being a queue. */}
         {row.status !== "open" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy}>
+          <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy} title="Send it back to Open">
             Reopen
           </Button>
         )}
         {row.status !== "wont_fix" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("wont_fix")} disabled={busy}>
+          <Button size="sm" variant="ghost" onClick={() => handleStatus("wont_fix")} disabled={busy} title="Close it without a fix">
             Won&apos;t fix
           </Button>
         )}
       </div>
+
+      {/* Pardeep, 6 Oct 2026: "isko aur badiya informatic banao jisse user ko sab kuch clear ho
+          sake wo kya kar sakta hai" — one line per state saying what the buttons do. */}
+      <p className="flex gap-1.5 text-xs text-ink-3 leading-relaxed">
+        <Icon name="info" size={13} className="flex-shrink-0 mt-0.5" />
+        <span>{ACTION_HELP[row.status] ?? ""}</span>
+      </p>
 
       {open && (
         <div className="pt-3 border-t border-hairline space-y-4">
