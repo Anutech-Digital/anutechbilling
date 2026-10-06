@@ -68,6 +68,7 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 /* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
+import { usePagedRows, LoadMore, PAYMENTS_PAGE_SIZE } from "./load-more";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -191,16 +192,20 @@ function PaymentsPageInner() {
     );
   });
 
+  /* R-104: paint 50 at a time (R-024 rule). Tab counts, KPIs, "collected" and the CSV
+     export still use every payment in `filtered` / `payments`; only the lists are paged. */
+  const paged = usePagedRows(filtered, PAYMENTS_PAGE_SIZE, [tab, focus, customerFilter ?? "", search.trim()].join("|"));
+
   /* j / k / Enter / o over the sales-payments table — opens the payment's quote,
      the same target a click uses. Enabled only while that table is on screen
      (it lives inside the subscription/all block, not the project view), so the
      keys never open a row from a list the user isn't looking at. Keyed by id,
      like /customers, so only that one table lights up. */
   const payKeys = useListKeys({
-    count: filtered.length,
+    count: paged.shown.length,   // only the rows on screen (R-104)
     enabled: view !== "project",
     onOpen: (i) => {
-      const p = filtered[i];
+      const p = paged.shown[i];
       if (p) router.push(`/quotes/${p.quote_id}` as never);
     },
   });
@@ -208,7 +213,7 @@ function PaymentsPageInner() {
   React.useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [payKeys.index]);
-  const payKbSelectedId = payKeys.index >= 0 ? filtered[payKeys.index]?.id ?? null : null;
+  const payKbSelectedId = payKeys.index >= 0 ? paged.shown[payKeys.index]?.id ?? null : null;
 
   const counts: Record<string, number> = { all: payments?.length ?? 0 };
   for (const p of payments ?? []) counts[p.status] = (counts[p.status] ?? 0) + 1;
@@ -561,7 +566,10 @@ function PaymentsPageInner() {
           <TabBar className="overflow-y-hidden" value={tab} onChange={(v) => { setFocus(""); setTab(v as typeof tab); }} items={tabsWithCounts} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
-              Showing {filtered.length} of {payments.length} payments · {rupee(totalCollected)} collected all-time
+              {paged.hidden > 0
+                ? <>Showing {paged.shown.length} of {filtered.length} payments</>
+                : <>Showing {filtered.length} of {payments.length} payments</>}
+              {" · "}{rupee(totalCollected)} collected all-time
             </div>
             <div className="w-full sm:w-72">
               <Input
@@ -631,7 +639,7 @@ function PaymentsPageInner() {
       {/* Adaptive card list — viewports < 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
         <ul className="xl:hidden space-y-2 mb-3">
-          {filtered.map((p) => {
+          {paged.shown.map((p) => {
             const ctx = quoteById.get(p.quote_id);
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
@@ -717,7 +725,7 @@ function PaymentsPageInner() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
+              {paged.shown.map((p) => {
                 const ctx = quoteById.get(p.quote_id);
                 const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
                 return (
@@ -737,6 +745,10 @@ function PaymentsPageInner() {
             </tbody>
           </table>
         </Card>
+      )}
+
+      {!isLoading && !error && (
+        <LoadMore hidden={paged.hidden} pageSize={PAYMENTS_PAGE_SIZE} noun="payments" onLoadMore={paged.loadMore} />
       )}
 
       {/* Help */}
