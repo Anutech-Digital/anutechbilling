@@ -9,6 +9,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { ReimbursementRow } from "@/lib/supabase/database.types";
 
@@ -97,7 +98,7 @@ export function useAddReimbursement() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Reimbursement recorded (expense booked)");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -115,7 +116,7 @@ export function useSettleReimbursement() {
       qc.invalidateQueries({ queryKey: ["reimbursements"] });
       toast.success("Marked settled");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -133,6 +134,6 @@ export function useDeleteReimbursement() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Reimbursement removed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

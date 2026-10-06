@@ -21,8 +21,8 @@ import { join } from "path";
 import { readFileSync } from "fs";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
 
-/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. */
-const BASELINE = 403;
+/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. */
+const BASELINE = 366;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {
@@ -46,6 +46,9 @@ const R266_FILES = [
   "assessments", "attendance-biometric", "backups", "balance-sheet", "business-loans",
   "compliance", "contacts", "credit-notes", "customers", "debit-notes", "emi",
   "employee-loans", "expense-claims", "expenses", "imported-contacts", "inbound-emails",
+  // R-283 — the next 8
+  "inbound-purchases", "items", "payroll", "prepaid-advances", "purchase-orders",
+  "referral-commissions", "referral-partners", "reimbursements",
 ] as const;
 
 describe("R-266 — no raw error text toasted from these query modules", () => {

@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, Database } from "@/lib/supabase/database.types";
 import { TIER_FALLBACK_MONTHLY } from "@/lib/pricing/workspace";
@@ -68,7 +69,7 @@ export function useCreateItem() {
       qc.invalidateQueries({ queryKey: ["items"] });
       toast.success("Item added to catalog");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -93,7 +94,7 @@ export function useUpdateItem() {
       qc.invalidateQueries({ queryKey: ["items"] });
       toast.success("Item updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -112,7 +113,7 @@ export function useDeleteItem() {
       qc.invalidateQueries({ queryKey: ["items"] });
       toast("Item deactivated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -285,7 +286,7 @@ export function useLoadDefaultCatalog() {
         toast.info("Catalog already loaded");
       }
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -314,7 +315,7 @@ export function useSyncHostingCatalog() {
       );
     },
     onError: (err) =>
-      toast.error((err as Error).message, {
+      toastError(err, {
         description: "DirectAdmin connection zaroori hai. Setup > Integrations me creds check karo.",
       }),
   });
@@ -344,7 +345,7 @@ export function useSyncDomainCatalog() {
       );
     },
     onError: (err) =>
-      toast.error((err as Error).message, {
+      toastError(err, {
         description: "app.anutech.in deploy hone ke baad hi ye chalega. Tab tak catalogue waise hi rahega.",
       }),
   });

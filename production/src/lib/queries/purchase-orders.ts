@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type {
@@ -129,7 +130,7 @@ export function useUpdatePurchaseOrder() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Purchase order updated");
     },
-    onError: (e) => toast.error((e as Error).message || "Purchase order update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Purchase order update nahi hua" }),
   });
 }
 
@@ -257,7 +258,7 @@ export function useAllocateBillToPO() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Bill allocated to PO");
     },
-    onError: (e) => toast.error((e as Error).message || "Bill allocate nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Bill allocate nahi hua" }),
   });
 }
 
@@ -278,7 +279,7 @@ export function useDeallocate() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Bill unlinked from PO");
     },
-    onError: (e) => toast.error((e as Error).message || "Unlink nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Unlink nahi hua" }),
   });
 }
 
@@ -303,6 +304,6 @@ export function useUpdatePurchaseOrderCost() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("PO cost updated");
     },
-    onError: (e) => toast.error((e as Error).message || "Cost update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Cost update nahi hua" }),
   });
 }
