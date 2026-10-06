@@ -21,14 +21,15 @@ import { join } from "node:path";
 
    Ye test un route par NAHI chalta jinka auth kisi aur tarah ka hai — `/api/cron/*`
    (CRON_SECRET), `/api/public/*` (jaan-boojhkar khula), `/api/webhooks/*` (signature),
-   `/api/v1/*` (API key), `/api/portal/*` (portal token). Unhe yahan kheenchna is test ko
+   `/api/v1/*` (API key), `/api/portal/*` (portal token), `/api/agent/*` (AGENT_QUEUE_TOKEN). Unhe yahan kheenchna is test ko
    shor bana dega, aur shor macha-ne wala test band kar diya jata hai.
    ───────────────────────────────────────────────────────────────────────────── */
 
 const API_DIR = join(process.cwd(), "src", "app", "api");
 
 /** Jinka apna alag darwaza hai — inhe ye test nahi dekhta. */
-const OTHER_DOORS = /^(cron|public|webhooks|v1|portal|auth)$/;
+/* `agent` (6 Oct 2026, R-183): /api/agent/feedback-queue — read-only, AGENT_QUEUE_TOKEN; its own test pins the token check. */
+const OTHER_DOORS = /^(cron|public|webhooks|v1|portal|auth|agent)$/;
 
 /** Service role — RLS bypass. Yahi wo cheez hai jo tenant filter ko suraksha banati hai. */
 const USES_ADMIN = /createAdminClient\s*\(/;

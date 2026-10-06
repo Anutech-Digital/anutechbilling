@@ -422,7 +422,9 @@ export default function AdminFeedbackPage() {
         <p className="text-xs text-ink-2 leading-relaxed">
           <b>Run AI Auto-Fix</b> writes the directive, copies it to your clipboard and marks the report queued.
           It does <b>not</b> change any code by itself — this app runs on a server with no access to the
-          repository. Paste the directive into Claude Code to actually make the fix.
+          repository. The AI worker picks up queued reports within the hour and puts each one on the
+          work board as a card; the fix is made from there. You can also paste the directive into
+          Claude Code yourself.
         </p>
       </div>
 
