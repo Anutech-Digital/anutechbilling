@@ -30,6 +30,7 @@ import { useLeadStageCounts } from "@/lib/queries/leads";
 import { useMrrSnapshots } from "@/lib/queries/seat-requests";
 import { KPI } from "@/components/shared/kpi";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Card } from "@/components/ui/card";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -147,13 +148,17 @@ const PIPELINE_STAGE_IDS = PIPELINE_STAGES.map((s) => s.id);
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
-  const { data: subs,      isLoading: subsLoading  } = useSubscriptions();
-  const { data: customers, isLoading: custsLoading } = useCustomers();
+  const subsQ  = useSubscriptions();
+  const custsQ = useCustomers();
+  const { data: subs,      isLoading: subsLoading  } = subsQ;
+  const { data: customers, isLoading: custsLoading } = custsQ;
   /* WC-scale: exact per-stage counts from the server. This used to be useLeads() — every
      lead, cut at PostgREST's 1000 rows — counted here, so past the thousandth lead the
      pipeline card described the newest thousand. Junk is excluded, as the card always said. */
-  const { data: stageCounts = {} } = useLeadStageCounts(PIPELINE_STAGE_IDS);
-  const { data: snapshots } = useMrrSnapshots(13);
+  const stageQ    = useLeadStageCounts(PIPELINE_STAGE_IDS);
+  const snapshotQ = useMrrSnapshots(13);
+  const { data: stageCounts = {} } = stageQ;
+  const { data: snapshots } = snapshotQ;
   const { data: currentUser } = useCurrentUser();
 
   const loading = subsLoading || custsLoading;
@@ -174,6 +179,22 @@ export default function ReportsPage() {
       </div>
     );
   }
+
+  /* MRR, ARR, seats and the customer count all come from these two. If either
+     failed, every KPI below would read ₹0 / 0 — say so instead, and keep the
+     reports directory usable. */
+  if (subsQ.isError || custsQ.isError) {
+    return (
+      <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+        <h1 className="mb-6 font-serif text-3xl text-ink">Reports</h1>
+        <div className="mb-8">
+          <LoadError what="Subscription and customer figures" onRetry={() => { void subsQ.refetch(); void custsQ.refetch(); }} />
+        </div>
+        <NavDirectory parentId="reports" title="All reports" />
+      </div>
+    );
+  }
+  const partialFail = stageQ.isError || snapshotQ.isError;
 
   // ── KPIs from real data ──────────────────────────────────────────────────
   const activeSubs = (subs ?? []).filter((s) => s.status === "active");
@@ -299,6 +320,10 @@ export default function ReportsPage() {
           Profit by product <span aria-hidden>→</span>
         </Link>
       </div>
+
+      {partialFail && (
+        <LoadErrorBanner onRetry={() => { void stageQ.refetch(); void snapshotQ.refetch(); }} />
+      )}
 
       {/* ── Reports directory (S30) — every report in one place, from APP_NAV. P&L,
              Balance Sheet, GST, TDS, Aging, ESI… are no longer sidebar rows; they are

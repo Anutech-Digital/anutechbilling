@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import {
   useBankAccount,
@@ -62,8 +63,10 @@ export default function BankAccountDetailPage() {
   const params = useParams<{ id: string }>();
   const accountId = params?.id ?? null;
 
-  const { data: account,      isLoading: accLoading } = useBankAccount(accountId);
-  const { data: transactions, isLoading: txnLoading } = useBankTransactions(accountId);
+  const accountQ = useBankAccount(accountId);
+  const txnQ     = useBankTransactions(accountId);
+  const { data: account,      isLoading: accLoading } = accountQ;
+  const { data: transactions, isLoading: txnLoading } = txnQ;
   const autoReconcile = useAutoReconcile();
 
   const [tab,           setTab]           = React.useState<FilterTab>("all");
@@ -138,6 +141,15 @@ export default function BankAccountDetailPage() {
 
   if (accLoading) {
     return <div className="p-8"><Skeleton className="h-32" /></div>;
+  }
+  // A failed fetch is not "not found", and without the statement lines both balances
+  // below would print the opening balance as if nothing had moved.
+  if (accountQ.isError || txnQ.isError) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <LoadError what="This bank account" onRetry={() => { void accountQ.refetch(); void txnQ.refetch(); }} />
+      </div>
+    );
   }
   if (!account) {
     return (

@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { FAB } from "@/components/ui/fab";
 import { useProjectSales, type ProjectSaleWithTotals } from "@/lib/queries/projects";
 import { rupee, formatDate, daysBetween } from "@/lib/utils";
@@ -25,7 +26,8 @@ import { istToday } from "@/lib/dates/ist";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const { data: projects, isLoading } = useProjectSales();
+  const projectsQ = useProjectSales();
+  const { data: projects, isLoading } = projectsQ;
   const [addOpen, setAddOpen] = React.useState(false);
   const [quoteOpen, setQuoteOpen] = React.useState(false);
   const [kpiOpen, setKpiOpen] = React.useState(true);
@@ -96,6 +98,8 @@ export default function ProjectsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-40 rounded-lg" />)}
         </div>
+      ) : projectsQ.isError ? (
+        <LoadError what="Project sales" onRetry={() => void projectsQ.refetch()} />
       ) : !projects || projects.length === 0 ? (
         <Card>
           <EmptyState

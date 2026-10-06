@@ -27,6 +27,22 @@ function pages(dir: string): string[] {
 
 const rel = (f: string) => path.relative(ROOT, f).split(path.sep).join("/");
 const handlesFailure = (src: string) => /\bisError\b|\bLoadError(Banner)?\b/.test(src);
+const APP = path.join(process.cwd(), "src/app/(app)");
+
+/** R-285: money/record pages (some outside accounting) that used to print ₹0,
+ *  "0 companies" or "not found" when their fetch failed. Each must import the
+ *  shared error state and branch on a query's isError. */
+const R285_PAGES = [
+  "accounting/payment-runs/page.tsx",
+  "accounting/business-loans/page.tsx",
+  "accounting/banking/[id]/page.tsx",
+  "reports/page.tsx",
+  "projects/page.tsx",
+  "projects/[id]/page.tsx",
+  "customers/groups/page.tsx",
+  "customers/groups/[id]/page.tsx",
+  "contacts/[id]/page.tsx",
+];
 
 /** Fixed by R-270 — each must use the shared error state. */
 const R270_PAGES = [
@@ -43,16 +59,13 @@ const R270_PAGES = [
 /** Not fixed yet — separate cards. Only ever remove from this list. */
 const KNOWN_GAPS = [
   "advances/page.tsx",
-  "banking/[id]/page.tsx",
   "banking/rules/page.tsx",
   "bill-payments/page.tsx",
-  "business-loans/page.tsx",
   "cash-flow/page.tsx",
   "day-book/page.tsx",
   "esi-register/page.tsx",
   "gst/page.tsx",
   "loans/page.tsx",
-  "payment-runs/page.tsx",
   "prepaid/page.tsx",
   "reimbursements/page.tsx",
   "salary-register/page.tsx",
@@ -75,6 +88,14 @@ describe("accounting pages show an error state, not ₹0 (R-270)", () => {
       return !p || !/from "@\/components\/shared\/load-error"/.test(p.src);
     });
     expect(missing, `These reports still have no shared error state:\n  ${missing.join("\n  ")}`).toEqual([]);
+  });
+
+  it("the R-285 pages use the shared LoadError / LoadErrorBanner", () => {
+    const missing = R285_PAGES.filter((f) => {
+      const src = fs.readFileSync(path.join(APP, f), "utf8");
+      return !/from "@\/components\/shared\/load-error"/.test(src) || !/\.isError\b/.test(src);
+    });
+    expect(missing, `These pages still fall through to ₹0 / not-found on a failed fetch:\n  ${missing.join("\n  ")}`).toEqual([]);
   });
 
   it("no accounting page with a loading state lacks a failed state (except the known gaps)", () => {

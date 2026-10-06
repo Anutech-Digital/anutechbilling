@@ -16,6 +16,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { FAB } from "@/components/ui/fab";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import {
@@ -76,7 +77,7 @@ export default function BusinessLoansPage() {
 
       {/* How it works — only when there's nothing yet, so once loans exist the
           money (KPIs) reads first instead of an education banner. English-only. */}
-      {loans.length === 0 && (
+      {loans.length === 0 && !q.isError && (
         <Card className="mb-5 p-3 md:p-4 border-amber/40 bg-amber-soft/25">
           <p className="text-[13px] text-ink-2 leading-relaxed">
             <b className="text-ink">Note:</b> a loan isn&apos;t an expense — it&apos;s cash in the bank plus an equal liability. Each month&apos;s EMI: only the <b>interest</b> is an expense; the <b>principal</b> reduces the loan. The app handles this split for you.
@@ -94,6 +95,8 @@ export default function BusinessLoansPage() {
 
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
+      ) : q.isError ? (
+        <LoadError what="Business loans" onRetry={() => void q.refetch()} />
       ) : loans.length === 0 ? (
         <Card className="py-2">
           <EmptyState
@@ -440,6 +443,11 @@ function HistoryDialog({ loan, onClose }: { loan: BusinessLoan; onClose: () => v
         <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
           {histQ.isLoading ? (
             <p className="text-xs text-ink-3">Loading…</p>
+          ) : histQ.isError ? (
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-rose/40 bg-rose/5 p-3 text-xs text-ink-2">
+              <span>EMI history didn&apos;t load. Your data is safe.</span>
+              <Button size="sm" icon="refresh" onClick={() => void histQ.refetch()}>Try again</Button>
+            </div>
           ) : rows.length === 0 ? (
             <div className="rounded-md border border-dashed border-hairline p-6 text-center text-xs text-ink-3">
               Abhi tak koi EMI record nahi hui.
