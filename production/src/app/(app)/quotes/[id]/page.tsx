@@ -39,6 +39,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ActivityTimeline, type TimelineEvent } from "@/components/shared/activity-timeline";
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { payIntent } from "./pay-intent";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
@@ -204,6 +205,19 @@ export default function QuoteDetailPage() {
     : null;
 
   const totalReceivedSoFar = sumReceived(paymentHistory ?? []);
+
+  /* R-243: ?pay=1 opens Record payment directly (amount filled), like ?send= above — once
+     per navigation, then the URL is cleaned. A quote that takes no payment just drops it. */
+  const payParam = searchParams.get("pay");
+  const payIntentHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (payIntentHandled.current || !quote) return;
+    const action = payIntent(payParam, quote, paymentHistory === undefined ? null : totalReceivedSoFar);
+    if (action === "none") return;
+    payIntentHandled.current = true;
+    if (action === "open") setPaymentOpen(true);
+    router.replace(`/quotes/${quote.id}` as never);
+  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router]);
   // Records that keep this quote un-deletable (must be voided/refunded first).
   const receivedPayments = (paymentHistory ?? []).filter((p) => p.status === "received");
 

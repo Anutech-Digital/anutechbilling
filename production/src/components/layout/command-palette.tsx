@@ -226,7 +226,8 @@ export function CommandPalette({
     { icon: "plus",    label: "Create new lead",        meta: "Open the quick-add form",                     href: "/leads?action=quick-add" },
     { icon: "file",    label: "Create new quote",       meta: "Open Quote Builder",                          href: "/quotes/new" },
     { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
-    { icon: "rupee",   label: "Record a payment",       meta: "Open an invoice to record what you received", href: "/invoices" },
+    /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
+    { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },
     { icon: "users",   label: "Add new customer",       meta: "Open new customer form",                      href: "/customers/new" },
     { icon: "send",    label: "Launch new campaign",    meta: "Email or WhatsApp blast",                     href: "/campaigns" },
     { icon: "mail",    label: "Send renewal reminders", meta: "Go to Renewals",                              href: "/renewals" },
