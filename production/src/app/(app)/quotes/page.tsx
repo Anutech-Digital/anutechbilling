@@ -19,6 +19,8 @@ import { toast } from "sonner";
 import { QUOTE_FOCI, QUOTE_FOCUS_LABEL, quoteInFocus, focusValue, type QuoteFocus } from "@/lib/quotes/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { useQuotes, useDeleteQuote, quoteDeleteBlockReason } from "@/lib/queries/quotes";
+import { useQuoteLeadContacts } from "@/lib/queries/quote-lead-contacts";
+import { quoteMatchesSearch, quotePartyName } from "@/lib/quotes/quote-party-name";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { useProjectSales, useDeleteProjectSale, type ProjectSaleWithTotals } from "@/lib/queries/projects";
@@ -123,6 +125,16 @@ function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { 
 export default function QuotesPage() {
   const router = useRouter();
   const { data: quotes, isLoading, error, refetch } = useQuotes();
+  /* R-278: a quote for a lead with no company was saved as "Prospect" and could not be
+     found by the lead's email or phone. The lead's contact is read alongside, so the row
+     shows a real name (old rows too, no data change) and search covers name/email/phone. */
+  const leadIdsOnQuotes = React.useMemo(
+    () => (quotes ?? []).map((q) => q.lead_id).filter((id): id is string => !!id),
+    [quotes],
+  );
+  const { data: leadContacts } = useQuoteLeadContacts(leadIdsOnQuotes);
+  const leadOf = (q: Quote) => (q.lead_id ? leadContacts?.get(q.lead_id) ?? null : null);
+  const partyOf = (q: Quote) => quotePartyName(q.customer_name, leadOf(q));
   /* ── Which quotes turned into a live subscription, and what is still owed ──
      Asked 11 Sep 2026: "I want to know which quote has an active subscription, and
      if I gave someone a grace period, show that too." Neither was visible here —
@@ -301,13 +313,7 @@ export default function QuotesPage() {
       // Accepted tab excludes those that have already graduated to invoiced
       if (q.status !== "accepted" || q.payment_status === "invoiced") return false;
     } else if (tab !== "all" && q.status !== tab) return false;
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      q.id.toLowerCase().includes(s) ||
-      q.customer_name.toLowerCase().includes(s) ||
-      (q.plan?.toLowerCase().includes(s) ?? false)
-    );
+    return quoteMatchesSearch(q, leadOf(q), search);
   });
 
   /* ── j / k / Enter over this table ────────────────────────────────────────
@@ -801,7 +807,7 @@ export default function QuotesPage() {
                         ) : null}
                       </div>
                       <p className="text-sm font-semibold text-ink mt-1 truncate">
-                        {cleanDisplayName(q.customer_name)}
+                        {cleanDisplayName(partyOf(q))}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
@@ -914,9 +920,9 @@ export default function QuotesPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2.5 align-top">
-                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(q.customer_name)}>{cleanDisplayName(q.customer_name)}</div>
-                        {phoneSuffixOf(q.customer_name) && (
-                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(q.customer_name)}</div>
+                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
+                        {phoneSuffixOf(partyOf(q)) && (
+                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(partyOf(q))}</div>
                         )}
                       </td>
                       {/* Plan — wraps to a second line rather than truncating with "…". */}
@@ -1037,7 +1043,7 @@ export default function QuotesPage() {
                                 icon="whatsapp"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1122,7 +1128,7 @@ export default function QuotesPage() {
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
                                 onClick={() => {
-                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >

@@ -61,6 +61,7 @@ import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
+import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
@@ -223,6 +224,11 @@ export function QuoteBuilder() {
   React.useEffect(() => { if (leadContactInit) setLeadContact(leadContactInit); }, [leadContactInit]);
   React.useEffect(() => { if (leadPhoneInit)   setLeadPhone(leadPhoneInit);     }, [leadPhoneInit]);
   React.useEffect(() => { if (leadEmailInit)   setLeadEmail(leadEmailInit);     }, [leadEmailInit]);
+  /* R-278: a lead with no company is still somebody. Company -> contact -> email -> phone,
+     so the quote is saved, previewed and headed with a real name instead of "Prospect". */
+  const leadDisplayName = leadQuoteName({
+    company: leadCompany, contact_name: leadContact, contact_email: leadEmail, contact_phone: leadPhone,
+  });
 
   // Lead mode applies when either:
   //   - explicit leadId in URL (from Lead Detail → Send Quote OR direct URL), OR
@@ -966,12 +972,12 @@ export function QuoteBuilder() {
          word before the generic placeholder. */
       const resolvedCustomerName =
         (isLeadMode
-          ? (leadCompany?.trim() || "")
+          ? leadDisplayName
           : customer
             ? customer.name
             : prospectName.trim())
         || (editOf ? (sourceQuote?.customer_name?.trim() ?? "") : "")
-        || "Prospect";
+        || PLACEHOLDER_QUOTE_NAME;
 
       const quote = await createQuote.mutateAsync({
         id: idToUse,
@@ -1148,7 +1154,7 @@ export function QuoteBuilder() {
                 : (quoteId ?? "New quotation")}
             </h1>
             <p className="text-sm text-ink-3 mt-1">
-              For <b className="text-ink">{isLeadMode ? leadCompany : (customer?.name ?? prospectName.trim() ?? "—")}</b>
+              For <b className="text-ink">{isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}</b>
               {(isLeadMode || (!customer && prospectName.trim())) && (
                 <span className="ml-1 text-amber-ink">(prospect)</span>
               )}
@@ -2540,7 +2546,7 @@ export function QuoteBuilder() {
         tenantPhone={currentUser?.tenantPhone}
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
-        customerName={isLeadMode ? (leadCompany ?? "Prospect") : (customer?.name ?? prospectName.trim() ?? "—")}
+        customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
         contactName={isLeadMode ? leadContact : null}
         contactEmail={isLeadMode ? leadEmail : null}
         contactPhone={isLeadMode ? leadPhone : null}
