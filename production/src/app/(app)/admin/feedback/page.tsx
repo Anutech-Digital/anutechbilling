@@ -37,6 +37,8 @@ import {
   useTriageFeedback,
   useDispatchFeedback,
   useUpdateFeedbackStatus,
+  useMarkFeedbackChecked,
+  useUnmarkFeedbackChecked,
   feedbackScreenshotUrl,
   type FeedbackWithShots,
   type FeedbackStatus,
@@ -59,7 +61,7 @@ const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: s
 const ACTION_HELP: Record<string, string> = {
   open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board within the hour. Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
   agent_queued: "Waiting for the AI worker — it becomes a card on the work board within the hour, and the fix is made from there. Reopen takes it back to Open.",
-  fixed: "Still happening? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, fixes it if still broken, notes the result on the work board, then archives itself. Reopen sends it back to Open.",
+  fixed: "Not checked yet? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
   wont_fix: "Closed without a fix. Reopen if it matters again.",
   duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
 };
@@ -122,7 +124,9 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
   lines.push(
     "",
     "1. JAANCH: report ke kadam browser me chalao. Screenshot ke saath batao ki ab kya hota hai.",
-    '2. Theek hai → bas batao "✓ browser me theek hai" aur kya dekha. Kuch mat badlo.',
+    '2. Theek hai → bas batao "✓ browser me theek hai" aur kya dekha. Kuch mat badlo. Phir app me report par "✓ Checked" lagao (token kabhi print mat karo):',
+    `   curl -s -X POST -H "Authorization: Bearer $(cat ~/.claude/secrets/agent-queue-token)" -H "content-type: application/json" -d '{"id":"${row.id}"}' ${appUrl}/api/agent/feedback-checked`,
+    "   (200 = lag gaya. 401/404/503 = nahi laga — bas nateeja me likh do, owner haath se \"Mark checked\" daba dega.)",
     "3. Bug abhi bhi hai → pehle board par card banao, phir neeche ki directive se theek karo: ek test jo pehle fail ho, fix, poori test suite, local par browser me dikhao, commit me card ka number.",
     "",
     '4. NATEEJA BOARD PAR: kaam ke ant me nateeja "Kaam ki list" board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par likho — theek tha to ek card status "done" aur title "Jaanch: <report>", fix kiya to wahi card review me. Taaki session band hone ke baad bhi nateeja dikhe.',
@@ -179,7 +183,7 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
   );
 }
 
-function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string | null }) {
+function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId: string | null; meName: string }) {
   const [open, setOpen] = React.useState(false);
   const directiveRef = React.useRef<HTMLPreElement>(null);
   /* Copy failed: open the details and select the directive, after the panel has rendered. */
@@ -191,6 +195,8 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
   const triage = useTriageFeedback();
   const dispatch = useDispatchFeedback();
   const setStatus = useUpdateFeedbackStatus();
+  const markChecked = useMarkFeedbackChecked();
+  const unmarkChecked = useUnmarkFeedbackChecked();
 
   const type = row.inferred_type ?? row.reported_type;
   const badge = TYPE_BADGE[type] ?? TYPE_BADGE.bug;
@@ -206,6 +212,33 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     else {
       showForManualCopy();
       toast.warning("Browser blocked copying.", { description: "The directive is open and selected below — press Ctrl+C." });
+    }
+  };
+
+  /* R-188: "I saw it working" — so a second visit does not have to remember. */
+  const handleMarkChecked = async () => {
+    try {
+      await markChecked.mutateAsync({ id: row.id, byName: meName });
+      toast.success("Marked as checked.", {
+        description: "The report now shows who checked it and when.",
+        action: { label: "Undo", onClick: () => void handleUnmarkChecked() },
+        duration: 10_000,
+      });
+    } catch (err) {
+      toast.error("Could not mark it checked.", {
+        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
+      });
+    }
+  };
+
+  const handleUnmarkChecked = async () => {
+    try {
+      await unmarkChecked.mutateAsync({ id: row.id });
+      toast.success("Check removed.", { description: "It shows \"not checked yet\" again." });
+    } catch (err) {
+      toast.error("Could not remove the check.", {
+        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
+      });
     }
   };
 
@@ -265,7 +298,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     }
   };
 
-  const busy = triage.isPending || dispatch.isPending || setStatus.isPending;
+  const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
 
   return (
     <Card className="p-4 space-y-3">
@@ -296,6 +329,9 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             )}
             {row.status === "agent_queued" && <Badge kind="info" size="sm">queued for agent</Badge>}
             {row.status === "fixed" && <Badge kind="success" size="sm">fixed</Badge>}
+            {row.status === "fixed" && (row.checked_at
+              ? <Badge kind="success" size="sm">✓ checked {formatDate(row.checked_at)}{row.checked_by_name ? ` · ${row.checked_by_name}` : ""}</Badge>
+              : <Badge kind="warning" size="sm">not checked yet</Badge>)}
             {row.status === "wont_fix" && <Badge kind="muted" size="sm">won&apos;t fix</Badge>}
           </div>
 
@@ -350,7 +386,18 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             <Icon name="copy" size={14} className="mr-1.5" />
             Check in browser
           </Button>
-        ) : (
+        ) : null}
+        {row.status === "fixed" && !row.checked_at ? (
+          <Button size="sm" variant="ghost" onClick={handleMarkChecked} disabled={busy} title="You saw it working — mark it so you do not check it again">
+            ✓ Mark checked
+          </Button>
+        ) : null}
+        {row.status === "fixed" && row.checked_at ? (
+          <Button size="sm" variant="ghost" onClick={handleUnmarkChecked} disabled={busy} title="Pressed by mistake? Take the check back">
+            Undo check
+          </Button>
+        ) : null}
+        {row.status === "fixed" ? null : (
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive} title="Copies the fix instructions to paste into Claude Code yourself">
             <Icon name="copy" size={14} className="mr-1.5" />
             Copy Directive
@@ -599,7 +646,7 @@ export default function AdminFeedbackPage() {
       {!isLoading && !error && rows.length > 0 && (
         <div className="space-y-3">
           {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} />
+            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} />
           ))}
         </div>
       )}
