@@ -34,6 +34,8 @@ import { rupee } from "@/lib/utils";
 import { WEBSITE_ORDER_FILTER, orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
+import { invoiceByLead, invoiceHref, type QuoteInvoiceRow } from "./invoice-links";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +75,7 @@ interface Order {
   /** True only when the lead is won — a cart order awaiting payment is NOT paid. */
   paid:        boolean;
   razorpayId:  string | null;
+  /** R-083: the GST invoice raised for this order's quote (R-079), or null if none yet. */
   invoiceNo:   string | null;
   status:      OrderStatus;
   source:      string;
@@ -206,7 +209,15 @@ function OrderDetailDrawer({
                   <span className="font-semibold text-amber">{rupee(order.total)}</span>
                 </DrawerRow>
                 <DrawerRow label="Razorpay ID" mono>{order.razorpayId}</DrawerRow>
-                <DrawerRow label="Invoice" mono>{order.invoiceNo}</DrawerRow>
+                <DrawerRow label="Invoice" mono>
+                  {order.invoiceNo ? (
+                    <Link href={invoiceHref(order.invoiceNo) as never} className="text-indigo-ink hover:underline" title="Open GST invoice">
+                      {order.invoiceNo}
+                    </Link>
+                  ) : (
+                    <span className="font-sans text-ink-3">{order.paid ? "Not issued yet" : "After payment"}</span>
+                  )}
+                </DrawerRow>
               </>
             ) : (
               <>
@@ -348,14 +359,13 @@ function OrderDetailDrawer({
             <Icon name="mail" size={12} />
             Email
           </Button>
-          {isPaid && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => toast.info("Downloading invoice PDF…")}
-            >
-              <Icon name="download" size={12} />
-              Invoice
+          {/* R-083: opens the order's real GST invoice (it used to toast "Downloading…"). */}
+          {isPaid && order.invoiceNo && (
+            <Button variant="default" size="sm" asChild>
+              <Link href={invoiceHref(order.invoiceNo) as never}>
+                <Icon name="receipt" size={12} />
+                Invoice
+              </Link>
             </Button>
           )}
           <div className="flex-1" />
@@ -417,7 +427,7 @@ function DrawerRow({
 
 // ─── DB → UI mapping ─────────────────────────────────────────────────────────
 // Map a website-order row from public.leads (sources: lib/online-orders/sources.ts) into the
-// Order shape the UI expects. Many UI fields (Razorpay ID, invoice no, granular
+// Order shape the UI expects (invoice no comes from the order's quote — R-083). Some UI fields (Razorpay ID, granular
 // progress) aren't populated yet — set to sensible defaults so the row still
 // renders. Once payments + provisioning land, we backfill from quotes/payments.
 
@@ -509,7 +519,7 @@ function nextActionFromLead(l: LeadRow): string {
   }
 }
 
-function leadToOrder(l: LeadRow): Order {
+function leadToOrder(l: LeadRow, invoiceId: string | null = null): Order {
   const isTrial = isTrialOrder(l);
   const win     = isTrial ? trialWindow(l) : null;
   const tier    = tierFromPlan(l.plan);
@@ -544,7 +554,7 @@ function leadToOrder(l: LeadRow): Order {
     trialEndsOn: win ? win.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null,
     paid:        l.stage === "won",
     razorpayId:  null,    // future: from payments table
-    invoiceNo:   null,    // future: from invoices table
+    invoiceNo:   invoiceId,
     status:      statusFromLead(l),
     source:      orderChannel(l.source, l.utm_source),
     progress:    isTrial
@@ -590,9 +600,27 @@ export default function OnlineOrdersPage() {
       setLoading(false);
       return;
     }
+    const leads = (data ?? []) as unknown as LeadRow[];
+
+    /* R-083: the invoice R-079 issues on payment sits on the order's quote
+       (quotes.lead_id -> quotes.invoice_id). A failure here only hides the links —
+       the orders themselves still show. */
+    let invoices = new Map<string, string>();
+    const leadIds = leads.map((l) => l.id);
+    if (leadIds.length) {
+      const { data: qRows, error: qErr } = await supabase
+        .from("quotes")
+        .select("lead_id, invoice_id, created_at")
+        .in("lead_id", leadIds)
+        .not("invoice_id", "is", null);
+      if (signal?.cancelled) return;
+      if (qErr) console.error("[online-orders] invoice lookup failed:", qErr);
+      else invoices = invoiceByLead((qRows ?? []) as QuoteInvoiceRow[]);
+    }
+
     // Real orders only — no demo/seed data. An empty buy-flow correctly shows
     // an empty state, never fabricated revenue.
-    setOrders((data ?? []).map((r) => leadToOrder(r as unknown as LeadRow)));
+    setOrders(leads.map((l) => leadToOrder(l, invoices.get(l.id) ?? null)));
     setLoading(false);
   }, []);
 
@@ -857,6 +885,16 @@ export default function OnlineOrdersPage() {
                       </span>
                     </div>
                   </button>
+                  {o.invoiceNo && (
+                    <Link
+                      href={invoiceHref(o.invoiceNo) as never}
+                      className="mt-1 inline-flex items-center gap-1 px-1 font-mono text-2xs text-indigo-ink hover:underline"
+                      title="Open GST invoice"
+                    >
+                      <Icon name="receipt" size={11} />
+                      {o.invoiceNo}
+                    </Link>
+                  )}
                 </li>
               );
             })}
@@ -914,6 +952,17 @@ export default function OnlineOrdersPage() {
                           <Badge kind="info" dot>
                             Trial · D{o.trialDay}
                           </Badge>
+                        )}
+                        {/* R-083: the order's GST invoice, one click away. */}
+                        {o.invoiceNo && (
+                          <Link
+                            href={invoiceHref(o.invoiceNo) as never}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1 block font-mono text-3xs text-indigo-ink hover:underline"
+                            title="Open GST invoice"
+                          >
+                            {o.invoiceNo}
+                          </Link>
                         )}
                       </td>
 
