@@ -160,6 +160,7 @@ function fill(paid: boolean, onNeedsPayment?: (h: unknown) => void) {
   set("contactName", "Ranjeet Kumar");
   set("contactEmail", "ranjeet@accesstel.in");
   set("contactPhone", "+91 98765 43210");
+  set("newCustState", "07"); // R-174: a new customer needs a state
   set("pricePerSeat", "1632");
   set("seats", "10");
   /* Postpaid requires a payment due date since 11 Sep 2026 — blank is refused, so the
@@ -339,6 +340,7 @@ describe("Postpaid — the payment due date is REQUIRED and starts blank", () =>
     setField("contactName", "Ranjeet Kumar");
     setField("contactEmail", "ranjeet@accesstel.in");
     setField("contactPhone", "+91 98765 43210");
+    setField("newCustState", "07"); // R-174: a new customer needs a state
     setField("pricePerSeat", "1632");
     setField("seats", "10");
     fireEvent.submit(document.querySelector("form")!);
@@ -355,6 +357,7 @@ describe("Postpaid — the payment due date is REQUIRED and starts blank", () =>
     setField("contactName", "Ranjeet Kumar");
     setField("contactEmail", "ranjeet@accesstel.in");
     setField("contactPhone", "+91 98765 43210");
+    setField("newCustState", "07"); // R-174: a new customer needs a state
     setField("pricePerSeat", "1632");
     setField("seats", "10");
     setField("paymentDueDate", "2026-12-31");
@@ -438,7 +441,7 @@ describe("A new customer gets a primary contact", () => {
    */
   describe("every field is refused blank", () => {
     /** Fill the form, omitting whichever contact field is under test. */
-    const submitWithout = (omit: "contactName" | "contactEmail" | "contactPhone") => {
+    const submitWithout = (omit: "contactName" | "contactEmail" | "contactPhone" | "newCustState") => {
       render(
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
           <AddSubscriptionDialog open onOpenChange={() => {}} onNeedsPayment={() => {}} />
@@ -452,6 +455,7 @@ describe("A new customer gets a primary contact", () => {
         contactName: "Ranjeet Kumar",
         contactEmail: "ranjeet@accesstel.in",
         contactPhone: "+91 98765 43210",
+        newCustState: "07", // R-174
         pricePerSeat: "1632",
         seats: "10",
         paymentDueDate: "2026-10-11",
@@ -460,7 +464,8 @@ describe("A new customer gets a primary contact", () => {
       fireEvent.submit(document.querySelector("form")!);
     };
 
-    it.each(["contactName", "contactEmail", "contactPhone"] as const)(
+    /* R-174: a new customer with no state could never be invoiced ("no state on record"). */
+    it.each(["contactName", "contactEmail", "contactPhone", "newCustState"] as const)(
       "writes nothing at all when %s is blank", async (omit) => {
         submitWithout(omit);
         await new Promise((r) => setTimeout(r, 50));
@@ -483,6 +488,7 @@ describe("A new customer gets a primary contact", () => {
       set("contactName", "Ranjeet Kumar");
       set("contactEmail", "ranjeet");
       set("contactPhone", "+91 98765 43210");
+      set("newCustState", "07"); // R-174: a new customer needs a state
       set("pricePerSeat", "1632");
       set("seats", "10");
       set("paymentDueDate", "2026-10-11");
@@ -507,6 +513,7 @@ describe("A new customer gets a primary contact", () => {
       set("contactName", "Ranjeet Kumar");
       set("contactEmail", "ranjeet@intranet");
       set("contactPhone", "9876543210");
+      set("newCustState", "07"); // R-174: a new customer needs a state
       set("pricePerSeat", "1632");
       set("seats", "10");
       set("paymentDueDate", "2026-10-11");
@@ -530,6 +537,7 @@ describe("A new customer gets a primary contact", () => {
       set("contactName", "Ranjeet Kumar");
       set("contactEmail", "ranjeet@accesstel.in");
       set("contactPhone", "011-4155 2200 x21");
+      set("newCustState", "07"); // R-174: a new customer needs a state
       set("pricePerSeat", "1632");
       set("seats", "10");
       set("paymentDueDate", "2026-10-11");

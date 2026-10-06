@@ -37,6 +37,8 @@ const FIELDS: Record<EntryProposal["kind"], FieldDef[]> = {
     { key: "name", label: "Company" }, { key: "contact_name", label: "Contact person" },
     { key: "contact_phone", label: "Phone" }, { key: "contact_email", label: "Email" },
     { key: "gstin", label: "GSTIN" }, { key: "domain", label: "Domain" },
+    /* R-174: place of supply when there is no GSTIN — the GST invoice needs one. */
+    { key: "state", label: "State (if no GSTIN)" },
     { key: "address", label: "Address", wide: true },
   ],
   expense: [

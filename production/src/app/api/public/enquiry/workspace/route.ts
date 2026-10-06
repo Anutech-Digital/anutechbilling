@@ -38,6 +38,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { turnstileRefusal } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
@@ -78,7 +79,10 @@ const enquirySchema = z.object({
   message:     z.string().max(2000).optional(),
   // Optional GST place-of-supply. Drives IGST vs CGST+SGST once the lead
   // converts to a customer (state copied through accept_quote / record_payment).
-  stateCode:   z.string().regex(/^\d{2}$/, "state code must be 2 digits").optional(),
+  /* R-174: a real GST state code — "2 digits" alone let "00" or "98" through, which no invoice
+     can use. Unknown codes are refused here rather than stored on the lead. */
+  stateCode:   z.string().regex(/^\d{2}$/, "state code must be 2 digits")
+    .refine((c) => c in GST_STATE_BY_CODE && Number(c) < 97, "not a GST state code").optional(),
   state:       z.string().max(60).optional(),
   /** A free-trial request from the site's trial form: no owner alert (owner, 30 Sep 2026). */
   trial:       z.boolean().optional(),
@@ -165,10 +169,11 @@ export async function POST(request: NextRequest) {
       // Migration 0232 — inbound attribution. Nulls when nothing was captured.
       ...captureFromRequest(request, body as Record<string, unknown>),
       notes:         leadNotes,
-      // Place-of-supply for GST (copied to the customer on conversion). Optional —
-      // blank falls back to intra-state until set on the customer in-app.
+      // Place-of-supply for GST (copied to the customer on conversion). Optional here — an
+      // enquiry is not a sale; a blank one shows in Customers → "State missing" after conversion
+      // (R-166) and generate_invoice refuses until it is set. The name comes from the code (R-174).
       state_code:    stateCode ?? null,
-      state:         state ?? null,
+      state:         stateCode ? GST_STATE_BY_CODE[stateCode] : (state ?? null),
     });
 
     if (leadErr) {

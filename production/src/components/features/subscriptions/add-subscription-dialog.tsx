@@ -9,6 +9,8 @@
 "use client";
 
 import * as React from "react";
+import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -139,6 +141,9 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
   const [contactEmail, setContactEmail] = React.useState("");
   const [contactPhone, setContactPhone] = React.useState("");
   const [contactRole, setContactRole] = React.useState<ContactRole>("poc");
+  /* R-174: a new customer's place of supply (GST code, or EXPORT_STATE). Without it the
+     GST invoice for this sale is refused ("no state on record"). */
+  const [newCustState, setNewCustState] = React.useState("");
   /* ── Picking someone who already exists ────────────────────────────────────
      Abhishek, 18 Sep 2026: "make it searchable so if that contact available then it
      should selected". Since migration 20260918090000 a person can serve several
@@ -358,6 +363,8 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
       setContactEmail("");
       setContactPhone("");
       setContactRole("poc");
+    setNewCustState("");
+      setNewCustState("");
     }
   };
 
@@ -369,6 +376,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
     setContactEmail("");
     setContactPhone("");
     setContactRole("poc");
+    setNewCustState("");
   };
 
   /**
@@ -667,6 +675,12 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
        bare 10-digit mobiles, landlines with a 2-to-4 digit STD code, extensions — and
        every pattern strict enough to be worth having would eventually refuse a real
        customer's real number. Required, not policed. */
+    if (needsContact && !newCustState) {
+      toast.error("Choose the customer's state", {
+        description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer.",
+      });
+      return;
+    }
     if (needsContact && !contactRole) {
       /* Unreachable from the form: the dropdown is seeded with 'poc' and Radix cannot
          clear it. Kept so the rule is stated in code rather than resting on a default
@@ -781,6 +795,10 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
           name: cleanCustomerName,
           domain: cleanDomain,
           created_at: new Date().toISOString(),
+          // R-174: place of supply — generate_invoice reads state_code.
+          ...(newCustState === EXPORT_STATE
+            ? { country: "Outside India" }
+            : newCustState ? { state_code: newCustState, state: GST_STATE_BY_CODE[newCustState] ?? null } : {}),
         } as any);
         if (custErr) throw custErr;
         customerId = newCustId;
@@ -1187,6 +1205,9 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
                   onChange={(e) => { setContactEmail(e.target.value); setPickedContactId(null); setContactQueryOpen(true); }}
                   required
                 />
+              </FormField>
+              <FormField label="Customer's state (GST)" required htmlFor="newCustState">
+                <GstStateSelect id="newCustState" value={newCustState} onChange={setNewCustState} allowExport />
               </FormField>
               <FormField label="Contact Phone" required htmlFor="contactPhone">
                 <Input
