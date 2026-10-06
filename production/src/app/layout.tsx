@@ -56,7 +56,8 @@ export const viewport: Viewport = {
   themeColor: "#C2410C", // brand amber — used by Android Chrome toolbar tint + iOS splash
   width:      "device-width",
   initialScale: 1,
-  // Prevent iOS Safari from zooming when focusing inputs (annoying on phone)
+  // Pinch-zoom stays allowed (accessibility). The focus-zoom on iPhone is stopped by
+  // 16px fields on phone widths — globals.css (R-267) — not by locking the scale.
   maximumScale: 5,
 };
 
