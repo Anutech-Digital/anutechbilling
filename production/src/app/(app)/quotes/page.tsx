@@ -57,6 +57,9 @@ import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type { Quote } from "@/lib/supabase/database.types";
+/* R-105: same paging rule + "Load N more" control as Payments (R-104) and the shared DataTable. */
+import { usePagedRows, LoadMore } from "../payments/load-more";
+import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -310,10 +313,20 @@ export default function QuotesPage() {
      `count` is the FILTERED length, so the selection is re-clamped whenever a tab or a
      search changes the list. Without that, Enter after a filter would open whichever row
      had slid into the old index — the wrong quote, confidently. See useListKeys. */
+  /* R-105: paint 50 at a time (R-024 rule). Tab counts, KPIs, the pipeline/renewal totals
+     and the CSV export still use every quote in `filtered` / `quotesByWorkspace`; only the
+     two lists are paged. A new tab, focus, search, team view or approvals filter starts
+     again at one page. */
+  const paged = usePagedRows(
+    filtered,
+    QUOTES_PAGE_SIZE,
+    quotesPagingKey({ tab, focus, search, teamMode, onlyMyApprovals }),
+  );
+
   const keys = useListKeys({
-    count: filtered.length,
+    count: paged.shown.length,   // only the rows on screen (R-105)
     onOpen: (i) => {
-      const q = filtered[i];
+      const q = paged.shown[i];
       if (q) router.push(`/quotes/${q.id}` as never);
     },
   });
@@ -646,7 +659,9 @@ export default function QuotesPage() {
               <TabBar className="overflow-y-hidden" value={tab} onChange={tabOn} items={tabs} />
               <div className="flex justify-between items-center gap-3 flex-wrap">
                 <div className="text-xs text-ink-3">
-                  Showing {filtered.length} of {counts.all ?? 0} quote{counts.all === 1 ? "" : "s"}
+                  {paged.hidden > 0
+                    ? <>Showing {paged.shown.length} of {filtered.length} quotes</>
+                    : <>Showing {filtered.length} of {counts.all ?? 0} quote{counts.all === 1 ? "" : "s"}</>}
                   {/* Beside the count on purpose: the count is the thing the toggle
                       changes, and a filter whose effect is shown somewhere else on the
                       page reads as the list being wrong. */}
@@ -757,7 +772,7 @@ export default function QuotesPage() {
       {/* Adaptive card list — phones, tablets, and medium viewports (< 1280px) */}
       {!isLoading && !error && filtered.length > 0 && (
         <ul className="xl:hidden space-y-2 mb-3">
-          {filtered.map((q) => {
+          {paged.shown.map((q) => {
             const uStatus = unifiedStatus(q);
             const note = cashNote(q);
             const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
@@ -828,8 +843,13 @@ export default function QuotesPage() {
               </li>
             );
           })}
+          {paged.hidden > 0 && (
+            <li>
+              <LoadMore hidden={paged.hidden} pageSize={QUOTES_PAGE_SIZE} noun="quotes" onLoadMore={paged.loadMore} />
+            </li>
+          )}
           <li className="pt-2 text-center text-2xs text-ink-3">
-            Showing {filtered.length} of {counts.all ?? 0} · Total {rupee(filtered.reduce((s, q) => s + (q.amount ?? 0), 0), { compact: true })}
+            Showing {paged.hidden > 0 ? `${paged.shown.length} of ${filtered.length}` : `${filtered.length} of ${counts.all ?? 0}`} · Total {rupee(filtered.reduce((s, q) => s + (q.amount ?? 0), 0), { compact: true })}
           </li>
         </ul>
       )}
@@ -852,7 +872,7 @@ export default function QuotesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((q, rowIndex) => {
+                {paged.shown.map((q, rowIndex) => {
                   const margin = estimateMarginForQuote(q);
                   const uStatus = unifiedStatus(q);
                   const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
@@ -1139,7 +1159,11 @@ export default function QuotesPage() {
             <div className="flex items-center justify-between gap-3 flex-wrap border-t border-hairline px-4 py-3 bg-paper-2/30 text-xs text-ink-3">
               <div className="flex items-center gap-2">
                 <Icon name="check_circle" size={12} className="text-emerald" />
-                <span>End of list · Showing {filtered.length} of {counts.all ?? 0} quotes</span>
+                <span>
+                  {paged.hidden > 0
+                    ? <>Showing {paged.shown.length} of {filtered.length} quotes · {paged.hidden} more below</>
+                    : <>End of list · Showing {filtered.length} of {counts.all ?? 0} quotes</>}
+                </span>
               </div>
               <div className="flex items-center gap-3">
                 <span>
@@ -1169,6 +1193,8 @@ export default function QuotesPage() {
               </div>
             </div>
           </Card>
+
+          <LoadMore hidden={paged.hidden} pageSize={QUOTES_PAGE_SIZE} noun="quotes" onLoadMore={paged.loadMore} />
 
           {/* Help text — pushed to bottom via mt-auto when content is short */}
           <div className="flex items-center gap-1.5 text-xs text-ink-3 mt-3">
