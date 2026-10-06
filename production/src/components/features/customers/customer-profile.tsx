@@ -59,6 +59,7 @@ import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { COPY } from "@/lib/copy";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -382,7 +383,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           <Button icon="edit" onClick={() => router.push(`/customers/${c.id}/edit` as never)}>Edit</Button>
           <Button icon="receipt" onClick={() => setInvoiceOpen(true)}>Invoice</Button>
           {canQuotes && (
-            <Button variant="primary" icon="plus" onClick={() => router.push(`/quotes/new?customer=${c.id}` as any)}>New quote</Button>
+            <Button variant="primary" icon="plus" onClick={() => router.push(`/quotes/new?customer=${c.id}` as any)}>{COPY.newQuote}</Button>
           )}
           {/* Archive / reactivate — the money-safe alternative to delete. Works
               even when the customer has invoices/payments (records are kept). */}

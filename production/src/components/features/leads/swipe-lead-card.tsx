@@ -56,23 +56,15 @@ import { heatScore, heatBadge } from "@/lib/leads/heat-score";
 import { decideSwipe, SWIPE_TRIGGER_PX } from "@/lib/leads/swipe-gesture";
 import { chipsForStage, type LeadOutcome } from "@/lib/leads/outcomes";
 import type { Lead } from "@/lib/supabase/database.types";
+import { STAGE_META } from "@/lib/leads/stage-meta";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { istToday } from "@/lib/dates/ist";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import { leadTitle } from "@/lib/leads/display-name";
 
-// LEAD_STAGES mirrors the array in leads/page.tsx — kept here as a small
-// constant to avoid coupling the swipe card to that file's internals. If
-// these labels diverge in the future we can lift to `lib/lead-stages.ts`.
-const LEAD_STAGES: { id: Lead["stage"]; label: string; dot: string }[] = [
-  { id: "new",     label: "New",          dot: "bg-slate"   },
-  { id: "contact", label: "Contacted",    dot: "bg-amber"   },
-  { id: "demo",    label: "Demo Done",    dot: "bg-indigo"  },
-  { id: "trial",   label: "Trial Active", dot: "bg-rose"    },
-  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo"  },
-  { id: "won",     label: "Won",          dot: "bg-emerald" },
-  { id: "lost",    label: "Lost",         dot: "bg-ink-3"   },
-];
+// R-290: the stage chip reads the shared table (lib/leads/stage-meta) — this used to be a
+// private copy, and copies are how stage order and labels drift between screens.
+const LEAD_STAGES = STAGE_META;
 
 // Drag thresholds now live in lib/leads/swipe-gesture.ts, beside the logic that uses
 // them. Two copies of "80" is how a reveal panel ends up appearing at a different point

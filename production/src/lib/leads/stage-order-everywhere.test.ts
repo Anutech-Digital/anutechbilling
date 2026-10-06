@@ -13,6 +13,10 @@ const SCREENS = [
   "src/app/(app)/dashboard/page.tsx",
   "src/components/features/leads/leads-insight-band.tsx",
   "src/components/features/leads/add-lead-form.tsx",
+  // R-290: the last private copies.
+  "src/components/features/leads/leads-bulk-bar.tsx",
+  "src/components/features/leads/swipe-lead-card.tsx",
+  "src/app/(app)/reports/page.tsx",
 ];
 
 describe("R-249 deal stages read in one order everywhere", () => {
@@ -36,6 +40,7 @@ describe("R-249 deal stages read in one order everywhere", () => {
       "src/app/(app)/dashboard/page.tsx",
       "src/app/(app)/quotes/page.tsx",
       "src/components/layout/command-palette.tsx",
+      "src/components/features/customers/customer-profile.tsx", // R-290
     ]) {
       const src = read(f);
       expect(src).not.toMatch(/Quick add quote|>\s*New Quote\s*<|"Create new quote"/);

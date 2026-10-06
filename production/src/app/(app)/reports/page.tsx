@@ -35,6 +35,7 @@ import { Card } from "@/components/ui/card";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { NavDirectory } from "@/components/layout/nav-directory";
+import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 import { DealsReportCard } from "@/components/features/deals/deals-report-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import {
@@ -134,14 +135,14 @@ function ReportCard({
 // Ye "funnel conversion" nahi hai: stage ka itihaas record nahi hota, sirf
 // aaj ki stage — isliye card kehta hai "Pipeline today" aur % kul ka hissa
 // hai, conversion nahi.
-const PIPELINE_STAGES: ReadonlyArray<{ id: Lead["stage"]; label: string; color: string }> = [
-  { id: "new",     label: "New",            color: "#64748b" },
-  { id: "contact", label: "Contacted",      color: "#6366f1" },
-  { id: "demo",    label: "Demo Done",      color: "#0ea5e9" },
-  { id: "trial",   label: "Trial Active",   color: "#f43f5e" },
-  { id: "quote",   label: "Quote Sent",     color: "#C2410C" },
-  { id: "won",     label: "Won",            color: "#16a34a" },
-];
+// R-290: stages, labels and order come from the one table (lib/leads/stage-meta, funnel
+// order quote → demo → trial); only the bar colours are this card's own.
+const PIPELINE_COLOR: Record<Lead["stage"], string> = {
+  new: "#64748b", contact: "#6366f1", quote: "#C2410C", demo: "#0ea5e9",
+  trial: "#f43f5e", won: "#16a34a", lost: "#94a3b8",
+};
+const PIPELINE_STAGES: ReadonlyArray<{ id: Lead["stage"]; label: string; color: string }> =
+  LEAD_STAGES.map((s) => ({ id: s.id, label: s.label, color: PIPELINE_COLOR[s.id] }));
 
 const PIPELINE_STAGE_IDS = PIPELINE_STAGES.map((s) => s.id);
 
