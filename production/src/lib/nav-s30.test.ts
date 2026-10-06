@@ -348,7 +348,7 @@ describe("5. Website orders sit in Sell next to Deals/Enquiries, not under Payme
     expect(row.id).toBe("online-orders");
     expect(row.label).toBe("Orders (website)");
     expect(row.roles).toEqual(["owner", "manager", "billing"]);
-    expect(row.hint).toBe("Website ke saare orders — cart, checkout, trial");
+    expect(row.hint).toBe("All website orders — cart, checkout, trial");
   });
 
   it("is no longer anywhere in Bill (not a child of Payments Received)", () => {

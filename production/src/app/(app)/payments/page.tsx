@@ -1021,7 +1021,7 @@ function PaymentRowView({
   const del = useDeletePayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: canQuotes ? "Yahin se nahi hata sakte — quote khol ke aage ka step wahan se karo." : noQuoteHint,
+        description: canQuotes ? "It can't be removed here — open the quote for the next step." : noQuoteHint,
         action: openQuote,
       }),
   });
@@ -1034,7 +1034,7 @@ function PaymentRowView({
   const refund = useRefundPayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: canQuotes ? "Ye rukavat quote/banking se hatati hai — wahin agla kadam hai." : noQuoteHint,
+        description: canQuotes ? "This block is cleared on the quote or in Banking — the next step is there." : noQuoteHint,
         action: openQuote,
       }),
   });
@@ -1051,14 +1051,14 @@ function PaymentRowView({
     });
     if (reason === null) return;
     if (reason.length < 5) {
-      toast.error("Wajah kam se kam 5 akshar ki ho — voucher par chhapti hai.");
+      toast.error("Enter a reason of at least 5 characters — it is printed on the voucher.");
       return;
     }
     if (await confirm({
       title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
       body:
-        "Kitab me: payment 'refunded', RFV voucher banega, quote/subscription ka hisaab wapas khulega, " +
-        "aur is payment se bani credit band hogi.\n\nAsli paisa Razorpay/bank se aapko KHUD bhejna hoga — ye button gateway ko nahi chhoota.",
+        "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
+        "and any credit from this payment is closed.\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
       confirmLabel: "Book refund",
       danger: true,
     })) refund.mutate({ id: p.id, reason: reason.trim() });

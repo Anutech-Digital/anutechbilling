@@ -143,7 +143,7 @@ export default function TodayPage() {
           </p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Today</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Har queue ka kaam ek list mein — sabse zaroori sabse upar. Click karo, seedha us screen par.
+            Every queue's work in one list, most urgent first. Click a row to open that screen.
           </p>
         </div>
         <Button icon="refresh" variant="ghost" onClick={() => { inbox.refetch(); compliance.refetch(); deals.refetch(); }}>

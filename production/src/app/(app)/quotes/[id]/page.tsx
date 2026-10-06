@@ -1525,11 +1525,11 @@ export default function QuoteDetailPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Icon name="lock" size={18} className="text-amber" />
-              Ye quote abhi delete nahi ho sakta
+              This quote can't be deleted yet
             </DialogTitle>
             <DialogDescription>
-              Is quote pe paisa laga hua hai. Delete karne se payment ledger + audit trail mit jaayega.
-              Pehle in related records ko hatana / void karna padega:
+              Money is recorded against this quote. Deleting it would erase the payment ledger and audit trail.
+              Clear these related records first:
             </DialogDescription>
           </DialogHeader>
 
@@ -1540,11 +1540,11 @@ export default function QuoteDetailPage() {
                   <Icon name="receipt" size={16} className="text-emerald shrink-0" />
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-ink truncate">Invoice {quote.invoice_id}</div>
-                    <div className="text-2xs text-ink-3">Pehle ise credit-note / void karo</div>
+                    <div className="text-2xs text-ink-3">Issue a credit note or void it first</div>
                   </div>
                 </div>
                 <Button asChild variant="ghost" size="sm" icon="external" className="shrink-0">
-                  <Link href={"/invoices" as any}>Open</Link>
+                  <Link href={invoiceHref(quote.invoice_id) as any}>Open</Link>
                 </Button>
               </div>
             )}
@@ -1564,7 +1564,7 @@ export default function QuoteDetailPage() {
                     </li>
                   ))}
                 </ul>
-                <div className="text-2xs text-ink-3 mt-1.5 pl-6">Pehle inhe refund / void karo (Payment history se).</div>
+                <div className="text-2xs text-ink-3 mt-1.5 pl-6">Refund or void these first (from Payment history).</div>
               </div>
             )}
 
@@ -1574,7 +1574,7 @@ export default function QuoteDetailPage() {
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="primary" onClick={() => setBlockedOpen(false)}>Samajh gaya</Button>
+            <Button type="button" variant="primary" onClick={() => setBlockedOpen(false)}>OK</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

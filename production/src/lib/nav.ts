@@ -326,11 +326,11 @@ export const APP_NAV: NavSection[] = [
       /* S29. owner/manager only for now: they bypass the middleware gate anyway, so adding
          it changes no other role's allowed routes. Opening it to more roles is a product
          call — today_inbox() already filters decisions by role, and RLS does the rest. */
-      { id: "today", href: "/today", label: "Today", icon: "inbox", roles: OM, hint: "Har queue ka aaj ka kaam, ek list mein" },
+      { id: "today", href: "/today", label: "Today", icon: "inbox", roles: OM, hint: "Today's work from every queue, in one list" },
       { id: "dashboard", href: "/dashboard", label: "Dashboard", icon: "home", roles: OMB },
       /* 2 Oct 2026 — paste / photograph anything, review, save. Pardeep (3 Oct): no hidden
          links — every page is in this menu or in NOT_IN_NAV with its reason (nav.test.ts). */
-      { id: "ai-entry",  href: "/ai-entry",  label: "AI Entry",  icon: "sparkles", roles: ["owner", "manager", "sales", "billing"], hint: "Chat, note, bill ya card daalo — AI entry bhar deta hai" },
+      { id: "ai-entry",  href: "/ai-entry",  label: "AI Entry",  icon: "sparkles", roles: ["owner", "manager", "sales", "billing"], hint: "Paste a chat, note, bill or card — AI fills the entry" },
       { id: "whatsapp",  href: "/whatsapp",        label: "WhatsApp Inbox",      icon: "whatsapp", roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "support",   href: "/support",         label: "Support Desk",        icon: "ticket",   roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "provisioning", href: "/provisioning", label: "Activation Queue", icon: "package", roles: ["owner", "manager", "support", "delivery"], hint: "Seats a customer has paid for that nobody has turned on yet." },
@@ -354,7 +354,7 @@ export const APP_NAV: NavSection[] = [
       /* R-204 (6 Oct 2026, Pardeep): was "Online Orders" under Bill › Payments Received. An
          online order is a sale's journey (cart, trial, DMS) — many have no money yet, and a
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
-      { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "Website ke saare orders — cart, checkout, trial" },
+      { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
       { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"] },
       /* Contacts is GONE from the nav entirely (10 Sep 2026): a customer's people live ON
          the customer (migration 20260910100000); somebody who is not a customer yet is a
@@ -364,9 +364,9 @@ export const APP_NAV: NavSection[] = [
            manager only, it shows ad spend and CAC. Fifteen sidebar rows became one: the
            other fourteen are the Hub's directory, in five groups (S30); S34 added a
            fifteenth, the IndiaMART key screen (owner-only, like its API). */
-        id: "marketing-hub",   href: "/marketing",         label: "Marketing Hub",  icon: "layout", roles: OM, hint: "Kaunse tools chahiye, kaun sambhalta hai, budget vs kharcha",
+        id: "marketing-hub",   href: "/marketing",         label: "Marketing Hub",  icon: "layout", roles: OM, hint: "Tools needed, who owns them, budget vs spend",
         directory: [
-          { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OM, group: "Plan & spend", hint: "Har campaign ka budget, dates, target — kharcha aur leads ke saath" },
+          { id: "marketing-campaigns", href: "/marketing/campaigns", label: "Campaign budgets", icon: "target", roles: OM, group: "Plan & spend", hint: "Each campaign's budget, dates and target, with spend and leads" },
           { id: "marketing-spend", href: "/marketing/spend",   label: "Spend",          icon: "wallet", roles: OM, group: "Plan & spend" },
           { id: "marketing-roas",  href: "/marketing/reports", label: "ROAS & CAC",     icon: "chart",  roles: OM, group: "Plan & spend" },
           { id: "campaigns",       href: "/campaigns",         label: "Email campaigns", icon: "mail",    roles: OM, group: "Campaigns" },
@@ -374,16 +374,16 @@ export const APP_NAV: NavSection[] = [
           { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Approved template se leads ko ek saath message" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
           { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal aur invoice reminder WhatsApp par — ON/OFF, template, log" },
-          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OM, group: "Ads & tracking", hint: "Google Ads + Facebook ka kharcha campaign-wise, roz Google/Meta se" },
-          { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OM, group: "Ads & tracking", hint: "Ad ka final URL, phone preview, kitni leads aayi" },
-          { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OM, group: "Ads & tracking", hint: "Har ad / post ka link — lead ka source khud lagega" },
+          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OM, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
+          { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OM, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
+          { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OM, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
           { id: "lead-gen",        href: "/lead-gen",          label: "Lead sources",    icon: "target",  roles: OM, group: "Ads & tracking" },
-          { id: "indiamart-leads", href: "/marketing/indiamart", label: "IndiaMART leads", icon: "inbox", roles: ["owner"], group: "Ads & tracking", hint: "CRM key save karo — IndiaMART ki enquiries apne aap leads banengi" },
+          { id: "indiamart-leads", href: "/marketing/indiamart", label: "IndiaMART leads", icon: "inbox", roles: ["owner"], group: "Ads & tracking", hint: "Save the CRM key — IndiaMART enquiries become leads automatically" },
           { id: "google-business", href: "/marketing/google-business", label: "Google Business Profile", icon: "map_pin", roles: OM, group: "Reputation", hint: "Maps/Search par listing kitni dikhi, calls, reviews — Google se seedha" },
           { id: "google-reviews",  href: "/marketing/reviews",   label: "Google reviews",  icon: "award", roles: OM, group: "Reputation", hint: "Khush customers se Google review maango" },
           { id: "coupons",         href: "/coupons",           label: "Coupons",         icon: "ticket",  roles: OM, group: "Offers & new leads" },
           { id: "online-promos",   href: "/online-promos",     label: "Website offer banner", icon: "sparkles", roles: OM, group: "Offers & new leads" },
-          { id: "lead-finder",     href: "/marketing/lead-finder", label: "AI Lead Finder", icon: "sparkles", roles: OM, group: "Offers & new leads", hint: "Agent public web se aapke jaise customers dhoondhe — approve karo to lead" },
+          { id: "lead-finder",     href: "/marketing/lead-finder", label: "AI Lead Finder", icon: "sparkles", roles: OM, group: "Offers & new leads", hint: "An agent finds customers like yours on the public web — approve to add a lead" },
         ],
       },
       { id: "referrals",       href: "/referrals",        label: "Referrals",     icon: "award",  roles: OM },
@@ -418,9 +418,9 @@ export const APP_NAV: NavSection[] = [
         children: [
           /* The two catalogs lived as tabs on /items with no link of their own, so the menu
              showed only Packages (Pardeep, 4 Oct 2026). Each now has its own address. */
-          { id: "catalog-subscriptions", href: "/items/subscriptions", label: "Subscription catalog", icon: "repeat",  roles: OM, hint: "Google, Microsoft, hosting — har mahine/saal ka daam" },
-          { id: "catalog-products",      href: "/items/products", label: "Product catalog",      icon: "package", roles: OM, hint: "Ek baar ke product aur services" },
-          { id: "packages", href: "/items/packages", label: "Packages", icon: "package", roles: OM, hint: "Products ke bundle — quote me ek click" },
+          { id: "catalog-subscriptions", href: "/items/subscriptions", label: "Subscription catalog", icon: "repeat",  roles: OM, hint: "Google, Microsoft, hosting — monthly and yearly prices" },
+          { id: "catalog-products",      href: "/items/products", label: "Product catalog",      icon: "package", roles: OM, hint: "One-time products and services" },
+          { id: "packages", href: "/items/packages", label: "Packages", icon: "package", roles: OM, hint: "Product bundles — one click in a quote" },
         ],
       },
     ],
@@ -435,7 +435,7 @@ export const APP_NAV: NavSection[] = [
       /* Was reachable only by URL. It is a queue — order mails waiting to be booked — so
          it leads the group. owner/manager only, so no gated role's routes change; whether
          billing should have it is a product call. */
-      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: OM, hint: "Amazon & co. ke order mails — review karo, phir expense" },
+      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: OM, hint: "Order emails from Amazon & co. — review, then book as expense" },
       /* "Vendor Portal & Bids" (/vendor-portal) was a child here until S35 (28 Sep 2026).
          It showed hardcoded demo bids saved to localStorage; the route now says "not built
          yet" and points back to Vendors / Purchase Orders. Not in the nav, on purpose. */
@@ -445,7 +445,7 @@ export const APP_NAV: NavSection[] = [
         id: "bills",           href: "/accounting/bills",          label: "COGS Bills",           icon: "receipt", roles: OMB,
         children: [
           /* R-164: Google's monthly invoice (via Net2Secure) checked domain by domain. */
-          { id: "google-bill-check", href: "/accounting/google-bill-check", label: "Google bill check", icon: "search", roles: OMB, hint: "Google ka mahine ka bill — har domain ka customer, leakage, margin" },
+          { id: "google-bill-check", href: "/accounting/google-bill-check", label: "Google bill check", icon: "search", roles: OMB, hint: "Google's monthly bill — customer per domain, leakage, margin" },
         ],
       },
       {
@@ -462,7 +462,7 @@ export const APP_NAV: NavSection[] = [
           /* Money paid to a vendor before the service (Facebook ad top-ups) and the
              month-end invoices booked against it (Pardeep, 26 Sep 2026). */
           { id: "prepaid",         href: "/accounting/prepaid",        label: "Prepaid / Advances",   icon: "wallet", roles: OMB },
-          { id: "emp-advances",    href: "/accounting/advances",       label: "Employee Advances",    icon: "wallet", roles: OMB, hint: "Staff ko kharche ka advance — diya, kharch, baaki" },
+          { id: "emp-advances",    href: "/accounting/advances",       label: "Employee Advances",    icon: "wallet", roles: OMB, hint: "Expense advances to staff — given, spent, balance" },
           { id: "reimbursements",  href: "/accounting/reimbursements", label: "Reimbursements",       icon: "receipt", roles: OMB },
         ],
       },
@@ -535,7 +535,7 @@ export const APP_NAV: NavSection[] = [
     section: "Team",
     icon: "users",
     items: [
-      { id: "my-attendance", href: "/attendance/me", label: "My Attendance", icon: "calendar", roles: STAFF, hint: "Apni attendance khud mark karo — login hi identity proof hai." },
+      { id: "my-attendance", href: "/attendance/me", label: "My Attendance", icon: "calendar", roles: STAFF, hint: "Mark your own attendance — your login is the proof." },
       /* Was listed twice (Home and Sales & CRM) "for reach". Once is enough now that it
          has a group every staff role can see; the mobile Quick Actions grid still puts it
          first on a phone. */
@@ -589,10 +589,10 @@ export const APP_NAV: NavSection[] = [
       /* "App khud kya bhejta hai — aur band karne ka switch". A brake nobody can find is
          not a brake. */
       {
-        id: "automation", href: "/automation",          label: "Automation",       icon: "sparkles", roles: OM, hint: "App khud kya bhejta hai — aur band karne ka switch",
+        id: "automation", href: "/automation",          label: "Automation",       icon: "sparkles", roles: OM, hint: "What the app sends on its own — and the switch to stop it",
         children: [
-          { id: "ux-insights", href: "/ux-insights",    label: "UX Insights",      icon: "sparkles", roles: OM, hint: "Log kahan atakte hain — aur kya theek karna hai" },
-          { id: "ui-insights", href: "/ui-insights",    label: "UI Insights",      icon: "layout",   roles: OM, hint: "Har page ka design score — aur kya badalna hai" },
+          { id: "ux-insights", href: "/ux-insights",    label: "UX Insights",      icon: "sparkles", roles: OM, hint: "Where people get stuck — and what to fix" },
+          { id: "ui-insights", href: "/ui-insights",    label: "UI Insights",      icon: "layout",   roles: OM, hint: "Design score per page — and what to change" },
           /* The triage queue for bug reports (Report Bug, Ctrl+Shift+B, and AI Help). Next to
              UX / UI Insights since 5 Oct 2026 (R-158): it sat under "Help & Tutorial" at the
              bottom of the menu and Pardeep could not find it; the sidebar is at its row cap.
@@ -610,7 +610,7 @@ export const APP_NAV: NavSection[] = [
           /* The owner's PRIVATE books. This hides the menu row and nothing more: middleware
              skips its role guard for owner AND manager. The data is protected by RLS scoped
              to auth.uid() (personal_vault_owner_isolation.test.sql), per USER not per role. */
-          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner"], hint: "Aapke apne paise — team me kisi ko nahi dikhta" },
+          { id: "vault-personal", href: "/vault/personal",  label: "Private Vault",    icon: "wallet", roles: ["owner"], hint: "Your personal money — hidden from the team" },
           { id: "vault-personal-banking",  href: "/vault/personal/banking",  label: "Private banking",  icon: "rupee",  roles: ["owner"] },
           { id: "vault-personal-expenses", href: "/vault/personal/expenses", label: "Private expenses", icon: "receipt", roles: ["owner"] },
           { id: "vault-personal-wealth",   href: "/vault/personal/wealth",   label: "Private wealth",   icon: "trending_up", roles: ["owner"] },

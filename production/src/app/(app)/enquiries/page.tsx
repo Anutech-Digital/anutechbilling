@@ -715,23 +715,21 @@ export default function EnquiriesPage() {
               {viewingBounce && (
                 <div className="border-b border-rose/50 bg-rose-soft/40 px-4 py-2.5">
                   <p className="text-[12px] leading-relaxed text-ink">
-                    <span className="font-semibold">Aapka bheja email wapas aa gaya.</span>{" "}
+                    <span className="font-semibold">Your email bounced.</span>{" "}
                     {bouncedTo ? (
-                      <>Wo <span className="font-mono font-semibold">{bouncedTo}</span> tak nahi pahuncha.</>
+                      <>It did not reach <span className="font-mono font-semibold">{bouncedTo}</span>.</>
                     ) : (
                       /* Same rule the extraction panel follows: say "not named" rather
                          than guess. A bounce body holds several addresses, and the wrong
                          one sends a rep to correct a record that is already right. */
-                      <>Kaunsa pata fail hua, wo is notice me likha nahi hai — neeche poora
-                        matn padhiye.</>
+                      <>The notice does not say which address failed — read the full text below.</>
                     )}{" "}
-                    Yaani us customer ne aapka quote dekha hi nahi, aur wo abhi bhi
-                    intezaar kar raha hai.
+                    The customer never saw your quote and is still waiting.
                   </p>
                   <p className="mt-1 text-[12px] leading-relaxed text-ink-2">
-                    <span className="font-semibold text-ink">Ab kya karein:</span> lead par
-                    sahi email pata bhariye, phir wahin se quote dobara bhejiye. Ye notice
-                    nipat jaye to <span className="font-semibold">✅ Mark done</span> dabaiye.
+                    <span className="font-semibold text-ink">Next:</span> fix the email address on
+                    the lead, then send the quote again from there. When this is handled,
+                    press <span className="font-semibold">✅ Mark done</span>.
                   </p>
                 </div>
               )}

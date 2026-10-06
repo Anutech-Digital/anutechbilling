@@ -467,7 +467,7 @@ export function AiHelp() {
         }),
       });
       const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
-      let reply = j.reply || j.error || "Jawab nahi aaya — dobara try karein.";
+      let reply = j.reply || j.error || "No answer came back — please try again.";
       if (scan && scan.findings.length && j.ai !== true) reply += `\n\nAutomatic jaanch ne ${scan.findings.length} cheez(ein) pakdi:\n` + scan.findings.map((f) => `• ${f.detail}`).join("\n");
       setItems((s) => {
         /* The same bug drafted earlier in THIS chat (an error report, then a page scan that
@@ -479,7 +479,7 @@ export function AiHelp() {
         return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
-      setItems((s) => [...s, { role: "assistant", text: "Connection nahi bana — dobara try karein. Bug ho to 'Report Bug' button bhi chalta hai." }]);
+      setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still use 'Report Bug'." }]);
     } finally {
       setBusy(false);
     }
@@ -487,7 +487,7 @@ export function AiHelp() {
 
   function send(e?: React.FormEvent) {
     e?.preventDefault();
-    const q = text.trim() || (shot ? "Is screenshot me kya galat hai?" : "");
+    const q = text.trim() || (shot ? "What is wrong in this screenshot?" : "");
     if (!q || busy) return;
     setText("");
     const s = shot;
@@ -515,9 +515,9 @@ export function AiHelp() {
         aiChatSummary: it.draft.chatSummary || null,
       });
       setItems((s) => s.map((x, i) => (i === idx ? { ...x, filedId: result.id } : x)));
-      toast.success("Report file ho gayi — aapke naam se", { description: `${AI_FILED_TAG}. Admin → Feedback mein dikhegi.` });
+      toast.success("Report filed in your name", { description: `${AI_FILED_TAG}. It appears in Admin → Feedback.` });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Report file nahi hui — dobara try karein.");
+      toast.error(err instanceof Error ? err.message : "Report was not filed — please try again.");
     } finally {
       setFiling(null);
     }
@@ -587,10 +587,10 @@ export function AiHelp() {
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {items.length === 0 && (
               <div className="text-sm text-ink-2 space-y-2 p-1">
-                <p><b>Check this page</b> dabaiye: main screen jaanch kar bataunga kya galat hai, aur aage kya test karna hai.</p>
-                <p>Main aapke clicks aur errors khud yaad rakhta hoon. Bug mile to bas likhiye "ye galat hai" — steps main likh dunga. Error aate hi upar wala AI Help icon laal ho jaayega.</p>
-                <p>📷 dabaiye ya <b>Ctrl+V</b> se screenshot daaliye — main screen dekh kar bataunga.</p>
-                <p className="text-ink-3 text-xs">Report tabhi jaati hai jab aap draft dekh kar <b>File</b> dabate hain — aapke naam se.</p>
+                <p>Press <b>Check this page</b>: I check the screen and tell you what is wrong and what to test next.</p>
+                <p>I remember your clicks and errors. Found a bug? Just write "this is wrong" — I will write the steps. The AI Help icon turns red when an error happens.</p>
+                <p>Press 📷 or paste a screenshot with <b>Ctrl+V</b> — I will look at the screen and answer.</p>
+                <p className="text-ink-3 text-xs">A report is sent only when you review the draft and press <b>File</b> — in your name.</p>
               </div>
             )}
             {items.map((m, i) => (
@@ -655,8 +655,8 @@ export function AiHelp() {
                       <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Bug report — draft</div>
                       <div className="font-semibold">{m.draft.title}</div>
                       <div className="text-2xs text-ink-3">{TYPE_LABEL[m.draft.type]} · {SEV_LABEL[m.draft.severity]} · {m.page ?? pathname}</div>
-                      <div className="text-xs"><b>Kya hua:</b> {m.draft.actual}</div>
-                      {m.draft.expected && <div className="text-xs"><b>Kya hona chahiye:</b> {m.draft.expected}</div>}
+                      <div className="text-xs"><b>What happened:</b> {m.draft.actual}</div>
+                      {m.draft.expected && <div className="text-xs"><b>Expected:</b> {m.draft.expected}</div>}
                       {m.draft.steps.length > 0 && (
                         <ol className="text-xs list-decimal pl-4 space-y-0.5">{m.draft.steps.map((s, j) => <li key={j}>{s}</li>)}</ol>
                       )}
@@ -667,7 +667,7 @@ export function AiHelp() {
                           <b>Already reported?</b> Same as: {m.similar.map((x) => `“${x.title}”`).join(", ")}. File only if this is different.
                         </div>
                       )}
-                      <div className="text-2xs text-ink-3">{AI_FILED_TAG} · aapke naam se: {currentUser?.fullName ?? "—"}</div>
+                      <div className="text-2xs text-ink-3">{AI_FILED_TAG} · filed by: {currentUser?.fullName ?? "—"}</div>
                       {m.filedId ? (
                         <div className="text-xs font-semibold text-emerald">✓ File ho gayi — Admin → Feedback</div>
                       ) : (
@@ -699,7 +699,7 @@ export function AiHelp() {
               onClick={() => void captureScreen()}
               disabled={capturing || !!busy}
             />
-            <label htmlFor="ai-help-input" className="sr-only">Aapka sawaal</label>
+            <label htmlFor="ai-help-input" className="sr-only">Your question</label>
             <textarea
               id="ai-help-input"
               ref={inputRef}
@@ -709,7 +709,7 @@ export function AiHelp() {
               onPaste={(e) => void onPaste(e)}
               rows={2}
               maxLength={1500}
-              placeholder="Jaise: Invoice par GST galat kyun aa raha hai?"
+              placeholder="e.g. Why is the GST wrong on this invoice?"
               className="flex-1 resize-none rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
             />
             <Button type="submit" size="sm" variant="primary" loading={busy === "chat"} disabled={(!text.trim() && !shot) || !!busy}>Send</Button>
