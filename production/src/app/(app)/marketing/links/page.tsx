@@ -38,7 +38,7 @@ function siteOrigin(): string {
 
 async function copy(text: string) {
   try { await navigator.clipboard.writeText(text); toast.success("Link copied"); }
-  catch { toast.error("Couldn't copy — select the link and copy it"); }
+  catch { toast.error("Couldn't copy the link", { description: "Select the link and copy it by hand." }); }
 }
 
 export default function TrackingLinksPage() {
@@ -68,7 +68,7 @@ export default function TrackingLinksPage() {
   const isLocal = /localhost|127\.0\.0\.1/.test(origin);
 
   async function save() {
-    if (!label.trim()) { toast.error("Name the link — e.g. \"FB ad — Diwali\""); return; }
+    if (!label.trim()) { toast.error("Name the link", { description: "e.g. \"FB ad — Diwali\", so you can tell its leads apart later." }); return; }
     const u = new URL(url);
     await create.mutateAsync({
       label: label.trim(), channel,

@@ -17,6 +17,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
@@ -660,7 +661,7 @@ export default function SetupPage() {
   const saveCompanyAndAdvance = async () => {
     // Block on bad GSTIN — empty is fine (optional), wrong checksum is not.
     if (data.gstin.trim() && !isValidGstin(data.gstin.trim())) {
-      toast.error("GSTIN is invalid — fix the checksum or leave the field blank");
+      toast.error("GSTIN is invalid", { description: "Check the 15 characters, or leave the field blank for now." });
       return;
     }
     const { name: stateName, code: stateCode } = parseStateLabel(data.state);
@@ -677,7 +678,7 @@ export default function SetupPage() {
       });
       setStep((s) => Math.min(STEPS.length - 1, s + 1));
     } catch (e) {
-      toast.error(`Could not save: ${(e as Error).message}`);
+      toastError(e, { fallback: "Could not save your business details" });
     }
   };
 

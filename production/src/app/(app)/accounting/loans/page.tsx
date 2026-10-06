@@ -388,7 +388,7 @@ function ReceiptLink({ path }: { path: string }) {
     try {
       const url = await getClaimReceiptUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Couldn't open the receipt");
+      else toast.error("Couldn't open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
     } finally { setLoading(false); }
   }
   return <Button variant="ghost" size="sm" icon="eye" loading={loading} onClick={open}>Receipt</Button>;
@@ -493,7 +493,7 @@ function ClaimLinkDialog({ onClose }: { onClose: () => void }) {
 
   async function copy() {
     try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-    catch { toast.error("Couldn't copy"); }
+    catch { toast.error("Couldn't copy the link", { description: "Select the link and copy it by hand." }); }
   }
   const waHref = `https://wa.me/?text=${encodeURIComponent(`Log your expenses from your advance here: ${link}`)}`;
 

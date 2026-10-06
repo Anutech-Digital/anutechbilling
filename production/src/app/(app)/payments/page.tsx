@@ -22,7 +22,7 @@ async function openReceipt(path: string) {
     const url = await getDocumentSignedUrl(path);
     window.open(url, "_blank", "noopener,noreferrer");
   } catch {
-    toast.error("Could not open the receipt");
+    toast.error("Could not open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
   }
 }
 
@@ -1052,7 +1052,7 @@ function PaymentRowView({
     });
     if (reason === null) return;
     if (reason.length < 5) {
-      toast.error("Enter a reason of at least 5 characters — it is printed on the voucher.");
+      toast.error("Enter a reason of at least 5 characters", { description: "It is printed on the voucher." });
       return;
     }
     if (await confirm({

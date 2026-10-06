@@ -61,6 +61,7 @@ import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/impo
 import { MarginAlertsCard } from "@/components/features/subscriptions/margin-alerts-card";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError, describeError } from "@/lib/errors/toast-error";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -376,7 +377,7 @@ export default function SubscriptionsPage() {
          already safely recorded — only the document is missing, and the quote page can
          raise it. Never a bare "failed". */
       toast.error("Payment saved, but the GST invoice could not be raised", {
-        description: error.message,
+        description: `${describeError(error).message} Open the quote to raise it.`,
         action: { label: "Open quote", onClick: () => router.push(`/quotes/${quoteId}` as Route) },
       });
     } else {
@@ -1955,14 +1956,14 @@ function DomainCell({ sub, compact = false }: { sub: Subscription; compact?: boo
   const submit = () => {
     const v = value.trim();
     if (!v) {
-      toast.error("Domain can't be blank");
+      toast.error("Domain can't be blank", { description: "Type the customer's domain, e.g. example.com." });
       return;
     }
     mut.mutate(
       { id: sub.id, domain: v },
       {
         onSuccess: () => { toast.success("Domain saved"); setEditing(false); },
-        onError:   (e) => { toast.error(e instanceof Error ? e.message : "Could not save"); },
+        onError:   (e) => { toastError(e, { fallback: "Could not save the domain" }); },
       },
     );
   };

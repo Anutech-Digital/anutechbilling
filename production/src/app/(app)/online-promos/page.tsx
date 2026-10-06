@@ -17,6 +17,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -80,7 +81,7 @@ export default function OnlinePromosPage() {
       await toggle.mutateAsync({ id: p.id, is_active: !p.is_active });
       toast.success(`${p.headline.slice(0, 30)} ${!p.is_active ? "is now LIVE" : "paused"}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not toggle");
+      toastError(err, { fallback: "Could not change the promo", description: "Nothing changed on the buy page. Refresh and try again." });
     }
   }
 
@@ -92,7 +93,7 @@ export default function OnlinePromosPage() {
       await del.mutateAsync(p.id);
       toast.success("Promo deleted");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not delete");
+      toastError(err, { fallback: "Could not delete the promo", description: "It is still on the buy page. Refresh and try again." });
     }
   }
 

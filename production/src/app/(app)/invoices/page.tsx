@@ -189,7 +189,7 @@ function InvoicesPageInner() {
      exactly why the dialog warns that a partial failure leaves numbers already used. */
   const issueSelected = React.useCallback(async () => {
     if (pendingSelected.size === 0) {
-      toast.error("Select at least one quote");
+      toast.error("Select at least one quote", { description: "Tick the quotes you want to invoice, then press Generate." });
       return;
     }
     setGenerating(true);
@@ -206,7 +206,7 @@ function InvoicesPageInner() {
     setPendingSelected(new Set());
     setConfirmBulk(false);
     if (ok > 0) toast.success(`Generated ${ok} invoice${ok === 1 ? "" : "s"}` + (fail ? ` · ${fail} failed` : ""));
-    if (fail > 0 && ok === 0) toast.error(`${fail} invoice${fail === 1 ? "" : "s"} failed`);
+    if (fail > 0 && ok === 0) toast.error(`${fail} invoice${fail === 1 ? "" : "s"} failed`, { description: "Nothing was raised. Open a quote to see why and generate it from there." });
   }, [pendingSelected, generateInvoice]);
   const [generating, setGenerating] = React.useState(false);
 

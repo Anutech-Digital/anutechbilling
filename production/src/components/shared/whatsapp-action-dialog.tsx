@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   Dialog,
   DialogContent,
@@ -119,7 +120,7 @@ export function WhatsAppActionDialog({
 
   const handleOpenWhatsAppWeb = () => {
     if (!cleanPhone) {
-      toast.error("No phone number available for this contact");
+      toast.error("No phone number for this contact", { description: "Add a mobile number to the contact, then try again." });
       return;
     }
     const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
@@ -134,15 +135,15 @@ export function WhatsAppActionDialog({
 
   const handleSendMetaApi = async () => {
     if (!cleanPhone) {
-      toast.error("No phone number available");
+      toast.error("No phone number for this contact", { description: "Add a mobile number to the contact, then try again." });
       return;
     }
     try {
       await sendApi.mutateAsync({ to: cleanPhone, text: message });
       toast.success("WhatsApp message sent via Cloud API!");
       onOpenChange(false);
-    } catch (e: any) {
-      toast.error(e?.message || "Could not send via API. Use WhatsApp Web button instead.");
+    } catch (e) {
+      toastError(e, { fallback: "Could not send via WhatsApp API", description: "Use the WhatsApp Web button instead, or check the WhatsApp connection in Settings." });
     }
   };
 

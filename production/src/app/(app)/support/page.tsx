@@ -10,6 +10,7 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -157,7 +158,7 @@ export default function SupportPage() {
         duration: 10_000,
       });
     } catch (e) {
-      toast.error((e as Error).message);
+      toastError(e, { fallback: "Could not request a call", description: "No call was booked. Try again in a minute." });
     } finally {
       setCallPending(false);
     }
@@ -197,7 +198,7 @@ export default function SupportPage() {
       toast.success("Ticket updated successfully");
       refetch();
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, { fallback: "Could not update the ticket" }),
   });
 
   return (

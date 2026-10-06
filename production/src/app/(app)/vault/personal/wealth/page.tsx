@@ -112,15 +112,15 @@ export default function PersonalWealthPage() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error("Investment ka naam likho."); return; }
+    if (!form.name.trim()) { toast.error("Enter the investment name", { description: "For example \"HDFC Flexi Cap\" or \"SBI FD\"." }); return; }
 
     const invested = parseRupees(form.invested);
     const current = parseRupees(form.current_value);
-    if (invested === null) { toast.error("Lagayi hui rakam sirf number me likho."); return; }
-    if (current === null) { toast.error("Aaj ki value sirf number me likho."); return; }
+    if (invested === null) { toast.error("Amount invested must be a number", { description: "Type digits only, e.g. 50000. No commas or ₹ sign needed." }); return; }
+    if (current === null) { toast.error("Current value must be a number", { description: "Type digits only, e.g. 56000. No commas or ₹ sign needed." }); return; }
 
     const units = form.units.trim() === "" ? null : Number(form.units);
-    if (units !== null && !Number.isFinite(units)) { toast.error("Units ek number hona chahiye."); return; }
+    if (units !== null && !Number.isFinite(units)) { toast.error("Units must be a number", { description: "Leave it blank if you don't track units." }); return; }
 
     try {
       await save.mutateAsync({
@@ -135,7 +135,7 @@ export default function PersonalWealthPage() {
         valued_on: form.valued_on || null,
         notes: form.notes.trim() || null,
       });
-      toast.success(form.id ? "Holding update ho gayi." : "Holding add ho gayi.");
+      toast.success(form.id ? "Holding updated" : "Holding added");
       setOpen(false);
     } catch { /* the hook surfaced it */ }
   };

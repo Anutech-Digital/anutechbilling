@@ -10,6 +10,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { CategoryRule } from "@/lib/banking/categorise";
 import type { TxnRuleDirection } from "@/lib/supabase/database.types";
 
@@ -98,7 +99,7 @@ export function useCreateTxnCategoryRule() {
       toast.success(r.updated ? "Rule updated." : "Saved — this will be categorised automatically next time.");
     },
     onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Could not save that rule");
+      toastError(e, { fallback: "Could not save that rule" });
     },
   });
 }
@@ -151,7 +152,7 @@ export function useUpdateTxnCategoryRule() {
       qc.invalidateQueries({ queryKey: ["txn-category-rules"] });
       toast.success("Rule updated.");
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not update that rule"),
+    onError: (e) => toastError(e, { fallback: "Could not update that rule" }),
   });
 }
 
@@ -168,6 +169,6 @@ export function useDeleteTxnCategoryRule() {
       qc.invalidateQueries({ queryKey: ["txn-category-rules"] });
       toast.success("Rule deleted.");
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not delete that rule"),
+    onError: (e) => toastError(e, { fallback: "Could not delete that rule" }),
   });
 }

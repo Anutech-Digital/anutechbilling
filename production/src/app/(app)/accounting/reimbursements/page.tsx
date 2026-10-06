@@ -33,6 +33,7 @@ import {
 import { useEmployees } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { istToday } from "@/lib/dates/ist";
 
 function todayISO() {
@@ -231,7 +232,7 @@ function ReceiptLink({ path }: { path: string }) {
     try {
       const url = await getReimbursementReceiptUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Couldn't open the receipt");
+      else toast.error("Couldn't open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
     } finally { setLoading(false); }
   }
   return (
@@ -267,7 +268,7 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
       if (receipt) {
         setUploading(true);
         try { receiptPath = await uploadReimbursementReceipt(receipt); }
-        catch (e) { toast.error((e as Error).message || "Receipt upload failed"); setUploading(false); return; }
+        catch (e) { toastError(e, { fallback: "Receipt upload failed", description: "Nothing was saved. Try a smaller photo or PDF, or save without the receipt and add it later." }); setUploading(false); return; }
         setUploading(false);
       }
       await add.mutateAsync({
