@@ -46,7 +46,7 @@ import {
   type ReminderKindView, type WaRemindersView,
 } from "@/lib/queries/whatsapp-reminders";
 
-const DIAL_LABEL: Record<string, string> = { auto: "auto (bhejta hai)", hold: "hold (rukta hai)", off: "off" };
+const DIAL_LABEL: Record<string, string> = { auto: "auto (sends)", hold: "hold (paused)", off: "off" };
 
 export default function WhatsAppRemindersPage() {
   const q = useWaReminders();
@@ -56,8 +56,8 @@ export default function WhatsAppRemindersPage() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">WhatsApp reminders</h1>
         <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-          Renewal aur invoice ke reminder email ke saath WhatsApp par bhi jaa sakte hain. Kab jaana hai ye renewals / dunning
-          ka schedule tay karta hai — yahan sirf ON/OFF aur kaunsa template. Templates likhne aur Meta se sync karne ke liye{" "}
+          Renewal and invoice reminders can go on WhatsApp as well as email. The renewals / dunning schedule decides
+          when — here you only set ON/OFF and which template. To write templates and sync them from Meta, use{" "}
           <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">WhatsApp broadcast → Templates</Link>.
         </p>
       </header>
@@ -66,8 +66,8 @@ export default function WhatsAppRemindersPage() {
         <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-48" /><Skeleton className="h-40" /></div>
       ) : q.error || !q.data ? (
         <Card className="py-2">
-          <EmptyState icon="whatsapp" title="Settings load nahi hui"
-            body={q.error instanceof Error ? q.error.message : "Page refresh karke dobara try kariye."} />
+          <EmptyState icon="whatsapp" title="Could not load settings"
+            body={q.error instanceof Error ? q.error.message : "Refresh the page and try again."} />
           <div className="flex justify-center pb-4"><Button variant="outline" onClick={() => q.refetch()}>{COPY.tryAgain}</Button></div>
         </Card>
       ) : (
@@ -88,26 +88,26 @@ function BeforeYouStart({ v }: { v: WaRemindersView }) {
   const dialOk = !v.dial.killSwitch && v.dial.renewal === "auto" && v.dial.dunning === "auto";
   return (
     <Card className="p-4 border-amber/40 bg-amber-soft/20 space-y-2">
-      <h2 className="text-sm font-semibold text-ink">WhatsApp reminder tabhi jaata hai jab ye teeno sahi hon</h2>
+      <h2 className="text-sm font-semibold text-ink">A WhatsApp reminder goes out only when all three are true</h2>
       <ol className="list-decimal pl-5 space-y-1.5 text-sm text-ink-2">
         <li>
-          <b>Template Meta par approved ho.</b> Naam yahan likhne se kuch nahi jaata — neeche ke button se starter templates app se hi
-          Meta ko bhejo (ya WhatsApp Manager me same naam + language se submit karo), approve hone par{" "}
-          <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">Templates → Sync from Meta</Link> dabao.
-          Reminder bill ke baare me hai, to category <b>UTILITY</b> rakho.
+          <b>The template is approved on Meta.</b> Typing a name here sends nothing — use the button below to send the starter templates
+          to Meta from the app (or submit them in WhatsApp Manager with the same name + language); once approved, press{" "}
+          <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">Templates → Sync from Meta</Link>.
+          Reminders are about bills, so keep the category <b>UTILITY</b>.
         </li>
         <li>
-          <b>Automation dial allow kare.</b> &ldquo;Send a renewal reminder&rdquo; aur &ldquo;Chase an overdue invoice&rdquo; dono{" "}
-          <b>auto</b> par hon — hold ya off par WhatsApp nahi jaata.{" "}
+          <b>The automation dial allows it.</b> &ldquo;Send a renewal reminder&rdquo; and &ldquo;Chase an overdue invoice&rdquo; are both on{" "}
+          <b>auto</b> — on hold or off, no WhatsApp goes out.{" "}
           <Link href="/automation" className="text-amber-ink hover:underline">Open automation</Link>
           <span className="ml-2 inline-flex flex-wrap gap-1.5 align-middle">
-            {v.dial.killSwitch && <Badge kind="danger" size="sm">Master switch band</Badge>}
+            {v.dial.killSwitch && <Badge kind="danger" size="sm">Master switch off</Badge>}
             <Badge kind={v.dial.renewal === "auto" && !v.dial.killSwitch ? "success" : "warning"} size="sm">Renewal: {DIAL_LABEL[v.dial.renewal] ?? v.dial.renewal}</Badge>
             <Badge kind={v.dial.dunning === "auto" && !v.dial.killSwitch ? "success" : "warning"} size="sm">Invoice: {DIAL_LABEL[v.dial.dunning] ?? v.dial.dunning}</Badge>
           </span>
         </li>
         <li>
-          <b>WhatsApp Business API connect ho.</b>{" "}
+          <b>WhatsApp Business API is connected.</b>{" "}
           <Link href="/settings" className="text-amber-ink hover:underline">Settings → Integrations</Link>
           <span className="ml-2 align-middle">
             <Badge kind={v.connected ? "success" : "warning"} size="sm">{v.connected ? "Connected" : "Not connected"}</Badge>
@@ -115,8 +115,8 @@ function BeforeYouStart({ v }: { v: WaRemindersView }) {
         </li>
       </ol>
       <p className="text-xs text-ink-3">
-        Jisne STOP likha hai use kabhi nahi jaata. Ek step (jaise &ldquo;7 din overdue&rdquo;) ek customer ko ek hi baar jaata hai.
-        {!dialOk && " Abhi dial ki wajah se kuch reminders ruk jayenge — neeche har kind ke saamne likha hai."}
+        Anyone who sent STOP never gets one. Each step (e.g. &ldquo;7 days overdue&rdquo;) goes to a customer only once.
+        {!dialOk && " Some reminders are held by the dial right now — each kind below says which."}
       </p>
       <SubmitStarters v={v} />
     </Card>
@@ -139,15 +139,15 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
       });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error ?? "Meta ko template nahi bhej paaye — page refresh karke dobara try kariye.");
+      if (!res.ok) throw new Error(j.error ?? "Could not send templates to Meta — refresh the page and try again.");
       return j as { submitted: number; results: SubmitResult[] };
     },
     onSuccess: (r) => {
       setResults(r.results);
       qc.invalidateQueries({ queryKey: ["wa-reminders"] });
       const failed = r.results.filter((x) => !x.ok).length;
-      if (failed === 0) toast.success(`${r.results.length} template Meta ko bhej diye — approval mein aam taur par kuch minute se 24 ghante lagte hain`);
-      else toast.warning(`${failed} template nahi gaye — neeche wajah likhi hai`);
+      if (failed === 0) toast.success(`${r.results.length} templates sent to Meta — approval usually takes a few minutes to 24 hours`);
+      else toast.warning(`${failed} templates not sent — the reason is shown below`);
     },
     onError: (err) => toastError(err),
   });
@@ -169,7 +169,7 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
             {submit.isPending ? "Sending to Meta…" : `Send for Meta approval (${pending.length})`}
           </Button>
           <span className="text-xs text-ink-3">
-            WhatsApp Manager mein login karke type karne ki zaroorat nahi. Neeche har kind ke &ldquo;Starter wording&rdquo; se copy karna bhi chalta hai.
+            No need to sign in to WhatsApp Manager and type them. Copying each kind's &ldquo;Starter wording&rdquo; below also works.
           </span>
         </div>
       )}
@@ -187,9 +187,9 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
             ))}
           </ul>
           <p className="text-xs text-ink-3">
-            Approve hone par{" "}
-            <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">Templates → Sync from Meta</Link>{" "}
-            dabao, phir neeche har kind par &ldquo;Set template&rdquo; — starter naam pehle se bhara milega.
+            Once approved, press{" "}
+            <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">Templates → Sync from Meta</Link>,{" "}
+            then &ldquo;Set template&rdquo; on each kind below — the starter name is filled in already.
           </p>
         </div>
       )}
@@ -227,14 +227,14 @@ function MasterSwitch({ v }: { v: WaRemindersView }) {
         </div>
         <p className="text-sm text-ink-3 mt-0.5">
           {v.enabled
-            ? "Renewal aur invoice reminders email ke saath WhatsApp par bhi ja rahe hain (jahan template taiyaar hai)."
-            : "Band hai — koi reminder WhatsApp par nahi jaata. Email pehle jaisa chalta rahega."}
-          {v.updatedAt && <> · Aakhri badlaav {formatDate(v.updatedAt, "long")}</>}
+            ? "Renewal and invoice reminders go on WhatsApp as well as email (where a template is ready)."
+            : "Off — no reminder goes on WhatsApp. Email continues as before."}
+          {v.updatedAt && <> · Last changed {formatDate(v.updatedAt, "long")}</>}
         </p>
       </div>
       <label className="flex items-center gap-2 text-sm text-ink-2">
         <Switch checked={v.enabled} disabled={set.isPending} onCheckedChange={toggle} aria-label="WhatsApp reminders ON / OFF" />
-        {set.isPending ? "Save ho raha hai…" : v.enabled ? "ON" : "OFF"}
+        {set.isPending ? "Saving…" : v.enabled ? "ON" : "OFF"}
       </label>
     </Card>
   );
@@ -254,8 +254,8 @@ function KindsCard({ v }: { v: WaRemindersView }) {
   return (
     <Card flush>
       <div className="px-4 pt-4 pb-2">
-        <h2 className="text-base font-semibold text-ink">Har reminder ka template</h2>
-        <p className="text-xs text-ink-3 mt-0.5">Jis kind ka template set nahi hai, uska sirf email jaata hai.</p>
+        <h2 className="text-base font-semibold text-ink">Template for each reminder</h2>
+        <p className="text-xs text-ink-3 mt-0.5">Kinds without a template send email only.</p>
       </div>
       {groups.map((g) => (
         <section key={g.subject} className="border-t border-hairline">
@@ -270,15 +270,15 @@ function KindsCard({ v }: { v: WaRemindersView }) {
                       <span className="font-mono">{k.mapping.template_name}</span>
                       <span className="text-ink-3">· {k.mapping.language}</span>
                       <Badge kind={k.templateStatus === "approved" ? "success" : k.templateStatus ? "warning" : "muted"} size="sm">
-                        Meta: {k.templateStatus ?? "app me nahi"}
+                        Meta: {k.templateStatus ?? "not in app"}
                       </Badge>
-                      {!k.mapping.enabled && <Badge kind="muted" size="sm">Band</Badge>}
+                      {!k.mapping.enabled && <Badge kind="muted" size="sm">Off</Badge>}
                     </p>
                   ) : (
-                    <p className="text-xs text-ink-3">Template set nahi</p>
+                    <p className="text-xs text-ink-3">No template set</p>
                   )}
                   <p className="text-xs flex items-start gap-1.5">
-                    <Badge kind={k.readiness.tone} size="sm">{k.readiness.state === "ready" ? "Jayega" : k.readiness.state === "switch_off" ? "Taiyaar" : "Rukega"}</Badge>
+                    <Badge kind={k.readiness.tone} size="sm">{k.readiness.state === "ready" ? "Will send" : k.readiness.state === "switch_off" ? "Ready" : "Held"}</Badge>
                     <span className="text-ink-2">{k.readiness.text}</span>
                   </p>
                 </div>
@@ -337,16 +337,16 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
           <DialogTitle>{REMINDER_KINDS[kind.kind].label}</DialogTitle>
-          <DialogDescription>Wahi naam aur language likho jo Meta par approved hai. {"{{1}}"}, {"{{2}}"} … har customer ke liye bharte hain.</DialogDescription>
+          <DialogDescription>Use the exact name and language approved on Meta. {"{{1}}"}, {"{{2}}"} … are filled in for each customer.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 max-h-[62vh] overflow-y-auto pr-1">
           {v.templates.length > 0 && (
-            <FormField label="App me jo templates hain unme se chuno" htmlFor="wr_pick">
+            <FormField label="Pick from templates in the app" htmlFor="wr_pick">
               <Select value={known ? `${known.name}|${known.language}` : ""} onValueChange={(val) => {
                 const [n, l] = val.split("|");
                 setName(n); setLanguage(l);
               }}>
-                <SelectTrigger id="wr_pick"><SelectValue placeholder="Template chuno (ya neeche naam likho)" /></SelectTrigger>
+                <SelectTrigger id="wr_pick"><SelectValue placeholder="Choose a template (or type a name below)" /></SelectTrigger>
                 <SelectContent>
                   {v.templates.map((t) => (
                     <SelectItem key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>
@@ -358,7 +358,7 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
             </FormField>
           )}
           <div className="grid gap-3 sm:grid-cols-3">
-            <FormField label="Template naam (Meta wala)" required htmlFor="wr_name" className="sm:col-span-2">
+            <FormField label="Template name (as on Meta)" required htmlFor="wr_name" className="sm:col-span-2">
               <Input id="wr_name" value={name} onChange={(e) => setName(e.target.value.trim().toLowerCase())} placeholder={starter.name} />
             </FormField>
             <FormField label="Language" required htmlFor="wr_lang">
@@ -370,17 +370,17 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
             <div className="space-y-1">
               <p className="text-xs">
                 <Badge kind={approved ? "success" : "warning"} size="sm">Meta: {known.status}</Badge>
-                {!approved && <span className="ml-2 text-amber-ink">Approve hone tak ye template nahi jayega.</span>}
+                {!approved && <span className="ml-2 text-amber-ink">This template will not send until approved.</span>}
               </p>
               <p className="whitespace-pre-wrap rounded-md bg-[#dcf8c6] text-[#111] p-2.5 max-w-md text-[13px]">{known.body}</p>
             </div>
           ) : (
             <div className="rounded-md border border-hairline bg-paper-2/40 p-3 space-y-2">
               <p className="text-xs text-amber-ink">
-                Ye naam app ke templates me nahi hai, to status &ldquo;approved&rdquo; nahi dikh sakta aur reminder nahi jayega.
-                Meta par submit karke Templates → Sync from Meta dabao.
+                This name is not among the app's templates, so it cannot show as &ldquo;approved&rdquo; and the reminder will not send.
+                Submit it on Meta, then press Templates → Sync from Meta.
               </p>
-              <FormField label="Template me kitne {{n}} hain" htmlFor="wr_slots">
+              <FormField label="How many {{n}} in the template" htmlFor="wr_slots">
                 <Input id="wr_slots" type="number" min={0} max={10} className="max-w-[8rem]" value={map.length}
                   onChange={(e) => setSlotCount(Number(e.target.value))} />
               </FormField>
@@ -390,7 +390,7 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
           {map.length > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {map.map((f, i) => (
-                <FormField key={i} label={`{{${i + 1}}} mein kya aaye`} htmlFor={`wr_p${i}`}>
+                <FormField key={i} label={`What goes in {{${i + 1}}}`} htmlFor={`wr_p${i}`}>
                   <Select value={f} onValueChange={(val) => setMap((cur) => cur.map((x, j) => (j === i ? (val as ReminderParamField) : x)))}>
                     <SelectTrigger id={`wr_p${i}`}><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -404,12 +404,12 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
 
           <label className="flex items-center gap-2 text-sm text-ink-2" htmlFor="wr_enabled">
             <Checkbox id="wr_enabled" checked={enabled} onCheckedChange={(c) => setEnabled(c === true)} />
-            Is kind ke liye WhatsApp chalu
+            WhatsApp on for this kind
           </label>
 
           <details className="rounded-md border border-hairline p-3 text-xs">
-            <summary className="cursor-pointer text-ink-2 font-medium">Starter wording (Meta par submit karne ke liye)</summary>
-            <p className="mt-2 font-mono text-ink">{starter.name} · UTILITY · {paramCount(starter.body)} jagah</p>
+            <summary className="cursor-pointer text-ink-2 font-medium">Starter wording (to submit on Meta)</summary>
+            <p className="mt-2 font-mono text-ink">{starter.name} · UTILITY · {paramCount(starter.body)} slots</p>
             <p className="mt-1 whitespace-pre-wrap text-ink-2">{starter.body}</p>
             <p className="mt-1 text-ink-3">{starter.param_map.map((f, i) => `{{${i + 1}}} = ${REMINDER_PARAM_FIELDS[f].label}`).join(" · ")}</p>
             <Button variant="ghost" size="sm" className="mt-1" onClick={async () => {
@@ -438,21 +438,21 @@ function LogCard({ v }: { v: WaRemindersView }) {
   if (v.log.length === 0) {
     return (
       <Card className="py-2">
-        <EmptyState icon="whatsapp" title="Abhi koi WhatsApp reminder nahi gaya"
-          body="Switch ON aur template approved hone ke baad, agle cron run me jo reminder jayega ya rukega wo yahan dikhega." />
+        <EmptyState icon="whatsapp" title="No WhatsApp reminders sent yet"
+          body="Once the switch is ON and a template is approved, each reminder sent or held in the next cron run shows up here." />
       </Card>
     );
   }
   return (
     <Card flush>
       <div className="px-4 pt-4 pb-2">
-        <h2 className="text-base font-semibold text-ink">Pichhle {v.log.length} WhatsApp reminders</h2>
-        <p className="text-xs text-ink-3 mt-0.5">Delivered / Read Meta se khud update hota hai.</p>
+        <h2 className="text-base font-semibold text-ink">Last {v.log.length} WhatsApp reminders</h2>
+        <p className="text-xs text-ink-3 mt-0.5">Delivered / Read update automatically from Meta.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px]">
           <thead className="bg-paper-2 border-y border-hairline-strong">
-            <tr>{["Kab", "Reminder", "Number", "Template", "Status", "Detail"].map((h) => (
+            <tr>{["When", "Reminder", "Number", "Template", "Status", "Detail"].map((h) => (
               <th key={h} scope="col" className="px-3 py-2 text-left text-2xs font-semibold text-ink-3 uppercase tracking-wider">{h}</th>
             ))}</tr>
           </thead>

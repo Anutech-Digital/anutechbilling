@@ -52,18 +52,18 @@ export default function TemplatesPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Email templates</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-            Campaign bhejte waqt &ldquo;Start from a template&rdquo; mein yahi dikhte hain. System templates badle nahi ja sakte —
-            &ldquo;Copy karke badlo&rdquo; se apni copy banao.
+            These appear under &ldquo;Start from a template&rdquo; when sending a campaign. System templates cannot be changed —
+            use &ldquo;Copy and edit&rdquo; to make your own copy.
           </p>
         </div>
         <div className="flex gap-2">
           <Link href="/campaigns"><Button variant="outline" size="sm">Campaigns</Button></Link>
-          <Button size="sm" icon="plus" onClick={() => setEditing({})}>Naya template</Button>
+          <Button size="sm" icon="plus" onClick={() => setEditing({})}>New template</Button>
         </div>
       </header>
 
       <div className="flex flex-wrap gap-2">
-        {[{ value: "all", label: "Sab" }, ...TEMPLATE_CATEGORIES].map((c) => (
+        {[{ value: "all", label: "All" }, ...TEMPLATE_CATEGORIES].map((c) => (
           <button key={c.value} type="button" onClick={() => setCat(c.value)}
             className={cn("rounded-full border px-3 py-1 text-xs", cat === c.value ? "border-amber bg-amber-soft/40 text-ink" : "border-hairline text-ink-2 hover:border-amber/60")}>
             {c.label}
@@ -77,9 +77,9 @@ export default function TemplatesPage() {
         <Card className="p-4 text-sm text-red-600">{(q.error as Error).message}</Card>
       ) : (
         <>
-          <Section title={`Aapke templates (${mine.length})`}>
+          <Section title={`Your templates (${mine.length})`}>
             {mine.length === 0 ? (
-              <p className="text-sm text-ink-3">Abhi koi nahi. &ldquo;Naya template&rdquo; se banao, ya neeche kisi system template ko copy karo.</p>
+              <p className="text-sm text-ink-3">None yet. Create one with &ldquo;New template&rdquo;, or copy a system template below.</p>
             ) : mine.map((t) => (
               <TemplateCard key={t.id} t={t}
                 onView={() => setViewing(t)}
@@ -87,7 +87,7 @@ export default function TemplatesPage() {
                   <Button variant="outline" size="sm" onClick={() => setEditing({ id: t.id, from: t })}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => setEditing({ from: { ...t, name: `${t.name} (copy)` } })}>Copy</Button>
                   <Button variant="ghost" size="sm" onClick={async () => {
-                    const ok = await confirm({ title: "Template delete karein?", body: `"${t.name}" hat jaayega. Bheje ja chuke campaigns par asar nahi.`, danger: true, confirmLabel: "Delete", cancelLabel: "Nahi" });
+                    const ok = await confirm({ title: "Delete template?", body: `"${t.name}" will be removed. Campaigns already sent are not affected.`, danger: true, confirmLabel: "Delete", cancelLabel: "Cancel" });
                     if (ok) del.mutate(t.id);
                   }}>Delete</Button>
                 </>} />
@@ -97,7 +97,7 @@ export default function TemplatesPage() {
             {system.map((t) => (
               <TemplateCard key={t.id} t={t}
                 onView={() => setViewing(t)}
-                actions={<Button variant="outline" size="sm" onClick={() => setEditing({ from: { ...t, name: `${t.name} (copy)` } })}>Copy karke badlo</Button>} />
+                actions={<Button variant="outline" size="sm" onClick={() => setEditing({ from: { ...t, name: `${t.name} (copy)` } })}>Copy and edit</Button>} />
             ))}
           </Section>
         </>
@@ -159,11 +159,11 @@ function PreviewDialog({ t, onClose }: { t: CampaignTemplateRow; onClose: () => 
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t.name}</DialogTitle>
-          <DialogDescription>Sample naam aur company ke saath. Asli mail mein har lead ka apna naam aata hai.</DialogDescription>
+          <DialogDescription>Shown with a sample name and company. Each lead sees their own name in the real email.</DialogDescription>
         </DialogHeader>
         <p className="text-sm"><span className="text-ink-3">Subject:</span> <b>{previewTemplate(t.subject)}</b></p>
         <HtmlPreview html={previewTemplate(t.body_html)} title={`Preview: ${t.name}`} className="h-[55vh]" />
-        <p className="text-xs text-ink-3">Unsubscribe link bhejte waqt khud neeche judta hai.</p>
+        <p className="text-xs text-ink-3">The unsubscribe link is added at the bottom automatically when sending.</p>
       </DialogContent>
     </Dialog>
   );
@@ -196,14 +196,14 @@ function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClo
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{editing.id ? "Template edit" : "Naya template"}</DialogTitle>
+          <DialogTitle>{editing.id ? "Edit template" : "New template"}</DialogTitle>
           <DialogDescription>
-            Variables: <code>{"{{name}}"}</code> <code>{"{{company}}"}</code> <code>{"{{sender}}"}</code> · offer ke liye <code>{"{{offer_code}}"}</code> <code>{"{{discount}}"}</code> <code>{"{{expires}}"}</code>
+            Variables: <code>{"{{name}}"}</code> <code>{"{{company}}"}</code> <code>{"{{sender}}"}</code> · for offers <code>{"{{offer_code}}"}</code> <code>{"{{discount}}"}</code> <code>{"{{expires}}"}</code>
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 max-h-[62vh] overflow-y-auto pr-1">
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Naam" required htmlFor="tp_name">
+            <FormField label="Name" required htmlFor="tp_name">
               <Input id="tp_name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Diwali offer 2026" />
             </FormField>
             <FormField label="Type" htmlFor="tp_cat">
@@ -213,8 +213,8 @@ function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClo
               </Select>
             </FormField>
           </div>
-          <FormField label="Kab use karein (note)" htmlFor="tp_desc">
-            <Input id="tp_desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Lost leads ko 2 mahine baad" />
+          <FormField label="When to use (note)" htmlFor="tp_desc">
+            <Input id="tp_desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Lost leads after 2 months" />
           </FormField>
           <FormField label="Subject" required htmlFor="tp_subject">
             <Input id="tp_subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Special offer for {{company}}" />
@@ -225,7 +225,7 @@ function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClo
               <div className="flex gap-1 text-xs">
                 {(["edit", "preview"] as const).map((k) => (
                   <button key={k} type="button" onClick={() => setTab(k)}
-                    className={cn("rounded px-2 py-0.5", tab === k ? "bg-paper-2 text-ink" : "text-ink-3")}>{k === "edit" ? "Likho" : "Preview"}</button>
+                    className={cn("rounded px-2 py-0.5", tab === k ? "bg-paper-2 text-ink" : "text-ink-3")}>{k === "edit" ? "Write" : "Preview"}</button>
                 ))}
               </div>
             </div>
@@ -238,11 +238,11 @@ function EditDialog({ editing, onClose }: { editing: NonNullable<Editing>; onClo
           </div>
           <FormField label="Plain text (optional)" htmlFor="tp_text">
             <textarea id="tp_text" value={text} onChange={(e) => setText(e.target.value)} rows={4}
-              className="w-full rounded-md border border-hairline bg-paper p-2 text-xs" placeholder="Jin mail apps mein HTML nahi khulta, unke liye" />
+              className="w-full rounded-md border border-hairline bg-paper p-2 text-xs" placeholder="For mail apps that do not show HTML" />
           </FormField>
           {unknown.length > 0 && (
             <p className="text-xs text-red-600">
-              Ye variable bharenge nahi aur mail mein waise hi chale jaayenge: {unknown.map((u) => `{{${u}}}`).join(", ")}
+              These variables will not be filled and will go out as typed: {unknown.map((u) => `{{${u}}}`).join(", ")}
             </p>
           )}
         </div>

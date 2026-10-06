@@ -49,7 +49,7 @@ const TABS: TabBarItem[] = [
 
 const STATUS: Record<WaStatus, { label: string; kind: "muted" | "warning" | "success" | "danger" | "info" }> = {
   draft:     { label: "Draft",            kind: "muted" },
-  submitted: { label: "Meta ke paas",     kind: "warning" },
+  submitted: { label: "With Meta",        kind: "warning" },
   approved:  { label: "Approved",         kind: "success" },
   rejected:  { label: "Rejected",         kind: "danger" },
   paused:    { label: "Paused",           kind: "info" },
@@ -68,10 +68,10 @@ export default function WhatsAppMarketingPage() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">WhatsApp broadcast</h1>
         <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-          WhatsApp par pehla message sirf Meta se <b>approved template</b> se ja sakta hai. Template yahan likho, Meta par submit karo,
-          approve hone par leads ko ek saath bhejo. STOP likhne wale ko dobara nahi jaata. Ek-ek se baat ke liye{" "}
-          <Link href="/whatsapp" className="text-amber-ink hover:underline">WhatsApp inbox</Link>. Renewal aur invoice ke
-          automatic reminder:{" "}
+          The first WhatsApp message can only be an <b>approved template</b> from Meta. Write the template here, submit it to Meta,
+          and once approved send it to leads in one go. Anyone who replies STOP gets nothing more. For one-to-one chats, use the{" "}
+          <Link href="/whatsapp" className="text-amber-ink hover:underline">WhatsApp inbox</Link>. Automatic renewal and invoice
+          reminders:{" "}
           <Link href="/marketing/whatsapp/reminders" className="text-amber-ink hover:underline">WhatsApp reminders</Link>.
         </p>
       </header>
@@ -103,8 +103,8 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
   if (approved.length === 0) {
     return (
       <Card className="py-2">
-        <EmptyState icon="whatsapp" title="Abhi koi approved template nahi"
-          body="Templates tab mein starter template copy karo, Meta (WhatsApp Manager → Message templates) par same naam se submit karo. Approve hone par yahan status Approved karo ya Sync from Meta dabao." />
+        <EmptyState icon="whatsapp" title="No approved templates yet"
+          body="Copy a starter template in the Templates tab and submit it to Meta (WhatsApp Manager → Message templates) under the same name. Once approved, set its status to Approved here or press Sync from Meta." />
         <div className="flex justify-center pb-4"><Button onClick={goTemplates}>Open templates</Button></div>
       </Card>
     );
@@ -114,12 +114,12 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
     <Card className="p-4 space-y-4">
       <FormField label="Template" htmlFor="bc_tpl">
         <Select value={templateId} onValueChange={setTemplateId}>
-          <SelectTrigger id="bc_tpl"><SelectValue placeholder="Approved template chuno" /></SelectTrigger>
+          <SelectTrigger id="bc_tpl"><SelectValue placeholder="Choose an approved template" /></SelectTrigger>
           <SelectContent>{approved.map((t) => <SelectItem key={t.id} value={t.id}>{t.name} ({t.language})</SelectItem>)}</SelectContent>
         </Select>
       </FormField>
       <div>
-        <p className="text-sm font-medium text-ink mb-1.5">Kis stage ke leads ko</p>
+        <p className="text-sm font-medium text-ink mb-1.5">Leads in these stages</p>
         <div className="flex flex-wrap gap-2">
           {STAGES.map((s) => (
             <button key={s.id} type="button"
@@ -133,25 +133,25 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
       <div className="flex gap-2">
         <Button variant="outline" disabled={!templateId || stages.length === 0 || preview.isPending}
           onClick={() => preview.mutate(input, { onSuccess: setP })}>
-          {preview.isPending ? "Gin rahe hain…" : "Kitne logon ko jaayega?"}
+          {preview.isPending ? "Counting…" : "How many will receive it?"}
         </Button>
       </div>
 
       {p && (
         <div className="rounded-lg border border-hairline bg-paper-2/40 p-3 space-y-2 text-sm">
-          <p><b>{p.recipients}</b> leads ko jaayega
-            {p.skippedOptOut > 0 && <> · {p.skippedOptOut} ne STOP kiya, chhode</>}
-            {p.noPhone > 0 && <> · {p.noPhone} ka mobile number sahi nahi</>}
-            {p.overCap > 0 && <> · {p.overCap} agli baar (ek baar mein 250 tak)</>}
+          <p>Goes to <b>{p.recipients}</b> leads
+            {p.skippedOptOut > 0 && <> · {p.skippedOptOut} skipped (sent STOP)</>}
+            {p.noPhone > 0 && <> · {p.noPhone} without a valid mobile number</>}
+            {p.overCap > 0 && <> · {p.overCap} next time (250 per send)</>}
           </p>
           {p.sample && (
             <div>
-              <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Pehle lead ko aisa dikhega</p>
+              <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">What the first lead will see</p>
               <p className="whitespace-pre-wrap rounded-md bg-[#dcf8c6] text-[#111] p-2.5 max-w-md text-[13px]">{p.sample}</p>
             </div>
           )}
           {!p.connected && (
-            <p className="text-amber-ink text-xs">WhatsApp Business API abhi connect nahi hai — Settings mein jodne ke baad hi bhej paoge.</p>
+            <p className="text-amber-ink text-xs">WhatsApp Business API is not connected — connect it in Settings before sending.</p>
           )}
           <Button disabled={p.recipients === 0 || !p.connected || send.isPending} onClick={async () => {
             const ok = await confirm({
@@ -183,14 +183,14 @@ function TemplatesTab() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2">
-        <Button icon="plus" onClick={() => setEditing({ name: "", language: "en", category: "MARKETING", body: "", param_map: [], status: "draft" })}>Naya template</Button>
+        <Button icon="plus" onClick={() => setEditing({ name: "", language: "en", category: "MARKETING", body: "", param_map: [], status: "draft" })}>New template</Button>
         <Button variant="outline" icon="refresh" disabled={sync.isPending} onClick={() => sync.mutate()}>{sync.isPending ? "Sync…" : "Sync from Meta"}</Button>
       </div>
 
       <section className="space-y-2">
-        <h2 className="text-base font-semibold text-ink border-b border-hairline pb-1.5">Aapke templates ({mine.length})</h2>
+        <h2 className="text-base font-semibold text-ink border-b border-hairline pb-1.5">Your templates ({mine.length})</h2>
         {q.isLoading ? <Skeleton className="h-24" /> : mine.length === 0 ? (
-          <p className="text-sm text-ink-3">Abhi koi nahi — neeche se starter copy karo.</p>
+          <p className="text-sm text-ink-3">None yet — copy a starter below.</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {mine.map((t) => (
@@ -222,7 +222,7 @@ function TemplatesTab() {
 
       <section className="space-y-2">
         <h2 className="text-base font-semibold text-ink border-b border-hairline pb-1.5">Starter templates</h2>
-        <p className="text-xs text-ink-3">Copy karo → Meta par same naam se submit karo → approve hone par status Approved.</p>
+        <p className="text-xs text-ink-3">Copy → submit to Meta under the same name → set status to Approved once approved.</p>
         <div className="grid gap-3 md:grid-cols-2">
           {STARTER_WA_TEMPLATES.map((s) => (
             <Card key={s.name} className="p-4 space-y-2">
@@ -233,7 +233,7 @@ function TemplatesTab() {
               <p className="whitespace-pre-wrap text-xs text-ink-2">{s.body}</p>
               <Button variant="outline" size="sm" disabled={names.has(s.name)}
                 onClick={() => setEditing({ name: s.name, language: "en", category: s.category, body: s.body, param_map: [...s.param_map], status: "draft" })}>
-                {names.has(s.name) ? "Pehle se hai" : "Mere templates mein daalo"}
+                {names.has(s.name) ? "Already added" : "Add to my templates"}
               </Button>
             </Card>
           ))}
@@ -254,19 +254,19 @@ function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void 
     setD((cur) => cur.param_map.length === n ? cur
       : { ...cur, param_map: Array.from({ length: n }, (_, i) => cur.param_map[i] ?? "first_name") });
   }, [n]);
-  const problem = !isValidTemplateName(d.name) ? "Naam: sirf chhote akshar, number aur _ (jaise festival_offer)." : templateProblem(d.body, d.param_map);
+  const problem = !isValidTemplateName(d.name) ? "Name: lowercase letters, numbers and _ only (e.g. festival_offer)." : templateProblem(d.body, d.param_map);
   const sample = renderBody(d.body, slotValues(d.param_map, { first_name: "Deepak", company: "Excel Technologies", sender: "Anutech" }));
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{d.id ? "Template edit" : "WhatsApp template"}</DialogTitle>
-          <DialogDescription>Naam aur text wahi rakho jo Meta par submit kiya hai. {"{{1}}"}, {"{{2}}"} … har lead ke liye bharte hain.</DialogDescription>
+          <DialogTitle>{d.id ? "Edit template" : "WhatsApp template"}</DialogTitle>
+          <DialogDescription>Keep the name and text exactly as submitted to Meta. {"{{1}}"}, {"{{2}}"} … are filled in for each lead.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 max-h-[62vh] overflow-y-auto pr-1">
           <div className="grid grid-cols-3 gap-3">
-            <FormField label="Naam (Meta wala)" required htmlFor="wt_name">
+            <FormField label="Name (as on Meta)" required htmlFor="wt_name">
               <Input id="wt_name" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value.trim().toLowerCase() })} placeholder="festival_offer" />
             </FormField>
             <FormField label="Language" htmlFor="wt_lang">
@@ -286,7 +286,7 @@ function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void 
           {n > 0 && (
             <div className="grid gap-2 sm:grid-cols-2">
               {d.param_map.map((f, i) => (
-                <FormField key={i} label={`{{${i + 1}}} mein kya aaye`} htmlFor={`wt_p${i}`}>
+                <FormField key={i} label={`What goes in {{${i + 1}}}`} htmlFor={`wt_p${i}`}>
                   <Select value={f} onValueChange={(v) => setD({ ...d, param_map: d.param_map.map((x, j) => j === i ? v : x) })}>
                     <SelectTrigger id={`wt_p${i}`}><SelectValue /></SelectTrigger>
                     <SelectContent>{(Object.keys(PARAM_FIELDS) as ParamField[]).map((k) => <SelectItem key={k} value={k}>{PARAM_FIELDS[k].label}</SelectItem>)}</SelectContent>
@@ -302,7 +302,7 @@ function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void 
             </div>
           )}
           {!/stop/i.test(d.body) && d.category === "MARKETING" && d.body.trim() && (
-            <p className="text-xs text-amber-ink">Marketing message mein &ldquo;Reply STOP to opt out&rdquo; jaisi line rakho — Meta isse pasand karta hai aur STOP khud opt-out ban jaata hai.</p>
+            <p className="text-xs text-amber-ink">Add a line like &ldquo;Reply STOP to opt out&rdquo; to marketing messages — Meta prefers it, and a STOP reply opts the person out automatically.</p>
           )}
           {problem && <p className="text-xs text-red-600">{problem}</p>}
         </div>
@@ -329,14 +329,14 @@ function OptOutsTab() {
   const norm = normalizeWaPhone(phone);
   return (
     <Card className="p-4 space-y-3">
-      <p className="text-sm text-ink-2">Jo STOP likhta hai wo khud yahan aa jaata hai. Kisi ne phone par mana kiya ho to number yahan haath se daalo.</p>
+      <p className="text-sm text-ink-2">Anyone who replies STOP is added here automatically. If someone declined by phone, add their number by hand.</p>
       <div className="flex gap-2 flex-wrap">
         <Input aria-label="Phone number to opt out" className="max-w-xs" placeholder="98990 65121" value={phone} onChange={(e) => setPhone(e.target.value)} />
         <Button disabled={!norm || add.isPending} onClick={() => { if (norm) add.mutate(norm, { onSuccess: () => setPhone("") }); }}>Add to opt-out list</Button>
-        {phone && !norm && <span className="text-xs text-red-600 self-center">Number sahi nahi lagta</span>}
+        {phone && !norm && <span className="text-xs text-red-600 self-center">Number looks invalid</span>}
       </div>
       {q.isLoading ? <Skeleton className="h-16" /> : (q.data ?? []).length === 0 ? (
-        <p className="text-xs text-ink-3">Abhi koi nahi.</p>
+        <p className="text-xs text-ink-3">None yet.</p>
       ) : (
         <div className="divide-y divide-hairline border-t border-hairline">
           {(q.data ?? []).map((o) => (
@@ -362,12 +362,12 @@ function OptOutsTab() {
 function HistoryTab() {
   const q = useWaBroadcasts();
   if (q.isLoading) return <Skeleton className="h-24" />;
-  if ((q.data ?? []).length === 0) return <Card className="py-2"><EmptyState icon="whatsapp" title="Abhi koi broadcast nahi" body="Pehla broadcast bhejne ke baad yahan dikhega." /></Card>;
+  if ((q.data ?? []).length === 0) return <Card className="py-2"><EmptyState icon="whatsapp" title="No broadcasts yet" body="Your first broadcast will appear here once sent." /></Card>;
   return (
     <Card flush>
       <table className="w-full">
         <thead className="bg-paper-2 border-y border-hairline-strong">
-          <tr>{["Date", "Template", "Logon ko", "Gaye", "Fail", "STOP chhode"].map((h, i) => (
+          <tr>{["Date", "Template", "Recipients", "Sent", "Failed", "Skipped (STOP)"].map((h, i) => (
             <th key={h} className={cn("px-3 py-2 text-2xs font-semibold text-ink-3 uppercase tracking-wider", i >= 2 ? "text-right" : "text-left")}>{h}</th>
           ))}</tr>
         </thead>

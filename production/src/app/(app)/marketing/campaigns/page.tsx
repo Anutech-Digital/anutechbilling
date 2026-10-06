@@ -33,10 +33,10 @@ import {
 } from "@/lib/queries/marketing-campaigns";
 
 const PHASE: Record<CampaignPhase, { label: string; kind: "info" | "success" | "muted" | "warning" }> = {
-  upcoming:  { label: "Aane wala", kind: "info" },
-  running:   { label: "Chal raha", kind: "success" },
-  ended:     { label: "Khatam",    kind: "muted" },
-  cancelled: { label: "Cancel",    kind: "warning" },
+  upcoming:  { label: "Upcoming", kind: "info" },
+  running:   { label: "Running", kind: "success" },
+  ended:     { label: "Ended",      kind: "muted" },
+  cancelled: { label: "Cancelled", kind: "warning" },
 };
 
 type Draft = Omit<MarketingCampaign, "id"> & { id?: string };
@@ -62,18 +62,18 @@ export default function MarketingCampaignsPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Campaigns — budget &amp; target</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-            Har campaign ka budget, dates aur target. Kharcha tab judta hai jab expense par campaign chuno; leads tab jab
-            campaign ke tracking link se aayein.
+            Each campaign's budget, dates and target. Spend counts once an expense is tagged with the campaign; leads count
+            when they come in through the campaign's tracking link.
           </p>
         </div>
-        <Button icon="plus" onClick={() => setEditing(blank())}>Naya campaign</Button>
+        <Button icon="plus" onClick={() => setEditing(blank())}>New campaign</Button>
       </header>
 
       {running.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
-          <Tile label="Chal rahe campaigns" value={String(running.length)} />
-          <Tile label="Unka kharcha / budget" value={`${rupee(totals.spend)} / ${rupee(totals.budget)}`} />
-          <Tile label="Unki leads" value={String(totals.leads)} />
+          <Tile label="Running campaigns" value={String(running.length)} />
+          <Tile label="Their spend / budget" value={`${rupee(totals.spend)} / ${rupee(totals.budget)}`} />
+          <Tile label="Their leads" value={String(totals.leads)} />
         </div>
       )}
 
@@ -83,9 +83,9 @@ export default function MarketingCampaignsPage() {
         <Card className="p-4 text-sm text-red-600">{(q.error as Error).message}</Card>
       ) : rows.length === 0 ? (
         <Card className="py-2">
-          <EmptyState icon="target" title="Abhi koi campaign nahi"
-            body="Jaise: “Diwali offer — ₹20,000, 1–31 Oct, 30 leads”. Campaign banao, uske tracking link ads mein lagao, aur ad ke bill par campaign chuno." />
-          <div className="flex justify-center pb-4"><Button onClick={() => setEditing(blank())}>Pehla campaign banao</Button></div>
+          <EmptyState icon="target" title="No campaigns yet"
+            body="For example: “Diwali offer — ₹20,000, 1–31 Oct, 30 leads”. Create a campaign, put its tracking link in your ads, and pick the campaign on the ad bill." />
+          <div className="flex justify-center pb-4"><Button onClick={() => setEditing(blank())}>Create your first campaign</Button></div>
         </Card>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -121,9 +121,9 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
   const del = useDeleteCampaign();
   const confirm = useConfirm();
   const ph = PHASE[m.phase];
-  const paceText = m.pace === "overspending" ? `Plan se ${rupee(m.paceGap ?? 0)} zyada kharch — budget jaldi khatam hoga`
-    : m.pace === "underspending" ? `Plan se ${rupee(Math.abs(m.paceGap ?? 0))} kam kharch`
-    : m.pace === "on_track" ? "Plan ke hisaab se" : null;
+  const paceText = m.pace === "overspending" ? `${rupee(m.paceGap ?? 0)} over plan — budget will run out early`
+    : m.pace === "underspending" ? `${rupee(Math.abs(m.paceGap ?? 0))} under plan`
+    : m.pace === "on_track" ? "On plan" : null;
 
   return (
     <Card className={cn("p-4 space-y-3", m.phase === "cancelled" && "opacity-60")}>
@@ -132,7 +132,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
           <div className="font-medium text-ink">{r.name}</div>
           <div className="text-xs text-ink-3">
             {formatDate(r.start_date)} – {formatDate(r.end_date)} · <code>{r.code}</code>
-            {m.phase === "running" && <> · din {m.daysElapsed}/{m.days}</>}
+            {m.phase === "running" && <> · day {m.daysElapsed}/{m.days}</>}
           </div>
         </div>
         <Badge kind={ph.kind} size="sm">{ph.label}</Badge>
@@ -167,7 +167,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
 
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-2">
         <Link href={`/marketing/links?campaign=${encodeURIComponent(r.code)}` as Route}>
-          <Button variant="outline" size="sm" icon="globe">Tracking link banao</Button>
+          <Button variant="outline" size="sm" icon="globe">Create tracking link</Button>
         </Link>
         <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
         <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>{open ? "Hide details" : `Details (${r.expenses.length} expenses · ${r.leadList.length} leads)`}</Button>
@@ -182,7 +182,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
         <div className="space-y-3 text-xs">
           <div>
             <p className="font-semibold text-ink-2 mb-1">Kharche</p>
-            {r.expenses.length === 0 ? <p className="text-ink-3">Koi nahi. Marketing expense par (ya Spend page par) is campaign ko chuno.</p> : (
+            {r.expenses.length === 0 ? <p className="text-ink-3">None. Tag a marketing expense (or use the Spend page) with this campaign.</p> : (
               <ul className="divide-y divide-hairline">
                 {r.expenses.map((e) => (
                   <li key={e.id} className="flex justify-between gap-2 py-1">
@@ -195,7 +195,7 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
           </div>
           <div>
             <p className="font-semibold text-ink-2 mb-1">Leads</p>
-            {r.leadList.length === 0 ? <p className="text-ink-3">Koi nahi. Campaign ka tracking link ads / posts mein lagao.</p> : (
+            {r.leadList.length === 0 ? <p className="text-ink-3">None. Put the campaign's tracking link in your ads / posts.</p> : (
               <ul className="divide-y divide-hairline">
                 {r.leadList.map((l) => (
                   <li key={l.id} className="flex justify-between gap-2 py-1">
@@ -226,28 +226,28 @@ function EditDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const [d, setD] = React.useState<Draft>(draft);
   const [codeTouched, setCodeTouched] = React.useState(Boolean(draft.id));
   const code = codeTouched ? d.code : campaignCode(d.name);
-  const problem = d.name.trim().length < 2 ? "Naam likho."
-    : !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(code) ? "Code: chhote akshar, number aur - (jaise diwali-2026)."
-    : d.end_date < d.start_date ? "End date start se pehle nahi ho sakti." : null;
+  const problem = d.name.trim().length < 2 ? "Enter a name."
+    : !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(code) ? "Code: lowercase letters, numbers and - (e.g. diwali-2026)."
+    : d.end_date < d.start_date ? "End date cannot be before the start date." : null;
   const num = (v: string) => (v.trim() === "" ? null : Math.max(0, Math.round(Number(v) || 0)));
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="md:!max-w-lg">
         <DialogHeader>
-          <DialogTitle>{d.id ? "Campaign edit" : "Naya campaign"}</DialogTitle>
-          <DialogDescription>Code wahi hai jo tracking link mein jaata hai — bante hi mat badlo, warna purane links ki leads alag ho jaayengi.</DialogDescription>
+          <DialogTitle>{d.id ? "Edit campaign" : "New campaign"}</DialogTitle>
+          <DialogDescription>The code goes into the tracking link — do not change it once created, or leads from older links will be split off.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <FormField label="Naam" required htmlFor="mc_name">
+          <FormField label="Name" required htmlFor="mc_name">
             <Input id="mc_name" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="e.g. Diwali offer 2026" />
           </FormField>
-          <FormField label="Code (link mein)" htmlFor="mc_code">
+          <FormField label="Code (in the link)" htmlFor="mc_code">
             <Input id="mc_code" value={code} onChange={(e) => { setCodeTouched(true); setD({ ...d, code: e.target.value.trim().toLowerCase() }); }} />
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Shuru" htmlFor="mc_start"><Input id="mc_start" type="date" value={d.start_date} onChange={(e) => setD({ ...d, start_date: e.target.value })} /></FormField>
-            <FormField label="Khatam" htmlFor="mc_end"><Input id="mc_end" type="date" value={d.end_date} onChange={(e) => setD({ ...d, end_date: e.target.value })} /></FormField>
+            <FormField label="Start" htmlFor="mc_start"><Input id="mc_start" type="date" value={d.start_date} onChange={(e) => setD({ ...d, start_date: e.target.value })} /></FormField>
+            <FormField label="End" htmlFor="mc_end"><Input id="mc_end" type="date" value={d.end_date} onChange={(e) => setD({ ...d, end_date: e.target.value })} /></FormField>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <FormField label="Budget (₹)" htmlFor="mc_budget"><Input id="mc_budget" type="number" min={0} value={d.budget || ""} onChange={(e) => setD({ ...d, budget: num(e.target.value) ?? 0 })} /></FormField>
