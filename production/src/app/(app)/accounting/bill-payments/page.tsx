@@ -57,7 +57,7 @@ export default function PaymentsMadePage() {
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Payments Made</h1>
-          <p className="text-sm text-ink-3 mt-1">Har paisa jo bank se nikla — vendors, salaries, tax/challan, advances · bank lines se, jaise reconcile hui waise</p>
+          <p className="text-sm text-ink-3 mt-1">Every rupee that left the bank — vendors, salaries, tax challans, advances · from bank lines, as reconciled</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="default" icon="download" onClick={exportCsv} disabled={rows.length === 0}>Export CSV</Button>
@@ -128,7 +128,7 @@ export default function PaymentsMadePage() {
       ) : error ? (
         <Card><p className="text-sm text-rose">Couldn&apos;t load payments. Please refresh.</p></Card>
       ) : rows.length === 0 ? (
-        <Card><EmptyState icon="rupee" title={lines.length ? "Is tab / search mein kuch nahi" : "Koi payment nahi"} body="Bank statement import karo aur lines reconcile karo — har money-out yahan aa jayega." /></Card>
+        <Card><EmptyState icon="rupee" title={lines.length ? "Nothing matches this filter or search" : "No payments yet"} body="Import a bank statement and reconcile its lines — every money-out will show here." /></Card>
       ) : (
         <>
           <ul className="md:hidden space-y-2">

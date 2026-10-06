@@ -69,6 +69,7 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
 import { usePagedRows, LoadMore, PAYMENTS_PAGE_SIZE } from "./load-more";
+import { paymentMethodLabel } from "./method-label";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -79,7 +80,7 @@ const STATUS_TABS: TabBarItem[] = [
 const METHOD_META: Record<string, { label: string; icon: string }> = {
   upi:           { label: "UPI",        icon: "rupee" },
   razorpay:      { label: "Razorpay",   icon: "zap" },
-  bank_transfer: { label: "Bank",       icon: "receipt" },
+  bank_transfer: { label: "Bank transfer", icon: "receipt" },
   cheque:        { label: "Cheque",     icon: "file" },
   cash:          { label: "Cash",       icon: "rupee" },
   other:         { label: "Other",      icon: "info" },
@@ -262,7 +263,7 @@ function PaymentsPageInner() {
       const ctx = quoteById.get(p.quote_id);
       return [
         formatDate(p.received_at), ctx?.customerName ?? "", p.quote_id, String(p.amount),
-        p.method ?? "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
+        p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
     });
     const csv = [header.map(esc).join(","), ...lines].join("\n");
@@ -355,7 +356,7 @@ function PaymentsPageInner() {
                 </button>
                 <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Top Payment Method</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? METHOD_META[topMethod[0]]?.label ?? topMethod[0] : "—"}</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? paymentMethodLabel(topMethod[0]) : "—"}</p>
                 </div>
               </div>
             </div>
@@ -657,7 +658,7 @@ function PaymentsPageInner() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base tabular-nums text-ink">{rupee(p.amount)}</p>
-                      <p className="text-3xs text-ink-3">{p.method}</p>
+                      <p className="text-3xs text-ink-3">{paymentMethodLabel(p.method)}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60 text-xs">
@@ -787,8 +788,8 @@ function PaymentsPageInner() {
                       <span className="font-medium text-ink block truncate">{cleanDisplayName(p.customer_name)}</span>
                     )}
                     <Link href={`/projects/${p.project_id}` as never} className="text-2xs text-ink-2 hover:text-amber-ink hover:underline block truncate">{p.project_title}</Link>
-                    <p className="text-2xs text-ink-3 mt-0.5 capitalize">
-                      {(p.method ?? "—").replace("_", " ")}{p.bank_txn_id ? " · reconciled" : ""} · {formatDate(p.received_at)}
+                    <p className="text-2xs text-ink-3 mt-0.5">
+                      {paymentMethodLabel(p.method)}{p.bank_txn_id ? " · reconciled" : ""} · {formatDate(p.received_at)}
                     </p>
                   </div>
                   <p className="font-serif text-base tabular-nums text-ink shrink-0">{rupee(p.amount)}</p>
@@ -819,7 +820,7 @@ function PaymentsPageInner() {
                       <span className="text-ink-3"> · </span>
                       <Link href={`/projects/${p.project_id}` as never} className="text-ink-2 hover:text-amber-ink hover:underline">{p.project_title}</Link>
                     </td>
-                    <td className="px-3 py-2.5 text-ink-2 capitalize">{(p.method ?? "—").replace("_", " ")}{p.bank_txn_id ? " · reconciled" : ""}</td>
+                    <td className="px-3 py-2.5 text-ink-2">{paymentMethodLabel(p.method)}{p.bank_txn_id ? " · reconciled" : ""}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium text-ink">{rupee(p.amount)}</td>
                     <td className="px-4 py-2.5 text-ink-2">{formatDate(p.received_at)}</td>
                   </tr>
@@ -1071,7 +1072,7 @@ function PaymentRowView({
             {methodInfo.label}
           </span>
         ) : (
-          <span className="text-xs text-ink-3">{p.method}</span>
+          <span className="text-xs text-ink-3">{paymentMethodLabel(p.method)}</span>
         )}
         {bankLabel && (
           <div className="text-3xs text-ink-3 mt-0.5 flex items-center gap-1 truncate">

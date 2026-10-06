@@ -414,7 +414,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField htmlFor="vendors-vendor-name" label="Vendor name" required>
-              <Input id="vendors-vendor-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Google Cloud India / Rajesh Reseller" autoFocus />
+              <Input id="vendors-vendor-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Google Cloud India" autoFocus />
             </FormField>
             <FormField htmlFor="vendors-gstin-optional" label="GSTIN (optional)">
               <Input id="vendors-gstin-optional" value={gstin} onChange={(e) => onGstinChange(e.target.value)} placeholder="e.g. 27ABCDE1234F1Z5" />
@@ -497,10 +497,14 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
             <p className="text-xs text-ink-3">Select products this vendor offers so you can buy & source licenses from them.</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* R-177: three across in a 512px dialog cut the placeholders ("e.g. +91 987…") — two across,
+              email on its own full-width line. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField htmlFor="vendors-contact-name" label="Contact name"><Input id="vendors-contact-name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g. Rahul Sharma" /></FormField>
-            <FormField htmlFor="vendors-email" label="Email"><Input id="vendors-email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="e.g. name@vendor.com" /></FormField>
-            <FormField htmlFor="vendors-phone" label="Phone"><Input id="vendors-phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="e.g. +91 98765 43210" /></FormField>
+            <FormField htmlFor="vendors-phone" label="Phone"><Input id="vendors-phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} placeholder="+91 98765 43210" /></FormField>
+            <div className="sm:col-span-2">
+              <FormField htmlFor="vendors-email" label="Email"><Input id="vendors-email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="e.g. name@vendor.com" /></FormField>
+            </div>
           </div>
           <FormField htmlFor="vendors-address-optional" label="Address (optional)">
             <Textarea id="vendors-address-optional" rows={2} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="e.g. 4th Floor, Tower B, Cyber City" />
