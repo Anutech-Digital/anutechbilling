@@ -182,6 +182,17 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
   };
 }
 
+/**
+ * R-195 (Pardeep, 6 Oct: "text select karne par 'Ask with AI' aaye"). What a selection becomes
+ * in AI Help's box: null when it is not worth a button (empty, one character, or a whole
+ * page dragged over); otherwise the text, whitespace collapsed and capped, as a question.
+ */
+export function askAboutSelection(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (t.length < 2 || t.length > 600) return null;
+  return `"${t.length > 300 ? t.slice(0, 300) + "…" : t}" — ye kya hai, aur ispar dhyan dene wali koi baat?`;
+}
+
 /** The tag every AI-filed report carries — short, as asked. */
 export const AI_FILED_TAG = "🤖 AI-drafted after chat";
 
