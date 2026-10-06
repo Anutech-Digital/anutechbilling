@@ -19,6 +19,7 @@ import { DevDemoPanel } from "@/components/shared/dev-demo-panel";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
+import { LocalTestLogin } from "./local-test-login";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -140,6 +141,9 @@ function LoginPageInner() {
           </div>
         </div>
       )}
+
+      {/* R-281: localhost-only sign-in as a seeded test role — no password in this page. */}
+      {configured && <LocalTestLogin nextPath={nextPath} />}
 
       {/* Dev-only demo credentials — hidden in production builds */}
       {showDemoHint && configured && DEMO_USERS.length > 0 && (
