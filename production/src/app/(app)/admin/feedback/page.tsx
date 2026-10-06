@@ -282,18 +282,24 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy}>
-          <Icon name="sparkles" size={14} className="mr-1.5" />
-          Run AI Auto-Fix
-        </Button>
+        {/* 6 Oct 2026 (Pardeep, Fixed tab): Auto-Fix on a fixed / won't-fix / already queued
+            report only re-queued it. It is for open reports; Reopen first to send one again. */}
+        {row.status === "open" && (
+          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy}>
+            <Icon name="sparkles" size={14} className="mr-1.5" />
+            Run AI Auto-Fix
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive}>
           <Icon name="copy" size={14} className="mr-1.5" />
           Copy Directive
         </Button>
-        <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
-          <Icon name="refresh" size={14} className="mr-1.5" />
-          {untriaged ? "Triage" : "Re-triage"}
-        </Button>
+        {(row.status === "open" || row.status === "agent_queued") && (
+          <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
+            <Icon name="refresh" size={14} className="mr-1.5" />
+            {untriaged ? "Triage" : "Re-triage"}
+          </Button>
+        )}
         <span className="flex-1" />
         {row.status !== "fixed" && (
           <Button size="sm" variant="ghost" onClick={() => handleStatus("fixed")} disabled={busy}>
