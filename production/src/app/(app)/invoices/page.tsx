@@ -720,6 +720,7 @@ function InvoicesPageInner() {
           Cards below 1280px (the row has eight columns), table above. */}
       {!isLoading && !error && invoices && invoices.length > 0 && (
         <DataTable
+          urlKey="sort"
           rows={rows}
           columns={INVOICE_COLUMNS}
           getRowId={(i) => i.id}

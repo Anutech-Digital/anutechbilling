@@ -676,6 +676,7 @@ function PaymentsPageInner() {
       {!isLoading && !error && filtered.length > 0 && (
         <div ref={payTableRef}>
           <DataTable
+            urlKey="sort"
             rows={filtered}
             columns={payColumns}
             getRowId={(p) => p.id}

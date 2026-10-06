@@ -698,6 +698,7 @@ export default function ExpensesPage() {
         </Card>
       ) : groupBy === "none" ? (
         <DataTable
+          urlKey="sort"
           rows={rows}
           columns={columns}
           getRowId={(e) => e.id}

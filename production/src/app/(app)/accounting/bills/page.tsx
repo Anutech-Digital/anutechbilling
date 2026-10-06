@@ -217,6 +217,7 @@ export default function VendorBillsPage() {
         </Card>
       ) : (
         <DataTable<VendorBill>
+          urlKey="sort"
           rows={shownBills}
           totalCount={bills.length}
           noun="bill"
