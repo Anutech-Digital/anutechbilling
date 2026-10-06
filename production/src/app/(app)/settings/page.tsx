@@ -46,18 +46,12 @@ import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { isValidVpa } from "@/lib/payments/upi";
 import type { RazorpayReadiness } from "@/lib/payments/razorpay-readiness";
+import { resellerTierView } from "./reseller-tier-view";
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 // Team roster moved to its own /team page. Settings only owns the
 // non-people configuration surfaces (company identity, integrations,
 // branding, notifications, security).
-
-// Placeholder integrations — these aren't wired yet, but show the
-// roadmap to Pardeep. Functional cards (Sandbox, WhatsApp) live as
-// their own components above the placeholder list.
-const INTEGRATIONS = [
-  { name: "Microsoft Partner",   sub: "Not configured",          status: "warn", icon: "shield"   },
-] as const;
 
 const TABS: TabBarItem[] = [
   { id: "company",       label: "Company"       },
@@ -537,8 +531,10 @@ function ResellerTierCard() {
   if (!isOwner) return null;  // hide entirely for non-owners — admin-only surface
   if (isLoading) return null; // soft-fail: no shimmer needed for a 1-row read
 
-  const tier         = data?.tier ?? "reseller";
-  const isDistributor = tier === "distributor";
+  /* R-251: from the tenant's own row only. An independent signup (no parent, not a
+     distributor) has nothing to show here, so the card is hidden. */
+  const view = resellerTierView(data);
+  if (!view) return null;
 
   return (
     <Card className="p-5 max-w-3xl">
@@ -547,43 +543,18 @@ function ResellerTierCard() {
           <Icon name="layout" size={14} className="text-ink-3" />
           Reseller tier
         </p>
-        <Badge kind={isDistributor ? "success" : "muted"} dot>
-          {isDistributor ? "Distributor" : "Reseller"}
+        <Badge kind={view.isDistributor ? "success" : "muted"} dot>
+          {view.badge}
         </Badge>
       </div>
-
-      {/* Three cases:
-          1. Distributor (has or will have children) — Excel Tech
-          2. Reseller with parent — Anutech Digital
-          3. Reseller without parent — independent peer tenant (most signups) */}
-      {/* Merged Management Hierarchy Summary */}
-      <div className="mt-4 pt-3 border-t border-hairline space-y-2">
-        <div className="flex items-center justify-between text-xs font-bold text-ink">
-          <span className="flex items-center gap-1.5">
-            <Icon name="globe" size={14} className="text-primary" />
-            <span>Distributor &amp; Subsidiary Merged Management</span>
-          </span>
-          <Badge kind="success" size="sm">Active Mapping</Badge>
-        </div>
-        <div className="p-3 bg-paper-2/70 rounded-lg text-xs space-y-1.5 border border-hairline font-mono">
-          <div className="flex justify-between">
-            <span className="text-ink-3">Master Distributor:</span>
-            <span className="text-ink font-bold">Anutech Digital (anutech.in)</span>
+      <dl className="mt-3 pt-3 border-t border-hairline space-y-1.5 text-xs">
+        {view.rows.map((r) => (
+          <div key={r.label} className="flex flex-wrap justify-between gap-x-3">
+            <dt className="text-ink-3">{r.label}</dt>
+            <dd className="text-ink font-medium break-words">{r.value}</dd>
           </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Managed Subsidiary:</span>
-            <span className="text-primary font-bold">Excel Technologies (exceltechnologies.in)</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Legal Identities:</span>
-            <span className="text-emerald font-semibold">Separate GSTINs &amp; Tax Filings</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Business Operations:</span>
-            <span className="text-amber-ink font-semibold">Merged (TopBar Workspace Switcher Active)</span>
-          </div>
-        </div>
-      </div>
+        ))}
+      </dl>
     </Card>
   );
 }
@@ -927,29 +898,6 @@ function IntegrationsTab() {
         <WhatsAppIntegrationCard />
         <GoogleResellerIntegrationCard />
         <GoogleContactsIntegrationCard />
-        {INTEGRATIONS.map((it) => (
-          <div
-            key={it.name}
-            className="flex items-center justify-between rounded-lg border border-hairline p-3"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-2 text-ink-3">
-                <Icon name={it.icon} size={16} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-ink">{it.name}</p>
-                <p className="text-xs text-ink-3">{it.sub}</p>
-              </div>
-            </div>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => toast.info(`Setting up ${it.name}`)}
-            >
-              Setup
-            </Button>
-          </div>
-        ))}
       </div>
     </Card>
     <ApiKeysCard />
