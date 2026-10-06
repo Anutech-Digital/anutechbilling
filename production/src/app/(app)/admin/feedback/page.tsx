@@ -20,6 +20,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -271,7 +272,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
         { description: mode === "stub" ? "No Gemini key is configured, so the deterministic engine ran." : undefined },
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Triage failed.");
+      toastError(err, {
+        fallback: "Triage failed.",
+        description: "The report is unchanged. Press Triage again in a moment.",
+      });
     }
   };
 
@@ -300,7 +304,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
         duration: 10_000,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not queue this report.");
+      toastError(err, {
+        fallback: "Could not queue this report.",
+        description: "It is still in the Open tab. Press the button again.",
+      });
     }
   };
 
@@ -309,7 +316,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
       await setStatus.mutateAsync({ id: row.id, status });
       toast.success(status === "fixed" ? "Marked fixed." : status === "wont_fix" ? "Marked won't fix." : "Reopened.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update the status.");
+      toastError(err, {
+        fallback: "Could not update the status.",
+        description: "The report keeps its old status. Refresh and try again.",
+      });
     }
   };
 

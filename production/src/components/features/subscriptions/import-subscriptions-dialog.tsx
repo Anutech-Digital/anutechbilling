@@ -138,7 +138,7 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { toast.error("File too large (>8 MB)."); return; }
+    if (file.size > 8 * 1024 * 1024) { toast.error("File too large", { description: "Use a CSV under 8 MB, or split it into two files." }); return; }
     setFileName(file.name);
     try {
       const text = await file.text();
@@ -148,10 +148,13 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
            already being skipped and a second reason would just be noise. */
         duplicate: r.error ? undefined : (duplicateReason(r, dedupe) ?? undefined),
       }));
-      if (rows.length === 0) { toast.error("No rows found (header + data needed)."); return; }
+      if (rows.length === 0) { toast.error("No rows found", { description: "The file needs a header row and at least one data row." }); return; }
       setParsed(rows);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, {
+        fallback: "Couldn't read the file.",
+        description: "Save it as CSV (comma separated) and choose it again.",
+      });
     }
   };
 
@@ -288,7 +291,10 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
       onImportComplete?.();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
+      toastError(err, {
+        fallback: "Import stopped.",
+        description: "Some rows may already be in. Import the same file again: rows already in the app are skipped.",
+      });
     } finally {
       setImporting(false);
     }

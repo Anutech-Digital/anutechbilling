@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -93,7 +94,10 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
       qc.invalidateQueries({ queryKey: ["integrations", "gemini"] });
       setApiKey("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Gemini key not saved.",
+      description: "Check the key was copied in full from Google AI Studio, then press Save again.",
+    }),
   });
 
   const disconnect = useMutation({
@@ -107,7 +111,10 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
       qc.invalidateQueries({ queryKey: ["integrations", "gemini"] });
       setApiKey("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Gemini key not cleared.",
+      description: "The saved key is still in use. Refresh the page and try again.",
+    }),
   });
 
   /**
@@ -133,9 +140,14 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
               : "This tested the key already saved for this workspace." },
         );
       }
-      else toast.error(json.error ?? "Test failed");
+      else toast.error(typeof json.error === "string" && json.error ? json.error : "Test failed", {
+        description: "The saved key did not answer. Paste a fresh key from Google AI Studio, press Save, then Test again.",
+      });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, {
+        fallback: "Could not reach the test.",
+        description: "Check your internet connection and press Test again.",
+      });
     } finally {
       setTesting(false);
     }

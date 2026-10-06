@@ -8,7 +8,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { CustomerGroup, Database } from "@/lib/supabase/database.types";
 
@@ -72,7 +72,7 @@ export function useCreateCustomerGroup() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customer_groups"] });
     },
-    onError: (e) => toast.error(`Could not create group: ${(e as Error).message}`),
+    onError: (e) => toastError(e, { fallback: "Could not create the group." }),
   });
 }
 
@@ -95,7 +95,7 @@ export function useUpdateCustomerGroup() {
       qc.invalidateQueries({ queryKey: ["customer_groups"] });
       qc.invalidateQueries({ queryKey: ["customer_groups", id] });
     },
-    onError: (e) => toast.error(`Could not save group: ${(e as Error).message}`),
+    onError: (e) => toastError(e, { fallback: "Could not save the group." }),
   });
 }
 
@@ -112,7 +112,7 @@ export function useDeleteCustomerGroup() {
       qc.invalidateQueries({ queryKey: ["customer_groups"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
     },
-    onError: (e) => toast.error(`Could not delete group: ${(e as Error).message}`),
+    onError: (e) => toastError(e, { fallback: "Could not delete the group." }),
   });
 }
 
@@ -132,6 +132,6 @@ export function useSetCustomerGroup() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["customer_groups"] });
     },
-    onError: (e) => toast.error(`Could not update company's group: ${(e as Error).message}`),
+    onError: (e) => toastError(e, { fallback: "Could not change this company's group." }),
   });
 }

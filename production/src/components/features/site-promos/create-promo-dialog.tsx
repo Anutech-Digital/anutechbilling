@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,16 +68,16 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
   const onSubmit = async () => {
     if (headline.trim().length < 4) {
-      toast.error("Headline ≥ 4 characters");
+      toast.error("Headline is too short", { description: "Use at least 4 characters." });
       return;
     }
     const dv = Number(discountValue);
     if (!Number.isFinite(dv) || dv <= 0) {
-      toast.error("Discount value must be greater than 0");
+      toast.error("Enter a discount", { description: "The discount must be more than 0." });
       return;
     }
     if (discountType === "percent" && dv > 100) {
-      toast.error("Percent discount cannot exceed 100");
+      toast.error("Discount is over 100%", { description: "Enter a percent between 1 and 100." });
       return;
     }
 
@@ -97,7 +98,10 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
       reset();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create");
+      toastError(err, {
+        fallback: "Promo not created.",
+        description: "Nothing went live. Check the fields and press Create again.",
+      });
     }
   };
 
