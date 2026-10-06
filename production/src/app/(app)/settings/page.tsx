@@ -15,6 +15,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { stateCodeFromName } from "@/lib/gst/gstin-state";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -47,6 +49,7 @@ import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { isValidVpa } from "@/lib/payments/upi";
 import type { RazorpayReadiness } from "@/lib/payments/razorpay-readiness";
 import { resellerTierView } from "./reseller-tier-view";
+import { resolveSettingsTab, settingsTabHref } from "./settings-tab";
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 // Team roster moved to its own /team page. Settings only owns the
@@ -129,7 +132,7 @@ const companySchema = z.object({
 });
 type CompanyForm = z.infer<typeof companySchema>;
 
-function CompanyTab() {
+function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { data: me, isLoading } = useCurrentUser();
   const updateTenant = useUpdateTenant();
   const isOwner = me?.role === "owner";
@@ -170,6 +173,8 @@ function CompanyTab() {
     resolver: zodResolver(companySchema),
     defaultValues: defaults,
   });
+  /* R-252: tell the page, so a tab switch can ask before unmounting a half-filled form. */
+  React.useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
 
   // Refresh defaults once useCurrentUser settles
   React.useEffect(() => { reset(defaults); }, [defaults, reset]);
@@ -232,7 +237,7 @@ function CompanyTab() {
             <p className="text-xs text-ink-3">Loading…</p>
           ) : (
             <fieldset disabled={!isOwner || isSubmitting} className="space-y-3 disabled:opacity-60">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Legal name *">
                   <Input
                     placeholder="E.g., Sharma Cloud Solutions Pvt Ltd"
@@ -294,7 +299,7 @@ function CompanyTab() {
                   manages it so the form submission carries the value. */}
               <input type="hidden" {...register("state_code")} />
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Registered state">
                   <Input
                     placeholder="Auto-filled from GSTIN — usually no need to edit"
@@ -312,7 +317,7 @@ function CompanyTab() {
                   />
                 </Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Billing email">
                   <Input
                     type="email"
@@ -966,8 +971,37 @@ function BrandingTab() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/* useSearchParams() needs a Suspense boundary or Next refuses to prerender the page. */
 export default function SettingsPage() {
-  const [tab, setTab] = React.useState("company");
+  return (
+    <React.Suspense fallback={null}>
+      <SettingsPageInner />
+    </React.Suspense>
+  );
+}
+
+function SettingsPageInner() {
+  /* R-252: the tab is the URL's ?tab=, so deep links (Google callbacks, AI Help, inbox
+     chips) land on the tab they name and Back/Forward move between tabs. */
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const tab = resolveSettingsTab(params.get("tab"), TABS.map((t) => t.id));
+  const confirm = useConfirm();
+  const companyDirty = React.useRef(false);
+  const onCompanyDirty = React.useCallback((d: boolean) => { companyDirty.current = d; }, []);
+
+  const changeTab = async (next: string) => {
+    if (next === tab) return;
+    if (tab === "company" && companyDirty.current && !(await confirm({
+      title: "Discard unsaved changes?",
+      body: "Your company details have changes that are not saved. Switching tabs will lose them.",
+      confirmLabel: "Discard",
+      danger: true,
+    }))) return;
+    companyDirty.current = false;
+    router.replace(settingsTabHref(pathname, params.toString(), next) as never, { scroll: false });
+  };
 
   return (
     <div className="mx-auto max-w-[1240px] p-4 md:p-6 lg:p-8 pb-20">
@@ -978,17 +1012,17 @@ export default function SettingsPage() {
         </p>
         <h1 className="font-serif text-3xl text-ink">Settings</h1>
         <p className="mt-1 text-sm text-ink-3">
-          Configure your reseller business · Team management lives at <span className="font-medium text-ink-2">/team</span>
+          Configure your reseller business · Team management lives on the <Link href="/team" className="font-medium text-ink-2 underline underline-offset-2 hover:text-amber-ink">Team page</Link>
         </p>
       </div>
 
       {/* ── Tabs ── */}
       <div className="mb-6">
-        <TabBar items={TABS} value={tab} onChange={setTab} />
+        <TabBar items={TABS} value={tab} onChange={(v) => { void changeTab(v); }} />
       </div>
 
       {/* ── Tab content ── */}
-      {tab === "company"       && <CompanyTab />}
+      {tab === "company"       && <CompanyTab onDirtyChange={onCompanyDirty} />}
       {tab === "integrations"  && <IntegrationsTab />}
       {tab === "branding"      && <BrandingTab />}
       {tab === "notifications" && <NotificationsCard />}
