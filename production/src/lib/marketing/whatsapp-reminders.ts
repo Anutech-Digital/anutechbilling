@@ -19,10 +19,10 @@ import type { DunningStep } from "@/lib/invoices/dunning";
 import { bodyComponents, isValidTemplateName, paramCount } from "./whatsapp-broadcast";
 
 export const REMINDER_KINDS = {
-  renewal_upcoming: { label: "Renewal aane wala hai (T-30 … T-3)", subject: "subscription" },
-  renewal_final:    { label: "Renewal aaj hai (T-0)",              subject: "subscription" },
-  renewal_grace:    { label: "Renewal nikal gaya — grace period",  subject: "subscription" },
-  invoice_due:      { label: "Invoice due hone wali hai / aaj due", subject: "invoice" },
+  renewal_upcoming: { label: "Renewal coming up (T-30 … T-3)", subject: "subscription" },
+  renewal_final:    { label: "Renewal today (T-0)",              subject: "subscription" },
+  renewal_grace:    { label: "Renewal passed — grace period",      subject: "subscription" },
+  invoice_due:      { label: "Invoice due soon / due today",     subject: "invoice" },
   invoice_overdue:  { label: "Invoice overdue (day 1 / 3 / 7)",    subject: "invoice" },
   invoice_final:    { label: "Invoice final notice (day 14)",      subject: "invoice" },
 } as const;
@@ -39,13 +39,13 @@ export function isReminderKind(v: string): v is ReminderKind {
  * there blocks the send (see `slotProblem`) instead of printing "-" where ₹ should be.
  */
 export const REMINDER_PARAM_FIELDS = {
-  customer_name: { label: "Customer ka naam",     fallback: "Customer" as string | null },
-  seller_name:   { label: "Aapki company",        fallback: "our team" as string | null },
+  customer_name: { label: "Customer name",        fallback: "Customer" as string | null },
+  seller_name:   { label: "Your company",         fallback: "our team" as string | null },
   plan:          { label: "Plan / product",       fallback: "your subscription" as string | null },
   invoice_id:    { label: "Invoice number",       fallback: null },
   amount:        { label: "Amount (₹)",           fallback: null },
   due_date:      { label: "Due / renewal date",   fallback: null },
-  days:          { label: "Kitne din",            fallback: null },
+  days:          { label: "Days",                 fallback: null },
   link:          { label: "Pay / accept link",    fallback: "reply to this message" as string | null },
 } as const;
 export type ReminderParamField = keyof typeof REMINDER_PARAM_FIELDS;
@@ -123,11 +123,11 @@ export function parseParamMap(v: unknown): ReminderParamField[] | null {
 
 /** Why a registry row cannot be saved as written (for a settings screen), or null. */
 export function reminderTemplateProblem(name: string, body: string, paramMap: unknown): string | null {
-  if (!isValidTemplateName(name)) return "Template ka naam sirf a-z, 0-9 aur _ ho sakta hai.";
+  if (!isValidTemplateName(name)) return "Template name can only use a-z, 0-9 and _.";
   const map = parseParamMap(paramMap);
-  if (!map) return "param_map me koi field reminder field nahi hai.";
+  if (!map) return "param_map has a field that is not a reminder field.";
   const n = paramCount(body);
-  if (body && map.length !== n) return `Template me ${n} jagah hain, par ${map.length} field chune hain.`;
+  if (body && map.length !== n) return `Template has ${n} slot${n === 1 ? "" : "s"}, but ${map.length} fields are chosen.`;
   return null;
 }
 

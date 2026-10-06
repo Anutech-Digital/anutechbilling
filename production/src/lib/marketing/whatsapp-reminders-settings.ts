@@ -54,38 +54,38 @@ export function kindReadiness(i: KindInput): KindReadiness {
 
   if (!pick.ok) {
     if (pick.reason === "no_template") {
-      return { state: "no_template", tone: "muted", text: "Template chuna nahi — \"Template set karo\" dabao." };
+      return { state: "no_template", tone: "muted", text: "No template chosen — click \"Set template\"." };
     }
     if (pick.reason === "template_disabled") {
-      return { state: "template_disabled", tone: "muted", text: "Is kind ka template band hai — edit karke ON karo." };
+      return { state: "template_disabled", tone: "muted", text: "This kind's template is off — edit it and turn it ON." };
     }
     if (pick.reason === "template_not_approved") {
       const t = i.templates.find((x) => x.name === i.mapping?.template_name && x.language === i.mapping?.language);
       return {
         state: "not_approved", tone: "warning",
         text: t
-          ? `"${t.name}" (${t.language}) abhi ${t.status} hai — Meta par approve hone ke baad "Sync from Meta" dabao.`
-          : `"${i.mapping?.template_name}" (${i.mapping?.language}) app ke templates me nahi hai — Meta par submit karke "Sync from Meta" dabao.`,
+          ? `"${t.name}" (${t.language}) is ${t.status} — click "Sync from Meta" once Meta approves it.`
+          : `"${i.mapping?.template_name}" (${i.mapping?.language}) is not in the app's templates — submit it on Meta, then click "Sync from Meta".`,
       };
     }
-    return { state: "bad_param_map", tone: "danger", text: "Template ke {{n}} fields galat hain — edit karke theek karo." };
+    return { state: "bad_param_map", tone: "danger", text: "The template's {{n}} fields are wrong — edit to fix them." };
   }
 
   if (!i.connected) {
-    return { state: "not_connected", tone: "warning", text: "WhatsApp Business API connect nahi hai — Settings → Integrations me jodo." };
+    return { state: "not_connected", tone: "warning", text: "WhatsApp Business API is not connected — connect it in Settings → Integrations." };
   }
   if (i.killSwitch || i.dialMode !== "auto") {
     return {
       state: "dial_blocks", tone: "warning",
       text: i.killSwitch
-        ? "Automation ka master switch band hai — /automation par chalu karo."
-        : `Automation dial is kaam ke liye "${i.dialMode}" par hai — WhatsApp sirf "auto" par jaata hai. /automation par badlo.`,
+        ? "The automation master switch is off — turn it on at /automation."
+        : `Automation dial for this job is "${i.dialMode}" — WhatsApp sends only on "auto". Change it at /automation.`,
     };
   }
   if (!i.switchOn) {
-    return { state: "switch_off", tone: "muted", text: "Sab taiyaar hai — upar ka switch ON karte hi jaane lagega." };
+    return { state: "switch_off", tone: "muted", text: "All set — reminders start once the switch above is ON." };
   }
-  return { state: "ready", tone: "success", text: "Chalu — agle cron run me reminder banta hai to WhatsApp jayega." };
+  return { state: "ready", tone: "success", text: "On — the next cron run sends a WhatsApp for every reminder due." };
 }
 
 /**
@@ -118,14 +118,14 @@ export function isStarterReminderName(name: string): boolean {
 /** Why this mapping cannot be saved, or null. Body is the approved text when the app has it. */
 export function mappingProblem(templateName: string, language: string, paramMap: unknown, body: string | null): string | null {
   if (!/^[a-z0-9_]+$/.test(templateName) || templateName.length > 512) {
-    return "Template ka naam sirf chhote a-z, 0-9 aur _ ho sakta hai (jaise invoice_due_v1) — Meta par jo naam hai wahi likho.";
+    return "Template name can only use lower-case a-z, 0-9 and _ (e.g. invoice_due_v1) — use the exact name from Meta.";
   }
-  if (language.length < 2 || language.length > 10) return "Language 2–10 akshar ki ho (jaise en, hi, en_US).";
+  if (language.length < 2 || language.length > 10) return "Language must be 2–10 characters (e.g. en, hi, en_US).";
   const map = parseParamMap(paramMap);
-  if (!map) return "Har {{n}} ke liye list me se ek field chuno.";
+  if (!map) return "Pick a field from the list for every {{n}}.";
   if (body !== null) {
     const n = paramCount(body);
-    if (map.length !== n) return `Template me ${n} jagah ({{n}}) hain, par ${map.length} field chune hain — dono barabar karo.`;
+    if (map.length !== n) return `Template has ${n} slot${n === 1 ? "" : "s"} ({{n}}), but ${map.length} fields are chosen — make them match.`;
   }
   return null;
 }
@@ -151,17 +151,17 @@ export function logStatus(s: string): { label: string; tone: "success" | "info" 
 
 /** Why a reminder was skipped, in words the owner can act on. */
 export const SKIP_REASON_TEXT: Record<SkipReason, string> = {
-  disabled:              "WhatsApp reminders OFF the",
-  automation_off:        "Automation dial ne roka (/automation)",
-  no_template:           "Is kind ka template set nahi tha",
-  template_disabled:     "Template band tha",
-  template_not_approved: "Template Meta se approved nahi tha",
-  bad_param_map:         "Template ke {{n}} fields galat the",
-  no_phone:              "Customer ka mobile number nahi mila",
-  opted_out:             "Customer ne STOP likha tha",
-  already_sent:          "Ye step pehle hi bheja ja chuka",
-  missing_value:         "Template ki kisi jagah ke liye value nahi thi",
-  not_configured:        "WhatsApp API connect nahi thi",
+  disabled:              "WhatsApp reminders were OFF",
+  automation_off:        "Blocked by the automation dial (/automation)",
+  no_template:           "No template set for this kind",
+  template_disabled:     "Template was off",
+  template_not_approved: "Template not approved by Meta",
+  bad_param_map:         "Template {{n}} fields were wrong",
+  no_phone:              "Customer has no mobile number",
+  opted_out:             "Customer replied STOP",
+  already_sent:          "This step was already sent",
+  missing_value:         "A template slot had no value",
+  not_configured:        "WhatsApp API was not connected",
 };
 
 export function skipReasonText(r: string | null): string | null {

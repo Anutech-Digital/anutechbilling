@@ -102,9 +102,9 @@ describe("gbp reviews", () => {
     const cmp = comparePeriods([], "2026-09-27");
     const list = insights(cmp, stats, { hasWebsite: false, hasPhone: true, reviewLinkSaved: true });
     expect(list[0].kind).toBe("act");
-    expect(list[0].text).toMatch(/bina jawab/);
+    expect(list[0].text).toMatch(/unanswered/);
     expect(list.some((i) => i.href === "/marketing/links")).toBe(true);
     const fine = insights(comparePeriods([], "2026-09-27"), reviewStats([rv(5, "2026-09-20", "ty")], "2026-09-27"), { hasWebsite: true, hasPhone: true, reviewLinkSaved: true });
-    expect(fine).toEqual([{ kind: "good", text: expect.stringMatching(/Sab theek/) }]);
+    expect(fine).toEqual([{ kind: "good", text: expect.stringMatching(/All good/) }]);
   });
 });

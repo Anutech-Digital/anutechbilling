@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest";
    ("Naya campaign", "Koi lead nahi"). App UI copy is short plain English. A ratchet over the
    WHOLE folder, so a new marketing page cannot bring it back. Comments, tests and AI chat
    text are out of scope; a message template the CUSTOMER receives may stay in their language
-   and is marked on its line with `customer-language`. */
-const ROOT = join(process.cwd(), "src/app/(app)/marketing");
+   and is marked on its line with `customer-language`.
+   R-296: src/lib/marketing too — readiness labels, skip reasons, reconcile notes and the tool
+   catalog's "why" are built there and rendered by these pages. */
+const ROOTS = [join(process.cwd(), "src/app/(app)/marketing"), join(process.cwd(), "src/lib/marketing")];
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -22,12 +24,14 @@ const HINGLISH = /\b(nahi|nahin|karo|karein|kar do|kijiye|dabao|dabaiye|chuno|li
 
 /** Source without comments, imports and console lines — what can reach the screen. */
 function uiLines(file: string): string[] {
+  /* The marker is read BEFORE comments are stripped, so a trailing `// customer-language`
+     on a template line counts (R-296: review and unsubscribe text the customer receives). */
   return readFileSync(file, "utf8")
+    .replace(/^.*customer-language.*$/gm, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1")
     .split(/\r?\n/)
-    .filter((l) => !/^\s*(import|export \* from)\b/.test(l) && !/console\.(log|warn|error)/.test(l))
-    .filter((l) => !/customer-language/.test(l));
+    .filter((l) => !/^\s*(import|export \* from)\b/.test(l) && !/console\.(log|warn|error)/.test(l));
 }
 
 /** Only the quoted strings and JSX text on a line — never identifiers like `ka` in code. */
@@ -41,10 +45,11 @@ function textOf(line: string): string {
 }
 
 describe("R-273 marketing UI copy is English", () => {
-  const files = walk(ROOT);
+  const files = ROOTS.flatMap((r) => walk(r));
 
-  it("finds the marketing pages", () => {
+  it("finds the marketing pages and their lib", () => {
     expect(files.length).toBeGreaterThan(10);
+    expect(files.some((f) => f.includes(join("src", "lib", "marketing")))).toBe(true);
   });
 
   for (const f of files) {

@@ -57,7 +57,7 @@ describe("marketing & advertising spend", () => {
     expect(headOf("Advertising")).toBe("Advertising");
     expect(headOf(" marketing ")).toBe("Marketing");
     expect(channelLabel("meta-ads")).toBe("Facebook / Instagram Ads");
-    expect(channelLabel(null)).toBe("Channel nahi chuna");
+    expect(channelLabel(null)).toBe("No channel");
   });
 
   it("nothing in → zeros, not NaN", () => {

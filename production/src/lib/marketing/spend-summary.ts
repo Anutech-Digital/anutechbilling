@@ -46,7 +46,7 @@ export function headOf(category: string | null | undefined): SpendHead {
 }
 
 export function channelLabel(channel: string | null | undefined): string {
-  if (!channel) return "Channel nahi chuna";
+  if (!channel) return "No channel";
   return AD_CHANNELS.find((c) => c.value === channel)?.label ?? channel;
 }
 
@@ -83,7 +83,7 @@ export function summariseSpend(rows: SpendRow[]): SpendSummary {
 
     /* Vendors are grouped on a trimmed, case-folded name so "Google India" and
        "google india " are one line; the first spelling seen is the one shown. */
-    const vName = (r.vendor_name ?? "").trim() || "Naam nahi likha";
+    const vName = (r.vendor_name ?? "").trim() || "No name";
     const vKey = vName.toLowerCase();
     const v = vendors.get(vKey) ?? { vendor: vName, total: 0, count: 0 };
     v.total += amt; v.count++;

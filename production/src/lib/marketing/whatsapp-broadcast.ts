@@ -10,9 +10,9 @@
 
 /** Lead fields a template slot can be filled with. */
 export const PARAM_FIELDS = {
-  first_name: { label: "Lead ka pehla naam", fallback: "there" },
-  company:    { label: "Lead ki company",    fallback: "your business" },
-  sender:     { label: "Aapki company ka naam", fallback: "our team" },
+  first_name: { label: "Lead first name", fallback: "there" },
+  company:    { label: "Lead company",        fallback: "your business" },
+  sender:     { label: "Your company name", fallback: "our team" },
 } as const;
 export type ParamField = keyof typeof PARAM_FIELDS;
 
@@ -32,7 +32,7 @@ export const STARTER_WA_TEMPLATES: readonly StarterTemplate[] = [
   {
     name: "business_email_intro", category: "MARKETING", param_map: ["first_name", "sender"],
     body: "Hi {{1}}, this is {{2}}. We set up professional business email (Google Workspace / Microsoft 365) on your own domain, with migration and support included. Would you like a quick quote for your team?\n\nReply STOP to opt out.",
-    when: "Naye leads ko pehla message",
+    when: "First message to new leads",
   },
   {
     name: "festival_offer", category: "MARKETING", param_map: ["first_name", "sender"],
@@ -42,17 +42,17 @@ export const STARTER_WA_TEMPLATES: readonly StarterTemplate[] = [
   {
     name: "quote_followup", category: "MARKETING", param_map: ["first_name", "company"],
     body: "Hi {{1}}, just checking in on the quote we shared for {{2}}. Happy to adjust users, plan or billing if needed — reply here and we will take care of it.\n\nReply STOP to opt out.",
-    when: "Quote bheja, jawab nahi aaya",
+    when: "Quote sent, no reply",
   },
   {
     name: "winback_check_in", category: "MARKETING", param_map: ["first_name", "company"],
     body: "Hi {{1}}, we spoke earlier about email and IT for {{2}}. Plans and prices have changed since — would you like an updated quote? No pressure either way.\n\nReply STOP to opt out.",
-    when: "Lost leads, 2–3 mahine baad",
+    when: "Lost leads, after 2–3 months",
   },
   {
     name: "custom_software_intro", category: "MARKETING", param_map: ["first_name", "sender"],
     body: "Hi {{1}}, {{2}} also builds custom software — billing, ERP, CRM, portals and apps — around how your business already works. Is there a manual process you would like automated?\n\nReply STOP to opt out.",
-    when: "Custom software ke liye",
+    when: "For custom software",
   },
 ];
 
@@ -70,13 +70,13 @@ export function paramCount(body: string): number {
 
 /** Why a template cannot be saved as written, or null. Slots must run 1..n with a field for each. */
 export function templateProblem(body: string, paramMap: string[]): string | null {
-  if (!body.trim()) return "Message khaali hai.";
+  if (!body.trim()) return "Message is empty.";
   const n = paramCount(body);
   for (let i = 1; i <= n; i++) {
-    if (!body.includes(`{{${i}}}`)) return `{{${i}}} gayab hai — number 1 se lagaataar hone chahiye.`;
+    if (!body.includes(`{{${i}}}`)) return `{{${i}}} is missing — slots must run in order from 1.`;
   }
-  if (paramMap.length !== n) return `Message mein ${n} jagah bharni hain, par ${paramMap.length} field chune hain.`;
-  for (const f of paramMap) if (!(f in PARAM_FIELDS)) return `"${f}" koi field nahi hai.`;
+  if (paramMap.length !== n) return `Message has ${n} slot${n === 1 ? "" : "s"}, but ${paramMap.length} fields are chosen.`;
+  for (const f of paramMap) if (!(f in PARAM_FIELDS)) return `"${f}" is not a field.`;
   return null;
 }
 
@@ -120,7 +120,7 @@ export function normalizeWaPhone(raw: string | null | undefined): string | null 
 
 const STOP_WORDS = new Set([
   "stop", "stop all", "stop promotions", "unsubscribe", "unsub", "opt out", "optout",
-  "band karo", "message band karo", "band", "mat bhejo",
+  "band karo", "message band karo", "band", "mat bhejo", // customer-language: what customers type to opt out
 ]);
 
 /** True when an inbound WhatsApp message (or quick-reply button) asks to stop. */
