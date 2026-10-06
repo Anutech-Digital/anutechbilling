@@ -42,6 +42,11 @@ const bodySchema = z.object({
     detail: z.string().max(400),
   })).max(FINDINGS_MAX).optional(),
   outline: z.string().max(2000).optional(),
+  /** R-189: one screenshot with this message (page capture or pasted), JPEG/PNG base64, ≤ ~1.5 MB. */
+  image: z.object({
+    mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+    base64: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/),
+  }).optional(),
 });
 
 const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to upar 'Report Bug' button (Ctrl+Shift+B) se seedha bhej dijiye.";
@@ -67,6 +72,13 @@ export async function POST(request: NextRequest) {
     messages.push({ role: "user", text: `Ye test fail hua: "${parsed.data.failedCheck}". Iski bug report banao.` });
   } else if (mode !== "chat") messages.push({ role: "user", text: MODE_PROMPT[mode] });
   if (!messages.length || messages[messages.length - 1].role !== "user") return NextResponse.json({ error: "Last message must be yours." }, { status: 400 });
+  const image = parsed.data.image;
+  if (image) {
+    const last = messages[messages.length - 1];
+    messages[messages.length - 1] = { ...last, text: `${last.text}
+
+[Screenshot attached: the screen the person is looking at. Read it — labels, numbers, errors — and use it in your answer.]` };
+  }
 
   const trail: TrailEvent[] = (parsed.data.trail ?? []).map((e) => ({ ...e, text: maskPII(e.text, 200) ?? "", path: e.path }));
   const findings: Finding[] = (parsed.data.findings ?? []).map((f) => ({ ...f, detail: maskPII(f.detail, 300) ?? "" }));
@@ -87,7 +99,8 @@ export async function POST(request: NextRequest) {
       outline: mode === "scan" && outline ? maskPII(outline, 1500) : null,
     }),
     temperature: 0.3,
-    timeoutMs: 25_000,
+    timeoutMs: image ? 40_000 : 25_000,
+    ...(image ? { attachment: { mimeType: image.mimeType, base64: image.base64 } } : {}),
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });
