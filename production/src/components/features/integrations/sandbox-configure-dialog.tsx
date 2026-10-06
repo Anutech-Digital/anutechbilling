@@ -12,6 +12,8 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -52,6 +54,7 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
   const { data: status, isLoading } = useSandboxStatus();
   const { data: me }                 = useCurrentUser();
   const qc = useQueryClient();
+  const router = useRouter();
 
   const [apiKey,    setApiKey]    = React.useState("");
   const [apiSecret, setApiSecret] = React.useState("");
@@ -88,7 +91,10 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
       qc.invalidateQueries({ queryKey: ["integrations", "sandbox"] });
       setApiKey(""); setApiSecret("");  // wipe inputs from memory
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Couldn't save the Sandbox keys.",
+      description: "Nothing changed. Copy the API key and secret again from your Sandbox dashboard and click Save.",
+    }),
   });
 
   const disconnect = useMutation({
@@ -101,7 +107,10 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
       toast.success("Sandbox credentials cleared");
       qc.invalidateQueries({ queryKey: ["integrations", "sandbox"] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Couldn't clear the Sandbox keys.",
+      description: "The saved keys are still in place. Refresh the page and try again.",
+    }),
   });
 
   async function testConnection() {
@@ -110,7 +119,10 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
     // data for it. Visitor sees their own company info as confirmation.
     const testGstin = me?.tenantGstin?.trim().toUpperCase() ?? "";
     if (!testGstin || !isValidGstin(testGstin)) {
-      toast.error("Add a valid GSTIN in Settings → Company first, then come back to test.");
+      toast.error("Your company GSTIN is missing or invalid.", {
+        description: "The test checks your own GSTIN. Add it in Settings → Company, then come back and test.",
+        action: { label: "Open Settings", onClick: () => { onOpenChange(false); router.push("/settings"); } },
+      });
       return;
     }
     setTesting(true);
@@ -124,12 +136,20 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
       if (json.ok && !json.mock) {
         toast.success(`Connected ✓ — ${json.verification?.legal_name ?? "verification"} · ${json.verification?.status ?? "Unknown"}`);
       } else if (json.ok && json.mock) {
-        toast.error("Still in mock mode — save credentials first.");
+        toast.error("Still in test mode.", {
+          description: "No Sandbox keys are saved yet. Enter the API key and secret above, click Save, then Test.",
+        });
       } else {
-        toast.error(`Test failed: ${json.error ?? "unknown"}`);
+        toastError(json.error, {
+          fallback: "Sandbox test failed.",
+          description: "Check the API key and secret match your Sandbox dashboard, save again, then Test.",
+        });
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, {
+        fallback: "Couldn't reach the server.",
+        description: "Check your internet connection and click Test again.",
+      });
     } finally {
       setTesting(false);
     }

@@ -17,6 +17,7 @@ import { convertRateForCommitment } from "@/lib/quotes/commitment-rate";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -359,7 +360,10 @@ export function QuoteBuilder() {
       const res = await fetch(`/api/fx/latest?from=${encodeURIComponent(c)}`);
       const data = await res.json();
       if (!res.ok || typeof data.rate !== "number") {
-        toast.error(data.error ?? "Couldn't fetch the latest rate — enter it manually.");
+        toastError(data.error, {
+          fallback: "Couldn't fetch the latest rate.",
+          description: "Type the exchange rate in the rate box yourself — the quote works the same.",
+        });
         return;
       }
       setExchangeRate(data.rate);
@@ -367,7 +371,9 @@ export function QuoteBuilder() {
       setFxAuto(true);
       toast.success(`Latest rate: ₹${data.rate}/${c}`);
     } catch {
-      toast.error("Couldn't reach the rates service — enter it manually.");
+      toast.error("Couldn't reach the rates service.", {
+        description: "Check your internet, or type the exchange rate in the rate box yourself.",
+      });
     } finally {
       setFxLoading(false);
     }
@@ -926,11 +932,15 @@ export function QuoteBuilder() {
     // prospect name — prospect mode lets the operator quote a brand-new
     // company without first creating a customer record.
     if (!isLeadMode && !customerId && !prospectName.trim()) {
-      toast.error("Pick a customer or type a new prospect name");
+      toast.error("Pick a customer or type a new prospect name", {
+        description: "A quote needs someone to send it to. Use the customer box at the top.",
+      });
       return;
     }
     if (lineItems.length === 0) {
-      toast.error("Add at least one line item");
+      toast.error("Add at least one line item", {
+        description: "Use Add item (Alt+A) to put a product or service on the quote.",
+      });
       return;
     }
     /* GST guard (2 Oct 2026). With no place of supply the quote assumes CGST+SGST; a
@@ -938,7 +948,9 @@ export function QuoteBuilder() {
        lead or typed prospect, where the state field is on this screen; an existing
        customer without one keeps the amber note (their record is fixed on /customers). */
     if (status === "sent" && !customerId && supplyStateMissing({ isExport, buyerStateCode })) {
-      toast.error("Pick the customer's state first — it decides CGST+SGST or IGST");
+      toast.error("Pick the customer's state first", {
+        description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
+      });
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
       return;
     }
@@ -953,7 +965,10 @@ export function QuoteBuilder() {
         const { data: newId, error: seqErr } = await supabase
           .rpc("next_document_number", { p_doc_type: "quote" });
         if (seqErr || !newId) {
-          toast.error("Failed to allocate quote number — please retry");
+          toastError(seqErr, {
+            fallback: "Couldn't get a quote number.",
+            description: "Nothing was saved and no number was used up. Click the button again.",
+          });
           return;
         }
         idToUse = newId;
@@ -2401,7 +2416,12 @@ export function QuoteBuilder() {
               <Button
                 icon="file"
                 onClick={() => {
-                  if (lineItems.length === 0) { toast.error("Add at least one line item to preview"); return; }
+                  if (lineItems.length === 0) {
+                    toast.error("Add at least one line item to preview", {
+                      description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
+                    });
+                    return;
+                  }
                   setPreviewOpen(true);
                 }}
               >
@@ -2425,7 +2445,12 @@ export function QuoteBuilder() {
           <Button
             icon="file"
             onClick={() => {
-              if (lineItems.length === 0) { toast.error("Add at least one line item to preview"); return; }
+              if (lineItems.length === 0) {
+                    toast.error("Add at least one line item to preview", {
+                      description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
+                    });
+                    return;
+                  }
               setPreviewOpen(true);
             }}
           >
