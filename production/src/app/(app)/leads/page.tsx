@@ -556,54 +556,6 @@ function LeadsPageInner() {
         />
       )}
 
-      {/* Search + Views dropdown + Filter buttons.
-          The Views control used to be a chip strip in a flex-1 overflow-x-auto
-          box here. Eight chips in the space left over between the search box and
-          the buttons meant one visible chip and two scroll arrows. It is a
-          dropdown now, so the row no longer needs a scrolling middle section —
-          and the width it was hogging goes to the search box, which was the
-          other cramped control on this row. */}
-      {!isLoading && counts && (
-        <LeadsToolbar
-          pool={counts.pool}
-          leadMeMember={leadMeMember}
-          leadTeam={leadTeam}
-          leadTeamMode={leadTeamMode}
-          setLeadTeamMode={setLeadTeamMode}
-          search={search}
-          setSearch={setSearch}
-          viewCounts={counts.views}
-          everythingCount={everythingCountForPage(counts, isDealsPage)}
-          isDealsPage={isDealsPage}
-          currentUser={currentUser}
-          duplicateCountForTab={counts.views.duplicates}
-          junkCount={counts.workspace.junk}
-          junkSuspectCount={counts.workspace.suspects}
-          smartView={smartView}
-          selectSmartView={selectSmartView}
-          folderRows={folderRows}
-          folder={folder}
-          selectFolder={selectFolder}
-          effectiveView={effectiveView}
-          setView={setView}
-          isMobile={isMobile}
-          activeFilterCount={activeFilterCount}
-          filterStages={filterStages}
-          stageFilter={stageFilter}
-          setStageFilter={setStageFilter}
-          priorityFilter={priorityFilter}
-          setPriorityFilter={setPriorityFilter}
-          ownerFilter={ownerFilter}
-          setOwnerFilter={setOwnerFilter}
-          isSales={isSales}
-          kpiOpen={kpiOpen}
-          setKpiOpen={setKpiOpen}
-          setCsvImportOpen={setCsvImportOpen}
-          setCampaignOpen={setCampaignOpen}
-          setGoogleImportOpen={setGoogleImportOpen}
-          setShareOpen={setShareOpen}
-        />
-      )}
 
 
 
@@ -670,6 +622,73 @@ function LeadsPageInner() {
         </div>
       )}
 
+      {/* Loss analytics — owner-level "why are we losing?", in money. Deals tab
+          only: the raw-inquiry tab has no stage flow, so losses aren't its story.
+          The card handles its own empty state and hides nothing. */}
+      {!isLoading && !error && isDealsPage && (totalLeads ?? 0) > 0 && (
+        <div className="mb-3">
+          <LossReasonsCard leads={lostQ.data ?? []} />
+        </div>
+      )}
+
+      {/* R-277 (Pardeep, 6 Oct): the search + filter bar sits DIRECTLY above the list /
+          Kanban it filters. It used to sit above the hot card, the call queue and (on /deals)
+          the loss-reasons card, so after typing a search or picking a filter the result was
+          a scroll away. Sticky inside this scrolling column, so it stays at hand while the
+          list scrolls — phone too. Order is pinned by toolbar-above-list.test.ts. */}
+      {/* Search + Views dropdown + Filter buttons.
+          The Views control used to be a chip strip in a flex-1 overflow-x-auto
+          box here. Eight chips in the space left over between the search box and
+          the buttons meant one visible chip and two scroll arrows. It is a
+          dropdown now, so the row no longer needs a scrolling middle section —
+          and the width it was hogging goes to the search box, which was the
+          other cramped control on this row. */}
+      {!isLoading && counts && (
+        <div className="sticky top-0 z-10 -mx-1 px-1 pt-1.5 bg-paper/95 backdrop-blur-sm">
+          <LeadsToolbar
+            pool={counts.pool}
+            leadMeMember={leadMeMember}
+            leadTeam={leadTeam}
+            leadTeamMode={leadTeamMode}
+            setLeadTeamMode={setLeadTeamMode}
+            search={search}
+            setSearch={setSearch}
+            viewCounts={counts.views}
+            everythingCount={everythingCountForPage(counts, isDealsPage)}
+            isDealsPage={isDealsPage}
+            currentUser={currentUser}
+            duplicateCountForTab={counts.views.duplicates}
+            junkCount={counts.workspace.junk}
+            junkSuspectCount={counts.workspace.suspects}
+            smartView={smartView}
+            selectSmartView={selectSmartView}
+            folderRows={folderRows}
+            folder={folder}
+            selectFolder={selectFolder}
+            effectiveView={effectiveView}
+            setView={setView}
+            isMobile={isMobile}
+            activeFilterCount={activeFilterCount}
+            filterStages={filterStages}
+            stageFilter={stageFilter}
+            setStageFilter={setStageFilter}
+            priorityFilter={priorityFilter}
+            setPriorityFilter={setPriorityFilter}
+            ownerFilter={ownerFilter}
+            setOwnerFilter={setOwnerFilter}
+            isSales={isSales}
+            kpiOpen={kpiOpen}
+            setKpiOpen={setKpiOpen}
+            setCsvImportOpen={setCsvImportOpen}
+            setCampaignOpen={setCampaignOpen}
+            setGoogleImportOpen={setGoogleImportOpen}
+            setShareOpen={setShareOpen}
+          />
+        </div>
+      )}
+
+      {/* Below the toolbar: a filter or view with no rows shows its empty state right under
+          the controls that caused it (R-277). Renders nothing when there are rows. */}
       <LeadsStatusStates
         error={error}
         refetch={refetch}
@@ -683,15 +702,6 @@ function LeadsPageInner() {
         setCsvImportOpen={setCsvImportOpen}
         setSmartView={setSmartView}
       />
-
-      {/* Loss analytics — owner-level "why are we losing?", in money. Deals tab
-          only: the raw-inquiry tab has no stage flow, so losses aren't its story.
-          The card handles its own empty state and hides nothing. */}
-      {!isLoading && !error && isDealsPage && (totalLeads ?? 0) > 0 && (
-        <div className="mb-3">
-          <LossReasonsCard leads={lostQ.data ?? []} />
-        </div>
-      )}
 
       {/* Kanban — only shows on Deals tab (raw leads in the Leads tab have
           no meaningful stage flow, so we force list view there).
