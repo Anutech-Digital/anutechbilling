@@ -38,12 +38,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { turnstileRefusal } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { decideAutoSend } from "@/lib/quotes/auto-send-quote";
 import { sendAutoQuote } from "@/lib/quotes/send-auto-quote";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 import {
   fetchWorkspaceCatalogPrice,
   buildWorkspaceLines,
@@ -78,7 +80,10 @@ const enquirySchema = z.object({
   message:     z.string().max(2000).optional(),
   // Optional GST place-of-supply. Drives IGST vs CGST+SGST once the lead
   // converts to a customer (state copied through accept_quote / record_payment).
-  stateCode:   z.string().regex(/^\d{2}$/, "state code must be 2 digits").optional(),
+  /* R-174: a real GST state code — "2 digits" alone let "00" or "98" through, which no invoice
+     can use. Unknown codes are refused here rather than stored on the lead. */
+  stateCode:   z.string().regex(/^\d{2}$/, "state code must be 2 digits")
+    .refine((c) => c in GST_STATE_BY_CODE && Number(c) < 97, "not a GST state code").optional(),
   state:       z.string().max(60).optional(),
   /** A free-trial request from the site's trial form: no owner alert (owner, 30 Sep 2026). */
   trial:       z.boolean().optional(),
@@ -165,10 +170,11 @@ export async function POST(request: NextRequest) {
       // Migration 0232 — inbound attribution. Nulls when nothing was captured.
       ...captureFromRequest(request, body as Record<string, unknown>),
       notes:         leadNotes,
-      // Place-of-supply for GST (copied to the customer on conversion). Optional —
-      // blank falls back to intra-state until set on the customer in-app.
+      // Place-of-supply for GST (copied to the customer on conversion). Optional here — an
+      // enquiry is not a sale; a blank one shows in Customers → "State missing" after conversion
+      // (R-166) and generate_invoice refuses until it is set. The name comes from the code (R-174).
       state_code:    stateCode ?? null,
-      state:         state ?? null,
+      state:         stateCode ? GST_STATE_BY_CODE[stateCode] : (state ?? null),
     });
 
     if (leadErr) {
@@ -284,6 +290,9 @@ export async function POST(request: NextRequest) {
     if (!owner.ok) {
       console.error(`[enquiry/workspace] lead ${leadId} saved, but no owner alert: ${owner.reason}`);
     }
+    const ownerName = owner.ok ? owner.ownerName : "";
+    const voice = storefrontVoice(tenantId);
+    const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
 
     /* ── FULL AUTO-SEND — Pardeep's call, 31 Aug 2026 ─────────────────────────
        "poora auto-SEND bhi kar do." Until now this route stopped at a draft and the
@@ -403,12 +412,13 @@ ${autoSent
          storefront owned by any other tenant that is three false statements to a
          stranger — including a partner certification this code cannot know the
          tenant holds. Named from the tenant row now, and anything absent is left
-         out rather than guessed. Needs `owner.ok` because a customer told to reply
-         is owed somewhere for the reply to land. */
-      owner.ok && sendEmail({
+         out rather than guessed. Needs a reply-to because a customer told to reply
+         is owed somewhere for the reply to land: support for the storefront
+         (lib/email/storefront-voice.ts), the owner for a reseller tenant. */
+      customerReplyTo && sendEmail({
         to:      email,
         from:    FROM_EMAIL,
-        replyTo: owner.to,
+        replyTo: customerReplyTo,
         kind:    "buy_page_lead_ack",
         route:   { tenantId },
         subject: `Got it, ${fullName.split(" ")[0]} — your Google Workspace quote is on the way`,
@@ -418,7 +428,7 @@ ${autoSent
 Thanks for the enquiry. Here's what you'll get from us shortly:
 
 • A custom GST quote for ${seats} Google Workspace ${tierName} users
-• Answers to any migration / setup / pricing questions${ownerTenant?.phone?.trim() ? `\n• A call or WhatsApp from ${owner.ownerName || "our team"} on ${ownerTenant.phone.trim()}` : ""}
+• Answers to any migration / setup / pricing questions${ownerTenant?.phone?.trim() ? `\n• A call or WhatsApp from ${voice ? "our team" : ownerName || "our team"} on ${ownerTenant.phone.trim()}` : ""}
 
 WHAT WE HAVE FROM YOU
   Company    ${companyName}
@@ -428,11 +438,11 @@ WHAT WE HAVE FROM YOU
 
 Just reply to this email if anything above is wrong, or if you'd like to add detail.
 
-— ${owner.ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
-  ownerTenant?.name?.trim() && owner.ownerName !== ownerTenant.name.trim()
+${voice ? voice.signOff : `— ${ownerName || ownerTenant?.name?.trim() || "Your reseller"}${
+  ownerTenant?.name?.trim() && ownerName !== ownerTenant.name.trim()
     ? `\n   ${ownerTenant.name.trim()}`
     : ""
-}`,
+}`}`,
       }),
     ]);
     {

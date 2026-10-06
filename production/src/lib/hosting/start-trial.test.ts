@@ -159,8 +159,15 @@ describe("trial emails: the customer only (30 Sep 2026)", () => {
     expect(r).toMatchObject({ ok: true, confirmationSent: true });
     const kinds = sendEmail.mock.calls.map((c) => (c[0] as { kind: string }).kind);
     expect(kinds).toEqual(["buy_page_trial_customer"]);
-    // The owner's address is still used — as the reply-to on the customer's email.
-    expect(sendEmail.mock.calls[0][0]).toMatchObject({ replyTo: "owner@example.invalid" });
+    // The storefront's customer email replies to support and signs as the company (5 Oct 2026).
+    expect(sendEmail.mock.calls[0][0]).toMatchObject({ replyTo: "support@anutech.in" });
+    expect((sendEmail.mock.calls[0][0] as { text: string }).text).toMatch(/— Anutech Digital$/);
+  });
+
+  it("the storefront email replies to support even with no owner alert address", async () => {
+    await startHostingTrial(adminWith({}), input, req, {});
+    expect(sendEmail.mock.calls[0][0]).toMatchObject({ replyTo: "support@anutech.in" });
+    expect((sendEmail.mock.calls[0][0] as { text: string }).text).not.toContain("Owner");
   });
 });
 

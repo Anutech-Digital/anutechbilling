@@ -27,6 +27,7 @@ const STATE_OPTIONS = Object.entries(GST_STATE_BY_CODE)
 import { razorpayContact } from "@/lib/checkout/razorpay-contact";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
+import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
@@ -329,6 +330,10 @@ export default function CheckoutPage() {
     lastOrder.current = order;
     try {
       const Razorpay = await loadRazorpay();
+      /* Razorpay saves the page's scroll style when it opens and puts it back when it closes —
+         which, with our progress card open, was "locked". Re-apply our own state once it has
+         closed (3 Oct 2026: /done could not be scrolled after paying). */
+      const afterRazorpay = () => { for (const ms of [0, 300, 1000]) window.setTimeout(settlePageScroll, ms); };
       const rzp = new Razorpay({
         key: order.razorpayKeyId,
         amount: order.amount,
@@ -341,13 +346,16 @@ export default function CheckoutPage() {
           method: METHODS.find((m) => m.label === method)?.razorpay,
         },
         notes: { quoteId: order.quoteId ?? "", domain: hasHosting ? domain.trim() : "" },
-        theme: { color: "#C2410C" },
+        /* The storefront blue (site.css --primary), so the payment window matches the shop
+           around it (3 Oct 2026). It was the staff app's orange. */
+        theme: { color: "#1668E3" },
         handler: () => {
           try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
           cart.clear();
+          afterRazorpay();
           router.push("/done" as never);
         },
-        modal: { ondismiss: () => setPaying(false), escape: true },
+        modal: { ondismiss: () => { setPaying(false); afterRazorpay(); }, escape: true },
       });
       rzp.on("payment.failed", (resp) => {
         setProblem({ during: "payment", message: resp.error?.description ?? "", flags: {} });

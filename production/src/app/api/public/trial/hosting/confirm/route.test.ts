@@ -60,12 +60,11 @@ describe("the trial account is created by the DMS engine", () => {
     expect(cmd.payload.customer).toMatchObject({ firstName: "Asha", lastName: "Verma", email: "asha@example.invalid", phone: "9876543210" });
   });
 
-  it("the customer is pointed at their DMS panel — no password is emailed from here", async () => {
+  it("sends the customer nothing itself: DMS sends the one 'trial is live' email when it creates the account (3 Oct 2026)", async () => {
     engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { daUsername: "trialc1" }, replayed: false });
-    await GET(req());
-    const toCustomer = mail.sendEmail.mock.calls.map((c) => c[0]).find((m) => m.to === "asha@example.invalid");
-    expect(toCustomer.text).toContain("https://panel.example.invalid");
-    expect(toCustomer.text).not.toMatch(/Password\s*:/);
+    const res = await GET(req());
+    expect(landed(res)).toBe("provisioned");
+    expect(mail.sendEmail.mock.calls.map((c) => c[0].to)).not.toContain("asha@example.invalid");
   });
 
   it("a second click replays: no second customer email", async () => {

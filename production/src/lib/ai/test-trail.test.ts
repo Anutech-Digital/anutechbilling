@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  pushTrail, isProblem, apiFailureWorthNoting, apiFailText, trailForPrompt,
+  pushTrail, isProblem, classifyToast, apiFailureWorthNoting, apiFailText, trailForPrompt,
   badTextFindings, findingsForPrompt, titleOverlap, looksLikeSameBug, TRAIL_MAX, type TrailEvent,
 } from "./test-trail";
 import { parseHelpAnswer, helpUserTurn, helpSystemPrompt, bugReportText } from "./app-help";
@@ -126,5 +126,32 @@ describe("AI Help knows what the page is for (5 Oct 2026)", async () => {
     const p = helpSystemPrompt({ pagePath: "/x", userName: null, role: null, mode: "check_failed", pagePurpose: "Test purpose" });
     expect(p).toContain("WHAT THIS PAGE IS FOR (trust this over guessing from the URL or the buttons): Test purpose");
     expect(p).toMatch(/MODE check_failed[\s\S]*do not ask first/);
+  });
+});
+
+/* R-176 (6 Oct 2026): a form asking for a blank field lit AI Help red ("Error caught — Report
+   it"). Real failures must still light it; a request to fill something must not. */
+describe("classifyToast — fill-this vs real failure", () => {
+  it("asking the user to fill or choose something is input, not a bug", () => {
+    expect(classifyToast("Choose the new customer's stateThe GST invoice needs it — it decides CGST + SGST or IGST.")).toBe("input_needed");
+    expect(classifyToast("State is missingChoose the state — the GST invoice cannot be made without it")).toBe("input_needed");
+    expect(classifyToast("Please choose your state. Nothing was charged.")).toBe("input_needed");
+    expect(classifyToast("The contact's phone number is required")).toBe("input_needed");
+  });
+  it("words of failure always win — a real error is never hidden", () => {
+    expect(classifyToast("Report not saved: permission denied for table feedback")).toBe("toast_error");
+    expect(classifyToast("Add failed — try again")).toBe("toast_error");
+    expect(classifyToast("Could not load invoices (500)")).toBe("toast_error");
+    expect(classifyToast("Customer is required but the server refused the save")).toBe("toast_error");
+  });
+  it("unknown wording stays an error (keep the report button when unsure)", () => {
+    expect(classifyToast("Something odd happened")).toBe("toast_error");
+  });
+  it("a toast the app marked as needs-input is input whatever it says", () => {
+    expect(classifyToast("Anything at all", true)).toBe("input_needed");
+  });
+  it("input_needed is not a problem — AI Help does not turn red for it", () => {
+    expect(isProblem({ kind: "input_needed", at: 0, text: "x", path: "/" })).toBe(false);
+    expect(isProblem({ kind: "toast_error", at: 0, text: "x", path: "/" })).toBe(true);
   });
 });

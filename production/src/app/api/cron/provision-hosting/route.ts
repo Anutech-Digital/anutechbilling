@@ -185,7 +185,8 @@ async function handle(req: Request) {
         planId: plan!.planId,
         months: plan!.months,
         customer: { ...name, email, ...normalisePhone(lead?.contact_phone ?? ""), companyName: lead?.company || quote.customer_name || undefined },
-        paymentMode: "live",
+        /* Said as it is: DMS refuses a TEST payment unless its own local-only switch is on. */
+        paymentMode: row.payment_mode === "test" ? "test" : "live",
         sourceRef: row.quote_id,
       },
     });

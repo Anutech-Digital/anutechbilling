@@ -131,6 +131,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG NODE_HEAP_MB=6144
 ENV NODE_OPTIONS=--max-old-space-size=${NODE_HEAP_MB}
 
+# R-182 (6 Oct 2026): "1" skips next build's own type check (3.9 of its 9.8 min). Only
+# cloudbuild.yaml passes it, because its gate step runs `next typegen` + `tsc` and push waits
+# for the gate. A plain `docker build` leaves it empty and still type-checks. next.config.mjs.
+ARG SKIP_BUILD_TYPECHECK=""
+ENV SKIP_BUILD_TYPECHECK=$SKIP_BUILD_TYPECHECK
+
 RUN npm run build
 
 # ── Stage 3: minimal production image ───────────────────────────────

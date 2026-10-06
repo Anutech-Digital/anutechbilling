@@ -24,6 +24,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { sendEmail } from "@/lib/email/send";
+import { storefrontVoice } from "@/lib/email/storefront-voice";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const APP_URL    = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
@@ -133,6 +134,8 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     const ownerEmail = tenant?.email;
+    // The storefront signs as the company and takes replies at support (lib/email/storefront-voice.ts).
+    const voice = storefrontVoice(tenantId);
     const firstName  = fullName.split(" ")[0];
 
     const settled = await Promise.allSettled([
@@ -172,7 +175,7 @@ ${APP_URL}/leads/${leadId}
         route: { tenantId: tenantId },
         to:      email,
         from:    FROM_EMAIL,
-        replyTo: ownerEmail,
+        replyTo: voice ? voice.replyTo : ownerEmail,
         subject: `Got your enquiry, ${firstName} — we'll be in touch shortly`,
         text:
 `Hi ${firstName},
@@ -185,7 +188,7 @@ ${productLabel ? `  Interested in ${productLabel}\n` : ""}${seats ? `  Users    
 
 If it's urgent, just reply to this email.
 
-— Team${tenant?.name ? ` ${tenant.name}` : ""}`,
+${voice ? voice.signOff : `— Team${tenant?.name ? ` ${tenant.name}` : ""}`}`,
       }),
     ]);
     settled.forEach((r, i) => {

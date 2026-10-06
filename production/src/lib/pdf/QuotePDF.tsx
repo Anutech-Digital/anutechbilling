@@ -27,6 +27,7 @@ import {
 import { formatDate } from "@/lib/utils";
 import { pdfRupee } from "./pdf-money";
 import { pdfText } from "./pdf-text";
+import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
@@ -75,6 +76,9 @@ export interface QuotePDFProps {
   contactName?:  string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** R-175: the buyer's state and GSTIN under "Bill to", as on the tax invoice. */
+  customerState?: string | null;
+  customerGstin?: string | null;
   createdDate?:  string | Date | null;
   expiresDate?:  string | Date | null;
   validityDays:  number;
@@ -87,6 +91,8 @@ export interface QuotePDFProps {
   tax:           number;
   total:         number;
   interState:    boolean;
+  /** R-175: "Haryana (06) · IGST" — the buyer's state by name and code (placeOfSupplyLabel). */
+  placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
@@ -394,10 +400,10 @@ const s = StyleSheet.create({
 export function QuotePDF(props: QuotePDFProps) {
   const {
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo,
-    quoteId, customerName, contactName, contactEmail, contactPhone,
+    quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
     isPaid = false,
     upiQrDataUrl, upiVpa,
   } = props;
@@ -528,13 +534,19 @@ export function QuotePDF(props: QuotePDFProps) {
             {contactPhone && (
               <Text style={s.customerMono}>{contactPhone}</Text>
             )}
+            {customerGstin && (
+              <Text style={s.customerMono}>GSTIN: {customerGstin}</Text>
+            )}
+            {customerState && (
+              <Text style={s.customerLine}>State: {pdfText(customerState)}</Text>
+            )}
           </View>
           <View style={s.colRight}>
             <Text style={s.sectionLabel}>Place of supply</Text>
             <Text style={s.metaValue}>
               {isExport
                 ? "Export · zero-rated under LUT (no GST)"
-                : interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)"}
+                : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
             </Text>
             {lineItems.length > 0 && firstCommitment && (
               <View style={s.metaGroup}>
@@ -584,6 +596,8 @@ export function QuotePDF(props: QuotePDFProps) {
                 <View key={line.id} style={s.tr} wrap={false}>
                   <View style={s.tdDesc}>
                     <Text style={s.lineName}>{pdfText(line.name)}</Text>
+                    {/* Which website the line is for (3 Oct 2026; invoice-display.ts). */}
+                    {lineDomainNote(line) && <Text style={s.lineMeta}>{pdfText(lineDomainNote(line) ?? "")}</Text>}
                     {/* R-156: a multi-year domain line's rate is the whole term, not a year. */}
                     {(line.years ?? 1) > 1 ? (
                       <Text style={s.lineMeta}>Registration for {line.years} years, paid now · HSN 998313</Text>

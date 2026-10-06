@@ -137,7 +137,8 @@ export default function GoogleBillCheckPage() {
     const missing = check.rows.filter((r) => r.status === "no_customer");
     const ok = await confirm({
       title: `Add ${missing.length} customers and subscriptions?`,
-      body: `One customer per domain (named after it — rename later) and a Google subscription with this month's Google cost saved as the cost price.\nUsers (1) and your selling price are not on Google's bill, so they are left for you: each row will show "Set price & users".`,
+      body: `One customer per domain (named after it — rename later) and a Google subscription with this month's Google cost saved as the cost price.\nUsers (1) and your selling price are not on Google's bill, so they are left for you: each row will show "Set price & users".
+Their state is not on the bill either — they appear in Customers → "State missing" until you pick it (a GST invoice needs it).`,
       confirmLabel: `Add ${missing.length}`,
     });
     if (!ok) return;
@@ -146,7 +147,7 @@ export default function GoogleBillCheckPage() {
       const res = await createFromBill(me.tenantId, missing.map((r) => ({
         domain: r.domain, googleCost: r.googleCost, customerName: nameFromDomain(r.domain), plan: "Google Workspace", users: 1, sellPerUserMonth: null,
       })));
-      toast.success(`Added ${res.customers} customers and ${res.subscriptions} subscriptions`, { description: "Set users and price on each — the rows now say 'Set price & users'." });
+      toast.success(`Added ${res.customers} customers and ${res.subscriptions} subscriptions`, { description: "Set users and price on each — the rows now say 'Set price & users'. Pick each customer's state in Customers → 'State missing' before invoicing." });
       refreshBooks();
     } catch (e) {
       toast.error((e as Error).message, { description: "Some rows may have been added. Refresh — the list shows what is still missing." });

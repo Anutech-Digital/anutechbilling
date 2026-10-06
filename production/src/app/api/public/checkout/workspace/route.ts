@@ -33,6 +33,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { sendEmail } from "@/lib/email/send";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
 import { buyPageTenantIdOrEmpty, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
@@ -540,12 +541,14 @@ export async function POST(request: NextRequest) {
       const leadOwner = await loadLeadOwner(admin, BUY_PAGE_TENANT_ID, leadId);
       const simBase = new URL(request.url).origin;
       const sellerPerson = (owner.ok ? owner.ownerName : "") || ownerTenant?.name?.trim() || "Your reseller";
+      const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
+      const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
       await Promise.allSettled([
         // Customer copy
-        owner.ok && sendEmail({
+        customerReplyTo && sendEmail({
           to:      email,
           from:    FROM_EMAIL,
-          replyTo: owner.to,
+          replyTo: customerReplyTo,
           kind:    "buy_page_checkout_sim_customer",
           route:   { tenantId: BUY_PAGE_TENANT_ID },
           subject: `[TEST] Payment received · ${quoteId} · ${amountFmt}`,
@@ -566,7 +569,7 @@ ORDER SUMMARY
 
 ${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace ${tierName}`, contactName: leadOwner?.name ?? sellerPerson })}
 
-— ${sellerPerson}
+${voice ? voice.signOff : `— ${sellerPerson}`}
    (Simulated email — system test only)`,
         }),
         // Lead owner — the employee this order was dealt to (R-111), same as the webhook
@@ -582,8 +585,8 @@ ${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace $
             customerEmail: email, amount: amountFmt, appBase: simBase, quoteId, leadId,
           }),
         }),
-        // Owner alert — flagged clearly as test
-        owner.ok && sendEmail({
+        // Owner alert — flagged clearly as test (switched off on a developer machine only)
+        owner.ok && ownerPaymentAlertAllowed() && sendEmail({
           to:      owner.to,
           from:    FROM_EMAIL,
           kind:    "buy_page_checkout_sim_owner",

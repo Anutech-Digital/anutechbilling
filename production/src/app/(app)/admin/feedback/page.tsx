@@ -37,6 +37,8 @@ import {
   useTriageFeedback,
   useDispatchFeedback,
   useUpdateFeedbackStatus,
+  useMarkFeedbackChecked,
+  useUnmarkFeedbackChecked,
   feedbackScreenshotUrl,
   type FeedbackWithShots,
   type FeedbackStatus,
@@ -55,6 +57,15 @@ const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: s
   ui_improvement: { kind: "warning", label: "UI polish" },
 };
 
+/** What the buttons on a report do, by status — shown under them. */
+const ACTION_HELP: Record<string, string> = {
+  open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board within the hour. Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
+  agent_queued: "Waiting for the AI worker — it becomes a card on the work board within the hour, and the fix is made from there. Reopen takes it back to Open.",
+  fixed: "Not checked yet? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
+  wont_fix: "Closed without a fix. Reopen if it matters again.",
+  duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
+};
+
 /** Severity band → colour. Bands, not a gradient: an operator reads three groups, not 100 shades. */
 function severityKind(score: number | null): "danger" | "warning" | "muted" {
   if (score === null) return "muted";
@@ -63,13 +74,81 @@ function severityKind(score: number | null): "danger" | "warning" | "muted" {
   return "muted";
 }
 
+/**
+ * 6 Oct 2026: "Could not reach the clipboard" on Copy Directive — some browsers and embedded
+ * views refuse navigator.clipboard (no permission, not focused). The old textarea +
+ * execCommand("copy") path still works in most of them, so try it before giving up; when both
+ * fail the caller opens the directive and selects it, so Ctrl+C is all that is left.
+ */
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    return false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
   }
+}
+
+/**
+ * Fixed reports (Pardeep, 6 Oct 2026: "copy directive ke jagah check in browser AI instruction
+ * do, saath me problem ko thik karne ka instruction bhi"). One prompt to paste into a new
+ * Claude Code session: re-run the report in a browser first, and only if it still fails, fix
+ * it from the original directive. Nothing is stored — it is built from the row on screen.
+ */
+function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
+  const page = row.route_pattern ?? row.page_path ?? "(page not recorded)";
+  const lines = [
+    'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo. (Ye prompt ek NAYE Claude Code session me chalana hai.)',
+    "",
+    "0. FOLDER: agar ye session kisi folder me nahi hai (\"No folder\" / scratch workspace), to sabse pehle change_directory tool se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega), phir aage badho.",
+    "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
+    "Asli repo SIRF Anutech-Digital/anutechbilling hai (`git remote -v` me jo remote wahan point kare — Pardeep ke computer par `anutech`). Branch manager-pardeep. Abhicode0to1/new-reselleros PUBLIC purana repo hai — wahan kabhi push mat karo; cloud session usi ko clone kiye ho to ruko aur owner ko batao. staging/deploy mat chhuo (staging shaam 5 baje owner ka session karta hai).",
+    `App: ${appUrl}${appUrl.includes("localhost") ? "" : " (ya local http://localhost:3001)"}. Jaanch browser pane me dikha kar karo.`,
+    "",
+    `Report: ${row.title}`,
+    `Page: ${page}`,
+    `Kya hua tha: ${row.problem_summary || row.title}`,
+  ];
+  if (row.body) lines.push(`Reporter ne likha:\n${row.body}`);
+  lines.push(
+    "",
+    "1. JAANCH: report ke kadam browser me chalao. Screenshot ke saath batao ki ab kya hota hai.",
+    '2. Theek hai → bas batao "✓ browser me theek hai" aur kya dekha. Kuch mat badlo. Phir app me report par "✓ Checked" lagao (token kabhi print mat karo):',
+    `   curl -s -X POST -H "Authorization: Bearer $(cat ~/.claude/secrets/agent-queue-token)" -H "content-type: application/json" -d '{"id":"${row.id}"}' ${appUrl}/api/agent/feedback-checked`,
+    "   (200 = lag gaya. 401/404/503 = nahi laga — bas nateeja me likh do, owner haath se \"Mark checked\" daba dega.)",
+    "3. Bug abhi bhi hai → pehle board par card banao, phir neeche ki directive se theek karo: ek test jo pehle fail ho, fix, poori test suite, local par browser me dikhao, commit me card ka number.",
+    "",
+    '4. NATEEJA BOARD PAR: kaam ke ant me nateeja "Kaam ki list" board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par likho — theek tha to ek card status "done" aur title "Jaanch: <report>", fix kiya to wahi card review me. Taaki session band hone ke baad bhi nateeja dikhe.',
+    '5. SESSION ARCHIVE: board par likhne ke baad ye session archive kar do (mcp__ccd_session_mgmt__archive_session, session_id "self"). Archive, delete nahi. SIRF tab jab ye session ISI prompt se shuru hua ho — agar is session me pehle se koi aur baatcheet/kaam hai (galti se purane session me paste hua), to archive MAT karo, bas nateeja batao.',
+    "",
+    "Directive (fix ke liye):",
+    row.directive || "(directive nahi hai — problem dekh kar khud tay karo)",
+  );
+  return lines.join("\n");
+}
+
+/** Selects an element's text so the user only has to press Ctrl+C. */
+function selectText(el: HTMLElement | null) {
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
 }
 
 function ScreenshotThumb({ path, name }: { path: string; name: string | null }) {
@@ -106,12 +185,20 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
   );
 }
 
-function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string | null }) {
+function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId: string | null; meName: string }) {
   const [open, setOpen] = React.useState(false);
+  const directiveRef = React.useRef<HTMLPreElement>(null);
+  /* Copy failed: open the details and select the directive, after the panel has rendered. */
+  const showForManualCopy = () => {
+    setOpen(true);
+    setTimeout(() => selectText(directiveRef.current), 50);
+  };
 
   const triage = useTriageFeedback();
   const dispatch = useDispatchFeedback();
   const setStatus = useUpdateFeedbackStatus();
+  const markChecked = useMarkFeedbackChecked();
+  const unmarkChecked = useUnmarkFeedbackChecked();
 
   const type = row.inferred_type ?? row.reported_type;
   const badge = TYPE_BADGE[type] ?? TYPE_BADGE.bug;
@@ -124,7 +211,43 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     }
     const ok = await copyToClipboard(row.directive);
     if (ok) toast.success("Directive copied — paste it into Claude Code.");
-    else toast.error("Could not reach the clipboard.", { description: "Select the directive text below and copy it manually." });
+    else {
+      showForManualCopy();
+      toast.warning("Browser blocked copying.", { description: "The directive is open and selected below — press Ctrl+C." });
+    }
+  };
+
+  /* R-188: "I saw it working" — so a second visit does not have to remember. */
+  const handleMarkChecked = async () => {
+    try {
+      await markChecked.mutateAsync({ id: row.id, byName: meName });
+      toast.success("Marked as checked.", {
+        description: "The report now shows who checked it and when.",
+        action: { label: "Undo", onClick: () => void handleUnmarkChecked() },
+        duration: 10_000,
+      });
+    } catch (err) {
+      toast.error("Could not mark it checked.", {
+        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
+      });
+    }
+  };
+
+  const handleUnmarkChecked = async () => {
+    try {
+      await unmarkChecked.mutateAsync({ id: row.id });
+      toast.success("Check removed.", { description: "It shows \"not checked yet\" again." });
+    } catch (err) {
+      toast.error("Could not remove the check.", {
+        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
+      });
+    }
+  };
+
+  const handleCopyCheck = async () => {
+    const ok = await copyToClipboard(buildCheckPrompt(row, window.location.origin));
+    if (ok) toast.success("Check + fix prompt copied.", { description: "Open a new Claude Code session and paste it — it checks in a browser, fixes it if still broken, writes the result on the board and archives itself." });
+    else toast.warning("Browser blocked copying.", { description: "Press Copy again, or ask Claude in chat to check this report." });
   };
 
   const handleRunTriage = async () => {
@@ -156,10 +279,11 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
 
       /* Says where the report went: it leaves the Open tab, and on 5 Oct three reports
          "vanished" for the person who pressed it. */
-      toast.success("Moved to Queued for agent — directive copied.", {
+      if (!copied && directive) showForManualCopy();
+      toast.success(copied ? "Moved to Queued for agent — directive copied." : "Moved to Queued for agent.", {
         description: copied
           ? "Not fixed yet: paste it into Claude Code to make the fix. The report waits in the Queued for agent tab."
-          : "Not fixed yet: open it in the Queued for agent tab to copy the directive for Claude Code.",
+          : "Not fixed yet. The browser blocked copying — the AI worker will still put it on the board within the hour.",
         duration: 10_000,
       });
     } catch (err) {
@@ -176,7 +300,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
     }
   };
 
-  const busy = triage.isPending || dispatch.isPending || setStatus.isPending;
+  const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
 
   return (
     <Card className="p-4 space-y-3">
@@ -207,6 +331,9 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             )}
             {row.status === "agent_queued" && <Badge kind="info" size="sm">queued for agent</Badge>}
             {row.status === "fixed" && <Badge kind="success" size="sm">fixed</Badge>}
+            {row.status === "fixed" && (row.checked_at
+              ? <Badge kind="success" size="sm">✓ checked {formatDate(row.checked_at)}{row.checked_by_name ? ` · ${row.checked_by_name}` : ""}</Badge>
+              : <Badge kind="warning" size="sm">not checked yet</Badge>)}
             {row.status === "wont_fix" && <Badge kind="muted" size="sm">won&apos;t fix</Badge>}
           </div>
 
@@ -221,6 +348,12 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             {row.filed_via === "ai-chat" && <Badge kind="info" size="sm">🤖 AI-drafted after chat</Badge>}
             <span className="text-ink-4">·</span>
             <span>{formatDate(row.created_at)}</span>
+            {row.status === "fixed" && row.resolved_at && (
+              <>
+                <span className="text-ink-4">·</span>
+                <span className="text-emerald">fixed {formatDate(row.resolved_at)}</span>
+              </>
+            )}
             {row.screenshots.length > 0 && (
               <>
                 <span className="text-ink-4">·</span>
@@ -242,18 +375,42 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy}>
-          <Icon name="sparkles" size={14} className="mr-1.5" />
-          Run AI Auto-Fix
-        </Button>
-        <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive}>
-          <Icon name="copy" size={14} className="mr-1.5" />
-          Copy Directive
-        </Button>
-        <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
-          <Icon name="refresh" size={14} className="mr-1.5" />
-          {untriaged ? "Triage" : "Re-triage"}
-        </Button>
+        {/* 6 Oct 2026 (Pardeep, Fixed tab): Auto-Fix on a fixed / won't-fix / already queued
+            report only re-queued it. It is for open reports; Reopen first to send one again. */}
+        {row.status === "open" && (
+          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy} title="Send to the AI worker — it becomes a card on the work board within the hour">
+            <Icon name="sparkles" size={14} className="mr-1.5" />
+            Run AI Auto-Fix
+          </Button>
+        )}
+        {row.status === "fixed" ? (
+          <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy} title="Copies a prompt: re-test this in a browser, fix it if still broken">
+            <Icon name="copy" size={14} className="mr-1.5" />
+            Check in browser
+          </Button>
+        ) : null}
+        {row.status === "fixed" && !row.checked_at ? (
+          <Button size="sm" variant="ghost" onClick={handleMarkChecked} disabled={busy} title="You saw it working — mark it so you do not check it again">
+            ✓ Mark checked
+          </Button>
+        ) : null}
+        {row.status === "fixed" && row.checked_at ? (
+          <Button size="sm" variant="ghost" onClick={handleUnmarkChecked} disabled={busy} title="Pressed by mistake? Take the check back">
+            Undo check
+          </Button>
+        ) : null}
+        {row.status === "fixed" ? null : (
+          <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive} title="Copies the fix instructions to paste into Claude Code yourself">
+            <Icon name="copy" size={14} className="mr-1.5" />
+            Copy Directive
+          </Button>
+        )}
+        {(row.status === "open" || row.status === "agent_queued") && (
+          <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
+            <Icon name="refresh" size={14} className="mr-1.5" />
+            {untriaged ? "Triage" : "Re-triage"}
+          </Button>
+        )}
         <span className="flex-1" />
         {row.status !== "fixed" && (
           <Button size="sm" variant="ghost" onClick={() => handleStatus("fixed")} disabled={busy}>
@@ -266,16 +423,23 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
             and "won't fix", and somebody eventually picks one of those to clear the row.
             A queue you can only leave by lying about the outcome stops being a queue. */}
         {row.status !== "open" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy}>
+          <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy} title="Send it back to Open">
             Reopen
           </Button>
         )}
         {row.status !== "wont_fix" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("wont_fix")} disabled={busy}>
+          <Button size="sm" variant="ghost" onClick={() => handleStatus("wont_fix")} disabled={busy} title="Close it without a fix">
             Won&apos;t fix
           </Button>
         )}
       </div>
+
+      {/* Pardeep, 6 Oct 2026: "isko aur badiya informatic banao jisse user ko sab kuch clear ho
+          sake wo kya kar sakta hai" — one line per state saying what the buttons do. */}
+      <p className="flex gap-1.5 text-xs text-ink-3 leading-relaxed">
+        <Icon name="info" size={13} className="flex-shrink-0 mt-0.5" />
+        <span>{ACTION_HELP[row.status] ?? ""}</span>
+      </p>
 
       {open && (
         <div className="pt-3 border-t border-hairline space-y-4">
@@ -335,7 +499,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
               )}
             </div>
             {row.directive ? (
-              <pre className="text-2xs leading-relaxed text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-96 overflow-y-auto">
+              <pre ref={directiveRef} className="text-2xs leading-relaxed text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-96 overflow-y-auto">
                 {row.directive}
               </pre>
             ) : (
@@ -422,7 +586,9 @@ export default function AdminFeedbackPage() {
         <p className="text-xs text-ink-2 leading-relaxed">
           <b>Run AI Auto-Fix</b> writes the directive, copies it to your clipboard and marks the report queued.
           It does <b>not</b> change any code by itself — this app runs on a server with no access to the
-          repository. Paste the directive into Claude Code to actually make the fix.
+          repository. The AI worker picks up queued reports within the hour and puts each one on the
+          work board as a card; the fix is made from there. You can also paste the directive into
+          Claude Code yourself.
         </p>
       </div>
 
@@ -482,7 +648,7 @@ export default function AdminFeedbackPage() {
       {!isLoading && !error && rows.length > 0 && (
         <div className="space-y-3">
           {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} />
+            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} />
           ))}
         </div>
       )}
@@ -573,9 +739,9 @@ function PlatformFeedbackList({
             {r.directive && (
               <button
                 type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(r.directive!);
-                  toast.success("Directive copied — paste it into Claude Code.");
+                onClick={async () => {
+                  if (await copyToClipboard(r.directive!)) toast.success("Directive copied — paste it into Claude Code.");
+                  else toast.warning("Browser blocked copying.", { description: "Select the directive text and press Ctrl+C." });
                 }}
                 className="mt-2 rounded border border-hairline px-2 py-0.5 text-2xs text-ink-2 hover:bg-paper-2"
               >

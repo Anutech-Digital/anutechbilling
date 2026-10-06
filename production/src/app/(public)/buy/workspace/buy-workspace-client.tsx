@@ -14,6 +14,7 @@
  * - Lead-capture enquiry form
  */
 
+import Link from "next/link";
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1326,10 +1327,10 @@ export function BuyWorkspaceClient({
       <header className="border-b border-hairline bg-paper sticky top-0 z-40 backdrop-blur-sm bg-paper/95">
         <div className="max-w-[1240px] mx-auto px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <a href="/" aria-label="Anutech Digital home">
+            <Link href="/" aria-label="Anutech Digital home">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" width={120} height={40} className="h-10 w-auto" />
-            </a>
+            </Link>
           </div>
           {/* Tiny partner pill */}
           <div

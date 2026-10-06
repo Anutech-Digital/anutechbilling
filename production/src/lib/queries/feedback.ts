@@ -322,8 +322,48 @@ export function useUpdateFeedbackStatus() {
           // Only a terminal status sets a resolution time; reopening clears it, so a
           // reopened report cannot claim to have been resolved.
           resolved_at: terminal ? new Date().toISOString() : null,
+          // R-188: a reopened report has not been checked any more.
+          ...(status === "open" ? { checked_at: null, checked_by_name: null } : {}),
           updated_at: new Date().toISOString(),
         })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidate(qc),
+  });
+}
+
+/**
+ * R-188: "I checked this fixed report in a browser and it is fine." Stamps who and when, so
+ * nobody has to remember. The AI check session sets the same fields through
+ * /api/agent/feedback-checked.
+ */
+export function useMarkFeedbackChecked() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, byName }: { id: string; byName: string }) => {
+      const supabase = createClient();
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("feedback")
+        .update({ checked_at: now, checked_by_name: byName.slice(0, 200), updated_at: now })
+        .eq("id", id)
+        .eq("status", "fixed");
+      if (error) throw error;
+    },
+    onSuccess: () => invalidate(qc),
+  });
+}
+
+/** R-188: take a "checked" back (pressed by mistake). */
+export function useUnmarkFeedbackChecked() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("feedback")
+        .update({ checked_at: null, checked_by_name: null, updated_at: new Date().toISOString() })
         .eq("id", id);
       if (error) throw error;
     },

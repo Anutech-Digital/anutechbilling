@@ -15,9 +15,12 @@
  */
 import * as React from "react";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/label";
+import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { GOOGLE_PLANS, newSubscriptionRow, nameFromDomain, type CheckRow, type CustomerLite } from "@/lib/reconcile/google-bill";
 
@@ -30,6 +33,9 @@ export interface BillItem {
   plan: string;
   users: number;
   sellPerUserMonth: number | null;
+  /** R-174: new customer's GST state code (or "export"); omitted = not known — the customer then
+   *  shows in Customers → "State missing" until someone picks it. */
+  stateCode?: string;
 }
 
 /** Inserts customers (where needed) then subscriptions. Returns how many of each. */
@@ -39,7 +45,11 @@ export async function createFromBill(tenantId: string, items: readonly BillItem[
   const idByDomain = new Map<string, string>();
   const toCreate = items.filter((i) => !i.customerId);
   for (let k = 0; k < toCreate.length; k += 200) {
-    const chunk = toCreate.slice(k, k + 200).map((i) => ({ tenant_id: tenantId, name: i.customerName.trim() || nameFromDomain(i.domain), domain: i.domain }));
+    const chunk = toCreate.slice(k, k + 200).map((i) => ({
+      tenant_id: tenantId, name: i.customerName.trim() || nameFromDomain(i.domain), domain: i.domain,
+      ...(i.stateCode === EXPORT_STATE ? { country: "Outside India" }
+        : i.stateCode ? { state_code: i.stateCode, state: GST_STATE_BY_CODE[i.stateCode] ?? null } : {}),
+    }));
     const { data, error } = await supabase.from("customers").insert(chunk).select("id, domain");
     if (error) throw new Error(`Customers not created: ${error.message}`);
     for (const c of data ?? []) if (c.domain) idByDomain.set(c.domain, c.id);
@@ -70,6 +80,7 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
   const [users, setUsers] = React.useState("1");
   const [price, setPrice] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [stateCode, setStateCode] = React.useState("");
 
   const byName = React.useMemo(() => new Map(customers.map((c) => [c.name.trim().toLowerCase(), c])), [customers]);
   const picked = existingRef ? { id: existingRef } : byName.get(pick.trim().toLowerCase()) ?? null;
@@ -83,6 +94,10 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
       toast.error("Pick a customer from the list.", { description: "Type a few letters and choose a name that appears — or switch to New customer." });
       return;
     }
+    if (mode === "new" && !stateCode) {
+      toast.error("Choose the customer's state", { className: NEEDS_INPUT_CLASS, description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer." });
+      return;
+    }
     setSaving(true);
     try {
       await createFromBill(tenantId, [{
@@ -90,6 +105,7 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
         customerId: mode === "existing" ? picked!.id : undefined,
         customerName: mode === "existing" ? (existingRef ? row.customerName ?? name : pick) : name,
         plan, users: u, sellPerUserMonth: sell,
+        stateCode: mode === "new" ? stateCode : undefined,
       }]);
       toast.success(`${row.domain}: ${mode === "new" ? "customer and " : ""}subscription added`);
       onDone();
@@ -118,6 +134,9 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
           {mode === "new" ? (
             <FormField label="Customer name" htmlFor="afb-name">
               <input id="afb-name" value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm" />
+              <div className="mt-2">
+                <GstStateSelect id="afb-state" value={stateCode} onChange={setStateCode} allowExport />
+              </div>
             </FormField>
           ) : existingRef ? (
             <div className="text-sm">Customer: <b>{row.customerName}</b></div>

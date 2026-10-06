@@ -14,7 +14,7 @@
  * deliberately NOT ported yet — which page wins there is its own decision.
  */
 import type { Metadata } from "next";
-import { Archivo, IBM_Plex_Mono } from "next/font/google";
+import { archivoSans as archivo, plexMono } from "@/lib/fonts";
 import "@/site/site.css";
 
 /**
@@ -39,18 +39,6 @@ import { Header } from "@/site/components/chrome/Header";
 import { UtilityBar, CtaBand, Footer, WhatsAppButton, ConsentBanner } from "@/site/components/chrome/Chrome";
 import { AgentChat } from "@/site/components/agent/AgentChat";
 
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-sans",
-  display: "swap",
-});
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (

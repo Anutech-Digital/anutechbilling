@@ -348,6 +348,36 @@ aakanksha thi wo hategi.
 
 ---
 
+## Local test setup — hosting aur trial asli server par (3 Oct 2026)
+
+Pawan ki machine par, Pawan ke kehne par, local DMS **asli** cheezon se juda hai — taaki trial aur
+paid hosting poore test ho sakein. Live site par inme se kuch nahi chalta.
+
+| Kahan | Setting | Matlab |
+|---|---|---|
+| ResellerOS `.env.local` | `HOSTING_TRIAL_LIVE=1`, `HOSTING_PROVISIONING_LIVE=1` | confirm/paid hosting DMS se account banwata hai |
+| ResellerOS `.env.local` | `ALLOW_TEST_PAYMENT_PROVISIONING=1` | Razorpay TEST payment par bhi hosting (domain kabhi nahi); production build me band |
+| ResellerOS `.env.local` | `ALLOW_REPEAT_TRIALS_LOCAL=1` | ek-trial-per-customer check band; production build me band |
+| ResellerOS `.env.local` | `RESELLERCLUB_API_URL`, `RESELLERCLUB_RESELLER_ID`, `RESELLERCLUB_API_KEY` = DMS wala asli account 1299294 (DMS ka `RESELLERCLUB_SECRET` hi API key hai) | domain search aur checkout ka daam seedha ResellerClub se. Iske bina laptop par koi domain price nahi milta: purana engine `app.anutech.in/api/public/*` 404 deta hai aur redeploy nahi ho sakta. Yahan sirf daam/availability padhe jaate hain; register DMS hi karta hai |
+| ResellerOS `.env.local` | `HOSTING_RENEWAL_LIVE=1` | paid hosting renewal DMS se account ki expiry aage badhata hai (`/api/cron/renew-hosting`) |
+| DMS `.env.docker` | `ENGINE_HOSTING_RENEW_LIVE=1` | DMS ka renewal switch; test renewal sirf tab jab `ENGINE_ALLOW_TEST_PAYMENT_PROVISION=1` aur ResellerOS isi machine par ho |
+| ResellerOS `.env.local` | `NO_OWNER_PAYMENT_ALERT_LOCAL=1` | test payment par owner ko "payment received" email nahi; live server par hamesha jaata hai |
+| DMS `.env.docker` | `DIRECTADMIN_*` = server1.anutech.in, `ENGINE_HOSTING_PROVISION_LIVE=1` | har test account **asli** server1 par banta hai |
+| DMS `.env.docker` | `ENGINE_ALLOW_TEST_PAYMENT_PROVISION=1` | test payment par DMS bhi account banata hai (sirf jab ResellerOS isi machine par ho) |
+| DMS `.env.docker` | `RESELLERCLUB_*` = asli account 1299294 | domain search/price asli; admin se register/renew = asli domain |
+| DMS `.env.docker` | `RAZORPAY_KEY_*` = test keys | koi asli paisa nahi |
+| Supabase (local) | `ai_autonomy`: test workspace `22222222…` me `provisioning.activate = auto` | paid hosting bina insaan ke |
+
+- **Hosting job:** `cd production && node scripts/local-cron.mjs` — har minute (live par Cloud Scheduler).
+- **Test account hatana:** DMS admin → Hosting → ⋮ → Terminate Account → Yes, Delete. Server1 se bhi
+  hatata hai aur customer ko "hosting removed" email jaata hai. Warning "DA deletion …" aaye to
+  server1 par haath se hatao.
+- **Test domain:** koi bhi random naam chalega (Pawan, 3 Oct 2026).
+- **Band karna:** DMS `.env.docker` se `ENGINE_HOSTING_PROVISION_LIVE` / `ENGINE_ALLOW_TEST_PAYMENT_PROVISION`
+  hatao aur `docker compose up -d dms`. Purane placeholder values ki backup Claude ke scratchpad me thi.
+- **Restart ke baad:** Docker Desktop "start at sign-in" on kiya gaya hai; ResellerOS
+  (`npm run dev -- -p 4320`) aur local-cron khud nahi chalte.
+
 ## Karne ka order
 
 1. **§2 token** — do jagah theek karta hai (CLI + MCP), aur §1 ki aapki line kaam karne

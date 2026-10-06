@@ -11,6 +11,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -22,7 +23,11 @@ import { Icon } from "@/components/ui/icon";
 import { useItems } from "@/lib/queries/items";
 import { useCustomers, useCreateCustomer } from "@/lib/queries/customers";
 import { useCreateProjectQuote, useUpdateProjectQuote, useUpdateProjectFutureMilestones, useCreateProjectDirectInvoice, useProjectSale, type MilestoneInput, type ProjectQuoteLine, type ProjectSaleWithTotals } from "@/lib/queries/projects";
-import { rupee } from "@/lib/utils";
+import { rupee, GST_STATE_BY_CODE } from "@/lib/utils";
+import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { istToday } from "@/lib/dates/ist";
 
 interface Props {
@@ -63,7 +68,8 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   const [email, setEmail]             = React.useState("");
   const [phone, setPhone]             = React.useState("");
   const [gstin, setGstin]             = React.useState("");
-  const [stateName, setStateName]     = React.useState("");
+  /* R-174: GST state code ("" = not chosen, "export" = outside India) — free text never mapped. */
+  const [stateCode, setStateCode]     = React.useState("");
   const [title, setTitle]             = React.useState("");
   const [description, setDescription]   = React.useState("");
   const [gstRate, setGstRate]           = React.useState("18");
@@ -80,7 +86,7 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   React.useEffect(() => {
     if (!open) {
       prefilledFor.current = null;
-      setCustomerId(""); setNewName(""); setContactName(""); setEmail(""); setPhone(""); setGstin(""); setStateName("");
+      setCustomerId(""); setNewName(""); setContactName(""); setEmail(""); setPhone(""); setGstin(""); setStateCode("");
       setTitle(""); setDescription(""); setGstRate("18"); setInterState(false);
       setLines([{ name: "", qty: "1", rate: "" }]); setRows([{ label: "Advance", amount: "", due: "" }]);
       return;
@@ -120,6 +126,19 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   const isNewCustomer = customerId === "";
   const selectedCustomer = customers?.find((c) => c.id === customerId);
   const effectiveName = isNewCustomer ? newName.trim() : (selectedCustomer?.name ?? "");
+
+  /* R-174 (6 Oct 2026): the IGST box was ticked by hand, so a Kerala customer could go out
+     as CGST + SGST if nobody remembered to tick it. On a NEW quote the head now follows the
+     buyer's state against ours (same rule as everywhere: isInterStateSupply); the box stays
+     editable as an override. Never touches an existing project — its head is already set. */
+  const { data: me } = useCurrentUser();
+  const buyerCode = isNewCustomer
+    ? (stateCode && stateCode !== EXPORT_STATE ? stateCode : stateCodeFromGstin(gstin))
+    : (selectedCustomer?.state_code ?? stateCodeFromGstin(selectedCustomer?.gstin));
+  React.useEffect(() => {
+    if (editProject || !buyerCode || !me?.tenantStateCode) return;
+    setInterState(isInterStateSupply(buyerCode, me.tenantStateCode));
+  }, [editProject, buyerCode, me?.tenantStateCode]);
 
   const lineAmount = (l: LineRow) => Math.max(0, Math.round(Number(l.qty) || 0)) * Math.max(0, Math.round(Number(l.rate) || 0));
   const taxableNum = lines.reduce((s, l) => s + lineAmount(l), 0);
@@ -183,6 +202,10 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
       toast.error(`Due date for "${badDue.label || "milestone"}" can't be before today.`);
       return;
     }
+    if (!editProject && isNewCustomer && !stateCode && !stateCodeFromGstin(gstin)) {
+      toast.error("Choose the new customer's state", { className: NEEDS_INPUT_CLASS, description: "The GST invoice needs it — it decides CGST + SGST or IGST. A valid GSTIN fills it by itself." });
+      return;
+    }
     const lineItems: ProjectQuoteLine[] = lines
       .filter((l) => l.name.trim() && lineAmount(l) > 0)
       .map((l) => ({
@@ -219,7 +242,8 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
           contact_email: email.trim() || null,
           contact_phone: phone.trim() || null,
           gstin:         gstin.trim() || null,
-          state:         stateName.trim() || null,
+          ...(stateCode === EXPORT_STATE ? { country: "Outside India" }
+            : stateCode ? { state: GST_STATE_BY_CODE[stateCode] ?? null, state_code: stateCode } : {}),
         });
         cid = cust.id; cname = cust.name;
       }
@@ -290,7 +314,7 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
               <Input aria-label="Email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <div className="grid grid-cols-2 gap-2">
                 <Input aria-label="GSTIN" placeholder="GSTIN" className="font-mono" value={gstin} onChange={(e) => setGstin(e.target.value)} />
-                <Input aria-label="State" placeholder="State (e.g. Maharashtra)" value={stateName} onChange={(e) => setStateName(e.target.value)} />
+                <GstStateSelect id="pq-state" value={stateCode} onChange={setStateCode} allowExport required={false} />
               </div>
               <p className="text-3xs text-ink-3">GSTIN + state make the tax invoice GST-correct (CGST/SGST vs IGST + the customer&apos;s ITC).</p>
             </div>
@@ -354,6 +378,9 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
             <label className="flex items-center gap-2 text-sm text-ink-2 mt-6">
               <input type="checkbox" checked={interState} onChange={(e) => setInterState(e.target.checked)} disabled={partialLock} className="rounded border-hairline disabled:opacity-60" />
               Inter-state (IGST)
+              {!editProject && buyerCode && me?.tenantStateCode && (
+                <span className="text-3xs text-ink-3">· set from {GST_STATE_BY_CODE[buyerCode] ?? buyerCode} ({buyerCode})</span>
+              )}
             </label>
           </div>
 

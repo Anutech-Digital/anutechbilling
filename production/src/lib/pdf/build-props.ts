@@ -11,7 +11,7 @@
  *
  * interState (GST head) uses the shared place-of-supply helper.
  */
-import { isInterStateSupply, isExportSupply } from "../gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "../gst/place-of-supply";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
@@ -147,6 +147,16 @@ export function buildInvoicePdfProps(args: {
     // migration 0166; old customers with city inside `address` are unaffected).
     customerAddress: [customer?.address, customer?.city].filter(Boolean).join(", ") || null,
     customerState:   customer?.state ?? null,
+    /* R-175 (6 Oct 2026): Rule 46(n) — the state NAME and CODE for the place of supply. The
+       in-app dialog printed "Haryana (06) · IGST" (R-043) but this builder never passed it, so
+       every server PDF — the one the customer is emailed — fell back to "Inter-state (IGST)".
+       Same inputs as tax-invoice-dialog: the code frozen on the invoice at issue. */
+    placeOfSupply: placeOfSupplyLabel({
+      posCode:    invoice.pos_state_code,
+      interState,
+      isExport:   isExportSupply(customer?.country ?? null),
+      country:    customer?.country ?? null,
+    }),
     tenantName:    tenant.name,
     tenantGstin:   tenant.gstin,
     tenantEmail:   tenant.email,
@@ -209,6 +219,9 @@ export function buildQuotePdfProps(args: {
     contactName:   customer?.contact_name ?? null,
     contactEmail:  customer?.contact_email ?? null,
     contactPhone:  customer?.contact_phone ?? null,
+    // R-175: state (today's customer, else the prospect state the quote was priced for) + GSTIN.
+    customerState: customer?.state ?? (quote as { prospect_state?: string | null }).prospect_state ?? null,
+    customerGstin: customer?.gstin ?? null,
     createdDate:   quote.created_date,
     expiresDate:   quote.expires_date,
     validityDays,
@@ -227,6 +240,15 @@ export function buildQuotePdfProps(args: {
       { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
     ),
     isExport:      isExportSupply(customer?.country),
+    /* R-175: name the buyer's state, as the invoice does — today's customer, else the
+       prospect state the quote was priced for. */
+    placeOfSupply: placeOfSupplyLabel({
+      posCode: customer?.state_code ?? (quote as { prospect_state_code?: string | null }).prospect_state_code ?? null,
+      interState: isInterStateSupply(
+        customer?.state_code, tenant.state_code,
+        { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
+      ),
+    }),
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
     billingCycle:  quote.billing_cycle,

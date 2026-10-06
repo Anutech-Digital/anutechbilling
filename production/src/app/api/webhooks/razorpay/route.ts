@@ -28,9 +28,10 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { rupee } from "@/lib/utils";
 import { sendEmail } from "@/lib/email/send";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
+import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { razorpayMode } from "@/lib/payments/razorpay-readiness";
-import { decideProvisioning, type ProvisioningVendor } from "@/lib/provisioning/provisioning";
+import { decideProvisioning, testPaymentProvisioningAllowed, type ProvisioningVendor } from "@/lib/provisioning/provisioning";
 import { queueProvisioning } from "@/lib/provisioning/provisioning.server";
 import { provisioningProducts, productAmountPaid } from "@/lib/provisioning/products";
 import { domainRegistrationEnabled, hostingProvisioningEnabled } from "@/lib/provisioning/domain-registration";
@@ -526,6 +527,7 @@ export async function POST(request: NextRequest) {
             ? (renewalPlan ? domainRenewalEnabled() : domainRegistrationEnabled()) && commandsConfigured()
             : false,
       dialMode,
+      allowTestPayment: testPaymentProvisioningAllowed(),
     });
 
     if (provisioning.action !== "refuse") {
@@ -598,6 +600,12 @@ export async function POST(request: NextRequest) {
   const sellerName   = seller.name?.trim() || "your reseller";
   const sellerPerson = seller.contact_name?.trim() || sellerName;
   const sellerPhone  = seller.phone?.trim() || "";
+  /* The storefront signs as the company and takes replies at support (lib/email/storefront-voice.ts);
+     a reseller tenant signs as itself and takes replies at its owner's address. */
+  const voice = storefrontVoice(quote.tenant_id);
+  const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
+  const contactWho = voice ? "our team" : sellerPerson;
+  const customerSignOff = voice ? voice.signOff : `— ${sellerPerson}\n   ${sellerName}`;
 
   const customerEmail = payment?.email ?? notes.email ?? "";
   const customerName  = notes.contact ?? notes.customerName ?? "";
@@ -638,10 +646,10 @@ export async function POST(request: NextRequest) {
 
   await Promise.allSettled([
     // Customer order confirmation
-    customerEmail && owner.ok && sendEmail({
+    customerEmail && customerReplyTo && sendEmail({
       to:      customerEmail,
       from:    FROM_EMAIL,
-      replyTo: owner.to,
+      replyTo: customerReplyTo,
       kind:    "razorpay_payment_customer",
       route:   { tenantId: quote.tenant_id },
       subject: `Payment received · ${quote.id} · ${amountFmt}`,
@@ -659,15 +667,14 @@ ORDER SUMMARY
 ${whatNext}
 
 ${invoiceLine}${
-  sellerPhone ? `\n\nIf you need anything, WhatsApp ${sellerPerson} on ${sellerPhone}.` : ""
+  sellerPhone ? `\n\nIf you need anything, WhatsApp ${contactWho} on ${sellerPhone}.` : ""
 }
 
-— ${sellerPerson}
-   ${sellerName}`,
+${customerSignOff}`,
     }),
 
-    // Seller alert — money in the bank
-    owner.ok && sendEmail({
+    // Seller alert — money in the bank (switched off on a developer machine only)
+    owner.ok && ownerPaymentAlertAllowed() && sendEmail({
       to:      owner.to,
       from:    FROM_EMAIL,
       kind:    "razorpay_payment_owner",
@@ -823,10 +830,11 @@ async function handlePaymentFailed(
   } else {
     const { alert: owner, tenant: seller } = await loadOwnerAlert(admin, quote.tenant_id);
     const sellerName = seller?.name?.trim() || "your reseller";
+    const voice = storefrontVoice(quote.tenant_id);
     const r = await sendEmail({
       to,
       from: FROM_EMAIL,
-      replyTo: owner.ok ? owner.to : undefined,
+      replyTo: voice ? voice.replyTo : owner.ok ? owner.to : undefined,
       kind: "razorpay_payment_failed_retry",
       route: { tenantId: quote.tenant_id },
       subject: `Your payment didn't go through · ${quote.id} · ${amountFmt}`,
@@ -841,7 +849,7 @@ You can try again — same order, same price — here:
 
 If it fails again, just reply to this email and we'll help.
 
-— ${sellerName}`,
+${voice ? voice.signOff : `— ${sellerName}`}`,
     }).catch((e: unknown) => ({ status: "failed" as const, errorMessage: e instanceof Error ? e.message : String(e) }));
     emailOutcome = r.status === "failed"
       ? `Retry email to ${to} FAILED (${r.errorMessage ?? "unknown"}). Retry link: ${retryUrl}`

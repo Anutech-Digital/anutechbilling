@@ -113,7 +113,7 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
       { h: "Sharing", p: "We share data only with the vendor whose product you bought, with payment processors to collect payment, and where compelled by law. Each processor is bound by contract to purpose limitation." },
       { h: "Retention", p: "Invoices and tax records are retained as long as GST law requires. Other personal data is deleted within ninety days of a valid deletion request or of the account closing, whichever is later." },
       { h: "Your rights", p: "You may ask for access to your data, correction of it, or its deletion, and you may nominate another person to exercise these rights on your behalf. Write to us and we respond inside thirty days." },
-      { h: "Grievances", p: "Write to support@anutech.in with \"Grievance\" in the subject. If it is not resolved, you may escalate to the Data Protection Board of India." },
+      { h: "Grievances", p: "Our Grievance Officer is Anutech Digital Pvt Ltd, Rohini, Delhi. Write to support@anutech.in with \"Grievance\" in the subject. If it is not resolved, you may escalate to the Data Protection Board of India." },
     ],
   },
   refund: {

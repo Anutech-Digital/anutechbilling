@@ -179,9 +179,9 @@ export default function PrivacyPage() {
       </Section>
 
       <Section id="contact" n={9} title="Grievance contact / DPO">
+        {/* The company, not a named person, is the grievance officer (Pawan, 5 Oct 2026). */}
         <p className="space-y-1">
-          <strong className="text-ink">Data Protection Officer:</strong><br />
-          {PLATFORM_OPERATOR.directors[0]}<br />
+          <strong className="text-ink">Grievance Officer / Data Protection Officer:</strong><br />
           {PLATFORM_OPERATOR.legalName}<br />
           {PLATFORM_OPERATOR.address}<br />
           Email:{" "}

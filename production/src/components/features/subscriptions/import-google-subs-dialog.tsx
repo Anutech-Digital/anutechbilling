@@ -237,6 +237,10 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
       toast.success(
         `Added ${inserted} subscription${inserted === 1 ? "" : "s"}` +
         (createNew && counts.newCustomers > 0 ? ` · ${counts.newCustomers} new customers` : ""),
+        /* R-174: Google's export has no state — new customers need one before a GST invoice. */
+        createNew && counts.newCustomers > 0
+          ? { description: `Google's list has no state — pick it for the new customers in Customers → "State missing" before invoicing.` }
+          : undefined,
       );
       onComplete?.();
       onOpenChange(false);
