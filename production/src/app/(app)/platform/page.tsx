@@ -181,6 +181,7 @@ export default function PlatformSignupsPage() {
 
         <div className="w-full sm:w-72">
           <Input
+            aria-label="Search resellers"
             placeholder="Search reseller name, email, phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -330,8 +331,9 @@ export default function PlatformSignupsPage() {
           {editTarget && (
             <div className="space-y-3 py-2 text-xs">
               <div>
-                <label className="font-semibold text-ink-2 block mb-1">Business Name</label>
+                <label htmlFor="pf-name" className="font-semibold text-ink-2 block mb-1">Business Name</label>
                 <Input
+                  id="pf-name"
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                   className="text-xs"
@@ -340,8 +342,9 @@ export default function PlatformSignupsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-ink-2 block mb-1">Account Tier</label>
+                  <label htmlFor="pf-tier" className="font-semibold text-ink-2 block mb-1">Account Tier</label>
                   <select
+                    id="pf-tier"
                     value={editForm.tier}
                     onChange={(e) => setEditForm({ ...editForm, tier: e.target.value })}
                     className="w-full h-9 rounded-md border border-hairline bg-paper text-xs px-2 text-ink"
@@ -352,8 +355,9 @@ export default function PlatformSignupsPage() {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-ink-2 block mb-1">Phone Number</label>
+                  <label htmlFor="pf-phone" className="font-semibold text-ink-2 block mb-1">Phone Number</label>
                   <Input
+                    id="pf-phone"
                     value={editForm.phone}
                     onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
                     placeholder="+91 98765 43210"
@@ -364,8 +368,9 @@ export default function PlatformSignupsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-ink-2 block mb-1">GSTIN</label>
+                  <label htmlFor="pf-gstin" className="font-semibold text-ink-2 block mb-1">GSTIN</label>
                   <Input
+                    id="pf-gstin"
                     value={editForm.gstin}
                     onChange={(e) => setEditForm({ ...editForm, gstin: e.target.value })}
                     placeholder="07AAAAA0000A1Z5"
@@ -374,8 +379,9 @@ export default function PlatformSignupsPage() {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-ink-2 block mb-1">State</label>
+                  <label htmlFor="pf-state" className="font-semibold text-ink-2 block mb-1">State</label>
                   <Input
+                    id="pf-state"
                     value={editForm.state}
                     onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
                     placeholder="Delhi"
@@ -392,6 +398,7 @@ export default function PlatformSignupsPage() {
                 <button
                   type="button"
                   onClick={() => setEditForm({ ...editForm, activated: !editForm.activated })}
+                  aria-pressed={editForm.activated}
                   className={`px-3 py-1 text-xs font-semibold rounded-full border transition-colors ${
                     editForm.activated
                       ? "bg-emerald/15 border-emerald text-emerald-ink"
@@ -441,10 +448,11 @@ export default function PlatformSignupsPage() {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-ink-2 block mb-1.5">
+                <label htmlFor="pf-delete-confirm" className="text-xs font-semibold text-ink-2 block mb-1.5">
                   To confirm deletion, type <span className="font-bold text-danger select-all font-mono">"{deleteTarget.name}"</span> below:
                 </label>
                 <Input
+                  id="pf-delete-confirm"
                   value={confirmInput}
                   onChange={(e) => setConfirmInput(e.target.value)}
                   placeholder={`Type "${deleteTarget.name}" exactly...`}

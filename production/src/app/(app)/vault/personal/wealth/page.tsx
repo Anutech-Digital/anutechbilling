@@ -267,17 +267,17 @@ export default function PersonalWealthPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis tarah ka</label>
+                <label htmlFor="vw-kind" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis tarah ka</label>
                 <Select value={form.asset_class} onValueChange={(v) => setForm((f) => ({ ...f, asset_class: v as AssetClass }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="vw-kind"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {ASSET_CLASSES.map((c) => <SelectItem key={c} value={c}>{ASSET_CLASS_LABEL[c]}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Units (optional)</label>
-                <Input
+                <label htmlFor="vw-units" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Units (optional)</label>
+                <Input id="vw-units"
                   value={form.units}
                   onChange={(e) => setForm((f) => ({ ...f, units: e.target.value }))}
                   placeholder="120.5"
@@ -287,8 +287,8 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Naam</label>
-              <Input
+              <label htmlFor="vw-name" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Naam</label>
+              <Input id="vw-name"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="Parag Parikh Flexi Cap / Dwarka flat"
@@ -297,8 +297,8 @@ export default function PersonalWealthPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Lagaya tha (₹)</label>
-                <Input
+                <label htmlFor="vw-invested" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Lagaya tha (₹)</label>
+                <Input id="vw-invested"
                   value={form.invested}
                   onChange={(e) => setForm((f) => ({ ...f, invested: e.target.value }))}
                   placeholder="500000"
@@ -306,8 +306,8 @@ export default function PersonalWealthPage() {
                 />
               </div>
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Aaj ki value (₹)</label>
-                <Input
+                <label htmlFor="vw-current-value" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Aaj ki value (₹)</label>
+                <Input id="vw-current-value"
                   value={form.current_value}
                   onChange={(e) => setForm((f) => ({ ...f, current_value: e.target.value }))}
                   placeholder="640000"
@@ -317,8 +317,8 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Value kis din ki hai</label>
-              <Input
+              <label htmlFor="vw-value-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Value kis din ki hai</label>
+              <Input id="vw-value-date"
                 type="date"
                 value={form.valued_on}
                 onChange={(e) => setForm((f) => ({ ...f, valued_on: e.target.value }))}
@@ -329,8 +329,8 @@ export default function PersonalWealthPage() {
             </div>
 
             <div>
-              <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
-              <Input
+              <label htmlFor="vw-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <Input id="vw-note"
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                 placeholder="optional"

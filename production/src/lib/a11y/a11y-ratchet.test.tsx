@@ -32,8 +32,20 @@ const report = (): Report =>
     maxBuffer: 64 * 1024 * 1024,
   })) as Report;
 
-/** Measured 6 Oct 2026 after R-271. Only ever lower these. */
-const BASELINE = { "label-no-for": 96, "input-no-name": 87 } as const;
+/** Measured 6 Oct 2026 after R-271; lowered by R-288 (96/87 → 57/52). Only ever lower these. */
+const BASELINE = { "label-no-for": 57, "input-no-name": 52 } as const;
+
+/** R-288: screens that hold secrets or money stay at zero untied labels / unnamed inputs. */
+const ZERO_FILES = [
+  "components/features/contacts/contact-form.tsx",
+  "app/(app)/vault/personal/banking/page.tsx",
+  "app/(app)/vault/personal/wealth/page.tsx",
+  "app/(app)/vault/personal/expenses/page.tsx",
+  "app/(app)/platform/page.tsx",
+  "components/features/integrations/razorpay-configure-dialog.tsx",
+  "components/features/integrations/whatsapp-configure-dialog.tsx",
+  "components/features/integrations/sandbox-configure-dialog.tsx",
+];
 
 afterEach(cleanup);
 
@@ -69,9 +81,9 @@ describe("FormField ties its label to its control (R-271)", () => {
 describe("a11y ratchet (R-271)", () => {
   const r = report();
 
-  it("the contact form has no untied label and no unnamed input", () => {
+  it.each(ZERO_FILES)("%s has no untied label and no unnamed input", (file) => {
     const hits = Object.values(r.detail).flat()
-      .filter((h) => h.file.endsWith("components/features/contacts/contact-form.tsx"))
+      .filter((h) => h.file.endsWith(file))
       .filter((h) => h.kind === "label-no-for" || h.kind === "input-no-name")
       .map((h) => `${h.kind}:${h.lines.join(",")}`);
     expect(hits).toEqual([]);

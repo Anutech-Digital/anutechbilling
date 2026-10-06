@@ -170,9 +170,9 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
 
             {/* API key + secret inputs */}
             <div>
-              <Label>API Key *</Label>
+              <Label htmlFor="sbx-api-key">API Key *</Label>
               <div className="flex gap-2">
-                <Input
+                <Input id="sbx-api-key"
                   type={showKey ? "text" : "password"}
                   className="font-mono"
                   placeholder="key_test_..."
@@ -180,7 +180,7 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
                   onChange={(e) => setApiKey(e.target.value)}
                   autoComplete="off"
                 />
-                <Button type="button" variant="ghost" size="sm" onClick={() => setShowKey((v) => !v)}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowKey((v) => !v)} aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey}>
                   <Icon name={showKey ? "eye_off" : "eye"} size={14} />
                 </Button>
               </div>
@@ -190,9 +190,9 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div>
-              <Label>API Secret *</Label>
+              <Label htmlFor="sbx-api-secret">API Secret *</Label>
               <div className="flex gap-2">
-                <Input
+                <Input id="sbx-api-secret"
                   type={showSecret ? "text" : "password"}
                   className="font-mono"
                   placeholder="secret_..."
@@ -200,7 +200,7 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
                   onChange={(e) => setApiSecret(e.target.value)}
                   autoComplete="off"
                 />
-                <Button type="button" variant="ghost" size="sm" onClick={() => setShowSecret((v) => !v)}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowSecret((v) => !v)} aria-label={showSecret ? "Hide API secret" : "Show API secret"} aria-pressed={showSecret}>
                   <Icon name={showSecret ? "eye_off" : "eye"} size={14} />
                 </Button>
               </div>
@@ -210,8 +210,8 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div>
-              <Label>API base URL</Label>
-              <Input
+              <Label htmlFor="sbx-api-base-url">API base URL</Label>
+              <Input id="sbx-api-base-url"
                 type="text"
                 className="font-mono"
                 value={apiBase}

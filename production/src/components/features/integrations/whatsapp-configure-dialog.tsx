@@ -189,8 +189,8 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div>
-              <Label>Phone Number ID *</Label>
-              <Input
+              <Label htmlFor="wa-phone-number-id">Phone Number ID *</Label>
+              <Input id="wa-phone-number-id"
                 className="font-mono"
                 placeholder="123456789012345"
                 value={phoneNumberId}
@@ -203,9 +203,9 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div className="min-w-0">
-              <Label>Access Token *</Label>
+              <Label htmlFor="wa-access-token">Access Token *</Label>
               <div className="flex gap-2 min-w-0">
-                <Input
+                <Input id="wa-access-token"
                   type={showToken ? "text" : "password"}
                   className="font-mono min-w-0 flex-1"
                   placeholder="EAA..."
@@ -213,7 +213,7 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
                   onChange={(e) => setAccessToken(e.target.value)}
                   autoComplete="off"
                 />
-                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowToken((v) => !v)}>
+                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowToken((v) => !v)} aria-label={showToken ? "Hide access token" : "Show access token"} aria-pressed={showToken}>
                   <Icon name={showToken ? "eye_off" : "eye"} size={14} />
                 </Button>
               </div>
@@ -223,8 +223,8 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div>
-              <Label>Business Account ID (WABA) — optional</Label>
-              <Input
+              <Label htmlFor="wa-waba-id">Business Account ID (WABA) — optional</Label>
+              <Input id="wa-waba-id"
                 className="font-mono"
                 placeholder="987654321098765"
                 value={businessAccountId}
@@ -265,9 +265,9 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 min-w-0">
                   <div className="min-w-0">
-                    <Label>Verify Token</Label>
+                    <Label htmlFor="wa-verify-token">Verify Token</Label>
                     <div className="flex gap-2 min-w-0">
-                      <Input
+                      <Input id="wa-verify-token"
                         className="font-mono min-w-0 flex-1"
                         placeholder="auto-generated"
                         value={verifyToken}
@@ -287,9 +287,9 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
                     </p>
                   </div>
                   <div className="min-w-0">
-                    <Label>App Secret — optional</Label>
+                    <Label htmlFor="wa-app-secret">App Secret — optional</Label>
                     <div className="flex gap-2 min-w-0">
-                      <Input
+                      <Input id="wa-app-secret"
                         type={showSecret ? "text" : "password"}
                         className="font-mono min-w-0 flex-1"
                         placeholder="x-hub-signature key"
@@ -297,7 +297,7 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
                         onChange={(e) => setAppSecret(e.target.value)}
                         autoComplete="off"
                       />
-                      <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowSecret((v) => !v)}>
+                      <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowSecret((v) => !v)} aria-label={showSecret ? "Hide app secret" : "Show app secret"} aria-pressed={showSecret}>
                         <Icon name={showSecret ? "eye_off" : "eye"} size={14} />
                       </Button>
                     </div>
