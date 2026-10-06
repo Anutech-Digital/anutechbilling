@@ -33,6 +33,7 @@ import {
   useEmailSuppressions, useRemoveSuppression,
 } from "@/lib/queries/marketing-hub";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { NavDirectory } from "@/components/layout/nav-directory";
 
 const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
@@ -155,10 +156,10 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
         {external ? (
           <a href={account} target="_blank" rel="noopener noreferrer"
              className="inline-flex items-center gap-1 text-xs font-medium text-amber-ink hover:underline">
-            Account kholo <Icon name="external" size={11} />
+            Open account <Icon name="external" size={11} />
           </a>
         ) : (
-          <Link href={account as Route} className="text-xs font-medium text-amber-ink hover:underline">Kholo →</Link>
+          <Link href={account as Route} className="text-xs font-medium text-amber-ink hover:underline">{COPY.open} →</Link>
         )}
         {r.inApp.map((l) => (
           <Link key={l.href + l.label} href={l.href as Route}
@@ -168,7 +169,7 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
         ))}
         <span className="flex-1" />
         <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-ink-3 hover:text-ink" aria-expanded={open}>
-          {open ? "Steps chhupao" : "Setup steps"}
+          {open ? "Hide steps" : "Setup steps"}
         </button>
         <Button variant="outline" size="sm" onClick={onEdit}>Update</Button>
       </div>
@@ -274,12 +275,12 @@ function OptOuts() {
                 <span className="text-xs text-ink-3">{formatDate(s.created_at)}</span>
                 <Button variant="ghost" size="sm" onClick={async () => {
                   const ok = await confirm({
-                    title: "Wapas list mein daalein?",
-                    body: `${s.email} ne khud unsubscribe kiya tha. Sirf tab hatao jab unhone khud dobara mail maange hon.`,
-                    confirmLabel: "Haan, unhone maanga hai", cancelLabel: "Nahi",
+                    title: "Add back to the mailing list?",
+                    body: `${s.email} unsubscribed themselves. Only remove this if they asked for emails again.`,
+                    confirmLabel: "Yes, they asked", cancelLabel: COPY.cancel,
                   });
                   if (ok) remove.mutate(s.email);
-                }}>Hatao</Button>
+                }}>{COPY.remove}</Button>
               </span>
             </div>
           ))}

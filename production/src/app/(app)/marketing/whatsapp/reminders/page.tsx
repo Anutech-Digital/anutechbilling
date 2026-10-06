@@ -32,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { cn, formatDate } from "@/lib/utils";
 import { paramCount } from "@/lib/marketing/whatsapp-broadcast";
 import {
@@ -67,7 +68,7 @@ export default function WhatsAppRemindersPage() {
         <Card className="py-2">
           <EmptyState icon="whatsapp" title="Settings load nahi hui"
             body={q.error instanceof Error ? q.error.message : "Page refresh karke dobara try kariye."} />
-          <div className="flex justify-center pb-4"><Button variant="outline" onClick={() => q.refetch()}>Dobara try karo</Button></div>
+          <div className="flex justify-center pb-4"><Button variant="outline" onClick={() => q.refetch()}>{COPY.tryAgain}</Button></div>
         </Card>
       ) : (
         <>
@@ -98,7 +99,7 @@ function BeforeYouStart({ v }: { v: WaRemindersView }) {
         <li>
           <b>Automation dial allow kare.</b> &ldquo;Send a renewal reminder&rdquo; aur &ldquo;Chase an overdue invoice&rdquo; dono{" "}
           <b>auto</b> par hon — hold ya off par WhatsApp nahi jaata.{" "}
-          <Link href="/automation" className="text-amber-ink hover:underline">Automation kholo</Link>
+          <Link href="/automation" className="text-amber-ink hover:underline">Open automation</Link>
           <span className="ml-2 inline-flex flex-wrap gap-1.5 align-middle">
             {v.dial.killSwitch && <Badge kind="danger" size="sm">Master switch band</Badge>}
             <Badge kind={v.dial.renewal === "auto" && !v.dial.killSwitch ? "success" : "warning"} size="sm">Renewal: {DIAL_LABEL[v.dial.renewal] ?? v.dial.renewal}</Badge>
@@ -109,7 +110,7 @@ function BeforeYouStart({ v }: { v: WaRemindersView }) {
           <b>WhatsApp Business API connect ho.</b>{" "}
           <Link href="/settings" className="text-amber-ink hover:underline">Settings → Integrations</Link>
           <span className="ml-2 align-middle">
-            <Badge kind={v.connected ? "success" : "warning"} size="sm">{v.connected ? "Connected" : "Connect nahi hai"}</Badge>
+            <Badge kind={v.connected ? "success" : "warning"} size="sm">{v.connected ? "Connected" : "Not connected"}</Badge>
           </span>
         </li>
       </ol>
@@ -159,13 +160,13 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
         <div className="flex flex-wrap items-center gap-3">
           <Button size="sm" disabled={submit.isPending} onClick={async () => {
             const ok = await confirm({
-              title: `${pending.length} template Meta par bhejein?`,
-              body: `Ye starter templates (UTILITY, English) aapke WhatsApp Business account se Meta ko approval ke liye jayenge: ${pending.map((s) => s.name).join(", ")}. Customer ko abhi kuch nahi jaata.`,
-              confirmLabel: "Haan, bhejo", cancelLabel: "Nahi",
+              title: `Send ${pending.length} templates to Meta?`,
+              body: `These starter templates (UTILITY, English) go from your WhatsApp Business account to Meta for approval: ${pending.map((s) => s.name).join(", ")}. Nothing is sent to customers yet.`,
+              confirmLabel: "Yes, send", cancelLabel: COPY.cancel,
             });
             if (ok) submit.mutate();
           }}>
-            {submit.isPending ? "Meta ko bhej rahe hain…" : `Meta par approval ke liye bhejo (${pending.length} template)`}
+            {submit.isPending ? "Sending to Meta…" : `Send for Meta approval (${pending.length})`}
           </Button>
           <span className="text-xs text-ink-3">
             WhatsApp Manager mein login karke type karne ki zaroorat nahi. Neeche har kind ke &ldquo;Starter wording&rdquo; se copy karna bhi chalta hai.
@@ -178,7 +179,7 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
             {results.map((r) => (
               <li key={r.name} className="flex flex-wrap items-center gap-1.5">
                 <Badge kind={r.ok ? (r.status === "approved" ? "success" : "info") : "danger"} size="sm">
-                  {r.ok ? (r.status ?? "bheja") : "Nahi gaya"}
+                  {r.ok ? (r.status ?? "sent") : "Not sent"}
                 </Badge>
                 <span className="font-mono text-ink-2">{r.name}</span>
                 {r.error && <span className={r.ok ? "text-ink-3" : "text-rose-ink"}>{r.error}</span>}
@@ -188,7 +189,7 @@ function SubmitStarters({ v }: { v: WaRemindersView }) {
           <p className="text-xs text-ink-3">
             Approve hone par{" "}
             <Link href="/marketing/whatsapp" className="text-amber-ink hover:underline">Templates → Sync from Meta</Link>{" "}
-            dabao, phir neeche har kind par &ldquo;Template set karo&rdquo; — starter naam pehle se bhara milega.
+            dabao, phir neeche har kind par &ldquo;Set template&rdquo; — starter naam pehle se bhara milega.
           </p>
         </div>
       )}
@@ -206,11 +207,11 @@ function MasterSwitch({ v }: { v: WaRemindersView }) {
   async function toggle(next: boolean) {
     if (next) {
       const ok = await confirm({
-        title: "WhatsApp reminders ON karein?",
+        title: "Turn on WhatsApp reminders?",
         body: readyCount === 0
-          ? "Abhi kisi bhi kind ka template taiyaar nahi hai, to ON karne par bhi kuch nahi jayega — pehle neeche template set karo. Phir bhi ON karna hai?"
-          : `Agle cron run se ${readyCount} kind ke reminder customers ko WhatsApp par jaane lagenge. Bheja hua message wapas nahi hota.`,
-        confirmLabel: "Haan, ON karo", cancelLabel: "Nahi",
+          ? "No template is ready yet, so nothing will go out even when on — set a template below first. Turn on anyway?"
+          : `From the next cron run, reminders for ${readyCount} kinds go to customers on WhatsApp. A sent message can't be taken back.`,
+        confirmLabel: "Yes, turn on", cancelLabel: COPY.cancel,
       });
       if (!ok) return;
     }
@@ -282,16 +283,16 @@ function KindsCard({ v }: { v: WaRemindersView }) {
                   </p>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
-                  <Button variant="outline" size="sm" onClick={() => setEditing(k)}>{k.mapping ? "Edit" : "Template set karo"}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditing(k)}>{k.mapping ? "Edit" : "Set template"}</Button>
                   {k.mapping && (
                     <Button variant="ghost" size="sm" disabled={del.isPending} onClick={async () => {
                       const ok = await confirm({
-                        title: "Template hatayein?",
-                        body: `"${k.label}" ka WhatsApp band ho jayega; email chalta rahega. Template Meta se nahi hatega.`,
-                        danger: true, confirmLabel: "Hatao", cancelLabel: "Nahi",
+                        title: "Remove template?",
+                        body: `WhatsApp for "${k.label}" stops; email keeps going. The template stays in Meta.`,
+                        danger: true, confirmLabel: COPY.remove, cancelLabel: COPY.cancel,
                       });
                       if (ok) del.mutate(k.kind);
-                    }}>Hatao</Button>
+                    }}>{COPY.remove}</Button>
                   )}
                 </div>
               </li>
@@ -412,8 +413,8 @@ function MappingDialog({ kind, v, onClose }: { kind: ReminderKindView; v: WaRemi
             <p className="mt-1 whitespace-pre-wrap text-ink-2">{starter.body}</p>
             <p className="mt-1 text-ink-3">{starter.param_map.map((f, i) => `{{${i + 1}}} = ${REMINDER_PARAM_FIELDS[f].label}`).join(" · ")}</p>
             <Button variant="ghost" size="sm" className="mt-1" onClick={async () => {
-              try { await navigator.clipboard.writeText(starter.body); toast.success("Text copy hua — Meta par paste karo"); }
-              catch { toast.error("Copy nahi hua — text select karke copy karo"); }
+              try { await navigator.clipboard.writeText(starter.body); toast.success("Text copied — paste it in Meta"); }
+              catch { toast.error("Couldn't copy — select the text and copy it"); }
             }}>Copy text</Button>
           </details>
 

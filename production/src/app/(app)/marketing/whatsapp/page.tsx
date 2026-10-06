@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { toast } from "sonner";
 import { cn, formatDate } from "@/lib/utils";
 import {
@@ -104,7 +105,7 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
       <Card className="py-2">
         <EmptyState icon="whatsapp" title="Abhi koi approved template nahi"
           body="Templates tab mein starter template copy karo, Meta (WhatsApp Manager → Message templates) par same naam se submit karo. Approve hone par yahan status Approved karo ya Sync from Meta dabao." />
-        <div className="flex justify-center pb-4"><Button onClick={goTemplates}>Templates kholo</Button></div>
+        <div className="flex justify-center pb-4"><Button onClick={goTemplates}>Open templates</Button></div>
       </Card>
     );
   }
@@ -154,12 +155,12 @@ function BroadcastTab({ goTemplates }: { goTemplates: () => void }) {
           )}
           <Button disabled={p.recipients === 0 || !p.connected || send.isPending} onClick={async () => {
             const ok = await confirm({
-              title: `${p.recipients} logon ko WhatsApp bhejein?`,
-              body: "Bheja hua message wapas nahi hota. Bahut saare log block ya report karein to Meta number ki rating gira deta hai — sirf un logon ko bhejo jo aapko jaante hain.",
-              confirmLabel: "Haan, bhejo", cancelLabel: "Nahi",
+              title: `Send WhatsApp to ${p.recipients} people?`,
+              body: "A sent message can't be taken back. If many people block or report it, Meta lowers your number's rating — only send to people who know you.",
+              confirmLabel: "Yes, send", cancelLabel: COPY.cancel,
             });
             if (ok) send.mutate(input, { onSuccess: () => setP(null) });
-          }}>{send.isPending ? "Bhej rahe hain…" : `${p.recipients} ko bhejo`}</Button>
+          }}>{send.isPending ? "Sending…" : `Send to ${p.recipients}`}</Button>
         </div>
       )}
     </Card>
@@ -206,10 +207,10 @@ function TemplatesTab() {
                 <div className="flex gap-1.5">
                   <Button variant="outline" size="sm" onClick={() => setEditing({ ...t })}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={async () => {
-                    try { await navigator.clipboard.writeText(t.body); toast.success("Text copy hua — Meta par paste karo"); } catch { toast.error("Copy nahi hua"); }
+                    try { await navigator.clipboard.writeText(t.body); toast.success("Text copied — paste it in Meta"); } catch { toast.error("Couldn't copy"); }
                   }}>Copy text</Button>
                   <Button variant="ghost" size="sm" onClick={async () => {
-                    const ok = await confirm({ title: "Template hatayein?", body: `${t.name} sirf app se hatega, Meta se nahi.`, danger: true, confirmLabel: "Hatao", cancelLabel: "Nahi" });
+                    const ok = await confirm({ title: "Delete template?", body: `${t.name} is removed from the app only, not from Meta.`, danger: true, confirmLabel: COPY.delete, cancelLabel: COPY.cancel });
                     if (ok) del.mutate(t.id);
                   }}>Delete</Button>
                 </div>
@@ -342,11 +343,11 @@ function OptOutsTab() {
             <div key={o.phone} className="flex items-center justify-between py-2 text-sm">
               <span className="font-mono text-ink">{o.phone}</span>
               <span className="flex items-center gap-3 text-xs text-ink-3">
-                {o.reason === "stop" ? "STOP likha" : "Haath se"} · {formatDate(o.created_at)}
+                {o.reason === "stop" ? "Replied STOP" : "Manual"} · {formatDate(o.created_at)}
                 <Button variant="ghost" size="sm" onClick={async () => {
-                  const ok = await confirm({ title: "Opt-out hatayein?", body: "Sirf tab jab is vyakti ne khud dobara message maange hon.", confirmLabel: "Haan, unhone maanga", cancelLabel: "Nahi" });
+                  const ok = await confirm({ title: "Remove opt-out?", body: "Only if this person asked for messages again.", confirmLabel: "Yes, they asked", cancelLabel: COPY.cancel });
                   if (ok) remove.mutate(o.phone);
-                }}>Hatao</Button>
+                }}>{COPY.remove}</Button>
               </span>
             </div>
           ))}

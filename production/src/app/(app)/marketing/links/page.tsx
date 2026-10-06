@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { toast } from "sonner";
 import { cn, formatDate } from "@/lib/utils";
 import { LEAD_SOURCES, sourceLabel } from "@/lib/leads/lead-sources";
@@ -36,8 +37,8 @@ function siteOrigin(): string {
 }
 
 async function copy(text: string) {
-  try { await navigator.clipboard.writeText(text); toast.success("Link copy ho gaya"); }
-  catch { toast.error("Copy nahi hua — link select karke copy karo"); }
+  try { await navigator.clipboard.writeText(text); toast.success("Link copied"); }
+  catch { toast.error("Couldn't copy — select the link and copy it"); }
 }
 
 export default function TrackingLinksPage() {
@@ -186,12 +187,12 @@ export default function TrackingLinksPage() {
                       <Button variant="ghost" size="sm" onClick={() => copy(l.full_url)}>Copy</Button>
                       <Button variant="ghost" size="sm" onClick={async () => {
                         const ok = await confirm({
-                          title: "Link hatayein?",
-                          body: "Sirf list se hatega. Jo ad is link ko use kar raha hai wo chalta rahega, aur aayi hui leads ka source waisa hi rahega.",
-                          confirmLabel: "Haan, hatao", cancelLabel: "Nahi",
+                          title: "Remove link?",
+                          body: "Removes it from this list only. Any ad using this link keeps working, and leads that came in keep their source.",
+                          confirmLabel: COPY.yesRemove, cancelLabel: COPY.cancel,
                         });
                         if (ok) del.mutate(l.id);
-                      }}>Hatao</Button>
+                      }}>{COPY.remove}</Button>
                     </td>
                   </tr>
                 ))}

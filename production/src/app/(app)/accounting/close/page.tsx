@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { useMonthClose, useSetManualCheck } from "@/lib/queries/month-close";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -33,8 +34,8 @@ function periodLabel(p: string): string {
 
 const TONE: Record<CloseStep["status"], { icon: "check" | "alert" | "x" | "clock"; cls: string; label: string }> = {
   done: { icon: "check", cls: "text-emerald", label: "Done" },
-  todo: { icon: "x", cls: "text-rose", label: "Baaki" },
-  warn: { icon: "alert", cls: "text-amber-ink", label: "Dekho" },
+  todo: { icon: "x", cls: "text-rose", label: COPY.pending },
+  warn: { icon: "alert", cls: "text-amber-ink", label: COPY.check },
   na: { icon: "clock", cls: "text-ink-3", label: "N/A" },
 };
 
@@ -52,9 +53,9 @@ export default function MonthClosePage() {
   async function lock() {
     if (!data) return;
     const ok = await confirm({
-      title: `Books ${formatDate(data.facts.monthEnd)} tak lock karein?`,
-      body: "Us tareekh tak ki koi entry (kharcha, bank line, salary, tax, invoice, payment) app se badal ya mit nahi sakegi. Return file ho gaye hain — yahi sahi waqt hai.",
-      confirmLabel: "Haan, lock karo", cancelLabel: "Nahi",
+      title: `Lock books up to ${formatDate(data.facts.monthEnd)}?`,
+      body: "No entry up to that date (expense, bank line, salary, tax, invoice, payment) can be changed or deleted in the app. Do this after your returns are filed.",
+      confirmLabel: "Yes, lock", cancelLabel: COPY.cancel,
     });
     if (!ok) return;
     await update.mutateAsync({ books_locked_until: data.facts.monthEnd });
@@ -97,7 +98,7 @@ export default function MonthClosePage() {
               </div>
               {!close.locked && (
                 isOwner
-                  ? <Button variant="primary" disabled={!close.readyToLock || update.isPending} loading={update.isPending} onClick={lock} icon="lock">Books {formatDate(data.facts.monthEnd)} tak lock karo</Button>
+                  ? <Button variant="primary" disabled={!close.readyToLock || update.isPending} loading={update.isPending} onClick={lock} icon="lock">Lock books up to {formatDate(data.facts.monthEnd)}</Button>
                   : <span className="text-xs text-ink-3">Lock sirf owner kar sakta hai</span>
               )}
             </div>
@@ -128,11 +129,11 @@ export default function MonthClosePage() {
                       {s.kind === "manual" && (
                         <Button size="sm" variant={s.status === "done" ? "ghost" : "primary"} disabled={tick.isPending}
                           onClick={() => tick.mutate({ period, key: s.key, done: s.status !== "done" })}>
-                          {s.status === "done" ? "Untick" : "Ho gaya ✓"}
+                          {s.status === "done" ? "Untick" : `${COPY.done} ✓`}
                         </Button>
                       )}
                       {s.href && s.status !== "na" && s.key !== "lock" && (
-                        <Link href={s.href as Route} className="text-xs text-amber-ink underline whitespace-nowrap">Kholo →</Link>
+                        <Link href={s.href as Route} className="text-xs text-amber-ink underline whitespace-nowrap">{COPY.open} →</Link>
                       )}
                     </div>
                   </div>

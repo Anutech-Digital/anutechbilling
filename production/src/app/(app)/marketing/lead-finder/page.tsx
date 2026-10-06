@@ -21,6 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { cn, formatDate } from "@/lib/utils";
 import { PRODUCT_LABEL, MX_LABEL } from "@/lib/leads/lead-finder";
 import { readContact } from "@/lib/leads/lead-contacts";
@@ -75,7 +76,7 @@ export default function LeadFinderPage() {
       {profiles.isLoading ? <Skeleton className="h-20 rounded-lg" /> : noProfiles && !editing ? (
         <Card className="p-6">
           <EmptyState icon="search" title="Pehla profile banao" body="Jaise: Gurgaon / Delhi NCR · CA firms, real estate, manufacturing · 10–200 log · Workspace + website. Roz raat 20 nayi companies." />
-          <div className="mt-3 text-center"><Button variant="primary" onClick={() => setEditing({ ...EMPTY, name: "SME Delhi NCR", cities: "Gurgaon, Delhi NCR, Noida", industries: "IT services, CA / law firms, real estate, manufacturing, clinics, schools" })}>Example se shuru karo</Button></div>
+          <div className="mt-3 text-center"><Button variant="primary" onClick={() => setEditing({ ...EMPTY, name: "SME Delhi NCR", cities: "Gurgaon, Delhi NCR, Noida", industries: "IT services, CA / law firms, real estate, manufacturing, clinics, schools" })}>Start from example</Button></div>
         </Card>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -97,9 +98,9 @@ export default function LeadFinderPage() {
               <option value={0}>Sab score</option><option value={50}>50+</option><option value={70}>70+</option>
             </select>
             <Button size="sm" variant="outline" icon="search" onClick={() => findContacts.mutate({})} loading={findContacts.isPending}
-              title="Jin companies ka contact abhi check nahi hua, unki apni website se email/phone padho (25 ek baar mein)">Contact dhoondho</Button>
+              title="Jin companies ka contact abhi check nahi hua, unki apni website se email/phone padho (25 ek baar mein)">Find contacts</Button>
             <Button size="sm" variant="outline" icon="search" onClick={() => searchPeople.mutate({})} loading={searchPeople.isPending}
-              title="Jinki website par kisi ka naam nahi mila, unke owner/director ka naam public record (MCA, ICAI, news) se dhoondho — 10 ek baar mein, har company par ek Google search lagta hai">Naam dhoondho</Button>
+              title="Jinki website par kisi ka naam nahi mila, unke owner/director ka naam public record (MCA, ICAI, news) se dhoondho — 10 ek baar mein, har company par ek Google search lagta hai">Find names</Button>
           </div>
         </div>
         <div className="px-4">
@@ -222,7 +223,7 @@ function CandidateRow({ c, onApprove, onReject, onUndo, onFindContact, onFindPer
             {contact?.person?.from === "search" && contact.person.source_url && <a href={contact.person.source_url} target="_blank" rel="noreferrer" className="text-ink-3 underline">naam kahan se</a>}
             {contact && (contact.email || contact.phone) && !contact.person && (
               <button type="button" className="text-amber-ink underline disabled:opacity-50" onClick={onFindPerson} disabled={finding}>
-                {contact.person_searched ? "Naam nahi mila — dobara search" : "Naam dhoondho"}
+                {contact.person_searched ? "No name found — search again" : "Find name"}
               </button>
             )}
             {contact?.email && <a href={`mailto:${contact.email}`} className="text-ink underline">✉ {contact.email}</a>}
@@ -230,7 +231,7 @@ function CandidateRow({ c, onApprove, onReject, onUndo, onFindContact, onFindPer
             {contact && !contact.email && !contact.phone && <span className="text-amber-ink">{(c.signals as { auto_rejected?: string } | null)?.auto_rejected ? "Apne aap hataya — website par email/phone nahi mila" : "Website par email/phone nahi mila"}</span>}
             {!contact && <span className="text-ink-3">Contact check nahi hua</span>}
             {(!contact || (!contact.email && !contact.phone)) && (
-              <button type="button" className="text-amber-ink underline disabled:opacity-50" onClick={onFindContact} disabled={finding}>{contact ? "Dobara dekho" : "Contact dhoondho"}</button>
+              <button type="button" className="text-amber-ink underline disabled:opacity-50" onClick={onFindContact} disabled={finding}>{contact ? "Check again" : "Find contact"}</button>
             )}
             {contact?.source_url && <a href={contact.source_url} target="_blank" rel="noreferrer" className="text-ink-3 underline">kahan se</a>}
           </div>
@@ -251,9 +252,9 @@ function CandidateRow({ c, onApprove, onReject, onUndo, onFindContact, onFindPer
                 <Button size="sm" variant="ghost" onClick={onReject} disabled={busy}>Reject</Button>
               </>
             ) : c.status === "rejected" ? (
-              <Button size="sm" variant="ghost" onClick={onUndo} disabled={busy}>Wapas review mein</Button>
+              <Button size="sm" variant="ghost" onClick={onUndo} disabled={busy}>Back to review</Button>
             ) : null}
-            <button type="button" className="text-xs text-ink-3 underline" onClick={() => setOpen((v) => !v)}>{open ? "Kam dikhao" : "Pitch & details"}</button>
+            <button type="button" className="text-xs text-ink-3 underline" onClick={() => setOpen((v) => !v)}>{open ? COPY.showLess : "Pitch & details"}</button>
           </div>
         </div>
       </div>

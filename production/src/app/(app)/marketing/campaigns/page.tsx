@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { campaignMetrics, campaignCode, todayIso, type CampaignPhase } from "@/lib/marketing/campaign-metrics";
 import { sourceLabel } from "@/lib/leads/lead-sources";
@@ -169,10 +170,10 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
           <Button variant="outline" size="sm" icon="globe">Tracking link banao</Button>
         </Link>
         <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
-        <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>{open ? "Details chhupao" : `Details (${r.expenses.length} kharche · ${r.leadList.length} leads)`}</Button>
+        <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>{open ? "Hide details" : `Details (${r.expenses.length} expenses · ${r.leadList.length} leads)`}</Button>
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={async () => {
-          const ok = await confirm({ title: "Campaign hatayein?", body: "Kharche aur leads nahi hatenge — bas is campaign se alag ho jaayenge.", danger: true, confirmLabel: "Hatao", cancelLabel: "Nahi" });
+          const ok = await confirm({ title: "Delete campaign?", body: "Expenses and leads stay — they are only unlinked from this campaign.", danger: true, confirmLabel: COPY.delete, cancelLabel: COPY.cancel });
           if (ok) del.mutate(r.id);
         }}>Delete</Button>
       </div>
