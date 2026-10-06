@@ -210,7 +210,19 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
       toast.error("There is no directive yet.", { description: "Run triage on this report first." });
       return;
     }
-    const ok = await copyToClipboard(row.directive);
+    /* R-200: the last step tells the fixing session to mark THIS report fixed in this app,
+       so the person who filed it sees "done · waiting for browser test" without asking. */
+    const footer = [
+      "",
+      "## When the fix is committed — mark this report fixed (do this last)",
+      "",
+      `Report id: ${row.id} — it lives in ${window.location.origin}. Never print the token.`,
+      "```bash",
+      `curl -s -X POST -H "Authorization: Bearer $(cat ~/.claude/secrets/agent-queue-token)" -H "content-type: application/json" -d '{"id":"${row.id}","note":"AI ne theek kiya: <card> (<commit>) - <kya badla>. (Note me sirf seedhe ASCII akshar) ${window.location.origin.includes("localhost") ? "Local par hai." : "Is app par agle merge/deploy ke baad (staging: shaam 5 baje)."} Tab browser test."}' ${window.location.origin}/api/agent/feedback-fixed`,
+      "```",
+      "200 = marked. 401/404/503 = not marked — say so in your reply; the owner can press Mark fixed.",
+    ].join("\n");
+    const ok = await copyToClipboard(`${row.directive}\n${footer}`);
     if (ok) toast.success("Directive copied — paste it into Claude Code.");
     else {
       showForManualCopy();
@@ -341,6 +353,12 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
           <p className="mt-1.5 text-sm font-medium text-ink">
             {row.problem_summary || row.title}
           </p>
+          {/* R-200: what the AI did and when it reaches this app (set by /api/agent/feedback-fixed). */}
+          {row.status === "fixed" && row.resolution_note && (
+            <p className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
+              🤖 {row.resolution_note}
+            </p>
+          )}
 
           <p className="mt-1 text-xs text-ink-3 flex items-center gap-2 flex-wrap">
             <span className="font-mono">{row.route_pattern ?? row.page_path ?? "screen unknown"}</span>
