@@ -83,7 +83,10 @@ describe("invoiceBucket", () => {
 });
 
 describe("/invoices no longer asks the column nobody writes", () => {
-  const src = readFileSync("src/app/(app)/invoices/page.tsx", "utf8")
+  /* R-238: the badge label moved to invoice-status.ts (shared with /invoices/<id>), so the
+     scan reads the page together with the file it delegates the label to. */
+  const src = (readFileSync("src/app/(app)/invoices/page.tsx", "utf8")
+    + readFileSync("src/app/(app)/invoices/invoice-status.ts", "utf8"))
     /* Comments stripped: the prose explaining why the old shape was removed must not
        satisfy a scan looking for that shape (L46). */
     .replace(/\/\*[\s\S]*?\*\//g, "")

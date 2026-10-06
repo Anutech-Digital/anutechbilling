@@ -23,6 +23,7 @@ import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
+import { invoiceStatusBadge } from "./invoice-status";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { useProjectPaymentsByInvoice } from "@/lib/queries/projects";
 import { useCustomer } from "@/lib/queries/customers";
@@ -59,6 +60,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const canQuotes = canOpenQuotes(me?.role);
   const bucket = invoiceBucket(invoice);
   const moneyDue = bucket === "pending" || bucket === "overdue";
+  const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
 
   /* ── WHO IS SELLING THIS — resolved or refused, never invented ──────────────
@@ -126,8 +128,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="font-mono text-base font-bold text-ink break-all">{invoice.id}</h1>
-                <Badge kind={invoice.status === "paid" ? "success" : "warning"} size="sm" dot>
-                  {invoice.status}
+                {/* R-238: the list's word (Overdue 40d, Partial…), not the stored status. */}
+                <Badge kind={statusBadge?.kind ?? "muted"} size="sm" dot>
+                  {statusBadge?.label ?? invoice.status}
                 </Badge>
               </div>
               <p className="text-xs font-medium text-ink-2 mt-0.5">
@@ -310,7 +313,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
 
               {showPayments && (
                 <div className="p-4">
-                  <InvoicePaymentsAccordion inv={invoice} />
+                  <InvoicePaymentsAccordion
+                    inv={invoice}
+                    /* R-238: no receipt yet → the next step is right here. */
+                    onRecordPayment={quote?.id && moneyDue ? () => setPayOpen(true) : undefined}
+                  />
                 </div>
               )}
             </Card>
@@ -417,7 +424,14 @@ export function InvoiceNotesList({ invoiceId }: { invoiceId: string }) {
   );
 }
 
-export function InvoicePaymentsAccordion({ inv }: { inv: Invoice }) {
+export function InvoicePaymentsAccordion({
+  inv,
+  onRecordPayment,
+}: {
+  inv: Invoice;
+  /** Shown as a button when there is no receipt yet (the invoice page passes it; the list does not). */
+  onRecordPayment?: () => void;
+}) {
   const { data: quote } = useQuoteByInvoiceId(inv.id);
   const { data: payments, isLoading } = usePaymentsByQuote(quote?.id);
   // Project invoices have no parent quote — their receipts live in project_payments.
@@ -458,7 +472,16 @@ export function InvoicePaymentsAccordion({ inv }: { inv: Invoice }) {
   }
 
   if (received.length === 0) {
-    return <div className="text-xs text-ink-3">No payment receipts recorded for this invoice yet.</div>;
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-ink-3">No payment receipts recorded for this invoice yet.</span>
+        {onRecordPayment && (
+          <Button size="sm" variant="outline" icon="rupee" onClick={onRecordPayment}>
+            Record payment
+          </Button>
+        )}
+      </div>
+    );
   }
 
   return (

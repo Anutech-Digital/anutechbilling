@@ -29,7 +29,8 @@ import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
 /* R-060. `status = 'overdue'` has no writer anywhere in the product, so the Overdue tab
    and its KPI were permanently empty while invoices ran months late. Derived from
    due_date instead — see the header of lib/invoices/overdue.ts for why not a cron. */
-import { invoiceOverdueDays, invoiceBucket } from "@/lib/invoices/overdue";
+import { invoiceBucket } from "@/lib/invoices/overdue";
+import { invoiceStatusBadge } from "./invoice-status";
 import {
   invoiceChip, invoiceChipCounts, invoiceKpis, invoiceInFocus, INVOICE_FOCI, INVOICE_FOCUS_LABEL, type InvoiceFocus,
 } from "@/lib/invoices/kpis";
@@ -870,18 +871,15 @@ function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals })
           <div className="flex items-center gap-1.5">
             {/* Mobile card. Same derived bucket as the desktop row, or the phone and the
                 laptop would name the same invoice differently (R-060). */}
-            <Badge
-              kind={
-                invoiceBucket(inv) === "paid"    ? "success" :
-                invoiceBucket(inv) === "overdue" ? "danger"  :
-                invoiceBucket(inv) === "pending" ? "warning" :
-                                                   "muted"
-              }
-              size="sm"
-              dot
-            >
-              {invoiceBucket(inv)}
-            </Badge>
+            {(() => {
+              /* R-238: same label as the desktop row and the invoice page. */
+              const sb = invoiceStatusBadge(inv);
+              return (
+                <Badge kind={sb?.kind ?? "muted"} size="sm" dot>
+                  {sb?.label ?? invoiceBucket(inv)}
+                </Badge>
+              );
+            })()}
           </div>
         </div>
       </Link>
@@ -984,21 +982,13 @@ function InvoiceRow({
           // "Overdue · Partial" reflects reality.
           // Partial when advances were adjusted OR some money is already in
           // (paid_amount — project invoices' milestone receipts, migration 0184).
-          const hasAdvancesApplied = Array.isArray(inv.adjusted_advances) && inv.adjusted_advances.length > 0;
-          const partial = (hasAdvancesApplied || (inv.paid_amount ?? 0) > 0) && inv.status !== "paid";
           /* R-060. Both the state and the day count are derived. `inv.overdue_days` is a
              column with `default 0` and no writer anywhere, so the old branch could only
              ever have rendered "Overdue 0d" — and never did, because nothing set the
-             status that reached it either. */
-          const bucket = invoiceBucket(inv);
-          const lateBy = invoiceOverdueDays(inv);
-          const badge =
-              bucket === "paid"    ? <Badge kind="success" dot>Paid</Badge>
-            : bucket === "pending" ? (partial ? <Badge kind="warning" dot>Partial</Badge> : <Badge kind="warning" dot>Pending</Badge>)
-            : bucket === "overdue" ? (partial ? <Badge kind="danger" dot>Overdue · Partial · {lateBy}d</Badge> : <Badge kind="danger" dot>Overdue {lateBy}d</Badge>)
-            : bucket === "draft"   ? <Badge kind="muted">Draft</Badge>
-            : bucket === "void"    ? <Badge kind="muted">Void</Badge>
-            : null;
+             status that reached it either.
+             R-238: the label lives in ./invoice-status.ts so /invoices/<id> shows the same word. */
+          const sb = invoiceStatusBadge(inv);
+          const badge = sb ? <Badge kind={sb.kind} dot={sb.kind !== "muted"}>{sb.label}</Badge> : null;
           // Draft/void have no receipts — badge stays static. Others toggle the
           // payment-receipts accordion on click.
           if (inv.status === "draft" || inv.status === "void") return badge;
