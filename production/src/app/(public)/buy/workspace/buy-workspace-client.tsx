@@ -28,7 +28,8 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
-import { GST_STATE_OPTIONS, stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
+import { buyNowSchema, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
@@ -2706,24 +2707,7 @@ function loadRazorpayCheckout(): Promise<RazorpayCtor> {
 //   4. On success → success toast (webhook handles the DB flip + emails)
 //   5. On failure / dismiss → error toast, can retry
 // ──────────────────────────────────────────────────────────────────────
-const buyNowSchema = z.object({
-  fullName:    z.string().min(2, "Your name"),
-  companyName: z.string().min(2, "Company name"),
-  email:       z.string().email("Valid work email"),
-  phone:       z.string().min(10, "10-digit phone"),
-  seats:       z.coerce.number().int().min(1).max(10000),
-  domain:      z.string().min(3, "Your business domain (e.g. acme.in)"),
-  tierId:      z.string(),
-  gstin:       z.string().optional(),
-  couponCode:  z.string().optional(),
-  stateCode:   z.string().optional(),
-}).superRefine((v, ctx) => {
-  /* R-173: the GST invoice needs a place of supply; a valid GSTIN carries one. */
-  if (!v.stateCode && !stateCodeFromGstin(v.gstin)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["stateCode"], message: "Select your state — the GST invoice needs it" });
-  }
-});
-type BuyNowForm = z.infer<typeof buyNowSchema>;
+// Schema lives in ./buy-now-schema (R-226: tested on its own).
 
 /**
  * Coupon validation state — owned by the dialog. Updated each time the
@@ -3392,6 +3376,31 @@ function BuyNowDialog({
               </select>
               {errors.stateCode?.message && <p className="text-xs text-rose mt-1">{errors.stateCode.message}</p>}
             </FormField>
+
+            {/* R-226: annual licence, no mid-term cancel — said before Pay, and the terms /
+                refund box must be ticked (schema blocks submit, so Razorpay never opens). */}
+            <p className="text-xs text-ink-2 rounded-md border border-hairline bg-paper-2 px-3 py-2">
+              {BUY_ANNUAL_NOTE}
+            </p>
+            <div className="flex items-start gap-2.5">
+              <input
+                id="buy-agree-terms"
+                type="checkbox"
+                aria-invalid={!!errors.agreeTerms || undefined}
+                aria-describedby={errors.agreeTerms ? "buy-agree-terms-error" : undefined}
+                {...register("agreeTerms")}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-amber"
+              />
+              <label htmlFor="buy-agree-terms" className="text-xs text-ink-2 cursor-pointer leading-relaxed">
+                I have read the{" "}
+                <a href="/terms-and-conditions" target="_blank" rel="noopener" className="font-semibold text-amber-ink underline">terms and conditions</a>{" "}
+                and the{" "}
+                <a href="/refund" target="_blank" rel="noopener" className="font-semibold text-amber-ink underline">refund policy</a>.
+              </label>
+            </div>
+            {errors.agreeTerms?.message && (
+              <p id="buy-agree-terms-error" role="alert" className="text-xs text-rose -mt-2">{errors.agreeTerms.message}</p>
+            )}
 
             <BusyPanel active={isSubmitting} title="Preparing your secure payment" steps={["Re-checking the price on our server", "Creating your order", "Opening the Razorpay payment window"]} />
             <Button
