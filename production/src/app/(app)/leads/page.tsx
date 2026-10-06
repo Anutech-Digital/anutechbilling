@@ -605,7 +605,11 @@ function LeadsPageInner() {
           Drawer / FAB / modals live OUTSIDE this flex (position:fixed),
           so they aren't constrained by the split. */}
       <div className="flex gap-6 flex-1 min-h-0">
-        <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        {/* R-197: this column SCROLLS. The wrapper above clips at the viewport height, and on a
+            short screen (~938px) the hot card + call queue filled it, so the board and the list
+            were cut off with no way to reach them. Board and list keep a min-h floor below, so
+            the scroll never squashes them to 0px. See board-reachable.test.ts. */}
+        <div className="flex-1 min-w-0 flex flex-col min-h-0 overflow-y-auto custom-scrollbar">
       {/* AI junk review — only in the Junk view. Lets the operator ask AI to
           decide across the spam pile (verdict + reason + confidence), then
           confirm with one tap. Reversible, human-in-the-loop. */}
@@ -703,6 +707,7 @@ function LeadsPageInner() {
           below also fires, creating a duplicate. Skipping the table here
           lets the smart empty state below own the empty-screen real estate. */}
       {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "list" && listRows.length > 0 && (
+        <div className="flex-1 min-h-[480px] flex flex-col">
         <LeadListView
           leads={listRows}
           /* S40: the list is PAGED. The server already ordered it for "wait" and "created"
@@ -732,6 +737,7 @@ function LeadsPageInner() {
           onMerge={openMergeFor}
           dupIds={dupIds}
         />
+        </div>
       )}
 
       <LeadsNoResults
