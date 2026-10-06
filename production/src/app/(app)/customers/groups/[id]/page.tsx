@@ -22,8 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { GroupFormDialog } from "@/components/features/customers/group-form-dialog";
 import { useCustomerGroup, useDeleteCustomerGroup } from "@/lib/queries/customer-groups";
-import { useCustomers } from "@/lib/queries/customers";
-import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { useGroupMembers, useMembersMrr } from "../group-queries";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { rupee } from "@/lib/utils";
 
@@ -33,8 +32,9 @@ export default function CustomerGroupDetailPage() {
   const router = useRouter();
 
   const { data: group, isLoading: groupLoading } = useCustomerGroup(id);
-  const { data: customers } = useCustomers();
-  const { data: subs } = useSubscriptions();
+  /* R-222: this group's companies and their active MRR only — it used to read every
+     customer and every subscription in the workspace to show these few rows. */
+  const { data: memberRows } = useGroupMembers(id);
   const { data: outstanding } = useOutstandingReceivables();
 
   const [editOpen, setEditOpen] = React.useState(false);
@@ -42,10 +42,9 @@ export default function CustomerGroupDetailPage() {
   const del = useDeleteCustomerGroup();
 
   // Members of this group + their money rollups.
-  const members = React.useMemo(
-    () => (customers ?? []).filter((c) => c.group_id === id),
-    [customers, id],
-  );
+  const members = React.useMemo(() => memberRows ?? [], [memberRows]);
+  const memberIds = React.useMemo(() => (memberRows ? memberRows.map((c) => c.id) : undefined), [memberRows]);
+  const { data: mrrByCustomer = new Map<string, number>() } = useMembersMrr(memberIds);
 
   const outstandingByCustomer = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -55,15 +54,6 @@ export default function CustomerGroupDetailPage() {
     }
     return map;
   }, [outstanding]);
-
-  const mrrByCustomer = React.useMemo(() => {
-    const map = new Map<string, number>();
-    for (const s of subs ?? []) {
-      if (!s.customer_id || s.status !== "active") continue;
-      map.set(s.customer_id, (map.get(s.customer_id) ?? 0) + s.mrr);
-    }
-    return map;
-  }, [subs]);
 
   const totalOutstanding = members.reduce((sum, c) => sum + (outstandingByCustomer.get(c.id) ?? 0), 0);
   const totalMRR = members.reduce((sum, c) => sum + (mrrByCustomer.get(c.id) ?? 0), 0);

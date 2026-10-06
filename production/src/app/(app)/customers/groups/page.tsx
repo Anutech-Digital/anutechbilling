@@ -18,22 +18,16 @@ import { FAB } from "@/components/ui/fab";
 import { EmptyState } from "@/components/shared/empty-state";
 import { GroupFormDialog } from "@/components/features/customers/group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
-import { useCustomers } from "@/lib/queries/customers";
+import { useGroupMemberCounts } from "./group-queries";
 import { newestFirst } from "@/lib/sort/newest-first";
 
 export default function CustomerGroupsPage() {
   const router = useRouter();
   const { data: groups, isLoading } = useCustomerGroups();
-  const { data: customers } = useCustomers();
   const [addOpen, setAddOpen] = React.useState(false);
 
-  const countByGroup = React.useMemo(() => {
-    const map = new Map<string, number>();
-    for (const c of customers ?? []) {
-      if (c.group_id) map.set(c.group_id, (map.get(c.group_id) ?? 0) + 1);
-    }
-    return map;
-  }, [customers]);
+  /* R-222: one slim read of grouped customers' group_id — not every customer row. */
+  const { data: countByGroup = new Map<string, number>() } = useGroupMemberCounts();
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
