@@ -38,7 +38,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import {
-  complianceTodayItems, rankTodayItems, kindMeta, URGENT_PRIORITY, type TodayItem,
+  complianceTodayItems, rankTodayItems, kindMeta, todayWhenLabel, URGENT_PRIORITY, type TodayItem,
 } from "@/lib/today/inbox";
 
 function useTodayInbox() {
@@ -55,19 +55,14 @@ function useTodayInbox() {
   });
 }
 
-/** "2d late", "due today", "in 3d", or the arrival time for queues with no deadline. */
+/** "2d late", "due today", "in 3d" (IST calendar days — R-241), or the arrival time for
+ *  queues with no deadline. */
 function whenLabel(item: TodayItem, now: number): string {
-  if (!item.due_at) return "";
-  const t = Date.parse(item.due_at);
-  if (Number.isNaN(t)) return "";
-  const days = Math.round((t - now) / 864e5);
+  const label = todayWhenLabel(item, now);
+  if (label !== null) return label;
   // Arrival-style kinds carry when it came in, not a deadline.
-  if (["enquiry", "whatsapp", "automation", "purchase_inbox", "join_request", "approval", "provisioning"].includes(item.kind)) {
-    return formatDate(item.due_at, "relative");
-  }
-  if (t < now) return days <= -1 ? `${-days}d late` : "late";
-  if (days === 0) return "due today";
-  return `in ${days}d`;
+  if (!item.due_at || Number.isNaN(Date.parse(item.due_at))) return "";
+  return formatDate(item.due_at, "relative");
 }
 
 function Row({ item, now }: { item: TodayItem; now: number }) {

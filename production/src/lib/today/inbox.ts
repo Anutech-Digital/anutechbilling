@@ -19,6 +19,7 @@
  * penalty has no cap on several of them.
  */
 import { buildComplianceRows, type ComplianceCategory } from "@/lib/compliance/obligations";
+import { daysBetweenISO, toIstDate } from "@/lib/dates/ist";
 
 export type TodayKind =
   | "task"
@@ -132,3 +133,25 @@ export function rankTodayItems(items: readonly TodayItem[]): TodayItem[] {
 
 /** Rows at or above this are shown under "Do first". */
 export const URGENT_PRIORITY = 75;
+
+/** Kinds whose due_at is when the thing ARRIVED, not a deadline — shown as a relative time. */
+export const TODAY_ARRIVAL_KINDS: readonly string[] = [
+  "enquiry", "whatsapp", "automation", "purchase_inbox", "join_request", "approval", "provisioning",
+];
+
+/**
+ * "2d late", "due today", "in 3d" — by IST calendar day (R-241, 6 Oct 2026). It used to
+ * compare milliseconds with Math.round: a filing due today (IST midnight) read "late" all
+ * day, and tomorrow 15:00 read "due today" from 03:00. Returns "" when there is no usable
+ * deadline, and null for arrival kinds (the page shows their relative arrival time).
+ */
+export function todayWhenLabel(item: TodayItem, now: number): string | null {
+  if (TODAY_ARRIVAL_KINDS.includes(item.kind)) return null;
+  if (!item.due_at) return "";
+  const t = Date.parse(item.due_at);
+  if (Number.isNaN(t)) return "";
+  const days = daysBetweenISO(toIstDate(now), toIstDate(t));
+  if (days < 0) return `${-days}d late`;
+  if (days === 0) return "due today";
+  return `in ${days}d`;
+}
