@@ -90,11 +90,16 @@ function istMidnightISO(date: string): string {
 /**
  * GST / TDS filings that are overdue or due within COMPLIANCE_WINDOW_DAYS and not
  * marked filed. `filed` is the same map the /compliance page builds from
- * compliance_log (`${obligation_key}|${period_key}` → filed date).
+ * compliance_log (`${obligation_key}|${period_key}` → filed date). `notApplicable`
+ * is the same predicate too (R-181: no TDS deducted → no TDS deposit to chase).
  */
-export function complianceTodayItems(today: Date, filed: Map<string, string>): TodayItem[] {
-  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES)
-    .filter((r) => r.status !== "filed" && r.daysToDue <= COMPLIANCE_WINDOW_DAYS)
+export function complianceTodayItems(
+  today: Date,
+  filed: Map<string, string>,
+  notApplicable?: (obligationKey: string, periodKey: string) => boolean,
+): TodayItem[] {
+  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable)
+    .filter((r) => r.status !== "filed" && r.status !== "not_applicable" && r.daysToDue <= COMPLIANCE_WINDOW_DAYS)
     .map((r) => ({
       kind: "compliance",
       id: `${r.ob.key}|${r.inst.periodKey}`,

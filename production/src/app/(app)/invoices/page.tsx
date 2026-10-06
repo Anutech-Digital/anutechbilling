@@ -468,7 +468,7 @@ function InvoicesPageInner() {
                             aria-label="Select all pending"
                           />
                         </th>
-                        <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Quote</th>
+                        <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3 whitespace-nowrap">Quote</th>
                         <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Customer</th>
                         <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Amount</th>
                         <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Payment</th>
@@ -503,7 +503,8 @@ function InvoicesPageInner() {
                                 aria-label={`Select ${q.id}`}
                               />
                             </td>
-                            <td className="p-2">
+                            {/* R-177: the quote no. ("Q-DEMO-27-0001") wrapped onto four lines. */}
+                            <td className="p-2 whitespace-nowrap">
                               <Link
                                 href={`/quotes/${q.id}` as any}
                                 className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"
@@ -1303,8 +1304,12 @@ function InvoicePreviewContainer({
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="right" className="sm:max-w-xl w-full p-0 flex flex-col h-full bg-paper overflow-y-auto">
-          <SheetHeader className="p-4 border-b border-hairline bg-paper-2 sticky top-0 z-20 flex flex-row items-center justify-between">
-            <div>
+          {/* R-202. On a 375px phone the three buttons used to sit in one shrink-0 row beside
+              the invoice number, making the sheet 446px wide: PDF off-screen, sideways scroll,
+              and the R-187 preview opened from it cut off. Below sm the row and the button
+              group wrap; from sm up (576px sheet) they stay on one line as before. */}
+          <SheetHeader className="p-4 border-b border-hairline bg-paper-2 sticky top-0 z-20 flex flex-row flex-wrap sm:flex-nowrap items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-base font-bold text-ink">{invoice.id}</span>
                 <Badge kind={invoice.status === "paid" ? "success" : "warning"} size="sm" dot>
@@ -1315,7 +1320,7 @@ function InvoicePreviewContainer({
                 {cleanDisplayName(invoice.customer_name)}
               </SheetTitle>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
               {quote?.id && (
                 /* "View quote" — same reasoning as tax-invoice-dialog.tsx. This opens the
                    quote hub, which is a read-only view, and an issued tax invoice is no

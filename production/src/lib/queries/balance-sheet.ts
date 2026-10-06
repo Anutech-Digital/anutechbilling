@@ -32,6 +32,7 @@ export type BalanceSheetItem = {
 
 export interface BalanceSheetAuto {
   cashAndBank:     number;   // sum of all bank + cash account balances
+  undepositedFunds: number;  // R-179: customer receipts (payments + project payments) not matched to any bank line — money in hand, an asset
   receivables:     number;   // invoiced-but-unpaid, EXCLUDING project milestones (accrual)
   advancesFromCustomers: number; // money received before invoicing — a LIABILITY, not earnings
   projectReceivable: number; // one-time / project sales: total − payments received

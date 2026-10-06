@@ -33,6 +33,9 @@ export interface BsRawRows {
   accounts: { id: string; opening_balance: N; account_type: string }[];
   /** bank_account_current_balance(id) har account ka — purana N+1. */
   balanceOf: Record<string, number | null>;
+  /** R-179: received payments jin par koi bank line match nahi, aur project payments bina bank_txn_id. */
+  unbankedPays: { amount: N }[];
+  unbankedProjPays: { amount: N }[];
   openInv: { id: string; amount: N; net_payable: N; status: string }[];
   msInv: { invoice_id: string | null }[];
   recdPays: { quote_id: string | null; amount: N; status: string }[];
@@ -77,6 +80,11 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
       cashAndBank += balance;
     }
   }
+
+  /* R-179 — jaan-boojh kar badlaav (migration 20261006140000): mila paisa jo bank line se
+     match nahi hua, asset. Pehle ye kahin nahi gina jaata tha. */
+  const undepositedFunds = r.unbankedPays.reduce((s, p) => s + (p.amount ?? 0), 0)
+                         + r.unbankedProjPays.reduce((s, p) => s + (p.amount ?? 0), 0);
 
   const projectInvoiceIds = new Set(r.msInv.map((m) => m.invoice_id as string));
   const receivables = computeTradeReceivables(r.openInv, projectInvoiceIds);
@@ -146,7 +154,7 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid, fyLabel };
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid, fyLabel };
 }
 
 /* ═══ P&L ═══════════════════════════════════════════════════════════════════ */

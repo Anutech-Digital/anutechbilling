@@ -163,7 +163,7 @@ function TabBar({ value, onChange, items, className }: TabBarProps) {
       ) : (
     <div
       role="tablist"
-      className="inline-flex items-center gap-1 border-b border-hairline w-full overflow-x-auto"
+      className="inline-flex items-center gap-1 border-b border-hairline w-full overflow-x-auto overflow-y-hidden"
     >
       {items.map((item) => {
         const active = value === item.id;

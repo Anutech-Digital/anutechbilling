@@ -28,8 +28,9 @@ import {
   type ComplianceCategory, type ComplianceRow, type ComplianceStatus,
 } from "@/lib/compliance/obligations";
 import {
-  useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled,
+  useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled, useTdsMonths,
 } from "@/lib/queries/compliance";
+import { noTdsDeductedPredicate, TDS_DEPOSIT_KEY } from "@/lib/compliance/tds-not-applicable";
 import { istToday } from "@/lib/dates/ist";
 
 const STATUS_META: Record<ComplianceStatus, { label: string; cls: string; icon: string }> = {
@@ -37,10 +38,14 @@ const STATUS_META: Record<ComplianceStatus, { label: string; cls: string; icon: 
   due_soon: { label: "Due soon", cls: "bg-amber-soft text-amber-ink",  icon: "clock" },
   upcoming: { label: "Upcoming", cls: "bg-paper-2 text-ink-2",         icon: "clock" },
   filed:    { label: "Filed",    cls: "bg-emerald/10 text-emerald",    icon: "check_circle" },
+  not_applicable: { label: "N/A", cls: "bg-paper-2 text-ink-3",       icon: "check" },
 };
 
 function dueText(r: ComplianceRow): string {
   if (r.status === "filed") return `Filed ${r.filedDate ? formatDate(r.filedDate) : ""}`.trim();
+  if (r.status === "not_applicable") {
+    return r.ob.key === TDS_DEPOSIT_KEY ? "No TDS deducted — nothing to deposit" : "Nothing to file";
+  }
   if (r.daysToDue === 0) return "Due today";
   if (r.daysToDue < 0) return `${Math.abs(r.daysToDue)} day${Math.abs(r.daysToDue) === 1 ? "" : "s"} overdue`;
   return `in ${r.daysToDue} day${r.daysToDue === 1 ? "" : "s"}`;
@@ -65,9 +70,17 @@ export function ComplianceView({
 
   const cats: ComplianceCategory[] | undefined = fixedCategories
     ?? (catFilter === "all" ? undefined : [catFilter]);
+  // R-181: a finished month with no TDS deducted has nothing to deposit. Until the
+  // TDS months load (or if the read fails) every month counts — a stray reminder
+  // is safer than a hidden deadline.
+  const tdsQ = useTdsMonths(today);
+  const notApplicable = React.useMemo(
+    () => (tdsQ.data ? noTdsDeductedPredicate(tdsQ.data, today) : undefined),
+    [tdsQ.data, today],
+  );
   const rows = React.useMemo(
-    () => buildComplianceRows(today, filedMap, cats),
-    [today, filedMap, cats],
+    () => buildComplianceRows(today, filedMap, cats, notApplicable),
+    [today, filedMap, cats, notApplicable],
   );
 
   const overdue = rows.filter((r) => r.status === "overdue").length;
@@ -135,10 +148,11 @@ export function ComplianceView({
                       <div className="text-[12px] text-ink-3 mt-1">
                         <span className="text-ink-2">{r.inst.periodLabel}</span>
                         {" · due "}{formatDate(r.inst.dueDate)}
-                        {r.status !== "filed" && (
+                        {r.status !== "filed" && r.status !== "not_applicable" && (
                           <span className={r.status === "overdue" ? "text-rose font-medium" : "text-ink-2"}> · {dueText(r)}</span>
                         )}
                         {r.status === "filed" && <span className="text-emerald"> · {dueText(r)}</span>}
+                        {r.status === "not_applicable" && <span className="text-ink-3"> · {dueText(r)}</span>}
                       </div>
                       {r.ob.applies && <div className="text-xs text-ink-3 mt-1">{r.ob.applies}</div>}
                       <div className="flex items-center gap-3 mt-1.5">
@@ -152,7 +166,7 @@ export function ComplianceView({
                       </div>
                     </div>
                     <div className="shrink-0 flex flex-col items-end gap-1">
-                      {r.status === "filed" ? (
+                      {r.status === "not_applicable" ? null : r.status === "filed" ? (
                         <Button variant="ghost" className="h-7 px-2 text-xs"
                           loading={unmark.isPending}
                           onClick={() => unmark.mutate({ obligation_key: r.ob.key, period_key: r.inst.periodKey })}>

@@ -7,7 +7,7 @@
  *   2. Stage stays 'trial' (NOT auto-moved to 'lost') — operator decides
  *      whether to push for last-ditch conversion or close the deal out.
  *      Rationale: many trials convert on day 15-17 after a final call.
- *   3. Send "we miss you" email to customer + alert to Pardeep
+ *   3. Send "we miss you" email to the customer (no owner alert — R-065)
  *
  * Schedule: 10:00 IST (04:30 UTC) — daily, after the renewals cron.
  * Configure via vercel.json or your scheduler of choice.
@@ -30,7 +30,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const FROM_EMAIL    = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const APP_URL       = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 
 interface CronResult {
   ran_at:         string;
@@ -211,9 +210,7 @@ ${sellerPhone ? `Prefer to talk? WhatsApp ${contactWho} on ${sellerPhone}.\n\n` 
             replyTo: voice ? voice.replyTo : owner.to,
             kind:    "trial_expiry_customer",
             route:   { tenantId: lead.tenant_id },
-            /* Customer-facing, so gated by the kill switch + dial. The OWNER copy further
-               down is deliberately NOT: a switch that silenced what the app says to the
-               operator would hide the very thing they flipped it to investigate. */
+            /* Customer-facing, so gated by the kill switch + dial. */
             automated: { tenantId: lead.tenant_id, action: "trial.send" },
             subject: `Your Google Workspace trial — ${lead.domain ?? "your domain"} — has ended`,
             text:
@@ -237,48 +234,16 @@ ${voice ? voice.signOff : `— ${sellerPerson || sellerName || "Your reseller"}$
 
       if (!owner.ok) {
         /* Loud, and in the response. The trial IS stamped expired — that part
-           succeeded and is in the database. Only the notifications are lost, and
-           this is the record of which and why. */
-        console.error(`[trial-expiry] no owner alert for lead ${lead.id}: ${owner.reason}`);
+           succeeded and is in the database. Only the customer mail is skipped (it
+           needs the owner address as its replyTo), and this is the record of which and why. */
+        console.error(`[trial-expiry] no owner address for lead ${lead.id}: ${owner.reason}`);
         if (!result.alerts_unaddressed.some((a) => a.tenant_id === lead.tenant_id)) {
           result.alerts_unaddressed.push({ tenant_id: lead.tenant_id, reason: owner.reason });
         }
-        continue;
       }
-
-      try {
-        await sendEmail({
-          to:      owner.to,
-          from:    FROM_EMAIL,
-          kind:    "trial_expiry_owner",
-          route:   { tenantId: lead.tenant_id },
-          subject: `⏰ Trial expired: ${lead.company} (${lead.domain ?? "no domain"}) — last chance`,
-          text:
-`A 14-day trial just ended.
-
-COMPANY      ${lead.company}
-CONTACT      ${lead.contact_name ?? "—"} <${lead.contact_email ?? "—"}>
-PHONE        ${lead.contact_phone ?? "—"}
-PLAN         ${lead.plan ?? "—"}
-DOMAIN       ${lead.domain ?? "—"}
-STARTED      ${lead.trial_started_at ? new Date(lead.trial_started_at).toDateString() : "—"}
-EXPIRED      ${new Date(lead.trial_expires_at ?? today).toDateString()} (${daysPast} days ago)
-
-${lead.contact_email
-  ? `A "we miss you" email has been sent to the customer. Customer responses\nin the next 3-5 days still often convert — call them if they don't reply.`
-  : `NO EMAIL WAS SENT TO THE CUSTOMER — this lead has no contact_email on file.\nReaching out is entirely on you. Add an address to the lead so the next one goes out.`}
-
-Open the lead:
-${APP_URL}/leads?lead=${lead.id}
-
-— ResellerOS`,
-        });
-        result.emails_sent++;
-      } catch (e) {
-        /* Was "pardeep alert failed" — a fixed name in a message about whichever
-           tenant this lead belongs to. */
-        console.error(`[trial-expiry] owner alert failed for tenant ${lead.tenant_id}:`, e);
-      }
+      /* No owner alert (R-065). Owner, 30 Sep 2026: "Remove this feature completely.
+         That will just annoy the owner." The expired trial stays at stage trial with
+         trial_expired_at stamped — that is where staff see it. */
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       result.errors.push({ lead_id: lead.id, message: msg });

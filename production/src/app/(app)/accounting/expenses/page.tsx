@@ -555,8 +555,9 @@ export default function ExpensesPage() {
         </div>
       </details>
 
-      {/* KPI strip — tight inline stats, minimal height. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-3">
+      {/* KPI strip — tight inline stats, minimal height. Columns fit the space (R-177: at 800px a fixed
+          3-up grid cut "TOTAL SPEND" / "TOP CATEGORY" to "TOTAL SPE…"); each tile is at least 9.5rem wide. */}
+      <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-2 mb-3">
         <KPI label="Entries" value={totals ? String(totals.count) : "—"} />
         <KPI label="Total spend"  value={totals ? rupee(totals.amount) : "—"} tone="rose" />
         <KPI label="Input GST"    value={totals ? rupee(totals.gstPaid) : "—"} tone="emerald" />
@@ -864,8 +865,9 @@ function KPI({
                    : "text-ink";
   return (
     <Card className="p-2.5">
-      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5 truncate">{label}</div>
-      <div className={`font-serif text-lg md:text-xl ${colorClass} leading-tight truncate`}>{value}</div>
+      {/* Label wraps instead of cutting; a long value (category name) keeps its full text on hover. */}
+      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5 leading-tight break-words">{label}</div>
+      <div className={`font-serif text-lg md:text-xl ${colorClass} leading-tight truncate`} title={value}>{value}</div>
       {sub && <div className="text-xs text-ink-3 truncate">{sub}</div>}
     </Card>
   );

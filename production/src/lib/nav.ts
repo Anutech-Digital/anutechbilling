@@ -425,6 +425,9 @@ export const APP_NAV: NavSection[] = [
   },
   {
     section: "Buy",
+    /* R-177: these pages sit under the sidebar's "Billing" app (nav-apps.ts), so the
+       crumb says Billing too — "Buy ›" named a heading the sidebar never shows. */
+    crumb: "Billing",
     icon: "cart",
     items: [
       /* Was reachable only by URL. It is a queue — order mails waiting to be booked — so
