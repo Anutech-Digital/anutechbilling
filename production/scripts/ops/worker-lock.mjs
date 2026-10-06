@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Worker locks — two worker sessions must never build in the same files (6 Oct 2026).
  *
