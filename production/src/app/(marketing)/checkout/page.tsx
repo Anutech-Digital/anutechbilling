@@ -14,7 +14,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { rupee, cycleLabel } from "@/site/lib/money";
-import { missingCheckoutDetails, missingDetailsMessage } from "@/site/lib/checkout-details";
+import { missingCheckoutDetails, missingDetailsMessage, gstinProblem, normalizeGstinInput } from "@/site/lib/checkout-details";
+import { stateCodeFromGstin, gstinContradictsState } from "@/lib/gst/gstin-state";
 import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
@@ -167,6 +168,14 @@ export default function CheckoutPage() {
       if (typeof s.addrPin === "string") setAddrPin(s.addrPin);
     } catch { /* private window / blocked storage — just start empty */ }
   }, []);
+  /* R-227: a checksum-valid GSTIN already says the state (its first two digits) — fill an
+     empty state from it. A state the buyer chose is never overwritten; a clash is shown. */
+  useEffect(() => {
+    const fromGstin = stateCodeFromGstin(gstin);
+    if (fromGstin) setStateCode((cur) => cur || fromGstin);
+  }, [gstin]);
+  const gstinError = gstinProblem(gstin);
+  const gstinStateClash = gstinContradictsState({ stateCode, gstin });
   // Hosting + a domain being bought in the same cart: the hosting goes on that domain,
   // so pre-fill it rather than making the customer type what is already in the cart.
   const cartDomain = cart.lines.find((l) => l.domain)?.domain ?? "";
@@ -195,7 +204,7 @@ export default function CheckoutPage() {
      says what is still needed (lib/checkout-details). */
   const missing = missingCheckoutDetails({
     name, email, phone, domain, plans, hasHosting: hasHosting || hasTrial, hasDomain,
-    needsState: !isTrialCart, stateCode,
+    needsState: !isTrialCart, stateCode, gstin,
     address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
   });
   const missingMsg = missingDetailsMessage(missing);
@@ -500,6 +509,12 @@ export default function CheckoutPage() {
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}
                   </select>
+                  {gstinStateClash && (
+                    <p role="status" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "9px 12px", fontSize: 14, margin: "8px 0 0" }}>
+                      Your GSTIN is registered in {GST_STATE_BY_CODE[stateCodeFromGstin(gstin) ?? ""]}, but the state chosen is {GST_STATE_BY_CODE[stateCode] ?? stateCode}.
+                      The invoice uses the state chosen here — change it if that&apos;s not right.
+                    </p>
+                  )}
                 </div>
               )}
               {hasDomain && (
@@ -517,7 +532,21 @@ export default function CheckoutPage() {
                 OPTIONAL
               </div>
               <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} autoComplete="organization" />
-              <Field label="GSTIN — FOR INPUT CREDIT" value={gstin} onChange={setGstin} mono />
+              <Field
+                label="GSTIN — FOR INPUT CREDIT"
+                value={gstin}
+                onChange={(v) => setGstin(normalizeGstinInput(v))}
+                mono
+                maxLength={15}
+                autoCapitalize="characters"
+                invalid={!!gstinError}
+                describedBy={gstinError ? "checkout-gstin-error" : undefined}
+              />
+              {gstinError && (
+                <p id="checkout-gstin-error" role="alert" style={{ color: "#B91C1C", fontSize: 14, margin: "-8px 0 14px" }}>
+                  {gstinError}
+                </p>
+              )}
 
               {trialMixed && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>

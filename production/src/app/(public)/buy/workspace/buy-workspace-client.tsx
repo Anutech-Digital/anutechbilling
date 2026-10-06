@@ -30,6 +30,7 @@ import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { buyNowSchema, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
+import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
@@ -3353,7 +3354,17 @@ function BuyNowDialog({
             </div>
 
             <FormField label="GSTIN (optional)" htmlFor="buy-gstin">
-              <Input id="buy-gstin" placeholder="e.g. 27ABCDE1234F1Z5" {...register("gstin")} />
+              <Input
+                id="buy-gstin"
+                placeholder="e.g. 27ABCDE1234F1Z5"
+                maxLength={15}
+                autoCapitalize="characters"
+                className="uppercase font-mono"
+                aria-invalid={!!errors.gstin || undefined}
+                aria-describedby={errors.gstin ? "buy-gstin-error" : undefined}
+                {...register("gstin", { setValueAs: (v: string) => normalizeGstinInput(v ?? "") })}
+              />
+              {errors.gstin?.message && <p id="buy-gstin-error" role="alert" className="text-xs text-rose mt-1">{errors.gstin.message}</p>}
               <p className="text-3xs text-ink-3 mt-1">
                 Add your GSTIN to claim input tax credit. Skip if not GST-registered.
               </p>

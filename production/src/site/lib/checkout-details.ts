@@ -14,6 +14,26 @@
  * These rules must stay in step with `cartSchema` in lib/checkout/cart-checkout.ts.
  */
 import { planDomains, type PlanDomainInput } from "@/lib/checkout/hosting-domain";
+import { isValidGstin } from "@/lib/utils";
+
+/**
+ * R-227 (6 Oct 2026): the server drops a GSTIN that fails isValidGstin (cart-checkout.ts)
+ * without a word, so the invoice goes out B2C and the buyer loses the input tax credit.
+ * The form now says so before the order exists: fix it, or leave it blank.
+ */
+export const GSTIN_INVALID_MSG = "This GSTIN doesn't look valid — fix it or leave it blank";
+
+/** What the buyer typed, as a GSTIN is written: capitals, no spaces, 15 characters at most. */
+export function normalizeGstinInput(v: string): string {
+  return v.replace(/\s+/g, "").toUpperCase().slice(0, 15);
+}
+
+/** Null when the GSTIN is blank (it is optional) or passes the full checksum; else the message. */
+export function gstinProblem(gstin: string | null | undefined): string | null {
+  const g = (gstin ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!g) return null;
+  return isValidGstin(g) ? null : GSTIN_INVALID_MSG;
+}
 
 export interface CheckoutDetails {
   name: string;
@@ -34,6 +54,8 @@ export interface CheckoutDetails {
   needsState?: boolean;
   /** The GST state code chosen ("07"), or "" when none. */
   stateCode?: string;
+  /** Optional GSTIN (R-227): blank is fine, a typed one must pass the checksum. */
+  gstin?: string;
   hasDomain: boolean;
   address: { line1: string; city: string; state: string; pin: string };
 }
@@ -51,6 +73,7 @@ export function missingCheckoutDetails(d: CheckoutDetails): string[] {
   if (d.needsState && !/^\d{2}$/.test((d.stateCode ?? "").trim())) {
     missing.push("your state (it decides the GST on your invoice)");
   }
+  if (gstinProblem(d.gstin)) missing.push("a valid GSTIN (or leave it blank)");
   if (d.hasDomain) {
     // The state is its own field now (R-091) and is checked above.
     const a = d.address;

@@ -11,7 +11,7 @@
 
 import { useId, type ReactNode } from "react";
 
-export function Field({ id, label, value, onChange, type = "text", mono, autoComplete, inputMode }: {
+export function Field({ id, label, value, onChange, type = "text", mono, autoComplete, inputMode, maxLength, autoCapitalize, invalid, describedBy }: {
   id?: string;
   label: string;
   value: string;
@@ -20,6 +20,11 @@ export function Field({ id, label, value, onChange, type = "text", mono, autoCom
   mono?: boolean;
   autoComplete?: string;
   inputMode?: "text" | "email" | "tel" | "numeric";
+  maxLength?: number;
+  autoCapitalize?: "characters" | "words" | "off";
+  /** The value is wrong and the message with id `describedBy` says why (R-227). */
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   const autoId = useId();
   const inputId = id ?? `checkout-field-${autoId}`;
@@ -32,8 +37,12 @@ export function Field({ id, label, value, onChange, type = "text", mono, autoCom
         value={value}
         autoComplete={autoComplete}
         inputMode={inputMode}
+        maxLength={maxLength}
+        autoCapitalize={autoCapitalize}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.value)}
-        style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
+        style={{ width: "100%", border: `1px solid ${invalid ? "#DC2626" : "var(--border-strong)"}`, borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
       />
     </div>
   );
