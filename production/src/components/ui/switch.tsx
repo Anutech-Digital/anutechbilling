@@ -10,6 +10,7 @@
 import * as React from "react";
 import * as SwitchPrimitive from "@radix-ui/react-switch";
 import { cn } from "@/lib/utils";
+import { touchTargetClass } from "@/components/ui/checkbox";
 
 const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitive.Root>,
@@ -22,6 +23,8 @@ const Switch = React.forwardRef<
       "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2",
       "disabled:cursor-not-allowed disabled:opacity-50",
       "data-[state=checked]:bg-amber data-[state=unchecked]:bg-hairline-strong",
+      // R-269: 20px track, 40px tap target on touch screens.
+      touchTargetClass,
       className
     )}
     {...props}
