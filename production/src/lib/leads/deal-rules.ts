@@ -81,6 +81,10 @@ export function dealFormErrors(i: DealFormInput): Partial<Record<DealFormField, 
   if (close && close < i.today && close !== (i.savedClose ?? "")) {
     out.expected_close_date = "Pick today or later";
   }
+  /* 6 Oct 2026 (Pardeep's report): a typed ₹0 was saved as the deal value. Blank stays fine
+     — the lead waits in the inbox until someone knows the amount — but 0 is not an amount,
+     at any stage. Negative never reaches here: the form's zod min(0) refuses it first. */
+  if (i.value === 0) out.value = "₹0 is not a deal value — leave it blank if the amount is not known yet";
   if (!needsDealDetails(i.stage)) return out;
 
   if ((i.company ?? "").trim().length < 2) out.company = "Company is required";

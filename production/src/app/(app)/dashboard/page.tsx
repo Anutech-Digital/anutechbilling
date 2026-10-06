@@ -11,6 +11,7 @@
  */
 "use client";
 
+import { istGreeting } from "@/lib/dates/ist";
 import * as React from "react";
 import { drillHref } from "@/lib/navigation/drilldown";
 import Link from "next/link";
@@ -139,8 +140,8 @@ export default function DashboardPage() {
 
   // Time-aware greeting + date
   const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  // R-178: by the IST hour on server AND browser (getHours() was UTC on the server).
+  const greeting = istGreeting(now);
   const dateLabel = now.toLocaleString("en-IN", {
     weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata",
   });
@@ -569,10 +570,12 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
+          {/* suppressHydrationWarning: only for a render that straddles a minute boundary
+              (e.g. 11:59:59 on the server, 12:00:00 in the browser) — R-178. */}
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1" suppressHydrationWarning>
             {dateLabel}
           </p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight">
+          <h1 className="font-serif text-3xl md:text-4xl leading-tight" suppressHydrationWarning>
             {greeting}{firstName ? `, ${firstName}` : ""}.
           </h1>
           {/* Money one-liner — the greeting row also carries business signal so

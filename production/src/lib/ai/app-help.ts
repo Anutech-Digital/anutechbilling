@@ -182,6 +182,44 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
   };
 }
 
+/**
+ * R-195 (Pardeep, 6 Oct: "text select karne par 'Ask with AI' aaye"). What a selection becomes
+ * in AI Help's box: null when it is not worth a button (empty, one character, or a whole
+ * page dragged over); otherwise the text, whitespace collapsed and capped, as a question.
+ */
+export function askAboutSelection(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (t.length < 2 || t.length > 600) return null;
+  return `"${t.length > 300 ? t.slice(0, 300) + "…" : t}" — ye kya hai, aur ispar dhyan dene wali koi baat?`;
+}
+
+/**
+ * R-196 (Pardeep, 6 Oct): "Run these tests in browser". AI Help must not click or submit on
+ * the person's real login (live data), so the "Test next" list becomes a prompt for a NEW
+ * Claude Code session, which runs each test in its own browser on the LOCAL app (test data)
+ * and writes the result on the work board. Pure, so the rules are tested.
+ */
+export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[] }): string {
+  const tests = input.tests.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
+  return [
+    `Is page ke tests browser me chalao aur nateeja do. (Ye prompt ek NAYE Claude Code session me chalana hai.)`,
+    "",
+    "CLOUD CHECK: ye kaam sirf Pardeep ke computer par chalne wale LOCAL session me ho sakta hai (localhost:3001 aur browser pane wahin hain). Agar tum cloud container me ho (path /home/user/..., localhost:3001 nahi khulta, ya browser pane nahi hai) to kuch mat karo — turant bolo: \"Ye cloud session hai — Claude app me naya session LOCAL chun kar chalaiye.\" Aur ruk jao.",
+    "0. FOLDER: agar session kisi folder me nahi hai, to pehle change_directory se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega).",
+    "Asli repo SIRF Anutech-Digital/anutechbilling (remote 'anutech'), branch manager-pardeep. Abhicode0to1/new-reselleros public purana repo hai — wahan kabhi push nahi. staging/deploy mat chhuo.",
+    "Kahan test karna hai: LOCAL app http://localhost:3001 (test data). Live/staging par form submit ya kuch save MAT karo.",
+    "",
+    `Page: ${input.pagePath}`,
+    "Tests:",
+    ...tests.map((t, i) => `${i + 1}. ${t}`),
+    "",
+    "Har test ke liye: browser pane me dikha kar chalao, screenshot lo, aur ✓ (chala) / ✗ (nahi chala, kya hua) likho. Koi test samajh na aaye to ✗ nahi — 'chala nahi paya, kyun' likho.",
+    "✗ wale test: har ek ke liye board par card banao (title me page + kya toota, kadam, screenshot ka varnan). Fix tabhi karo jab owner kahe.",
+    "NATEEJA BOARD PAR: 'Kaam ki list' (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par ek card 'Test run: <page>' status done — har test ka ✓/✗ ek line me. Samay date -u se.",
+    "SESSION ARCHIVE: board par likhne ke baad ye session archive karo (mcp__ccd_session_mgmt__archive_session, session_id \"self\") — SIRF agar ye session ISI prompt se shuru hua. Pehle se koi aur baatcheet ho to archive MAT karo.",
+  ].join("\n");
+}
+
 /** The tag every AI-filed report carries — short, as asked. */
 export const AI_FILED_TAG = "🤖 AI-drafted after chat";
 

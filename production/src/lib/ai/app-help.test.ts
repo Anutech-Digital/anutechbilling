@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseHelpAnswer, parseHelpActions, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
+import { parseHelpAnswer, parseHelpActions, askAboutSelection, buildTestRunPrompt, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
 
 const draft = { title: "Invoice PDF shows IGST for a Delhi customer", type: "bug", severity: "critical", actual: "IGST 18% on a Delhi-to-Delhi invoice", expected: "CGST 9% + SGST 9%", steps: ["Open Invoices", "Open INV-1", "Download PDF"], chatSummary: "Asked why tax looked wrong; same state as ours." };
 
@@ -113,5 +113,55 @@ describe("parseHelpActions — only safe, checkable fixes survive", () => {
   it("parseHelpAnswer carries actions through", () => {
     const a = parseHelpAnswer({ reply: "ok", checklist: [], actions: [{ kind: "open", label: "Settings", href: "/settings?tab=company" }], bugDraft: null });
     expect(a?.actions).toEqual([{ kind: "open", label: "Settings", href: "/settings?tab=company" }]);
+  });
+});
+
+/* R-195: what a text selection becomes in AI Help's box. */
+describe("askAboutSelection", () => {
+  it("turns a selection into a question, whitespace collapsed", () => {
+    expect(askAboutSelection("  ₹19.3K\n  1 invoice owed ")).toBe('"₹19.3K 1 invoice owed" — ye kya hai, aur ispar dhyan dene wali koi baat?');
+  });
+  it("offers nothing for empty, one character, or a whole page dragged over", () => {
+    expect(askAboutSelection("")).toBeNull();
+    expect(askAboutSelection(null)).toBeNull();
+    expect(askAboutSelection("x")).toBeNull();
+    expect(askAboutSelection("a".repeat(601))).toBeNull();
+  });
+  it("caps a long selection at 300 characters", () => {
+    const q = askAboutSelection("b".repeat(450))!;
+    expect(q).toContain("b".repeat(300) + "…");
+    expect(q).not.toContain("b".repeat(301));
+  });
+});
+
+/* R-196: the "Run these tests in browser" prompt. */
+describe("buildTestRunPrompt", () => {
+  const p = buildTestRunPrompt({ pagePath: "/deals", tests: ["Add lead with  ₹0 value", "", "Switch to Kanban view"] });
+  it("lists the tests, numbered, blanks dropped and spaces collapsed", () => {
+    expect(p).toContain("Page: /deals");
+    expect(p).toContain("1. Add lead with ₹0 value");
+    expect(p).toContain("2. Switch to Kanban view");
+    expect(p).not.toContain("3.");
+  });
+  it("keeps the safety rules: local app only, real repo, board, archive only its own session", () => {
+    expect(p).toContain("http://localhost:3001");
+    expect(p).toMatch(/Live\/staging par form submit ya kuch save MAT karo/);
+    expect(p).toContain("Anutech-Digital/anutechbilling");
+    expect(p).toContain(String.raw`C:\Users\mso50\new-reselleros`);
+    expect(p).toMatch(/SIRF agar ye session ISI prompt se shuru hua/);
+  });
+  it("caps at 12 tests", () => {
+    const many = buildTestRunPrompt({ pagePath: "/x", tests: Array.from({ length: 20 }, (_, i) => `t${i}`) });
+    expect(many).toContain("12. t11");
+    expect(many).not.toContain("13. t12");
+  });
+});
+
+/* 6 Oct: a pasted test prompt ran in a CLOUD session, which cannot reach localhost. */
+describe("buildTestRunPrompt — cloud check", () => {
+  it("tells a cloud session to stop and ask for a Local session", () => {
+    const p = buildTestRunPrompt({ pagePath: "/deals", tests: ["x"] });
+    expect(p).toContain("CLOUD CHECK");
+    expect(p).toMatch(/naya session LOCAL chun kar chalaiye/);
   });
 });

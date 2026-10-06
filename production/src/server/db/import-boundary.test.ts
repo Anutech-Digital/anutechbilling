@@ -81,7 +81,8 @@ describe("database import boundary", () => {
        /api/agent/feedback-checked (R-183/R-188, cross-tenant by design, token-gated) came from
        manager-pardeep, which does not have src/server/db yet. R-194 moves both onto the jobs
        client when R-161 lands there, and this goes back to 205. */
-    const BASELINE = 207;
+    // 208 since 6 Oct evening: /api/agent/feedback-fixed (R-200), same reason, same R-194.
+    const BASELINE = 208;
     const count = FILES.filter((f) => !isTest(f.path)).reduce((n, f) => n + (f.code.match(/createAdminClient\(\)/g)?.length ?? 0), 0);
     expect(count).toBeLessThanOrEqual(BASELINE);
   });
