@@ -25,6 +25,8 @@ import { useCreateProjectQuote, useUpdateProjectQuote, useUpdateProjectFutureMil
 import { rupee, GST_STATE_BY_CODE } from "@/lib/utils";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { istToday } from "@/lib/dates/ist";
 
 interface Props {
@@ -123,6 +125,19 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   const isNewCustomer = customerId === "";
   const selectedCustomer = customers?.find((c) => c.id === customerId);
   const effectiveName = isNewCustomer ? newName.trim() : (selectedCustomer?.name ?? "");
+
+  /* R-174 (6 Oct 2026): the IGST box was ticked by hand, so a Kerala customer could go out
+     as CGST + SGST if nobody remembered to tick it. On a NEW quote the head now follows the
+     buyer's state against ours (same rule as everywhere: isInterStateSupply); the box stays
+     editable as an override. Never touches an existing project — its head is already set. */
+  const { data: me } = useCurrentUser();
+  const buyerCode = isNewCustomer
+    ? (stateCode && stateCode !== EXPORT_STATE ? stateCode : stateCodeFromGstin(gstin))
+    : (selectedCustomer?.state_code ?? stateCodeFromGstin(selectedCustomer?.gstin));
+  React.useEffect(() => {
+    if (editProject || !buyerCode || !me?.tenantStateCode) return;
+    setInterState(isInterStateSupply(buyerCode, me.tenantStateCode));
+  }, [editProject, buyerCode, me?.tenantStateCode]);
 
   const lineAmount = (l: LineRow) => Math.max(0, Math.round(Number(l.qty) || 0)) * Math.max(0, Math.round(Number(l.rate) || 0));
   const taxableNum = lines.reduce((s, l) => s + lineAmount(l), 0);
@@ -362,6 +377,9 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
             <label className="flex items-center gap-2 text-sm text-ink-2 mt-6">
               <input type="checkbox" checked={interState} onChange={(e) => setInterState(e.target.checked)} disabled={partialLock} className="rounded border-hairline disabled:opacity-60" />
               Inter-state (IGST)
+              {!editProject && buyerCode && me?.tenantStateCode && (
+                <span className="text-3xs text-ink-3">· set from {GST_STATE_BY_CODE[buyerCode] ?? buyerCode} ({buyerCode})</span>
+              )}
             </label>
           </div>
 
