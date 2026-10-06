@@ -65,6 +65,16 @@ export function istParts(now: Date = new Date()): { date: string; year: number; 
   };
 }
 
+/**
+ * R-178 (6 Oct 2026): the dashboard greeting by the IST hour. It used `new Date().getHours()`,
+ * which is UTC on the server and IST in the browser, so the server rendered "Good afternoon"
+ * and the browser "Good morning" — React error #418 on every load, and AI Help turned red.
+ */
+export function istGreeting(now: Date = new Date()): "Good morning" | "Good afternoon" | "Good evening" {
+  const { hour } = istParts(now);
+  return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+}
+
 /** YYYY-MM-DD + n din (calendar arithmetic, timezone-free). */
 export function addDaysISO(iso: string, n: number): string {
   const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
