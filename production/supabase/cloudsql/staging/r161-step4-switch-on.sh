@@ -40,7 +40,8 @@ say "1. Cloud Run staging: socket + secrets + switches (no traffic yet)"
 gcloud run services update "$S" --project="$P" --region="$R" --no-traffic --tag=r161 \
   --add-cloudsql-instances=resellsubsos-prod:asia-southeast1:resellersos-staging-db \
   --update-secrets=DATABASE_URL=staging-r161-database-url:latest,ANON_DATABASE_URL=staging-r161-anon-database-url:latest,SERVICE_DATABASE_URL=staging-r161-service-database-url:latest,AUTH_DATABASE_URL=staging-r161-auth-database-url:latest,JOBS_DATABASE_URL=staging-r161-jobs-database-url:latest,SUPABASE_JWT_SECRET=staging-r161-supabase-jwt-secret:latest,AUTH_SECRET=staging-r161-auth-secret:latest,AUTH_GOOGLE_ID=staging-r161-google-client-id:latest,AUTH_GOOGLE_SECRET=staging-r161-google-client-secret:latest \
-  --memory=1Gi \n  --update-env-vars=DATA_GATEWAY=1,AUTH_PROVIDER=authjs,AUTH_URL=$APP,STORAGE_BACKEND=gcs,GCS_BUCKET=resellsubsos-staging-files,DB_POOL_MAX=3
+  --memory=1Gi \
+  --update-env-vars=DATA_GATEWAY=1,AUTH_PROVIDER=authjs,AUTH_URL=$APP,STORAGE_BACKEND=gcs,GCS_BUCKET=resellsubsos-staging-files,DB_POOL_MAX=3
 
 say "2. Staging build trigger: browser switches on, Supabase URL = the app itself"
 # update github --update-substitutions returns INVALID_ARGUMENT here; export/import instead.
