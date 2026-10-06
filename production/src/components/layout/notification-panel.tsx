@@ -18,36 +18,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
-import { cn, rupee, formatDate, toWhatsAppDigits } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { buildNotifications, type NotificationItem } from "./notification-items";
 import { useTasks } from "@/lib/queries/tasks";
 import { useRecentLeads } from "@/lib/queries/leads";
 import { useCelebrations } from "@/lib/queries/contacts";
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from "@/lib/queries/notifications";
 
-type NotifTone = "emerald" | "indigo" | "amber" | "rose" | "slate";
-
-interface Notification {
-  id: string;
-  title: string;
-  meta: string;
-  icon: string;
-  tone: NotifTone;
-  unread: boolean;
-  link: string;
-  when: number; // ms, for sorting
-  /** When set, the item shows a 1-tap WhatsApp "Wish" button (birthdays). */
-  wishHref?: string;
-}
-
 const READ_KEY = "ros_notif_read";
-
-/** End-of-today and start-of-today as UTC ms, computed in IST (matches the
- *  tasks query's day boundary so "due today / overdue" agrees with the badge). */
-function todayBoundsIST() {
-  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
-  const endMs = Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate() + 1) - 5.5 * 3600 * 1000;
-  return { start: endMs - 24 * 3600 * 1000, end: endMs };
-}
 
 export function NotificationPanel({
   open,
@@ -57,14 +36,14 @@ export function NotificationPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { data: tasks } = useTasks("all");
+  const { data: tasks, isLoading: tasksLoading } = useTasks("all");
   /* Only the leads it shows: created in the last 7 days, 30 at most, five columns (S40).
      This panel is mounted on every page and used to load every lead with select("*"). */
-  const { data: leads } = useRecentLeads();
-  const { data: celebrations } = useCelebrations(7);
+  const { data: leads, isLoading: leadsLoading } = useRecentLeads();
+  const { data: celebrations, isLoading: celebrationsLoading } = useCelebrations(7);
   /* Asli events — DB se (audit B4): payment/quote-accept/lead/ticket. Read-state
      row par hai, har device par ek. */
-  const { data: dbNotifs } = useNotifications();
+  const { data: dbNotifs, isLoading: notifsLoading } = useNotifications();
   const markDbRead = useMarkNotificationRead();
   const markDbAll  = useMarkAllNotificationsRead();
 
@@ -81,94 +60,12 @@ export function NotificationPanel({
     try { localStorage.setItem(READ_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
   };
 
-  const items = React.useMemo<Notification[]>(() => {
-    const out: Notification[] = [];
-    const { start, end } = todayBoundsIST();
-
-    // 0. Asli events (DB) — payment/quote/lead/ticket; yahi badge ke pehle chalak hain.
-    const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
-      "payment.received": { icon: "rupee",  tone: "emerald" },
-      "quote.accepted":   { icon: "check",  tone: "emerald" },
-      "lead.created":     { icon: "target", tone: "amber"   },
-      "ticket.created":   { icon: "help",   tone: "indigo"  },
-    };
-    for (const n of dbNotifs ?? []) {
-      const km = KIND_META[n.kind] ?? { icon: "bell", tone: "slate" as NotifTone };
-      out.push({
-        id: `db-${n.id}`,
-        title: n.title,
-        meta: `${n.body ? n.body + " · " : ""}${formatDate(n.created_at)}`,
-        icon: km.icon,
-        tone: km.tone,
-        unread: !n.read_at,
-        link: n.href ?? "/dashboard",
-        when: new Date(n.created_at).getTime(),
-      });
-    }
-
-    // 1. Actionable: tasks due today or overdue (pending / snoozed only).
-    for (const t of tasks ?? []) {
-      if (t.status !== "pending" && t.status !== "snoozed") continue;
-      const due = new Date(t.due_at).getTime();
-      if (due >= end) continue; // future tasks aren't "notifications" yet
-      const overdue = due < start;
-      const who = t.leads?.company ?? t.customers?.name ?? t.quotes?.customer_name ?? null;
-      out.push({
-        id: `task-${t.id}`,
-        title: t.title,
-        meta: `${overdue ? "Overdue" : "Due today"}${who ? ` · ${who}` : ""} · ${formatDate(t.due_at)}`,
-        icon: overdue ? "alert" : "clock",
-        tone: overdue ? "rose" : "amber",
-        unread: !readIds.has(`task-${t.id}`),
-        link: t.lead_id ? `/leads?lead=${t.lead_id}` : "/tasks",
-        when: due,
-      });
-    }
-
-    // 2. Informational: leads that arrived in the last 7 days.
-    const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
-    for (const l of leads ?? []) {
-      const created = new Date(l.created_at).getTime();
-      if (created < weekAgo) continue;
-      out.push({
-        id: `lead-${l.id}`,
-        title: `New lead · ${l.company}`,
-        meta: `${formatDate(l.created_at)}${l.value ? ` · ${rupee(l.value, { compact: true })}` : ""}${l.contact_name ? ` · ${l.contact_name}` : ""}`,
-        icon: "target",
-        tone: "amber",
-        unread: false, // info, doesn't drive the unread dot
-        link: `/leads?lead=${l.id}`,
-        when: created,
-      });
-    }
-
-    // 3. Relationship: upcoming birthdays / anniversaries (next 7 days).
-    //    Today's celebration drives the unread dot ("wish them NOW"); the rest
-    //    are a gentle heads-up. Each carries a 1-tap WhatsApp wish.
-    for (const c of celebrations ?? []) {
-      const first = c.name.split(" ")[0] || c.name;
-      const isBday = c.kind === "birthday";
-      const whenLabel = c.inDays === 0 ? "Today" : c.inDays === 1 ? "Tomorrow" : `in ${c.inDays} days`;
-      const wa = toWhatsAppDigits(c.phone);
-      const wishText = isBday
-        ? `Happy Birthday ${first}! 🎂🎉 Aapka din shubh aur mangalmay ho.`
-        : `Happy Anniversary ${first}! 💐🎉 Dher saari shubhkaamnaayein.`;
-      out.push({
-        id: `celebration-${c.id}`,
-        title: `${isBday ? "🎂" : "💍"} ${c.name}'s ${c.kind}`,
-        meta: `${whenLabel}${c.age != null ? ` · turning ${c.age}` : ""} · ${formatDate(c.dateISO)}`,
-        icon: "sparkles",
-        tone: isBday ? "amber" : "indigo",
-        unread: c.inDays === 0,           // only today's nudges the badge
-        link: `/contacts/${c.contactId}`,
-        // Sort so nearer celebrations sit higher, just under today's tasks.
-        when: Date.now() - c.inDays * 3_600_000,
-        wishHref: wa ? `https://wa.me/${wa}?text=${encodeURIComponent(wishText)}` : undefined,
-      });
-    }
-
-    return out.sort((a, b) => b.when - a.when).slice(0, 30);
-  }, [tasks, leads, celebrations, readIds, dbNotifs]);
+  const items = React.useMemo(
+    () => buildNotifications({ dbNotifs, tasks, leads, celebrations, readIds }),
+    [tasks, leads, celebrations, readIds, dbNotifs],
+  );
+  /* Pehli load par "You're all caught up" jhooth tha (R-247) — data aane tak skeleton. */
+  const loading = items.length === 0 && (tasksLoading || leadsLoading || notifsLoading || celebrationsLoading);
 
   const unreadCount = items.filter((n) => n.unread).length;
 
@@ -180,7 +77,7 @@ export function NotificationPanel({
     markDbAll.mutate();
   };
 
-  const openItem = (n: Notification) => {
+  const openItem = (n: NotificationItem) => {
     const next = new Set(readIds);
     next.add(n.id);
     persistRead(next);
@@ -197,7 +94,9 @@ export function NotificationPanel({
           <div>
             <SheetTitle className="text-base">Notifications</SheetTitle>
             <SheetDescription className="text-2xs mt-0.5">
-              {items.length === 0
+              {loading
+                ? "Loading…"
+                : items.length === 0
                 ? "You're all caught up"
                 : unreadCount > 0
                 ? `${unreadCount} need${unreadCount === 1 ? "s" : ""} attention · ${items.length} recent`
@@ -229,7 +128,19 @@ export function NotificationPanel({
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto">
-          {items.length === 0 ? (
+          {loading ? (
+            <div aria-busy="true">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i} className="px-4 py-3 border-b border-hairline flex gap-3 items-start">
+                  <Skeleton className="w-8 h-8 rounded-full flex-shrink-0" />
+                  <div className="flex-1 space-y-2 pt-0.5">
+                    <Skeleton className="h-3.5 w-3/4" />
+                    <Skeleton className="h-2.5 w-1/2" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : items.length === 0 ? (
             <EmptyState
               icon="bell"
               title="You're all caught up"
