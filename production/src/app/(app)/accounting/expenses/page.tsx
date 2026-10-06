@@ -16,13 +16,13 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FAB } from "@/components/ui/fab";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import {
   useExpenses,
   useExpensesTotals,
   useDeleteExpense,
   useOutstandingPayable,
-  expensePayStatus,
   type Expense,
 } from "@/lib/queries/expenses";
 import { AddExpenseDialog } from "@/components/features/accounting/add-expense-dialog";
@@ -38,97 +38,10 @@ import { toast } from "sonner";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
 import { panFromGstin } from "@/lib/accounting/tds-deductor";
 import { istToday } from "@/lib/dates/ist";
+import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
+import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
 
 type DateRange = { from: string; to: string };
-
-/** Reconcile tag shown next to a Salaries expense's category. Salary expenses
- *  reflect their salary's paid-status (which supports PARTIAL payments); every
- *  other expense uses its own reconciled_txn_id. */
-type SalMini = { paid_status: "unpaid" | "partial" | "paid"; paid_amount: number; net: number };
-function reconcileTag(e: Expense, sal?: SalMini):
-  { tone: "emerald" | "amber"; label: string; title?: string } | null {
-  if (e.category === "Salaries" && sal) {
-    if (sal.paid_status === "paid") return { tone: "emerald", label: "✓ Paid" };
-    if (sal.paid_status === "partial") {
-      return {
-        tone: "amber",
-        label: `◐ Partial · ${rupee(sal.paid_amount)}/${rupee(sal.net)}`,
-        title: `Partly paid — ${rupee(sal.net - sal.paid_amount)} still owed. Reconcile another bank line in Banking to clear it.`,
-      };
-    }
-    return { tone: "amber", label: "To pay", title: "Salary not paid yet — pay it and reconcile in Banking." };
-  }
-  // Statutory / other payroll posting: reconciled bank line = Paid, else payable.
-  if (e.reconciled_txn_id) return { tone: "emerald", label: "✓ Paid" };
-  return { tone: "amber", label: "To pay", title: "Not settled yet — reconcile its bank line to confirm." };
-}
-function ReconcileTag({ tone, label, title }: { tone: "emerald" | "amber"; label: string; title?: string }) {
-  const cls = tone === "emerald" ? "bg-emerald/10 text-emerald" : "bg-amber-soft text-amber-ink";
-  return (
-    <span title={title} className={`inline-flex items-center gap-1 rounded-full ${cls} px-2 py-0.5 text-3xs font-medium align-middle`}>
-      <Icon name={tone === "emerald" ? "check_circle" : "clock"} size={11} />
-      {label}
-    </span>
-  );
-}
-
-/**
- * Status chip for a non-payroll expense. Two independent facts:
- *   • Paid vs To-pay — did the money leave (the operator's record)?
- *   • Reconciled — has it been matched to a bank/cash line (bank-verified)?
- * So a paid expense reads "Paid" straight away; once it reconciles it gains a
- * "✓ Paid" tick (bank-verified). An open bill reads "To pay" / "Overdue".
- */
-function PayBadge({ e, today }: { e: Expense; today: string }) {
-  const base = "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-3xs font-medium align-middle";
-  if (!e.paid) {
-    const overdue = expensePayStatus(e, today) === "overdue";
-    return (
-      <span
-        title={overdue ? "Payable overdue — settle it and Mark paid." : "Payable — not paid yet."}
-        className={`${base} ${overdue ? "bg-rose/10 text-rose" : "bg-amber-soft text-amber-ink"}`}
-      >
-        <Icon name={overdue ? "alert" : "clock"} size={11} />
-        {overdue ? "Overdue" : "To pay"}
-      </span>
-    );
-  }
-  if (e.reconciled_txn_id) {
-    return (
-      <span title="Paid & bank-verified — matched to a bank/cash line." className={`${base} bg-emerald/10 text-emerald`}>
-        <Icon name="check_circle" size={11} /> Paid
-      </span>
-    );
-  }
-  return (
-    <span title="Payment recorded. Reconcile it against the bank line to bank-verify." className={`${base} border border-emerald/30 text-emerald`}>
-      <Icon name="check" size={11} /> Paid
-    </span>
-  );
-}
-
-/** Bill-presence chip — makes "Missing bill" / kaccha clearly visible. */
-function BillChip({ tone, label, title }: { tone: "rose" | "amber"; label: string; title?: string }) {
-  const cls = tone === "rose" ? "bg-rose/10 text-rose" : "bg-amber-soft/70 text-amber-ink";
-  return (
-    <span title={title} className={`inline-flex items-center gap-1 rounded-full ${cls} px-1.5 py-0.5 text-3xs uppercase tracking-wide font-semibold align-middle`}>
-      <Icon name="alert" size={10} /> {label}
-    </span>
-  );
-}
-
-/** Payroll / statutory postings (salaries, employer ESI/PF, TDS) are generated
- *  by the Payroll module — they carry no bill or line items, so they get no
- *  items editor and clicking one jumps to Payroll (their real home) instead of
- *  the bill-style detail. */
-function isPayrollExpense(e: { category?: string | null; payment_method?: string | null }): boolean {
-  const cat = e.category ?? "";
-  return (
-    cat === "Salaries" ||
-    e.payment_method === "statutory" ||
-    /\b(ESI|EPF|PF|Provident|Gratuity|Bonus|TDS)\b/i.test(cat)
-  );
-}
 
 const iso = (y: number, m: number, d: number) =>
   `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -224,7 +137,7 @@ export default function ExpensesPage() {
     [salariesQ.data],
   );
 
-  const allRows   = q.data ?? [];
+  const allRows   = React.useMemo(() => q.data ?? [], [q.data]);
   const isLoading = q.isLoading;
   const totals    = totalsQ.data;
 
@@ -279,13 +192,23 @@ export default function ExpensesPage() {
 
   // Rows after the client-side filters (category is applied in the query;
   // payee + "to pay" are applied here).
-  const q_ = search.trim().toLowerCase();
-  const rows = allRows.filter((e) =>
-    (!payeeFilter || (e.vendor_name ?? "") === payeeFilter) &&
-    (!unpaidOnly || rowOwes(e)) &&
-    (!q_ || [e.category, e.vendor_name, e.description, e.payment_method, String(e.amount)]
-      .some((f) => (f ?? "").toString().toLowerCase().includes(q_))),
+  const rows = React.useMemo(
+    () => filterExpenses(allRows, { payee: payeeFilter, unpaidOnly, search }, rowOwes),
+    [allRows, payeeFilter, unpaidOnly, search, rowOwes],
   );
+
+  /* R-213: saved views remember the date range + every filter (DataTable "Views"). */
+  const filterState = { from: range.from, to: range.to, category: catFilter, payee: payeeFilter, unpaidOnly, search };
+  const viewState = expenseViewState(filterState);
+  const applyView = (v: Record<string, unknown>) => {
+    const s = readExpenseView(v, filterState);
+    setRange({ from: s.from, to: s.to });
+    setCatFilter(s.category);
+    setPayeeFilter(s.payee);
+    setUnpaidOnly(s.unpaidOnly);
+    setSearch(s.search);
+    setSelectedIds(new Set());
+  };
 
   const groups = React.useMemo(
     () => (groupBy === "none" ? [] : groupExpenses(rows, groupBy)),
@@ -392,7 +315,7 @@ export default function ExpensesPage() {
     const noBill = e.bill_type === "none" && !isPayrollExpense(e);
     return (
           <tr key={e.id}
-            className={`hover:bg-paper-2/40 cursor-pointer align-top ${selectedIds.has(e.id) ? "bg-amber-soft/40" : ""}`}
+            className={`border-b border-hairline last:border-0 hover:bg-paper-2/40 cursor-pointer align-top ${selectedIds.has(e.id) ? "bg-amber-soft/40" : ""}`}
             onClick={() => openRow(e)}>
             {/* Bulk-select checkbox — only for settle-able payables */}
             <td className="px-2 py-2.5" onClick={(ev) => ev.stopPropagation()}>
@@ -406,6 +329,8 @@ export default function ExpensesPage() {
                 />
               )}
             </td>
+            {/* Date — its own column so it can be sorted (R-213) */}
+            <td className="px-3 py-2.5 text-ink-2 whitespace-nowrap">{formatDate(e.expense_date)}</td>
             {/* Expense: category + status + bill chip, then a muted meta line */}
             <td className="px-3 py-2.5">
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -416,11 +341,11 @@ export default function ExpensesPage() {
                 {e.bill_type === "kaccha" && <BillChip tone="amber" label="Kaccha" title="Non-GST (kaccha) bill" />}
                 {e.bill_type === "none" && !isPayrollExpense(e) && <BillChip tone="rose" label="No bill" title="No bill/receipt attached yet" />}
               </div>
-              <div className="text-xs text-ink-3 truncate mt-0.5" title={e.description ?? undefined}>
-                {formatDate(e.expense_date)}
-                {e.payment_method ? ` · ${e.payment_method}` : ""}
-                {e.description ? ` · ${e.description}` : ""}
-              </div>
+              {(e.payment_method || e.description) && (
+                <div className="text-xs text-ink-3 truncate mt-0.5" title={e.description ?? undefined}>
+                  {[e.payment_method, e.description].filter(Boolean).join(" · ")}
+                </div>
+              )}
             </td>
             {/* Vendor */}
             <td className="px-3 py-2.5 text-ink-2 truncate" title={e.vendor_name ?? undefined}>{e.vendor_name ?? "—"}</td>
@@ -455,8 +380,7 @@ export default function ExpensesPage() {
   };
 
   /* One mobile card — flat or under a group header. */
-  const renderMobileRow = (e: Expense) => (
-      <li key={e.id}>
+  const renderMobileCard = (e: Expense) => (
         <Card className={`p-4 cursor-pointer ${selectedIds.has(e.id) ? "ring-1 ring-amber/50 bg-amber-soft/30" : ""}`} onClick={() => openRow(e)}>
           <div className="flex items-start justify-between gap-2 mb-1">
             {bulkEligible(e) && (
@@ -514,8 +438,35 @@ export default function ExpensesPage() {
             </div>
           </div>
         </Card>
-      </li>
   );
+  const renderMobileRow = (e: Expense) => <li key={e.id}>{renderMobileCard(e)}</li>;
+
+  /* R-213: the flat list is on the shared DataTable — click Date / Expense / Vendor /
+     Amount to sort, "Views" to save the filters. The first column keeps this page's own
+     select (only unpaid operating expenses can be bulk-paid), so the DataTable's
+     every-row checkbox is not used. Grouped view (vendor / category subtotals) keeps its
+     own table below — DataTable has no group rows. */
+  const columns: DataTableColumn<Expense>[] = [
+    {
+      id: "select",
+      width: "4%",
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Select all payable expenses"
+          className="align-middle accent-amber cursor-pointer disabled:opacity-30"
+          checked={allEligibleSelected}
+          disabled={eligibleRows.length === 0}
+          onChange={toggleAll}
+        />
+      ),
+    },
+    { id: "date", header: "Date", width: "11%", sortValue: EXPENSE_SORT.date },
+    { id: "expense", header: "Expense", width: "31%", sortValue: EXPENSE_SORT.expense },
+    { id: "vendor", header: "Vendor / payee", width: "18%", sortValue: EXPENSE_SORT.vendor },
+    { id: "amount", header: "Amount", width: "16%", align: "right", sortValue: EXPENSE_SORT.amount },
+    { id: "actions", header: "Actions", width: "20%", align: "right" },
+  ];
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
@@ -616,9 +567,12 @@ export default function ExpensesPage() {
           >
             To pay{payableQ.data && payableQ.data.count > 0 ? ` · ${payableQ.data.count}` : ""}
           </button>
-          <span className="ml-auto text-xs text-ink-3">
-            {rows.length} {rows.length === 1 ? "entry" : "entries"}
-          </span>
+          {/* Flat list: the table's own "Showing x of y" says this (R-213). */}
+          {groupBy !== "none" && (
+            <span className="ml-auto text-xs text-ink-3">
+              {rows.length} {rows.length === 1 ? "entry" : "entries"}
+            </span>
+          )}
         </div>
         <div className="mt-2">
           <div className="relative">
@@ -736,18 +690,30 @@ export default function ExpensesPage() {
             action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add your first expense</Button>}
           />
         </Card>
+      ) : groupBy === "none" ? (
+        <DataTable
+          rows={rows}
+          columns={columns}
+          getRowId={(e) => e.id}
+          totalCount={allRows.length}
+          noun="expense"
+          views={{ storageKey: "expenses", current: viewState, apply: applyView }}
+          cardsBelow="md"
+          mobileCard={(e) => renderMobileCard(e)}
+          renderRow={(e) => renderDesktopRow(e)}
+        />
       ) : (
         <>
-          {/* Desktop table — FLUID (table-fixed + % widths) so it always fits the
-              container with NO horizontal scroll. Date / method / GST are folded
-              into rich cells; status badge + bill chip sit with the category. */}
+          {/* Grouped view (vendor / category subtotals) — own table, same columns as the
+              DataTable above. FLUID (table-fixed + % widths): no horizontal scroll. */}
           <Card flush className="hidden md:block">
             <div className="overflow-y-auto max-h-[calc(100vh-15rem)]">
             <table className="w-full table-fixed text-sm">
               <colgroup>
                 <col style={{ width: "4%" }} />
-                <col style={{ width: "40%" }} />
-                <col style={{ width: "20%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "31%" }} />
+                <col style={{ width: "18%" }} />
                 <col style={{ width: "16%" }} />
                 <col style={{ width: "20%" }} />
               </colgroup>
@@ -763,17 +729,18 @@ export default function ExpensesPage() {
                       onChange={toggleAll}
                     />
                   </th>
+                  <th className="text-left  px-3 py-2.5">Date</th>
                   <th className="text-left  px-3 py-2.5">Expense</th>
                   <th className="text-left  px-3 py-2.5">Vendor / payee</th>
                   <th className="text-right px-3 py-2.5">Amount</th>
                   <th className="text-right px-3 py-2.5">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-hairline">
-                {groupBy === "none" ? rows.map(renderDesktopRow) : groups.map((g) => (
+              <tbody>
+                {groups.map((g) => (
                   <React.Fragment key={g.key}>
-                    <tr className="bg-paper-2/70">
-                      <td colSpan={3} className="px-3 py-2">
+                    <tr className="bg-paper-2/70 border-b border-hairline">
+                      <td colSpan={4} className="px-3 py-2">
                         <button
                           type="button"
                           onClick={() => toggleGroup(g.key)}
@@ -801,7 +768,7 @@ export default function ExpensesPage() {
 
           {/* Mobile cards */}
           <ul className="md:hidden space-y-2.5">
-            {groupBy === "none" ? rows.map(renderMobileRow) : groups.map((g) => (
+            {groups.map((g) => (
               <React.Fragment key={g.key}>
                 <li>
                   <button
