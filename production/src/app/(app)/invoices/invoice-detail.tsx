@@ -36,7 +36,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
-import { getInvoiceWhatsAppUrl } from "@/lib/whatsapp";
+import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -165,7 +165,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 size="sm"
                 variant="primary"
                 icon="whatsapp"
-                onClick={() => window.open(getInvoiceWhatsAppUrl(invoice, customer?.contact_phone, waSender), "_blank")}
+                onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
               >
                 WhatsApp
               </Button>

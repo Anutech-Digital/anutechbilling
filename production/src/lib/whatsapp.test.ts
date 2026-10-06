@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getInvoiceWhatsAppUrl, getLeadWhatsAppUrl, getRenewalWhatsAppUrl,
-  formatWhatsAppPhone, signOff, payLine, type WhatsAppSender,
+  formatWhatsAppPhone, signOff, payLine, invoiceWhatsAppTarget, type WhatsAppSender,
 } from "./whatsapp";
 
 const ANUTECH: WhatsAppSender = {
@@ -100,5 +100,30 @@ describe("the phone number", () => {
   it("returns empty for nothing, so wa.me opens the contact picker", () => {
     expect(formatWhatsAppPhone(null)).toBe("");
     expect(formatWhatsAppPhone(undefined)).toBe("");
+  });
+});
+
+describe("R-245: the invoice reminder goes to the customer, and never says '*due date*'", () => {
+  it("leaves the due clause out when the invoice has no due date", () => {
+    const m = body(getInvoiceWhatsAppUrl({ id: "INV-1", amount: 500 }, "9876543210", ANUTECH));
+    expect(m).not.toMatch(/due date/i);
+    expect(m).not.toMatch(/due on/i);
+    expect(m).toContain("*INV-1* for *");
+  });
+
+  it("still names the date when there is one", () => {
+    expect(body(getInvoiceWhatsAppUrl(invoice, "9876543210", ANUTECH))).toMatch(/due on \*.+2026\*/);
+  });
+
+  it("addresses wa.me to the customer's number (91 + 10 digits)", () => {
+    const t = invoiceWhatsAppTarget(invoice, "+91 98765-43210", ANUTECH);
+    expect(t.ok).toBe(true);
+    if (t.ok) expect(t.url.startsWith("https://wa.me/919876543210?text=")).toBe(true);
+  });
+
+  it("refuses (no_phone) instead of opening a recipient-less link", () => {
+    for (const p of [null, undefined, "", "   ", "12345"]) {
+      expect(invoiceWhatsAppTarget(invoice, p, ANUTECH)).toEqual({ ok: false, reason: "no_phone" });
+    }
   });
 });

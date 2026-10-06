@@ -53,7 +53,8 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
-import { getInvoiceWhatsAppUrl } from "@/lib/whatsapp";
+import { useCustomers } from "@/lib/queries/customers";
+import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
@@ -83,6 +84,8 @@ function InvoicesPageInner() {
   const canQuotes    = canOpenQuotes(me?.role);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
+  /* R-245: the reminder goes to the customer's phone — from the cached customer list. */
+  const { data: customers } = useCustomers();
 
   const { data: invoices, isLoading, error, refetch } = useInvoices();
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
@@ -623,7 +626,7 @@ function InvoicesPageInner() {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
             const first = selectedInvoices[0];
             if (!first) return;
-            window.open(getInvoiceWhatsAppUrl(first, null, waSender), "_blank");
+            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never))) return;
             /* ── THE BUTTON USED TO SAY "Bulk WhatsApp" AND SEND ONE ─────────
                It opened `selectedInvoices[0]` and nothing else, so selecting twelve invoices
                and clicking it messaged one customer while the label said it had done all
@@ -905,6 +908,8 @@ function InvoiceRow({
 }) {
   const router = useRouter();
   const waSender = useWhatsAppSender();
+  /* R-245: same cache as the page (one fetch), so the row menu knows the phone. */
+  const { data: customers } = useCustomers();
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenQuotes(me?.role);
   const [delOpen, setDelOpen] = React.useState(false);
@@ -1066,10 +1071,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
-                    onClick={() => {
-                      const url = getInvoiceWhatsAppUrl(inv, null, waSender);
-                      window.open(url, "_blank");
-                    }}
+                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never))}
                   >
                     <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>
