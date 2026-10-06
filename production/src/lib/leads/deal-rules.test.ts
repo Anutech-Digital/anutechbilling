@@ -163,3 +163,22 @@ describe("the wiring", () => {
     expect(BOARD).toContain("≈ visible cards only");
   });
 });
+
+/* Pardeep's 6 Oct report (/deals): "Deal amount me ₹0 ... accept ho rahi hai". Blank is fine
+   (the lead waits in the inbox); a typed ₹0 is not a deal value, at any stage. Negative is
+   already refused by the form's zod min(0) with "raise a credit note instead". */
+describe("dealFormErrors — ₹0 is not a deal value", () => {
+  const base: DealFormInput = {
+    stage: "new", isProject: false, company: "", plan: "",
+    requirement: "", value: undefined, expectedClose: "", today: TODAY,
+  };
+  it("blank value is fine on a new lead", () => expect(dealFormErrors(base).value).toBeUndefined());
+  it("₹0 is refused with a way out, even on a new lead", () => {
+    expect(dealFormErrors({ ...base, value: 0 }).value).toMatch(/₹0 is not a deal value — leave it blank/);
+  });
+  it("₹0 is refused on a quote-stage deal too", () => {
+    expect(dealFormErrors({ ...base, stage: "quote", company: "Acme", plan: "GW", expectedClose: "2026-10-15", value: 0 }).value)
+      .toMatch(/₹0 is not a deal value/);
+  });
+  it("a real amount passes", () => expect(dealFormErrors({ ...base, value: 1 }).value).toBeUndefined());
+});
