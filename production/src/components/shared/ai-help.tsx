@@ -87,6 +87,61 @@ async function toShot(source: HTMLCanvasElement | Blob): Promise<Shot | null> {
   return null;
 }
 
+/**
+ * R-189 (Pardeep, 6 Oct: "poora page na lekar kuch portion ka hi screen lena ho"): after the
+ * capture, the picture opens full-screen; drag a box over the part you want, or keep it all.
+ * Coordinates are mapped from the displayed image back to the canvas, so the crop is exact
+ * at any zoom. Pointer events, so mouse and touch both work.
+ */
+function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone: (c: HTMLCanvasElement) => void; onCancel: () => void }) {
+  const imgRef = React.useRef<HTMLImageElement>(null);
+  const [box, setBox] = React.useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const start = React.useRef<{ x: number; y: number } | null>(null);
+  const url = React.useMemo(() => src.toDataURL("image/png"), [src]);
+
+  const pos = (e: React.PointerEvent) => {
+    const r = imgRef.current!.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) };
+  };
+  const down = (e: React.PointerEvent) => { e.preventDefault(); (e.target as Element).setPointerCapture?.(e.pointerId); start.current = pos(e); setBox({ ...start.current, w: 0, h: 0 }); };
+  const move = (e: React.PointerEvent) => {
+    if (!start.current) return;
+    const p = pos(e);
+    setBox({ x: Math.min(p.x, start.current.x), y: Math.min(p.y, start.current.y), w: Math.abs(p.x - start.current.x), h: Math.abs(p.y - start.current.y) });
+  };
+  const up = () => { start.current = null; };
+
+  function applySelection() {
+    const img = imgRef.current;
+    if (!img || !box || box.w < 8 || box.h < 8) return;
+    const k = src.width / img.getBoundingClientRect().width;
+    const out = document.createElement("canvas");
+    out.width = Math.round(box.w * k); out.height = Math.round(box.h * k);
+    out.getContext("2d")?.drawImage(src, box.x * k, box.y * k, box.w * k, box.h * k, 0, 0, out.width, out.height);
+    onDone(out);
+  }
+
+  return (
+    <div data-ai-help className="fixed inset-0 z-[60] bg-black/70 flex flex-col items-center justify-center gap-3 p-3" role="dialog" aria-label="Choose part of the screenshot">
+      <p className="text-sm text-white text-center">Drag a box over the part you want — or keep the whole screen.</p>
+      <div className="relative max-w-full max-h-[75vh] touch-none select-none">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img ref={imgRef} src={url} alt="Screenshot to crop" draggable={false}
+          className="max-w-full max-h-[75vh] rounded-md cursor-crosshair"
+          onPointerDown={down} onPointerMove={move} onPointerUp={up} />
+        {box && box.w > 0 && (
+          <div className="absolute border-2 border-amber bg-amber/10 pointer-events-none" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />
+        )}
+      </div>
+      <div className="flex gap-2 flex-wrap justify-center">
+        <Button size="sm" variant="primary" disabled={!box || box.w < 8 || box.h < 8} onClick={applySelection}>Use selection</Button>
+        <Button size="sm" variant="outline" className="bg-paper" onClick={() => onDone(src)}>Whole screen</Button>
+        <Button size="sm" variant="ghost" className="text-white" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 interface ChatItem extends HelpMessage {
   /** R-189: screenshot sent with this message */
   image?: string;
@@ -196,6 +251,12 @@ export function AiHelp() {
   const [checks, setChecks] = React.useState<Record<string, "ok" | "fail">>({});
   const [shot, setShot] = React.useState<Shot | null>(null);
   const [capturing, setCapturing] = React.useState(false);
+  const [cropSrc, setCropSrc] = React.useState<HTMLCanvasElement | null>(null);
+  async function finishCrop(c: HTMLCanvasElement) {
+    setCropSrc(null);
+    const s = await toShot(c);
+    if (s) setShot(s); else toast.warning("Screenshot is too large.", { description: "Choose a smaller part." });
+  }
 
   /* R-189 (Pardeep, 6 Oct: "screenshot ka bhi option ho"): photo of the page behind the
      panel. The panel itself is left out of the picture (ignoreElements). */
@@ -209,8 +270,7 @@ export function AiHelp() {
         ignoreElements: (el) => el instanceof Element && !!el.closest?.(SELF),
         width: window.innerWidth, height: window.innerHeight, x: window.scrollX, y: window.scrollY,
       });
-      const s = await toShot(canvas);
-      if (s) setShot(s); else toast.warning("Screenshot is too large.", { description: "Paste a smaller one with Ctrl+V." });
+      setCropSrc(canvas);
     } catch {
       toast.warning("Could not take a screenshot.", { description: "Paste one with Ctrl+V instead (Win+Shift+S takes one)." });
     } finally {
@@ -312,6 +372,7 @@ export function AiHelp() {
 
   return (
     <div data-ai-help>
+      {cropSrc && <CropOverlay src={cropSrc} onDone={(c) => void finishCrop(c)} onCancel={() => setCropSrc(null)} />}
       {open && (
         <section
           role="dialog"
