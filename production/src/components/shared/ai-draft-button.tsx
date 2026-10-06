@@ -46,6 +46,7 @@ export function AiDraftButton({
   const [subject, setSubject] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [mode, setMode] = React.useState<string>("");
+  const fieldId = React.useId();
 
   async function generate() {
     setDrafting(true);
@@ -110,13 +111,13 @@ export function AiDraftButton({
             <div className="space-y-3">
               {channel === "email" && (
                 <div>
-                  <label className="block text-xs font-medium text-ink-2 mb-1">Subject</label>
-                  <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+                  <label htmlFor={`${fieldId}-subject`} className="block text-xs font-medium text-ink-2 mb-1">Subject</label>
+                  <Input id={`${fieldId}-subject`} value={subject} onChange={(e) => setSubject(e.target.value)} />
                 </div>
               )}
               <div>
-                <label className="block text-xs font-medium text-ink-2 mb-1">Message</label>
-                <Textarea rows={6} value={message} onChange={(e) => setMessage(e.target.value)} />
+                <label htmlFor={`${fieldId}-message`} className="block text-xs font-medium text-ink-2 mb-1">Message</label>
+                <Textarea id={`${fieldId}-message`} rows={6} value={message} onChange={(e) => setMessage(e.target.value)} />
               </div>
             </div>
           )}

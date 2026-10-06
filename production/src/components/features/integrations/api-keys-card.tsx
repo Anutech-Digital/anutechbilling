@@ -107,8 +107,9 @@ export default function ApiKeysCard() {
       {/* Create */}
       <div className="mb-4 flex items-end gap-2">
         <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium text-ink-3">New key label</label>
+          <label htmlFor="api-key-new-label" className="mb-1 block text-xs font-medium text-ink-3">New key label</label>
           <Input
+            id="api-key-new-label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g. DSP support platform"

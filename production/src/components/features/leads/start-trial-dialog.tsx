@@ -152,8 +152,8 @@ export default function StartTrialDialog({ open, onOpenChange }: Props) {
           </div>
         </div>
 
-        <Label>Tier</Label>
-        <div className="grid grid-cols-4 gap-2 mb-4">
+        <p id="start-trial-tier" className="text-xs font-medium leading-none text-ink-2">Tier</p>
+        <div role="group" aria-labelledby="start-trial-tier" className="grid grid-cols-4 gap-2 mb-4">
           {TIERS.map((t) => (
             <button
               key={t.id}

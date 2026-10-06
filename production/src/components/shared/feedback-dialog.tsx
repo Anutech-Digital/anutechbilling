@@ -316,7 +316,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
           {/* One box, like a chat composer (5 Oct 2026, Pardeep): pasted, dropped, uploaded and
               auto-captured screenshots all show INSIDE the box as thumbnails above the text, and
               the capture / attach buttons live in the box's own toolbar. */}
-          <FormField label="Details & Steps">
+          <FormField label="Details & Steps" htmlFor="feedback-details">
             <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileChange} className="hidden" />
             <div
               onDragOver={(e) => { if (Array.from(e.dataTransfer.items).some((i) => i.type.startsWith("image/"))) { e.preventDefault(); setDragging(true); } }}
@@ -349,6 +349,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
                 </ul>
               )}
               <textarea
+                id="feedback-details"
                 className="block w-full min-h-[110px] p-3 bg-transparent border-0 shadow-none ring-0 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-0 focus-visible:ring-0 focus:border-0 leading-relaxed resize-y"
                 placeholder={
                   type === "bug"

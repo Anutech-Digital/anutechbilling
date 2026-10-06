@@ -20,6 +20,7 @@
  * and chat live only in this tab (memory, not storage); text is PII-masked before it is kept.
  */
 import * as React from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
@@ -174,8 +175,15 @@ function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone
   }
 
   return (
-    <div data-ai-help className="fixed inset-0 z-[60] bg-black/70 flex flex-col items-center justify-center gap-3 p-3" role="dialog" aria-label="Choose part of the screenshot">
-      <p className="text-sm text-white text-center">Drag a box over the part you want — or keep the whole screen.</p>
+    /* R-302: a Radix dialog, so focus is trapped inside while cropping, Esc cancels, and focus
+       returns to AI Help afterwards. data-ai-help on the portalled nodes keeps these clicks out
+       of the test trail, as before. */
+    <DialogPrimitive.Root open onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogPrimitive.Portal>
+      <DialogPrimitive.Overlay data-ai-help className="fixed inset-0 z-[60] bg-black/70" />
+      <DialogPrimitive.Content data-ai-help className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-3 p-3 outline-none">
+      <DialogPrimitive.Title className="sr-only">Choose part of the screenshot</DialogPrimitive.Title>
+      <DialogPrimitive.Description className="text-sm text-white text-center">Drag a box over the part you want — or keep the whole screen.</DialogPrimitive.Description>
       <div className="relative max-w-full max-h-[75vh] touch-none select-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img ref={imgRef} src={url} alt="Screenshot to crop" draggable={false}
@@ -190,7 +198,9 @@ function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone
         <Button size="sm" variant="outline" className="bg-paper" onClick={() => onDone(src)}>Whole screen</Button>
         <Button size="sm" variant="ghost" className="text-white" onClick={onCancel}>Cancel</Button>
       </div>
-    </div>
+      </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

@@ -149,8 +149,8 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
         {/* Quick-pick preset headlines */}
         <div className="mb-3">
-          <Label>Quick start</Label>
-          <div className="grid grid-cols-2 gap-1.5 mt-1">
+          <p id="create-promo-quick-start" className="text-xs font-medium leading-none text-ink-2">Quick start</p>
+          <div role="group" aria-labelledby="create-promo-quick-start" className="grid grid-cols-2 gap-1.5 mt-1">
             {PRESET_HEADLINES.map((p) => (
               <button
                 key={p.h}
@@ -180,10 +180,12 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div>
-            <Label>Type</Label>
-            <div className="grid grid-cols-2 gap-1 mt-1">
+            <p id="create-promo-type" className="text-xs font-medium leading-none text-ink-2">Type</p>
+            <div role="group" aria-labelledby="create-promo-type" className="grid grid-cols-2 gap-1 mt-1">
               <button
                 type="button"
+                aria-label="Percent"
+                aria-pressed={discountType === "percent"}
                 onClick={() => setDiscountType("percent")}
                 className={cn(
                   "border rounded py-2 text-xs font-medium",
@@ -192,6 +194,8 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
               >%</button>
               <button
                 type="button"
+                aria-label="Flat rupees"
+                aria-pressed={discountType === "flat"}
                 onClick={() => setDiscountType("flat")}
                 className={cn(
                   "border rounded py-2 text-xs font-medium",
@@ -216,12 +220,14 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
         </div>
 
         <div className="mb-4">
-          <Label>Banner colour</Label>
-          <div className="grid grid-cols-5 gap-1.5 mt-1.5">
+          <p id="create-promo-banner-colour" className="text-xs font-medium leading-none text-ink-2">Banner colour</p>
+          <div role="group" aria-labelledby="create-promo-banner-colour" className="grid grid-cols-5 gap-1.5 mt-1.5">
             {BANNER_STYLES.map((s) => (
               <button
                 key={s.id}
                 type="button"
+                aria-label={s.label}
+                aria-pressed={bannerStyle === s.id}
                 onClick={() => setBannerStyle(s.id)}
                 className={cn(
                   "h-9 rounded-md transition-all",

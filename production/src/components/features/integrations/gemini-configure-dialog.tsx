@@ -177,9 +177,10 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div className="min-w-0">
-              <Label>Gemini API key *</Label>
+              <Label htmlFor="gemini-api-key">Gemini API key *</Label>
               <div className="flex gap-2 min-w-0">
                 <Input
+                  id="gemini-api-key"
                   type={show ? "text" : "password"}
                   className="font-mono min-w-0 flex-1"
                   placeholder="AIza…"
@@ -187,7 +188,7 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
                   onChange={(e) => setApiKey(e.target.value)}
                   autoComplete="off"
                 />
-                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShow((v) => !v)}>
+                <Button type="button" variant="ghost" size="sm" className="shrink-0" aria-label={show ? "Hide API key" : "Show API key"} aria-pressed={show} onClick={() => setShow((v) => !v)}>
                   {show ? "Hide" : "Show"}
                 </Button>
               </div>
@@ -197,8 +198,9 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div className="min-w-0">
-              <Label>Model</Label>
+              <Label htmlFor="gemini-model">Model</Label>
               <select
+                id="gemini-model"
                 className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm font-mono text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
                 value={model || RECOMMENDED_MODEL}
                 onChange={(e) => setModel(e.target.value)}

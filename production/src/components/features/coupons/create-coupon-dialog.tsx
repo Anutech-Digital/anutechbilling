@@ -144,10 +144,11 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
 
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div>
-            <Label>Discount type</Label>
-            <div className="grid grid-cols-2 gap-2 mt-1">
+            <p id="create-coupon-discount-type" className="text-xs font-medium leading-none text-ink-2">Discount type</p>
+            <div role="group" aria-labelledby="create-coupon-discount-type" className="grid grid-cols-2 gap-2 mt-1">
               <button
                 type="button"
+                aria-pressed={discountType === "percent"}
                 onClick={() => setDiscountType("percent")}
                 className={cn(
                   "border rounded-md py-2 text-sm transition-colors",
@@ -160,6 +161,7 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
               </button>
               <button
                 type="button"
+                aria-pressed={discountType === "flat"}
                 onClick={() => setDiscountType("flat")}
                 className={cn(
                   "border rounded-md py-2 text-sm transition-colors",

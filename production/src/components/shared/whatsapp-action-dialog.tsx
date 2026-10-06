@@ -50,6 +50,7 @@ export function WhatsAppActionDialog({
   const sendApi = useSendWhatsApp();
   const [selectedTemplate, setSelectedTemplate] = React.useState<WhatsAppCategory>(category);
   const [message, setMessage] = React.useState("");
+  const fieldId = React.useId();
 
   // Clean phone number (strip + or spaces, default +91 for India if 10 digits)
   const cleanPhone = React.useMemo(() => {
@@ -161,8 +162,8 @@ export function WhatsAppActionDialog({
         <div className="space-y-4 my-2">
           {/* Category Chips */}
           <div>
-            <Label className="text-xs font-semibold text-ink-2 mb-1.5 block">Select Preset Template:</Label>
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <p id={`${fieldId}-template`} className="text-xs font-semibold leading-none text-ink-2 mb-1.5 block">Select Preset Template:</p>
+            <div role="group" aria-labelledby={`${fieldId}-template`} className="flex items-center gap-1.5 flex-wrap">
               {[
                 { id: "quote", label: "📄 Quote Link" },
                 { id: "invoice", label: "💳 Invoice Due" },
@@ -173,6 +174,7 @@ export function WhatsAppActionDialog({
                 <button
                   key={t.id}
                   type="button"
+                  aria-pressed={selectedTemplate === t.id}
                   onClick={() => handleTemplateChange(t.id as WhatsAppCategory)}
                   className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-all cursor-pointer ${
                     selectedTemplate === t.id
@@ -188,8 +190,9 @@ export function WhatsAppActionDialog({
 
           {/* Editable Message Text Area */}
           <div>
-            <Label className="text-xs font-semibold text-ink-2 mb-1.5 block">Message Body (Editable):</Label>
+            <Label htmlFor={`${fieldId}-message`} className="text-xs font-semibold text-ink-2 mb-1.5 block">Message Body (Editable):</Label>
             <textarea
+              id={`${fieldId}-message`}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={8}

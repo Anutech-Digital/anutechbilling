@@ -124,6 +124,7 @@ export function SmartPaste({ catalogue, onFill, contactOnly = false }: SmartPast
       </div>
 
       <Textarea
+        aria-label="Message to read details from"
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}

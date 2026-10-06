@@ -32,8 +32,9 @@ const report = (): Report =>
     maxBuffer: 64 * 1024 * 1024,
   })) as Report;
 
-/** Measured 6 Oct 2026 after R-271; lowered by R-288 (96/87 → 57/52). Only ever lower these. */
-const BASELINE = { "label-no-for": 57, "input-no-name": 52 } as const;
+/** Measured 6 Oct 2026 after R-271; lowered by R-288 (96/87 → 57/52), R-302 (→ 38/40, and the
+ *  last hand-rolled overlay gone: modal-no-trap 0). Only ever lower these. */
+const BASELINE = { "label-no-for": 38, "input-no-name": 40, "modal-no-trap": 0 } as const;
 
 /** R-288: screens that hold secrets or money stay at zero untied labels / unnamed inputs. */
 const ZERO_FILES = [
@@ -45,7 +46,23 @@ const ZERO_FILES = [
   "components/features/integrations/razorpay-configure-dialog.tsx",
   "components/features/integrations/whatsapp-configure-dialog.tsx",
   "components/features/integrations/sandbox-configure-dialog.tsx",
+  // R-302: shared dialogs + promo/coupon/trial/integration dialogs.
+  "components/shared/whatsapp-action-dialog.tsx",
+  "components/shared/feedback-dialog.tsx",
+  "components/shared/ai-draft-button.tsx",
+  "components/shared/smart-paste.tsx",
+  "components/features/whatsapp/send-whatsapp-dialog.tsx",
+  "components/features/support/agent-tooling-panel.tsx",
+  "components/features/site-promos/create-promo-dialog.tsx",
+  "components/features/leads/start-trial-dialog.tsx",
+  "components/features/integrations/gemini-configure-dialog.tsx",
+  "components/features/integrations/email-sending-card.tsx",
+  "components/features/integrations/api-keys-card.tsx",
+  "components/features/coupons/create-coupon-dialog.tsx",
 ];
+
+/** R-302: overlays that must be the focus-trapping ui/dialog, not a hand-rolled `fixed inset-0`. */
+const NO_TRAP_FILES = ["components/shared/ai-help.tsx"];
 
 afterEach(cleanup);
 
@@ -85,6 +102,13 @@ describe("a11y ratchet (R-271)", () => {
     const hits = Object.values(r.detail).flat()
       .filter((h) => h.file.endsWith(file))
       .filter((h) => h.kind === "label-no-for" || h.kind === "input-no-name")
+      .map((h) => `${h.kind}:${h.lines.join(",")}`);
+    expect(hits).toEqual([]);
+  });
+
+  it.each(NO_TRAP_FILES)("%s has no overlay without a focus trap", (file) => {
+    const hits = Object.values(r.detail).flat()
+      .filter((h) => h.file.endsWith(file) && h.kind === "modal-no-trap")
       .map((h) => `${h.kind}:${h.lines.join(",")}`);
     expect(hits).toEqual([]);
   });

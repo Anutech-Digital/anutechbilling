@@ -157,14 +157,15 @@ export default function EmailSendingCard() {
       )}
 
       {/* ── Provider ─────────────────────────────────────────────────────── */}
-      <Label>Provider</Label>
-      <div className="mb-4 mt-1.5 grid grid-cols-2 gap-2">
+      <p id="email-sending-provider" className="text-xs font-medium leading-none text-ink-2">Provider</p>
+      <div role="group" aria-labelledby="email-sending-provider" className="mb-4 mt-1.5 grid grid-cols-2 gap-2">
         {(["resend", "gmail"] as const).map((p) => {
           const active = data.provider === p;
           return (
             <button
               key={p}
               type="button"
+              aria-pressed={active}
               onClick={() => save.mutate({ provider: p })}
               disabled={save.isPending}
               className={[
