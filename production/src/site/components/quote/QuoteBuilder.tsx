@@ -138,7 +138,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     ].join("\n");
   };
 
-  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && phone.replace(/\D/g, "").length >= 10 && selected.length > 0 && (gstin === "" || gstin.length === 15);
+  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && isIndianMobile(phone) && selected.length > 0 && (gstin === "" || gstin.length === 15);
 
   async function generate() {
     setTouched(true); setErr("");
@@ -284,11 +284,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             <span aria-hidden style={{ color: P, fontSize: 18 }}>{openSec === "details" ? "▲" : "▼"}</span>
           </button>
           {openSec === "details" && (
-            <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <QField label="Company" value={company} set={setCompany} touched={touched} required />
-              <QField label="Your name" value={name} set={setName} touched={touched} required />
-              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" />
-              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" />
+            /* R-231: data-grid → one column on a phone (two 1fr columns left ~150px boxes). */
+            <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }} data-grid>
+              <QField label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
+              <QField label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
+              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
+              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
               <div>
                 <QField label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
                 {gstin.length > 0 && gstin.length !== 15 && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{gstin.length}/15 characters</span>}
@@ -405,14 +406,24 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "var(--text-secondary)" }}><span>{l}</span><span className="mono">{v}</span></div>;
 }
 
-function QField({ label, value, set, touched, required, kind = "text", placeholder }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string }) {
-  const bad = touched && required && (kind === "email" ? !value.includes("@") : value.replace(kind === "tel" ? /\D/g : /\s/g, "").length < 2);
+/**
+ * R-231: a 10-digit Indian mobile (6–9 first), with or without +91 / 0 in front. The old
+ * rule only wanted 2 digits, so "12345" looked fine until the quote button refused it.
+ */
+export function isIndianMobile(v: string): boolean {
+  const d = v.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
+  return /^[6-9]\d{9}$/.test(d);
+}
+
+export function QField({ label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
+  const bad = touched && required && (kind === "email" ? !value.includes("@") : kind === "tel" ? !isIndianMobile(value) : value.replace(/\s/g, "").length < 2);
+  const msg = kind === "tel" && value.trim() ? "Enter a 10-digit mobile number." : label + " is needed here.";
   return (
     <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
       {label}
-      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder}
+      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
         style={{ width: "100%", marginTop: 4, minHeight: 44, border: `1.5px solid ${bad ? "var(--warning)" : "var(--border-strong)"}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, fontFamily: "inherit" }} />
-      {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{label} is needed here.</span>}
+      {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{msg}</span>}
     </label>
   );
 }

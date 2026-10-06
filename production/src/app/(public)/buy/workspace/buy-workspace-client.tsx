@@ -3325,12 +3325,12 @@ function BuyNowDialog({
             <input type="hidden" {...register("seats")} />
 
             <FormField label="Your name" required htmlFor="buy-fullName">
-              <Input id="buy-fullName" placeholder="e.g. Rajesh Kumar"
+              <Input id="buy-fullName" placeholder="e.g. Rajesh Kumar" autoComplete="name"
                 error={errors.fullName?.message} {...register("fullName")} />
             </FormField>
 
             <FormField label="Company" required htmlFor="buy-companyName">
-              <Input id="buy-companyName" placeholder="e.g. Acme Pvt Ltd"
+              <Input id="buy-companyName" placeholder="e.g. Acme Pvt Ltd" autoComplete="organization"
                 error={errors.companyName?.message} {...register("companyName")} />
             </FormField>
 
@@ -3344,11 +3344,11 @@ function BuyNowDialog({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormField label="Work email" required htmlFor="buy-email">
-                <Input id="buy-email" type="email" placeholder="e.g. rajesh@acme.in"
+                <Input id="buy-email" type="email" placeholder="e.g. rajesh@acme.in" autoComplete="email" inputMode="email"
                   error={errors.email?.message} {...register("email")} />
               </FormField>
               <FormField label="Phone (WhatsApp)" required htmlFor="buy-phone">
-                <Input id="buy-phone" type="tel" placeholder="e.g. +91 98765 43210"
+                <Input id="buy-phone" type="tel" placeholder="e.g. +91 98765 43210" autoComplete="tel" inputMode="tel"
                   error={errors.phone?.message} {...register("phone")} />
               </FormField>
             </div>
