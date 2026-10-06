@@ -63,23 +63,46 @@ function FormField({
    */
   hint?: React.ReactNode;
 }) {
+  /* R-271: a label is read out with its box only when it points at the box's id. Most call
+     sites pass no htmlFor, so FormField wires it itself: when its one child is a form control
+     (input/select/textarea, or our Input/Textarea) that child keeps its own id or gets a
+     useId() one, and the label points at it. Anything else is rendered untouched. */
+  const autoId = React.useId();
+  let targetId = htmlFor;
+  let control: React.ReactNode = children;
+  if (!targetId && isLabelable(children)) {
+    targetId = children.props.id || autoId;
+    if (!children.props.id) control = React.cloneElement(children, { id: autoId });
+  }
   return (
     <div className={className ? `space-y-1.5 ${className}` : "space-y-1.5"}>
       {hint ? (
         <div className="flex items-baseline justify-between gap-2">
-          <Label htmlFor={htmlFor} required={required}>
+          <Label htmlFor={targetId} required={required}>
             {label}
           </Label>
           <span className="text-xs">{hint}</span>
         </div>
       ) : (
-        <Label htmlFor={htmlFor} required={required}>
+        <Label htmlFor={targetId} required={required}>
           {label}
         </Label>
       )}
-      {children}
+      {control}
     </div>
   );
+}
+
+const LABELABLE_TAGS = new Set(["input", "select", "textarea"]);
+const LABELABLE_COMPONENTS = new Set(["Input", "Textarea"]);
+
+/** One element that a <label for> can name — a native control or our Input/Textarea. */
+function isLabelable(node: React.ReactNode): node is React.ReactElement<{ id?: string }> {
+  if (!React.isValidElement(node)) return false;
+  const t = node.type;
+  if (typeof t === "string") return LABELABLE_TAGS.has(t);
+  const name = (t as { displayName?: string }).displayName;
+  return typeof name === "string" && LABELABLE_COMPONENTS.has(name);
 }
 
 export { Label, FormField };
