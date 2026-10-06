@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { toastError } from "@/lib/errors/toast-error";
+import { readAllRows, type ExistingCustomerRow } from "./import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { cn } from "@/lib/utils";
 
@@ -73,15 +75,20 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
     }
     (async () => {
       const supabase = createClient();
-      const [{ data: custs }, { data: cdoms }] = await Promise.all([
-        supabase.from("customers").select("id, name, customer_number"),
-        supabase.from("customer_domains").select("domain"),
-      ]);
-      const byNumber = new Map<string, { id: string; name: string }>();
-      for (const c of custs ?? []) if (c.customer_number) byNumber.set(String(c.customer_number).trim().toLowerCase(), { id: c.id, name: c.name });
-      const mapped = new Set<string>();
-      for (const cd of cdoms ?? []) mapped.add(normDomain(cd.domain));
-      lookups.current = { byNumber, mapped };
+      try {
+        // R-295: every row, not the first 1000 — else a domain past #1000 links twice.
+        const [custs, cdoms] = await Promise.all([
+          readAllRows<ExistingCustomerRow>(supabase, "customers", "id, name, customer_number"),
+          readAllRows<{ domain: string }>(supabase, "customer_domains", "id, domain"),
+        ]);
+        const byNumber = new Map<string, { id: string; name: string }>();
+        for (const c of custs) if (c.customer_number) byNumber.set(String(c.customer_number).trim().toLowerCase(), { id: c.id, name: c.name });
+        const mapped = new Set<string>();
+        for (const cd of cdoms) mapped.add(normDomain(cd.domain));
+        lookups.current = { byNumber, mapped };
+      } catch (e) {
+        toastError(e, { description: "Existing customers and domains didn't load, so duplicates can't be checked. Close and reopen." });
+      }
     })();
   }, [open]);
 

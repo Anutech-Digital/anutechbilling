@@ -33,6 +33,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { toastError } from "@/lib/errors/toast-error";
+import { readAllRows, type ExistingCustomerRow } from "@/components/features/customers/import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import {
   buildImportDedupeIndex, duplicateReason,
@@ -108,21 +110,28 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
          inserts every matched row and never asked whether the subscription was already
          here, which is correct for the one-time Zoho migration it was built for and
          wrong every time after. See lib/subscriptions/import-dedupe.ts. */
-      const [{ data }, { data: subs }] = await Promise.all([
-        supabase.from("customers").select("id, name, customer_number, domain"),
-        supabase.from("subscriptions").select("domain, customer_id, plan"),
-      ]);
+      /* R-295: every row, not the first 1000 — both lookups paged past PostgREST's cap. */
+      let data: ExistingCustomerRow[], subs: TrackedSubscription[];
+      try {
+        [data, subs] = await Promise.all([
+          readAllRows<ExistingCustomerRow>(supabase, "customers", "id, name, customer_number, domain"),
+          readAllRows<TrackedSubscription>(supabase, "subscriptions", "id, domain, customer_id, plan"),
+        ]);
+      } catch (e) {
+        toastError(e, { description: "Existing customers and subscriptions didn't load, so duplicates can't be checked. Close and reopen." });
+        return;
+      }
       const m = new Map<string, { id: string; name: string }>();
       /* Domain is the SECOND way in, for a portable export whose customer numbers do not
          exist in this workspace — restoring into a fresh app, or moving between them. */
       const d = new Map<string, { id: string; name: string }>();
-      (data ?? []).forEach((c) => {
+      data.forEach((c) => {
         if (c.customer_number) m.set(c.customer_number.trim().toLowerCase(), { id: c.id, name: c.name });
         if (c.domain) d.set(c.domain.trim().toLowerCase().replace(/^www\./, ""), { id: c.id, name: c.name });
       });
       setCustMap(m);
       setDomainMap(d);
-      setDedupe(buildImportDedupeIndex((subs ?? []) as TrackedSubscription[]));
+      setDedupe(buildImportDedupeIndex(subs));
     })();
   }, [open]);
 

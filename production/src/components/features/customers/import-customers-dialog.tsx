@@ -33,6 +33,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { toastError } from "@/lib/errors/toast-error";
+import { readAllRows, existingCustomerKeys, type ExistingCustomerRow } from "./import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { cn, GST_STATE_BY_CODE, gstStateFromGstin } from "@/lib/utils";
 
@@ -98,15 +100,15 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
     }
     (async () => {
       const supabase = createClient();
-      const { data } = await supabase.from("customers").select("contact_email, customer_number");
-      const nums = new Set<string>();
-      const emails = new Set<string>();
-      (data ?? []).forEach((c) => {
-        if (c.customer_number) nums.add(c.customer_number.trim().toLowerCase());
-        if (c.contact_email) emails.add(c.contact_email.trim().toLowerCase());
-      });
-      setExistingNums(nums);
-      setExistingEmails(emails);
+      try {
+        // R-295: every customer, not the first 1000 — else #1001+ re-import as duplicates.
+        const rows = await readAllRows<ExistingCustomerRow>(supabase, "customers", "id, contact_email, customer_number");
+        const { nums, emails } = existingCustomerKeys(rows);
+        setExistingNums(nums);
+        setExistingEmails(emails);
+      } catch (e) {
+        toastError(e, { description: "Existing customers didn't load, so duplicates can't be checked. Close and reopen." });
+      }
     })();
   }, [open]);
 

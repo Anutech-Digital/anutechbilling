@@ -30,6 +30,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { toastError } from "@/lib/errors/toast-error";
+import { readAllRows, type ExistingCustomerRow } from "@/components/features/customers/import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useItems } from "@/lib/queries/items";
 import { buildPlanPriceIndex } from "@/lib/subscriptions/plan-match";
@@ -89,26 +91,33 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
     }
     (async () => {
       const supabase = createClient();
-      const [{ data: custs }, { data: subs }, { data: cdoms }] = await Promise.all([
-        supabase.from("customers").select("id, name, customer_number, domain"),
-        supabase.from("subscriptions").select("domain"),
-        supabase.from("customer_domains").select("domain, customer_id"),
-      ]);
+      // R-295: every row, not the first 1000 — else subs/customers past #1000 import twice.
+      let custs: ExistingCustomerRow[], subs: { domain: string | null }[], cdoms: { domain: string; customer_id: string }[];
+      try {
+        [custs, subs, cdoms] = await Promise.all([
+          readAllRows<ExistingCustomerRow>(supabase, "customers", "id, name, customer_number, domain"),
+          readAllRows<{ domain: string | null }>(supabase, "subscriptions", "id, domain"),
+          readAllRows<{ domain: string; customer_id: string }>(supabase, "customer_domains", "id, domain, customer_id"),
+        ]);
+      } catch (e) {
+        toastError(e, { description: "Existing customers and subscriptions didn't load, so duplicates can't be checked. Close and reopen." });
+        return;
+      }
       const nameById = new Map<string, string>();
       const byNumber = new Map<string, { id: string; name: string }>();
       const byDomain = new Map<string, { id: string; name: string }>();
-      for (const c of custs ?? []) {
+      for (const c of custs) {
         nameById.set(c.id, c.name);
         if (c.customer_number) byNumber.set(String(c.customer_number).trim().toLowerCase(), { id: c.id, name: c.name });
         if (c.domain) byDomain.set(normDomain(c.domain), { id: c.id, name: c.name });
       }
       // customer_domains is the authoritative many-domains-per-customer map.
-      for (const cd of cdoms ?? []) {
+      for (const cd of cdoms) {
         const name = nameById.get(cd.customer_id);
         if (name) byDomain.set(normDomain(cd.domain), { id: cd.customer_id, name });
       }
       const appSubDomains = new Set<string>();
-      for (const s of subs ?? []) if (s.domain) appSubDomains.add(normDomain(s.domain));
+      for (const s of subs) if (s.domain) appSubDomains.add(normDomain(s.domain));
       lookups.current = { byNumber, byDomain, appSubDomains };
     })();
   }, [open]);
