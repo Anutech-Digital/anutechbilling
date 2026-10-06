@@ -33,8 +33,10 @@ const report = (): Report =>
   })) as Report;
 
 /** Measured 6 Oct 2026 after R-271; lowered by R-288 (96/87 → 57/52), R-302 (→ 38/40, and the
- *  last hand-rolled overlay gone: modal-no-trap 0). Only ever lower these. */
-const BASELINE = { "label-no-for": 38, "input-no-name": 40, "modal-no-trap": 0 } as const;
+ *  last hand-rolled overlay gone: modal-no-trap 0), R-307 (→ 3/11: the real count once R-302 and
+ *  R-303 both landed — R-303's fixes could not lower it while this file sat in R-302's lock).
+ *  Only ever lower these. */
+const BASELINE = { "label-no-for": 3, "input-no-name": 11, "modal-no-trap": 0 } as const;
 
 /** R-288: screens that hold secrets or money stay at zero untied labels / unnamed inputs. */
 const ZERO_FILES = [
