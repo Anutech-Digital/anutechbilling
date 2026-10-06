@@ -3,14 +3,16 @@
  */
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as React from "react";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import type { Customer, Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
-import { withStateCode } from "@/lib/gst/gstin-state";
+import { missingInvoiceState, withStateCode } from "@/lib/gst/gstin-state";
+import { flattenPages } from "@/lib/queries/keyset";
 
 type CustomerInsert = Database["public"]["Tables"]["customers"]["Insert"];
 type CustomerUpdate = Database["public"]["Tables"]["customers"]["Update"];
@@ -18,30 +20,179 @@ type CustomerUpdate = Database["public"]["Tables"]["customers"]["Update"];
 // ============================================================
 // List
 // ============================================================
-export function useCustomers() {
+type Client = ReturnType<typeof createClient>;
+
+/** Every customer, A–Z — the full list. Also the Customers page's CSV export (R-210). */
+export async function fetchAllCustomers(supabase: Client): Promise<Customer[]> {
+  // Removed 2026-08-13 — same dead hardcoded-tenant fallback as leads.ts.
+  // RLS (verified on prod: enabled on `customers`, 5 policies) filters the
+  // retry identically, so it could never return a row the first query didn't.
+  /* R-046: PostgREST answers at most 1000 rows (supabase/config.toml max_rows) and says
+     NOTHING when it cut the answer short. At 1001 customers this list silently lost the
+     rest — no error, no warning, just a page that looks complete and is not. That is
+     the worst shape a data bug takes (AGENTS.md §2).
+
+     fetchAllRows pages until a short page comes back. The order ENDS ON id because an
+     offset page over an order with ties can repeat or skip a row across a page
+     boundary — see the helper header; name alone is not a total order. */
+  return await fetchAllRows<Customer>((from, to) =>
+    supabase
+      .from("customers")
+      .select("*")
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to));
+}
+
+export function useCustomers(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["customers"],
-    queryFn: async (): Promise<Customer[]> => {
-      const supabase = createClient();
-      // Removed 2026-08-13 — same dead hardcoded-tenant fallback as leads.ts.
-      // RLS (verified on prod: enabled on `customers`, 5 policies) filters the
-      // retry identically, so it could never return a row the first query didn't.
-      /* R-046: PostgREST answers at most 1000 rows (supabase/config.toml max_rows) and says
-         NOTHING when it cut the answer short. At 1001 customers this list silently lost the
-         rest — no error, no warning, just a page that looks complete and is not. That is
-         the worst shape a data bug takes (AGENTS.md §2).
+    /* R-210: the Customers page turns this off while its paged read is showing. Every
+       other caller passes nothing and gets the whole list, as before. */
+    enabled: opts.enabled ?? true,
+    queryFn: async (): Promise<Customer[]> => fetchAllCustomers(createClient()),
+  });
+}
 
-         fetchAllRows pages until a short page comes back. The order ENDS ON id because an
-         offset page over an order with ties can repeat or skip a row across a page
-         boundary — see the helper header; name alone is not a total order. */
-      return await fetchAllRows<Customer>((from, to) =>
-        supabase
-          .from("customers")
-          .select("*")
-          .order("name", { ascending: true })
-          .order("id", { ascending: true })
-          .range(from, to));
-    },
+// ============================================================
+// Customers page — server pages (R-210, part of R-064)
+// ============================================================
+/* The page's default screen (view All, newest first) reads 50 rows at a time with the
+   search and the archived switch in the query and an exact total, instead of every
+   customer. Which screens use it: app/(app)/customers/server-list.ts#customerListMode. */
+
+export const CUSTOMERS_PAGE_SIZE = 50;
+
+/** The columns the page's search box reads on the customer row itself. */
+export const CUSTOMER_SEARCH_COLUMNS = ["name", "display_name", "domain", "contact_name", "contact_email"] as const;
+
+export interface CustomerPageFilters {
+  /** Free text, as typed. Trimmed and lower-cased here. */
+  search: string;
+  /** true = only archived (is_active false); false = everything else. */
+  archived: boolean;
+  /** Customers whose PEOPLE match the search (contact link table) — they match too. */
+  contactIds?: readonly string[] | null;
+}
+
+/**
+ * The PostgREST `or=(…)` for the search box, or null when there is no search.
+ *
+ * Same test as the page's in-browser search: any of CUSTOMER_SEARCH_COLUMNS contains the
+ * text (case-insensitive), or the customer is one a matching person is on. The value is
+ * double-quoted so a comma or bracket the user typed cannot split the filter; the LIKE
+ * wildcards `%` `*` and the quoting characters `"` `\` are dropped from it rather than
+ * escaped (an escape inside a quoted or-value is itself unescaped by PostgREST, so it is
+ * not dependable). `_` stays — it can only widen a match, never hide a row.
+ */
+export function customerSearchOr(search: string, contactIds?: readonly string[] | null): string | null {
+  const s = search.trim().toLowerCase().replace(/[%*"\\]/g, "");
+  if (!s) return null;
+  const pat = `"%${s}%"`;
+  const parts: string[] = CUSTOMER_SEARCH_COLUMNS.map((c) => `${c}.ilike.${pat}`);
+  const ids = [...new Set(contactIds ?? [])];
+  if (ids.length > 0) parts.push(`id.in.(${ids.join(",")})`);
+  return parts.join(",");
+}
+
+export interface CustomerPage { rows: Customer[]; total: number }
+
+/**
+ * One page of the Customers list: `limit` rows from `from`, plus the exact total for the
+ * same filters. Newest first with nulls last, then A–Z, then id — the order the page's
+ * newestFirst() gave the full list (stable sort over an A–Z read), ending on a unique
+ * column so an offset page never repeats or skips a row.
+ */
+export async function fetchCustomersPage(
+  supabase: Client, f: CustomerPageFilters, from: number, limit = CUSTOMERS_PAGE_SIZE,
+): Promise<CustomerPage> {
+  let q = supabase.from("customers").select("*", { count: "exact" });
+  q = f.archived ? q.eq("is_active", false) : q.not("is_active", "is", false);
+  const or = customerSearchOr(f.search, f.contactIds);
+  if (or) q = q.or(or);
+  const { data, error, count } = await q
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .order("name", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, from + limit - 1);
+  if (error) throw error;
+  const rows = (data ?? []) as Customer[];
+  return { rows, total: count ?? from + rows.length };
+}
+
+/** Where the next page starts, or undefined when the list is complete. */
+export function nextCustomerPageFrom(
+  last: CustomerPage, pages: readonly CustomerPage[], limit = CUSTOMERS_PAGE_SIZE,
+): number | undefined {
+  const loaded = pages.reduce((n, p) => n + p.rows.length, 0);
+  if (last.rows.length < limit || loaded >= last.total) return undefined;
+  return loaded;
+}
+
+export function useCustomersPaged(f: CustomerPageFilters, opts: { enabled?: boolean } = {}) {
+  const key: CustomerPageFilters = {
+    search: f.search.trim().toLowerCase(),
+    archived: f.archived,
+    contactIds: [...new Set(f.contactIds ?? [])].sort(),
+  };
+  const q = useInfiniteQuery({
+    /* Under ["customers"], so every customer mutation's invalidation reaches it. */
+    queryKey: ["customers", "paged", key],
+    enabled: opts.enabled ?? true,
+    placeholderData: keepPreviousData,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => fetchCustomersPage(createClient(), key, pageParam),
+    getNextPageParam: (last, pages) => nextCustomerPageFrom(last, pages),
+  });
+  const rows = React.useMemo(
+    () => (q.data ? flattenPages(q.data.pages, (c) => c.id) : undefined),
+    [q.data],
+  );
+  const pages = q.data?.pages;
+  const total = pages && pages.length > 0 ? pages[pages.length - 1].total : undefined;
+  return { ...q, rows, total };
+}
+
+export interface CustomerListCounts {
+  /** Every customer, active + archived — the "All" chip. */
+  all: number;
+  /** Archived only (is_active false). */
+  archived: number;
+  /** Customers a tax invoice would refuse for having no state (missingInvoiceState). */
+  noStateIds: string[];
+}
+
+/**
+ * The numbers the page used to count over every customer row: two exact server counts,
+ * and the few customers with no state code (read slim, then tested with the same
+ * missingInvoiceState the invoice uses — so a country spelled "India " is judged exactly
+ * as generate_invoice judges it).
+ */
+export async function fetchCustomerListCounts(supabase: Client): Promise<CustomerListCounts> {
+  const [allRes, archRes, blank] = await Promise.all([
+    supabase.from("customers").select("id", { count: "exact", head: true }),
+    supabase.from("customers").select("id", { count: "exact", head: true }).eq("is_active", false),
+    fetchAllRows<{ id: string; state_code: string | null; country: string | null }>((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, state_code, country")
+        .or("state_code.is.null,state_code.eq.")
+        .order("id", { ascending: true })
+        .range(from, to)),
+  ]);
+  if (allRes.error) throw allRes.error;
+  if (archRes.error) throw archRes.error;
+  return {
+    all: allRes.count ?? 0,
+    archived: archRes.count ?? 0,
+    noStateIds: blank.filter((c) => missingInvoiceState(c)).map((c) => c.id),
+  };
+}
+
+export function useCustomerListCounts() {
+  return useQuery({
+    queryKey: ["customers", "list-counts"],
+    queryFn: () => fetchCustomerListCounts(createClient()),
   });
 }
 
