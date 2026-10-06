@@ -15,6 +15,7 @@
  */
 import * as React from "react";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/label";
@@ -94,7 +95,7 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
       return;
     }
     if (mode === "new" && !stateCode) {
-      toast.error("Choose the customer's state", { description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer." });
+      toast.error("Choose the customer's state", { className: NEEDS_INPUT_CLASS, description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer." });
       return;
     }
     setSaving(true);

@@ -32,7 +32,7 @@ const bodySchema = z.object({
   /** check_failed: the "Test next" line the person marked as failed. */
   failedCheck: z.string().trim().max(300).optional(),
   trail: z.array(z.object({
-    kind: z.enum(["page", "click", "error", "api_fail", "toast_error"]),
+    kind: z.enum(["page", "click", "error", "api_fail", "toast_error", "input_needed"]),
     at: z.number(),
     text: z.string().max(400),
     path: z.string().max(300),

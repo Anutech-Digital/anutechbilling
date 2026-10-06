@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
 import { bugReportText, AI_FILED_TAG, type BugDraft, type HelpMessage, type HelpMode } from "@/lib/ai/app-help";
-import { pushTrail, isProblem, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
+import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
 
@@ -114,7 +114,8 @@ function useTrail(pathname: string) {
       for (const m of muts) for (const n of Array.from(m.addedNodes)) {
         if (!(n instanceof Element)) continue;
         const toastEl = n.matches?.("[data-sonner-toast][data-type=error]") ? n : n.querySelector?.("[data-sonner-toast][data-type=error]");
-        if (toastEl) add("toast_error", (toastEl.textContent || "").trim());
+        /* R-176: "please fill X" is recorded for the steps, but does not turn AI Help red. */
+        if (toastEl) add(classifyToast(toastEl.textContent || "", toastEl.classList.contains(NEEDS_INPUT_CLASS)), (toastEl.textContent || "").trim());
       }
     });
     mo.observe(document.body, { childList: true, subtree: true });

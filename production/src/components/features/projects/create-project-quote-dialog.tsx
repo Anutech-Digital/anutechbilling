@@ -11,6 +11,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -202,7 +203,7 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
       return;
     }
     if (!editProject && isNewCustomer && !stateCode && !stateCodeFromGstin(gstin)) {
-      toast.error("Choose the new customer's state", { description: "The GST invoice needs it — it decides CGST + SGST or IGST. A valid GSTIN fills it by itself." });
+      toast.error("Choose the new customer's state", { className: NEEDS_INPUT_CLASS, description: "The GST invoice needs it — it decides CGST + SGST or IGST. A valid GSTIN fills it by itself." });
       return;
     }
     const lineItems: ProjectQuoteLine[] = lines

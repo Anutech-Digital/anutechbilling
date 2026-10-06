@@ -12,6 +12,7 @@ import * as React from "react";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -676,7 +677,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
        every pattern strict enough to be worth having would eventually refuse a real
        customer's real number. Required, not policed. */
     if (needsContact && !newCustState) {
-      toast.error("Choose the customer's state", {
+      toast.error("Choose the customer's state", { className: NEEDS_INPUT_CLASS,
         description: "The GST invoice needs it — it decides CGST + SGST or IGST. Pick \"Outside India\" for a foreign customer.",
       });
       return;
