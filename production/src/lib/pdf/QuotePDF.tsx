@@ -87,6 +87,8 @@ export interface QuotePDFProps {
   tax:           number;
   total:         number;
   interState:    boolean;
+  /** R-175: "Haryana (06) · IGST" — the buyer's state by name and code (placeOfSupplyLabel). */
+  placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
@@ -397,7 +399,7 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
     isPaid = false,
     upiQrDataUrl, upiVpa,
   } = props;
@@ -534,7 +536,7 @@ export function QuotePDF(props: QuotePDFProps) {
             <Text style={s.metaValue}>
               {isExport
                 ? "Export · zero-rated under LUT (no GST)"
-                : interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)"}
+                : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
             </Text>
             {lineItems.length > 0 && firstCommitment && (
               <View style={s.metaGroup}>

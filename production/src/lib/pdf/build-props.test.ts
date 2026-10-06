@@ -160,3 +160,36 @@ describe("quote PDF props me logo", () => {
     expect(p.tenantLogo).not.toBe(tenant.logo_url);
   });
 });
+
+/* R-175 (6 Oct 2026): the server PDF — the one the customer is emailed — printed only
+   "Inter-state (IGST)" while the in-app dialog said "Haryana (06) · IGST". Rule 46(n) wants the
+   state name and code. Tenant above is Maharashtra (27). */
+describe("place of supply names the state (R-175)", () => {
+  const quote = { subtotal: 16320, discount_pct: 0, tax_rate: 18, amount: 19258, line_items: [] } as unknown as Quote;
+  const cust = (state_code: string | null, country = "India") =>
+    ({ id: "c1", name: "Local Sub Test", state_code, country, gstin: null }) as unknown as Customer;
+
+  it("invoice to another state: 'Haryana (06) · IGST', from the code frozen at issue", () => {
+    const invoice = { id: "INV-9", amount: 19258, customer_name: "X", tenant_id: "t1", inter_state: true, pos_state_code: "06" } as unknown as Invoice;
+    expect(buildInvoicePdfProps({ invoice, quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Haryana (06) · IGST");
+  });
+
+  it("invoice in the seller's own state: 'Maharashtra (27) · CGST + SGST'", () => {
+    const invoice = { id: "INV-10", amount: 19258, customer_name: "X", tenant_id: "t1", inter_state: false, pos_state_code: "27" } as unknown as Invoice;
+    expect(buildInvoicePdfProps({ invoice, quote, customer: cust("27"), tenant }).placeOfSupply).toBe("Maharashtra (27) · CGST + SGST");
+  });
+
+  it("a legacy invoice with no frozen code keeps the old wording rather than guessing", () => {
+    const invoice = { id: "INV-11", amount: 19258, customer_name: "X", tenant_id: "t1", inter_state: true, pos_state_code: null } as unknown as Invoice;
+    expect(buildInvoicePdfProps({ invoice, quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Inter-state (IGST)");
+  });
+
+  it("an export invoice says Export and the country", () => {
+    const invoice = { id: "INV-12", amount: 1000, customer_name: "X", tenant_id: "t1", inter_state: true, pos_state_code: "96" } as unknown as Invoice;
+    expect(buildInvoicePdfProps({ invoice, quote, customer: cust(null, "United States"), tenant }).placeOfSupply).toMatch(/^Export · United States/);
+  });
+
+  it("a quote names the buyer's state too", () => {
+    expect(buildQuotePdfProps({ quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Haryana (06) · IGST");
+  });
+});
