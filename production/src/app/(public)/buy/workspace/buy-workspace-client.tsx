@@ -29,7 +29,8 @@ import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
-import { buyNowSchema, buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
+import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
@@ -184,9 +185,7 @@ function calcForTier(tier: Tier, seats: number): PriceCalc {
 
   // Promo override (Standard's first-20 discount) when the tier carries one.
   const baseRate  = tier.promoPrice ?? tier.annualPrice;
-  const annual    = seats * baseRate * 12;
-  const gst       = Math.round(annual * 0.18);
-  const total     = annual + gst;
+  const { annual, gst, total } = annualTotals(seats, baseRate);   // R-276: the server's sum
   const perUserPm = seats > 0 ? Math.round(total / (seats * 12)) : 0;
 
   // Savings = (regular rate − promo rate) × seats × 12 × 1.18, if promo applies.
@@ -365,7 +364,8 @@ function buildTiers(catalog: CatalogItem[]): Tier[] {
   return catalog.map((item) => {
     const slug    = slugFromName(item.name);
     const preset  = TIER_PRESETS[slug];
-    const annual  = item.prices?.annual?.msrp  ?? item.msrp;
+    /* R-276: same floor as the server's order amount, so a stale row is never shown below list. */
+    const annual  = tierAnnualPrice(slug, item.prices?.annual?.msrp ?? item.msrp);
     /* R-157: used to multiply the annual rate by 1.25 when no monthly existed — an invented rate. Only a real
        flexible price above the annual one is shown (a lower one is a stale catalogue row). */
     const flex = item.prices?.monthly?.msrp ?? null;
