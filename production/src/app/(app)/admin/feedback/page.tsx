@@ -113,6 +113,7 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
   const lines = [
     'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo. (Ye prompt ek NAYE Claude Code session me chalana hai.)',
     "",
+    "0. FOLDER: agar ye session kisi folder me nahi hai (\"No folder\" / scratch workspace), to sabse pehle change_directory tool se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega), phir aage badho.",
     "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
     `App: ${appUrl}${appUrl.includes("localhost") ? "" : " (ya local http://localhost:3001)"}. Jaanch browser pane me dikha kar karo.`,
     "",
