@@ -55,6 +55,8 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { canOpenQuotes } from "@/lib/quotes/access";
+import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -136,6 +138,10 @@ function PaymentsPageInner() {
   const { data: customers } = useCustomers();
   const { data: bankAccounts } = useBankAccounts();
   const { data: me } = useCurrentUser();
+  /* R-237: billing cannot open /quotes (middleware sends it to /invoices) — no quote links
+     for it, and Record payment opens the dialog here for everyone. */
+  const canQuotes = canOpenQuotes(me?.role);
+  const [payQuoteId, setPayQuoteId] = React.useState<string | null>(null);
   const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
 
@@ -227,7 +233,7 @@ function PaymentsPageInner() {
     enabled: view !== "project",
     onOpen: (i) => {
       const p = filtered.find((x) => x.id === shownIds[i]);
-      if (p) router.push(`/quotes/${p.quote_id}` as never);
+      if (p && canQuotes) router.push(`/quotes/${p.quote_id}` as never);
     },
   });
   const selectedRowRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -366,11 +372,12 @@ function PaymentsPageInner() {
                   {mtdProject > 0 && <p className="text-3xs text-ink-3 mt-0.5">incl. {rupee(mtdProject)} project receipts</p>}
                 </button>
                 {/* These two count QUOTES — they open the quotes they counted (lib/quotes/focus.ts). */}
-                <button type="button" onClick={() => router.push("/quotes?focus=partial" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+                {/* R-237: billing cannot open /quotes — the tile stays a number, not a dead link. */}
+                <button type="button" disabled={!canQuotes} onClick={() => router.push("/quotes?focus=partial" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left enabled:hover:border-amber/60 transition-all enabled:cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Partial Quotes</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{partialQuotes.length}</p>
                 </button>
-                <button type="button" onClick={() => router.push("/quotes?focus=to-invoice" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+                <button type="button" onClick={() => router.push((canQuotes ? "/quotes?focus=to-invoice" : "/invoices") as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Awaiting GST Invoice</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(awaitingInvoiceTotal, { compact: true })} <span className="text-xs text-ink-3 font-normal">({awaitingInvoiceQuotes.length})</span></p>
                 </button>
@@ -450,8 +457,8 @@ function PaymentsPageInner() {
                         <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
                       </div>
                       {o.quote_id && (
-                        <Button asChild size="sm" variant="primary" icon="rupee">
-                          <Link href={`/quotes/${o.quote_id}` as any}>Record payment</Link>
+                        <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayQuoteId(o.quote_id)}>
+                          Record payment
                         </Button>
                       )}
                     </div>
@@ -506,7 +513,7 @@ function PaymentsPageInner() {
                           writeOffSub.mutate({ id: o.subscription_id, reason });
                         }
                       }}
-                      recordPaymentHref={o.quote_id ? `/quotes/${o.quote_id}` : null}
+                      onRecordPayment={o.quote_id ? () => setPayQuoteId(o.quote_id) : null}
                     />
                   ))}
                 </tbody>
@@ -532,9 +539,15 @@ function PaymentsPageInner() {
                 <span className="min-w-0">
                   <b>{partialQuotes.length} partial payment{partialQuotes.length === 1 ? "" : "s"}</b> — collect the remaining balance from the customer.
                 </span>
-                <Button asChild size="sm" variant="default" icon="external" className="shrink-0">
-                  <Link href={`/quotes/${partialQuotes[0].id}` as any}>Open</Link>
-                </Button>
+                {canQuotes ? (
+                  <Button asChild size="sm" variant="default" icon="external" className="shrink-0">
+                    <Link href={`/quotes/${partialQuotes[0].id}` as any}>Open</Link>
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="default" icon="rupee" className="shrink-0" onClick={() => setPayQuoteId(partialQuotes[0].id)}>
+                    Record payment
+                  </Button>
+                )}
               </li>
             )}
             {awaitingInvoiceQuotes.length > 0 && (
@@ -542,8 +555,9 @@ function PaymentsPageInner() {
                 <span className="min-w-0">
                   <b>{awaitingInvoiceQuotes.length} fully paid</b>, GST invoice not generated yet (₹{awaitingInvoiceTotal.toLocaleString("en-IN")} worth).
                 </span>
+                {/* Billing generates GST invoices on /invoices (the quote page is closed to it). */}
                 <Button asChild size="sm" variant="default" icon="receipt" className="shrink-0">
-                  <Link href={`/quotes/${awaitingInvoiceQuotes[0].id}` as any}>Generate</Link>
+                  <Link href={(canQuotes ? `/quotes/${awaitingInvoiceQuotes[0].id}` : "/invoices") as any}>Generate</Link>
                 </Button>
               </li>
             )}
@@ -639,7 +653,7 @@ function PaymentsPageInner() {
           body="Once you record a payment on any quote, it shows up here for reconciliation and invoicing."
           action={
             <Button asChild icon="external">
-              <Link href="/quotes">Go to Quotes</Link>
+              {canQuotes ? <Link href="/quotes">Go to Quotes</Link> : <Link href="/invoices">Go to Invoices</Link>}
             </Button>
           }
         />
@@ -674,8 +688,9 @@ function PaymentsPageInner() {
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
               <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
-                <Link
-                  href={`/quotes/${p.quote_id}` as never}
+                <MaybeQuoteLink
+                  quoteId={p.quote_id}
+                  enabled={canQuotes}
                   className="block p-3 active:bg-paper-2/50"
                 >
                   <div className="flex items-start justify-between gap-3 mb-1.5">
@@ -706,7 +721,7 @@ function PaymentsPageInner() {
                       {p.status}
                     </Badge>
                   </div>
-                </Link>
+                </MaybeQuoteLink>
                 {(p.status === "received" || p.receipt_file_path) && (
                 <div className="flex border-t border-hairline/60">
                   {p.status === "received" && (
@@ -834,6 +849,11 @@ function PaymentsPageInner() {
       )}
 
       {/* Edit payment details (safe fields only — amount stays locked) */}
+      <RecordQuotePaymentDialog
+        quoteId={payQuoteId}
+        open={!!payQuoteId}
+        onOpenChange={(o) => { if (!o) setPayQuoteId(null); }}
+      />
       <EditPaymentDialog
         open={!!editPayment}
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
@@ -873,14 +893,15 @@ function OutstandingRowView({
   onSuspend,
   onResume,
   onWriteOff,
-  recordPaymentHref,
+  onRecordPayment,
 }: {
   o: OutstandingRow;
   onReminder: () => void;
   onSuspend:  () => void;
   onResume:   () => void;
   onWriteOff: () => void;
-  recordPaymentHref: string | null;
+  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open). */
+  onRecordPayment: (() => void) | null;
 }) {
   const aging =
     o.days_outstanding <= 7   ? "fresh" :
@@ -916,9 +937,9 @@ function OutstandingRowView({
       </td>
       <td className="p-2 text-right">
         <div className="flex justify-end gap-1 flex-wrap">
-          {recordPaymentHref && (
-            <Button asChild size="sm" variant="primary" icon="rupee">
-              <Link href={recordPaymentHref as any}>Pay</Link>
+          {onRecordPayment && (
+            <Button size="sm" variant="primary" icon="rupee" onClick={onRecordPayment}>
+              Pay
             </Button>
           )}
           <Button size="sm" icon="mail" onClick={onReminder}>
@@ -937,6 +958,25 @@ function OutstandingRowView({
         </div>
       </td>
     </tr>
+  );
+}
+
+/** R-237: a quote link for roles that can open quotes, plain content for the rest (billing). */
+function MaybeQuoteLink({
+  quoteId,
+  enabled,
+  className,
+  children,
+}: {
+  quoteId: string;
+  enabled: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return enabled ? (
+    <Link href={`/quotes/${quoteId}` as never} className={className}>{children}</Link>
+  ) : (
+    <div className={className}>{children}</div>
   );
 }
 
@@ -969,14 +1009,20 @@ function PaymentRowView({
   const router = useRouter();
   const methodInfo = METHOD_META[p.method];
   const [receiptOpen, setReceiptOpen] = React.useState(false);
+  /* R-237: billing cannot open quotes — every quote link/row-click below is for the rest. */
+  const canQuotes = canOpenQuotes(me?.role);
+  const openQuote = canQuotes
+    ? { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) }
+    : undefined;
+  const noQuoteHint = "The next step is on the quote — ask an owner or manager.";
   // When a delete is blocked (invoice issued / bank-reconciled / add-seats / etc.),
   // don't dead-end: show the reason AND a button to where the next step happens
   // (the quote, which lists the exact blocking records + how to clear them).
   const del = useDeletePayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: "Yahin se nahi hata sakte — quote khol ke aage ka step wahan se karo.",
-        action: { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) },
+        description: canQuotes ? "Yahin se nahi hata sakte — quote khol ke aage ka step wahan se karo." : noQuoteHint,
+        action: openQuote,
       }),
   });
   const confirm = useConfirm();
@@ -988,8 +1034,8 @@ function PaymentRowView({
   const refund = useRefundPayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: "Ye rukavat quote/banking se hatati hai — wahin agla kadam hai.",
-        action: { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) },
+        description: canQuotes ? "Ye rukavat quote/banking se hatati hai — wahin agla kadam hai." : noQuoteHint,
+        action: openQuote,
       }),
   });
   const askText = useAskText();
@@ -1045,15 +1091,20 @@ function PaymentRowView({
       ref={rowRef}
       {...{ [PAY_ROW_ATTR]: p.id }}
       className={cn(
-        "group border-b border-hairline last:border-0 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset",
+        "group border-b border-hairline last:border-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset",
+        canQuotes && "cursor-pointer",
         selected ? "bg-amber-soft/60 ring-1 ring-inset ring-amber/40" : "hover:bg-paper-2/50",
       )}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open quote ${p.quote_id}`}
+      {...(canQuotes
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": `Open quote ${p.quote_id}`,
+            onClick: () => router.push(`/quotes/${p.quote_id}` as any),
+            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/quotes/${p.quote_id}` as any); } },
+          }
+        : {})}
       aria-selected={selected}
-      onClick={() => router.push(`/quotes/${p.quote_id}` as any)}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/quotes/${p.quote_id}` as any); } }}
     >
       <td className="px-3 py-2.5 text-xs text-ink-2 whitespace-nowrap align-top">{formatDate(p.received_at)}</td>
       <td className="px-3 py-2.5 text-sm font-medium align-top" onClick={(e) => e.stopPropagation()}>
@@ -1087,9 +1138,13 @@ function PaymentRowView({
           chips, so the Status column stays a clean single badge. */}
       <td className="px-3 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
         <div className="flex flex-col gap-1 items-start">
-          <Link href={`/quotes/${p.quote_id}` as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={p.quote_id}>
-            {p.quote_id}
-          </Link>
+          {canQuotes ? (
+            <Link href={`/quotes/${p.quote_id}` as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={p.quote_id}>
+              {p.quote_id}
+            </Link>
+          ) : (
+            <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink-2">{p.quote_id}</span>
+          )}
           {ctx?.invoiceId && (
             <Link href={`/invoices?open=${ctx.invoiceId}` as any} className="font-mono text-3xs text-indigo-ink hover:underline" title="Open GST invoice">{ctx.invoiceId}</Link>
           )}
@@ -1121,11 +1176,13 @@ function PaymentRowView({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[12rem]">
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
-                <Link href={`/quotes/${p.quote_id}` as any}>
-                  <Icon name="external" size={16} /> Open quote
-                </Link>
-              </DropdownMenuItem>
+              {canQuotes && (
+                <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
+                  <Link href={`/quotes/${p.quote_id}` as any}>
+                    <Icon name="external" size={16} /> Open quote
+                  </Link>
+                </DropdownMenuItem>
+              )}
               {p.status === "received" && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
                   <Icon name="edit" size={16} /> Edit details

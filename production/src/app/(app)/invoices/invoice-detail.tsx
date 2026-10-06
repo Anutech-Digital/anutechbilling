@@ -20,7 +20,10 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
-import { usePaymentsByQuote } from "@/lib/queries/payments";
+import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
+import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { invoiceBucket } from "@/lib/invoices/overdue";
+import { canOpenQuotes } from "@/lib/quotes/access";
 import { useProjectPaymentsByInvoice } from "@/lib/queries/projects";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -52,6 +55,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
+  /* R-237: billing cannot open /quotes — hide "View quote", give it Record payment here. */
+  const canQuotes = canOpenQuotes(me?.role);
+  const bucket = invoiceBucket(invoice);
+  const moneyDue = bucket === "pending" || bucket === "overdue";
+  const [payOpen, setPayOpen] = React.useState(false);
 
   /* ── WHO IS SELLING THIS — resolved or refused, never invented ──────────────
      This used to be `me || { tenantName: "Excel Technologies Pvt Ltd",
@@ -127,7 +135,14 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               </p>
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
-              {quote?.id && (
+              {quote?.id && moneyDue && (
+                /* R-237: record the payment HERE. Billing's only way used to be the quote
+                   page, which middleware does not let billing open. */
+                <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayOpen(true)}>
+                  Record payment
+                </Button>
+              )}
+              {quote?.id && canQuotes && (
                 /* "View quote" — same reasoning as tax-invoice-dialog.tsx. This opens the
                    quote hub, which is a read-only view, and an issued tax invoice is no
                    place to suggest editing the figures behind it (CGST §31; corrections are
@@ -340,6 +355,23 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           tenantPhone={supplier.phone}
           tenantAddress={supplier.address}
           tenantState={supplier.state}
+        />
+      )}
+      {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
+          (record_payment flips this invoice to paid once the balance is covered). */}
+      {payOpen && quote && (
+        <RecordPaymentDialog
+          open={payOpen}
+          onOpenChange={setPayOpen}
+          quoteId={quote.id}
+          customerName={invoice.customer_name ?? quote.customer_name}
+          expectedAmount={quote.amount ?? invoice.amount}
+          alreadyReceived={totalReceived(payments ?? [])}
+          isProspect={!!quote.lead_id && !quote.customer_id}
+          invoiceId={invoice.id}
+          customerId={invoice.customer_id ?? quote.customer_id}
+          askDomain={!quote.is_one_off}
+          defaultDomain={quote.domain ?? undefined}
         />
       )}
     </>

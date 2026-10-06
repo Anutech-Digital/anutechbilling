@@ -54,6 +54,8 @@ import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-c
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { getInvoiceWhatsAppUrl } from "@/lib/whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenQuotes } from "@/lib/quotes/access";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
@@ -75,6 +77,9 @@ const INVOICE_COLUMNS: DataTableColumn<Invoice>[] = [
 function InvoicesPageInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
+  /* R-237: billing (whose home this page is) cannot open /quotes — no quote links for it. */
+  const { data: me } = useCurrentUser();
+  const canQuotes    = canOpenQuotes(me?.role);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
 
@@ -280,9 +285,11 @@ function InvoicesPageInner() {
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
-          <Button variant="primary" icon="plus" onClick={() => router.push("/quotes" as any)}>
-            New invoice
-          </Button>
+          {canQuotes && (
+            <Button variant="primary" icon="plus" onClick={() => router.push("/quotes" as any)}>
+              New invoice
+            </Button>
+          )}
         </div>
       </div>
 
@@ -403,7 +410,11 @@ function InvoicesPageInner() {
                       <li key={q.id} className="rounded-lg border border-hairline bg-paper p-3">
                         <div className="flex items-start justify-between gap-3 mb-2">
                           <div className="min-w-0 flex-1">
-                            <Link href={`/quotes/${q.id}` as any} className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline block truncate">{q.id}</Link>
+                            {canQuotes ? (
+                              <Link href={`/quotes/${q.id}` as any} className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline block truncate">{q.id}</Link>
+                            ) : (
+                              <span className="font-mono text-xs font-semibold text-ink block truncate">{q.id}</span>
+                            )}
                             <p className="text-sm text-ink truncate mt-0.5">{q.customer_name}</p>
                             <p className="text-2xs text-ink-3 mt-0.5">First advance {anchor ? formatDate(anchor) : "—"}</p>
                           </div>
@@ -482,12 +493,16 @@ function InvoicesPageInner() {
                             </td>
                             {/* R-177: the quote no. ("Q-DEMO-27-0001") wrapped onto four lines. */}
                             <td className="p-2 whitespace-nowrap">
-                              <Link
-                                href={`/quotes/${q.id}` as any}
-                                className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"
-                              >
-                                {q.id}
-                              </Link>
+                              {canQuotes ? (
+                                <Link
+                                  href={`/quotes/${q.id}` as any}
+                                  className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"
+                                >
+                                  {q.id}
+                                </Link>
+                              ) : (
+                                <span className="font-mono text-xs font-semibold text-ink">{q.id}</span>
+                              )}
                             </td>
                             <td className="p-2 text-sm">{q.customer_name}</td>
                             <td className="p-2 text-right tabular-nums text-sm font-medium">
@@ -680,13 +695,15 @@ function InvoicesPageInner() {
         <EmptyState
           icon="receipt"
           title="No invoices yet"
-          body="Invoices are generated when a quote is accepted and payment is recorded. Start by creating a quote."
-          action={
+          body={canQuotes
+            ? "Invoices are generated when a quote is accepted and payment is recorded. Start by creating a quote."
+            : "Invoices are generated when a quote is accepted and payment is recorded. Your owner or sales team creates the quotes."}
+          action={canQuotes ? (
             <Button asChild variant="primary" icon="file">
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- pre-existing plain <a> (full navigation), kept as-is by the Next 15 upgrade; eslint-plugin-next 15 now also scans app/ */}
               <a href="/quotes/new">Create a quote</a>
             </Button>
-          }
+          ) : undefined}
         />
       )}
 
@@ -763,7 +780,7 @@ function InvoicesPageInner() {
       )}
 
       {/* Mobile primary — the header "New invoice" scrolls away on a phone. */}
-      <FAB icon="plus" label="New invoice" onClick={() => router.push("/quotes" as any)} />
+      {canQuotes && <FAB icon="plus" label="New invoice" onClick={() => router.push("/quotes" as any)} />}
 
       {/* ── The two taps that issue a GST invoice ────────────────────────────
           Both used to fire on a bare click. Each states the number it will take,
@@ -890,6 +907,8 @@ function InvoiceRow({
 }) {
   const router = useRouter();
   const waSender = useWhatsAppSender();
+  const { data: me } = useCurrentUser();
+  const canQuotes = canOpenQuotes(me?.role);
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
   const [subPayOpen, setSubPayOpen] = React.useState(false);
@@ -1042,7 +1061,7 @@ function InvoiceRow({
               >
                 <Icon name="link" size={15} /> Copy invoice link
               </DropdownMenuItem>
-              {inv.quote_id && (
+              {inv.quote_id && canQuotes && (
                 <DropdownMenuItem
                   className="gap-2.5 py-2 cursor-pointer"
                   onClick={() => router.push(`/quotes/${inv.quote_id}` as any)}

@@ -40,6 +40,7 @@ import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenQuotes } from "@/lib/quotes/access";
 import { useQueryClient } from "@tanstack/react-query";
 
 // ─── Risk model ──────────────────────────────────────────────────────────────
@@ -153,6 +154,10 @@ function RenewalBucket({
   const [generating, setGenerating] = React.useState<string | null>(null);
   const qc = useQueryClient();
   const router = useRouter();
+  /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
+     home) — no "Open quote" link for them, and Generate stays on this page. */
+  const { data: me } = useCurrentUser();
+  const canQuotes = canOpenQuotes(me?.role);
 
   async function handleGenerateQuote(sub: Subscription) {
     setGenerating(sub.id);
@@ -172,8 +177,8 @@ function RenewalBucket({
         ? `Opening existing renewal quote for ${sub.customer_name}`
         : `Renewal quote ${json.quoteId} created for ${sub.customer_name}`;
       toast.success(msg, { duration: 3500 });
-      // Navigate so the operator can edit before sending
-      router.push(`/quotes/${json.quoteId}` as never);
+      // Navigate so the operator can edit before sending (only roles that can open quotes)
+      if (canQuotes) router.push(`/quotes/${json.quoteId}` as never);
     } catch (err) {
       toast.error(`Failed: ${(err as Error).message}`);
     } finally {
@@ -292,7 +297,11 @@ function RenewalBucket({
 
                 {/* Bottom row: actions */}
                 <div className="flex items-center gap-1.5 pt-2 border-t border-hairline/60">
-                  {sub.renewal_quote_id ? (
+                  {sub.renewal_quote_id && !canQuotes ? (
+                    <span className="flex-1 truncate text-center font-mono text-2xs text-ink-3" title="Renewal quote ready — owner or sales sends it">
+                      {sub.renewal_quote_id}
+                    </span>
+                  ) : sub.renewal_quote_id ? (
                     <Button
                       asChild
                       variant="default"
@@ -499,7 +508,9 @@ function RenewalBucket({
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-start gap-1.5">
                             <div className="flex items-center gap-1.5">
-                              {sub.renewal_quote_id ? (
+                              {sub.renewal_quote_id && !canQuotes ? (
+                                <span className="text-2xs text-ink-3" title="Owner or sales sends it">Renewal quote ready</span>
+                              ) : sub.renewal_quote_id ? (
                                 <Button
                                   asChild
                                   variant="default"
@@ -628,7 +639,9 @@ export default function RenewalsPage() {
             icon="refresh"
             title="No subscriptions to renew yet"
             body="Renewals show up here automatically once you have active subscriptions. A subscription is created when a customer pays for a recurring quote — so send a quote and record the payment to get started."
-            action={<Button variant="primary" icon="send" onClick={() => router.push("/quotes/new" as never)}>Create a quote</Button>}
+            action={canOpenQuotes(me?.role)
+              ? <Button variant="primary" icon="send" onClick={() => router.push("/quotes/new" as never)}>Create a quote</Button>
+              : undefined}
             secondary={<Button variant="default" icon="users" onClick={() => router.push("/customers" as never)}>View customers</Button>}
           />
         </Card>

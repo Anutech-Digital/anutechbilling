@@ -57,6 +57,8 @@ import { useReferralAgreements } from "@/lib/queries/referral-partners";
 import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-chooser-dialog";
 import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenQuotes } from "@/lib/quotes/access";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -71,6 +73,11 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const inPanel = variant === "panel";
   const router = useRouter();
   const confirm = useConfirm();
+  /* R-237: billing opens customers but not /quotes (middleware sends it to /invoices) —
+     no quote clicks or New quote buttons for it. */
+  const { data: me } = useCurrentUser();
+  const canQuotes = canOpenQuotes(me?.role);
+  const openQuote = (id: string) => (canQuotes ? () => router.push(`/quotes/${id}` as never) : undefined);
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
   const { data: allGroups } = useCustomerGroups();
@@ -191,7 +198,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, onClick: undefined as (() => void) | undefined, payId: p.id })),
     // Project milestone receipts — show as Payment rows so they're not invisible.
     ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", onClick: undefined as (() => void) | undefined })),
-    ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as const, ref: q.id, amount: q.amount, status: q.status, onClick: () => router.push(`/quotes/${q.id}` as never) })),
+    ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as const, ref: q.id, amount: q.amount, status: q.status, onClick: openQuote(q.id) })),
     /* R-006: the status reads in QUOTE language ("Quotation" / "Accepted" / "Declined")
        because this row is the project's quotation as well as the project. The raw
        `quoted` / `active` wording made no sense under a Quotes heading. */
@@ -240,7 +247,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     hierRows.push({ key: `cpay:${p.id}`, parentKey: null, indent: 0, date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? "Refund" : "Payment", ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, payId: p.id });
   }
   for (const q of allQuotes) {
-    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, onClick: () => router.push(`/quotes/${q.id}` as never) });
+    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, onClick: openQuote(q.id) });
   }
   // Which rows are parents (have children) + parent lookup for the collapse walk.
   const parentOf: Record<string, string | null> = {};
@@ -374,7 +381,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           </Button>
           <Button icon="edit" onClick={() => router.push(`/customers/${c.id}/edit` as never)}>Edit</Button>
           <Button icon="receipt" onClick={() => setInvoiceOpen(true)}>Invoice</Button>
-          <Button variant="primary" icon="plus" onClick={() => router.push(`/quotes/new?customer=${c.id}` as any)}>New quote</Button>
+          {canQuotes && (
+            <Button variant="primary" icon="plus" onClick={() => router.push(`/quotes/new?customer=${c.id}` as any)}>New quote</Button>
+          )}
           {/* Archive / reactivate — the money-safe alternative to delete. Works
               even when the customer has invoices/payments (records are kept). */}
           <Button
@@ -473,7 +482,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             sub={svcView === "subscription"
               ? (allSubs.length > 0 ? `${insights.activeSubs.length} active` : undefined)
               : ((projects ?? []).length > 0 ? `${(projects ?? []).length} project${(projects ?? []).length > 1 ? "s" : ""}` : undefined)}
-            actions={
+            actions={svcView !== "project" && !canQuotes ? undefined : (
               <Button
                 size="sm"
                 variant="primary"
@@ -486,7 +495,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
               >
                 {svcView === "project" ? "New project quote" : "New subscription"}
               </Button>
-            }
+            )}
           >
             <div className="mb-3">
               <TabBar
