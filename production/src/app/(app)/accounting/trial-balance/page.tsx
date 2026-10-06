@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
-import { rupee, cn } from "@/lib/utils";
+import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fyOf } from "@/lib/accounting/ledger";
@@ -52,7 +52,7 @@ export default function TrialBalancePage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Trial Balance</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-2xl">
-            As of {today}. Balance-sheet heads are today&apos;s balances; income and expense heads are{" "}
+            As of {formatDate(today)}. Balance-sheet heads are today&apos;s balances; income and expense heads are{" "}
             {tb?.fyLabel ?? "this FY"} to date. Same numbers as the{" "}
             <Link href="/accounting/balance-sheet" className="underline">Balance Sheet</Link> and{" "}
             <Link href="/accounting/pnl" className="underline">P&amp;L</Link>.
@@ -66,7 +66,7 @@ export default function TrialBalancePage() {
       {error ? (
         <Card className="p-4 border-rose/40 bg-rose-soft/30">
           <p role="alert" className="text-sm text-ink-2">
-            Trial Balance nahi ban saka: {(error as Error).message}
+            Could not build the Trial Balance: {(error as Error).message}
           </p>
         </Card>
       ) : !tb ? (

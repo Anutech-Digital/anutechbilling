@@ -59,7 +59,7 @@ export default function DayBookPage() {
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Day Book</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-2xl">
             Every voucher, date by date — invoices, receipts, refunds, notes, bills and payments.
-            Salary ka kharcha Journal voucher hai (Tally jaisa), aur uska bhugtan Payment.
+            Salary expense is a Journal voucher (as in Tally) and paying it is a Payment.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -98,16 +98,16 @@ export default function DayBookPage() {
       )}
 
       {!valid ? (
-        <Card className="p-4"><p className="text-sm text-ink-2">&quot;From&quot; tareekh &quot;To&quot; se pehle ya barabar honi chahiye.</p></Card>
+        <Card className="p-4"><p className="text-sm text-ink-2">The &quot;From&quot; date must be on or before the &quot;To&quot; date.</p></Card>
       ) : q.error ? (
         <Card className="p-4 border-rose/40 bg-rose-soft/30">
-          <p role="alert" className="text-sm text-ink-2">Day Book nahi ban saki: {(q.error as Error).message}</p>
+          <p role="alert" className="text-sm text-ink-2">Could not build the Day Book: {(q.error as Error).message}</p>
         </Card>
       ) : q.isLoading ? (
         <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : rows.length === 0 ? (
         <Card className="py-2">
-          <EmptyState icon="calendar" title="No vouchers in this period" body="Koi invoice, receipt, bill ya payment is period me nahi. Doosra period chunein." />
+          <EmptyState icon="calendar" title="No vouchers in this period" body="No invoice, receipt, bill or payment in this period. Pick another period." />
         </Card>
       ) : (
         <Card className="overflow-hidden">

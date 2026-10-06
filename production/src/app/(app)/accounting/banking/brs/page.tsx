@@ -73,8 +73,8 @@ export default function BrsPage() {
           </p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Bank Reconciliation Statement</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-2xl">
-            Bank ke hisaab se balance aur books ke hisaab se balance — aur beech ka har farq naam se.
-            Har mahine ke end par ye <b>zero farq</b> par aana chahiye, phir books lock karo.
+            Balance as per bank and balance as per books, with every difference named.
+            At each month end this should reach a <b>zero difference</b>; then lock the books.
           </p>
         </div>
         <Button variant="outline" size="sm" icon="download" onClick={exportCsv} disabled={!brs || accError || txError}>Export CSV (for CA)</Button>
@@ -93,8 +93,8 @@ export default function BrsPage() {
             <Input id="brs-as-of" type="date" value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value)} />
           </div>
           <div>
-            <label htmlFor="brs-bank-statement-ka-closing" className="block text-xs font-medium text-ink-2 mb-1">Closing balance per bank statement (optional)</label>
-            <Input id="brs-bank-statement-ka-closing" type="number" value={closing} onChange={(e) => setClosing(e.target.value)} placeholder="Statement PDF se" />
+            <label htmlFor="brs-statement-closing" className="block text-xs font-medium text-ink-2 mb-1">Closing balance per bank statement (optional)</label>
+            <Input id="brs-statement-closing" type="number" value={closing} onChange={(e) => setClosing(e.target.value)} placeholder="From the statement PDF" />
           </div>
         </div>
       </Card>
@@ -104,7 +104,7 @@ export default function BrsPage() {
       ) : accError || txError ? (
         <LoadError what="Bank lines" onRetry={() => { refetchAcc(); if (accountId) refetchTx(); }} />
       ) : !account ? (
-        <Card className="py-2"><EmptyState icon="rupee" title="Koi bank account nahi" body="Banking mein pehle account jodo aur statement import karo." /></Card>
+        <Card className="py-2"><EmptyState icon="rupee" title="No bank account" body="Add an account in Banking first and import a statement." /></Card>
       ) : brs ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -120,9 +120,9 @@ export default function BrsPage() {
             </Card>
             <Card className={`p-4 ${brs.clean ? "border-emerald/40 bg-emerald/5" : "border-amber/40 bg-amber-soft/20"}`}>
               <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Status</div>
-              <div className={`font-serif text-2xl mt-1 ${brs.clean ? "text-emerald" : "text-amber-ink"}`}>{brs.clean ? "Reconciled" : "Farq hai"}</div>
+              <div className={`font-serif text-2xl mt-1 ${brs.clean ? "text-emerald" : "text-amber-ink"}`}>{brs.clean ? "Reconciled" : "Difference"}</div>
               <div className="text-xs text-ink-3 mt-0.5">
-                {brs.unbookedImports.length ? `${brs.unbookedImports.length} bank line(s) books mein nahi` : "har bank line booked"}
+                {brs.unbookedImports.length ? `${brs.unbookedImports.length} bank line(s) not in books` : "every bank line booked"}
                 {brs.importGap !== null && brs.importGap !== 0 ? ` · import gap ${rupee(Math.abs(brs.importGap))}` : brs.importGap === 0 ? " · statement closing matches" : ""}
               </div>
             </Card>
@@ -132,21 +132,21 @@ export default function BrsPage() {
             <Card className="p-4 border-rose/40 bg-rose/5">
               <p className="text-sm text-ink">
                 <Icon name="alert" size={14} className="inline mr-1 text-rose" />
-                Statement ka closing balance imported lines se <b>{rupee(Math.abs(brs.importGap))} {brs.importGap > 0 ? "zyada" : "kam"}</b> hai —
-                yaani kuch lines import nahi hui (ya delete ho gayi). Us mahine ka statement dobara import karo; reconcile karne se ye farq nahi jaata.
+                The statement closing balance is <b>{rupee(Math.abs(brs.importGap))} {brs.importGap > 0 ? "more" : "less"}</b> than the imported lines,
+                so some lines were not imported (or were deleted). Import that month's statement again; reconciling does not clear this difference.
               </p>
             </Card>
           )}
 
           <Card className="overflow-hidden">
             <div className="flex items-center justify-between bg-paper-2/50 px-4 py-2.5">
-              <span className="font-semibold text-ink">Bank mein hai, books mein nahi</span>
+              <span className="font-semibold text-ink">In bank, not in books</span>
               <span className="text-xs font-mono text-ink-2">{brs.unbookedImports.length} line · net {rupee(brs.totals.unbookedImports)}</span>
             </div>
             {brs.unbookedImports.length === 0
-              ? <p className="px-4 py-3 text-sm text-ink-3">Koi nahi — har imported line kisi entry se judi hai.</p>
+              ? <p className="px-4 py-3 text-sm text-ink-3">None. Every imported line is matched to an entry.</p>
               : <>
-                  <p className="px-4 pt-2 text-xs text-ink-3">Bank charges, interest, anjaan receipt — <Link href={`/accounting/banking/${account.id}`} className="text-amber-ink underline">Banking → is account</Link> par har line ko book / reconcile karo.</p>
+                  <p className="px-4 pt-2 text-xs text-ink-3">Bank charges, interest, unknown receipts: book or reconcile each line in <Link href={`/accounting/banking/${account.id}`} className="text-amber-ink underline">Banking → this account</Link>.</p>
                   <LineTable rows={brs.unbookedImports} sign="net" />
                 </>}
           </Card>
@@ -158,9 +158,9 @@ export default function BrsPage() {
                 <span className="text-xs font-mono text-ink-2">{rupee(brs.totals.paymentsNotPresented)}</span>
               </div>
               {brs.paymentsNotPresented.length === 0
-                ? <p className="px-4 py-3 text-sm text-ink-3">Koi nahi.</p>
+                ? <p className="px-4 py-3 text-sm text-ink-3">None.</p>
                 : <>
-                    <p className="px-4 pt-2 text-xs text-ink-3">Books mein book ho chuke (Bills / Payroll / Referrals se), bank se abhi nikle nahi. Statement aane par wahi line reconcile karo — ye manual line replace ho jaayegi.</p>
+                    <p className="px-4 pt-2 text-xs text-ink-3">Booked in the books (from Bills, Payroll or Referrals) but not yet out of the bank. When the statement arrives, reconcile that line and it replaces this manual line.</p>
                     <LineTable rows={brs.paymentsNotPresented} sign="debit" />
                   </>}
             </Card>
@@ -170,7 +170,7 @@ export default function BrsPage() {
                 <span className="text-xs font-mono text-ink-2">{rupee(brs.totals.depositsInTransit)}</span>
               </div>
               {brs.depositsInTransit.length === 0
-                ? <p className="px-4 py-3 text-sm text-ink-3">Koi nahi.</p>
+                ? <p className="px-4 py-3 text-sm text-ink-3">None.</p>
                 : <LineTable rows={brs.depositsInTransit} sign="credit" />}
             </Card>
           </div>
@@ -179,8 +179,8 @@ export default function BrsPage() {
             <Card className="p-4 border-amber/40 bg-amber-soft/20">
               <p className="text-sm text-ink">
                 <Icon name="alert" size={14} className="inline mr-1 text-amber-ink" />
-                <b>{brs.ignoredBeforeOpening} line(s)</b> opening balance ki tareekh ({formatDate(account.opening_balance_date)}) se <b>pehle</b> ki hain — ye ginti mein nahi, isliye upar ke balance adhoore hain.
-                Banking → account → Edit mein opening balance ki tareekh sabse purani line se pehle rakho (aur us din ka asli balance likho).
+                <b>{brs.ignoredBeforeOpening} line(s)</b> are dated <b>before</b> the opening balance date ({formatDate(account.opening_balance_date)}). They are not counted, so the balances above are incomplete.
+                In Banking → account → Edit, set the opening balance date before the oldest line (and enter the real balance for that day).
               </p>
             </Card>
           )}

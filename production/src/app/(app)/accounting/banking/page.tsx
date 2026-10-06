@@ -90,7 +90,7 @@ export default function BankingPage() {
               <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total balance</p>
               <p className="font-serif text-2xl text-ink mt-1">{rupee(totalBalance, { compact: true })}</p>
               <p className="text-xs text-ink-3 mt-0.5">
-                {cardOwed > 0 ? <>Cash &amp; bank · <span className="text-rose">{rupee(cardOwed, { compact: true })} cards ka owe / udhari</span></> : "Across all accounts"}
+                {cardOwed > 0 ? <>Cash &amp; bank · <span className="text-rose">{rupee(cardOwed, { compact: true })} owed on cards</span></> : "Across all accounts"}
               </p>
             </div>
             <div>
@@ -215,7 +215,7 @@ function BankAccountCard({
             {account.account_type === "cash" ? (
               <p className="text-xs text-ink-3 mt-0.5">Cash in hand</p>
             ) : isCard ? (
-              <p className="text-xs text-ink-3 mt-0.5">Company credit card · owe / udhari</p>
+              <p className="text-xs text-ink-3 mt-0.5">Company credit card · amount owed</p>
             ) : (
               <p className="text-xs text-ink-3 font-mono mt-0.5">
                 {[account.account_number_last4 && `••• ${account.account_number_last4}`, account.ifsc]
@@ -244,7 +244,7 @@ function BankAccountCard({
                 {rupee(Math.abs(balance))}
               </p>
               <p className="text-xs text-ink-3 mt-0.5">
-                {balance < 0 ? "card par owe / udhari" : balance > 0 ? "extra jama (credit)" : "koi owe / udhari nahi"}
+                {balance < 0 ? "owed on card" : balance > 0 ? "extra paid (credit)" : "nothing owed"}
               </p>
             </>
           ) : (

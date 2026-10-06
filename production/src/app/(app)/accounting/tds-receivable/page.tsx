@@ -169,9 +169,6 @@ export default function TdsReceivablePage() {
                 Pending cert → Cert received → Verified on 26AS → Claimed in ITR
               </span>
             </p>
-            <p className="text-ink-3 text-xs italic">
-              Phase 2 (Record Payment integration) coming next — for now this page is view-only.
-            </p>
           </div>
         </Card>
       )}
@@ -223,7 +220,7 @@ export default function TdsReceivablePage() {
             icon="receipt"
             title={activeTab === "all" ? "No TDS entries yet" : `No entries in "${activeTab === "claimable" ? "Ready to claim" : TDS_STATUS_LABEL[activeTab as TdsStatus]}"`}
             body={activeTab === "all"
-              ? "TDS entries will appear here when customers deduct tax on payments. Wait for Phase 2 (Record Payment integration) — or add manually for past invoices."
+              ? "TDS entries appear here when you tick \"TDS was deducted\" while recording a payment. For past invoices, add them manually."
               : "Switch to a different tab or fiscal year."}
           />
         </Card>

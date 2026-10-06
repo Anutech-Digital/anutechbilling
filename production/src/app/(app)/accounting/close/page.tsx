@@ -72,12 +72,12 @@ export default function MonthClosePage() {
           </p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Month-end close</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-2xl">
-            Har mahine ye list upar se neeche — jo books khud saabit karti hain wo apne aap tick hota hai, portal wale kaam tum tick karo, aakhir mein lock.
+            Work down this list every month. Steps the books can prove tick themselves; tick the portal steps yourself, then lock.
           </p>
         </div>
         <div>
-          <label htmlFor="close-mahina" className="block text-xs font-medium text-ink-2 mb-1">Month</label>
-          <Input id="close-mahina" type="month" value={period} max={prevPeriod() > period ? prevPeriod() : period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
+          <label htmlFor="close-month" className="block text-xs font-medium text-ink-2 mb-1">Month</label>
+          <Input id="close-month" type="month" value={period} max={prevPeriod() > period ? prevPeriod() : period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
         </div>
       </div>
 
@@ -93,13 +93,13 @@ export default function MonthClosePage() {
               <div>
                 <div className="font-serif text-2xl text-ink">{periodLabel(period)} — {close.done} / {close.total}</div>
                 <div className="text-xs text-ink-3 mt-0.5">
-                  {close.locked ? "Mahina band hai — books lock." : close.readyToLock ? "Sab steps ho gaye — ab lock kar do." : `${close.total - close.done} step baaki.`}
+                  {close.locked ? "Month closed. Books are locked." : close.readyToLock ? "All steps done. Lock the books now." : `${close.total - close.done} step(s) left.`}
                 </div>
               </div>
               {!close.locked && (
                 isOwner
                   ? <Button variant="primary" disabled={!close.readyToLock || update.isPending} loading={update.isPending} onClick={lock} icon="lock">Lock books up to {formatDate(data.facts.monthEnd)}</Button>
-                  : <span className="text-xs text-ink-3">Lock sirf owner kar sakta hai</span>
+                  : <span className="text-xs text-ink-3">Only the owner can lock</span>
               )}
             </div>
             <div className="mt-3 h-1.5 rounded-full bg-paper-2 overflow-hidden">
