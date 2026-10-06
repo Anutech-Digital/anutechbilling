@@ -17,7 +17,12 @@
  *   node scripts/ops/worker-lock.mjs claim   R-197 C:/Users/mso50/reselleros-w-r-197 src/app/(app)/deals src/lib/deals
  *   node scripts/ops/worker-lock.mjs check   R-197      (run inside the worktree)
  *   node scripts/ops/worker-lock.mjs release R-197
+ *   node scripts/ops/worker-lock.mjs push    R-197      (inside the worktree: waits its turn, rebases, pushes)
  *   node scripts/ops/worker-lock.mjs list
+ *
+ * push — one worker pushes at a time (6 Oct: 6 of 8 workers had their push rejected because
+ * another worker pushed in the same minute). Waits for the push turn, then fetch + rebase +
+ * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 3 = MAX_WORKERS (4) already
  * running. Either way: stop, do not work around it.
@@ -74,7 +79,7 @@ function lockFile(card) { return path.join(LOCK_DIR, `${card.toUpperCase()}.json
 export function readLocks() {
   if (!fs.existsSync(LOCK_DIR)) return [];
   const live = [];
-  for (const f of fs.readdirSync(LOCK_DIR).filter((n) => n.endsWith(".json"))) {
+  for (const f of fs.readdirSync(LOCK_DIR).filter((n) => n.endsWith(".json") && !n.startsWith("_"))) {
     const full = path.join(LOCK_DIR, f);
     let l;
     try { l = JSON.parse(fs.readFileSync(full, "utf8")); } catch { continue; }
@@ -102,6 +107,42 @@ function changedFiles() {
   const working = execSync("git status --porcelain --untracked-files=all", { encoding: "utf8" })
     .split("\n").filter(Boolean).map((l) => l.slice(3).split(" -> ").pop());
   return [...new Set([...committed.split("\n"), ...working].map((s) => s.trim()).filter(Boolean).map(normPath))];
+}
+
+/** A push turn older than this is from a crashed worker and may be taken over. */
+export const PUSH_TURN_STALE_MS = 15 * 60 * 1000;
+
+export function pushTurnFree(turn, now) {
+  return !turn || now - turn.at > PUSH_TURN_STALE_MS;
+}
+
+function sh(cmd) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+
+async function pushWithTurn(card) {
+  const turnFile = path.join(LOCK_DIR, "_push-turn.json");
+  const waitUntil = Date.now() + 30 * 60 * 1000;
+  for (;;) {
+    let turn = null;
+    try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+    if (pushTurnFree(turn, Date.now())) {
+      if (turn) fs.rmSync(turnFile, { force: true });
+      try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
+    }
+    if (Date.now() > waitUntil) { console.error(`✗ 30 min se push ki baari nahi aayi (${turn?.card} push kar raha hai). Owner ko batao.`); process.exit(4); }
+    console.log(`… ${turn?.card ?? "koi"} push kar raha hai — baari ka intezaar`);
+    await new Promise((r) => setTimeout(r, 15000));
+  }
+  try {
+    sh("git fetch -q anutech");
+    try { sh("git rebase -q anutech/manager-pardeep"); }
+    catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
+    try { sh("npx tsc --noEmit -p ."); } catch (e) { console.error("✗ Rebase ke baad tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); process.exit(1); }
+    const branch = sh("git branch --show-current").trim();
+    sh(`git push -q anutech ${branch}:manager-pardeep`);
+    console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);
+  } finally {
+    fs.rmSync(turnFile, { force: true });
+  }
 }
 
 function main(argv) {
@@ -146,6 +187,7 @@ function main(argv) {
     console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
     return;
   }
+  if (cmd === "push") return pushWithTurn(card);
   if (cmd === "release") {
     fs.rmSync(lockFile(card), { force: true });
     console.log(`✓ ${card} ka lock hata.`);
