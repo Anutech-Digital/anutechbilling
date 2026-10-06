@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { toast } from "sonner";
+import { describeError } from "@/lib/errors/toast-error";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -101,7 +102,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
 
     } catch (err: unknown) {
       console.error("Auto screen capture failed:", err);
-      toast.error("Could not auto-capture screen. Use Ctrl + V or upload image files.");
+      toast.error("Could not capture the screen", { description: "Paste a screenshot with Ctrl + V, or upload image files." });
     } finally {
       setCapturing(false);
       onOpenChange(true);
@@ -114,12 +115,12 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
 
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith("image/")) {
-        toast.error(`"${file.name}" is not an image file.`);
+        toast.error(`"${file.name}" is not an image`, { description: "Attach PNG, JPG or another image file." });
         return;
       }
 
       if (file.size > 5 * 1024 * 1024) {
-        toast.error(`"${file.name}" exceeds 5MB size limit.`);
+        toast.error(`"${file.name}" is over 5 MB`, { description: "Crop or compress the image, then attach it again." });
         return;
       }
 
@@ -144,7 +145,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
     if (!files.length) return;
     e.preventDefault();
     for (const file of files) {
-      if (file.size > 5 * 1024 * 1024) { toast.error(`"${file.name}" exceeds 5MB size limit.`); continue; }
+      if (file.size > 5 * 1024 * 1024) { toast.error(`"${file.name}" is over 5 MB`, { description: "Crop or compress the image, then attach it again." }); continue; }
       const reader = new FileReader();
       reader.onload = (evt) => setScreenshots((prev) => [...prev, { id: crypto.randomUUID(), name: file.name, dataUrl: evt.target?.result as string }]);
       reader.readAsDataURL(file);
@@ -169,7 +170,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
     e.preventDefault();
     const cleanedPrompt = promptText.trim();
     if (!cleanedPrompt) {
-      toast.error("Please enter details in the report box");
+      toast.error("Report box is empty", { description: "Write what happened and what you expected, then submit." });
       return;
     }
 
@@ -211,7 +212,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
       setScreenshots([]);
       onOpenChange(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Could not submit the report.";
+      const msg = describeError(err, "Could not submit the report.").message;
       // Nothing is cleared and the dialog stays open, so the text the reporter typed is
       // still on screen and a retry costs one click instead of retyping it.
       toast.error(msg, {

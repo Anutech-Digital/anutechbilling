@@ -10,6 +10,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -102,15 +103,15 @@ export default function PlatformSignupsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Failed to update workspace");
+        toast.error(data.error || "Could not update workspace", { description: "Nothing was saved. Check the fields and save again." });
         return;
       }
 
       toast.success("Workspace details updated successfully!");
       setEditTarget(null);
       q.refetch();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save changes.");
+    } catch (err) {
+      toastError(err, { fallback: "Could not save changes", description: "Nothing was saved. Check your connection and save again." });
     } finally {
       setIsSavingEdit(false);
     }
@@ -128,7 +129,7 @@ export default function PlatformSignupsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Failed to delete workspace");
+        toast.error(data.error || "Could not delete workspace", { description: "The workspace is unchanged. Refresh the page and try again." });
         return;
       }
 
@@ -136,8 +137,8 @@ export default function PlatformSignupsPage() {
       setDeleteTarget(null);
       setConfirmInput("");
       q.refetch();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to execute deletion.");
+    } catch (err) {
+      toastError(err, { fallback: "Could not delete workspace", description: "The workspace is unchanged. Check your connection and try again." });
     } finally {
       setIsDeleting(false);
     }

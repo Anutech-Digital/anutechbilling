@@ -17,6 +17,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -112,7 +113,7 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
       // Wipe the secret-bearing inputs from memory (they're persisted server-side)
       setAccessToken(""); setAppSecret("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, { description: "Nothing was saved. Check the Phone number ID and access token, then save again." }),
   });
 
   const disconnect = useMutation({
@@ -127,7 +128,7 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
       setPhoneNumberId(""); setAccessToken(""); setBusinessAccountId("");
       setAppSecret(""); setVerifyToken("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, { description: "WhatsApp is still connected. Refresh the page and try again." }),
   });
 
   async function testConnection() {
@@ -140,10 +141,10 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
           `Connected ✓ — ${json.verified_name ?? "unverified"} · ${json.display_number ?? ""} · quality ${json.quality_rating ?? "?"}`,
         );
       } else {
-        toast.error(json.error ?? "Test failed");
+        toast.error(json.error ?? "Test failed", { description: "Check the Phone number ID and access token in Meta Business, save, then test again." });
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, { fallback: "Could not reach the server", description: "Check your internet connection, then test again." });
     } finally {
       setTesting(false);
     }
@@ -152,7 +153,7 @@ export default function WhatsAppConfigureDialog({ open, onOpenChange }: Props) {
   function copyToClipboard(text: string, label: string) {
     navigator.clipboard?.writeText(text).then(
       () => toast.success(`${label} copied`),
-      () => toast.error("Clipboard blocked"),
+      () => toast.error("Clipboard blocked", { description: "Your browser did not allow copying. Select the text and copy it by hand." }),
     );
   }
 
