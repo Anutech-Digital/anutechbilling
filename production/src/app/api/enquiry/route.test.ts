@@ -61,3 +61,30 @@ describe("/api/enquiry — honest answers for the site forms", () => {
     expect(await res.json()).toMatchObject({ ok: false });
   });
 });
+
+/* R-228: the site showed a reference made from a localStorage counter, so every new visitor's
+   first quote was AQ-YYYYMM-001. The proxy now hands back the app's own number — the draft
+   quote's number on the Workspace path, else the lead id — which sales can find in the app. */
+describe("/api/enquiry — the reference number is the app's, not the browser's", () => {
+  it("general path: the lead id", async () => {
+    fetchMock.mockResolvedValue(upstream(200, { success: true, leadId: "L-MG3X9K", ackSent: true }));
+    expect(await (await POST(req(body))).json()).toMatchObject({ ok: true, leadId: "L-MG3X9K", reference: "L-MG3X9K" });
+  });
+
+  it("Workspace path: the draft quote's number", async () => {
+    fetchMock.mockResolvedValue(upstream(200, { success: true, leadId: "L-MG3X9K", draftQuoteId: "QT-2026-0042", autoSent: false, ackSent: true }));
+    const res = await POST(req({ ...body, edition: "GW Business Starter", seats: 5 }));
+    expect(await res.json()).toMatchObject({ ok: true, quoteId: "QT-2026-0042", reference: "QT-2026-0042" });
+  });
+
+  it("Workspace path with no draft quote: falls back to the lead id", async () => {
+    fetchMock.mockResolvedValue(upstream(200, { success: true, leadId: "L-MG3X9K", draftQuoteId: null, ackSent: true }));
+    const res = await POST(req({ ...body, edition: "GW Business Starter", seats: 5 }));
+    expect(await res.json()).toMatchObject({ ok: true, quoteId: null, reference: "L-MG3X9K" });
+  });
+
+  it("no id from the app: reference is null — never invented", async () => {
+    fetchMock.mockResolvedValue(upstream(200, { success: true, ackSent: true }));
+    expect(await (await POST(req(body))).json()).toMatchObject({ ok: true, reference: null });
+  });
+});

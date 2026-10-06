@@ -26,6 +26,7 @@ import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
+import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const P = "var(--primary)";
@@ -151,7 +152,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
 
   const requestText = (no: string) =>
     [
-      `TRIAL REQUEST ${no}`,
+      `TRIAL REQUEST${no ? ` ${no}` : ""}`,
       "",
       ...rows.map((r) => `· ${r.k}: ${r.v}`),
       "",
@@ -190,11 +191,10 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
       return;
     }
     setFormErr(null);
+    /* R-228: the request's number is the APP's (draft quote number, else lead id) from
+       /api/enquiry — never a per-browser counter, which gave every new visitor AT-…-001. */
     const now = new Date();
-    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    let n = 1;
-    try { n = (parseInt(window.localStorage.getItem("anutech-trial-seq") ?? "0", 10) || 0) + 1; window.localStorage.setItem("anutech-trial-seq", String(n)); } catch { /* private */ }
-    const no = `AT-${ym}-${String(n).padStart(3, "0")}`;
+    let no = "";
     setSending(true);
     setSubmitErr(null);
     try {
@@ -204,7 +204,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         headers: { "Content-Type": "application/json", ...ts.headers },
         body: JSON.stringify({ fullName: company, companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true }),
       });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean };
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !json.ok) {
         setSubmitErr(json.error || "We could not send your trial request. Nothing was saved — please press the button to try again.");
         ts.reset();
@@ -212,6 +212,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         return;
       }
       setAckSent(json.ackSent === true);
+      no = enquiryReference(json);
     } catch {
       setSubmitErr("We could not reach our server, so your trial request was not sent. Check your connection and press the button to try again.");
       setSending(false);
@@ -222,7 +223,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   }
 
   const fmt = (d: Date) => `${d.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]} ${d.getFullYear()}`;
-  const mailHref = `mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(`Trial request ${reqNo} — ${labelOf(ed)}`)}&body=${encodeURIComponent(requestText(reqNo))}`;
+  const mailHref = `mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(`Trial request${reqNo ? ` ${reqNo}` : ""} — ${labelOf(ed)}`)}&body=${encodeURIComponent(requestText(reqNo))}`;
   const waHref = `${WHATSAPP_URL}?text=${encodeURIComponent(requestText(reqNo))}`;
   const orderHref = `/quote?ed=${encodeURIComponent(ed)}&seats=${seats}&term=annual`;
 
@@ -237,7 +238,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         <div style={{ display: "flex", alignItems: "center", gap: 14, ...card, padding: "18px 20px", marginBottom: 20 }}>
           <span aria-hidden style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 999, background: GREEN, color: "#fff", fontSize: 17, flex: "none" }}>✓</span>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>We have received trial request {reqNo}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>We have received {reqNo ? <>trial request {reqNo}</> : "your trial request"}</div>
             <div style={{ fontSize: 13.5, color: "var(--text-muted)" }}>
               {ackSent
                 ? <>A confirmation is on its way to <b style={{ color: "var(--text)" }}>{email}</b> — check your inbox, and the spam folder if it is not there in a few minutes.</>
@@ -253,7 +254,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
           <div style={{ ...card, padding: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
               <span style={{ fontSize: 14.5, fontWeight: 700, color: "var(--text)" }}>{labelOf(ed)} — trial</span>
-              <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{reqNo}</span>
+              <span className={reqNo ? "mono" : undefined} style={{ fontSize: 12, color: "var(--text-muted)" }}>{referenceNote(reqNo, { received: true, ackSent })}</span>
             </div>
             <div className="meta" style={{ marginBottom: 10 }}>{reqAt && fmt(reqAt)}</div>
             {rows.map((r) => (

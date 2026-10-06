@@ -22,6 +22,7 @@ import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
+import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const P = "var(--primary)";
@@ -142,12 +143,9 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   async function generate() {
     setTouched(true); setErr("");
     if (!valid) { setOpenSec(selected.length === 0 ? "plan" : "details"); setErr("Add at least one line, and a company, name, valid email and 10-digit phone — that's where the formal quotation goes."); return; }
-    // Quote number: AQ-YYYYMM-NNN from a local counter.
+    /* R-228: the quote's number is the APP's (draft quote number, else lead id) from
+       /api/enquiry — never a per-browser counter, which gave every new visitor AQ-…-001. */
     const now = new Date();
-    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    let n = 1;
-    try { const k = `anutech-quote-seq-${ym}`; n = (parseInt(window.localStorage.getItem(k) ?? "0", 10) || 0) + 1; window.localStorage.setItem(k, String(n)); } catch { /* private window */ }
-    const no = `AQ-${ym}-${String(n).padStart(3, "0")}`;
 
     setSubmitState("sending");
     try {
@@ -166,16 +164,16 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           edition: primary?.name, term,
         }),
       });
-      const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean };
+      const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !data.ok) throw new Error(data.error || "Our team did not receive it.");
       setTeamHasIt(true); setTeamErr(""); setAckSent(data.ackSent === true);
-      setQuoteNo(no); setQuoteAt(now); setSubmitState("done");
+      setQuoteNo(enquiryReference(data)); setQuoteAt(now); setSubmitState("done");
     } catch (e) {
       ts.reset();
       // The quote is still valid to hand off manually — shown, and marked NOT received.
       setTeamHasIt(false);
       setTeamErr(e instanceof Error ? e.message : "We could not reach our server.");
-      setQuoteNo(no); setQuoteAt(now); setSubmitState("done");
+      setQuoteNo(""); setQuoteAt(now); setSubmitState("done");
     }
   }
 
@@ -363,7 +361,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           <div data-quote-doc>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>{COMPANY.name}</span>
-              <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{quoteNo}</span>
+              <span className={quoteNo ? "mono" : undefined} style={{ fontSize: 12, color: "var(--text-muted)" }}>{referenceNote(quoteNo, { received: teamHasIt === true, ackSent })}</span>
             </div>
             <div className="meta" style={{ marginBottom: 12 }}>{quoteAt && fmt(quoteAt)} · valid till {validTill && fmt(validTill)} · {term === "annual" ? "annual commitment" : "flexible monthly"}</div>
             <div style={{ fontSize: 13, marginBottom: 10 }}><b>Quote for:</b> {company}{gstin ? ` · GSTIN ${gstin}` : ""}</div>
@@ -386,12 +384,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             </ul>
             {/* delivery */}
             <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-              <a href={`mailto:${encodeURIComponent(email)}?cc=${COMPANY.supportEmail}&subject=${encodeURIComponent(`Quotation ${quoteNo} — Anutech Digital`)}&body=${encodeURIComponent(quoteText())}`} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the quote</a>
+              <a href={`mailto:${encodeURIComponent(email)}?cc=${COMPANY.supportEmail}&subject=${encodeURIComponent(`Quotation${quoteNo ? ` ${quoteNo}` : ""} — Anutech Digital`)}&body=${encodeURIComponent(quoteText())}`} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the quote</a>
               <div style={{ display: "flex", gap: 8 }}>
                 <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(quoteText())}`} target="_blank" rel="noopener" onClick={() => setDelivered("wa")} className="btn btn-outline" style={{ flex: 1 }}>Send on WhatsApp</a>
                 <button onClick={() => window.print()} className="btn btn-outline" style={{ flex: 1 }}>Save as PDF</button>
               </div>
-              <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`I'd like to order at quote ${quoteNo}: ` + quoteText())}`} target="_blank" rel="noopener" className="btn btn-outline" style={{ width: "100%" }}>Order at this rate</a>
+              <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`I'd like to order at ${quoteNo ? `quote ${quoteNo}` : "this quote"}: ` + quoteText())}`} target="_blank" rel="noopener" className="btn btn-outline" style={{ width: "100%" }}>Order at this rate</a>
               <button onClick={() => { setSubmitState("idle"); setDelivered(""); }} style={{ background: "none", border: "none", color: P, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 13, paddingTop: 4 }}>Change something</button>
               {delivered && <p className="meta" style={{ textAlign: "center", color: "var(--success)" }}>{delivered === "email" ? "Opened your email app with the quote." : "Opened WhatsApp with the quote."}</p>}
             </div>
