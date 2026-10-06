@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
@@ -51,7 +52,7 @@ export default function ItrPage() {
   /* Default: pichhla FY — wahi hai jo file hona hai. Chalta hua FY advance
      tax ke liye ek click par. */
   const [fyYear, setFyYear] = React.useState(nowFy.startYear - 1);
-  const { data: pack, isLoading, error } = useItrPack(fyYear);
+  const { data: pack, isLoading, isError, refetch } = useItrPack(fyYear);
   const { data: log } = useComplianceLog();
   const filedMap = toFiledMap(log);
 
@@ -94,12 +95,8 @@ export default function ItrPage() {
           <Skeleton className="h-64 w-full" />
         </div>
       )}
-      {error != null && (
-        <Card className="p-6 text-sm text-rose-ink">
-          Aankde load nahi hue — network ya session ka masla lagta hai. Page reload kariye;
-          phir bhi na aaye to logout–login.
-        </Card>
-      )}
+      {/* R-270: the shared error state, with a retry instead of "reload the page". */}
+      {isError && <LoadError what="ITR figures" onRetry={() => { void refetch(); }} />}
 
       {pack && (
         <PackView

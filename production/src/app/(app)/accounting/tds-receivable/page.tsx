@@ -23,6 +23,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import {
@@ -116,6 +117,9 @@ export default function TdsReceivablePage() {
           <Tds26asImport />
         </div>
       </div>
+
+      {/* R-270: the tiles fall back to "—" when the summary fails; say why. */}
+      {summaryQ.isError && <LoadErrorBanner onRetry={() => { void summaryQ.refetch(); }} />}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
@@ -214,6 +218,9 @@ export default function TdsReceivablePage() {
         <div className="space-y-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : listQ.isError && !listQ.data ? (
+        /* R-270: was "No TDS entries yet" — wrong when the fetch simply failed. */
+        <LoadError what="TDS entries" onRetry={() => { void listQ.refetch(); }} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState

@@ -23,6 +23,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -253,7 +254,9 @@ function useProfitability(range: DateRange) {
 
 export default function ProfitabilityPage() {
   const [range, setRange] = React.useState<DateRange>(thisFY());
-  const { data, isLoading } = useProfitability(range);
+  const { data, isLoading, isError, refetch } = useProfitability(range);
+  /* R-270: a failed load printed ₹0 revenue, 0.0% margin and "No paid customers". */
+  const failed = isError && !data;
 
   const rows   = data?.rows   ?? [];
   const totals = data?.totals ?? { revenue: 0, cogs: 0, margin: 0, marginPct: 0, customers: 0, redCount: 0, amberCount: 0, greenCount: 0 };
@@ -307,6 +310,7 @@ export default function ProfitabilityPage() {
       </Card>
 
       {/* KPI strip */}
+      {!failed && (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-6">
         <KPI label="Total revenue (ex-GST)" value={rupee(totals.revenue)} />
         <KPI label="Total COGS"             value={rupee(totals.cogs)}    tone="rose" />
@@ -315,6 +319,7 @@ export default function ProfitabilityPage() {
              tone={totals.marginPct >= 25 ? "emerald" : totals.marginPct >= 15 ? "amber" : "rose"} />
         <KPI label="Customers"              value={`${totals.customers}`} hint={`${totals.greenCount}🟢 ${totals.amberCount}🟡 ${totals.redCount}🔴`} />
       </div>
+      )}
 
       {/* Action banner if there are red customers */}
       {totals.redCount > 0 && (
@@ -333,6 +338,8 @@ export default function ProfitabilityPage() {
         <div className="space-y-3">
           {[1,2,3,4,5].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : failed ? (
+        <LoadError what="Customer profitability" onRetry={() => { void refetch(); }} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState

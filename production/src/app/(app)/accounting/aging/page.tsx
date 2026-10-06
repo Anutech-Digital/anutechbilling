@@ -25,6 +25,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -164,7 +165,10 @@ function whatsappLink(phone: string, message: string): string {
 }
 
 export default function AgingPage() {
-  const { data, isLoading } = useAging();
+  const { data, isLoading, isError, refetch } = useAging();
+  /* R-270: on a failed load the tiles used to read ₹0 and the table "No outstanding
+     receivables. Nice." — the opposite of the truth when money is owed. */
+  const failed = isError && !data;
   const { data: me } = useCurrentUser();
   // Reminder messages are sent FROM this reseller — use their own business name,
   // never a hardcoded one (this is multi-tenant; another reseller must not send
@@ -192,6 +196,7 @@ export default function AgingPage() {
       </div>
 
       {/* KPI strip */}
+      {!failed && (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-6">
         <KPI label="Total outstanding" value={rupee(totals.total)} tone={totals.total > 0 ? "rose" : undefined} big onClick={() => setBucket("")} active={bucket === ""} />
         <KPI label="Current (0–30 days)" value={rupee(totals.current)} onClick={() => setBucket("current")} active={bucket === "current"} />
@@ -199,6 +204,7 @@ export default function AgingPage() {
         <KPI label="61–90 days"          value={rupee(totals.b60)}     tone={totals.b60 > 0 ? "amber" : undefined} onClick={() => setBucket("b60")} active={bucket === "b60"} />
         <KPI label="90+ days"            value={rupee(totals.over90)}  tone={totals.over90 > 0 ? "rose" : undefined} onClick={() => setBucket("over90")} active={bucket === "over90"} />
       </div>
+      )}
 
       {totals.total > 0 && overdueRupees > 0 && (
         <Card className="p-4 mb-6 border-rose/40 bg-rose-soft/30">
@@ -216,6 +222,8 @@ export default function AgingPage() {
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : failed ? (
+        <LoadError what="Customer aging" onRetry={() => { void refetch(); }} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState

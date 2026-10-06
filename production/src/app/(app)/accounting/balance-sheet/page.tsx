@@ -19,6 +19,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -45,8 +46,8 @@ import { istToday } from "@/lib/dates/ist";
 import { fmtBS } from "./format";
 
 export default function BalanceSheetPage() {
-  const { data: auto, isLoading: autoLoading } = useBalanceSheetAuto();
-  const { data: items, isLoading: itemsLoading } = useBalanceSheetItems();
+  const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
+  const { data: items, isLoading: itemsLoading, isError: itemsFailed, refetch: refetchItems } = useBalanceSheetItems();
   const del = useDeleteBalanceSheetItem();
   const confirm = useConfirm();
   /* D16 (27 Sep 2026): the unexplained difference is almost always the owner's money that
@@ -74,6 +75,8 @@ export default function BalanceSheetPage() {
   const today = istToday();
 
   const loading = autoLoading || itemsLoading;
+  /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
+  const failed = autoFailed || itemsFailed;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -163,7 +166,7 @@ export default function BalanceSheetPage() {
 
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
-      {!loading && (
+      {!loading && !failed && (
         <div className="grid grid-cols-3 gap-3 mb-4">
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
@@ -196,7 +199,7 @@ export default function BalanceSheetPage() {
       {/* Financial-health / solvency indicator — prominent rose banner when net
           worth is negative, subtle green strip when solvent. Shows the key
           liquidity + leverage ratios with plain-English tooltips. */}
-      {!loading && auto && (
+      {!loading && !failed && auto && (
         <Card className={`mb-6 p-4 ${netWorth < 0 ? "border-rose/40 bg-rose/5" : "border-emerald/30 bg-emerald-soft/20"}`}>
           <div className="flex items-start gap-3">
             <Icon name={netWorth < 0 ? "alert" : "check_circle"} size={18} className={`mt-0.5 shrink-0 ${netWorth < 0 ? "text-rose" : "text-emerald"}`} />
@@ -230,6 +233,8 @@ export default function BalanceSheetPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {[1, 2].map((i) => <Skeleton key={i} className="h-96 rounded-lg" />)}
         </div>
+      ) : failed ? (
+        <LoadError what="Balance sheet" onRetry={() => { void refetchAuto(); void refetchItems(); }} />
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -33,6 +33,7 @@ import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorBanner } from "@/components/shared/load-error";
 import { cn, rupee } from "@/lib/utils";
 import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { useUnreconciledExpenses, useUnpaidBillsDue } from "@/lib/queries/expenses";
@@ -102,6 +103,10 @@ export default function AccountingOverviewPage() {
 
   const a = autoQ.data;
   const loading = autoQ.isLoading;
+  /* R-270: the hero tiles and the money inbox read ₹0 when their query fails. Several
+     queries feed this page, so a banner above says the figures are incomplete. */
+  const moneyQueries = [autoQ, invoicesQ, creditsQ, billsQ];
+  const someFailed = moneyQueries.some((q) => q.isError);
 
   /* R-179: mila hua paisa jo abhi kisi bank line se match nahi hua bhi "haath me" hai —
      Balance Sheet ke "Received, not yet in bank" jaisa hi number. */
@@ -132,6 +137,10 @@ export default function AccountingOverviewPage() {
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Overview</h1>
         <p className="text-sm text-ink-2 mt-1">Your business&apos;s money health, right now — and what needs your attention.</p>
       </div>
+
+      {someFailed && (
+        <LoadErrorBanner onRetry={() => { for (const q of moneyQueries) if (q.isError) void q.refetch(); }} />
+      )}
 
       {/* Hero — the four numbers that matter */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">

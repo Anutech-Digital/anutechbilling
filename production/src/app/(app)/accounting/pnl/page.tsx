@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Term } from "@/components/shared/term";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
@@ -161,7 +162,7 @@ function previousRange(r: DateRange): DateRange {
 
 export default function PnLPage() {
   const [range, setRange] = React.useState<DateRange>(thisMonth());
-  const { data, isLoading } = usePnL(range);
+  const { data, isLoading, isError, refetch } = usePnL(range);
   const [drill, setDrill] = React.useState<PnLDrillKind | null>(null);
   const [drillExpenseCat, setDrillExpenseCat] = React.useState<string | null>(null);
   const [projectCostOpen, setProjectCostOpen] = React.useState(false);
@@ -279,6 +280,12 @@ export default function PnLPage() {
           </div>
         </div>
       </Card>
+
+      {/* R-270: a failed load says so. Before, every figure below simply vanished (or
+          kept the last range) with nothing telling the owner the numbers were missing. */}
+      {isError && (data
+        ? <LoadErrorBanner onRetry={() => { void refetch(); }} />
+        : <div className="mb-6"><LoadError what="Profit & Loss" onRetry={() => { void refetch(); }} /></div>)}
 
       {/* ── THE ANSWER FIRST ────────────────────────────────────────────────
           Revenue · cost of goods · expenses · net profit, before any chart. The page used
