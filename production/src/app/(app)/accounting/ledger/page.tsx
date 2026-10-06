@@ -179,10 +179,10 @@ function LedgerPageInner() {
           {/* Customer / vendor. A segmented control, not a dropdown: it changes what the
               Dr and Cr columns MEAN, which is too consequential to hide in a menu. */}
           <div>
-            <label className="block text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
+            <p id="ledger-of-label" className="block text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               Ledger of
-            </label>
-            <div className="inline-flex rounded-md border border-hairline overflow-hidden">
+            </p>
+            <div role="group" aria-labelledby="ledger-of-label" className="inline-flex rounded-md border border-hairline overflow-hidden">
               {(["customer", "vendor"] as const).map((k) => (
                 <button
                   key={k}

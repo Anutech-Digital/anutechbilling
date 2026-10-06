@@ -73,16 +73,19 @@ const TABS: TabBarItem[] = [
 
 function Field({
   label,
+  htmlFor,
   children,
   className,
 }: {
   label: string;
+  /** R-303: the id of the control this label names (screen readers announce it). */
+  htmlFor?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={className}>
-      <label className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
       {children}
     </div>
   );
@@ -238,15 +241,15 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
           ) : (
             <fieldset disabled={!isOwner || isSubmitting} className="space-y-3 disabled:opacity-60">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Legal name *">
-                  <Input
+                <Field htmlFor="settings-legal-name" label="Legal name *">
+                  <Input id="settings-legal-name"
                     placeholder="E.g., Sharma Cloud Solutions Pvt Ltd"
                     error={errors.name?.message}
                     {...register("name")}
                   />
                 </Field>
-                <Field label="Owner / contact name">
-                  <Input
+                <Field htmlFor="settings-owner-contact-name" label="Owner / contact name">
+                  <Input id="settings-owner-contact-name"
                     placeholder="E.g., Pardeep A"
                     error={errors.contact_name?.message}
                     {...register("contact_name")}
@@ -257,8 +260,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   of this field, so we don't show a separate input for it;
                   RHF still tracks it via a hidden register (set by the
                   auto-fill useEffect higher up). */}
-              <Field label="GSTIN">
-                <Input
+              <Field htmlFor="settings-gstin" label="GSTIN">
+                <Input id="settings-gstin"
                   className="font-mono uppercase"
                   placeholder="e.g. 27AABCE1234D1Z9"
                   error={errors.gstin?.message}
@@ -300,15 +303,15 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
               <input type="hidden" {...register("state_code")} />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Registered state">
-                  <Input
+                <Field htmlFor="settings-registered-state" label="Registered state">
+                  <Input id="settings-registered-state"
                     placeholder="Auto-filled from GSTIN — usually no need to edit"
                     error={errors.state?.message}
                     {...register("state")}
                   />
                 </Field>
-                <Field label="PIN code">
-                  <Input
+                <Field htmlFor="settings-pin-code" label="PIN code">
+                  <Input id="settings-pin-code"
                     className="font-mono"
                     placeholder="400051"
                     maxLength={6}
@@ -318,8 +321,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                 </Field>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Billing email">
-                  <Input
+                <Field htmlFor="settings-billing-email" label="Billing email">
+                  <Input id="settings-billing-email"
                     type="email"
                     className="font-mono"
                     placeholder="e.g. billing@example.in"
@@ -327,8 +330,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                     {...register("email")}
                   />
                 </Field>
-                <Field label="Phone">
-                  <Input
+                <Field htmlFor="settings-phone" label="Phone">
+                  <Input id="settings-phone"
                     className="font-mono"
                     placeholder="e.g. +91 98765 43210"
                     error={errors.phone?.message}
@@ -336,11 +339,11 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   />
                 </Field>
               </div>
-              <Field label="Currency">
-                <Input defaultValue="INR (₹)" readOnly title="Multi-currency support coming later" />
+              <Field htmlFor="settings-currency" label="Currency">
+                <Input id="settings-currency" defaultValue="INR (₹)" readOnly title="Multi-currency support coming later" />
               </Field>
-              <Field label="Renewal grace period (days)">
-                <Input
+              <Field htmlFor="settings-renewal-grace-period-days" label="Renewal grace period (days)">
+                <Input id="settings-renewal-grace-period-days"
                   type="number"
                   min={0}
                   max={30}
@@ -354,8 +357,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   Buffer between renewal date and auto-suspend. 0 means service suspends the day after renewal if unpaid; up to 30 days extra.
                 </p>
               </Field>
-              <Field label="Address">
-                <textarea
+              <Field htmlFor="settings-address" label="Address">
+                <textarea id="settings-address"
                   placeholder="Building, street, city, state, PIN"
                   rows={3}
                   className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber resize-none"
@@ -368,8 +371,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
               {/* LUT — for exporters shipping without IGST (CGST Rule 96A). */}
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-4">
-                <Field label="LUT number (exports — optional)">
-                  <Input
+                <Field htmlFor="settings-lut-number-exports-optional" label="LUT number (exports — optional)">
+                  <Input id="settings-lut-number-exports-optional"
                     placeholder="e.g. AD290425000000X — for zero-rated exports"
                     className="font-mono"
                     error={errors.lut_number?.message}
@@ -379,8 +382,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                     Have an LUT for exports? Store its ARN here — it lets you bill international clients at 0% GST (no IGST) legally and label those sales correctly for GSTR-1.
                   </p>
                 </Field>
-                <Field label="Valid up to">
-                  <Input type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
+                <Field htmlFor="settings-valid-up-to" label="Valid up to">
+                  <Input id="settings-valid-up-to" type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
                 </Field>
               </div>
 
@@ -388,8 +391,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   any UPI app and needs no Razorpay, so it can be switched on
                   today. Blank simply means no QR is printed. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Your UPI ID (optional)">
-                  <Input
+                <Field htmlFor="settings-your-upi-id-optional" label="Your UPI ID (optional)">
+                  <Input id="settings-your-upi-id-optional"
                     placeholder="e.g. yourname@okhdfcbank"
                     className="font-mono"
                     error={errors.upi_vpa?.message}
@@ -402,8 +405,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                     payment here. Leave blank for no QR.
                   </p>
                 </Field>
-                <Field label="Name shown in the payer's UPI app">
-                  <Input
+                <Field htmlFor="settings-name-shown-in-the-payer-s-upi-app" label="Name shown in the payer's UPI app">
+                  <Input id="settings-name-shown-in-the-payer-s-upi-app"
                     placeholder="Defaults to your company name"
                     error={errors.upi_payee_name?.message}
                     {...register("upi_payee_name")}
@@ -424,22 +427,22 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                   Bank transfer details (optional)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Field label="Bank name">
-                    <Input
+                  <Field htmlFor="settings-bank-name" label="Bank name">
+                    <Input id="settings-bank-name"
                       placeholder="e.g. HDFC Bank"
                       error={errors.remit_bank_name?.message}
                       {...register("remit_bank_name")}
                     />
                   </Field>
-                  <Field label="Branch (optional)">
-                    <Input
+                  <Field htmlFor="settings-branch-optional" label="Branch (optional)">
+                    <Input id="settings-branch-optional"
                       placeholder="e.g. Nehru Place, New Delhi"
                       error={errors.remit_branch?.message}
                       {...register("remit_branch")}
                     />
                   </Field>
-                  <Field label="Account name (beneficiary)">
-                    <Input
+                  <Field htmlFor="settings-account-name-beneficiary" label="Account name (beneficiary)">
+                    <Input id="settings-account-name-beneficiary"
                       placeholder="Defaults to your company name"
                       error={errors.remit_account_name?.message}
                       {...register("remit_account_name")}
@@ -449,16 +452,16 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                       is what gets bounced.
                     </p>
                   </Field>
-                  <Field label="Account number">
-                    <Input
+                  <Field htmlFor="settings-account-number" label="Account number">
+                    <Input id="settings-account-number"
                       placeholder="e.g. 50200012345678"
                       className="font-mono"
                       error={errors.remit_account_number?.message}
                       {...register("remit_account_number")}
                     />
                   </Field>
-                  <Field label="IFSC">
-                    <Input
+                  <Field htmlFor="settings-ifsc" label="IFSC">
+                    <Input id="settings-ifsc"
                       placeholder="e.g. HDFC0001234"
                       className="font-mono uppercase"
                       error={errors.remit_ifsc?.message}

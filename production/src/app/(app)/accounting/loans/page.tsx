@@ -800,8 +800,8 @@ function DisburseDialog({ onClose, initialKind }: { onClose: () => void; initial
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-ink-2 mb-1.5">What are you giving?</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <p id="loans-kind-label" className="block text-xs font-medium text-ink-2 mb-1.5">What are you giving?</p>
+            <div role="group" aria-labelledby="loans-kind-label" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {([
                 { k: "loan", label: "Loan", desc: "Repaid back" },
                 { k: "salary_advance", label: "Salary advance", desc: "Recovered from pay" },

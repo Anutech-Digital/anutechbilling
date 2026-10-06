@@ -68,16 +68,19 @@ interface WizardData {
 
 function Field({
   label,
+  htmlFor,
   children,
   className,
 }: {
   label: string;
+  /** R-303: the id of the control this label names (screen readers announce it). */
+  htmlFor?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={className}>
-      <label className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
       {children}
     </div>
   );
@@ -106,15 +109,15 @@ function StepCompany({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Legal company name" className="col-span-2">
-          <Input
+        <Field htmlFor="setup-legal-company-name" label="Legal company name" className="col-span-2">
+          <Input id="setup-legal-company-name"
             placeholder="e.g. Sharma Cloud Solutions Pvt Ltd"
             value={data.companyName}
             onChange={(e) => update("companyName", e.target.value)}
           />
         </Field>
-        <Field label="GSTIN">
-          <Input
+        <Field htmlFor="setup-gstin" label="GSTIN">
+          <Input id="setup-gstin"
             className="font-mono"
             placeholder="e.g. 27AABCE9876D1Z3"
             value={data.gstin}
@@ -168,8 +171,8 @@ function StepCompany({
             }}
           />
         </Field>
-        <Field label="State">
-          <select
+        <Field htmlFor="setup-state" label="State">
+          <select id="setup-state"
             className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
             value={data.state}
             onChange={(e) => update("state", e.target.value)}
@@ -183,22 +186,22 @@ function StepCompany({
               ))}
           </select>
         </Field>
-        <Field label="Registered address" className="col-span-2">
-          <Input
+        <Field htmlFor="setup-registered-address" label="Registered address" className="col-span-2">
+          <Input id="setup-registered-address"
             placeholder="Office address"
             value={data.address}
             onChange={(e) => update("address", e.target.value)}
           />
         </Field>
-        <Field label="Owner / Contact name">
-          <Input
+        <Field htmlFor="setup-owner-contact-name" label="Owner / Contact name">
+          <Input id="setup-owner-contact-name"
             placeholder="Your name"
             value={data.contactName}
             onChange={(e) => update("contactName", e.target.value)}
           />
         </Field>
-        <Field label="Contact email">
-          <Input
+        <Field htmlFor="setup-contact-email" label="Contact email">
+          <Input id="setup-contact-email"
             type="email"
             placeholder="e.g. owner@yourcompany.in"
             className="font-mono"
@@ -206,8 +209,8 @@ function StepCompany({
             onChange={(e) => update("contactEmail", e.target.value)}
           />
         </Field>
-        <Field label="PIN code">
-          <Input
+        <Field htmlFor="setup-pin-code" label="PIN code">
+          <Input id="setup-pin-code"
             className="font-mono"
             placeholder="400001"
             value={data.pinCode}

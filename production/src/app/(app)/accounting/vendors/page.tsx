@@ -468,10 +468,10 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 
           {/* Products & Services Supplied Selection */}
           <div className="space-y-1.5 p-3 bg-paper-2/60 border border-hairline rounded-xl">
-            <label className="block text-xs uppercase tracking-wider text-primary font-bold">
+            <p id="vendor-products-label" className="block text-xs uppercase tracking-wider text-primary font-bold">
               🛒 Products & Services Supplied by Vendor *
-            </label>
-            <div className="flex flex-wrap gap-1.5 pt-1">
+            </p>
+            <div role="group" aria-labelledby="vendor-products-label" className="flex flex-wrap gap-1.5 pt-1">
               {VENDOR_SUPPLIED_PRODUCTS.map((prod) => {
                 const isSel = selectedProducts.includes(prod);
                 return (

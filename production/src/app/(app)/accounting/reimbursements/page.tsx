@@ -353,11 +353,12 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
             </FormField>
           </div>
           {/* Receipt / bill photo — proof of the spend. */}
-          <FormField label="Receipt / bill (optional)">
+          <FormField htmlFor="reimbursements-receipt" label="Receipt / bill (optional)">
             <label className="flex items-center gap-2 rounded-md border border-dashed border-hairline px-3 py-2 text-sm text-ink-2 cursor-pointer hover:border-hairline-strong">
               <Icon name="upload" size={14} className="text-ink-3" />
               <span className="truncate">{receipt ? receipt.name : "Attach a photo or PDF"}</span>
               <input
+                id="reimbursements-receipt"
                 type="file"
                 accept="image/*,application/pdf"
                 className="hidden"
