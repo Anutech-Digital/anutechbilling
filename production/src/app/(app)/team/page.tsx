@@ -206,6 +206,7 @@ export default function TeamPage() {
                   <td className="p-3">
                     {isOwner && m.id !== me?.userId ? (
                       <select
+                        aria-label={`Role for ${m.full_name ?? m.email}`}
                         value={m.role}
                         onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                         className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
@@ -323,6 +324,7 @@ export default function TeamPage() {
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 {isOwner && m.id !== me?.userId ? (
                   <select
+                    aria-label={`Role for ${m.full_name ?? m.email}`}
                     value={m.role}
                     onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                     className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"

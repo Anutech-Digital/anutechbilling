@@ -313,6 +313,7 @@ export default function ContactsPage() {
             </div>
             <div className="w-72">
               <Input
+                aria-label="Search contacts"
                 prefix={<Icon name="search" size={14} />}
                 placeholder="Name, email, phone, company…"
                 value={search}

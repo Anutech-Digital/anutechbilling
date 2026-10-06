@@ -247,6 +247,7 @@ function ThreadPane({ contactPhone }: { contactPhone: string | null }) {
         {within24h ? (
           <div className="flex gap-2">
             <Input
+              aria-label="Message"
               placeholder="Type a message…"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

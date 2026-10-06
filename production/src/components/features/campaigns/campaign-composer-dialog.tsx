@@ -440,12 +440,14 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
 
           {/* Body mode toggle */}
           <div className="flex items-center justify-between">
-            <Label>Body</Label>
-            <div className="inline-flex gap-1 bg-paper-2 rounded-md p-0.5">
+            {/* Label points at the textarea being edited; in Preview there is none, so it names the iframe. */}
+            <Label htmlFor={bodyMode === "text" ? "campaign-composer-body-text" : bodyMode === "html" ? "campaign-composer-body-html" : "campaign-composer-body-preview"}>Body</Label>
+            <div role="group" aria-label="Body view" className="inline-flex gap-1 bg-paper-2 rounded-md p-0.5">
               {(["preview","html","text"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
+                  aria-pressed={bodyMode === m}
                   onClick={() => setBodyMode(m)}
                   className={cn(
                     "px-2.5 py-0.5 text-2xs font-medium rounded transition-colors",
@@ -462,6 +464,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
             previewHtml ? (
               <div className="border border-hairline rounded-md overflow-hidden bg-paper-2">
                 <iframe
+                  id="campaign-composer-body-preview"
                   srcDoc={previewHtml}
                   className="w-full h-[380px] bg-white"
                   sandbox=""
@@ -479,7 +482,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
 
           {bodyMode === "html" && (
-            <textarea aria-label="Email body (HTML source)"
+            <textarea id="campaign-composer-body-html" aria-label="Email body (HTML source)"
               rows={14}
               value={bodyHtml}
               onChange={(e) => setBodyHtml(e.target.value)}
@@ -489,7 +492,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
 
           {bodyMode === "text" && (
-            <textarea aria-label="Email body (plain text)"
+            <textarea id="campaign-composer-body-text" aria-label="Email body (plain text)"
               rows={10}
               value={bodyText}
               onChange={(e) => setBodyText(e.target.value)}
