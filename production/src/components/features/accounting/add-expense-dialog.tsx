@@ -569,16 +569,25 @@ export function AddExpenseDialog({
       formCategory: values.category,
       itemCategories: lines.map((l) => l.category),
     });
-    if (catErr) { toast.error(catErr); return; }
+    if (catErr) {
+      toast.error(catErr, { description: "Pick a category, then save again. Nothing was saved." });
+      return;
+    }
 
     // ── Someone else paid our expense → record as a REIMBURSEMENT (payable to
     //    that person). add_reimbursement books the expense + the payable together,
     //    so we do NOT also create an expense here. ──
     if (reimburse) {
       const person = reimbursePerson.trim();
-      if (!person) { toast.error("Kisne diya? — us vyakti ka naam daalo."); return; }
+      if (!person) {
+        toast.error("Who paid for this?", { description: "Type that person's name in \"Kisne diya?\" — we owe them this money back. Nothing was saved." });
+        return;
+      }
       const amt = Math.round((values.amount || 0) * rate);
-      if (amt <= 0) { toast.error("Amount daalo."); return; }
+      if (amt <= 0) {
+        toast.error("Enter the amount.", { description: "The amount they paid must be more than ₹0. Nothing was saved." });
+        return;
+      }
       await addReimb.mutateAsync({
         person,
         purpose:    values.notes?.trim() || values.description?.trim() || (values.category ?? ""),
@@ -593,7 +602,7 @@ export function AddExpenseDialog({
 
     const fromAdvance = paid && values.payment_method === EMPLOYEE_ADVANCE_METHOD;
     if (fromAdvance && !advanceId) {
-      toast.error("Pick whose advance this was paid from.");
+      toast.error("Pick whose advance this was paid from.", { description: "The bill is taken off that person's advance balance. Choose them under \"Paid by\"." });
       return;
     }
 
@@ -601,7 +610,7 @@ export function AddExpenseDialog({
     /* A commission with no payee cannot be totalled per person, so s.194H cannot be checked —
        and the question "who did we pay commission to?" has no answer. */
     if (values.category === COMMISSION_CATEGORY && !payee) {
-      toast.error("Commission kisko diya? — 'Kisko diya' mein us vyakti ka naam daalo.");
+      toast.error("Who was the commission paid to?", { description: "Type their name in \"Kisko diya\" — TDS under s.194H is checked per person. Nothing was saved." });
       return;
     }
     // Only GST-invoice suppliers belong in the Vendors master. So: an already-

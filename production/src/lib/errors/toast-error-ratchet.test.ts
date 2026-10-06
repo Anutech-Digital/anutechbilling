@@ -21,8 +21,8 @@ import { join } from "path";
 import { readFileSync } from "fs";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
 
-/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. R-299: 5 heaviest files — 298. */
-const BASELINE = 298;
+/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. R-299: 5 heaviest files — 298. R-304: re-measured 270 (R-300 kept its own test file and never lowered this), then 5 more files — 245. */
+const BASELINE = 245;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {
@@ -94,5 +94,31 @@ describe("R-299 — no bare or raw error toasts in the five heaviest files", () 
     const src = readFileSync(abs, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/toast\.error\(\s*\w+\s+instanceof\s+Error\s*\?\s*\w+\.message/);
     expect(src).not.toMatch(/toast\.error\(\s*\w+\.message/);
+  });
+});
+
+/* R-304 — GST page, Team page, Private banking, Add expense, Bank statement import (25 bare
+   toasts). Every toast.error here says why / what next (description or action) or goes
+   through toastError(); none pastes a raw `.message` onto the screen. Per-file at ZERO. */
+const R304_FILES = [
+  "src/app/(app)/accounting/gst/page.tsx",
+  "src/app/(app)/team/page.tsx",
+  "src/app/(app)/vault/personal/banking/page.tsx",
+  "src/components/features/accounting/add-expense-dialog.tsx",
+  "src/components/features/banking/import-statement-dialog.tsx",
+] as const;
+
+describe("R-304 — no bare or raw error toasts in these five files", () => {
+  const { rawByFile } = countRaw(join(process.cwd(), "src")) as { rawByFile: Map<string, number> };
+  it.each(R304_FILES)("%s", (file) => {
+    const abs = join(process.cwd(), file);
+    const src = readFileSync(abs, "utf8");
+    // Denominator: the file still shows error toasts, so "0 bare" means something.
+    expect(src).toMatch(/toast\.error\(|toastError\(/);
+    expect(rawByFile.get(abs) ?? 0, `${file}: bare toast.error (no description/action)`).toBe(0);
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/toast\.error\(\s*\w+\s+instanceof\s+Error\s*\?\s*\w+\.message/);
+    expect(code).not.toMatch(/toast\.error\(\s*\w+\.message/);
+    expect(code).not.toMatch(/toast\.error\(\s*json\.error/);
   });
 });

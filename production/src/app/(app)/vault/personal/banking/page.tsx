@@ -99,22 +99,31 @@ export default function PersonalBankingPage() {
   };
 
   const handleSave = async () => {
-    if (!form.label.trim()) { toast.error("Account ka naam likho (jaise 'HDFC Salary')."); return; }
+    if (!form.label.trim()) {
+      toast.error("Give the account a name.", { description: "Something you'll recognise, like 'HDFC Salary'. Nothing was saved." });
+      return;
+    }
 
     const balance = parseRupees(form.balance);
-    if (balance === null) { toast.error("Balance sirf number me likho — comma ya ₹ nahi."); return; }
+    if (balance === null) {
+      toast.error("Balance must be a number.", { description: "Type digits only, like 125000 or 1,25,000. Nothing was saved." });
+      return;
+    }
 
     if (form.account_last4 && !/^\d{4}$/.test(form.account_last4)) {
-      toast.error("Sirf aakhri 4 digit likho (poora number nahi).");
+      toast.error("Enter only the last 4 digits.", { description: "Never the full account number — 4 digits are enough to tell accounts apart." });
       return;
     }
 
     const creditLimit = form.credit_limit ? parseRupees(form.credit_limit) : null;
-    if (form.credit_limit && creditLimit === null) { toast.error("Credit limit sirf number me likho."); return; }
+    if (form.credit_limit && creditLimit === null) {
+      toast.error("Credit limit must be a number.", { description: "Type digits only, like 200000, or leave it empty. Nothing was saved." });
+      return;
+    }
 
     const rate = form.interest_rate ? Number(form.interest_rate) : null;
     if (form.interest_rate && (rate === null || !Number.isFinite(rate) || rate < 0 || rate > 100)) {
-      toast.error("Interest rate 0 se 100 ke beech hona chahiye.");
+      toast.error("Interest rate must be between 0 and 100.", { description: "Enter the yearly rate in percent, like 7.1, or leave it empty." });
       return;
     }
 

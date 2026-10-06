@@ -16,6 +16,8 @@
 "use client";
 
 import * as React from "react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -450,6 +452,7 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
 const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter];
 
 export default function GstReportPage() {
+  const router = useRouter();
   const [range, setRange] = React.useState<DateRange>(thisMonth());
   const { data, isLoading } = useGstReport(range);
   const { data: taxPayments } = useTaxPayments();
@@ -464,13 +467,22 @@ export default function GstReportPage() {
     if (!file || !data) return;
     try {
       const parsed = parseGstr2b(JSON.parse(await file.text()));
-      if (parsed.errors.length) { toast.error(parsed.errors.join(" ")); return; }
+      if (parsed.errors.length) {
+        toast.error("This isn't a GSTR-2B file.", {
+          description: "On the GST portal open Returns → GSTR-2B, download the JSON, and pick that file.",
+        });
+        return;
+      }
       const books = data.inputRows.map((r) => ({ id: r.id, source: r.source, vendor: r.vendor, vendorGstin: r.vendorGstin, billNo: r.billNo, date: r.date, taxable: r.taxableValue, igst: r.igst, cgst: r.cgst, sgst: r.sgst }));
       const recon = reconcile2b(parsed.invoices, books);
       setTwoB({ period: parsed.period, recon, count: parsed.invoices.length });
       const fp = range.from.slice(5, 7) + range.from.slice(0, 4);
-      if (parsed.period && parsed.period !== fp) toast.warning(`2B ka period ${parsed.period} hai, page par ${fp} — range wahi mahina rakho.`);
-    } catch { toast.error("JSON padha nahi gaya — portal se GSTR-2B ka JSON download karke wahi file chuno."); }
+      if (parsed.period && parsed.period !== fp) toast.warning(`This 2B is for ${parsed.period}, the page shows ${fp} — set the date range to the same month.`);
+    } catch {
+      toast.error("Couldn't read this file.", {
+        description: "It isn't valid JSON. On the GST portal open Returns → GSTR-2B, download the JSON, and pick that file.",
+      });
+    }
     if (fileRef.current) fileRef.current.value = "";
   }
   function export2b() {
@@ -515,7 +527,12 @@ export default function GstReportPage() {
       downloadCSV(`gstr1-${key}-${stamp}.csv`, [...GSTR1_HEADERS[key]], csv[key]);
       files++;
     }
-    if (files === 0) { toast.error("No invoices to export for GSTR-1 in this period."); return; }
+    if (files === 0) {
+      toast.error("No invoices to export for GSTR-1 in this period.", {
+        description: "Pick another date range above — GSTR-1 is built from the invoices issued in that range.",
+      });
+      return;
+    }
     const notes: string[] = [];
     if (secs.skipped.length) notes.push(`${secs.skipped.length} B2C document(s) skipped (${secs.skipped.slice(0, 3).join(", ")}) — add the customer's state, then re-export.`);
     if (secs.notesNettedIntoB2cs) notes.push(`${secs.notesNettedIntoB2cs} small unregistered note(s) netted into B2CS.`);
@@ -526,12 +543,17 @@ export default function GstReportPage() {
 
   function exportGstr1Json() {
     if (!data || !data.outputRows.length) {
-      toast.error("No invoices in this period to export JSON.");
+      toast.error("No invoices in this period to export JSON.", {
+        description: "Pick another date range above — the JSON is built from the invoices issued in that range.",
+      });
       return;
     }
     /* A return JSON with a placeholder GSTIN is a return for nobody — refuse, don't guess. */
     if (!data.sellerGstin) {
-      toast.error("Company GSTIN nahi mila — Settings → Company mein GSTIN bharo, phir JSON banao.");
+      toast.error("Your company GSTIN is missing.", {
+        description: "The return JSON needs your GSTIN. Add it in Settings → Company, then export again.",
+        action: { label: "Open Settings", onClick: () => router.push("/settings?tab=company" as Route) },
+      });
       return;
     }
     const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
