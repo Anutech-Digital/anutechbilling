@@ -72,7 +72,9 @@ export const MONEY_FOLDERS: readonly MoneyFolderMeta[] = [
     direction: "in",
     noun: "deposits",
     action: "Money already in your account that the books cannot explain. Match it.",
-    emptyHint: "Every deposit in your bank is accounted for.",
+    /* R-179: bina bank account / statement ke bhi ye "sab theek" kehta tha. Sirf wahi kaho jo
+       folder ginta hai — imported bank lines. */
+    emptyHint: "No unmatched credits in your imported bank lines.",
     href: "/accounting/banking",
   },
   {

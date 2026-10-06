@@ -60,6 +60,9 @@ select json_build_object(
     -- rpc("bank_account_current_balance", { p_account_id }) har account ke liye
     'balanceOf', (select coalesce(json_object_agg(id, public.bank_account_current_balance(id)), '{}') from public.bank_accounts),
     'openInv',   (select coalesce(json_agg(json_build_object('id', id, 'amount', amount, 'net_payable', net_payable, 'status', status)), '[]') from public.invoices where status in ('pending','overdue')),
+    -- R-179: receipts jin par koi bank line match nahi (undeposited funds)
+    'unbankedPays',     (select coalesce(json_agg(json_build_object('amount', amount)), '[]') from public.payments p where status = 'received' and not exists (select 1 from public.bank_transactions t where t.matched_to_type = 'payment' and t.matched_to_id = p.id::text)),
+    'unbankedProjPays', (select coalesce(json_agg(json_build_object('amount', amount)), '[]') from public.project_payments where bank_txn_id is null),
     'msInv',     (select coalesce(json_agg(json_build_object('invoice_id', invoice_id)), '[]') from public.project_milestones where invoice_id is not null),
     'recdPays',  (select coalesce(json_agg(json_build_object('quote_id', quote_id, 'amount', amount, 'status', status)), '[]') from public.payments where status = 'received'),
     'quoteInv',  (select coalesce(json_agg(json_build_object('id', id, 'invoice_id', invoice_id)), '[]') from public.quotes),
@@ -147,6 +150,7 @@ function dump(): Dump {
   const migration = [
     "supabase/migrations/20260928110000_report_functions.sql",
     "supabase/migrations/20260928190000_report_fixes_ist_ledger_trend_cn.sql",
+    "supabase/migrations/20261006140000_undeposited_funds.sql",
   ].map((p) => readFileSync(join(ROOT, p), "utf8")).join("\n");
   const testSql = readFileSync(join(ROOT, "supabase/tests/report_functions.test.sql"), "utf8");
   const fixture = testSql.split("-- FIXTURE:BEGIN")[1]?.split("-- FIXTURE:END")[0];

@@ -40,6 +40,7 @@ import {
 } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
+import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
 import { istToday } from "@/lib/dates/ist";
 
 export default function BalanceSheetPage() {
@@ -74,27 +75,16 @@ export default function BalanceSheetPage() {
   const loading = autoLoading || itemsLoading;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
-  const sum = (rows: BalanceSheetItem[]) => rows.reduce((s, r) => s + r.amount, 0);
-
-  // GST: positive → payable (liability); negative → ITC credit (asset).
-  const gst = auto?.gstPayable ?? 0;
-  const gstCredit = gst < 0 ? -gst : 0;
-  const gstPayable = gst > 0 ? gst : 0;
-
-  const autoAssets =
-    (auto?.cashAndBank ?? 0) + (auto?.receivables ?? 0) + (auto?.projectReceivable ?? 0) + (auto?.tdsReceivable ?? 0)
-    + (auto?.employeeLoans ?? 0) + (auto?.prepaidAdvances ?? 0) + (auto?.fixedAssets ?? 0) + gstCredit
-    + (auto?.advanceTaxPaid ?? 0);
-  const autoLiab = (auto?.payables ?? 0) + (auto?.advancesFromCustomers ?? 0) + (auto?.salaryPayable ?? 0) + (auto?.salaryDuesPayable ?? 0) + (auto?.reimbursementsPayable ?? 0) + (auto?.creditCardPayable ?? 0) + (auto?.emiLoansPayable ?? 0) + (auto?.businessLoansPayable ?? 0) + gstPayable;
-
   const manualAssetRows = manual("asset");
   const manualLiabRows  = manual("liability");
   const manualEqRows    = manual("equity");
 
-  const totalAssets = autoAssets + sum(manualAssetRows);
-  const totalLiab   = autoLiab + sum(manualLiabRows);
-  const netWorth    = totalAssets - totalLiab;                 // = total equity
-  const retained    = netWorth - sum(manualEqRows);            // what equity must hold for the sheet to balance
+  /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
+     R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
+     account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
+  const {
+    gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentRatio, debtToEquity,
+  } = balanceSheetTotals(auto, items ?? []);
   /* Retained earnings PER THE BOOKS — cumulative net profit from the P&L, all periods
      (27 Sep 2026). The plug above used to be shown AS retained earnings, which hid every
      missing entry inside a number that always looked right. Now the P&L figure is the
@@ -103,17 +93,6 @@ export default function BalanceSheetPage() {
   const cumulativeProfit = cumulative.data ? (cumulative.data.model.netProfit ?? cumulative.data.netProfit) : null;
   const unexplained = cumulativeProfit === null ? null : retained - cumulativeProfit;
 
-  // ── Solvency ratios (liquidity + leverage) ──────────────────────────────
-  // Current = liquid within a year. Long-term items (fixed assets, staff loans,
-  // EMI / business loans) are EXCLUDED from the current buckets.
-  const currentAssets =
-    (auto?.cashAndBank ?? 0) + (auto?.receivables ?? 0) + (auto?.projectReceivable ?? 0)
-    + (auto?.tdsReceivable ?? 0) + gstCredit + (auto?.advanceTaxPaid ?? 0) + sum(manualAssetRows);
-  const currentLiab =
-    (auto?.payables ?? 0) + (auto?.advancesFromCustomers ?? 0) + (auto?.salaryPayable ?? 0) + (auto?.salaryDuesPayable ?? 0)
-    + (auto?.reimbursementsPayable ?? 0) + (auto?.creditCardPayable ?? 0) + gstPayable + sum(manualLiabRows);
-  const currentRatio = currentLiab > 0 ? currentAssets / currentLiab : null;   // ≥1 = can cover short-term dues
-  const debtToEquity = netWorth > 0 ? totalLiab / netWorth : null;             // null = negative equity (insolvent)
 
   // Export the full sheet as a CSV the owner can hand to their CA (mirrors GST/P&L).
   function exportCSV() {
@@ -126,6 +105,7 @@ export default function BalanceSheetPage() {
         ["", ""],
         ["ASSETS", ""],
         ["Cash & bank", auto.cashAndBank ?? 0],
+        ["Received, not yet in bank (undeposited funds)", auto.undepositedFunds ?? 0],
         ["Accounts receivable", auto.receivables ?? 0],
         ["Project receivable", auto.projectReceivable ?? 0],
         ["TDS receivable", auto.tdsReceivable ?? 0],
@@ -257,6 +237,9 @@ export default function BalanceSheetPage() {
               <SectionTitle>Assets</SectionTitle>
               <div className="space-y-1 mt-3">
                 <BSLine label="Cash & bank balances" amount={auto?.cashAndBank ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
+                {(auto?.undepositedFunds ?? 0) !== 0 && (
+                  <BSLine label="Received, not yet in bank" hint="customer receipts not matched to a bank line yet" amount={auto?.undepositedFunds ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
+                )}
                 <BSLine label="Trade receivables" hint="invoiced but unpaid (excl. projects)" amount={auto?.receivables ?? 0} kind="auto" source="unpaid invoices" href="/invoices" />
                 {(auto?.projectReceivable ?? 0) > 0 && (
                   <BSLine label="Project receivables" hint="one-time / custom project sales, unpaid" amount={auto?.projectReceivable ?? 0} kind="auto" source="project invoices" href="/invoices" />
@@ -363,7 +346,7 @@ export default function BalanceSheetPage() {
                       <div className="font-mono text-xs space-y-1 bg-paper rounded p-2 border border-hairline">
                         <div className="flex justify-between gap-3"><span>Total assets</span><span className="tabular-nums">{fmtBS(totalAssets)}</span></div>
                         <div className="flex justify-between gap-3"><span>− Total liabilities</span><span className="tabular-nums">{fmtBS(totalLiab)}</span></div>
-                        <div className="flex justify-between gap-3"><span>− Owner&apos;s capital &amp; other manual equity</span><span className="tabular-nums">{fmtBS(sum(manualEqRows))}</span></div>
+                        <div className="flex justify-between gap-3"><span>− Owner&apos;s capital &amp; other manual equity</span><span className="tabular-nums">{fmtBS(netWorth - retained)}</span></div>
                         <div className="flex justify-between gap-3"><span>− Retained earnings (P&amp;L, all periods)</span><span className="tabular-nums">{fmtBS(cumulativeProfit ?? 0)}</span></div>
                         <div className="flex justify-between gap-3 border-t border-hairline pt-1 font-semibold text-ink"><span>= Unexplained difference</span><span className="tabular-nums">{fmtBS(unexplained ?? retained)}</span></div>
                       </div>

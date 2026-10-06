@@ -52,6 +52,8 @@ export interface BalanceSheetRpcRow {
   fy_start_year: number;
   fy_label: string;
   cash_and_bank: number;
+  /** R-179 (migration 20261006140000). Migration lagne se pehle column hota hi nahi. */
+  undeposited_funds?: number | null;
   credit_card_payable: number;
   receivables: number;
   advances_from_customers: number;
@@ -95,6 +97,9 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
 
   return {
     cashAndBank: r.cash_and_bank,
+    /* Migration 20261006140000 se pehle column nahi aata: tab 0 — yaani aaj tak wala hi
+       number, koi naya galat number nahi. Migration lagte hi asli raqam. */
+    undepositedFunds: r.undeposited_funds ?? 0,
     receivables: r.receivables,
     advancesFromCustomers: r.advances_from_customers,
     projectReceivable: r.project_receivable,

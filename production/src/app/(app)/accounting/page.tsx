@@ -103,7 +103,10 @@ export default function AccountingOverviewPage() {
   const a = autoQ.data;
   const loading = autoQ.isLoading;
 
-  const cash = a?.cashAndBank ?? 0;
+  /* R-179: mila hua paisa jo abhi kisi bank line se match nahi hua bhi "haath me" hai —
+     Balance Sheet ke "Received, not yet in bank" jaisa hi number. */
+  const unbanked = a?.undepositedFunds ?? 0;
+  const cash = (a?.cashAndBank ?? 0) + unbanked;
   const owedToYou = a ? a.receivables + a.projectReceivable + a.tdsReceivable + a.employeeLoans : 0;
   const youOwe = a
     ? a.payables + a.salaryPayable + a.salaryDuesPayable + a.reimbursementsPayable +
@@ -133,7 +136,7 @@ export default function AccountingOverviewPage() {
       {/* Hero — the four numbers that matter */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <HeroKpi label="Cash & bank" value={cash} tone={cash < 0 ? "rose" : "emerald"} loading={loading}
-          hint="Money you actually have" href="/accounting/banking" />
+          hint={unbanked > 0 ? `Includes ${rupee(unbanked)} received, not yet in bank` : "Money you actually have"} href="/accounting/banking" />
         <HeroKpi label="Owed to you" value={owedToYou} tone="amber" loading={loading}
           hint="Receivables + advances" href="/accounting/aging" />
         <HeroKpi label="You owe" value={youOwe} tone={youOwe > 0 ? "rose" : "ink"} loading={loading}

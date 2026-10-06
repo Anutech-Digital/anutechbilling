@@ -13935,6 +13935,7 @@ export type Database = {
           salary_payable: number
           tax_payments: Json
           tds_receivable: number
+          undeposited_funds: number
         }[]
       }
       report_day_book: { Args: { p_from: string; p_to: string }; Returns: Json }
