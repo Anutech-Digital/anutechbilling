@@ -5,6 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -86,7 +87,7 @@ export function useSetSubscriptionDomain() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Domain saved");
     },
-    onError: (e) => toast.error((e as Error).message || "Domain save nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Domain not saved." }),
   });
 }
 
@@ -123,7 +124,7 @@ export function useUpdateSubscription() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Subscription corrected");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

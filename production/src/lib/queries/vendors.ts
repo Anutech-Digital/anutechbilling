@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { VendorRow, ExpenseRow } from "@/lib/supabase/database.types";
@@ -269,7 +270,7 @@ export function useUpsertVendor() {
       qc.invalidateQueries({ queryKey: ["vendors"] });
       toast.success("Vendor saved");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -287,6 +288,6 @@ export function useDeleteVendor() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Vendor removed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

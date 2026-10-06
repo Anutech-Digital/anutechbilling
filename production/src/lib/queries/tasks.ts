@@ -10,6 +10,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Task } from "@/lib/supabase/database.types";
 
@@ -200,7 +201,7 @@ export function useCreateTask() {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       toast.success("Follow-up scheduled");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -222,7 +223,7 @@ export function useUpdateTask() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -246,7 +247,7 @@ export function useCompleteTask() {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       toast.success("Marked done ✓");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -279,7 +280,7 @@ export function useSnoozeTask() {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       toast(`Snoozed to ${new Date(data.due_at).toLocaleString("en-IN")}`);
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -296,6 +297,6 @@ export function useDeleteTask() {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       toast.success("Task deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

@@ -21,8 +21,8 @@ import { join } from "path";
 import { readFileSync } from "fs";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
 
-/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. */
-const BASELINE = 366;
+/** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. */
+const BASELINE = 344;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {
@@ -57,5 +57,19 @@ describe("R-266 — no raw error text toasted from these query modules", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     expect(src).not.toMatch(/toast\.error\(\s*\(?\s*\w+\s+as\s+Error\s*\)?\s*\.message/);
     expect(src).not.toMatch(/toast\.error\(\s*\w+\.message/);
+  });
+});
+
+/* R-284 — the next 6 query modules, same zero rule. Also bans raw `.message` pasted into a
+   toast description (tds-receivable's 26AS bulk verify did that). */
+const R284_FILES = ["subscriptions", "tasks", "tds-receivable", "vendor-bills", "vendors", "whatsapp"] as const;
+
+describe("R-284 — no raw error text toasted from these query modules", () => {
+  it.each(R284_FILES)("src/lib/queries/%s.ts", (name) => {
+    const src = readFileSync(join(process.cwd(), "src/lib/queries", `${name}.ts`), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toMatch(/toast\.error\(\s*\(?\s*\w+\s+as\s+Error\s*\)?\s*\.message/);
+    expect(src).not.toMatch(/toast\.error\(\s*\w+\.message/);
+    expect(src).not.toMatch(/description:\s*`\$\{\(?\s*\w+(\s+as\s+Error)?\s*\)?\.message/);
   });
 });

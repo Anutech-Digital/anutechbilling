@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
@@ -138,7 +139,7 @@ export function useCreateVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill added");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -160,7 +161,7 @@ export function useUpdateVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -187,7 +188,7 @@ export function usePayVendorBill() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Payment recorded");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -227,6 +228,6 @@ export function useDeleteVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
