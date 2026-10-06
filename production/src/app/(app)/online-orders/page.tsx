@@ -13,7 +13,6 @@ import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { ORDER_FOCI, ORDER_FOCUS_LABEL, orderInFocus, type OrderFocus } from "@/lib/online-orders/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
-import { toast } from "sonner";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,6 +35,10 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { invoiceByLead, invoiceHref, type QuoteInvoiceRow } from "./invoice-links";
+import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
+import { useLeadOutcome } from "@/lib/leads/use-outcome";
+import { useCallLog } from "@/components/features/leads/call-log-dialog";
+import type { Lead } from "@/lib/supabase/database.types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,6 +85,8 @@ interface Order {
   progress:    Record<string, ProgressState>;
   amAssigned:  string;
   nextAction:  string;
+  /** R-236: the lead row behind the order — the drawer's quote + call-log buttons act on it. */
+  lead:        LeadRow;
 }
 
 
@@ -159,10 +164,49 @@ function OrderDetailDrawer({
   const isPaid = order.type === "paid";
   const steps  = isPaid ? PAID_STEPS : TRIAL_STEPS;
   const s      = STATUS_META[order.status];
+  /* R-236: every button does its real job or is not shown — see drawer-actions.ts. */
+  const actions = orderDrawerActions({
+    type: order.type, status: order.status, trialDay: order.trialDay,
+    leadId: order.lead.id, company: order.company, plan: order.lead.plan,
+    seats: order.lead.seats, contact: order.contact,
+  });
+  const runOutcome = useLeadOutcome();
+  const callLog = useCallLog(runOutcome);
+  const renderAction = (a: DrawerAction) => {
+    const variant = a.key === "admin-console" ? "ghost" : a.primary ? "primary" : "default";
+    if (a.kind === "call-log") {
+      return (
+        <Button key={a.key} variant={variant} size="sm" onClick={() => callLog.run("talked", order.lead)}>
+          <Icon name={a.icon} size={12} />
+          {a.label}
+        </Button>
+      );
+    }
+    return (
+      <Button key={a.key} variant={variant} size="sm" asChild>
+        {a.kind === "link" ? (
+          <Link href={a.href as never}>
+            <Icon name={a.icon} size={12} />
+            {a.label}
+          </Link>
+        ) : (
+          <a
+            href={a.href}
+            /* tel:/mailto: hand off to the phone or mail app; web links open a new tab. */
+            target={a.href?.startsWith("http") ? "_blank" : undefined}
+            rel="noopener noreferrer"
+          >
+            <Icon name={a.icon} size={12} />
+            {a.label}
+          </a>
+        )}
+      </Button>
+    );
+  };
 
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()}>
-      <SheetContent side="right" className="w-[520px] flex flex-col p-0">
+      <SheetContent side="right" className="w-full sm:max-w-[520px] flex flex-col p-0">
         <SheetHeader className="border-b border-hairline px-6 py-4">
           <div className="flex items-center gap-2 mb-0.5">
             <SheetTitle className="font-serif text-lg leading-tight">
@@ -270,95 +314,7 @@ function OrderDetailDrawer({
 
         {/* Action bar */}
         <div className="flex flex-wrap gap-2 border-t border-hairline bg-paper-2 px-6 py-3">
-          {isPaid && order.status === "provisioning" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.info("Re-running provisioning…")}
-            >
-              <Icon name="refresh" size={12} />
-              Retry provisioning
-            </Button>
-          )}
-          {isPaid && order.status === "dns-pending" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.success("DNS guide re-sent")}
-            >
-              <Icon name="mail" size={12} />
-              Re-send DNS guide
-            </Button>
-          )}
-          {isPaid && order.status === "issue" && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => toast.info("Escalating to Google support…")}
-            >
-              <Icon name="alert" size={12} />
-              Escalate to Google
-            </Button>
-          )}
-          {!isPaid &&
-            order.status === "trial-active" &&
-            (order.trialDay ?? 0) >= 7 && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => toast.success("Conversion quote sent")}
-              >
-                <Icon name="rupee" size={12} />
-                Send convert quote
-              </Button>
-            )}
-          {!isPaid &&
-            order.status === "trial-active" &&
-            (order.trialDay ?? 0) < 7 && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => toast.success("Call logged")}
-              >
-                <Icon name="phone" size={12} />
-                Log AM call
-              </Button>
-            )}
-          {!isPaid && order.status === "trial-expired" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.success("Winback email queued")}
-            >
-              <Icon name="mail" size={12} />
-              Send winback
-            </Button>
-          )}
-
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`WhatsApp: ${order.contact.name}`)}
-          >
-            <Icon name="whatsapp" size={12} />
-            WhatsApp
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`Calling ${order.contact.phone}`)}
-          >
-            <Icon name="phone" size={12} />
-            Call
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`Email: ${order.contact.email}`)}
-          >
-            <Icon name="mail" size={12} />
-            Email
-          </Button>
+          {actions.filter((a) => a.key !== "admin-console").map(renderAction)}
           {/* R-083: opens the order's real GST invoice (it used to toast "Downloading…"). */}
           {isPaid && order.invoiceNo && (
             <Button variant="default" size="sm" asChild>
@@ -369,15 +325,9 @@ function OrderDetailDrawer({
             </Button>
           )}
           <div className="flex-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => toast.info("Opening Google Admin Console")}
-          >
-            <Icon name="external" size={12} />
-            Admin console
-          </Button>
+          {actions.filter((a) => a.key === "admin-console").map(renderAction)}
         </div>
+        {callLog.dialog}
       </SheetContent>
     </Sheet>
   );
@@ -416,7 +366,7 @@ function DrawerRow({
       style={{ gridTemplateColumns: "120px 1fr" }}
     >
       <span className="text-ink-3">{label}</span>
-      <span className={cn("text-ink", mono && "font-mono text-xs")}>{children}</span>
+      <span className={cn("min-w-0 break-words text-ink", mono && "break-all font-mono text-xs")}>{children}</span>
     </div>
   );
 }
@@ -440,10 +390,11 @@ interface LeadRow {
   plan:          string | null;
   seats:         number | null;
   value:         number | null;
-  stage:         string;
+  stage:         Lead["stage"];
   source:        string | null;
   notes:         string | null;
   created_at:    string;
+  follow_up_date:   string | null;
   domain:           string | null;
   utm_source:       string | null;
   trial_started_at: string | null;
@@ -563,6 +514,7 @@ function leadToOrder(l: LeadRow, invoiceId: string | null = null): Order {
     /* Was the literal "Pardeep A" on every row. The lead's real owner, or says so. */
     amAssigned:  l.owner?.full_name?.trim() || "Unassigned",
     nextAction:  nextActionFromLead(l),
+    lead:        l,
   };
 }
 
@@ -588,7 +540,7 @@ export default function OnlineOrdersPage() {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("leads")
-      .select("id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)")
+      .select("id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, follow_up_date, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)")
       .or(WEBSITE_ORDER_FILTER)
       .order("created_at", { ascending: false })
       .limit(100);
