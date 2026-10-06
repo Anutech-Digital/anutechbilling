@@ -113,6 +113,7 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
   const lines = [
     'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo. (Ye prompt ek NAYE Claude Code session me chalana hai.)',
     "",
+    "CLOUD CHECK: ye kaam sirf Pardeep ke computer par chalne wale LOCAL session me ho sakta hai (localhost:3001 aur browser pane wahin hain). Agar tum cloud container me ho (path /home/user/..., localhost:3001 nahi khulta, ya browser pane nahi hai) to kuch mat karo — turant bolo: \"Ye cloud session hai — Claude app me naya session LOCAL chun kar chalaiye.\" Aur ruk jao.",
     "0. FOLDER: agar ye session kisi folder me nahi hai (\"No folder\" / scratch workspace), to sabse pehle change_directory tool se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega), phir aage badho.",
     "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
     "Asli repo SIRF Anutech-Digital/anutechbilling hai (`git remote -v` me jo remote wahan point kare — Pardeep ke computer par `anutech`). Branch manager-pardeep. Abhicode0to1/new-reselleros PUBLIC purana repo hai — wahan kabhi push mat karo; cloud session usi ko clone kiye ho to ruko aur owner ko batao. staging/deploy mat chhuo (staging shaam 5 baje owner ka session karta hai).",

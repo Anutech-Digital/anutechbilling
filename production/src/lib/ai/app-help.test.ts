@@ -156,3 +156,12 @@ describe("buildTestRunPrompt", () => {
     expect(many).not.toContain("13. t12");
   });
 });
+
+/* 6 Oct: a pasted test prompt ran in a CLOUD session, which cannot reach localhost. */
+describe("buildTestRunPrompt — cloud check", () => {
+  it("tells a cloud session to stop and ask for a Local session", () => {
+    const p = buildTestRunPrompt({ pagePath: "/deals", tests: ["x"] });
+    expect(p).toContain("CLOUD CHECK");
+    expect(p).toMatch(/naya session LOCAL chun kar chalaiye/);
+  });
+});

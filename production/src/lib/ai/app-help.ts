@@ -204,6 +204,7 @@ export function buildTestRunPrompt(input: { pagePath: string; tests: readonly st
   return [
     `Is page ke tests browser me chalao aur nateeja do. (Ye prompt ek NAYE Claude Code session me chalana hai.)`,
     "",
+    "CLOUD CHECK: ye kaam sirf Pardeep ke computer par chalne wale LOCAL session me ho sakta hai (localhost:3001 aur browser pane wahin hain). Agar tum cloud container me ho (path /home/user/..., localhost:3001 nahi khulta, ya browser pane nahi hai) to kuch mat karo — turant bolo: \"Ye cloud session hai — Claude app me naya session LOCAL chun kar chalaiye.\" Aur ruk jao.",
     "0. FOLDER: agar session kisi folder me nahi hai, to pehle change_directory se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega).",
     "Asli repo SIRF Anutech-Digital/anutechbilling (remote 'anutech'), branch manager-pardeep. Abhicode0to1/new-reselleros public purana repo hai — wahan kabhi push nahi. staging/deploy mat chhuo.",
     "Kahan test karna hai: LOCAL app http://localhost:3001 (test data). Live/staging par form submit ya kuch save MAT karo.",
