@@ -64,6 +64,9 @@ import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs
 /* Page parts live in components/features/leads/ and the rules that pick rows in
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
 
+/* Brief mark on the row a deep link opened (R-208) — design tokens only, so it follows the theme. */
+const JUST_OPENED_ROW = ["ring-2", "ring-inset", "ring-primary", "bg-primary-soft"];
+
 function LeadsPageInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -222,6 +225,12 @@ function LeadsPageInner() {
   // Runs once when that lead has been looked up and the URL param is present. S40: looked
   // up by id — the lead may be on page 40 of the list, which the page has not loaded.
   const deepLinkHandledRef = React.useRef(false);
+  /* R-208: the handler strips ?lead= once done, so a SECOND deep link in the same visit
+     (the next lead saved from Add lead / Quick add) must be handled too — re-arm when the
+     param goes away, else only the first saved lead ever opened. */
+  React.useEffect(() => {
+    if (!focusLeadId) deepLinkHandledRef.current = false;
+  }, [focusLeadId]);
   /* On /deals a deal opens its own page (/deals/<id>, 30 Sep 2026), so an old-style
      /deals?lead=<id> link — the /today rows use it — goes there instead of the drawer. */
   const deepLinkToPage = isDealsPage && !!focusLeadId;
@@ -246,11 +255,14 @@ function LeadsPageInner() {
     deepLinkHandledRef.current = true;
     setSelected(match);
 
-    // Scroll the matching card into view so the user can see where it is in the pipeline
+    // Scroll the matching card into view so the user can see where it is in the pipeline,
+    // and mark it for a few seconds (R-208: a just-saved lead must be findable at a glance).
     setTimeout(() => {
-      document
-        .querySelector(`[data-lead-id="${match.id}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const row = document.querySelector<HTMLElement>(`[data-lead-id="${CSS.escape(match.id)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      row.classList.add(...JUST_OPENED_ROW);
+      setTimeout(() => row.classList.remove(...JUST_OPENED_ROW), 3000);
     }, 100);
 
     // Clean the param from URL so refresh doesn't re-trigger. Use the CURRENT

@@ -16,7 +16,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { revealSavedLead } from "@/components/features/leads/reveal-saved-lead";
 import type { Route } from "next";
 import { useForm } from "react-hook-form";
 import { FieldPill } from "@/components/ui/field-pill";
@@ -269,6 +270,7 @@ interface AddLeadFormProps {
 
 export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: AddLeadFormProps) {
   const router    = useRouter();
+  const pathname  = usePathname();
   const createLead = useCreateLead();
   /* An existing customer's new need — more seats, another product, a software project
      (migration 20260926250000). Picking the customer fills the contact fields from it and
@@ -701,35 +703,26 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
            which is the exact failure it was added to prevent. Written once, at creation, from
            the session rather than from `data`: a creator the user can pick is not a creator. */
         await createLead.mutateAsync({ id, ...sharedPatch, created_by: me?.userId ?? null });
+        onOpenChange(false);
 
         // ─── Contextual toast (replaces the hook's generic "Lead created") ───
         // The split between Leads (raw) and Deals (qualified) confused users:
         // they'd save a lead with a plan picked, then can't find it on /leads.
-        // Solution: tell them WHICH page their lead landed on + 1-tap nav.
-        toast.dismiss();
         // Where it LANDS is decided by stage (Deals = past the quote gate), not by
         // plan/value — else we'd say "Deal" but the raw lead sits in the inbox.
+        /* R-208: the button opens THIS lead (not just the page), and on /leads its drawer
+           opens by itself — the list's "needs action" order buried a fresh lead under overdue ones. */
         const isDeal = (POST_QUOTE_STAGE_VALUES as readonly string[]).includes(data.stage);
-        const companyName  = data.company;
-        if (isDeal) {
-          toast.success(`${companyName} saved as Deal`, {
-            description: "In your Deal Pipeline",
-            duration: 6000,
-            action: {
-              label: "View deals",
-              onClick: () => router.push("/deals" as Route),
-            },
-          });
-        } else {
-          toast.success(`${companyName} added to your inbox`, {
-            description: "In Leads — send a quote to move it into the Deal Pipeline",
-            duration: 6000,
-            action: {
-              label: "View leads",
-              onClick: () => router.push("/leads" as Route),
-            },
-          });
-        }
+        const name = data.company?.trim() || data.contact_name?.trim() || "New lead";
+        revealSavedLead({
+          id,
+          title: isDeal ? `${name} saved as Deal` : `${name} added to your leads`,
+          description: isDeal ? "In your Deal Pipeline" : "Send a quote to move it into the Deal Pipeline",
+          isDeal,
+          pathname,
+          router,
+        });
+        return;
       }
       onOpenChange(false);
     } catch {

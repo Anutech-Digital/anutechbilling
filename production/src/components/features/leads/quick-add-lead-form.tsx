@@ -21,12 +21,11 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { Route } from "next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { toast } from "sonner";
 
 import {
   Sheet,
@@ -48,6 +47,7 @@ import { dupCheckKeys, duplicateWarning, pickDuplicate } from "@/lib/leads/dupli
 import { stageShownOnPage } from "@/lib/leads/page-scope";
 import { quickAddProblem, quickAddLabel, whatsappNumber, phoneDigits } from "@/lib/leads/quick-add";
 import type { Lead } from "@/lib/supabase/database.types";
+import { revealSavedLead } from "@/components/features/leads/reveal-saved-lead";
 
 /* Any ONE of phone / email / name is enough — the rule and its reasons live in
    lib/leads/quick-add.ts, so the form and its tests can't drift apart. */
@@ -75,6 +75,7 @@ interface QuickAddLeadFormProps {
 
 export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) {
   const router     = useRouter();
+  const pathname   = usePathname();
   const createLead = useCreateLead({ quiet: true });
   const { data: me } = useCurrentUser();
 
@@ -186,20 +187,18 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
         setTimeout(() => setFocus("contact_phone"), 0);
         return;
       }
-      toast.dismiss();
-      toast.success(`${label} added to your leads`, {
-        description: name ? "Add plan and seats later from the lead." : "Add the name later from the lead.",
-        duration: 6000,
-        action: {
-          label: "Open lead",
-          onClick: () => router.push(`/leads?lead=${id}` as Route),
-        },
-        ...(wa
-          ? { cancel: { label: "WhatsApp", onClick: () => window.open(`https://wa.me/${wa}`, "_blank", "noopener") } }
-          : {}),
-      });
-
       onOpenChange(false);
+      /* R-208: confirm the save AND put the new lead in front of the user — on /leads its
+         drawer opens; the list's default "needs action" order would bury it under overdue rows. */
+      revealSavedLead({
+        id,
+        title: `${label} added to your leads`,
+        description: name ? "Add plan and seats later from the lead." : "Add the name later from the lead.",
+        isDeal: false,
+        pathname,
+        router,
+        cancel: wa ? { label: "WhatsApp", onClick: () => window.open(`https://wa.me/${wa}`, "_blank", "noopener") } : undefined,
+      });
     } catch {
       // Error toast handled inside useCreateLead.onError
     }
