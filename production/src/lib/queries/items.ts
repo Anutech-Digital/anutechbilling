@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, Database } from "@/lib/supabase/database.types";
+import { TIER_FALLBACK_MONTHLY } from "@/lib/pricing/workspace";
 
 type ItemInsert = Database["public"]["Tables"]["items"]["Insert"];
 type ItemUpdate = Database["public"]["Tables"]["items"]["Update"];
@@ -134,30 +135,41 @@ type CatalogEntry = {
   };
 };
 
+/**
+ * Google Workspace list price (₹/seat/month, annual) — read from the single source in
+ * lib/pricing/workspace.ts, never copied here. R-207: this seed used to say Starter 136 /
+ * Standard 736 (an old promo), so every new tenant's catalogue quoted below list.
+ */
+const GW_LIST = {
+  starter:  TIER_FALLBACK_MONTHLY.starter,
+  standard: TIER_FALLBACK_MONTHLY.standard,
+  plus:     TIER_FALLBACK_MONTHLY.plus,
+} as const;
+
 const DEFAULT_CATALOG: CatalogEntry[] = [
   // ─── Main items (7 core plans) — pricing matrix per Indian reseller market norms ───
   {
     id: "GW-STR", name: "Google Workspace Business Starter", vendor: "google", kind: "main",
-    msrp: 136, wholesale: 110,
+    msrp: GW_LIST.starter, wholesale: 110,
     prices: {
       monthly: { msrp: 170, wholesale: 138 },  // No commit, ~25% premium for flex
-      annual:  { msrp: 136, wholesale: 110 },  // 1-yr commit, headline rate
+      annual:  { msrp: GW_LIST.starter, wholesale: 110 },  // 1-yr commit, list price
     },
   },
   {
     id: "GW-STD", name: "Google Workspace Business Standard", vendor: "google", kind: "main",
-    msrp: 736, wholesale: 620,
+    msrp: GW_LIST.standard, wholesale: 620,
     prices: {
       monthly: { msrp: 920, wholesale: 780 },
-      annual:  { msrp: 736, wholesale: 620 },
+      annual:  { msrp: GW_LIST.standard, wholesale: 620 },
     },
   },
   {
     id: "GW-PLS", name: "Google Workspace Business Plus", vendor: "google", kind: "main",
-    msrp: 1380, wholesale: 1150,
+    msrp: GW_LIST.plus, wholesale: 1150,
     prices: {
       monthly: { msrp: 1725, wholesale: 1450 },
-      annual:  { msrp: 1380, wholesale: 1150 },
+      annual:  { msrp: GW_LIST.plus, wholesale: 1150 },
     },
   },
   {
