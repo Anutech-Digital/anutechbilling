@@ -61,7 +61,7 @@ const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: s
 const ACTION_HELP: Record<string, string> = {
   open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board within the hour. Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
   agent_queued: "Waiting for the AI worker — it becomes a card on the work board within the hour, and the fix is made from there. Reopen takes it back to Open.",
-  fixed: "Not checked yet? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
+  fixed: "Done, waiting for a browser test? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
   wont_fix: "Closed without a fix. Reopen if it matters again.",
   duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
 };
@@ -237,7 +237,7 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
   const handleUnmarkChecked = async () => {
     try {
       await unmarkChecked.mutateAsync({ id: row.id });
-      toast.success("Check removed.", { description: "It shows \"not checked yet\" again." });
+      toast.success("Check removed.", { description: "It shows \"waiting for browser test\" again." });
     } catch (err) {
       toast.error("Could not remove the check.", {
         description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
@@ -334,7 +334,7 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
             {row.status === "fixed" && <Badge kind="success" size="sm">fixed</Badge>}
             {row.status === "fixed" && (row.checked_at
               ? <Badge kind="success" size="sm">✓ checked {formatDate(row.checked_at)}{row.checked_by_name ? ` · ${row.checked_by_name}` : ""}</Badge>
-              : <Badge kind="warning" size="sm">not checked yet</Badge>)}
+              : <Badge kind="warning" size="sm">done · waiting for browser test</Badge>)}
             {row.status === "wont_fix" && <Badge kind="muted" size="sm">won&apos;t fix</Badge>}
           </div>
 
