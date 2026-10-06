@@ -11,6 +11,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,16 +52,22 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
   const onSubmit = async () => {
     const cleanCode = code.trim().toUpperCase().replace(/\s+/g, "");
     if (cleanCode.length < 3) {
-      toast.error("Code must be at least 3 characters");
+      toast.error("Code must be at least 3 characters", {
+        description: "Letters and numbers, no spaces — like DIWALI15. Customers type it at checkout.",
+      });
       return;
     }
     const dv = Number(discountValue);
     if (!Number.isFinite(dv) || dv <= 0) {
-      toast.error("Discount value must be greater than 0");
+      toast.error("Discount value must be greater than 0", {
+        description: discountType === "percent" ? "Enter the percent off, like 10." : "Enter the rupees off, like 500.",
+      });
       return;
     }
     if (discountType === "percent" && dv > 100) {
-      toast.error("Percent discount cannot exceed 100");
+      toast.error("Percent discount cannot exceed 100", {
+        description: "Enter 100 or less — or switch to ₹ Flat for a fixed rupee amount.",
+      });
       return;
     }
 
@@ -80,12 +87,14 @@ export default function CreateCouponDialog({ open, onOpenChange }: Props) {
       reset();
       onOpenChange(false);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Could not create coupon";
+      const msg = err instanceof Error ? err.message : "";
       // Friendlier message for the common "code already exists" duplicate-PK case.
       if (/duplicate|already exists|coupons_pkey/i.test(msg)) {
-        toast.error(`Code "${cleanCode}" already exists. Pick another.`);
+        toast.error(`Code "${cleanCode}" already exists.`, {
+          description: "Each code can be used once per workspace. Pick another code, or edit the existing one from the Coupons list.",
+        });
       } else {
-        toast.error(msg);
+        toastError(err, { fallback: "Could not create coupon." });
       }
     }
   };

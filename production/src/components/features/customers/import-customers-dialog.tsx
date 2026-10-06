@@ -128,7 +128,9 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) {
-      toast.error("File too large (>8 MB). Split into smaller files.");
+      toast.error("File too large (over 8 MB).", {
+        description: "Split it into smaller CSV files and import them one after another.",
+      });
       return;
     }
     setFileName(file.name);
@@ -136,12 +138,17 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
       const text = await file.text();
       const rows = parseCustomersCsv(text, existingNums, existingEmails);
       if (rows.length === 0) {
-        toast.error("No rows found. Make sure the file has a header + data rows.");
+        toast.error("No rows found in this file.", {
+        description: "The first row must be the header (name, email, …) with customers below it. Download the sample CSV to see the layout.",
+      });
         return;
       }
       setParsed(rows);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, {
+        fallback: "Couldn't read the file.",
+        description: "Save it as CSV (UTF-8) from Excel or Google Sheets and choose it again.",
+      });
     }
   };
 
@@ -149,10 +156,14 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
     if (!parsed || !me) return;
     const valid = parsed.filter((r) => !r.error && !r.dup);
     if (valid.length === 0) {
-      toast.error("No new customers to import.");
+      toast.error("No new customers to import.", {
+        description: "Every row is either already in Customers or has an error — fix the rows marked red, or choose another file.",
+      });
       return;
     }
     setImporting(true);
+    // Counted outside the try, so a failure part-way can say how many rows already went in.
+    let inserted = 0;
     try {
       const supabase = createClient();
       const payload = valid.map((r) => ({
@@ -168,7 +179,6 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
       }));
 
       // Chunked insert so 1000+ rows don't hit payload limits.
-      let inserted = 0;
       for (let i = 0; i < payload.length; i += 500) {
         const chunk = payload.slice(i, i + 500);
         const { error } = await supabase.from("customers").insert(chunk);
@@ -187,7 +197,12 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
       onImportComplete?.();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
+      toastError(err, {
+        fallback: "Import failed.",
+        description: inserted > 0
+          ? `${inserted} customer${inserted === 1 ? " was" : "s were"} imported before it stopped. Close and reopen Import before trying again — rows with a customer number or email already in Customers then show as "already exist".`
+          : "Nothing was imported. Check your connection and press Import again.",
+      });
     } finally {
       setImporting(false);
     }
