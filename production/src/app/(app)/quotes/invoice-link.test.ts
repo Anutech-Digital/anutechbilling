@@ -56,6 +56,12 @@ function stripComments(src: string): string {
 
 const files = tsxFiles(SRC).map((file) => ({ file, src: stripComments(readFileSync(file, "utf8")) }));
 
+/* R-218 (after R-086): one invoice has its own page, /invoices/<id>, built by invoiceHref()
+   (invoices/invoice-href.ts, which also encodes ids with a "/"). The old `/invoices?open=`
+   still works through a redirect for links already out in mails and WhatsApp, but a link
+   the app renders today should not take the extra hop. */
+const DEEP_LINK = /invoiceHref\(|\/invoices\?open=/;
+
 describe("a control naming one invoice opens that invoice", () => {
   it("has files to scan", () => {
     expect(files.length).toBeGreaterThan(100);
@@ -67,22 +73,43 @@ describe("a control naming one invoice opens that invoice", () => {
       /* Singular only. "View invoices" (plural — the subscriptions page listing a
          customer's invoices) is a list destination and correctly goes to the list. */
       if (!/["'>\s]View invoice(?!s)/.test(src)) continue;
-      if (!/\/invoices\?open=/.test(src)) offenders.push(file);
+      if (!DEEP_LINK.test(src)) offenders.push(file);
     }
     expect(
       offenders,
-      'link to `/invoices?open=<invoice id>` — it opens that invoice\'s dialog — or label the button for where it actually goes',
+      "link to invoiceHref(<invoice id>) — the invoice's own page — or label the button for where it actually goes",
     ).toEqual([]);
   });
 
   it("still finds the two screens this was fixed on, so the rule is not scanning thin air", () => {
     const withDeepLink = files
-      .filter(({ src }) => /\/invoices\?open=/.test(src))
+      .filter(({ src }) => DEEP_LINK.test(src))
       .map(({ file }) => file.replace(/\\/g, "/"));
     expect(withDeepLink.join("\n")).toMatch(/quotes\/\[id\]\/page\.tsx/);
     /* The lead drawer's rule moved out of leads/page.tsx into next-action.ts (S35). */
     expect(withDeepLink.join("\n")).toMatch(/lib\/leads\/next-action\.ts/);
     // And the ones that were already right, which is how the fix was found at all.
     expect(withDeepLink.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("R-218: in-app invoice links go straight to /invoices/<id>", () => {
+  /* payments/page.tsx joins this list after R-215 (the Payments table card) lands. */
+  const FIXED = [
+    "app/(app)/quotes/page.tsx",
+    "app/(app)/quotes/[id]/page.tsx",
+    "components/layout/command-palette.tsx",
+    "lib/deals/timeline.ts",
+    "lib/leads/next-action.ts",
+    "app/(app)/online-orders/invoice-links.ts",
+  ];
+
+  it.each(FIXED)("%s has no ?open= invoice link left", (rel) => {
+    const src = stripComments(readFileSync(join(SRC, rel), "utf8"));
+    expect(src).not.toMatch(/invoices\?open=/);
+  });
+
+  it.each(FIXED)("%s builds the address with invoiceHref", (rel) => {
+    expect(readFileSync(join(SRC, rel), "utf8")).toMatch(/invoiceHref/);
   });
 });

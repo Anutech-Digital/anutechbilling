@@ -29,6 +29,7 @@ import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { backfilledStart } from "@/lib/deals/deal-quotes";
 import type { Lead } from "@/lib/supabase/database.types";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -380,7 +381,7 @@ export function buildDealHistory(src: DealHistorySources, nameOf: NameOf = () =>
       id: `invoice:${inv.id}`, group: "money", icon: "receipt", tone: inv.status === "void" ? "rose" : "indigo",
       title: inv.status === "void" ? "Invoice (void)" : "Invoice issued",
       detail: [inv.id, inv.status && inv.status !== "void" ? inv.status : null].filter(Boolean).join(" · "),
-      amount: inv.amount ?? null, href: `/invoices?open=${encodeURIComponent(inv.id)}`,
+      amount: inv.amount ?? null, href: invoiceHref(inv.id),
     });
   }
   for (const p of src.payments ?? []) {
@@ -459,7 +460,7 @@ export function buildDealHistory(src: DealHistorySources, nameOf: NameOf = () =>
       id: `project-invoice:${inv.id}`, group: "money", icon: "receipt", tone: inv.status === "void" ? "rose" : "indigo",
       title: inv.status === "void" ? "Project invoice (void)" : "Project invoice issued",
       detail: [inv.id, ms?.label, inv.status && inv.status !== "void" ? inv.status : null].filter(Boolean).join(" · "),
-      amount: inv.amount ?? null, href: `/invoices?open=${encodeURIComponent(inv.id)}`,
+      amount: inv.amount ?? null, href: invoiceHref(inv.id),
     });
   }
   for (const p of dedupeById(src.projectPayments ?? [])) {

@@ -8,7 +8,7 @@
  * toasted "Downloading…".
  *
  * This module joins the two: for each lead, the invoice of its newest invoiced quote, and the
- * one URL every other screen already uses to open a single invoice (`/invoices?open=<id>`).
+ * one URL every other screen uses to open a single invoice (its own page, /invoices/<id>).
  */
 
 export interface QuoteInvoiceRow {
@@ -34,7 +34,5 @@ export function invoiceByLead(rows: readonly QuoteInvoiceRow[]): Map<string, str
   return new Map([...newest].map(([lead, v]) => [lead, v.invoiceId]));
 }
 
-/** The single-invoice URL the rest of the app uses (payments, quotes, command palette). */
-export function invoiceHref(invoiceId: string): string {
-  return `/invoices?open=${encodeURIComponent(invoiceId)}`;
-}
+/** The single-invoice URL the rest of the app uses — R-218: the one helper, not a copy. */
+export { invoiceHref } from "../invoices/invoice-href";

@@ -26,7 +26,9 @@ describe("R-083 invoiceByLead", () => {
   });
 
   it("links to the single-invoice view used everywhere else", () => {
-    expect(invoiceHref("INV-ADPL-2026-27-0031")).toBe("/invoices?open=INV-ADPL-2026-27-0031");
+    expect(invoiceHref("INV-ADPL-2026-27-0031")).toBe("/invoices/INV-ADPL-2026-27-0031");
+    // R-218: an id with "/" from a custom series stays one path segment.
+    expect(invoiceHref("ANU/26-27/001")).toBe("/invoices/ANU%2F26-27%2F001");
   });
 });
 

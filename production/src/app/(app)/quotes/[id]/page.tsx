@@ -66,6 +66,7 @@ import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment } from "@/lib/supabase/database.types";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 // ============================================================
 // Status meta
@@ -1030,7 +1031,7 @@ export default function QuoteDetailPage() {
                     This button names a specific document — "View invoice
                     INV-ADPL-2026-27-0018" — and used to land on `/invoices`, leaving the
                     reader to find that row among 21. The exact destination already
-                    existed: `/invoices?open=<id>` auto-opens that invoice's dialog, and
+                    existed (now its own page, invoiceHref → /invoices/<id>, R-218), and
                     five other places already used it (the Quotes LIST's own Invoiced
                     button, payments, the customer panel, the command palette, and the
                     invoices page's copy-link). This screen was the odd one out, which is
@@ -1040,7 +1041,7 @@ export default function QuoteDetailPage() {
                   <Link
                     href={
                       quote.invoice_id
-                        ? (`/invoices?open=${quote.invoice_id}` as any)
+                        ? (invoiceHref(quote.invoice_id) as any)
                         : (`/invoices` as any)
                     }
                   >

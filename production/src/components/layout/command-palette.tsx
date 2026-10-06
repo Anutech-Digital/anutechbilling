@@ -48,6 +48,7 @@ import {
 } from "@/lib/search/keywords";
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 // ============================================================
 // Hook to manage open state + register ⌘K shortcut
@@ -366,8 +367,8 @@ export function CommandPalette({
                 </Command.Group>
               )}
 
-              {/* Invoices — real, tenant-scoped. Deep-links to /invoices?open=<id>
-                  which auto-opens that invoice's preview (existing pattern). */}
+              {/* Invoices — real, tenant-scoped. Opens the invoice's own page
+                  (invoiceHref → /invoices/<id>, R-218). */}
               {fInvoices.length > 0 && (
                 <Command.Group heading={`Invoices · ${count(fInvoices, invoices)}`}>
                   {fInvoices.map((inv) => {
@@ -380,7 +381,7 @@ export function CommandPalette({
                         label={inv.id}
                         meta={meta}
                         keywords={invoiceKeywords(inv)}
-                        onSelect={() => go(`/invoices?open=${inv.id}`)}
+                        onSelect={() => go(invoiceHref(inv.id))}
                       />
                     );
                   })}

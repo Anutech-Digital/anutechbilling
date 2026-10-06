@@ -60,6 +60,7 @@ import type { Quote } from "@/lib/supabase/database.types";
 /* R-105: same paging rule + "Load N more" control as Payments (R-104) and the shared DataTable. */
 import { usePagedRows, LoadMore } from "../payments/load-more";
 import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -1054,14 +1055,13 @@ export default function QuotesPage() {
                             const ps = q.payment_status;
                             if (ps === "invoiced") {
                               // Terminal — money flow complete, jump to the
-                              // actual invoice (auto-opens that dialog via
-                              // ?open=INV-XX deep link on /invoices)
+                              // actual invoice's own page (R-218: invoiceHref)
                               return (
                                 <Button asChild size="sm" icon="receipt">
                                   <Link
                                     href={
                                       q.invoice_id
-                                        ? (`/invoices?open=${q.invoice_id}` as any)
+                                        ? (invoiceHref(q.invoice_id) as any)
                                         : (`/quotes/${q.id}` as any)
                                     }
                                   >
