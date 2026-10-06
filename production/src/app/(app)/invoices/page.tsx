@@ -468,7 +468,7 @@ function InvoicesPageInner() {
                             aria-label="Select all pending"
                           />
                         </th>
-                        <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Quote</th>
+                        <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3 whitespace-nowrap">Quote</th>
                         <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Customer</th>
                         <th className="text-right p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Amount</th>
                         <th className="text-left p-2 text-3xs uppercase tracking-wider font-semibold text-ink-3">Payment</th>
@@ -503,7 +503,8 @@ function InvoicesPageInner() {
                                 aria-label={`Select ${q.id}`}
                               />
                             </td>
-                            <td className="p-2">
+                            {/* R-177: the quote no. ("Q-DEMO-27-0001") wrapped onto four lines. */}
+                            <td className="p-2 whitespace-nowrap">
                               <Link
                                 href={`/quotes/${q.id}` as any}
                                 className="font-mono text-xs font-semibold text-ink hover:text-amber-ink hover:underline"

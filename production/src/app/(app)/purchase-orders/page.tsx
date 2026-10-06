@@ -135,7 +135,7 @@ export default function PurchaseOrdersPage() {
       {/* KPIs */}
       {!isLoading && pos && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <KPI label="Pending to place"   value={draftCount}                trend={rupee(pendingValue, { compact: true }) + " value"} trendKind="down" trendIcon="alert" onClick={() => setTab("draft")} />
+          <KPI label="Pending to place"   value={draftCount}                trend={rupee(pendingValue, { compact: true }) + " value"} trendKind={draftCount > 0 ? "down" : "neutral"} trendIcon={draftCount > 0 ? "alert" : undefined} onClick={() => setTab("draft")} />
           <KPI label="Placed (in flight)" value={rupee(placedValue, { compact: true })} trend={`${counts.placed} POs`} icon="rupee" onClick={() => setTab("placed")} />
           <KPI label="Provisioned seats"  value={provisionedSeats}          trend={`${counts.provisioned} POs`} trendKind="up" onClick={() => setTab("provisioned")} />
           <KPI label="Sold vs procured"   value={reconGap === 0 ? "✓ matched" : `${reconGap} short`} trend={`${reconciledCount} POs reconciled with bills`} trendKind={reconGap === 0 ? "up" : "down"} icon={reconGap === 0 ? "check_circle" : "alert"} />
