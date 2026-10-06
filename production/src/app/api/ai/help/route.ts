@@ -22,6 +22,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { maskPII } from "@/lib/ux/signals";
 import { pagePurpose } from "@/lib/ai/page-purpose";
+import { helpFacts } from "@/lib/ai/help-facts";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES } from "@/lib/ai/app-help";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
@@ -91,6 +92,10 @@ export async function POST(request: NextRequest) {
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
   if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], ai: false, reason: "no_key" });
 
+  /* R-189: the company's own setup, read with the person's login (RLS) — not for error
+     reports, which are about what just broke. */
+  const facts = me?.tenant_id && mode !== "error" ? await helpFacts(supabase, me.tenant_id).catch(() => null) : null;
+
   let failure = "";
   const raw = await geminiJson<unknown>({
     apiKey: gemini.apiKey,
@@ -100,6 +105,7 @@ export async function POST(request: NextRequest) {
       trail: trail.length ? trailForPrompt(trail) : null,
       findings: mode === "scan" ? findingsForPrompt(findings) : null,
       outline: mode === "scan" && outline ? maskPII(outline, 1500) : null,
+      facts: facts?.text ?? null,
     }),
     temperature: 0.3,
     timeoutMs: image ? 40_000 : 25_000,
@@ -107,7 +113,7 @@ export async function POST(request: NextRequest) {
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });
-  const answer = parseHelpAnswer(raw);
+  const answer = parseHelpAnswer(raw, facts?.customerIds);
   if (!answer) {
     if (failure) console.error("[ai/help] no answer:", failure);
     return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });

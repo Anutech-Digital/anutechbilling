@@ -20,14 +20,16 @@
  * and chat live only in this tab (memory, not storage); text is PII-masked before it is kept.
  */
 import * as React from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
-import { bugReportText, AI_FILED_TAG, type BugDraft, type HelpMessage, type HelpMode } from "@/lib/ai/app-help";
+import { bugReportText, AI_FILED_TAG, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
 import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
@@ -149,6 +151,8 @@ interface ChatItem extends HelpMessage {
   filedId?: string;
   page?: string | null;
   checklist?: string[];
+  /** R-189: fixes the AI offers — nothing runs until the person presses one */
+  actions?: HelpAction[];
   similar?: { id: string; title: string }[];
   /** the trail as it was when this answer came back — filed with the report */
   recorded?: string | null;
@@ -237,6 +241,28 @@ function useTrail(pathname: string) {
 
 export function AiHelp() {
   const pathname = usePathname() || "/";
+  const router = useRouter();
+  /** "<message index>:<action index>" → done / failed */
+  const [acted, setActed] = React.useState<Record<string, "done" | "busy" | "failed">>({});
+
+  /* R-189: run one offered fix, as the signed-in person (RLS decides what they may change). */
+  async function runAction(key: string, a: HelpAction) {
+    if (a.kind === "open") { setOpen(false); router.push(a.href as never); return; }
+    setActed((s) => ({ ...s, [key]: "busy" }));
+    const supabase = createClient();
+    const name = GST_STATE_BY_CODE[a.stateCode] ?? null;
+    const q = a.kind === "set_customer_state"
+      ? supabase.from("customers").update({ state_code: a.stateCode, state: name }).eq("id", a.customerId).select("id")
+      : supabase.from("tenants").update({ state_code: a.stateCode, state: name }).eq("id", currentUser?.tenantId ?? "").select("id");
+    const { data, error } = await q;
+    if (error || !data?.length) {
+      setActed((s) => ({ ...s, [key]: "failed" }));
+      toast.error("Could not make that change.", { description: `${error?.message ?? "You may not have permission for this."} — do it from the page instead.` });
+      return;
+    }
+    setActed((s) => ({ ...s, [key]: "done" }));
+    toast.success("Done.", { description: a.label });
+  }
   const { data: currentUser } = useCurrentUser();
   const submit = useSubmitFeedback();
   const { trail, unseen, clearUnseen } = useTrail(pathname);
@@ -313,7 +339,7 @@ export function AiHelp() {
           ...(image ? { image: { mimeType: image.mimeType, base64: image.base64 } } : {}),
         }),
       });
-      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
+      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
       let reply = j.reply || j.error || "Jawab nahi aaya — dobara try karein.";
       if (scan && scan.findings.length && j.ai !== true) reply += `\n\nAutomatic jaanch ne ${scan.findings.length} cheez(ein) pakdi:\n` + scan.findings.map((f) => `• ${f.detail}`).join("\n");
       setItems((s) => {
@@ -323,7 +349,7 @@ export function AiHelp() {
           ? s.filter((x) => x.draft && looksLikeSameBug({ title: j.bugDraft!.title, pagePath: pathname }, { title: x.draft.title, page_path: x.page ?? null }))
               .map((x) => ({ id: x.filedId ?? "draft", title: x.draft!.title }))
           : [];
-        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
+        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
       setItems((s) => [...s, { role: "assistant", text: "Connection nahi bana — dobara try karein. Bug ho to 'Report Bug' button bhi chalta hai." }]);
@@ -386,7 +412,7 @@ export function AiHelp() {
               <div className="text-2xs text-ink-3 truncate">On this page: {pathname}</div>
             </div>
             {items.length > 0 && (
-              <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); }}>New chat</button>
+              <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); setActed({}); }}>New chat</button>
             )}
             <button type="button" aria-label="Close" className="p-1 text-ink-3 hover:text-ink" onClick={() => setOpen(false)}>
               <Icon name="x" size={16} />
@@ -426,6 +452,24 @@ export function AiHelp() {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   {m.image && <img src={m.image} alt="Screenshot sent with this message" className="mb-1.5 max-h-40 rounded-md border border-hairline" />}
                   {m.text}
+                  {m.actions && m.actions.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Fix it here</div>
+                      {m.actions.map((a, j) => {
+                        const k = `${i}:${j}`;
+                        const st = acted[k];
+                        return (
+                          <Button key={j} size="sm" variant={a.kind === "open" ? "outline" : "primary"}
+                            className="justify-start text-left h-auto py-1.5 whitespace-normal"
+                            loading={st === "busy"} disabled={st === "done" || st === "busy"}
+                            onClick={() => void runAction(k, a)}>
+                            {st === "done" ? "✓ " : a.kind === "open" ? "→ " : ""}{a.label}
+                          </Button>
+                        );
+                      })}
+                      {m.actions.some((a) => a.kind !== "open") && <div className="text-2xs text-ink-3">Nothing changes until you press a button. It saves as you.</div>}
+                    </div>
+                  )}
                   {m.checklist && m.checklist.length > 0 && (
                     <div className="mt-2 rounded-lg border border-hairline bg-paper p-2.5 text-ink">
                       <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Test next</div>
