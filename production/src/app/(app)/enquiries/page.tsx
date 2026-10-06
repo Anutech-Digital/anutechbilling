@@ -55,6 +55,7 @@ import { extractEntities, foundCount, type ExtractedEntities } from "@/lib/inbou
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { ReplyComposer } from "@/components/features/enquiries/reply-composer";
+import { FolderChips, AddLeadButton, SetUpEmailButton } from "./mobile-folders";
 import { dialable } from "@/lib/leads/call-queue";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 
@@ -484,21 +485,10 @@ export default function EnquiriesPage() {
           </ul>
         </nav>
 
-        {/* Mobile folder picker — the rail would eat the screen (CLAUDE.md §20). */}
-        <div className="md:hidden mb-2 w-full shrink-0">
-          <select
-            value={folder}
-            onChange={(e) => setFolder(e.target.value as MailFolder)}
-            aria-label="Mail folder"
-            className="w-full rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink"
-          >
-            {MAIL_FOLDERS.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.icon} {f.label}{counts[f.id] ? ` (${counts[f.id]})` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Phone folders (R-209): the rail would eat the screen (CLAUDE.md §20), so a row
+            of chips that scrolls inside itself. The old "Inbox ▾" <select> hid six of the
+            seven folders from anyone who never opened it. */}
+        <FolderChips folder={folder} counts={counts} unread={unread} onPick={setFolder} />
 
         {/* ── Pane 1: the list ──────────────────────────────────────────── */}
         <div className={cn(
@@ -542,10 +532,10 @@ export default function EnquiriesPage() {
                   action={isEmptySearch(parsed)
                     ? (folder !== "inbox"
                         ? <Button size="sm" variant="ghost" onClick={() => setFolder("inbox")}>Go to Inbox</Button>
-                        : <Button size="sm" asChild><Link href={"/leads" as Route}>Add a lead manually</Link></Button>)
+                        : <AddLeadButton />)
                     : <Button size="sm" variant="ghost" onClick={() => setQuery("")}>Clear search</Button>}
                   secondary={isEmptySearch(parsed) && folder === "inbox"
-                    ? <Button size="sm" variant="ghost" asChild><Link href={"/settings?tab=integrations" as Route}>Set up email in Settings</Link></Button>
+                    ? <SetUpEmailButton />
                     : undefined}
                 />
                 {/* R-192 (6 Oct 2026, from Pardeep's cloud session — re-written here after review,
