@@ -14,6 +14,7 @@ import { fyBounds } from "@/lib/dates/ist";
 import { receivedThisFy, type ReceivedFacts } from "@/lib/customers/received-this-fy";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import type {
@@ -51,22 +52,31 @@ export function useProjectSales() {
     queryKey: ["project_sales"],
     queryFn: async (): Promise<ProjectSaleWithTotals[]> => {
       const supabase = createClient();
-      const { data: projects, error } = await supabase
-        .from("project_sales")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
+      /* R-264: the list AND every table its paid/cost/labour totals are summed from are paged
+         past PostgREST's silent 1000-row cap (a capped sum = wrong receivable, no error).
+         Each order ends on id so offset pages never repeat or skip a row. */
+      const projects = await fetchAllRows((from, to) =>
+        supabase
+          .from("project_sales")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
 
-      const [{ data: pays, error: pErr }, { data: exps, error: xErr }, { data: labourRows, error: lErr }, { data: emps, error: eErr }] = await Promise.all([
-        supabase.from("project_payments").select("project_id, amount"),
-        supabase.from("expenses").select("project_id, amount").not("project_id", "is", null),
-        supabase.from("project_labour").select("project_id, employee_id, percent, months"),
-        supabase.from("employees").select("id, monthly_gross"),
+      const [pays, exps, labourRows, emps] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase.from("project_payments").select("project_id, amount")
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("expenses").select("project_id, amount").not("project_id", "is", null)
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("project_labour").select("project_id, employee_id, percent, months")
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("employees").select("id, monthly_gross")
+            .order("id", { ascending: true }).range(from, to)),
       ]);
-      if (pErr) throw pErr;
-      if (xErr) throw xErr;
-      if (lErr) throw lErr;
-      if (eErr) throw eErr;
 
       const paidBy = new Map<string, number>();
       for (const p of pays ?? []) paidBy.set(p.project_id, (paidBy.get(p.project_id) ?? 0) + (p.amount ?? 0));

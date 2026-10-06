@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
 
 type VendorBillInsert = Database["public"]["Tables"]["vendor_bills"]["Insert"];
@@ -43,15 +44,18 @@ export function useVendorBills(opts?: {
     queryKey: ["vendor_bills", { from, to, status }],
     queryFn: async (): Promise<VendorBill[]> => {
       const supabase = createClient();
-      let q = supabase.from("vendor_bills").select("*").order("bill_date", { ascending: false });
-      if (from)   q = q.gte("bill_date", from);
-      if (to)     q = q.lte("bill_date", to);
-      /* "owed" = unpaid + partial: the Outstanding tile's bills (R-118). */
-      if (status === "owed") q = q.in("status", ["unpaid", "partial"]);
-      else if (status) q = q.eq("status", status);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as VendorBill[];
+      /* R-264: paged past the silent 1000-row cap; id last makes the order total. */
+      return await fetchAllRows<VendorBill>((rFrom, rTo) => {
+        let q = supabase.from("vendor_bills").select("*")
+          .order("bill_date", { ascending: false })
+          .order("id", { ascending: true });
+        if (from)   q = q.gte("bill_date", from);
+        if (to)     q = q.lte("bill_date", to);
+        /* "owed" = unpaid + partial: the Outstanding tile's bills (R-118). */
+        if (status === "owed") q = q.in("status", ["unpaid", "partial"]);
+        else if (status) q = q.eq("status", status);
+        return q.range(rFrom, rTo);
+      });
     },
   });
 }

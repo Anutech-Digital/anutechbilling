@@ -8,6 +8,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { VendorRow, ExpenseRow } from "@/lib/supabase/database.types";
 import type { VendorBill } from "@/lib/queries/vendor-bills";
 
@@ -92,16 +93,26 @@ export function useVendors() {
     queryKey: ["vendors"],
     queryFn: async (): Promise<Vendor[]> => {
       const supabase = createClient();
-      const { data: vendors, error } = await supabase.from("vendors").select("*").order("name", { ascending: true });
-      if (error) throw error;
-      const { data: bills, error: bErr } = await supabase
-        .from("vendor_bills").select("vendor_id, total, paid_amount, bill_date, currency, fx_rate");
-      if (bErr) throw bErr;
-      const { data: expenses, error: eErr } = await supabase
-        .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate");
-      if (eErr) throw eErr;
+      /* R-264: the vendor list AND the bills/expenses its totals are summed from are paged
+         past PostgREST's silent 1000-row cap — a capped rollup shows a wrong 'outstanding'
+         with no error. Each order ends on id so offset pages never repeat or skip a row. */
+      const vendors = await fetchAllRows<VendorRow>((from, to) =>
+        supabase.from("vendors").select("*")
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to));
+      const bills = await fetchAllRows<RollupBill>((from, to) =>
+        supabase
+          .from("vendor_bills").select("vendor_id, total, paid_amount, bill_date, currency, fx_rate")
+          .order("id", { ascending: true })
+          .range(from, to));
+      const expenses = await fetchAllRows<RollupExpense>((from, to) =>
+        supabase
+          .from("expenses").select("vendor_id, amount, expense_date, currency, fx_rate")
+          .order("id", { ascending: true })
+          .range(from, to));
 
-      return rollupVendors((vendors ?? []) as VendorRow[], (bills ?? []) as RollupBill[], (expenses ?? []) as RollupExpense[]);
+      return rollupVendors(vendors, bills, expenses);
     },
     staleTime: 30_000,
   });

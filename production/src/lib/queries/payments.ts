@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 
 // ============================================================
@@ -20,12 +21,15 @@ export function usePayments() {
     queryKey: ["payments"],
     queryFn: async (): Promise<Payment[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("payments")
-        .select("*")
-        .order("received_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Payment[];
+      /* R-264: PostgREST stops at 1000 rows without saying so — page them all; the order
+         ends on id so offset pages never repeat or skip a row (lib/ops/fetch-all.ts). */
+      return await fetchAllRows<Payment>((from, to) =>
+        supabase
+          .from("payments")
+          .select("*")
+          .order("received_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
     },
   });
 }

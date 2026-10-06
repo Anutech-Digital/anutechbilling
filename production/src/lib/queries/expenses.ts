@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, ExpenseRow } from "@/lib/supabase/database.types";
 import { localDateISO } from "@/lib/leads/outcomes";
 
@@ -221,17 +222,19 @@ export function useExpenses(opts?: {
       const supabase = createClient();
       // Newest first: by bill date, then most-recently-added (created_at) so a
       // freshly-entered expense always lands at the top even on a shared date.
-      let q = supabase
-        .from("expenses")
-        .select("*")
-        .order("expense_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      if (from)     q = q.gte("expense_date", from);
-      if (to)       q = q.lte("expense_date", to);
-      if (category) q = q.eq("category", category);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as Expense[];
+      // R-264: paged past the silent 1000-row cap; id last makes the order total.
+      return await fetchAllRows<Expense>((rFrom, rTo) => {
+        let q = supabase
+          .from("expenses")
+          .select("*")
+          .order("expense_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true });
+        if (from)     q = q.gte("expense_date", from);
+        if (to)       q = q.lte("expense_date", to);
+        if (category) q = q.eq("category", category);
+        return q.range(rFrom, rTo);
+      });
     },
   });
 }

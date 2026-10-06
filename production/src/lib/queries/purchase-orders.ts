@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type {
   Database,
   PurchaseOrderRow,
@@ -51,12 +52,14 @@ export function usePurchaseOrders() {
     queryKey: ["purchase_orders"],
     queryFn: async (): Promise<PurchaseOrderRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("purchase_orders")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+      /* R-264: paged past the silent 1000-row cap; id last makes the order total. */
+      return await fetchAllRows<PurchaseOrderRow>((from, to) =>
+        supabase
+          .from("purchase_orders")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
     },
   });
 }
