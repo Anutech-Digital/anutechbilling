@@ -190,9 +190,11 @@ export default function PaymentRunsPage() {
         </details>
       )}
 
-      {/* ── Sticky create bar ──────────────────────────────────── */}
+      {/* ── Sticky create bar ──────────────────────────────────── R-298: phones sit on the
+          shared --bottom-nav-h (it already carries the home-indicator inset); from md the bar
+          touches the screen edge, so only there is the inset padded. */}
       {canCreate && pickedRows.length > 0 && (
-        <div className="fixed left-0 right-0 bottom-16 md:bottom-0 z-40 border-t border-hairline bg-paper/95 backdrop-blur px-4 py-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0px))" }}>
+        <div className="fixed left-0 right-0 bottom-[var(--bottom-nav-h,56px)] md:bottom-0 z-40 border-t border-hairline bg-paper/95 backdrop-blur px-4 py-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
           <div className="max-w-[1400px] mx-auto flex flex-wrap items-center gap-3">
             <div className="text-sm"><b>{pickedRows.length}</b> selected · <b className="tabular-nums">{rupee(pickedTotal)}</b></div>
             <label className="text-xs text-ink-3 flex items-center gap-1.5">Pay from
