@@ -100,7 +100,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
   const page = row.route_pattern ?? row.page_path ?? "(page not recorded)";
   const lines = [
-    'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo.',
+    'Ye bug report app me "fixed" mark hai. Pehle browser me jaancho ki sach me theek hua ya nahi; theek na ho to theek karo. (Ye prompt ek NAYE Claude Code session me chalana hai.)',
     "",
     "Repo: C:\\Users\\mso50\\new-reselleros (app production/ me). AGENTS.md aur production/CLAUDE.md ke niyam maano.",
     `App: ${appUrl}${appUrl.includes("localhost") ? "" : " (ya local http://localhost:3001)"}. Jaanch browser pane me dikha kar karo.`,
@@ -115,6 +115,9 @@ function buildCheckPrompt(row: FeedbackWithShots, appUrl: string): string {
     "1. JAANCH: report ke kadam browser me chalao. Screenshot ke saath batao ki ab kya hota hai.",
     '2. Theek hai → bas batao "✓ browser me theek hai" aur kya dekha. Kuch mat badlo.',
     "3. Bug abhi bhi hai → pehle board par card banao, phir neeche ki directive se theek karo: ek test jo pehle fail ho, fix, poori test suite, local par browser me dikhao, commit me card ka number.",
+    "",
+    '4. NATEEJA BOARD PAR: kaam ke ant me nateeja "Kaam ki list" board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par likho — theek tha to ek card status "done" aur title "Jaanch: <report>", fix kiya to wahi card review me. Taaki session band hone ke baad bhi nateeja dikhe.',
+    '5. SESSION ARCHIVE: board par likhne ke baad ye session archive kar do (mcp__ccd_session_mgmt__archive_session, session_id "self"). Archive, delete nahi.',
     "",
     "Directive (fix ke liye):",
     row.directive || "(directive nahi hai — problem dekh kar khud tay karo)",
@@ -199,7 +202,7 @@ function FeedbackCard({ row, userId }: { row: FeedbackWithShots; userId: string 
 
   const handleCopyCheck = async () => {
     const ok = await copyToClipboard(buildCheckPrompt(row, window.location.origin));
-    if (ok) toast.success("Check + fix prompt copied.", { description: "Paste it into a new Claude Code session — it checks in a browser and fixes it if still broken." });
+    if (ok) toast.success("Check + fix prompt copied.", { description: "Open a new Claude Code session and paste it — it checks in a browser, fixes it if still broken, writes the result on the board and archives itself." });
     else toast.warning("Browser blocked copying.", { description: "Press Copy again, or ask Claude in chat to check this report." });
   };
 
