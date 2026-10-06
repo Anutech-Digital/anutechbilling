@@ -16,6 +16,8 @@
 #
 # Undo (any time): run with UNDO=1 — removes the switches and puts the trigger back.
 # Production is not touched.
+# Learned on staging 6 Oct: 512Mi runs out of heap with the gateway (1Gi), and Auth.js needs
+# AUTH_URL or it sends Google https://0.0.0.0:8080 as the redirect. Both are in step 1 now.
 set -euo pipefail
 P=resellsubsos-prod; R=asia-southeast1; S=resellersos-staging
 APP=https://resellersos-staging-njvk4nxhdq-as.a.run.app
@@ -27,7 +29,7 @@ gcloud config get-value account
 if [ "${UNDO:-}" = 1 ]; then
   say "UNDO: switches off, trigger back to the VM"
   gcloud run services update "$S" --project="$P" --region="$R" \
-    --remove-env-vars=DATA_GATEWAY,AUTH_PROVIDER,STORAGE_BACKEND,GCS_BUCKET,DB_POOL_MAX \
+    --remove-env-vars=DATA_GATEWAY,AUTH_PROVIDER,AUTH_URL,STORAGE_BACKEND,GCS_BUCKET,DB_POOL_MAX \
     --remove-secrets=DATABASE_URL,ANON_DATABASE_URL,SERVICE_DATABASE_URL,AUTH_DATABASE_URL,JOBS_DATABASE_URL,SUPABASE_JWT_SECRET,AUTH_SECRET,AUTH_GOOGLE_ID,AUTH_GOOGLE_SECRET
   UNDO=1 bash "$(dirname "$0")/r161-step4b-trigger.sh"
   say "Undone. Tell Claude 'undo ho gaya' — it rebuilds staging on the VM path."
@@ -38,7 +40,7 @@ say "1. Cloud Run staging: socket + secrets + switches (no traffic yet)"
 gcloud run services update "$S" --project="$P" --region="$R" --no-traffic --tag=r161 \
   --add-cloudsql-instances=resellsubsos-prod:asia-southeast1:resellersos-staging-db \
   --update-secrets=DATABASE_URL=staging-r161-database-url:latest,ANON_DATABASE_URL=staging-r161-anon-database-url:latest,SERVICE_DATABASE_URL=staging-r161-service-database-url:latest,AUTH_DATABASE_URL=staging-r161-auth-database-url:latest,JOBS_DATABASE_URL=staging-r161-jobs-database-url:latest,SUPABASE_JWT_SECRET=staging-r161-supabase-jwt-secret:latest,AUTH_SECRET=staging-r161-auth-secret:latest,AUTH_GOOGLE_ID=staging-r161-google-client-id:latest,AUTH_GOOGLE_SECRET=staging-r161-google-client-secret:latest \
-  --update-env-vars=DATA_GATEWAY=1,AUTH_PROVIDER=authjs,STORAGE_BACKEND=gcs,GCS_BUCKET=resellsubsos-staging-files,DB_POOL_MAX=3
+  --memory=1Gi \n  --update-env-vars=DATA_GATEWAY=1,AUTH_PROVIDER=authjs,AUTH_URL=$APP,STORAGE_BACKEND=gcs,GCS_BUCKET=resellsubsos-staging-files,DB_POOL_MAX=3
 
 say "2. Staging build trigger: browser switches on, Supabase URL = the app itself"
 # update github --update-substitutions returns INVALID_ARGUMENT here; export/import instead.
