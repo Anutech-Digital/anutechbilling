@@ -10,6 +10,7 @@ import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/button";
 import { AiHelpButton } from "@/components/shared/ai-help";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel } from "./notification-panel";
@@ -56,7 +57,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   React.useEffect(() => setMounted(true), []);
 
   return (
-    <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-2 px-3 md:px-4">
+    <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-1 sm:gap-2 px-3 md:px-4">
       {/* STAGING banner — so a screenshot can never be mistaken for production (docs/STAGING.md). */}
       {process.env.NEXT_PUBLIC_APP_ENV === "staging" && (
         <span className="shrink-0 rounded bg-amber text-ink text-3xs font-bold uppercase tracking-wider px-2 py-0.5" title="Ye staging hai — demo data, koi customer nahi">Staging</span>
@@ -96,7 +97,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           aria-label="Go back"
         >
           <Icon name="chevron-left" size={18} />
-          <span>Back</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
       )}
 
@@ -121,7 +122,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           <button
             type="button"
             onClick={() => setFeedbackOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
+            data-topbar="report-bug"
           >
             <Icon name="bug" size={14} className="text-rose-ink" />
             <span className="hidden sm:inline">Report Bug</span>
@@ -152,6 +154,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
             icon={mounted && resolvedTheme === "dark" ? "sun" : "moon"}
             aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+            className="hidden sm:inline-flex"
+            data-topbar="theme"
           />
         </TooltipTrigger>
         <TooltipContent>Toggle theme</TooltipContent>
@@ -169,6 +173,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
             icon="sparkles"
             aria-label="Quick actions for this page"
             onClick={() => setActionsOpen(true)}
+            className="hidden sm:inline-flex"
+            data-topbar="quick-actions"
           />
         </TooltipTrigger>
         <TooltipContent>Quick actions</TooltipContent>
@@ -195,6 +201,31 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           </span>
         )}
       </div>
+
+      {/* R-203: phone only — Report Bug, theme and Quick actions live here below sm so the
+          topbar never gets wider than a 375px screen. From sm up they are their own buttons. */}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <IconButton
+            icon="more_h"
+            aria-label="More actions"
+            className="sm:hidden"
+            data-topbar="more"
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => setActionsOpen(true)}>
+            <Icon name="sparkles" size={14} /> Quick actions
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
+            <Icon name={mounted && resolvedTheme === "dark" ? "sun" : "moon"} size={14} />
+            {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setFeedbackOpen(true)}>
+            <Icon name="bug" size={14} /> Report bug
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* Mounted panels */}
       {/* Mounted only while open. Both panels run ~14 unbounded table reads (leads, customers,
