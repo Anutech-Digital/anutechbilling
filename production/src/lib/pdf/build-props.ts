@@ -219,6 +219,9 @@ export function buildQuotePdfProps(args: {
     contactName:   customer?.contact_name ?? null,
     contactEmail:  customer?.contact_email ?? null,
     contactPhone:  customer?.contact_phone ?? null,
+    // R-175: state (today's customer, else the prospect state the quote was priced for) + GSTIN.
+    customerState: customer?.state ?? (quote as { prospect_state?: string | null }).prospect_state ?? null,
+    customerGstin: customer?.gstin ?? null,
     createdDate:   quote.created_date,
     expiresDate:   quote.expires_date,
     validityDays,

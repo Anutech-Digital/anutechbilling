@@ -75,6 +75,9 @@ export interface QuotePDFProps {
   contactName?:  string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** R-175: the buyer's state and GSTIN under "Bill to", as on the tax invoice. */
+  customerState?: string | null;
+  customerGstin?: string | null;
   createdDate?:  string | Date | null;
   expiresDate?:  string | Date | null;
   validityDays:  number;
@@ -396,7 +399,7 @@ const s = StyleSheet.create({
 export function QuotePDF(props: QuotePDFProps) {
   const {
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo,
-    quoteId, customerName, contactName, contactEmail, contactPhone,
+    quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
@@ -529,6 +532,12 @@ export function QuotePDF(props: QuotePDFProps) {
             )}
             {contactPhone && (
               <Text style={s.customerMono}>{contactPhone}</Text>
+            )}
+            {customerGstin && (
+              <Text style={s.customerMono}>GSTIN: {customerGstin}</Text>
+            )}
+            {customerState && (
+              <Text style={s.customerLine}>State: {pdfText(customerState)}</Text>
             )}
           </View>
           <View style={s.colRight}>

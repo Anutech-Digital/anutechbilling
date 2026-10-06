@@ -193,3 +193,16 @@ describe("place of supply names the state (R-175)", () => {
     expect(buildQuotePdfProps({ quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Haryana (06) · IGST");
   });
 });
+
+describe("quote Bill-to carries the state and GSTIN (R-175)", () => {
+  const quote = { id: "Q-1", customer_name: "Local Sub Test", subtotal: 16320, discount_pct: 0, tax_rate: 18, amount: 19258, line_items: [], prospect_state: "Punjab" } as unknown as Quote;
+  it("from the customer when there is one", () => {
+    const customer = { id: "c1", name: "X", state: "Haryana", state_code: "06", gstin: "06AAAAA0000A1Z5", country: "India" } as unknown as Customer;
+    const p = buildQuotePdfProps({ quote, customer, tenant });
+    expect(p.customerState).toBe("Haryana");
+    expect(p.customerGstin).toBe("06AAAAA0000A1Z5");
+  });
+  it("else the prospect state the quote was priced for", () => {
+    expect(buildQuotePdfProps({ quote, customer: null, tenant }).customerState).toBe("Punjab");
+  });
+});
