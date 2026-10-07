@@ -73,21 +73,42 @@ export function AiHelpButton() {
    a full-screen sheet — no sizes there. */
 export interface PanelSize { w: number; h: number }
 export const PANEL_NORMAL: PanelSize = { w: 420, h: 600 };
-export const PANEL_LARGE: PanelSize = { w: 760, h: 860 };
-export const PANEL_MIN: PanelSize = { w: 340, h: 360 };
-const PANEL_MAX_W = 1100;
+/* R-360: "Expand" = about double the width and the full height of the window; the clamp
+   below trims it to whatever the screen allows. */
+export const PANEL_LARGE: PanelSize = { w: PANEL_NORMAL.w * 2, h: 10_000 };
+export const PANEL_MIN: PanelSize = { w: 360, h: 360 };
+const PANEL_MAX_W = 900;
+/** Width never passes this share of the window (R-360: 360px .. min(900px, 90vw)). */
+const PANEL_MAX_VW = 0.9;
 /** md:top-16 (64px) above the panel + a 16px gap below it. */
 const PANEL_TOP_AND_GAP = 80;
 const PANEL_SIZE_KEY = "reselleros.aiHelp.size";
+/** One arrow-key press on the resize handle moves the edge this far. */
+export const PANEL_KEY_STEP = 40;
 
-/** Keep a size inside the window: never below PANEL_MIN, never past the screen edge (the screen wins). */
+/** Widest the panel may be in this window. */
+export const panelMaxWidth = (vp: { w: number }) => Math.max(PANEL_MIN.w, Math.floor(Math.min(PANEL_MAX_W, vp.w * PANEL_MAX_VW)));
+
+/** Keep a size inside the window: never below PANEL_MIN, never past min(900px, 90vw) / the screen bottom. */
 export function clampPanelSize(s: PanelSize, vp: { w: number; h: number }): PanelSize {
-  const maxW = Math.min(PANEL_MAX_W, vp.w - 40);
-  const maxH = vp.h - PANEL_TOP_AND_GAP;
+  const maxW = panelMaxWidth(vp);
+  const maxH = Math.max(PANEL_MIN.h, vp.h - PANEL_TOP_AND_GAP);
+  const w = Number.isFinite(s.w) ? s.w : PANEL_NORMAL.w;
+  const h = Number.isFinite(s.h) ? s.h : PANEL_NORMAL.h;
   return {
-    w: Math.round(Math.min(maxW, Math.max(PANEL_MIN.w, s.w))),
-    h: Math.round(Math.min(maxH, Math.max(PANEL_MIN.h, s.h))),
+    w: Math.round(Math.min(maxW, Math.max(PANEL_MIN.w, w))),
+    h: Math.round(Math.min(maxH, Math.max(PANEL_MIN.h, h))),
   };
+}
+
+/** R-360: keyboard on the left-edge handle — ← widens, → narrows, Home = narrowest, End = widest. Null = not a resize key. */
+export function keyResize(s: PanelSize, key: string, vp: { w: number; h: number }): PanelSize | null {
+  const w = key === "ArrowLeft" ? s.w + PANEL_KEY_STEP
+    : key === "ArrowRight" ? s.w - PANEL_KEY_STEP
+    : key === "Home" ? PANEL_MIN.w
+    : key === "End" ? panelMaxWidth(vp)
+    : null;
+  return w === null ? null : clampPanelSize({ w, h: s.h }, vp);
 }
 
 export type ResizeEdge = "left" | "bottom" | "corner";
@@ -365,7 +386,8 @@ export function AiHelp() {
   const shownSize = clampPanelSize(size, viewport());
   const large = isLargePanel(shownSize);
   function toggleSize() {
-    const next = clampPanelSize(large ? PANEL_NORMAL : PANEL_LARGE, viewport());
+    /* Kept unclamped: "Expand" stays full height when the window later grows (clamped on show). */
+    const next = large ? PANEL_NORMAL : PANEL_LARGE;
     setSize(next);
     savePanelSize(next);
   }
@@ -385,6 +407,13 @@ export function AiHelp() {
     if (!drag.current) return;
     savePanelSize(drag.current.last);
     drag.current = null;
+  };
+  const onResizeKey = (e: React.KeyboardEvent) => {
+    const next = keyResize(shownSize, e.key, viewport());
+    if (!next) return;
+    e.preventDefault();
+    setSize(next);
+    savePanelSize(next);
   };
   /* R-352: this page's last browser test run. Read with the person's login (owner/manager by
      RLS); no table yet, no run or no access → nothing is shown. */
@@ -592,8 +621,12 @@ export function AiHelp() {
           className="fixed z-50 inset-0 md:inset-auto md:right-5 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] flex flex-col md:rounded-2xl md:border border-hairline bg-paper shadow-2xl overflow-hidden"
         >
           {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
-          <div aria-hidden="true" data-resize="left" onPointerDown={startDrag("left")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
-            className="hidden md:block absolute left-0 top-0 bottom-3 w-1.5 z-10 cursor-ew-resize touch-none hover:bg-amber/30" />
+          {/* R-360: the left edge is also a keyboard control (Tab to it, ← / → / Home / End). */}
+          <div data-resize="left" role="separator" tabIndex={0} aria-orientation="vertical"
+            aria-label="Resize panel width — left arrow wider, right arrow narrower"
+            aria-valuemin={PANEL_MIN.w} aria-valuemax={panelMaxWidth(viewport())} aria-valuenow={shownSize.w}
+            onPointerDown={startDrag("left")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onKeyDown={onResizeKey}
+            className="hidden md:block absolute left-0 top-0 bottom-3 w-1.5 z-10 cursor-ew-resize touch-none hover:bg-amber/30 focus:outline-none focus-visible:bg-amber/60" />
           <div aria-hidden="true" data-resize="bottom" onPointerDown={startDrag("bottom")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
             className="hidden md:block absolute bottom-0 left-3 right-0 h-1.5 z-10 cursor-ns-resize touch-none hover:bg-amber/30" />
           <div aria-hidden="true" data-resize="corner" onPointerDown={startDrag("corner")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
@@ -607,9 +640,11 @@ export function AiHelp() {
             {items.length > 0 && (
               <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); setActed({}); }}>New chat</button>
             )}
-            <button type="button" className="hidden md:inline text-2xs text-ink-3 hover:text-ink"
+            <button type="button" className="hidden md:inline rounded px-1 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              aria-pressed={large}
+              aria-label={large ? "Collapse panel to normal size" : "Expand panel"}
               title={large ? "Back to the normal size" : "Make the panel bigger — or drag its left or bottom edge"}
-              onClick={toggleSize}>{large ? "Smaller" : "Bigger"}</button>
+              onClick={toggleSize}>{large ? "Smaller" : "Expand"}</button>
             <button type="button" aria-label="Close" className="p-1 text-ink-3 hover:text-ink" onClick={() => setOpen(false)}>
               <Icon name="x" size={16} />
             </button>
