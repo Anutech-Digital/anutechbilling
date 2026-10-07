@@ -79,6 +79,24 @@ describe("amendmentActor", () => {
     expect(amendmentActor(amend({ source: "user", changed_by: "u9" }), new Map())).toBe("A team member");
     expect(amendmentActor(amend({ source: "user", changed_by: null }))).toBe("Unknown");
   });
+
+  it("names a portal customer from actor_label when changed_by is null (R-326)", () => {
+    expect(amendmentActor({ ...amend({ source: "user", changed_by: null }), actor_label: "Customer X" })).toBe("Customer X");
+  });
+
+  it("behaves as before when the actor_label column is missing or empty (migration not applied)", () => {
+    const row = amend({ source: "user", changed_by: null });
+    expect("actor_label" in row).toBe(false);
+    expect(amendmentActor(row)).toBe("Unknown");
+    expect(amendmentActor({ ...row, actor_label: null })).toBe("Unknown");
+    expect(amendmentActor({ ...row, actor_label: "  " })).toBe("Unknown");
+  });
+
+  it("keeps a staff name and the system label ahead of actor_label", () => {
+    const names = new Map([["u1", "Pardeep Sharma"]]);
+    expect(amendmentActor({ ...amend({ changed_by: "u1" }), actor_label: "Customer X" }, names)).toBe("Pardeep Sharma");
+    expect(amendmentActor({ ...amend({ source: "system" }), actor_label: "Customer X" })).toMatch(/Automatic/);
+  });
 });
 
 describe("seatHistory", () => {
