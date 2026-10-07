@@ -22,10 +22,11 @@ describe("Accounts tab fits an 800px window (R-180)", () => {
     expect(navLabel("/accounting/banking/brs")).toBe("Bank Reconciliation");
   });
 
-  it("the topbar gives the breadcrumb the free space and never wraps Report Bug", () => {
+  it("the topbar gives the breadcrumb the free space (R-383: no wide Report Bug pill — it is inside Help)", () => {
     const topbar = read("components/layout/topbar.tsx");
     expect(topbar).toMatch(/aria-label="Breadcrumb" className="[^"]*\bflex-1 min-w-0\b/);
-    expect(topbar).toMatch(/className="[^"]*\bwhitespace-nowrap\b[^"]*"\s+data-topbar="report-bug"/);
+    expect(topbar).not.toMatch(/data-topbar="report-bug"/);
+    expect(topbar).toMatch(/<AiHelpButton \/>/);
   });
 
   it("the sidebar menu scrolls up-down only", () => {

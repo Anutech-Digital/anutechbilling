@@ -51,6 +51,8 @@ const ZERO_FILES = [
   // R-302: shared dialogs + promo/coupon/trial/integration dialogs.
   "components/shared/whatsapp-action-dialog.tsx",
   "components/shared/feedback-dialog.tsx",
+  // R-383: the Help panel's "Report a problem" tab.
+  "components/shared/help-report-tab.tsx",
   "components/shared/ai-draft-button.tsx",
   "components/shared/smart-paste.tsx",
   "components/features/whatsapp/send-whatsapp-dialog.tsx",

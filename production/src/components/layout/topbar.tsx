@@ -8,7 +8,7 @@ import { useTheme } from "next-themes";
 
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/button";
-import { AiHelpButton } from "@/components/shared/ai-help";
+import { AiHelpButton, openHelpReport } from "@/components/shared/ai-help";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -16,7 +16,6 @@ import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel } from "./notification-panel";
 import { useNotifications } from "@/lib/queries/notifications";
 import { QuickActionsPanel } from "./quick-actions-panel";
-import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { getCrumb, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
 import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
@@ -43,7 +42,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  const [feedbackOpen, setFeedbackOpen] = React.useState(false);
   // Bell badge = open tasks due by end of today (today + overdue). When push
   // notifications + WhatsApp reminders arrive in Phase 2 they'll feed the
   // same number (any unread notification becomes a virtual task surface).
@@ -118,21 +116,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
 
       <div className="flex-1 md:hidden" />
 
-      {/* Team Testing & Feedback / Bug Report Trigger */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setFeedbackOpen(true)}
-            className="hidden sm:flex shrink-0 whitespace-nowrap items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
-            data-topbar="report-bug"
-          >
-            <Icon name="bug" size={14} className="text-rose-ink" />
-            <span className="hidden sm:inline">Report Bug</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent shortcut="report-bug">Report a bug or suggest a new feature</TooltipContent>
-      </Tooltip>
+      {/* R-383 (7 Oct 2026): no separate "Report Bug" button any more — reporting lives in the
+          one Help button (AiHelpButton, below) on its "Report a problem" tab; Ctrl+Shift+B opens it. */}
 
       {/* Search button (triggers ⌘K) */}
       <button
@@ -163,7 +148,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         <TooltipContent>Toggle theme</TooltipContent>
       </Tooltip>
 
-      {/* AI Help (R-158/R-162) — a small icon, not a floating button over the page. */}
+      {/* Help (R-158/R-162/R-383) — Ask AI + Report a problem, one small icon, not a floating button over the page. */}
       <AiHelpButton />
 
       {/* Quick actions — page-aware "what should I do now" panel.
@@ -204,7 +189,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         )}
       </div>
 
-      {/* R-203: phone only — Report Bug, theme and Quick actions live here below sm so the
+      {/* R-203: phone only — Report a problem, theme and Quick actions live here below sm so the
           topbar never gets wider than a 375px screen. From sm up they are their own buttons. */}
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
@@ -223,8 +208,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
             <Icon name={mounted && resolvedTheme === "dark" ? "sun" : "moon"} size={14} />
             {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setFeedbackOpen(true)}>
-            <Icon name="bug" size={14} /> Report bug
+          <DropdownMenuItem onSelect={() => openHelpReport()}>
+            <Icon name="bug" size={14} /> Report a problem
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -236,7 +221,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       {cmdk.isOpen && <CommandPalette open onOpenChange={cmdk.setOpen} />}
       {notifOpen && <NotificationPanel open onOpenChange={setNotifOpen} />}
       <QuickActionsPanel open={actionsOpen} onOpenChange={setActionsOpen} />
-      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </header>
   );
 }

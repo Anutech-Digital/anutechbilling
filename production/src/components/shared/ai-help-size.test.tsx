@@ -32,15 +32,15 @@ beforeEach(() => {
 });
 afterEach(() => {
   /* close the shared panel state so the next test starts closed */
-  const btn = screen.queryByRole("button", { name: /AI Help —/ });
+  const btn = screen.queryByRole("button", { name: /^Help —/ });
   if (btn?.getAttribute("aria-pressed") === "true") fireEvent.click(btn);
   cleanup();
 });
 
 function openPanel() {
   render(<><AiHelpButton /><AiHelp /></>);
-  fireEvent.click(screen.getByRole("button", { name: /AI Help —/ }));
-  return screen.getByRole("dialog", { name: "AI Help" });
+  fireEvent.click(screen.getByRole("button", { name: /^Help —/ }));
+  return screen.getByRole("dialog", { name: "Help" });
 }
 const width = (el: HTMLElement) => el.style.getPropertyValue("--ai-w");
 const height = (el: HTMLElement) => el.style.getPropertyValue("--ai-h");
@@ -134,7 +134,7 @@ describe("AI Help panel size (R-223, R-360)", () => {
       await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
       expect(await screen.findByRole("button", { name: "Ask: What next?" })).toBeTruthy();
     } finally {
-      fireEvent.click(screen.getByRole("button", { name: /AI Help —/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Help —/ }));
       cleanup(); /* unmount first: the panel puts its cached fetch back on unmount */
       window.fetch = realFetch;
       w.__aiHelpFetch = realCached;

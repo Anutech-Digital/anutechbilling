@@ -12,7 +12,7 @@
  * workspace that look like the same bug come back as `similar`, so nobody files it twice.
  *
  * Gemini through geminiJson (timeout + circuit breaker, null on every failure). With no
- * key or a failed call it says so plainly and points at the Report Bug button — the chat is
+ * key or a failed call it says so plainly and points at the Help panel's Report a problem tab — the chat is
  * a help, never the only way to report.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -51,10 +51,10 @@ const bodySchema = z.object({
   }).optional(),
 });
 
-const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to upar 'Report Bug' button (Ctrl+Shift+B) se seedha bhej dijiye.";
+const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to isi Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se seedha bhej dijiye.";
 /** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
     Say what is missing and where to add it. */
-const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to 'Report Bug' button (Ctrl+Shift+B) se bhej dijiye.";
+const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se bhej dijiye.";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;

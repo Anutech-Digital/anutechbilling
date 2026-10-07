@@ -32,7 +32,7 @@ import { AiHelp, AiHelpButton, LastTestedNote } from "./ai-help";
 beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
 afterEach(() => {
   /* close the shared panel state so the next test starts closed */
-  const btn = screen.queryByRole("button", { name: /AI Help/ });
+  const btn = screen.queryByRole("button", { name: /^Help —/ });
   if (btn?.getAttribute("aria-pressed") === "true") fireEvent.click(btn);
   cleanup();
   db.result = { data: null, error: null };
@@ -46,7 +46,7 @@ const RESULTS = [
 
 async function openPanel() {
   render(<><AiHelpButton /><AiHelp /></>);
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /AI Help/ })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Help —/ })); });
   await act(async () => { await Promise.resolve(); });
 }
 

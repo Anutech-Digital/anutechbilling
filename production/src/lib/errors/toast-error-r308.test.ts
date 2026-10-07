@@ -16,6 +16,7 @@ const R308_FILES = [
   "src/components/features/integrations/whatsapp-configure-dialog.tsx",
   "src/components/features/leads/import-csv-dialog.tsx",
   "src/components/shared/feedback-dialog.tsx",
+  "src/components/shared/help-report-tab.tsx", // R-383
   "src/app/(app)/accounting/tds-receivable/year-end/page.tsx",
   "src/app/(app)/platform/page.tsx",
 ] as const;

@@ -20,7 +20,6 @@
  * and chat live only in this tab (memory, not storage); text is PII-masked before it is kept.
  */
 import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
@@ -35,30 +34,46 @@ import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, typ
 import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
+import { CropOverlay, HELP_SELF, captureViewport, toShot, type Shot } from "@/components/shared/help-shot";
+import { HelpReportTab } from "@/components/shared/help-report-tab";
 
 /* Open/closed and "an error was caught" live outside the component (5 Oct 2026, Pardeep:
    "ai help button ko top me chhota sa icon laga do"). The big floating button covered page
    buttons (the Payment runs "Create" bar, list rows on phone); the trigger is now a small
    icon in the top bar, which needs to open the same panel and show the same red dot. */
-type HelpUi = { open: boolean; alert: string | null };
-let helpUi: HelpUi = { open: false, alert: null };
+/* R-383 (7 Oct 2026, Pardeep: "dono me farak kya, merge karke behtar"): the header's separate
+   "Report Bug" button is gone. This one Help button opens a panel with two tabs — "Ask" (the
+   AI chat, as before) and "Report a problem" (a plain form that always submits). Ctrl+Shift+B
+   opens the Report tab straight away. */
+export type HelpTab = "ask" | "report";
+type HelpUi = { open: boolean; alert: string | null; tab: HelpTab };
+let helpUi: HelpUi = { open: false, alert: null, tab: "ask" };
 const helpListeners = new Set<() => void>();
 const setHelpUi = (patch: Partial<HelpUi>) => { helpUi = { ...helpUi, ...patch }; helpListeners.forEach((l) => l()); };
 const subscribeHelpUi = (l: () => void) => { helpListeners.add(l); return () => { helpListeners.delete(l); }; };
-const SERVER_UI: HelpUi = { open: false, alert: null };
+const SERVER_UI: HelpUi = { open: false, alert: null, tab: "ask" };
 const useHelpUi = () => React.useSyncExternalStore(subscribeHelpUi, () => helpUi, () => SERVER_UI);
 
-/** The top-bar trigger: a small chat icon, with a red dot while an unseen error waits. */
+/** Open Help on the "Report a problem" tab (phone More menu, other callers). */
+export function openHelpReport() { setHelpUi({ open: true, tab: "report" }); }
+/** Ctrl+Shift+B: open on the Report tab; pressed again while that tab is showing, close. */
+export function toggleHelpReport() {
+  if (helpUi.open && helpUi.tab === "report") setHelpUi({ open: false });
+  else openHelpReport();
+}
+
+/** The top-bar trigger: the one Help button, with a red dot while an unseen error waits. */
 export function AiHelpButton() {
   const { open, alert } = useHelpUi();
   return (
     <div className="relative">
       <IconButton
         icon={alert ? "alert" : "message"}
-        aria-label={alert ? "AI Help — an error was caught, open to report it" : "AI Help — ask about this page or report a bug"}
-        title={alert ? `Error caught: ${alert}` : "AI Help"}
+        aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
+        title={alert ? `Error caught: ${alert}` : "Help — ask AI or report a problem (Ctrl+Shift+B to report)"}
         aria-pressed={open}
-        onClick={() => setHelpUi({ open: !open })}
+        data-topbar="help"
+        onClick={() => setHelpUi(open ? { open: false } : { open: true, tab: alert ? "report" : helpUi.tab })}
         className={alert ? "text-rose" : undefined}
       />
       {alert && <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose ring-2 ring-paper animate-pulse pointer-events-none" aria-hidden="true" />}
@@ -137,95 +152,6 @@ function savePanelSize(s: PanelSize) {
 }
 const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
 
-/** R-189: one screenshot that goes with the next message (and is filed with the report). */
-interface Shot { dataUrl: string; mimeType: "image/jpeg"; base64: string }
-
-/** Shrink to ≤1280px wide JPEG so a screenshot stays well under the route's 2 MB limit. */
-async function toShot(source: HTMLCanvasElement | Blob): Promise<Shot | null> {
-  let canvas: HTMLCanvasElement;
-  if (source instanceof HTMLCanvasElement) canvas = source;
-  else {
-    const bmp = await createImageBitmap(source);
-    canvas = document.createElement("canvas");
-    canvas.width = bmp.width; canvas.height = bmp.height;
-    canvas.getContext("2d")?.drawImage(bmp, 0, 0);
-  }
-  const scale = Math.min(1, 1280 / canvas.width);
-  const out = document.createElement("canvas");
-  out.width = Math.round(canvas.width * scale); out.height = Math.round(canvas.height * scale);
-  out.getContext("2d")?.drawImage(canvas, 0, 0, out.width, out.height);
-  for (const q of [0.72, 0.55, 0.4]) {
-    const dataUrl = out.toDataURL("image/jpeg", q);
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    if (base64.length < 1_900_000) return { dataUrl, mimeType: "image/jpeg", base64 };
-  }
-  return null;
-}
-
-/**
- * R-189 (Pardeep, 6 Oct: "poora page na lekar kuch portion ka hi screen lena ho"): after the
- * capture, the picture opens full-screen; drag a box over the part you want, or keep it all.
- * Coordinates are mapped from the displayed image back to the canvas, so the crop is exact
- * at any zoom. Pointer events, so mouse and touch both work.
- */
-function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone: (c: HTMLCanvasElement) => void; onCancel: () => void }) {
-  const imgRef = React.useRef<HTMLImageElement>(null);
-  const [box, setBox] = React.useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const start = React.useRef<{ x: number; y: number } | null>(null);
-  const url = React.useMemo(() => src.toDataURL("image/png"), [src]);
-
-  const pos = (e: React.PointerEvent) => {
-    const r = imgRef.current!.getBoundingClientRect();
-    return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) };
-  };
-  const down = (e: React.PointerEvent) => { e.preventDefault(); (e.target as Element).setPointerCapture?.(e.pointerId); start.current = pos(e); setBox({ ...start.current, w: 0, h: 0 }); };
-  const move = (e: React.PointerEvent) => {
-    if (!start.current) return;
-    const p = pos(e);
-    setBox({ x: Math.min(p.x, start.current.x), y: Math.min(p.y, start.current.y), w: Math.abs(p.x - start.current.x), h: Math.abs(p.y - start.current.y) });
-  };
-  const up = () => { start.current = null; };
-
-  function applySelection() {
-    const img = imgRef.current;
-    if (!img || !box || box.w < 8 || box.h < 8) return;
-    const k = src.width / img.getBoundingClientRect().width;
-    const out = document.createElement("canvas");
-    out.width = Math.round(box.w * k); out.height = Math.round(box.h * k);
-    out.getContext("2d")?.drawImage(src, box.x * k, box.y * k, box.w * k, box.h * k, 0, 0, out.width, out.height);
-    onDone(out);
-  }
-
-  return (
-    /* R-302: a Radix dialog, so focus is trapped inside while cropping, Esc cancels, and focus
-       returns to AI Help afterwards. data-ai-help on the portalled nodes keeps these clicks out
-       of the test trail, as before. */
-    <DialogPrimitive.Root open onOpenChange={(o) => { if (!o) onCancel(); }}>
-      <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay data-ai-help className="fixed inset-0 z-[60] bg-black/70" />
-      <DialogPrimitive.Content data-ai-help className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-3 p-3 outline-none">
-      <DialogPrimitive.Title className="sr-only">Choose part of the screenshot</DialogPrimitive.Title>
-      <DialogPrimitive.Description className="text-sm text-white text-center">Drag a box over the part you want — or keep the whole screen.</DialogPrimitive.Description>
-      <div className="relative max-w-full max-h-[75vh] touch-none select-none">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img ref={imgRef} src={url} alt="Screenshot to crop" draggable={false}
-          className="max-w-full max-h-[75vh] rounded-md cursor-crosshair"
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} />
-        {box && box.w > 0 && (
-          <div className="absolute border-2 border-amber bg-amber/10 pointer-events-none" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />
-        )}
-      </div>
-      <div className="flex gap-2 flex-wrap justify-center">
-        <Button size="sm" variant="primary" disabled={!box || box.w < 8 || box.h < 8} onClick={applySelection}>Use selection</Button>
-        <Button size="sm" variant="outline" className="bg-paper" onClick={() => onDone(src)}>Whole screen</Button>
-        <Button size="sm" variant="ghost" className="text-white" onClick={onCancel}>Cancel</Button>
-      </div>
-      </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
-  );
-}
-
 /**
  * R-352: "Last tested 7 Oct, 10:52 · 5 ✓ 1 ✗" at the top of AI Help, with the failed tests
  * named — so the person sees what the browser run already covered before asking for more.
@@ -264,7 +190,7 @@ interface ChatItem extends HelpMessage {
 
 const SEV_LABEL: Record<BugDraft["severity"], string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
 const TYPE_LABEL: Record<BugDraft["type"], string> = { bug: "Bug", feature: "Feature", ui_improvement: "UI improvement" };
-const SELF = "[data-ai-help]";
+const SELF = HELP_SELF;
 const CONTROL = "a,button,input,select,textarea,label,summary,[role=button],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=switch]";
 
 function controlLabel(el: Element): string {
@@ -371,7 +297,7 @@ export function AiHelp() {
   const { data: currentUser } = useCurrentUser();
   const submit = useSubmitFeedback();
   const { trail, unseen, clearUnseen } = useTrail(pathname);
-  const { open } = useHelpUi();
+  const { open, tab } = useHelpUi();
   const setOpen = React.useCallback((v: boolean) => setHelpUi({ open: v }), []);
   React.useEffect(() => { setHelpUi({ alert: unseen?.text ?? null }); }, [unseen]);
   /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
@@ -475,7 +401,7 @@ export function AiHelp() {
     setText(askAt.q);
     setAskAt(null);
     window.getSelection()?.removeAllRanges();
-    setOpen(true);
+    setHelpUi({ open: true, tab: "ask" });
     setTimeout(() => inputRef.current?.focus(), 80);
   }
   async function finishCrop(c: HTMLCanvasElement) {
@@ -489,19 +415,10 @@ export function AiHelp() {
   async function captureScreen() {
     if (capturing) return;
     setCapturing(true);
-    try {
-      const { default: html2canvas } = await import("html2canvas");
-      const canvas = await html2canvas(document.body, {
-        useCORS: true, allowTaint: true, scale: 1,
-        ignoreElements: (el) => el instanceof Element && !!el.closest?.(SELF),
-        width: window.innerWidth, height: window.innerHeight, x: window.scrollX, y: window.scrollY,
-      });
-      setCropSrc(canvas);
-    } catch {
-      toast.warning("Could not take a screenshot.", { description: "Paste one with Ctrl+V instead (Win+Shift+S takes one)." });
-    } finally {
-      setCapturing(false);
-    }
+    const canvas = await captureViewport();
+    setCapturing(false);
+    if (canvas) setCropSrc(canvas);
+    else toast.warning("Could not take a screenshot.", { description: "Paste one with Ctrl+V instead (Win+Shift+S takes one)." });
   }
 
   async function onPaste(e: React.ClipboardEvent) {
@@ -552,7 +469,7 @@ export function AiHelp() {
         return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], followUps: Array.isArray(j.followUps) ? j.followUps.filter((f): f is string => typeof f === "string" && f.trim() !== "").slice(0, 3) : [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
-      setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still use 'Report Bug'." }]);
+      setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still send it from the Report a problem tab." }]);
     } finally {
       setBusy(false);
     }
@@ -616,7 +533,7 @@ export function AiHelp() {
       {open && (
         <section
           role="dialog"
-          aria-label="AI Help"
+          aria-label="Help"
           data-size={large ? "large" : "normal"}
           style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px` } as React.CSSProperties}
           className="fixed z-50 inset-0 md:inset-auto md:right-5 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] flex flex-col md:rounded-2xl md:border border-hairline bg-paper shadow-2xl overflow-hidden"
@@ -635,10 +552,10 @@ export function AiHelp() {
           <header className="flex items-center gap-2 px-4 py-3 border-b border-hairline bg-paper-2/60">
             <Icon name="sparkles" size={16} className="text-amber-ink" />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-ink">AI Help</div>
+              <div className="text-sm font-semibold text-ink">Help</div>
               <div className="text-2xs text-ink-3 truncate">On this page: {pathname}</div>
             </div>
-            {items.length > 0 && (
+            {tab === "ask" && items.length > 0 && (
               <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); setActed({}); }}>New chat</button>
             )}
             <button type="button" className="hidden md:inline rounded px-1 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
@@ -651,6 +568,21 @@ export function AiHelp() {
             </button>
           </header>
 
+          {/* R-383: one Help panel, two tabs. Arrow keys move between them (WAI-ARIA tabs). */}
+          <div role="tablist" aria-label="Help" className="flex border-b border-hairline px-2"
+            onKeyDown={(e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); const next = tab === "ask" ? "report" : "ask"; setHelpUi({ tab: next }); document.getElementById(`help-tab-${next}`)?.focus(); } }}>
+            {(["ask", "report"] as const).map((t) => (
+              <button key={t} type="button" role="tab" id={`help-tab-${t}`} aria-selected={tab === t} aria-controls={`help-panel-${t}`} tabIndex={tab === t ? 0 : -1}
+                onClick={() => setHelpUi({ tab: t })}
+                className={`min-h-10 px-3 text-xs font-semibold border-b-2 -mb-px focus:outline-none focus-visible:ring-2 focus-visible:ring-amber ${tab === t ? "border-ink text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}>
+                {t === "ask" ? "Ask" : "Report a problem"}
+                {t === "report" && unseen && <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-rose align-middle" aria-label="error caught" />}
+              </button>
+            ))}
+          </div>
+
+          {tab === "ask" ? (
+          <div role="tabpanel" id="help-panel-ask" aria-labelledby="help-tab-ask" className="flex-1 min-h-0 flex flex-col">
           {unseen && (
             <div className="px-3 py-2 border-b border-hairline bg-red-50 text-red-900 text-xs flex items-start gap-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
@@ -811,6 +743,12 @@ export function AiHelp() {
             />
             <Button type="submit" size="sm" variant="primary" loading={busy === "chat"} disabled={(!text.trim() && !shot) || !!busy}>Send</Button>
           </form>
+          </div>
+          ) : (
+            <div role="tabpanel" id="help-panel-report" aria-labelledby="help-tab-report" className="flex-1 min-h-0 flex flex-col">
+              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={unseen?.text ?? null} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
+            </div>
+          )}
         </section>
       )}
     </div>

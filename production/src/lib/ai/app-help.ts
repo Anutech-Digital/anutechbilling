@@ -74,7 +74,7 @@ const APP_FACTS = [
   "ResellerOS is Anutech Digital's own business app (Indian reseller of Google Workspace, Microsoft 365, Zoho, domains, hosting; also builds custom software).",
   "Main areas: Today/Dashboard; Sales & Pipeline (leads, deals Kanban, enquiries, tasks, quotes); Customers; Billing (invoices with GST, payments, renewals, subscriptions, online orders); Catalog (products, subscription catalogue, packages); Accounting (books, bank, advances, expenses); Employees & Team (staff, attendance, payroll, Academy for apprentices); Marketing Hub (campaigns, ads landing pages); Projects (custom software); Settings and Integrations (Razorpay, Gemini, email).",
   "Money rules: amounts in ₹, GST 18% (CGST+SGST inside the state, IGST outside), quotes become invoices on payment, renewals raise quotes before the renewal date.",
-  "There is a 'Report Bug' button in the top bar (Ctrl+Shift+B). Reports go to Admin → Feedback, where an AI triages them.",
+  "The top bar has one Help button with two tabs: 'Ask' (this AI chat) and 'Report a problem' (a plain report form; Ctrl+Shift+B opens it). Reports go to Admin → Feedback, where an AI triages them.",
 ];
 
 export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null; testHistory?: string | null }): string {
