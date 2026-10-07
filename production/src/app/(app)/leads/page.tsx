@@ -21,6 +21,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { LEAD_VIEWS } from "@/lib/navigation/drilldown";
 import { useTeamTree } from "@/lib/queries/team-tree";
 import { idsForMode, type TeamViewMode } from "@/lib/team/visibility";
@@ -167,6 +168,12 @@ function LeadsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   const [selected, setSelected] = React.useState<Pick<Lead, "id"> | null>(null);
+  /* R-342: the open drawer is in the URL — ?lead=<id>, and its tab in ?ltab= (the sheet
+     owns that one). Opening a quote or task from the drawer and pressing Back used to land
+     on /leads with the drawer closed, because nothing on the history entry said which lead
+     was open. replaceState (useUrlState, R-272), so opening a lead adds no history entry. */
+  const [, setLeadInUrl] = useUrlState("lead");
+  const [, setLeadTabInUrl] = useUrlState("ltab");
 
   /* WHICH lead the drawer is on stays in `selected`; WHAT that lead currently says comes
      from the query. Two different questions, and conflating them is what let the drawer
@@ -224,12 +231,14 @@ function LeadsPageInner() {
   // ── Deep-link: open the drawer for the lead in ?lead=<id> ──
   // Runs once when that lead has been looked up and the URL param is present. S40: looked
   // up by id — the lead may be on page 40 of the list, which the page has not loaded.
-  const deepLinkHandledRef = React.useRef(false);
-  /* R-208: the handler strips ?lead= once done, so a SECOND deep link in the same visit
-     (the next lead saved from Add lead / Quick add) must be handled too — re-arm when the
-     param goes away, else only the first saved lead ever opened. */
+  /* Which ?lead= id has been handled. An id, not a flag (R-342): ?lead= now STAYS in the
+     URL while the drawer is open, and a row click writes it too — so "handled" must mean
+     "this lead", or a row click would re-run the deep link (scroll + flash) on itself.
+     R-208: a SECOND deep link in the same visit (the next lead saved from Add lead / Quick
+     add) is a different id, so it is handled; closing re-arms it for the same id. */
+  const deepLinkHandledRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!focusLeadId) deepLinkHandledRef.current = false;
+    if (!focusLeadId) deepLinkHandledRef.current = null;
   }, [focusLeadId]);
   /* On /deals a deal opens its own page (/deals/<id>, 30 Sep 2026), so an old-style
      /deals?lead=<id> link — the /today rows use it — goes there instead of the drawer. */
@@ -243,16 +252,16 @@ function LeadsPageInner() {
   }, [deepLinkToPage, focusLeadId, router]);
   React.useEffect(() => {
     if (deepLinkToPage) return;
-    if (deepLinkHandledRef.current) return;
-    if (!focusLeadId || !deepLink.isFetched) return;
+    if (!focusLeadId || deepLinkHandledRef.current === focusLeadId) return;
+    if (!deepLink.isFetched) return;
 
     const match = deepLink.data ?? null;
+    deepLinkHandledRef.current = focusLeadId;
     if (!match) {
-      deepLinkHandledRef.current = true;
       toast.error(`Lead ${focusLeadId} not found`);
+      setLeadInUrl("");
       return;
     }
-    deepLinkHandledRef.current = true;
     setSelected(match);
 
     // Scroll the matching card into view so the user can see where it is in the pipeline,
@@ -265,18 +274,28 @@ function LeadsPageInner() {
       setTimeout(() => row.classList.remove(...JUST_OPENED_ROW), 3000);
     }, 100);
 
-    // Clean the param from URL so refresh doesn't re-trigger. Use the CURRENT
-    // path (not a hardcoded /leads) so a ?lead= deep-link opened on /deals
-    // stays on /deals instead of bouncing the user to /leads.
-    router.replace(pathname as never);
-  }, [deepLinkToPage, focusLeadId, deepLink.isFetched, deepLink.data, router, pathname]);
+    /* ?lead= is NOT stripped any more (R-342): it is what makes Back and refresh reopen
+       this drawer. Closing the drawer clears it (closeLead). */
+  }, [deepLinkToPage, focusLeadId, deepLink.isFetched, deepLink.data, setLeadInUrl]);
 
   /* Opening a row / card / queue item: /leads keeps its quick drawer; /deals opens the
      deal's own page, where its whole history lives (30 Sep 2026). */
   const openLead = React.useCallback((l: Pick<Lead, "id">) => {
-    if (isDealsPage) router.push(`/deals/${encodeURIComponent(l.id)}` as never);
-    else setSelected(l);
-  }, [isDealsPage, router]);
+    if (isDealsPage) { router.push(`/deals/${encodeURIComponent(l.id)}` as never); return; }
+    deepLinkHandledRef.current = l.id;
+    setSelected(l);
+    setLeadInUrl(l.id);
+  }, [isDealsPage, router, setLeadInUrl]);
+
+  /* The real close — X, Esc, overlay, archive, delete. Clears the drawer from the URL.
+     Leaving the drawer for ANOTHER page must not call this (R-342): it would wipe ?lead from
+     the history entry Back returns to. The sheet pushes without closing for those. */
+  const closeLead = React.useCallback(() => {
+    deepLinkHandledRef.current = null;
+    setSelected(null);
+    setLeadInUrl("");
+    setLeadTabInUrl("");
+  }, [setLeadInUrl, setLeadTabInUrl]);
 
   // Quick "Send quote" from a list row — carries the lead's context into the
   // quote builder. Returning to /leads lands on the list (no auto-opened drawer).
@@ -801,9 +820,9 @@ function LeadsPageInner() {
           on first open it appears once that one row has arrived. */}
       <LeadDetailSheet
         lead={selectedLive}
-        onClose={() => setSelected(null)}
+        onClose={closeLead}
         onEdit={(l) => {
-          setSelected(null);
+          closeLead();
           setEditingLead(l);
           setAddOpen(true);
         }}

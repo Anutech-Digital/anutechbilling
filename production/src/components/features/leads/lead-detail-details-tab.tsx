@@ -238,8 +238,7 @@ export function LeadDetailsTab({
                       key={q.id}
                       type="button"
                       onClick={() => {
-                        onClose();
-                        router.push(`/quotes/${q.id}` as any);
+                        router.push(`/quotes/${q.id}` as never);
                       }}
                       className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-paper-2 transition-colors"
                     >
