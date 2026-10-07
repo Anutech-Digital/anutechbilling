@@ -80,6 +80,8 @@ function props(over: Partial<LeadsToolbarProps> = {}): LeadsToolbarProps {
     setOwnerFilter: noop,
     sourceFilter: [],
     setSourceFilter: noop,
+    leadSort: "newest" as const,
+    setLeadSort: noop,
     isSales: false,
     kpiOpen: false,
     setKpiOpen: noop,
@@ -164,5 +166,30 @@ describe("R-392: Filter → Source and Assigned to", () => {
     openFilter();
     expect(screen.getByText("Assigned to")).toBeTruthy();
     expect(screen.queryByText("Owner")).toBeNull();
+  });
+});
+
+/* R-420 (Pardeep, 7 Oct): a Sort menu for the list and the Kanban. */
+describe("R-420: Sort", () => {
+  it("offers every order with short labels and ticks the current one", () => {
+    render(<LeadsToolbar {...props({ leadSort: "value" })} />);
+    const items = screen.getAllByRole("menuitemcheckbox")
+      .map((el) => el.textContent ?? "")
+      .filter((t) => ["Newest first", "Oldest first", "Value: high to low", "Next follow-up", "Name A–Z", "Stage", "Waiting for reply"].includes(t));
+    expect(items).toEqual(["Newest first", "Oldest first", "Value: high to low", "Next follow-up", "Name A–Z", "Stage", "Waiting for reply"]);
+    expect(screen.getByRole("menuitemcheckbox", { name: "Value: high to low" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Newest first" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("picking an order hands it to the page", () => {
+    const setLeadSort = vi.fn();
+    render(<LeadsToolbar {...props({ setLeadSort })} />);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Next follow-up" }));
+    expect(setLeadSort).toHaveBeenCalledWith("followup");
+  });
+
+  it("the button names the order for screen readers (icon-only on a phone)", () => {
+    render(<LeadsToolbar {...props({ leadSort: "name" })} />);
+    expect(screen.getByRole("button", { name: "Sort: Name A–Z" })).toBeTruthy();
   });
 });

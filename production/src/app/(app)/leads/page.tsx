@@ -51,12 +51,15 @@ import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
 import { DEAL_STAGES, filterStagesFor } from "@/lib/leads/stage-meta";
 import { boardServerTotals, everythingCountForPage, folderShownOnPage, scopeFiltersForPage, stageShownOnPage } from "@/lib/leads/page-scope";
 import {
-  boardCut, folderForView, inWorkspace, listCut, searchLeads, type SortCol,
+  boardCut, folderForView, inWorkspace, listCut, nextSort, searchLeads, type SortCol,
 } from "@/lib/leads/list-selectors";
 import { toastError } from "@/lib/errors/toast-error";
 import { LeadListView } from "@/components/features/leads/lead-list-view";
 import { LeadDetailSheet } from "@/components/features/leads/lead-detail-sheet";
 import { LeadsToolbar } from "@/components/features/leads/leads-toolbar";
+import {
+  DEFAULT_LEAD_SORT, LEAD_SORT_PARAM, LEAD_SORTS, listHeaderSortFor, serverSortFor, sortBoardLeads, type LeadSort,
+} from "@/lib/leads/lead-sort";
 import { LeadsKpiDrawer } from "@/components/features/leads/leads-kpi-drawer";
 import { LeadsHotCard } from "@/components/features/leads/leads-hot-card";
 import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board";
@@ -241,8 +244,15 @@ function LeadsPageInner() {
      upar), jiska nateeja ye tha ki teen din se ruki hui lead teesre panne par chali jati
      thi. Research isi ko galat kehti hai: default order me wo cheez pehle honi chahiye
      jispar kaam BAAKI hai. */
-  const [sortBy, setSortBy] = React.useState<SortCol>("wait");
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+  /* R-420 (Pardeep, 7 Oct): the Sort menu — Newest first (default), Oldest, Value, Next
+     follow-up, Name, Stage, Waiting for reply. In the URL (?sort=), so a reload, Back and a
+     shared link keep it; the list orders and pages by it on the server, the Kanban sorts
+     each column by it (lib/leads/lead-sort.ts). A column-header click re-sorts the loaded
+     rows on top (headerSort); picking from the menu again hands the order back to it. */
+  const [leadSort, setLeadSort] = useUrlChoice<LeadSort>(LEAD_SORT_PARAM, LEAD_SORTS, DEFAULT_LEAD_SORT);
+  const [headerSort, setHeaderSort] = React.useState<{ sortBy: SortCol; sortDir: "asc" | "desc" } | null>(null);
+  React.useEffect(() => { setHeaderSort(null); }, [leadSort]);
+  const { sortBy, sortDir } = headerSort ?? listHeaderSortFor(leadSort);
   const [kpiOpen, setKpiOpen] = React.useState(false);
 
   // ── Deep-link: open the drawer for the lead in ?lead=<id> ──
@@ -423,10 +433,10 @@ function LeadsPageInner() {
     sources: sourceFilter,
     smart_view: smartView,
     folder: folderForView(folder, smartView),
-    /* The default "wait" order (lib/leads/waiting.ts) is worked out by the server, so the
-       lead that has waited longest is on page 1 even if it arrived months ago. */
-    sort: sortBy === "wait" ? "wait" : "created",
-  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, sourceFilter, smartView, folder, sortBy, isDealsPage]);
+    /* R-420: every Sort-menu order is worked out by the server (migration
+       20261007300000), so page 2 continues the same order — never just the loaded page. */
+    sort: serverSortFor(leadSort),
+  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, sourceFilter, smartView, folder, leadSort, isDealsPage]);
 
   const countsQ = useLeadCounts(listFilters);
   const counts  = countsQ.data;
@@ -437,7 +447,7 @@ function LeadsPageInner() {
      only while the board is on screen. Its chips are server counts like the list's. */
   /* Only this page's columns — /deals has no New / Contacted (lib/leads/page-scope.ts). */
   const boardStages = React.useMemo(() => BOARD_STAGES.filter((s) => stageShownOnPage(s, isDealsPage)), [isDealsPage]);
-  const boardQ  = useLeadsBoard(viewKnown && !isList, { ownerIds: teamIds, junk: smartView === "junk", stages: boardStages });
+  const boardQ  = useLeadsBoard(viewKnown && !isList, { ownerIds: teamIds, junk: smartView === "junk", stages: boardStages, sort: leadSort });
   /* The call queue and the loss card read their own small slices. */
   const dueQ    = useDueLeads(teamIds, search.trim() === "");
   const lostQ   = useLostLeads(teamIds, isDealsPage);
@@ -480,8 +490,9 @@ function LeadsPageInner() {
        Won is also the board's DROP TARGET. So the board's base is every non-junk, non-lost
        lead; picking a folder hands control back to the list cut (list-selectors#boardCut). */
     const cutFolder = folderForView(folder, smartView);
-    return boardCut(searched, listCut(searched, cutFolder, smartView, folderToday), cutFolder, smartView);
-  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, folder, folderToday]);
+    /* R-420: the board keeps this order inside each column. */
+    return sortBoardLeads(boardCut(searched, listCut(searched, cutFolder, smartView, folderToday), cutFolder, smartView), leadSort);
+  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, folder, folderToday, leadSort]);
 
   /** The rows the current view is showing — what `filtered` was. */
   const shownRows = isList ? listRows : boardLeads;
@@ -709,6 +720,8 @@ function LeadsPageInner() {
             setOwnerFilter={setOwnerFilter}
             sourceFilter={sourceFilter}
             setSourceFilter={setSourceFilter}
+            leadSort={leadSort}
+            setLeadSort={setLeadSort}
             isSales={isSales}
             kpiOpen={kpiOpen}
             setKpiOpen={setKpiOpen}
@@ -765,10 +778,9 @@ function LeadsPageInner() {
         <div className="flex-1 min-h-[480px] flex flex-col">
         <LeadListView
           leads={listRows}
-          /* S40: the list is PAGED. The server already ordered it for "wait" and "created"
-             (newest first); any other column sorts the rows loaded so far, and the footer
-             says so. */
-          serverSorted={sortDir === "desc" && (sortBy === "wait" || sortBy === "created")}
+          /* S40: the list is PAGED. The server orders it by the Sort menu (R-420); a
+             column-header click sorts the rows loaded so far, and the footer says so. */
+          serverSorted={headerSort === null}
           paging={{
             total: counts?.list.matching ?? listRows.length,
             hasMore: Boolean(pagesQ.hasNextPage),
@@ -777,10 +789,7 @@ function LeadsPageInner() {
           }}
           sortBy={sortBy}
           sortDir={sortDir}
-          onSort={(col) => {
-            if (sortBy === col) setSortDir(sortDir === "asc" ? "desc" : "asc");
-            else { setSortBy(col); setSortDir(col === "company" ? "asc" : "desc"); }
-          }}
+          onSort={(col) => setHeaderSort(nextSort({ sortBy, sortDir }, col))}
           // Both Leads + Deals rows open the rich drawer now (consistency): a
           // raw lead's first move is to CONTACT (call/WhatsApp/email/follow-up/
           // send-quote) — all live in the drawer. Qualifying is still one click

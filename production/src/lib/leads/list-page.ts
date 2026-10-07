@@ -49,7 +49,9 @@ export type LeadListRow = Pick<Lead, (typeof LEAD_LIST_COLUMNS)[number]> & { is_
  */
 export type LeadListCursor =
   | { created_at: string; id: string }
-  | { wait_key: string; id: string };
+  | { wait_key: string; id: string }
+  /* R-420 (migration 20261007300000): oldest / value / followup / name / stage. */
+  | { sort_num: string; sort_txt: string; id: string };
 
 export interface LeadListPage {
   rows: LeadListRow[];
@@ -76,8 +78,9 @@ export interface LeadListFilters {
   smart_view?: SmartView;
   /** The folder cut — applied only together with smart_view. */
   folder?: SalesFolder | "all";
-  /** 'created' (newest first) or 'wait' (lib/leads/waiting.ts#waitPriority). */
-  sort?: "created" | "wait";
+  /** 'created' (newest first), 'wait' (lib/leads/waiting.ts#waitPriority), or an R-420 order
+      (lib/leads/lead-sort.ts: oldest, value, followup, name, stage). */
+  sort?: "created" | "wait" | "oldest" | "value" | "followup" | "name" | "stage";
   /** Only the OTHER leads that duplicate this one (the merge dialog's cluster). */
   dup_of?: string;
   /** Leads that a lead being TYPED would duplicate (the Add-lead form's warning). */

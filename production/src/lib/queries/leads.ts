@@ -6,6 +6,7 @@
  */
 "use client";
 
+import { boardOrderFor, DEFAULT_LEAD_SORT, type LeadSort } from "@/lib/leads/lead-sort";
 import * as React from "react";
 import {
   keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey,
@@ -197,13 +198,16 @@ export interface BoardData {
    Contacted, so it does not read them at all. */
 export function useLeadsBoard(
   enabled: boolean,
-  opts: { ownerIds?: readonly string[] | null; junk?: boolean; stages?: readonly BoardStage[] } = {},
+  opts: { ownerIds?: readonly string[] | null; junk?: boolean; stages?: readonly BoardStage[]; sort?: LeadSort } = {},
 ) {
   const ownerIds = opts.ownerIds ?? null;
   const junk = opts.junk ?? false;
   const stages = opts.stages ?? BOARD_STAGES;
+  /* R-420: a column over BOARD_COLUMN_CAP loads the top of the CHOSEN order, not just the
+     newest. Keyed by the order terms, so sorts that read the same cards share one cache. */
+  const order = boardOrderFor(opts.sort ?? DEFAULT_LEAD_SORT);
   return useQuery({
-    queryKey: ["leads", "board", ownerIds, junk, stages],
+    queryKey: ["leads", "board", ownerIds, junk, stages, order],
     enabled,
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<BoardData> => {
@@ -214,9 +218,8 @@ export function useLeadsBoard(
           .eq("stage", stage)
           .eq("is_junk", junk);
         if (ownerIds) q = q.or(ownerOr(ownerIds));
-        return q
-          .order("created_at", { ascending: false }).order("id", { ascending: false })
-          .limit(BOARD_COLUMN_CAP);
+        for (const t of order) q = q.order(t.column, { ascending: t.ascending, nullsFirst: t.nullsFirst });
+        return q.limit(BOARD_COLUMN_CAP);
       }));
       const rows: LeadListRow[] = [];
       const totals = {} as BoardData["totals"];
