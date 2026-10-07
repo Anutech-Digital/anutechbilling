@@ -12,6 +12,8 @@ const st = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase/client", () => ({ isSupabaseConfigured: () => true }));
+/* R-161 (staging branch) also imports the Auth.js session; stubbed so this file runs there too. */
+vi.mock("@/server/auth/middleware-session", () => ({ authjsMiddlewareSession: async () => { throw new Error("not used"); } }));
 vi.mock("@/lib/supabase/middleware", () => ({
   updateSession: async (request: NextRequest) => ({
     response: NextResponse.next({ request }),

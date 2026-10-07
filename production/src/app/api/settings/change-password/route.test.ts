@@ -29,6 +29,13 @@ vi.mock("@supabase/supabase-js", () => ({
   }),
 }));
 
+/* R-161 (staging branch) builds the throwaway client through lib/supabase/bare instead. */
+vi.mock("@/lib/supabase/bare", () => ({
+  createBareClient: () => ({
+    auth: { signInWithPassword: async () => ({ error: st.pwOk ? null : { message: "bad" } }) },
+  }),
+}));
+
 import { POST } from "./route";
 
 const call = (body: unknown) =>
