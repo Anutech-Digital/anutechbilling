@@ -68,6 +68,8 @@ import type { Lead, LeadPriority } from "@/lib/supabase/database.types";
 import { formatIstDate, istToday } from "@/lib/dates/ist";
 import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
 import { STAGE_META } from "@/lib/leads/stage-meta";
+import { leadStatePatch, stateFromLeadGstin, stateLabel } from "@/lib/leads/lead-state";
+import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 
 /* R-249: the same funnel order and labels as the board (lib/leads/stage-meta). */
 const STAGES: { value: Lead["stage"]; label: string }[] = STAGE_META.map((s) => ({ value: s.id, label: s.label }));
@@ -130,7 +132,7 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
  */
 const STEP_LABELS = ["Contact", "Enquiry", "Review"] as const;
 const STEP_FIELDS = [
-  ["company", "contact_name", "contact_email", "contact_phone", "gstin"],
+  ["company", "contact_name", "contact_email", "contact_phone", "gstin", "state_code"],
   ["enquiry_type", "plan", "seats", "value", "requirement", "project_timeline", "stage", "source", "priority",
    "subscription_type", "billing_cycle", "current_provider", "follow_up_date", "expected_close_date", "owner_id", "notes"],
 ] as const;
@@ -229,6 +231,8 @@ const schema = z.object({
   contact_email: z.string().email("Invalid email").optional().or(z.literal("")),
   contact_phone: z.string().optional(),
   gstin:         z.string().optional().or(z.literal("")),
+  /* R-376 (a): GST state code ("06"). Optional — a valid GSTIN fills it by itself. */
+  state_code:    z.string().optional().or(z.literal("")),
   enquiry_type:  z.enum(["subscription", "project"]),
   requirement:   z.string().optional().or(z.literal("")),
   project_timeline: z.string().optional().or(z.literal("")),
@@ -323,6 +327,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
     setValue,
     watch,
     getValues,
+    getFieldState,
     trigger,
     setError,
     formState: { errors, isSubmitting, isDirty },
@@ -335,6 +340,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           contact_email:  editingLead.contact_email ?? "",
           contact_phone:  editingLead.contact_phone ?? "",
           gstin:          editingLead.gstin         ?? "",
+          state_code:     editingLead.state_code    ?? "",
           enquiry_type:   editingLead.enquiry_type  ?? "subscription",
           requirement:    editingLead.requirement   ?? "",
           project_timeline: editingLead.project_timeline ?? "",
@@ -414,6 +420,17 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
     const t = setTimeout(() => setDupKeys(dupCheckKeys({ company: wCompany, phone: wPhone, email: wEmail, gstin: wGstin })), 300);
     return () => clearTimeout(t);
   }, [wCompany, wPhone, wEmail, wGstin]);
+  /* R-376 (a): a valid GSTIN proves the state (its first two digits) — fill the State select
+     from it. Only when the GSTIN was typed/picked in this sitting, or no state is set yet: an
+     edit that merely opens a lead must not silently rewrite the state saved on it. */
+  const gstinStateCode = stateFromLeadGstin(wGstin);
+  React.useEffect(() => {
+    if (!gstinStateCode) return;
+    const current = getValues("state_code") ?? "";
+    if (current === gstinStateCode) return;
+    if (current && !getFieldState("gstin").isDirty) return;
+    setValue("state_code", gstinStateCode, { shouldDirty: true });
+  }, [gstinStateCode, getValues, getFieldState, setValue]);
   const { data: dupCandidates } = useLeadDuplicateCheck(dupKeys, editingLead?.id, open);
   const dupMatch = React.useMemo(() => pickDuplicate(dupCandidates, forCustomer), [dupCandidates, forCustomer]);
 
@@ -571,6 +588,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         contact_email:  editingLead.contact_email ?? "",
         contact_phone:  editingLead.contact_phone ?? "",
         gstin:          editingLead.gstin         ?? "",
+        state_code:     editingLead.state_code    ?? "",
         enquiry_type:   editingLead.enquiry_type  ?? "subscription",
         requirement:    editingLead.requirement   ?? "",
         project_timeline: editingLead.project_timeline ?? "",
@@ -666,6 +684,9 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         contact_email:  data.contact_email || null,
         contact_phone:  data.contact_phone || null,
         gstin:          data.gstin?.trim().toUpperCase() || null,
+        /* R-376 (a): the place of supply the quote builder prefills from. An edit writes it
+           only when the select moved (lib/leads/lead-state.ts). */
+        ...leadStatePatch(data.state_code, isEditing ? editingLead : null),
         enquiry_type:   data.enquiry_type,
         requirement:    requirementVal,
         project_timeline: project ? (data.project_timeline?.trim() || null) : null,
@@ -977,6 +998,27 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 Optional. Helps auto-fill legal name + address on conversion.
               </p>
             )}
+          </FormField>
+
+          {/* R-376 (a): State = place of supply. GST is CGST + SGST in the seller's own
+              state and IGST outside it, so the quote builder prefills from this. Same list
+              and codes as the quote builder's Place of supply. */}
+          <FormField label="State" htmlFor="state_code">
+            <select
+              id="state_code"
+              {...register("state_code")}
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+            >
+              <option value="">Select state (for GST)</option>
+              {GST_STATE_OPTIONS.map((s) => (
+                <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
+              ))}
+            </select>
+            <p className="text-xs text-ink-3">
+              {gstinStateCode && watch("state_code") === gstinStateCode
+                ? "Filled from the GSTIN."
+                : "Optional. Decides IGST or CGST + SGST on the quote."}
+            </p>
           </FormField>
 
           </Step>
@@ -1393,6 +1435,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 <Review label="Phone"       value={watch("contact_phone")} />
                 <Review label="GSTIN"       value={watch("gstin")} mono
                         note={gstinState(watch("gstin") ?? "")?.name} />
+                <Review label="State"       value={stateLabel(watch("state_code"))} />
                 <Review label="Enquiry"     value={ENQUIRY_TYPES.find((t) => t.value === enquiry)?.label} />
                 {isProject ? (
                   <>

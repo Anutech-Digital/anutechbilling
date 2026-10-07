@@ -15,7 +15,8 @@ import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteUpiAmount } from "./upi-amount";
 import { acceptedPayNow } from "./accepted-pay";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
@@ -62,7 +63,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id")
+    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -201,17 +202,31 @@ export default async function QuoteAcceptPage(props: Props) {
 
   /* R-376(b): the tax heads exactly as the quote preview / PDF print them — seller vs
      buyer state through the shared place-of-supply helper (same call as the send route).
-     Only state codes and GSTINs are read; only the resulting boolean reaches the page. */
-  const { data: buyer } = quote.customer_id
-    ? await supabase
-        .from("customers")
-        .select("gstin, state_code")
-        .eq("id", quote.customer_id)
-        .maybeSingle()
-    : { data: null };
-  const interState = isInterStateSupply(buyer?.state_code, tenant?.state_code, {
-    customerGstin: buyer?.gstin, sellerGstin: tenant?.gstin,
+     Only state codes and GSTINs are read; only the resulting boolean reaches the page.
+     R-376 (f): a quote raised on a LEAD (no customer yet) takes the lead's state — before,
+     it fell to the intra-state default and showed CGST + SGST to an out-of-state buyer.
+     R-376 (d): the contact person's NAME is read too, for the signer box — nothing else. */
+  const [{ data: buyer }, { data: lead }] = await Promise.all([
+    quote.customer_id
+      ? supabase
+          .from("customers")
+          .select("gstin, state_code, country, contact_name, contact_first_name, contact_last_name")
+          .eq("id", quote.customer_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    !quote.customer_id && quote.lead_id
+      ? supabase
+          .from("leads")
+          .select("gstin, state_code, country, contact_name")
+          .eq("id", quote.lead_id)
+          .eq("tenant_id", quote.tenant_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const { interState } = quotePlaceOfSupply({
+    customer: buyer, lead, quote, seller: { state_code: tenant?.state_code, gstin: tenant?.gstin },
   });
+  const signerDefault = signerNameDefault({ customer: buyer, lead, company: quote.customer_name });
 
   /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
      fed the raw lines (it needs item_id to spot a catalogue support row). */
@@ -231,6 +246,7 @@ export default async function QuoteAcceptPage(props: Props) {
       upiQr={upi}
       acceptedPay={acceptedPay}
       interState={interState}
+      signerDefault={signerDefault}
       supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />
   );

@@ -52,7 +52,7 @@ import { useUpdateLead, useLeads } from "@/lib/queries/leads";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply } from "@/lib/gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -226,6 +226,10 @@ export function QuoteBuilder() {
   const [leadStateCode, setLeadStateCode] = React.useState(leadStateInit);
   const [leadGstin,     setLeadGstin]     = React.useState(leadGstinInit);
   React.useEffect(() => { if (leadStateInit) setLeadStateCode(leadStateInit); }, [leadStateInit]);
+  /* R-376 (a): a lead saved with only a GSTIN still told us its state — prefill Place of
+     supply from it. Kept apart from leadStateInit so the save writes it back to the lead. */
+  const leadGstinState = !leadStateInit ? (stateCodeFromGstin(leadGstinInit) ?? "") : "";
+  React.useEffect(() => { if (leadGstinState) setLeadStateCode((s) => s || leadGstinState); }, [leadGstinState]);
   React.useEffect(() => { if (leadGstinInit) setLeadGstin(leadGstinInit); }, [leadGstinInit]);
 
   // Sync local state when the lead loads asynchronously (initial mount the
@@ -733,6 +737,8 @@ export function QuoteBuilder() {
   // For a prospect/lead quote (no customer record yet) export can't be inferred
   // here — mark the customer as export once created. (Phase 1c: lead country.)
   const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
+  /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
+  const placeOfSupply     = placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
   // USD (books still record in ₹) so the operator doesn't have to remember to
@@ -2679,6 +2685,7 @@ export function QuoteBuilder() {
         tax={tax}
         total={total}
         interState={interState}
+        placeOfSupply={placeOfSupply}
         isExport={isExport}
         currency={currency}
         exchangeRate={exchangeRate}

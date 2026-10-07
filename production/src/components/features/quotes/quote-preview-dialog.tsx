@@ -57,6 +57,9 @@ interface Props {
   tax:           number;
   total:         number;
   interState:    boolean;
+  /** R-376 (f): "Haryana (06) · IGST" — the buyer's state by name and code
+   *  (lib/quotes/quote-place-of-supply). Omitted → the old "Inter-state (IGST applies)". */
+  placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
@@ -92,6 +95,7 @@ export function QuotePreviewDialog({
   tax,
   total,
   interState,
+  placeOfSupply,
   isExport = false,
   currency,
   exchangeRate,
@@ -222,7 +226,7 @@ export function QuotePreviewDialog({
               <p className="text-sm">
                 {isExport
                   ? "Export · zero-rated under LUT (no GST)"
-                  : interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)"}
+                  : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
               </p>
               {lineItems.length > 0 && firstCommitment && (
                 <>

@@ -28,7 +28,8 @@ import { useProjectSales, useDeleteProjectSale, type ProjectSaleWithTotals } fro
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { useLead } from "@/lib/queries/leads";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { quotesEmptyCopy } from "@/lib/quotes/empty-tab";
@@ -1276,7 +1277,15 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
   const validity = quote.expires_date
     ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
     : 30;
-  const interState = isInterStateSupply(customer?.state_code, currentUser?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: currentUser?.tenantGstin });
+  /* R-376 (f): customer → lead → typed prospect; names the state ("Haryana (06) · IGST"). */
+  const { data: lead } = useLead(!quote.customer_id ? (quote.lead_id ?? undefined) : undefined);
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    lead: lead ?? null,
+    quote,
+    seller: { state_code: currentUser?.tenantStateCode, gstin: currentUser?.tenantGstin },
+  });
+  const interState = pos.interState;
 
   return (
     <QuotePreviewDialog
@@ -1301,6 +1310,8 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       tax={tax}
       total={total}
       interState={interState}
+      placeOfSupply={pos.label}
+      isExport={pos.isExport}
       validityDays={validity}
       notes={quote.notes ?? ""}
       isProspect={!!quote.lead_id}

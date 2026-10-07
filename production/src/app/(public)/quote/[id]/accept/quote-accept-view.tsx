@@ -81,11 +81,14 @@ interface Props {
   interState?: boolean;
   /** R-376(b): "Support: Free — Included" from lib/pdf/quote-support-line. */
   supportLine?: { text: string; detail: string } | null;
+  /** R-376(d): the contact PERSON to pre-fill "Your full name" (./signer-default.ts) —
+   *  falls back to the company name only when no person is known. */
+  signerDefault?: string | null;
 }
 
 export function QuoteAcceptView({
   quote, lineItems, token, payOnline = false, tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress,
-  upiQr = null, acceptedPay = null, interState = false, supportLine = null,
+  upiQr = null, acceptedPay = null, interState = false, supportLine = null, signerDefault = null,
 }: Props) {
   const [accepting, setAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(quote.status === "accepted");
@@ -157,7 +160,7 @@ export function QuoteAcceptView({
     lines: Array<{ lineId: string; qty: number; included: boolean; rate: number; amount: number; bandLabel: string | null; rePriced: boolean }>;
   } | null>(null);
   const [pricing, setPricing] = React.useState(false);
-  const [signerName, setSignerName] = React.useState(quote.customer_name ?? "");
+  const [signerName, setSignerName] = React.useState(signerDefault ?? quote.customer_name ?? "");
   /* Set when Confirm is pressed with no name, so the press says why (29 Sep 2026: a
      hover title was the only explanation, and a phone has no hover). */
   const [nameNudge, setNameNudge] = React.useState(false);

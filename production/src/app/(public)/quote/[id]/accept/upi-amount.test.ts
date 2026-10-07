@@ -77,8 +77,10 @@ describe("accept page copy + wiring (R-234)", () => {
     expect(view).not.toMatch(/bhugtan/);
   });
 
-  it("signer name starts from the customer name", () => {
-    expect(view).toMatch(/useState\(quote\.customer_name \?\? ""\)/);
+  /* R-376 (d): the contact PERSON first (./signer-default.ts); the company name only as
+     the fallback — it used to be the company, so people signed as "Acme Pvt Ltd". */
+  it("signer name starts from the contact person, falling back to the customer name", () => {
+    expect(view).toMatch(/useState\(signerDefault \?\? quote\.customer_name \?\? ""\)/);
   });
 
   it("request changes without an email falls back to WhatsApp / phone", () => {

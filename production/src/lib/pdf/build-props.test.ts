@@ -192,6 +192,21 @@ describe("place of supply names the state (R-175)", () => {
   it("a quote names the buyer's state too", () => {
     expect(buildQuotePdfProps({ quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Haryana (06) · IGST");
   });
+
+  /* R-376 (f): a quote raised on a LEAD has no customer yet. The PDF used to read the
+     customer only, find nothing and print "Intra-state (CGST + SGST)" for a Haryana lead. */
+  it("a lead quote (no customer) takes the lead's state and the IGST head", () => {
+    const p = buildQuotePdfProps({ quote, customer: null, lead: { state_code: "06" }, tenant });
+    expect(p.placeOfSupply).toBe("Haryana (06) · IGST");
+    expect(p.interState).toBe(true);
+  });
+
+  it("a typed-prospect quote in the seller's state: 'Maharashtra (27) · CGST + SGST'", () => {
+    const q = { ...quote, prospect_state_code: "27" } as unknown as Quote;
+    const p = buildQuotePdfProps({ quote: q, customer: null, tenant });
+    expect(p.placeOfSupply).toBe("Maharashtra (27) · CGST + SGST");
+    expect(p.interState).toBe(false);
+  });
 });
 
 describe("quote Bill-to carries the state and GSTIN (R-175)", () => {

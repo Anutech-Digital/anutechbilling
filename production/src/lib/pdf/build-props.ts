@@ -12,6 +12,7 @@
  * interState (GST head) uses the shared place-of-supply helper.
  */
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "../gst/place-of-supply";
+import { quotePlaceOfSupply } from "../quotes/quote-place-of-supply";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
@@ -213,9 +214,18 @@ export function buildQuotePdfProps(args: {
    * running on the inbound-mail webhook. Omitted → the document draws its monogram.
    */
   logoDataUri?: string | null;
+  /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
+  lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
 }): QuotePDFProps {
   const { quote, customer, tenant } = args;
   const a = quoteAmounts(quote);
+  /* R-376 (f): customer → lead → typed prospect; one helper for preview, PDF and accept page. */
+  const pos = quotePlaceOfSupply({
+    customer,
+    lead: args.lead ?? null,
+    quote: quote as { prospect_state_code?: string | null; prospect_country?: string | null },
+    seller: tenant,
+  });
   const validityDays =
     quote.created_date && quote.expires_date
       ? Math.max(0, Math.round((new Date(quote.expires_date).getTime() - new Date(quote.created_date).getTime()) / 86_400_000))
@@ -250,20 +260,10 @@ export function buildQuotePdfProps(args: {
     total:         a.total,
     // A quote is not yet a tax document, so unlike an invoice there is nothing
     // frozen to respect — always compute the best answer available today.
-    interState:    isInterStateSupply(
-      customer?.state_code, tenant.state_code,
-      { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-    ),
-    isExport:      isExportSupply(customer?.country),
-    /* R-175: name the buyer's state, as the invoice does — today's customer, else the
-       prospect state the quote was priced for. */
-    placeOfSupply: placeOfSupplyLabel({
-      posCode: customer?.state_code ?? (quote as { prospect_state_code?: string | null }).prospect_state_code ?? null,
-      interState: isInterStateSupply(
-        customer?.state_code, tenant.state_code,
-        { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-      ),
-    }),
+    interState:    pos.interState,
+    isExport:      pos.isExport,
+    /* R-175 / R-376 (f): name the buyer's state, as the invoice does — "Haryana (06) · IGST". */
+    placeOfSupply: pos.label,
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
     billingCycle:  quote.billing_cycle,
