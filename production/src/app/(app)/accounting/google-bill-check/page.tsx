@@ -17,12 +17,13 @@ import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
 import { downloadCSV } from "@/lib/csv";
 import { toast } from "sonner";
+import { rupee } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { AddFromBillDialog, createFromBill } from "@/components/features/reconcile/add-from-bill";
 import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, type SubLite, type CustomerLite, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
 
-const inr = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const inr = (n: number) => rupee(n, { decimals: 2 });
 const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "success" | "info" }> = {
   no_customer: { label: "No customer", kind: "danger" },
   no_subscription: { label: "No subscription", kind: "danger" },

@@ -671,7 +671,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                             onChange={(e) => setCapPfCeiling(e.target.checked)}
                             className="rounded border-hairline accent-amber"
                           />
-                          <span>Cap PF at the wage ceiling (₹{Math.round(pfWageCeiling() * PF_EMPLOYER_RATE).toLocaleString("en-IN")}/mo today)</span>
+                          <span>Cap PF at the wage ceiling ({rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo today)</span>
                         </label>
                       </div>
                     </div>
@@ -1732,11 +1732,11 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   <span className="font-mono text-ink font-semibold">{rupee(esiN + esiEmployerN)}</span>
                 </div>
                 {esiSticky && esiWage > ESI_WAGE_CEILING && (
-                  <div className="text-amber-ink">Wage ₹{ESI_WAGE_CEILING.toLocaleString("en-IN")} se upar hai, par is contribution period mein pehle se cover the — period khatam hone tak ESI lagega.</div>
+                  <div className="text-amber-ink">Wage {rupee(ESI_WAGE_CEILING)} se upar hai, par is contribution period mein pehle se cover the — period khatam hone tak ESI lagega.</div>
                 )}
               </div>
             ) : (
-              <p className="text-xs text-ink-3">ESI not applicable — gross above the ₹{ESI_WAGE_CEILING.toLocaleString("en-IN")} ceiling (or turned off for this employee).{employee.esi_applicable && esiWage > ESI_WAGE_CEILING ? " Agar is contribution period (Apr–Sep / Oct–Mar) ke pehle mahine mein cover the to ESI chalta rehta — is employee ki us period ki koi payslip ESI ke saath nahi mili." : ""}</p>
+              <p className="text-xs text-ink-3">ESI not applicable — gross above the {rupee(ESI_WAGE_CEILING)} ceiling (or turned off for this employee).{employee.esi_applicable && esiWage > ESI_WAGE_CEILING ? " Agar is contribution period (Apr–Sep / Oct–Mar) ke pehle mahine mein cover the to ESI chalta rehta — is employee ki us period ki koi payslip ESI ke saath nahi mili." : ""}</p>
             )}
             {employee.pf_applicable && (
               <div className="rounded bg-paper-2/50 px-2.5 py-2 text-xs text-ink-2 space-y-0.5">
@@ -1748,7 +1748,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   <span>Total PF challan this month (employee + employer)</span>
                   <span className="font-mono text-ink font-semibold">{rupee(n(pf) + pfEmployerN)}</span>
                 </div>
-                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage ₹{pfCalc.base.toLocaleString("en-IN")} (ceiling ₹{pfCalc.ceiling.toLocaleString("en-IN")} for {period}). Admin/EDLI ~1% not included.</div>
+                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage {rupee(pfCalc.base)} (ceiling {rupee(pfCalc.ceiling)} for {period}). Admin/EDLI ~1% not included.</div>
               </div>
             )}
           </div>

@@ -119,11 +119,11 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
   const chaseMessage = (() => {
     switch (tds.status) {
       case "pending_cert":
-        return `Hi ${tds.customer_name}, you deducted ₹${tds.tds_amount.toLocaleString("en-IN")} TDS (${tds.section} @ ${Number(tds.rate_pct).toFixed(2)}%) on our invoice. ${tds.fiscal_year} is closing — kindly share Form 16A certificate so I can claim it in my ITR. Thanks — Pardeep`;
+        return `Hi ${tds.customer_name}, you deducted ${rupee(tds.tds_amount)} TDS (${tds.section} @ ${Number(tds.rate_pct).toFixed(2)}%) on our invoice. ${tds.fiscal_year} is closing — kindly share Form 16A certificate so I can claim it in my ITR. Thanks — Pardeep`;
       case "disputed":
-        return `Hi ${tds.customer_name}, the ₹${tds.tds_amount.toLocaleString("en-IN")} TDS you deducted doesn't appear in my Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with govt? BSR code / Challan number share kar do please — bohut zaruri hai. — Pardeep`;
+        return `Hi ${tds.customer_name}, the ${rupee(tds.tds_amount)} TDS you deducted doesn't appear in my Form 26AS for ${tds.fiscal_year}. Could you confirm it was deposited with govt? BSR code / Challan number share kar do please — bohut zaruri hai. — Pardeep`;
       default:
-        return `Hi ${tds.customer_name}, regarding TDS ₹${tds.tds_amount.toLocaleString("en-IN")} on ${tds.section}/${tds.fiscal_year} — quick check-in. — Pardeep`;
+        return `Hi ${tds.customer_name}, regarding TDS ${rupee(tds.tds_amount)} on ${tds.section}/${tds.fiscal_year} — quick check-in. — Pardeep`;
     }
   })();
 
@@ -259,7 +259,7 @@ export function TdsDetailDialog({ open, onOpenChange, tds }: Props) {
               type="button"
               variant="default"
               onClick={async () => {
-                if (await confirm({ title: `Write off ₹${tds.tds_amount.toLocaleString("en-IN")} as loss?`, body: "You won't claim this in ITR.", danger: true, confirmLabel: "Write off" })) {
+                if (await confirm({ title: `Write off ${rupee(tds.tds_amount)} as loss?`, body: "You won't claim this in ITR.", danger: true, confirmLabel: "Write off" })) {
                   writeOff.mutate(tds.id, { onSuccess: () => onOpenChange(false) });
                 }
               }}

@@ -1147,7 +1147,7 @@ export function AddExpenseDialog({
                         onChange={(e) => { setFxRate(e.target.value); if (fxError) setFxError(null); }} />
                     </FormField>
                     {rate > 0 && Number(watch("amount")) > 0 && (
-                      <p className="text-[12px] text-emerald pb-2">= ₹{Math.round(Number(watch("amount")) * rate).toLocaleString("en-IN")} in books{Number(watch("gst_paid")) > 0 ? ` · ₹${Math.round(Number(watch("gst_paid")) * rate).toLocaleString("en-IN")} GST` : ""}</p>
+                      <p className="text-[12px] text-emerald pb-2">= {rupee(Math.round(Number(watch("amount")) * rate))} in books{Number(watch("gst_paid")) > 0 ? ` · ${rupee(Math.round(Number(watch("gst_paid")) * rate))} GST` : ""}</p>
                     )}
                   </div>
                 )}
@@ -1280,7 +1280,7 @@ export function AddExpenseDialog({
                   <SelectItem value="none">Pick an advance</SelectItem>
                   {openAdvances.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
-                      {a.employee_name} · ₹{a.remaining_balance.toLocaleString("en-IN")} left
+                      {a.employee_name} · {rupee(a.remaining_balance, { decimals: Number.isInteger(a.remaining_balance) ? 0 : 2 })} left
                     </SelectItem>
                   ))}
                 </SelectContent>

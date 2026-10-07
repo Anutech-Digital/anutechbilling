@@ -63,7 +63,7 @@ function downloadEcr(period: string, rows: PfRegisterRow[]) {
   a.href = url; a.download = `ECR-${period.replace("-", "")}.txt`;
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   const assumed = f.lines.filter((l) => l.wageAssumed).length;
-  let msg = `ECR ${period}: ${f.lines.length} member, EPF wages ₹${f.totals.epfWages.toLocaleString("en-IN")}, EE ₹${f.totals.ee.toLocaleString("en-IN")}, EPS ₹${f.totals.eps.toLocaleString("en-IN")}, ER diff ₹${f.totals.erDiff.toLocaleString("en-IN")}.`;
+  let msg = `ECR ${period}: ${f.lines.length} member, EPF wages ${rupee(f.totals.epfWages)}, EE ${rupee(f.totals.ee)}, EPS ${rupee(f.totals.eps)}, ER diff ${rupee(f.totals.erDiff)}.`;
   if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} chhoote: ${f.skipped.map((s) => s.employee).join(", ")} (UAN bharo).`;
   if (assumed) msg += ` ⚠ ${assumed} payslip par PF wage nahi tha — gross liya.`;
   toast[f.skipped.length || assumed ? "warning" : "success"](msg);
@@ -110,7 +110,7 @@ function PfSection() {
         return (
           <Card key={period} className="overflow-hidden">
             <div className="flex items-center justify-between gap-3 bg-paper-2/50 px-4 py-2.5">
-              <span className="font-semibold text-ink">{periodLabel(period)} <span className="text-xs text-ink-3 font-normal">ceiling ₹{pfWageCeiling(period).toLocaleString("en-IN")}</span></span>
+              <span className="font-semibold text-ink">{periodLabel(period)} <span className="text-xs text-ink-3 font-normal">ceiling {rupee(pfWageCeiling(period))}</span></span>
               <div className="flex items-center gap-3">
                 <span className="hidden sm:inline text-xs text-ink-2 font-mono">
                   employee {rupee(ee)} · employer {rupee(er)} · <b className="text-ink">{rupee(ee + er)}</b>
@@ -177,7 +177,7 @@ export default function EsiRegisterPage() {
         <h1 className="font-serif text-3xl text-ink">ESI &amp; PF Register</h1>
         <p className="text-sm text-ink-2 mt-1">
           Employees' State Insurance — employee {(ESI_EMPLOYEE_RATE * 100).toFixed(2)}% + employer{" "}
-          {(ESI_EMPLOYER_RATE * 100).toFixed(2)}% on wages up to ₹{ESI_WAGE_CEILING.toLocaleString("en-IN")}/month
+          {(ESI_EMPLOYER_RATE * 100).toFixed(2)}% on wages up to {rupee(ESI_WAGE_CEILING)}/month
           (once covered in a contribution period, covered till its end). Provident Fund — 12% + 12% on Basic + DA up to the month's ceiling.
         </p>
       </header>

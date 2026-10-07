@@ -38,6 +38,7 @@ import { Icon } from "@/components/ui/icon";
 import { useCreateVendorBill, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
+import { rupee } from "@/lib/utils";
 
 const schema = z.object({
   vendor_name:  z.string().min(2, "Vendor name required"),
@@ -588,7 +589,7 @@ export function AddVendorBillDialog({
             </div>
             {isForeign && rate > 0 && Number(watch("total")) > 0 && (
               <p className="mt-1 text-xs text-emerald">
-                ≈ ₹{Math.round(Number(watch("total")) * rate).toLocaleString("en-IN")} in books (@ ₹{rate}/{currency})
+                ≈ {rupee(Math.round(Number(watch("total")) * rate))} in books (@ ₹{rate}/{currency})
               </p>
             )}
           </FormField>
