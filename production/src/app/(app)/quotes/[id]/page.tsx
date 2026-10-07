@@ -48,6 +48,8 @@ import { ApprovalDrawer } from "@/components/features/quotes/approval-drawer";
 import { LifecycleStepper } from "@/components/features/quotes/lifecycle-stepper";
 import { ProvisioningCard } from "@/components/features/quotes/provisioning-card";
 import { quoteLifecycle } from "@/lib/quotes/lifecycle";
+import { withTrialStep, quoteTrialState, quoteTrialEligibility, formatIstDate } from "@/lib/trials/start-from-quote";
+import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialog";
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
@@ -205,6 +207,19 @@ export default function QuoteDetailPage() {
     : null;
 
   const totalReceivedSoFar = sumReceived(paymentHistory ?? []);
+
+  /* R-282: trial first, pay later. TRIAL sits between SIGNED and PAID while the quote's lead
+     is on a trial; its end day is the payment due date. Rules in lib/trials/start-from-quote.ts. */
+  const [trialOpen, setTrialOpen] = React.useState(false);
+  const trialLead = quote?.lead_id ? lead : null;
+  const trialSteps = lifecycle && quote ? withTrialStep(lifecycle.steps, trialLead, quote.status) : null;
+  const trialState = trialLead ? quoteTrialState(trialLead) : null;
+  const trialEligibility = quote
+    ? quoteTrialEligibility(
+        { status: quote.status, payment_status: quote.payment_status, received: totalReceivedSoFar },
+        trialLead,
+      )
+    : null;
 
   /* R-243: ?pay=1 opens Record payment directly (amount filled), like ?send= above — once
      per navigation, then the URL is cleaned. A quote that takes no payment just drops it. */
@@ -741,6 +756,19 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="copy" size={15} /> Duplicate & edit
               </DropdownMenuItem>
+              {/* R-282: only an accepted quote with no money in. A running trial still shows
+                  the item, and says why it cannot start a second one. */}
+              {quote.status === "accepted" && totalReceivedSoFar === 0 && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => {
+                    if (trialEligibility?.ok) setTrialOpen(true);
+                    else if (trialEligibility) toast.info(trialEligibility.reason);
+                  }}
+                >
+                  <Icon name="clock" size={15} /> Start trial (pay later)
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {deleteBlock ? (
                 <DropdownMenuItem
@@ -766,8 +794,34 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={lifecycle.steps} dead={lifecycle.dead} />
+          <LifecycleStepper steps={trialSteps ?? lifecycle.steps} dead={lifecycle.dead} />
+          {/* R-282: the trial's last day IS the payment due date — said in words, because the
+              stepper's detail line is hidden on a phone. */}
+          {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
+            <p className={cn("mt-3 border-t border-hairline pt-2.5 text-xs", trialState.kind === "ended" ? "text-rose" : "text-ink-2")}>
+              {trialState.kind === "running"
+                ? <>Trial running · payment due <b>{formatIstDate(trialState.endDate)}</b> ({trialState.daysLeft === 0 ? "today" : `${trialState.daysLeft} ${trialState.daysLeft === 1 ? "day" : "days"} left`})</>
+                : <>Trial ended <b>{formatIstDate(trialState.endDate)}</b> · payment not in. Extend, stop or convert — nothing is suspended automatically.</>}
+            </p>
+          )}
         </Card>
+      )}
+
+      {trialOpen && (
+        <QuoteTrialDialog
+          open={trialOpen}
+          onOpenChange={setTrialOpen}
+          quote={{
+            id: quote.id, tenant_id: quote.tenant_id, lead_id: quote.lead_id, customer_id: quote.customer_id,
+            customer_name: quote.customer_name, domain: quote.domain, seats: quote.seats,
+          }}
+          lead={lead ? { id: lead.id, notes: lead.notes } : null}
+          customer={customer ? {
+            contact_name: customer.contact_name, contact_email: customer.contact_email,
+            contact_phone: customer.contact_phone, domain: customer.domain,
+          } : null}
+          ownerId={me?.userId}
+        />
       )}
 
       {/* Status-aware action bar */}
