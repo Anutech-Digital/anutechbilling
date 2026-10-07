@@ -76,7 +76,7 @@ export default function CartPage() {
               </div>
               <button
                 onClick={() => cart.remove(l.key)}
-                style={{ alignSelf: "center", background: "none", border: "none", color: "var(--danger)", fontSize: 14, cursor: "pointer" }}
+                style={{ alignSelf: "center", background: "none", border: "none", color: "var(--danger)", fontSize: 14, cursor: "pointer", minHeight: 44, padding: "0 8px" }}
               >
                 Remove
               </button>
@@ -126,7 +126,8 @@ export default function CartPage() {
   );
 }
 
-const step: React.CSSProperties = { background: "none", border: "none", width: 32, fontSize: 16, cursor: "pointer", color: "var(--text-secondary)" };
+// 44px tap targets on a phone (CLAUDE.md §20, 7 Oct 2026) — the stepper was 32×35.
+const step: React.CSSProperties = { background: "none", border: "none", width: 44, minHeight: 44, fontSize: 18, cursor: "pointer", color: "var(--text-secondary)" };
 const stepLocked: React.CSSProperties = { ...step, cursor: "not-allowed", opacity: 0.35 };
 
 function Row({ label, value, color }: { label: string; value: string; color?: string }) {

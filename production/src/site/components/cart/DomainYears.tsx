@@ -22,7 +22,7 @@ export function DomainYears({ line, compact = false }: { line: CartLine; compact
         id={id}
         value={current}
         onChange={(e) => cart.setYears(line.key, Number(e.target.value))}
-        style={{ border: "1px solid var(--border-strong)", borderRadius: 6, padding: compact ? "4px 8px" : "6px 10px", fontSize: 14, background: "#fff" }}
+        style={{ border: "1px solid var(--border-strong)", borderRadius: 6, padding: compact ? "4px 8px" : "6px 10px", minHeight: compact ? undefined : 44, fontSize: 14, background: "#fff" }}
       >
         {terms.map((t) => {
           const price = domainTermPrice(line.yearPrices, t, line.bundleFree);

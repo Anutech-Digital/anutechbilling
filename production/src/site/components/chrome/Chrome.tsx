@@ -216,7 +216,7 @@ export function ConsentBanner() {
       role="dialog"
       aria-label="Cookie consent"
       style={{
-        position: "fixed", left: 22, bottom: 22, zIndex: 95, maxWidth: 360,
+        position: "fixed", left: 22, bottom: 22, zIndex: 95, maxWidth: "min(360px, calc(100vw - 44px))",
         background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
         padding: 18, boxShadow: "var(--shadow-panel)",
       }}

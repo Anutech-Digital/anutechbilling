@@ -61,6 +61,7 @@
 
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 .anutech-site .wrap { max-width: 1180px; margin: 0 auto; padding: 0 48px; }
+.anutech-site .site-header-row { gap: 26px; }
 .anutech-site .section { padding: 64px 0; }
 .anutech-site .section-tight { padding: 44px 0; }
 .anutech-site .section-tall { padding: 76px 0; }
@@ -161,6 +162,7 @@
 .anutech-site .only-mobile { display: none; }
 @media (max-width: 979px) {
   .anutech-site .wrap { padding: 0 20px; }
+  .anutech-site .site-header-row { gap: 10px; }
   .anutech-site .h1-hero { font-size: 38px; }
   .anutech-site .h1-page { font-size: 34px; }
   .anutech-site .h2-section { font-size: 27px; }

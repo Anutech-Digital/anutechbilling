@@ -19,7 +19,7 @@
  */
 import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
-import { COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
+import { CLIENT_AREA_URL, COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 
 type Tone = "success" | "warn";
@@ -65,7 +65,7 @@ function Timeline({ steps }: { steps: Step[] }) {
             </div>
             <div style={{ paddingBottom: last ? 0 : 22, paddingTop: 5 }}>
               <div style={{ fontWeight: 600, fontSize: 16, color: "var(--text)", marginBottom: 4 }}>{s.title}</div>
-              <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>{s.body}</div>
+              <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>{s.body}</div>
             </div>
           </li>
         );
@@ -82,21 +82,24 @@ function CopyNumber({ value }: { value: string }) {
       onClick={() => {
         navigator.clipboard?.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); }, () => { /* no clipboard: the number is on screen */ });
       }}
-      style={{ fontSize: 13, fontWeight: 600, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-strong)", background: "#fff", color: copied ? "var(--success)" : "var(--text)", cursor: "pointer" }}
+      style={{ fontSize: 13, fontWeight: 600, padding: "6px 12px", minHeight: 44, borderRadius: 6, border: "1px solid var(--border-strong)", background: "#fff", color: copied ? "var(--success)" : "var(--text)", cursor: "pointer" }}
     >
       {copied ? "Copied" : "Copy"}
     </button>
   );
 }
 
+const helpLink = { display: "inline-flex", alignItems: "center", minHeight: 44, color: "var(--primary)", fontWeight: 600, fontSize: 15 } as const;
+
 function HelpBlock({ subject }: { subject: string }) {
   return (
     <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }}>
       <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Need help?</div>
-      <a href={`mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(subject)}`} style={{ color: "var(--primary)", fontWeight: 600, fontSize: 15 }}>{COMPANY.supportEmail}</a>
+      {/* 44px tall tap targets (CLAUDE.md §20) — they were 16px text links. */}
+      <a href={`mailto:${COMPANY.supportEmail}?subject=${encodeURIComponent(subject)}`} style={helpLink}>{COMPANY.supportEmail}</a>
       {WHATSAPP_READY && (
-        <div style={{ marginTop: 6 }}>
-          <a href={WHATSAPP_URL} target="_blank" rel="noreferrer" style={{ color: "var(--primary)", fontWeight: 600, fontSize: 15 }}>WhatsApp us</a>
+        <div>
+          <a href={WHATSAPP_URL} target="_blank" rel="noreferrer" style={helpLink}>WhatsApp us</a>
         </div>
       )}
       <div className="meta" style={{ marginTop: 6 }}>{COMPANY.hours}</div>
@@ -119,7 +122,8 @@ function DoneLayout({ tone, badge, title, lead, steps, aside, actions }: {
             {badge}
           </div>
           <h1 className="h1-narrow" style={{ marginBottom: 14 }}>{title}</h1>
-          <p className="body-lg" style={{ margin: 0 }}>{lead}</p>
+          {/* overflowWrap: a long email address in the lead pushed the whole page sideways on a phone (7 Oct 2026). */}
+          <p className="body-lg" style={{ margin: 0, overflowWrap: "anywhere" }}>{lead}</p>
         </header>
 
         <div data-grid style={{ display: "grid", gridTemplateColumns: "1.35fr .9fr", gap: 24, alignItems: "start" }}>
@@ -234,10 +238,18 @@ export default function DonePage() {
         ) : (
           <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>Your order number is in the confirmation email.</div>
         )}
+        {/* A direct way into the Customer Portal once it is all set up (7 Oct 2026, Pawan) — the
+            same address as the trial's "Your hosting is live" page, not the shop's /login. */}
+        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }}>
+          <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Customer Portal</div>
+          <div style={{ fontSize: 14, lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
+            Manage your hosting, domains and invoices there. First time? Use the &ldquo;set your password&rdquo; link in the email with your login details.
+          </div>
+          <a href={CLIENT_AREA_URL} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>Log in to the Customer Portal</a>
+        </div>
         <HelpBlock subject={orderNo ? `My order ${orderNo}` : "My order"} />
       </>}
       actions={<>
-        <Link href="/login" className="btn btn-primary">Go to client login</Link>
         <Link href="/" className="btn btn-outline">Back to home</Link>
       </>}
     />

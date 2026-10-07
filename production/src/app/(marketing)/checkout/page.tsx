@@ -508,7 +508,7 @@ export default function CheckoutPage() {
                     id="checkout-state"
                     value={stateCode}
                     onChange={(e) => setStateCode(e.target.value)}
-                    style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
+                    style={{ width: "100%", minHeight: 44, border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
                   >
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}

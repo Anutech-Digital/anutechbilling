@@ -170,7 +170,9 @@ export function Header() {
       onMouseLeave={() => setOpen(null)}
       style={{ position: "sticky", top: 0, zIndex: 80, background: "#fff", borderBottom: "1px solid var(--border-light)" }}
     >
-      <div className="wrap" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
+      {/* The gap lives in site.css (.site-header-row): 26px, 10px on a phone — at 320px the fixed 26px
+          pushed the menu button off the screen and the page scrolled sideways (7 Oct 2026). */}
+      <div className="wrap site-header-row" style={{ height: 68, display: "flex", alignItems: "center" }}>
         {/* The marketing home lives at "/", but "/" redirects a logged-in user to
             /dashboard — so for an owner browsing the site, the logo would bounce to
             the app instead of the company home they clicked for. "?preview=1" is the
@@ -257,7 +259,7 @@ export function Header() {
           aria-label={mobile ? "Close menu" : "Open menu"}
           aria-expanded={mobile}
           onClick={() => setMobile((v) => !v)}
-          style={{ background: "none", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "8px 12px", fontSize: 16, cursor: "pointer" }}
+          style={{ background: "none", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "8px 12px", minWidth: 44, minHeight: 44, fontSize: 16, cursor: "pointer", flexShrink: 0 }}
         >
           {mobile ? "✕" : "☰"}
         </button>
