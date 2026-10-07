@@ -81,3 +81,45 @@ describe("singleUnitNote — why a line's quantity is locked at 1 (30 Sep 2026)"
     }
   });
 });
+
+/* R-225 (7 Oct 2026): coupon domain par nahi lagta — domain registry cost ke kareeb bikta hai.
+   Baaki lines par niyam wahi jo pehle tha. */
+describe("coupon aur domain (R-225)", () => {
+  it("sirf domain wali cart + sahi code = poora daam", () => {
+    const t = cartTotals([line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" })], "ANUTECH10");
+    expect(t.discount).toBe(0);
+    expect(t.discountRate).toBe(0);
+    expect(t.payable).toBeCloseTo(799 * 1.18);
+  });
+
+  it("workspace line par coupon pehle jaisa — gross ka 10%", () => {
+    const t = cartTotals([line({ unitPrice: 270, qty: 10, sku: "workspace:starter", cycle: "monthly" })], "ANUTECH10");
+    expect(t.discountRate).toBe(0.10);
+    expect(t.discount).toBeCloseTo(270);
+    expect(t.subtotal).toBeCloseTo(2430);
+  });
+
+  it("hosting + paid domain: discount sirf hosting par, domain poore daam", () => {
+    const t = cartTotals(
+      [
+        line({ unitPrice: 2999, sku: "hosting:standard", cycle: "yearly" }),
+        line({ unitPrice: 799, sku: "domain:in", domain: "acme.in", cycle: "yearly" }),
+      ],
+      "ANUTECH10",
+    );
+    // 2999 → 2699 (whole rupees per unit), domain 799 untouched.
+    expect(t.discount).toBe(300);
+    expect(t.subtotal).toBe(2699 + 799);
+  });
+
+  it("₹0 bundle domain ke saath coupon pehle jaisa poore gross par", () => {
+    const t = cartTotals(
+      [
+        line({ unitPrice: 2999, sku: "hosting:standard", cycle: "yearly" }),
+        line({ unitPrice: 0, sku: "domain:in", domain: "acme.in", cycle: "yearly" }),
+      ],
+      "MIGRATE15",
+    );
+    expect(t.discount).toBeCloseTo(2999 * 0.15);
+  });
+});

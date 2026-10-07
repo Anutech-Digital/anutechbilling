@@ -59,11 +59,64 @@ export function domainTermPrice(yearPrices: Record<string, number> | undefined, 
   return Math.max(0, total - (yearPrices?.["1"] ?? 0));
 }
 
-/** The two launch coupons from the handoff. Percent off the gross, before GST. */
+/**
+ * The two launch coupons from the handoff. Percent off the gross, before GST.
+ * R-225 (7 Oct 2026, Pardeep): the codes stay, but their NAMES are never printed on the
+ * cart page — the hint says only "Have a coupon code?". And a coupon never discounts a
+ * `domain:*` line: a domain sells close to the registry's cost, so 10–15% off it was a
+ * loss on the order. Every other line is discounted exactly as before.
+ */
 export const COUPONS: Readonly<Record<string, number>> = {
   ANUTECH10: 0.10,
   MIGRATE15: 0.15,
 };
+
+/** The coupon's rate for a typed code (case and spaces forgiven); 0 for an unknown one. */
+export function couponRate(code: string): number {
+  const c = code.trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(COUPONS, c) ? COUPONS[c] : 0;
+}
+
+/** A line a coupon never discounts (R-225): a domain registration. */
+export function isCouponExempt(sku: string | undefined): boolean {
+  return (sku ?? "").toLowerCase().startsWith("domain:");
+}
+
+export interface CouponLineInput { qty: number; price: number; exempt: boolean }
+
+/** One unit's price after the coupon, whole rupees — the "lines" mode of couponSplit. */
+export function discountedUnitPrice(price: number, rate: number): number {
+  return Math.round(price * (1 - rate));
+}
+
+/**
+ * How a coupon comes off a cart — ONE rule for the cart page and the checkout (R-225):
+ *
+ *   "none"  — no valid code, or nothing in the cart it may discount (a domain-only cart).
+ *   "whole" — no PRICED exempt line (a ₹0 bundled domain does not count): percent off the
+ *             whole gross, exactly as before R-225. The quote stores it as `discount_pct`.
+ *   "lines" — priced domain lines next to other lines. The discount comes off each other
+ *             line's unit price, rounded to whole rupees (as a package discount does,
+ *             lib/packages/price.ts), because a quote's `discount_pct` is a whole-number
+ *             percent of the WHOLE subtotal and cannot leave the domain out.
+ *
+ * `discount` is rupees off, before GST. For "whole" it is unrounded, as the cart always
+ * showed it; the checkout rounds the subtotal once.
+ */
+export function couponSplit(
+  lines: readonly CouponLineInput[],
+  rate: number,
+): { mode: "none" | "whole" | "lines"; discount: number } {
+  const eligible = lines.filter((l) => !l.exempt);
+  const eligibleGross = eligible.reduce((n, l) => n + l.price * l.qty, 0);
+  const exemptGross = lines.filter((l) => l.exempt).reduce((n, l) => n + l.price * l.qty, 0);
+  if (rate <= 0 || eligibleGross <= 0) return { mode: "none", discount: 0 };
+  if (exemptGross <= 0) return { mode: "whole", discount: eligibleGross * rate };
+  return {
+    mode: "lines",
+    discount: eligible.reduce((n, l) => n + l.qty * (l.price - discountedUnitPrice(l.price, rate)), 0),
+  };
+}
 
 export const GST_RATE = 0.18;
 
@@ -80,8 +133,13 @@ export interface CartTotals {
 
 export function cartTotals(lines: readonly CartLine[], couponCode: string): CartTotals {
   const gross = lines.reduce((n, l) => n + l.unitPrice * l.qty, 0);
-  const discountRate = COUPONS[couponCode.trim().toUpperCase()] ?? 0;
-  const discount = gross * discountRate;
+  const rate = couponRate(couponCode);
+  const { discount } = couponSplit(
+    lines.map((l) => ({ qty: l.qty, price: l.unitPrice, exempt: isCouponExempt(l.sku) })),
+    rate,
+  );
+  // Reported only when it took something off — a domain-only cart shows no "10% off" row.
+  const discountRate = discount > 0 ? rate : 0;
   const subtotal = gross - discount;
   const gst = subtotal * GST_RATE;
   return {

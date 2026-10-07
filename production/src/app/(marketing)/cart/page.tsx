@@ -9,7 +9,7 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, COUPONS, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, cycleLabel, couponRate, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
@@ -19,7 +19,7 @@ export default function CartPage() {
   const t = cart.totals;
   const hostingWarning = hostingLimitWarning(cart.lines);
   const code = cart.coupon.trim().toUpperCase();
-  const couponValid = code in COUPONS;
+  const couponValid = couponRate(code) > 0;
 
   if (cart.lines.length === 0) {
     return (
@@ -91,14 +91,17 @@ export default function CartPage() {
             id="cart-coupon"
             value={cart.coupon}
             onChange={(e) => cart.setCoupon(e.target.value)}
-            placeholder="ANUTECH10"
+            placeholder="Enter code"
             aria-label="Coupon code"
             style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "10px 12px", fontSize: 15, fontFamily: "var(--font-mono)", textTransform: "uppercase" }}
           />
+          {/* R-225: never name a code here — coupons are given out, not advertised. */}
           <div className="meta" style={{ margin: "6px 0 16px", color: code && !couponValid ? "var(--danger)" : "var(--text-muted)" }}>
             {code && !couponValid
-              ? "That code is not valid. Try ANUTECH10 or MIGRATE15."
-              : "Have a code? ANUTECH10 or MIGRATE15."}
+              ? "That code is not valid."
+              : couponValid && t.discount === 0
+                ? "Coupons don't apply to domain names."
+                : "Have a coupon code?"}
           </div>
 
           {t.discount > 0 && <Row label={`${code} — ${Math.round(t.discountRate * 100)}% off`} value={`−${rupee(t.discount)}`} color="var(--success)" />}
