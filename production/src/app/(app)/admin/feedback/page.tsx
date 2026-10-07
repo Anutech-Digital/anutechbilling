@@ -48,6 +48,7 @@ import {
 } from "@/lib/queries/feedback";
 import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
 import { PlatformAiStatus, SendToAiButton, SendAllOpenButton } from "./platform-ai";
+import { RecheckTypeScore } from "./recheck";
 
 const STATUS_TABS: { id: string; label: string }[] = [
   { id: "open", label: "Open" },
@@ -236,7 +237,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
 
   const handleCopy = async () => {
     if (!row.directive) {
-      toast.error("There is no directive yet.", { description: "Run triage on this report first." });
+      toast.error("There is no directive yet.", { description: "Open Details and press Re-check type & score." });
       return;
     }
     /* R-200: the last step tells the fixing session to mark THIS report fixed in this app,
@@ -302,7 +303,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
     } catch (err) {
       toastError(err, {
         fallback: "Triage failed.",
-        description: "The report is unchanged. Press Triage again in a moment.",
+        description: "The report is unchanged. Press Re-check type & score again in a moment.",
       });
     }
   };
@@ -476,12 +477,6 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
             Copy Directive
           </Button>
         )}
-        {(row.status === "open" || row.status === "agent_queued") && (
-          <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
-            <Icon name="refresh" size={14} className="mr-1.5" />
-            {untriaged ? "Triage" : "Re-triage"}
-          </Button>
-        )}
         <span className="flex-1" />
         {row.status !== "fixed" && (
           <Button size="sm" variant="ghost" onClick={() => handleStatus("fixed")} disabled={busy}>
@@ -514,6 +509,10 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
 
       {open && (
         <div className="pt-3 border-t border-hairline space-y-4">
+          {/* R-393: re-running triage is a rare fix-up, so it lives here, not in the row. */}
+          {(row.status === "open" || row.status === "agent_queued") && (
+            <RecheckTypeScore onRun={() => void handleRunTriage()} disabled={busy} />
+          )}
           <div>
             <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">{row.filed_via === "ai-chat" ? "What the AI wrote (after the chat), filed by the reporter" : "What the reporter wrote"}</h4>
             {row.filed_via === "ai-chat" && row.ai_chat_summary && (
@@ -575,7 +574,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
               </pre>
             ) : (
               <p className="text-xs text-ink-3">
-                No directive yet — press <b>Triage</b> above to generate one.
+                No directive yet — press <b>Re-check type &amp; score</b> above to make one.
               </p>
             )}
           </div>
@@ -705,7 +704,7 @@ export default function AdminFeedbackPage() {
 
       {untriagedCount > 0 && (
         <p className="text-xs text-amber-ink bg-amber-soft border border-amber/30 rounded-md px-3 py-2">
-          {untriagedCount} report(s) in this view have no directive yet. Press <b>Triage</b> on each, or{" "}
+          {untriagedCount} report(s) in this view have no directive yet. Open <b>Details</b> and press <b>Re-check type &amp; score</b>, or{" "}
           <b>Run AI Auto-Fix</b>, which triages first.
         </p>
       )}
