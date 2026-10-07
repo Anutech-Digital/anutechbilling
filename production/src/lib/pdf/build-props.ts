@@ -62,6 +62,12 @@ export interface TenantPdfInfo {
    * quote route (a quote is not an export invoice) need not select it; the invoice route does.
    */
   lut_number?:          string | null;
+  /**
+   * R-368. tenants.udyam_number — the company's MSME registration, printed under the GSTIN.
+   * Optional and read SEPARATELY (lib/compliance/udyam.ts readTenantUdyam), never in the
+   * tenant select: before its migration the column does not exist and the select would fail.
+   */
+  udyam_number?:        string | null;
 }
 
 interface Amounts {
@@ -171,6 +177,7 @@ export function buildInvoicePdfProps(args: {
     tenantState:   tenant.state,
     tenantLogo:    args.logoDataUri ?? null,
     lutNumber:     tenant.lut_number ?? null,
+    udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
     // Foreign-currency display (books stay ₹). Carried on the backing quote — an
@@ -217,6 +224,7 @@ export function buildQuotePdfProps(args: {
   return {
     tenantName:    tenant.name,
     tenantGstin:   tenant.gstin,
+    udyamNumber:   tenant.udyam_number ?? null,
     tenantEmail:   tenant.email,
     tenantPhone:   tenant.phone,
     tenantAddress: tenant.address,

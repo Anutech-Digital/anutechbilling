@@ -28,6 +28,7 @@ import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { exportEndorsement } from "@/lib/gst/export-lut";
+import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type {
   Invoice,
@@ -82,6 +83,8 @@ export interface InvoicePDFProps {
    * endorsement prints without an ARN line rather than inventing one.
    */
   lutNumber?:     string | null;
+  /** R-368. tenants.udyam_number — "MSME Udyam: UDYAM-…" under the supplier GSTIN when set. */
+  udyamNumber?:   string | null;
   /**
    * The company logo as a resolved `data:image/...` URI, from `logoDataUri()`.
    *
@@ -431,7 +434,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
     currency, exchangeRate, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
-    lutNumber = null,
+    lutNumber = null, udyamNumber = null,
     upiQrDataUrl, upiVpa, payMethods = null,
   } = props;
 
@@ -499,6 +502,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
             <Text style={s.partyLabel}>From (Supplier)</Text>
             <Text style={s.partyName}>{pdfText(tenantName)}</Text>
             {tenantGstin   && <Text style={s.partyGstin}>GSTIN: {tenantGstin}</Text>}
+            {udyamPdfLine(udyamNumber) && <Text style={s.partyMeta}>{udyamPdfLine(udyamNumber)}</Text>}
             {tenantAddress && <Text style={s.partyMeta}>{pdfText(tenantAddress)}</Text>}
             {tenantState   && <Text style={s.partyMeta}>State: {tenantState}</Text>}
             {tenantEmail   && <Text style={[s.partyMeta, { fontFamily: "Courier" }]}>{tenantEmail}</Text>}

@@ -19,6 +19,7 @@ import { Sheet, SheetContent, SheetFooter, SheetTitle, SheetDescription } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { formatIstDate } from "@/lib/trials/start-from-quote";
@@ -26,13 +27,18 @@ import {
   CREDIT_MIN_DAYS, CREDIT_MAX_DAYS,
   defaultCreditDays, validCreditDays, planCredit, creditExposure, overLimitDecision,
   activateQuoteOnCredit, NeedsDatabaseUpdateError,
+  annualLineNames, annualCreditDecision, ANNUAL_OVERRIDE_MIN_REASON,
 } from "@/lib/credit/activate-on-credit";
 import { useCustomerOpenInvoices } from "@/lib/credit/queries";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  quote: { id: string; customer_name: string; amount: number; invoice_id: string | null; seats: number | null };
+  quote: {
+    id: string; customer_name: string; amount: number; invoice_id: string | null; seats: number | null;
+    /** R-368: an annual line blocks credit unless the owner overrides with a reason. */
+    line_items?: ReadonlyArray<{ commitment?: string | null; name?: string | null }> | null;
+  };
   customer: { id: string; name: string; payment_terms_days: number | null; credit_limit?: number | null };
   role: string | null | undefined;
 }
@@ -42,11 +48,13 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
   const initialDays = defaultCreditDays(customer.payment_terms_days);
   const [days, setDays] = React.useState(String(initialDays));
   const [approve, setApprove] = React.useState(false);
+  const [overrideAnnual, setOverrideAnnual] = React.useState(false);
+  const [overrideReason, setOverrideReason] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const { data: openInvoices, isLoading: loadingOwed, error: owedError } = useCustomerOpenInvoices(customer.id, open);
 
   React.useEffect(() => {
-    if (open) { setDays(String(initialDays)); setApprove(false); }
+    if (open) { setDays(String(initialDays)); setApprove(false); setOverrideAnnual(false); setOverrideReason(""); }
   }, [open, initialDays]);
 
   const nDays = Number(days);
@@ -56,7 +64,11 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
     ? creditExposure({ openInvoices, quoteAmount: quote.amount, quoteInvoiceId: quote.invoice_id, creditLimit: customer.credit_limit })
     : null;
   const decision = exposure ? overLimitDecision(exposure, role, rupee) : null;
-  const blocked = decision?.kind === "refused" || (decision?.kind === "owner-approve" && !approve);
+  /* R-368: annual plans need payment first. Owner only: tick override + write why. */
+  const annualNames = annualLineNames(quote.line_items);
+  const annual = annualCreditDecision(quote.line_items, role, overrideAnnual ? overrideReason : "");
+  const annualBlocked = annual.kind === "blocked" || annual.kind === "needs-override";
+  const blocked = annualBlocked || decision?.kind === "refused" || (decision?.kind === "owner-approve" && !approve);
   const canSave = Boolean(plan) && Boolean(exposure) && !blocked && !saving;
 
   const onSave = async () => {
@@ -65,6 +77,7 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
     try {
       const res = await activateQuoteOnCredit(createClient(), {
         quoteId: quote.id, days: nDays, approveOverLimit: decision?.kind === "owner-approve" && approve,
+        annualOverrideReason: annual.kind === "overridden" ? annual.reason : null,
       });
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["quotes"] }),
@@ -136,6 +149,43 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
                 ))}
               </ul>
               <p className="mt-2 text-ink-3">Nothing is sent to the customer and nothing is suspended automatically.</p>
+            </div>
+          )}
+
+          {/* R-368: annual plans need payment first */}
+          {annualNames.length > 0 && (
+            <div className="mt-3 text-xs">
+              <p role={annual.kind === "blocked" ? "alert" : undefined} className="flex items-start gap-1.5 rounded-md border border-rose/50 bg-rose-soft p-2.5 text-rose">
+                <Icon name="alert" size={14} className="mt-px shrink-0" />
+                <span>
+                  <b>Annual plans need payment first.</b> {annualNames.join(", ")} {annualNames.length === 1 ? "is" : "are"} billed for a year.
+                  {annual.kind === "blocked" && " Only the owner can activate an annual plan on credit."}
+                </span>
+              </p>
+              {role === "owner" && (
+                <div className="rounded-md border border-amber/60 bg-amber-soft p-2.5 mt-2 text-amber-ink">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox" className="mt-0.5 h-4 w-4 accent-[var(--amber)]"
+                      checked={overrideAnnual} onChange={(e) => setOverrideAnnual(e.target.checked)}
+                    />
+                    <span><b>Override as owner.</b> Activate on credit anyway; your reason is kept on the quote.</span>
+                  </label>
+                  {overrideAnnual && (
+                    <div className="mt-2">
+                      <Label htmlFor="credit-annual-reason">Reason</Label>
+                      <Textarea
+                        id="credit-annual-reason" rows={2} value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        placeholder="e.g. Customer for 6 years, always pays on time"
+                      />
+                      {annual.kind === "needs-override" && (
+                        <p className="text-ink-3 mt-1">At least {ANNUAL_OVERRIDE_MIN_REASON} characters.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

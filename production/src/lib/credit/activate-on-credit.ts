@@ -115,6 +115,51 @@ export function customerCreditEligibility(
   return { ok: true };
 }
 
+// ── Annual plans need payment first (R-368) ──────────────────────────────────
+
+/** Shortest owner reason the database accepts for activating an annual plan on credit. */
+export const ANNUAL_OVERRIDE_MIN_REASON = 5;
+
+/**
+ * A line billed for a year (or a legacy multi-month term). Monthly flex, one-time and lines
+ * with no commitment are not. Same test as the database's check (migration 20261007123000).
+ */
+function isAnnualCommitment(c: unknown): boolean {
+  return typeof c === "string" && c.length > 0 && c !== "monthly" && c !== "one_time";
+}
+
+export function annualLineNames(
+  lines: ReadonlyArray<{ commitment?: string | null; name?: string | null }> | null | undefined,
+): string[] {
+  return (lines ?? [])
+    .filter((l) => isAnnualCommitment(l?.commitment))
+    .map((l) => (typeof l.name === "string" && l.name.trim() ? l.name.trim() : "Annual plan"));
+}
+
+export type AnnualCreditDecision =
+  | { kind: "allowed" }
+  | { kind: "blocked"; reason: string }
+  | { kind: "needs-override" }
+  | { kind: "overridden"; reason: string };
+
+/**
+ * Pardeep (7 Oct 2026): a year of service on credit is too much risk by default. Annual lines
+ * block "Activate now, pay later"; only the OWNER can override, and must write why.
+ */
+export function annualCreditDecision(
+  lines: ReadonlyArray<{ commitment?: string | null; name?: string | null }> | null | undefined,
+  role: string | null | undefined,
+  overrideReason: string,
+): AnnualCreditDecision {
+  if (annualLineNames(lines).length === 0) return { kind: "allowed" };
+  if (role !== "owner") {
+    return { kind: "blocked", reason: "Annual plans need payment first. Only the owner can activate an annual plan on credit." };
+  }
+  const reason = overrideReason.trim();
+  if (reason.length < ANNUAL_OVERRIDE_MIN_REASON) return { kind: "needs-override" };
+  return { kind: "overridden", reason };
+}
+
 // ── Credit limit ─────────────────────────────────────────────────────────────
 
 export interface OpenInvoice {
@@ -314,15 +359,20 @@ export interface ActivateOnCreditResult {
 /** One RPC: invoice + subscriptions + tasks in one transaction, or nothing at all. */
 export async function activateQuoteOnCredit(
   supabase: SupabaseClient,
-  input: { quoteId: string; days: number; approveOverLimit: boolean },
+  input: { quoteId: string; days: number; approveOverLimit: boolean; annualOverrideReason?: string | null },
 ): Promise<ActivateOnCreditResult> {
   if (!validCreditDays(input.days)) {
     throw new Error(`Credit days must be ${CREDIT_MIN_DAYS}–${CREDIT_MAX_DAYS}.`);
   }
+  /* R-368: an annual line needs the owner's written reason (migration 20261007123000). Sent
+     only when there is one, so a monthly quote still activates on a database that has
+     R-346's function but not this one yet. */
+  const reason = input.annualOverrideReason?.trim();
   const { data, error } = await supabase.rpc("activate_quote_on_credit", {
     p_quote_id: input.quoteId,
     p_credit_days: input.days,
     p_approve_over_limit: input.approveOverLimit,
+    ...(reason ? { p_annual_override_reason: reason } : {}),
   });
   if (error) {
     if (isMissingDbObject(error)) throw new NeedsDatabaseUpdateError();

@@ -40,6 +40,7 @@ import { quoteDocumentLabel } from "./quote-document-kind";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
+import { udyamPdfLine } from "@/lib/compliance/udyam";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -59,6 +60,8 @@ export interface QuotePDFProps {
   // Tenant (supplier)
   tenantName:     string;
   tenantGstin?:   string | null;
+  /** R-368. tenants.udyam_number — "MSME Udyam: UDYAM-…" under the GSTIN when set. */
+  udyamNumber?:   string | null;
   tenantEmail?:   string | null;
   tenantPhone?:   string | null;
   tenantAddress?: string | null;
@@ -407,7 +410,7 @@ const s = StyleSheet.create({
 
 export function QuotePDF(props: QuotePDFProps) {
   const {
-    tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo,
+    tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo, udyamNumber = null,
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
@@ -513,6 +516,9 @@ export function QuotePDF(props: QuotePDFProps) {
               <Text style={s.brandName}>{pdfText(tenantName)}</Text>
               {tenantGstin && (
                 <Text style={s.brandMeta}>GSTIN: {tenantGstin}</Text>
+              )}
+              {udyamPdfLine(udyamNumber) && (
+                <Text style={s.brandMeta}>{udyamPdfLine(udyamNumber)}</Text>
               )}
               {tenantAddress && (
                 <Text style={s.brandMeta}>{pdfText(tenantAddress)}</Text>

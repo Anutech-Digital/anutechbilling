@@ -21,6 +21,94 @@ import {
   type BusinessType, type GstFiling,
 } from "@/lib/compliance/obligations";
 import { useComplianceProfile, useSaveComplianceProfile } from "@/lib/compliance/profile";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { createClient } from "@/lib/supabase/client";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { isMissingUdyamColumn, normalizeUdyam, udyamInputOk } from "@/lib/compliance/udyam";
+
+/* R-368: the company's own Udyam number. Its own read + save: the column comes in its own
+   migration (20261007123000), and the business-type/GST read above must not break before it. */
+const untyped = () => createClient() as unknown as SupabaseClient;
+
+function useTenantUdyam() {
+  const me = useCurrentUser();
+  const tenantId = me.data?.tenantId ?? null;
+  return useQuery({
+    queryKey: ["tenant_udyam", tenantId],
+    enabled: Boolean(tenantId),
+    queryFn: async (): Promise<{ value: string | null; columnMissing: boolean }> => {
+      const { data, error } = await untyped().from("tenants").select("udyam_number").eq("id", tenantId as string).maybeSingle();
+      if (isMissingUdyamColumn(error)) return { value: null, columnMissing: true };
+      if (error) throw new Error(error.message);
+      const v = (data as { udyam_number?: unknown } | null)?.udyam_number;
+      return { value: typeof v === "string" ? v : null, columnMissing: false };
+    },
+  });
+}
+
+function useSaveTenantUdyam() {
+  const qc = useQueryClient();
+  const me = useCurrentUser();
+  const tenantId = me.data?.tenantId ?? null;
+  return useMutation({
+    mutationFn: async (value: string | null) => {
+      if (!tenantId) throw new Error("Not signed in to a workspace");
+      const { data, error } = await untyped().from("tenants").update({ udyam_number: value }).eq("id", tenantId).select("id");
+      if (isMissingUdyamColumn(error)) throw new Error("This needs a database update first.");
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) throw new Error("Only the workspace owner can change this.");
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tenant_udyam"] });
+      toast.success("Udyam number saved");
+    },
+    onError: (err) => toast.error(`Could not save: ${(err as Error).message}`),
+  });
+}
+
+function UdyamField({ isOwner }: { isOwner: boolean }) {
+  const { data, isLoading } = useTenantUdyam();
+  const save = useSaveTenantUdyam();
+  const [value, setValue] = React.useState("");
+  const loaded = React.useRef(false);
+  React.useEffect(() => {
+    if (!data || loaded.current) return;
+    loaded.current = true;
+    setValue(data.value ?? "");
+  }, [data]);
+
+  const missing = Boolean(data?.columnMissing);
+  const ok = udyamInputOk(value);
+  const dirty = !!data && normalizeUdyam(value) !== normalizeUdyam(data.value);
+  return (
+    <div>
+      <Label htmlFor="tenant-udyam">Udyam number (MSME)</Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id="tenant-udyam" value={value} onChange={(e) => setValue(e.target.value.toUpperCase())}
+          placeholder="UDYAM-DL-01-0012345" maxLength={19} className="font-mono uppercase max-w-[16rem]"
+          disabled={!isOwner || missing || isLoading || save.isPending} aria-invalid={!ok}
+        />
+        {isOwner && !missing && (
+          <Button type="button" size="sm" variant="primary" icon="check"
+            loading={save.isPending} disabled={!dirty || !ok || save.isPending}
+            onClick={() => save.mutate(normalizeUdyam(value))}>
+            Save
+          </Button>
+        )}
+      </div>
+      <p className={`mt-1.5 text-3xs ${ok ? "text-ink-3" : "text-rose"}`}>
+        {!ok ? "Format: UDYAM-SS-00-0000000."
+          : missing ? "Needs a database update before it can be saved."
+          : "Printed on quotes and invoices when set. Leave empty if not registered."}
+      </p>
+    </div>
+  );
+}
 
 const BUSINESS_TYPES: BusinessType[] = ["proprietor", "partnership", "llp", "pvt_ltd"];
 const GST_MODES: GstFiling[] = ["monthly", "qrmp"];
@@ -141,6 +229,9 @@ export function ComplianceProfileCard({ isOwner }: { isOwner: boolean }) {
               )}
             </div>
           )}
+          <div className="border-t border-hairline pt-4">
+            <UdyamField isOwner={isOwner} />
+          </div>
         </div>
       )}
     </Card>

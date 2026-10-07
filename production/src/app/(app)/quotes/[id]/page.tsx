@@ -53,6 +53,7 @@ import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialo
 import { ActivateOnCreditDialog } from "@/components/features/quotes/activate-on-credit-dialog";
 import { showActivateOnCredit, customerCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
 import { useCreditInvoice } from "@/lib/credit/queries";
+import { LateInterestLine } from "@/components/features/quotes/late-interest-line";
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
@@ -869,6 +870,11 @@ export default function QuoteDetailPage() {
                 : <>Active on credit · <b>{rupee(creditState.amountDue)}</b> was due <b>{formatIstDate(creditState.dueDate)}</b> ({creditState.daysLate} {creditState.daysLate === 1 ? "day" : "days"} late). Nothing is suspended automatically.</>}
             </p>
           )}
+          {/* R-368: 18% p.a. late interest — shown; charged only by an owner/billing click. Stays
+              after a late payment until it is charged (or there was none). */}
+          {isOnCredit && quote?.invoice_id && (
+            <LateInterestLine quoteId={quote.id} invoiceId={quote.invoice_id} role={me?.role} />
+          )}
         </Card>
       )}
 
@@ -876,7 +882,10 @@ export default function QuoteDetailPage() {
         <ActivateOnCreditDialog
           open={creditOpen}
           onOpenChange={setCreditOpen}
-          quote={{ id: quote.id, customer_name: quote.customer_name, amount: quote.amount ?? 0, invoice_id: quote.invoice_id, seats: quote.seats }}
+          quote={{
+            id: quote.id, customer_name: quote.customer_name, amount: quote.amount ?? 0, invoice_id: quote.invoice_id, seats: quote.seats,
+            line_items: Array.isArray(quote.line_items) ? quote.line_items : null,
+          }}
           customer={{
             id: creditCustomer.id, name: creditCustomer.name,
             payment_terms_days: creditCustomer.payment_terms_days ?? null,

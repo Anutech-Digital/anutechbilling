@@ -15,6 +15,7 @@ import { buildInvoicePdfProps, type TenantPdfInfo } from "@/lib/pdf/build-props"
 import { buildInvoiceUpiQr } from "@/lib/pdf/upi-qr";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
+import { readTenantUdyam } from "@/lib/compliance/udyam";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,12 +37,14 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const inv = invoice as Invoice;
-  const [{ data: quote }, { data: customer }, { data: tenant }] = await Promise.all([
+  const [{ data: quote }, { data: customer }, { data: tenant }, udyamNumber] = await Promise.all([
     admin.from("quotes").select("*").eq("invoice_id", id).maybeSingle(),
     inv.customer_id
       ? admin.from("customers").select("*").eq("id", inv.customer_id).maybeSingle()
       : Promise.resolve({ data: null }),
     admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch, lut_number").eq("id", inv.tenant_id).maybeSingle(),
+    /* R-368: read on its own — never fails the PDF, null before its migration. */
+    readTenantUdyam(admin, inv.tenant_id),
   ]);
 
   /* R-038. Whether this seller can take a Razorpay payment at all. Read here rather
@@ -65,11 +68,11 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     invoice:  inv,
     quote:    (quote as Quote) ?? null,
     customer: (customer as Customer) ?? null,
-    tenant:   (tenant as TenantPdfInfo) ?? {
+    tenant:   tenant ? { ...(tenant as TenantPdfInfo), udyam_number: udyamNumber } : {
       name: inv.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,
-      remit_ifsc: null, remit_branch: null, lut_number: null,
+      remit_ifsc: null, remit_branch: null, lut_number: null, udyam_number: udyamNumber,
     },
   });
 
