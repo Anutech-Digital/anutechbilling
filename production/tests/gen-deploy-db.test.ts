@@ -78,6 +78,24 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
     expect(res.scripts.live.after).not.toContain("current_user_id()/g");
   });
 
+  it("finds a listed migration the staging branch moved to prisma/migrations (R-161 layout)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-prisma-"));
+    try {
+      const tmp = path.join(root, "supabase");
+      fs.cpSync(path.join(supabaseDir, "migrations"), path.join(tmp, "migrations"), { recursive: true });
+      for (const env of ENVS) {
+        fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
+        fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
+      }
+      const moved = "20261006130000_feedback_checked";
+      fs.mkdirSync(path.join(root, "prisma", "migrations", moved), { recursive: true });
+      fs.renameSync(path.join(tmp, "migrations", `${moved}.sql`), path.join(root, "prisma", "migrations", moved, "migration.sql"));
+      const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
+      expect(res.files).toContain(`${moved}.sql`);
+      for (const env of ENVS) expect(res.scripts[env].after).toBe(res.scripts[env].before);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("a new migration with a header is appended to BOTH scripts; one without fails", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-"));
     try {
