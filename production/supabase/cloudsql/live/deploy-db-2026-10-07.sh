@@ -38,6 +38,7 @@ MIGS=(
   "renewrate|20261007050000_record_payment_renewal_rate.sql|resellersos_migration|exists(select 1 from pg_proc where proname='record_payment' and pronamespace='public'::regnamespace and prosrc like '%renewal_rate%')"
   "salarybill|20261007053000_billing_reads_salary_payments.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname='public' and tablename='salary_payments' and policyname='salary_payments_select_money_roles' and qual like '%billing%')"
   "aggturn|20261007060000_tenant_aggregate_turnover.sql|resellersos_migration|exists(select 1 from pg_constraint where conname='tenants_aggregate_turnover_check')"
+  "credit|20261007073000_activate_on_credit.sql|resellersos_migration|exists(select 1 from pg_proc where proname='activate_quote_on_credit' and pronamespace='public'::regnamespace)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
