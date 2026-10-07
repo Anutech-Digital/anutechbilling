@@ -54,6 +54,7 @@ import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.serv
 import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment, parseRefund, refundAdvice } from "@/lib/razorpay/gateway-money";
+import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
 
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
@@ -1012,16 +1013,25 @@ async function recordGatewayFee(
 ): Promise<void> {
   const fee = gatewayFeeFromPayment(payment);
   if (!fee) return;
-  const { error } = await admin
+  const { data: rows, error } = await admin
     .from("payments")
     .update({ gateway_fee: fee.fee, gateway_fee_gst: fee.gst })
     .eq("tenant_id", tenantId)
     .eq("quote_id", quoteId)
-    .eq("reference", reference);
+    .eq("reference", reference)
+    .select("id");
   if (error) {
     logDbError("webhooks/razorpay:gateway_fee", error);
-  } else {
-    console.log(`[webhooks/razorpay] ${reference}: Razorpay fee ₹${fee.fee} (GST ₹${fee.gst}), settles ₹${fee.net}`);
+    return;
+  }
+  console.log(`[webhooks/razorpay] ${reference}: Razorpay fee ₹${fee.fee} (GST ₹${fee.gst}), settles ₹${fee.net}`);
+  /* R-045 slice 2: book the fee as a Bank Charges expense (its GST as input), once per
+     payment — the expense id is derived from the payment id, so a retry or the later
+     payment.captured lands on the same row and writes nothing. Best-effort: a miss is
+     picked up by "Book Razorpay fees" on the Payments page. */
+  for (const r of (rows ?? []) as { id: string }[]) {
+    const booked = await bookGatewayFeeExpense(admin, tenantId, r.id);
+    if (booked === "error") console.error(`[webhooks/razorpay] ${reference}: fee expense not booked — use Book Razorpay fees on /payments`);
   }
 }
 

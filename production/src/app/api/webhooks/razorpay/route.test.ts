@@ -88,6 +88,8 @@ vi.mock("@/lib/email/owner-alert.server", () => ({
 vi.mock("@/lib/ai/autonomy.server", () => ({ loadAutonomyPolicy: async () => ({ modes: {} }) }));
 const queueProvisioning = vi.hoisted(() => vi.fn(async () => "queued"));
 vi.mock("@/lib/provisioning/provisioning.server", () => ({ queueProvisioning }));
+const bookGatewayFeeExpense = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => "booked"));
+vi.mock("@/lib/razorpay/fee-expense.server", () => ({ bookGatewayFeeExpense }));
 vi.mock("@/lib/pdf/pdf-token", () => ({
   pdfDownloadUrl: (base: string, kind: string, id: string) => `${base}/api/pdf/${kind}/${id}?sig=test`,
 }));
@@ -388,6 +390,29 @@ describe("R-045 — Razorpay's fee is kept on the payment", () => {
     expect((await again.json()).alreadyProcessed).toBe(true);
     expect(payRow().gateway_fee).toBe(28);
     expect(rpcNames().filter((n) => n === "record_payment")).toHaveLength(1);
+  });
+
+  it("slice 2: the fee is booked as an expense for THIS payment, in THIS tenant", async () => {
+    bookGatewayFeeExpense.mockClear();
+    await POST(signed(capturedWithFee()));
+    expect(bookGatewayFeeExpense).toHaveBeenCalledTimes(1);
+    const [, tenant, paymentId] = bookGatewayFeeExpense.mock.calls[0];
+    expect(tenant).toBe(TENANT);
+    expect(paymentId).toBe(payRow().id);
+  });
+
+  it("slice 2: a booking failure never fails the webhook (the payment is committed)", async () => {
+    bookGatewayFeeExpense.mockClear();
+    bookGatewayFeeExpense.mockResolvedValueOnce("error");
+    const res = await POST(signed(capturedWithFee()));
+    expect(res.status).toBe(200);
+    expect(payRow().gateway_fee).toBe(28);
+  });
+
+  it("slice 2: no fee in the event → nothing to book", async () => {
+    bookGatewayFeeExpense.mockClear();
+    await POST(signed(captured()));
+    expect(bookGatewayFeeExpense).not.toHaveBeenCalled();
   });
 
   it("no fee in the event: nothing guessed", async () => {

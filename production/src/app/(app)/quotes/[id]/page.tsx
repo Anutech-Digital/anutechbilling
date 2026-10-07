@@ -77,6 +77,7 @@ import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 
 // ============================================================
 // Status meta
@@ -1401,6 +1402,7 @@ export default function QuoteDetailPage() {
                   <div className="text-xs text-ink-3 min-w-0 truncate">
                     #{idx + 1} · {formatDate(p.received_at)}
                     {p.reference ? <> · <span className="font-mono">{p.reference}</span></> : null}
+                    <FeeNetLine payment={p} />
                   </div>
                   {p.status === "received" && me && (
                     <Button size="sm" variant="ghost" icon="file" onClick={() => setReceiptPayment(p)}>
@@ -1445,6 +1447,7 @@ export default function QuoteDetailPage() {
                   </td>
                   <td className="p-3 text-right tabular-nums text-sm font-medium">
                     {rupee(p.amount)}
+                    <FeeNetLine payment={p} className="font-normal" />
                   </td>
                   <td className="p-3 text-sm capitalize">{p.method.replace("_", " ")}</td>
                   <td className="p-3 font-mono text-xs text-ink-2 truncate max-w-[180px]">{p.reference ?? "—"}</td>

@@ -77,6 +77,8 @@ import { paymentMethodLabel } from "./method-label";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
+import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
+import { paymentFeeView } from "@/lib/razorpay/fee-expense";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -288,11 +290,14 @@ function PaymentsPageInner() {
   const handleExportCsv = () => {
     if (filtered.length === 0) { toast.info("No payments to export"); return; }
     const esc = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["Date", "Customer", "Quote", "Amount", "Method", "Reference", "Status", "Receipt Voucher"];
+    /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
+    const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
       const ctx = quoteById.get(p.quote_id);
+      const fee = paymentFeeView(p);
       return [
         formatDate(p.received_at), ctx?.customerName ?? "", p.quote_id, String(p.amount),
+        fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
     });
@@ -320,6 +325,7 @@ function PaymentsPageInner() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <BookGatewayFeesButton payments={payments} role={me?.role} />
           <Button icon="download" onClick={handleExportCsv}>
             Export CSV
           </Button>
@@ -710,6 +716,7 @@ function PaymentsPageInner() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base tabular-nums text-ink">{rupee(p.amount)}</p>
+                      <FeeNetLine payment={p} />
                       <p className="text-3xs text-ink-3">{paymentMethodLabel(p.method)}</p>
                     </div>
                   </div>
@@ -1131,6 +1138,7 @@ function PaymentRowView({
       {/* Amount — cash in, the happiest number; give it weight. */}
       <td className="px-3 py-2.5 text-right tabular-nums align-top">
         <span className="font-serif text-[15px] font-semibold text-emerald">{rupee(p.amount)}</span>
+        <FeeNetLine payment={p} className="mt-0.5" />
       </td>
       <td className="px-3 py-2.5 align-top">
         {methodInfo ? (
