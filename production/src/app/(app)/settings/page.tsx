@@ -31,6 +31,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
+import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
 import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
@@ -517,6 +518,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
       </Card>
 
       <InvoiceNumberingCard isOwner={isOwner} />
+
+      {/* R-262: business type + GST filing → which filings the Compliance Calendar shows. */}
+      <ComplianceProfileCard isOwner={isOwner} />
     </div>
   );
 }

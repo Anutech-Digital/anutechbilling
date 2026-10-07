@@ -24,9 +24,10 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { formatDate } from "@/lib/utils";
 import {
-  buildComplianceRows, CATEGORY_META,
+  buildComplianceRows, CATEGORY_META, BUSINESS_TYPE_LABEL, GST_FILING_LABEL,
   type ComplianceCategory, type ComplianceRow, type ComplianceStatus,
 } from "@/lib/compliance/obligations";
+import { useComplianceProfile } from "@/lib/compliance/profile";
 import {
   useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled, useTdsMonths,
 } from "@/lib/queries/compliance";
@@ -78,10 +79,18 @@ export function ComplianceView({
     () => (tdsQ.data ? noTdsDeductedPredicate(tdsQ.data, today) : undefined),
     [tdsQ.data, today],
   );
+  // R-262: business type + GST mode narrow the list. Not set / not loaded / columns not
+  // migrated → the original Pvt Ltd, monthly-GST calendar.
+  const profileQ = useComplianceProfile();
+  const profile = profileQ.data;
   const rows = React.useMemo(
-    () => buildComplianceRows(today, filedMap, cats, notApplicable),
-    [today, filedMap, cats, notApplicable],
+    () => buildComplianceRows(today, filedMap, cats, notApplicable, profile),
+    [today, filedMap, cats, notApplicable, profile],
   );
+  const profileSet = Boolean(profile?.businessType && profile?.gstFiling);
+  const profileText = profile?.businessType
+    ? `${BUSINESS_TYPE_LABEL[profile.businessType]}${profile.gstFiling ? ` · GST ${GST_FILING_LABEL[profile.gstFiling]}` : ""}`
+    : null;
 
   const overdue = rows.filter((r) => r.status === "overdue").length;
   const dueSoon = rows.filter((r) => r.status === "due_soon").length;
@@ -101,9 +110,21 @@ export function ComplianceView({
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-hairline bg-paper-2/40 px-3 py-2 text-[12px] text-ink-2">
         <Icon name="info" size={14} className="text-amber-ink shrink-0 mt-0.5" />
         <p>
-          Standard due dates for an Indian Private Limited company. Exact dates change with
+          {profileText
+            ? <>Standard due dates for your business ({profileText}). </>
+            : <>Standard due dates for an Indian Private Limited company filing GST monthly. </>}
+          Exact dates change with
           government extensions and depend on your turnover / audit status — <b>confirm each with your CA</b>.
           Marking an item filed only records it here for your tracking.
+          {profile && !profile.columnsMissing && !profileSet && (
+            <>
+              {" "}Not a Pvt Ltd, or on QRMP?{" "}
+              <Link href="/settings" className="font-medium text-ink underline">
+                Set your business type and GST filing
+              </Link>{" "}
+              so only your filings show.
+            </>
+          )}
         </p>
       </div>
 
@@ -193,7 +214,7 @@ export function ComplianceView({
             );
           })}
           {rows.length === 0 && (
-            <Card className="p-6 text-center text-sm text-ink-3">No obligations in this category.</Card>
+            <Card className="p-6 text-center text-sm text-ink-3">{profileText ? `Nothing in this category for a ${profileText.split(" · ")[0]}.` : "No obligations in this category."}</Card>
           )}
         </ul>
       )}
