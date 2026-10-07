@@ -34,7 +34,11 @@ change `_SUPABASE_URL` on the trigger.
    `gcloud sql import sql resellersos-staging-db gs://…/<file>.sql --database=resellersos --user=resellersos_migration --project=resellsubsos-prod`.
    Run the matching `supabase/tests/*.test.sql` the same way (`--user=postgres`): an import
    that finishes without ERROR means every assertion passed.
-3. `git push anutech manager-pardeep:staging` → Cloud Build builds the staging image
+3. **Staging train** (manager, every 2–3 hours — see `docs/STAGING-TRAIN.md`):
+   `node scripts/ops/staging-train.mjs` (dry run), then
+   `node scripts/ops/staging-train.mjs --db-done --push`. It merges the newest CI-green commit
+   of `manager-pardeep` into `staging` (`--no-ff`, never a force push — staging carries R-161
+   commits that `manager-pardeep` lacks) → Cloud Build builds the staging image
    (its own `_IMAGE` path, so production's `:latest` is never touched) and deploys
    `resellersos-staging`.
 4. Check on the staging URL (AI tester / by hand). Nothing there is real: break anything.
