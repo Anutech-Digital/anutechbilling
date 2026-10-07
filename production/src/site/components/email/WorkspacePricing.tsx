@@ -17,6 +17,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import Link from "@/site/components/ui/SiteLink";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS, offerPercentOff } from "@/site/lib/workspace-offer";
+import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
+import { WHATSAPP_URL } from "@/site/lib/config";
 
 export type PlanKey = "starter" | "standard" | "plus" | "enterprise";
 export interface PricedPlan {
@@ -151,7 +153,11 @@ export function WorkspacePricing({ plans, head, intro }: {
      reads as noise — Pardeep, 4 Oct). Desktop always shows every column. */
   const [cmp, setCmp] = useState(0);
   const byKey = useMemo(() => new Map(plans.map((p) => [p.key, p])), [plans]);
-  const shown = ORDER.map((k) => byKey.get(k)).filter((p): p is PricedPlan => !!p);
+  /* R-328 (7 Oct 2026, Pardeep): Business Plus shows no price — Google's own page does not
+     either. Whatever figure a caller passes, the card says "Contact us for pricing" and
+     offers a quote / WhatsApp, never Buy now. */
+  const shown = ORDER.map((k) => byKey.get(k)).filter((p): p is PricedPlan => !!p)
+    .map((p) => (p.key === "plus" ? { ...p, edition: PLUS_EDITION, annual: null, monthly: null } : p));
   const cols = shown.map((p) => ORDER.indexOf(p.key));
 
   /* "Save up to N%" — the best annual-vs-flexible saving among plans that have both. */
@@ -199,6 +205,7 @@ export function WorkspacePricing({ plans, head, intro }: {
           const isStarterOffer = p.key === "starter" && offerOn;
           const yearTotal = rate == null ? null : isStarterOffer ? FIRST_YEAR_PER_USER * users : rate * 12 * users;
           const edition = p.edition;
+          const onRequest = p.key === "plus";
           /* R-232: the online checkout sells the annual plan only; flexible stays quote-first. */
           const buyHref = edition != null && term === "annual" && p.annual != null ? buyWorkspaceHref(edition, users) : null;
           return (
@@ -211,6 +218,8 @@ export function WorkspacePricing({ plans, head, intro }: {
               <div className="wp-price">
                 {edition == null ? (
                   <b className="wp-talk">Let&apos;s talk</b>
+                ) : onRequest ? (
+                  <><b className="wp-talk">{CONTACT_FOR_PRICING}</b><small>We send the price for your team the same working day</small></>
                 ) : rate == null ? (
                   <><b className="wp-talk">Annual only</b><small>Switch to Annual to see the price</small></>
                 ) : (
@@ -238,6 +247,11 @@ export function WorkspacePricing({ plans, head, intro }: {
               <div className="wp-cta">
                 {edition == null ? (
                   <Link href="/contact" className="wp-btn wp-primary">Talk to us</Link>
+                ) : onRequest ? (
+                  <>
+                    <Link href={`/quote?${q({ ed: edition, seats: String(users), term })}`} className="wp-btn wp-primary">Get a quote</Link>
+                    <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`Hi Anutech — please send the Google Workspace Business Plus price for ${users} user${users === 1 ? "" : "s"} (${term}).`)}`} target="_blank" rel="noopener" className="wp-btn wp-ghost">Ask on WhatsApp</a>
+                  </>
                 ) : buyHref ? (
                   /* R-232: ready to pay → Razorpay checkout with this edition and seat count chosen. */
                   <>

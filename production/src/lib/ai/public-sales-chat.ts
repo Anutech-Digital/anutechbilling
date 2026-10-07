@@ -123,6 +123,8 @@ export function buildFacts(
     `SUPPORT: ${company.supportHours}${company.phone ? ` · WhatsApp/phone ${company.phone}` : ""}.`,
     `LIVE PRICE LIST (from the company's own catalogue, GST 18% extra, stated separately on every invoice):`,
     ...(lines.length ? lines : ["- (price list temporarily unavailable — offer the quote page instead)"]),
+    /* R-328: Plus is never priced in public (Google publishes no Plus price either). */
+    `- Google Workspace Business Plus: price on request — NEVER state a rupee figure for it; offer the Get-a-quote form or WhatsApp, and we send the price for their team.`,
     `STANDING TERMS: free migration done by us; setup and DNS (MX, SPF, DKIM, DMARC) free; GST invoice with GSTIN on every order; payment 100% in advance against the GST tax invoice.`,
     /* Poori website ka scope — par daam SIRF unke jinke aankde catalogue (DB) se aaye.
        Domains/hosting/mail/SSL ke site-wale daam abhi placeholder hain; unhe facts me

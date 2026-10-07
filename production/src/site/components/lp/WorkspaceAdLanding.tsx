@@ -29,6 +29,7 @@ import { pickAdParams, withAdParams, rememberLanding } from "@/site/lib/ad-attri
 import { reportLeadConversion } from "@/site/lib/google-ads";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS } from "@/site/lib/workspace-offer";
 import { LP_PLANS, compareRows, type LpPlan } from "@/site/lib/lp-plans";
+import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 
 /** The one line per plan card that storage and Meet size do not already say. */
 const PLAN_HIGHLIGHT: Record<LpPlan["key"], string> = {
@@ -287,7 +288,10 @@ export function WorkspaceAdLanding({
             <div className="gw-price">{inr(annualPerSeatMo!)}<small> per user / month</small></div>
             <div className="gw-year">{inr(yearly)} per user / year · + 18% GST (input credit milta hai)</div>
             </>) : (
-            <div className="gw-price gw-price-talk">Let&apos;s talk<small> — quote in a day</small></div>
+            /* R-328: Business Plus has no published price (Google shows none either). */
+            plan.key === "plus"
+              ? <div className="gw-price gw-price-talk">{CONTACT_FOR_PRICING}<small> — quote in a day</small></div>
+              : <div className="gw-price gw-price-talk">Let&apos;s talk<small> — quote in a day</small></div>
             )}
             {hasOffer && (
             <div className="gw-offer-box">
@@ -343,7 +347,7 @@ export function WorkspaceAdLanding({
                 <div className="gw-plan-price">
                   {annual != null && annual > 0 ? <>{inr(annual)}<small>/user/mahina</small></> : <>Quote<small> — ek din mein</small></>}
                 </div>
-                <small className="gw-plan-year">{annual != null && annual > 0 ? `saalana plan · + GST` : "300+ users ke liye"}</small>
+                <small className="gw-plan-year">{annual != null && annual > 0 ? `saalana plan · + GST` : p.key === "plus" ? CONTACT_FOR_PRICING : "300+ users ke liye"}</small>
                 <ul className="gw-plan-facts">
                   <li>{p.storage}</li>
                   <li>{p.meetPeople}</li>

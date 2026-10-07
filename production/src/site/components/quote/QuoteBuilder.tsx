@@ -127,9 +127,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   });
   const catCount = (c: string) => products.filter((p) => p.vendor === c).length;
   const anyDomainSelected = selected.some((p) => p.domain);
+  /* R-328: Business Plus has no public price — on the quote, out of the total, priced by us. */
+  const onRequestPicked = selected.filter((p) => p.priceOnRequest);
+  const ON_REQUEST = "Price on request";
 
   const quoteText = () => {
-    const L = selected.map((p) => `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
+    const L = selected.map((p) => p.priceOnRequest
+      ? `• ${p.label} — ${lines[p.name]} ${p.per}${lines[p.name] === 1 ? "" : "s"} — price on request (sent with the formal quotation)`
+      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
     return [
       `Quotation ${quoteNo || "(draft)"} — Anutech Digital`,
       `For: ${company || "—"}${gstin ? " · GSTIN " + gstin : ""}`,
@@ -257,7 +262,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
                         <span id={locked ? lockNoteId : undefined} className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                          {!annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
+                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>
@@ -332,9 +337,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 13.5 }}>
                 <span style={{ minWidth: 0 }}>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>×{lines[p.name]}</span></span>
-                <span className="mono" style={{ whiteSpace: "nowrap" }}>{inr(amountOf(p, lines[p.name]))}</span>
+                <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
+            {onRequestPicked.length > 0 && (
+              <p className="meta" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+                {onRequestPicked.map((p) => p.label).join(", ")}: price on request — not in the total below. We send it with your quotation, or <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`Hi Anutech — please send the price for ${onRequestPicked.map((p) => `${p.label} × ${lines[p.name]}`).join(", ")}.`)}`} target="_blank" rel="noopener">ask on WhatsApp</a>.
+              </p>
+            )}
             {selected.length > 0 && (
               <div style={{ marginTop: 10, fontSize: 13.5 }}>
                 <Row l="Subtotal" v={inr(subtotal)} />
@@ -386,8 +396,8 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             <div style={{ fontSize: 13, marginBottom: 10 }}><b>Quote for:</b> {company}{gstin ? ` · GSTIN ${gstin}` : ""}</div>
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 12.5 }}>
-                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {inr(rateOf(p))}/{p.per} · HSN {COMPANY.hsn}</span></span>
-                <span className="mono" style={{ whiteSpace: "nowrap" }}>{inr(amountOf(p, lines[p.name]))}</span>
+                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(rateOf(p))}/${p.per}`} · HSN {COMPANY.hsn}</span></span>
+                <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
             <div style={{ marginTop: 8, fontSize: 13 }}>

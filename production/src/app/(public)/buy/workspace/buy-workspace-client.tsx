@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { tierAnnualPrice, annualTotals } from "./tier-price";
 import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
@@ -364,6 +365,10 @@ function buildTiers(catalog: CatalogItem[]): Tier[] {
   return catalog.map((item) => {
     const slug    = slugFromName(item.name);
     const preset  = TIER_PRESETS[slug];
+    /* R-328 (7 Oct 2026, Pardeep): Business Plus has no price on the website — like Google's
+       own page. Its card says "Contact us for pricing" and goes to the quote form; the server
+       page already sends it with no figures and the checkout route refuses it. */
+    const onRequest = slug === "enterprise" || isPublicPriceHiddenTier(slug);
     /* R-276: same floor as the server's order amount, so a stale row is never shown below list. */
     const annual  = tierAnnualPrice(slug, item.prices?.annual?.msrp ?? item.msrp);
     /* R-157: used to multiply the annual rate by 1.25 when no monthly existed — an invented rate. Only a real
@@ -374,8 +379,8 @@ function buildTiers(catalog: CatalogItem[]): Tier[] {
       id:           slug,
       catalogId:    item.id,
       name:         item.name.replace(/^Google Workspace\s*/i, "") || item.name,
-      monthlyPrice: slug === "enterprise" ? null : monthly,
-      annualPrice:  slug === "enterprise" ? null : annual,
+      monthlyPrice: onRequest ? null : monthly,
+      annualPrice:  onRequest ? null : annual,
       maxUsers:     slug === "enterprise" ? null : 300,
       isPopular:    preset.isPopular,
       cta:          slug === "enterprise" ? "Contact sales" : "Get a quote",
@@ -1476,7 +1481,7 @@ export function BuyWorkspaceClient({
                         <div className={`text-3xs mt-0.5 ${isActive ? "text-paper/80" : "text-ink-3"}`}>
                           {t.annualPrice
                             ? `₹${(t.promoPrice ?? t.annualPrice).toLocaleString("en-IN")}/user · excl GST`
-                            : "Custom"}
+                            : isPublicPriceHiddenTier(t.id) ? "On request" : "Custom"}
                         </div>
                       </button>
                     );
@@ -2116,8 +2121,17 @@ function PricingCard({
           </div>
         ) : (
           <div className="mb-4">
-            <div className="font-serif text-3xl text-ink">Let&apos;s talk</div>
-            <div className="text-xs text-ink-3 mt-1">Custom pricing for 300+ users</div>
+            {isPublicPriceHiddenTier(tier.id) ? (
+              <>
+                <div className="font-serif text-3xl text-ink">{CONTACT_FOR_PRICING}</div>
+                <div className="text-xs text-ink-3 mt-1">We send the price for your team the same working day</div>
+              </>
+            ) : (
+              <>
+                <div className="font-serif text-3xl text-ink">Let&apos;s talk</div>
+                <div className="text-xs text-ink-3 mt-1">Custom pricing for 300+ users</div>
+              </>
+            )}
           </div>
         )}
 

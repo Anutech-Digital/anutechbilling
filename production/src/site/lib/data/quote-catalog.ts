@@ -18,6 +18,7 @@
  * extension, so the rate follows the TLD the customer picks.
  */
 import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
+import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
 import type { MergedEdition } from "../live-catalog";
 
@@ -33,6 +34,9 @@ export interface QuoteProduct {
   cycle: "mo" | "yr"; // billing cadence for the amount shown
   domain?: boolean;
   domainField?: keyof Pick<Tld, "reg" | "renew" | "transfer">;
+  /** R-328: no public price (Business Plus) — the line goes on the quote, the price comes back
+   *  with the formal quotation. ₹0 in every sum on this page; shown as "Price on request". */
+  priceOnRequest?: boolean;
 }
 
 const LABEL: Record<string, string> = {
@@ -58,6 +62,13 @@ const editions: QuoteProduct[] = LICENCE_EDITIONS.map((e) => ({
   name: e.name, label: LABEL[e.name] ?? e.name, vendor: vendorOf(e.name),
   tags: TAGS[e.name] ?? "", note: e.note, annual: e.annual, monthly: e.monthly, per: "seat", cycle: "mo",
 }));
+/* R-328: Business Plus can still be asked for — after Standard, with no figure of its own. */
+const plusAt = editions.findIndex((e) => e.name === "GW Business Standard") + 1;
+editions.splice(plusAt > 0 ? plusAt : editions.length, 0, {
+  name: PLUS_EDITION, label: LABEL[PLUS_EDITION], vendor: "Google Workspace", tags: TAGS[PLUS_EDITION],
+  note: "5 TB, Vault, eDiscovery · price sent with your quotation", annual: 0, monthly: 0, per: "seat", cycle: "mo",
+  priceOnRequest: true,
+});
 
 const domains: QuoteProduct[] = [
   { name: "Domain registration", label: "Domain registration", vendor: "Domains", tags: "domain registration register new name in com net org dns whois", note: "A new name on the extension you pick — first year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "reg" },
@@ -103,7 +114,7 @@ export function withLiveEditions(products: readonly QuoteProduct[], editions: re
   const live = new Map(editions.map((e) => [e.name, e]));
   return products.map((p) => {
     const l = live.get(p.name);
-    if (!l) return p;
+    if (!l || p.priceOnRequest) return p;
     const monthly = l.monthlyOrNull === undefined ? l.monthly : l.monthlyOrNull;
     return { ...p, annual: l.annual ?? p.annual, monthly };
   });

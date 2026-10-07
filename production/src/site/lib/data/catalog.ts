@@ -6,6 +6,7 @@
  * They live in this one module so that replacing them is a one-file edit, and so a test
  * can count that no component carries a price of its own.
  */
+import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 
 export interface Tld {
   tld: string;
@@ -59,7 +60,8 @@ export const LICENCE_EDITIONS: readonly LicenceEdition[] = [
      ₹136 / ₹736). Used only when the live catalogue cannot be read. */
   { name: "GW Business Starter", note: "30 GB per user", annual: 270, monthly: 325 },
   { name: "GW Business Standard", note: "2 TB per user, recordings", annual: 1080, monthly: 1300 },
-  { name: "GW Business Plus", note: "5 TB, Vault, eDiscovery", annual: 1380, monthly: 1620 },
+  /* R-328 (7 Oct 2026): no Business Plus row — its price is never shown on the website
+     (Google does not publish one either). Pages offer "Contact us for pricing" instead. */
   /* R-076 (7 Oct 2026): M365 and Zoho are live too (live-catalog.ts merges the app's
      "Microsoft 365 …" / "Zoho …" items over these). Same rule: fallback only. */
   { name: "M365 Business Basic", note: "Web Office, 50 GB mail", annual: 145, monthly: 175 },
@@ -98,7 +100,7 @@ export const EDITION_MATRICES: Readonly<Record<string, EditionMatrix>> = {
     cols: ["BUSINESS STARTER", "BUSINESS STANDARD", "BUSINESS PLUS"],
     note: "Google caps Business editions at 300 users. Above that it is Enterprise — talk to us.",
     rows: [
-      ["Price per seat, annual", "₹270/mo", "₹1,080/mo", "₹1,380/mo"],
+      ["Price per seat, annual", "₹270/mo", "₹1,080/mo", CONTACT_FOR_PRICING],
       ["Storage per user", "30 GB", "2 TB", "5 TB"],
       ["Custom email on your domain", "Yes", "Yes", "Yes"],
       ["Meet participants", "100", "150", "500"],

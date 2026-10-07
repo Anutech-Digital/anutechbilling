@@ -21,6 +21,7 @@
  */
 
 import { floorWorkspaceRow } from "./workspace-floor";
+import { isPublicPriceHidden } from "./public-price-policy";
 
 /** R-076: the website reads Microsoft 365 and Zoho from the same endpoint as Google Workspace. */
 export type PublicSuiteVendor = "google" | "microsoft" | "zoho";
@@ -68,6 +69,9 @@ function monthlyMsrp(prices: unknown): number | null {
 export function publicWorkspaceCatalog(rows: readonly CatalogRowLike[]): PublicWorkspaceItem[] {
   const out: PublicWorkspaceItem[] = [];
   for (const raw of rows) {
+    /* R-328: Business Plus is "Contact us for pricing" on the website (Google publishes no
+       Plus price either) — its row never leaves this endpoint, so no page can print it. */
+    if (isPublicPriceHidden(raw.name)) continue;
     /* R-205: a GW Starter/Standard/Plus row priced under the list price is stale (the old
        ₹136 seed) — lifted to the list price before it reaches the website. */
     const r = floorWorkspaceRow(raw);

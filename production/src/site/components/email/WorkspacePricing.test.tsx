@@ -34,7 +34,7 @@ describe("Workspace pricing → Buy now (R-232)", () => {
 
   it("every Business plan has Buy now first, then quote and trial", () => {
     render(<WorkspacePricing plans={plans} />);
-    for (const [name, tier] of [["Business Starter", "starter"], ["Business Standard", "standard"], ["Business Plus", "plus"]]) {
+    for (const [name, tier] of [["Business Starter", "starter"], ["Business Standard", "standard"]]) {
       const links = within(card(name)).getAllByRole("link");
       expect(links[0].textContent).toBe("Buy now");
       expect(links[0].getAttribute("href")).toBe(`/buy/workspace?tier=${tier}&seats=1&buy=1`);
@@ -48,6 +48,22 @@ describe("Workspace pricing → Buy now (R-232)", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Flexible|Monthly/ }));
     expect(within(card("Business Starter")).queryByRole("link", { name: "Buy now" })).toBeNull();
     expect(within(card("Business Starter")).getByRole("link", { name: "Get this plan" }).getAttribute("href")).toMatch(/^\/quote\?/);
+  });
+
+  it("R-328: Business Plus shows no price — 'Contact us for pricing', quote + WhatsApp, never Buy now", () => {
+    render(<WorkspacePricing plans={plans} />);
+    fireEvent.change(screen.getByLabelText("Number of users"), { target: { value: "7" } });
+    const c = card("Business Plus");
+    expect(c.textContent).toContain("Contact us for pricing");
+    expect(c.textContent).not.toMatch(/₹/);
+    const links = within(c).getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual(["Get a quote", "Ask on WhatsApp"]);
+    expect(links[0].getAttribute("href")).toBe("/quote?ed=GW+Business+Plus&seats=7&term=annual");
+    expect(links[1].getAttribute("href")).toMatch(/^https:\/\/wa\.me\//);
+    expect(links.some((l) => l.getAttribute("href")?.startsWith("/buy/"))).toBe(false);
+    /* Starter and Standard keep their prices. */
+    expect(card("Business Starter").textContent).toContain("₹160");
+    expect(card("Business Standard").textContent).toContain("₹800");
   });
 
   it("Enterprise stays 'Talk to us'", () => {

@@ -24,6 +24,7 @@
  * mistake (term boundary, 12×) the app has already paid for.
  */
 import { RESELLEROS_URL } from "./config";
+import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { EDITION_MATRICES, LICENCE_EDITIONS, MAIL_RATES, type LicenceEdition } from "./data/catalog";
 
 export type SuiteVendor = "google" | "microsoft" | "zoho";
@@ -120,6 +121,9 @@ export function mergeEditions(live: LiveWorkspaceItem[] | null): MergedEdition[]
 
   const out = [...base];
   for (const item of live) {
+    /* R-328: Business Plus is price on request on the website — even if an older app's
+       endpoint still sends its row, it never becomes a card, a calculator line or JSON-LD. */
+    if (isPublicPriceHidden(item.name)) continue;
     const name = websiteName(item);
     const key = name.toLowerCase();
     const target = EDITION_ALIASES[key] ?? key;

@@ -27,6 +27,7 @@ import { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/server";
 import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
+import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 
 const BUY_PAGE_TENANT_ID =
@@ -60,7 +61,24 @@ async function fetchGoogleWorkspaceItems(): Promise<CatalogItem[]> {
     console.error("[buy/workspace] catalog fetch failed:", error);
     return [];
   }
-  return (data ?? []) as CatalogItem[];
+  return ((data ?? []) as CatalogItem[]).map(publicBuyRow);
+}
+
+/**
+ * What of a catalogue row may reach the visitor's browser (these props are serialised into the
+ * page). R-328: Business Plus keeps its card but carries NO price ("Contact us for pricing").
+ * Wholesale and margin are our cost — the client never reads them, so they never leave.
+ */
+function publicBuyRow(row: CatalogItem): CatalogItem {
+  const hidden = isPublicPriceHidden(row.name);
+  const strip = (t?: { msrp: number; wholesale: number }) => (t ? { msrp: hidden ? 0 : t.msrp, wholesale: 0 } : undefined);
+  return {
+    ...row,
+    msrp: hidden ? 0 : row.msrp,
+    wholesale: 0,
+    margin_pct: null,
+    prices: hidden ? {} : { ...(row.prices?.annual ? { annual: strip(row.prices.annual) } : {}), ...(row.prices?.monthly ? { monthly: strip(row.prices.monthly) } : {}) },
+  };
 }
 
 /**

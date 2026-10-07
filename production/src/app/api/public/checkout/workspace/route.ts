@@ -40,6 +40,7 @@ import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 import { buildLinesFromCatalog, type CatalogPriceRow } from "./pricing";
+import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -127,6 +128,14 @@ export async function POST(request: NextRequest) {
       );
     }
     const { fullName, companyName, email, phone, seats, domain, tierId, gstin, simulate, couponCode } = parsed.data;
+
+    /* R-328 (7 Oct 2026, Pardeep): Business Plus is "Contact us for pricing" on the website,
+       like Google's own page — never sold or priced online. Refused before anything is read,
+       saved or charged; the message carries no figure. The pages never offer it; this is the
+       server gate for a crafted or stale request. */
+    if (isPublicPriceHiddenTier(tierId)) {
+      return NextResponse.json({ error: PLUS_NOT_SOLD_ONLINE, priceOnRequest: true }, { status: 400 });
+    }
 
     /* ── The buyer's place of supply (R-173, 6 Oct 2026) ─────────────────────
        record_payment copies the lead's state_code / state / gstin onto the customer it creates,
