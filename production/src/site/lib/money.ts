@@ -59,23 +59,14 @@ export function domainTermPrice(yearPrices: Record<string, number> | undefined, 
   return Math.max(0, total - (yearPrices?.["1"] ?? 0));
 }
 
-/**
- * The two launch coupons from the handoff. Percent off the gross, before GST.
- * R-225 (7 Oct 2026, Pardeep): the codes stay, but their NAMES are never printed on the
- * cart page — the hint says only "Have a coupon code?". And a coupon never discounts a
- * `domain:*` line: a domain sells close to the registry's cost, so 10–15% off it was a
- * loss on the order. Every other line is discounted exactly as before.
+/*
+ * Coupons: percent off the FIRST payment's gross, before GST.
+ * R-225 (7 Oct 2026, Pardeep): code NAMES are never printed on the cart page, and a coupon
+ * never discounts a `domain:*` line (a domain sells close to the registry's cost).
+ * R-329 (7 Oct 2026): the code table is SERVER-ONLY (lib/checkout/coupons). This module is
+ * in the browser bundle, so it only ever sees a rate the server confirmed
+ * (POST /api/public/cart-coupon). Renewals are at list price.
  */
-export const COUPONS: Readonly<Record<string, number>> = {
-  ANUTECH10: 0.10,
-  MIGRATE15: 0.15,
-};
-
-/** The coupon's rate for a typed code (case and spaces forgiven); 0 for an unknown one. */
-export function couponRate(code: string): number {
-  const c = code.trim().toUpperCase();
-  return Object.prototype.hasOwnProperty.call(COUPONS, c) ? COUPONS[c] : 0;
-}
 
 /** A line a coupon never discounts (R-225): a domain registration. */
 export function isCouponExempt(sku: string | undefined): boolean {
@@ -131,9 +122,13 @@ export interface CartTotals {
   recurring: number;
 }
 
-export function cartTotals(lines: readonly CartLine[], couponCode: string): CartTotals {
+/**
+ * `couponRate` is the server-confirmed rate of the cart's code (0..1; 0 = none) — never the
+ * code itself: the code table is not in the browser (R-329).
+ */
+export function cartTotals(lines: readonly CartLine[], couponRate: number): CartTotals {
   const gross = lines.reduce((n, l) => n + l.unitPrice * l.qty, 0);
-  const rate = couponRate(couponCode);
+  const rate = Number.isFinite(couponRate) && couponRate > 0 && couponRate < 1 ? couponRate : 0;
   const { discount } = couponSplit(
     lines.map((l) => ({ qty: l.qty, price: l.unitPrice, exempt: isCouponExempt(l.sku) })),
     rate,

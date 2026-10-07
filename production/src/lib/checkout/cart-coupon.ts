@@ -3,21 +3,30 @@
  * (couponSplit in site/lib/money), applied to the server-priced quote lines.
  *
  * Pardeep: keep the coupons, but never on a domain line (a domain sells close to the
- * registry's cost). Every other line is discounted exactly as before:
+ * registry's cost). And (R-329) a coupon is for the FIRST payment only — renewals are at
+ * list price, as they always were before R-225.
  *
  *  - no priced domain line → quote-level `discount_pct` off the gross, unchanged since
- *    24 Sep 2026; `generate_invoice` prints it as the invoice's Discount row.
+ *    24 Sep 2026; `generate_invoice` prints it as the invoice's Discount row. Line rates
+ *    stay at list, and record_payment files each subscription's mrr from the line rate,
+ *    so renewals are at list.
  *  - domain-only cart → nothing off.
  *  - priced domain + other lines → `discount_pct` cannot do it (a whole-number % of the
  *    WHOLE subtotal, smallint), so the discount comes off each other line's rate, whole
  *    rupees, with the catalogue rate kept as `list_rate` — the package pattern
  *    (lib/packages/price.ts). The quote's subtotal is then already the taxable value.
+ *    R-329: record_payment took a subscription's mrr from that DISCOUNTED rate, so every
+ *    renewal was discounted too. Each discounted line now also carries `renewal_rate`
+ *    (= list); record_payment reads it for the mrr (migration
+ *    20261007050000_record_payment_renewal_rate). The invoice still sums the charged rates.
  *
- * Mutates the discounted lines' `rate` / `list_rate` in place (the caller's quote lines).
+ * The code table is server-only (lib/checkout/coupons, R-329).
+ * Mutates the discounted lines' `rate` / `list_rate` / `renewal_rate` in place.
  */
-import { couponRate, couponSplit, discountedUnitPrice } from "@/site/lib/money";
+import { couponSplit, discountedUnitPrice } from "@/site/lib/money";
+import { couponRate } from "./coupons";
 
-export interface CouponQuoteLine { qty: number; rate: number; list_rate?: number }
+export interface CouponQuoteLine { qty: number; rate: number; list_rate?: number; renewal_rate?: number }
 
 export interface CartCouponResult {
   /** The typed code, normalised. */
@@ -58,6 +67,7 @@ export function applyCartCoupon<T extends CouponQuoteLine>(
     for (const line of items) {
       if (isExempt(line)) continue;
       line.list_rate = line.rate;
+      line.renewal_rate = line.rate; // R-329: the first payment only — renews at list
       line.rate = discountedUnitPrice(line.rate, rate);
     }
     const subtotal = Math.round(items.reduce((s, i) => s + i.qty * i.rate, 0));

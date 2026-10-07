@@ -118,7 +118,8 @@ const cartSchema = z.object({
       country: z.string().max(2).optional(),
     })
     .optional(),
-  /** The cart page's coupon. Applied from the SAME table the cart uses (site/lib/money). */
+  /** The cart page's coupon code. Priced from the server-only table the cart page asks
+   *  through POST /api/public/cart-coupon (lib/checkout/coupons, R-329). */
   coupon: z.string().max(40).optional(),
   simulate: z.boolean().optional(),
 });
@@ -127,6 +128,9 @@ interface QuoteLine {
   id: string; name: string; qty: number; rate: number; cost: number;
   /** The rate before a coupon, when a coupon came off this line's rate (R-225, cart-coupon.ts). */
   list_rate?: number;
+  /** What the line's subscription renews at, when a coupon came off its first payment
+   *  (R-329). record_payment files the subscription's mrr from it. */
+  renewal_rate?: number;
   /** Domain lines only: the exact name paid for, so provisioning registers THAT name. */
   domain?: string;
   /** Domain lines only: whose name it is registered in (owner decision 22). */
@@ -632,7 +636,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       deal.applied
         ? deal.discountPct
           ? `Coupon ${couponCode}: ${deal.ratePct}% off ₹${gross.toLocaleString("en-IN")}`
-          : `Coupon ${couponCode}: ${deal.ratePct}% off non-domain lines, ₹${deal.discount.toLocaleString("en-IN")} off (domains at full price)`
+          : `Coupon ${couponCode}: ${deal.ratePct}% off non-domain lines, ₹${deal.discount.toLocaleString("en-IN")} off (domains at full price; renewals at list)`
         : null,
       hasHosting
         ? hostingItems.length > 1

@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { applyCartCoupon } from "./cart-coupon";
 
-type L = { qty: number; rate: number; list_rate?: number; domain?: boolean };
+type L = { qty: number; rate: number; list_rate?: number; renewal_rate?: number; domain?: boolean };
 const isDomain = (l: L) => l.domain === true;
 
 describe("applyCartCoupon (R-225)", () => {
@@ -55,5 +55,22 @@ describe("applyCartCoupon (R-225)", () => {
     const r = applyCartCoupon(items, isDomain, "CONSTRUCTOR");
     expect(r.discountPct).toBe(0);
     expect(r.subtotal).toBe(1000);
+  });
+
+  /* R-329 (7 Oct 2026): a coupon is for the FIRST payment only. record_payment files a
+     subscription's mrr from the line's charged rate, and renewals run from that mrr — so a
+     discounted hosting rate discounted every renewal too. The line now says what it renews
+     at (renewal_rate = list); record_payment reads it (migration 20261007050000). */
+  it("hosting + paid domain: first payment discounted, renewal stays at list", () => {
+    const items: L[] = [{ qty: 1, rate: 2999 }, { qty: 1, rate: 799, domain: true }];
+    applyCartCoupon(items, isDomain, "ANUTECH10");
+    expect(items[0]).toMatchObject({ rate: 2699, list_rate: 2999, renewal_rate: 2999 });
+    expect(items[1]).toEqual({ qty: 1, rate: 799, domain: true });
+  });
+
+  it("no paid domain: lines untouched (no renewal_rate), exactly as before R-225", () => {
+    const items: L[] = [{ qty: 1, rate: 2999 }, { qty: 1, rate: 0, domain: true }];
+    applyCartCoupon(items, isDomain, "ANUTECH10");
+    expect(items[0]).toEqual({ qty: 1, rate: 2999 });
   });
 });
