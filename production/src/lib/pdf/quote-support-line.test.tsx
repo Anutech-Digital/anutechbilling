@@ -57,7 +57,7 @@ describe("includedSupportLine", () => {
     expect(l).toEqual({
       planName: "Free",
       text: "Support: Free — Included",
-      detail: "Email helpdesk, answered within a working day.",
+      detail: "Email helpdesk, answered within a working day. · First response in 24h · Email only · No live calls",
     });
   });
   it("paid plan / product add-on / typed support line → null", () => {

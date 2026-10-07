@@ -49,6 +49,22 @@ export function includedSupportLine(lines: readonly LineLike[] | null | undefine
   return {
     planName: free.label,
     text:     `Support: ${free.label} — Included`,
-    detail:   free.summary,
+    /* Same facts the builder's plan card lists (support-plan-picker), so the customer
+       reads on the quote what the seller saw: "… · First response in 24h · Email only ·
+       No live calls" (Abhishek's report, 7 Oct). */
+    detail:   [free.summary, ...supportTierFacts(free)].join(" · "),
   };
+}
+
+/** The plan card's bullet facts for a tier, as plain text. */
+export function supportTierFacts(tier: (typeof SUPPORT_TIERS)[number]): string[] {
+  const channel =
+    tier.channels.whatsapp === "24x7" ? "WhatsApp, 24/7"
+    : tier.channels.whatsapp === "business_hours" ? "WhatsApp in business hours"
+    : "Email only";
+  const calls =
+    tier.channels.meetCallsPerMonth === null ? "Unlimited live calls"
+    : tier.channels.meetCallsPerMonth > 0 ? `${tier.channels.meetCallsPerMonth} live calls a month`
+    : "No live calls";
+  return [`First response in ${tier.slaHours}h`, channel, calls];
 }
