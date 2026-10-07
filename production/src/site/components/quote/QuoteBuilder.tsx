@@ -17,28 +17,23 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-224: hosting rates carry paise (₹49.99) — print them exactly as /rates does, not rounded. */
+const inr = quoteInr;
 const P = "var(--primary)";
 
 export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const params = useSearchParams();
 
-  // Live rates (if the page supplied them) override the static edition prices.
-  const products = useMemo<QuoteProduct[]>(() => {
-    if (!editions?.length) return [...QUOTE_PRODUCTS];
-    const live = new Map(editions.map((e) => [e.name, e]));
-    return QUOTE_PRODUCTS.map((p) => {
-      const l = live.get(p.name);
-      return l ? { ...p, annual: l.annual ?? p.annual, monthly: l.monthly ?? p.monthly } : p;
-    });
-  }, [editions]);
+  // Live rates (if the page supplied them) override the static edition prices. An edition
+  // with no flexible tier comes back with monthly: null — annual only (R-224).
+  const products = useMemo<QuoteProduct[]>(() => withLiveEditions(QUOTE_PRODUCTS, editions), [editions]);
   const byName = useMemo(() => new Map(products.map((p) => [p.name, p])), [products]);
 
   const [lines, setLines] = useState<Record<string, number>>({ "GW Business Starter": 1 });
@@ -84,15 +79,20 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       if (v) setCat(v);
     }
     if (Object.keys(next).length) setLines(next);
-    if (t === "annual" || t === "monthly") setTerm(t);
+    /* A deep link asking for monthly on an annual-only edition stays annual (R-224). */
+    const edAnnualOnly = !!ed && byName.get(ed)?.monthly === null;
+    if (t === "annual" || (t === "monthly" && !edAnnualOnly)) setTerm(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const annual = term === "annual";
   const rateOf = (p: QuoteProduct): number => {
     if (p.domain && p.domainField) return QUOTE_TLDS.find((t) => t.tld === domainTld)?.[p.domainField] ?? 0;
-    return annual ? p.annual : p.monthly;
+    /* Annual-only lines never sit in a monthly basket (toggle + term guard below), so the
+       annual fallback is unreachable in practice — it only keeps the type a number. */
+    return quoteRate(p, term) ?? p.annual;
   };
+  const annualOnly = (p: QuoteProduct) => p.monthly === null;
   const amountOf = (p: QuoteProduct, qty: number): number => (p.cycle === "mo" ? rateOf(p) * qty * (annual ? 12 : 1) : rateOf(p) * qty);
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
@@ -101,13 +101,21 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const gst = payable - subtotal;
   const renewal = Math.round(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0) * 1.18);
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
-  const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly > p.annual);
+  const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
-    ? Math.round((1 - moLines.reduce((n, p) => n + p.annual * lines[p.name], 0) / moLines.reduce((n, p) => n + p.monthly * lines[p.name], 0)) * 100)
+    ? Math.round((1 - moLines.reduce((n, p) => n + p.annual * lines[p.name], 0) / moLines.reduce((n, p) => n + (p.monthly ?? p.annual) * lines[p.name], 0)) * 100)
     : 0;
+  // Selected lines with no flexible tier — while any is in the basket, Flexible monthly is off.
+  const annualOnlyPicked = selected.filter(annualOnly);
 
   const setQty = (nm: string, q: number) => setLines((L) => { const v = Math.max(0, Math.min(999, q)); const c = { ...L }; if (v === 0) delete c[nm]; else c[nm] = v; return c; });
-  const toggle = (nm: string) => setLines((L) => { const c = { ...L }; if (c[nm]) delete c[nm]; else c[nm] = 1; return c; });
+  const toggle = (nm: string) => setLines((L) => {
+    const c = { ...L };
+    if (c[nm]) delete c[nm];
+    else if (!annual && byName.get(nm)?.monthly === null) return L; // annual only — not on a monthly quote
+    else c[nm] = 1;
+    return c;
+  });
 
   // Products visible in the picker: category + search, but a selected line always shows.
   const q = query.trim().toLowerCase();
@@ -211,17 +219,25 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               {/* commitment toggle */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "8px 0 12px" }}>
                 <div style={{ display: "inline-flex", background: "var(--tint)", border: "1px solid var(--border)", borderRadius: 999, padding: 3 }}>
-                  {(["annual", "monthly"] as const).map((t) => (
-                    <button key={t} onClick={() => setTerm(t)} aria-pressed={term === t}
-                      style={{ cursor: "pointer", border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: term === t ? 600 : 500, background: term === t ? P : "transparent", color: term === t ? "#fff" : "var(--text-secondary)", fontFamily: "inherit", minHeight: 40 }}>
-                      {t === "annual" ? "Annual commitment" : "Flexible monthly"}
-                    </button>
-                  ))}
+                  {(["annual", "monthly"] as const).map((t) => {
+                    const off = t === "monthly" && annualOnlyPicked.length > 0;
+                    return (
+                      <button key={t} onClick={() => setTerm(t)} aria-pressed={term === t} disabled={off} aria-describedby={off ? "annual-only-note" : undefined}
+                        style={{ cursor: off ? "not-allowed" : "pointer", border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: term === t ? 600 : 500, background: term === t ? P : "transparent", color: term === t ? "#fff" : off ? "var(--text-muted)" : "var(--text-secondary)", fontFamily: "inherit", minHeight: 40 }}>
+                        {t === "annual" ? "Annual commitment" : "Flexible monthly"}
+                      </button>
+                    );
+                  })}
                 </div>
                 <span style={{ fontSize: 13, color: savePct > 0 ? "var(--success)" : "var(--text-muted)", fontWeight: 600 }}>
                   {savePct > 0 ? `Annual saves ${savePct}% on this basket` : "Commitment doesn't change domain or certificate rates"}
                 </span>
               </div>
+              {annualOnlyPicked.length > 0 && (
+                <p id="annual-only-note" className="meta" style={{ margin: "-4px 0 10px", fontSize: 13 }}>
+                  {annualOnlyPicked.map((p) => p.label).join(", ")} {annualOnlyPicked.length > 1 ? "are" : "is"} annual only. Remove {annualOnlyPicked.length > 1 ? "them" : "it"} for a monthly quote.
+                </p>
+              )}
               {/* rows */}
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {visible.length === 0 && (
@@ -229,17 +245,18 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                 )}
                 {visible.map((p) => {
                   const on = (lines[p.name] ?? 0) > 0;
+                  const locked = !on && !annual && annualOnly(p); // annual only, monthly quote
                   return (
                     <div key={p.name} style={{ borderTop: "1px solid var(--border-hairline)" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0" }}>
-                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`}
-                          style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: `1.5px solid ${on ? "var(--success)" : "var(--border-strong)"}`, background: on ? "var(--success)" : "#fff", color: "#fff", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>{on ? "✓" : ""}</button>
-                        <button onClick={() => toggle(p.name)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`} disabled={locked}
+                          style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: `1.5px solid ${on ? "var(--success)" : "var(--border-strong)"}`, background: on ? "var(--success)" : locked ? "var(--tint)" : "#fff", color: "#fff", cursor: locked ? "not-allowed" : "pointer", fontSize: 13, lineHeight: 1 }}>{on ? "✓" : ""}</button>
+                        <button onClick={() => toggle(p.name)} disabled={locked} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit", padding: 0 }}>
                           <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "var(--text)" }}>{p.label}</span>
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
                         <span className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                          {rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
+                          {!annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>

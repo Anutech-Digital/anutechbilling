@@ -33,39 +33,9 @@ export const TLDS: readonly Tld[] = [
   { tld: ".app", reg: 1299, renew: 1499, transfer: 1399, use: "Mobile and web apps", group: "Tech" },
 ] as const;
 
-export interface HostingPlan {
-  name: string;
-  who: string;
-  /** ₹/month when billed monthly. */
-  monthly: number;
-  /** ₹/month when billed yearly (the −20% figure the toggle shows). */
-  yearly: number;
-  lines: readonly string[];
-}
-
-export const HOSTING_PLANS: readonly HostingPlan[] = [
-  { name: "Starter", who: "one site", monthly: 199, yearly: 159, lines: ["1 website, 10 GB NVMe", "Free SSL, daily backups", "WhatsApp + email support"] },
-  { name: "Business", who: "up to 10 sites", monthly: 449, yearly: 359, lines: ["10 websites, 50 GB NVMe", "5 mailboxes included", "Free migration, done by us", "Staging site per domain"] },
-  { name: "Agency", who: "client work", monthly: 999, yearly: 799, lines: ["Unlimited sites, 200 GB NVMe", "WHM, one cPanel per client", "Hourly backups, wildcard SSL", "Named engineer on WhatsApp"] },
-] as const;
-
-/** The 14-row full specification table. "—" renders in --text-disabled. */
-export const HOSTING_SPECS: readonly (readonly [string, string, string, string])[] = [
-  ["NVMe SSD storage", "10 GB", "50 GB", "200 GB"],
-  ["Websites", "1", "10", "Unlimited"],
-  ["Guided monthly visits", "25k", "150k", "1M+"],
-  ["Free domain, first year", ".in", ".in or .com", ".in or .com"],
-  ["Business mailboxes", "—", "5", "25"],
-  ["SSL certificate", "Free DV", "Free DV", "Wildcard"],
-  ["Web server", "LiteSpeed", "LiteSpeed", "LiteSpeed"],
-  ["PHP versions", "7.4 – 8.3", "7.4 – 8.3", "7.4 – 8.3"],
-  ["Databases", "2", "25", "Unlimited"],
-  ["Staging environment", "—", "1 per site", "1 per site"],
-  ["Backup frequency", "Daily", "Daily", "Hourly"],
-  ["WHM / sub-accounts", "—", "—", "Yes"],
-  ["Datacentre", "Mumbai", "Mumbai / Bengaluru", "Mumbai / Bengaluru"],
-  ["Support channel", "WhatsApp", "WhatsApp", "Named engineer"],
-] as const;
+/* R-224 (7 Oct 2026): HOSTING_PLANS / HOSTING_SPECS (three old placeholder plans at
+   ₹159–₹999) were removed — hosting is priced ONLY by HOSTING_TIERS in
+   hosting-landing-v2.ts (from LANDING_PLANS), which /hosting, /rates, the cart and /quote use. */
 
 /** ₹/mailbox/month. */
 export const MAIL_RATES: Readonly<Record<string, number>> = {
@@ -108,7 +78,7 @@ export interface Cert {
 }
 
 export const CERTS: readonly Cert[] = [
-  { name: "Free DV", who: "Every site we host", price: "₹0", unit: "", highlighted: true, cta: "Included", addPrice: null, lines: ["Auto-issued and auto-renewed", "Padlock in every browser", "Wildcard on Agency plans"] },
+  { name: "Free DV", who: "Every site we host", price: "₹0", unit: "", highlighted: true, cta: "Included", addPrice: null, lines: ["Auto-issued and auto-renewed", "Padlock in every browser", "Wildcard on Plus"] },
   { name: "Positive SSL", who: "A single domain", price: "₹899", unit: "/yr", highlighted: false, cta: "Get a quote", addPrice: 899, lines: ["Domain validation, minutes", "₹50k relying-party warranty", "Reissue any time"] },
   { name: "Wildcard", who: "Every subdomain", price: "₹4,499", unit: "/yr", highlighted: false, cta: "Get a quote", addPrice: 4499, lines: ["Covers *.yourdomain.in", "One cert, unlimited subdomains", "Fits multi-client setups"] },
   { name: "OV / EV", who: "When a client needs paperwork", price: "₹6,999", unit: "/yr", highlighted: false, cta: "Talk to us", addPrice: null, lines: ["Organisation vetting by the CA", "Company name on the cert", "We handle the documents"] },

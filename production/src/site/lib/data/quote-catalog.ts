@@ -1,17 +1,25 @@
 /**
  * Quote-builder catalogue — everything a multi-line quote can contain, in the
  * shape the "Anutech Quote" handoff uses. Prices come from the repo's own data
- * where it exists (LICENCE_EDITIONS, HOSTING_PLANS, TLDS in catalog.ts) so the
- * quote can never disagree with the rest of the site; support tiers and the
- * three domain "actions" are defined here (not elsewhere in the repo) from the
- * handoff, all in WHOLE RUPEES (CLAUDE.md §13).
+ * where it exists (LICENCE_EDITIONS + TLDS in catalog.ts, HOSTING_TIERS — the same
+ * tiers /hosting, /rates and the cart sell) so the quote can never disagree with the
+ * rest of the site; support tiers and the three domain "actions" are defined here
+ * (not elsewhere in the repo) from the handoff.
+ *
+ * R-224 (7 Oct 2026): hosting used to come from the old HOSTING_PLANS placeholder
+ * (Starter ₹159/199, Business ₹359 and a ₹799 third plan — ~3× /hosting, one that does
+ * not exist). Hosting rates are paise-precise (₹49.99), so `quoteInr` prints them the
+ * way /rates does. `monthly: null` = no flexible tier (a live GW edition can be annual
+ * only) — the builder must not quote it under "Flexible monthly".
  *
  * `annual` / `monthly` are ₹ per `per`-unit per period. Domain / SSL / onsite
  * lines bill once a year (cycle "yr") — never ×12. Domain products carry a
  * `domainField` that selects the reg / renew / transfer column of the chosen
  * extension, so the rate follows the TLD the customer picks.
  */
-import { LICENCE_EDITIONS, HOSTING_PLANS, TLDS, type Tld } from "./catalog";
+import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
+import { HOSTING_TIERS } from "./hosting-landing-v2";
+import type { MergedEdition } from "../live-catalog";
 
 export interface QuoteProduct {
   name: string;      // stable id
@@ -20,7 +28,7 @@ export interface QuoteProduct {
   tags: string;      // keyword search haystack
   note: string;
   annual: number;    // ₹/unit, annual commitment
-  monthly: number;   // ₹/unit, flexible monthly
+  monthly: number | null; // ₹/unit, flexible monthly — null = annual only
   per: string;       // "seat" | "site" | "domain" | "certificate" | "account" | "visit"
   cycle: "mo" | "yr"; // billing cadence for the amount shown
   domain?: boolean;
@@ -57,10 +65,12 @@ const domains: QuoteProduct[] = [
   { name: "Domain transfer", label: "Domain transfer in", vendor: "Domains", tags: "domain transfer move switch registrar epp code", note: "Move a name to us — no fee, adds a year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "transfer" },
 ];
 
-const hosting: QuoteProduct[] = HOSTING_PLANS.map((h) => ({
+/* Same tiers, names and ₹ as /hosting and /rates: billed yearly → annual, billed monthly → flexible. */
+const hosting: QuoteProduct[] = HOSTING_TIERS.map((h) => ({
   name: `Hosting ${h.name}`, label: `Web hosting — ${h.name}`, vendor: "Web hosting",
-  tags: `cpanel litespeed nvme hosting website ${h.who} mumbai bengaluru`, note: `${h.who} · ${h.lines[0]}`,
-  annual: h.yearly, monthly: h.monthly, per: "site", cycle: "mo",
+  tags: `cpanel nvme ssl backups hosting website ${h.name.toLowerCase()}`,
+  note: `${h.storage} · ${h.sites} site${h.sites === "1" ? "" : "s"} · ${h.bandwidth} bandwidth`,
+  annual: h.yearlyMo, monthly: h.monthly, per: "site", cycle: "mo",
 }));
 
 const ssl: QuoteProduct[] = [
@@ -82,3 +92,30 @@ export const QUOTE_CATEGORIES: readonly string[] = ["Google Workspace", "Microso
 
 /** The extensions the domain picker offers — real reg/renew/transfer from TLDS. */
 export const QUOTE_TLDS: readonly Tld[] = TLDS;
+
+/**
+ * Overlay live edition prices on the catalogue. A live edition whose `monthlyOrNull` is
+ * null has no flexible tier — its `monthly` becomes null (annual only), never the annual
+ * rate dressed up as monthly (R-224).
+ */
+export function withLiveEditions(products: readonly QuoteProduct[], editions: readonly MergedEdition[] | undefined): QuoteProduct[] {
+  if (!editions?.length) return [...products];
+  const live = new Map(editions.map((e) => [e.name, e]));
+  return products.map((p) => {
+    const l = live.get(p.name);
+    if (!l) return p;
+    const monthly = l.monthlyOrNull === undefined ? l.monthly : l.monthlyOrNull;
+    return { ...p, annual: l.annual ?? p.annual, monthly };
+  });
+}
+
+/** ₹/unit for the term, or null when the product is not sold on that term. */
+export function quoteRate(p: QuoteProduct, term: "annual" | "monthly"): number | null {
+  return term === "annual" ? p.annual : p.monthly;
+}
+
+/** ₹ the way /rates prints it: whole rupees plain, paise to 2 places (₹49.99, ₹1,080). */
+export function quoteInr(n: number): string {
+  const r = Math.round(n * 100) / 100;
+  return "₹" + (Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+}
