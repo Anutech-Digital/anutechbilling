@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { invoiceByLead, invoiceHref, type QuoteInvoiceRow } from "./invoice-links";
+import { ordersEmptyState } from "./empty-state";
 import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
 import { useLeadOutcome } from "@/lib/leads/use-outcome";
 import { useCallLog } from "@/components/features/leads/call-log-dialog";
@@ -620,6 +621,14 @@ export default function OnlineOrdersPage() {
     0,
   );
 
+  /* R-350: each tab / search / filter gets its own empty message — "No orders yet" only on All. */
+  const empty = ordersEmptyState({
+    tab,
+    search,
+    focusLabel: focus ? ORDER_FOCUS_LABEL[focus] : "",
+    totalOrders: orders.length,
+  });
+
   const tabItems: TabBarItem[] = [
     { id: "all",    label: `All · ${orders.length}` },
     { id: "paid",   label: `Paid · ${orders.filter((o) => o.paid).length}` },
@@ -779,20 +788,8 @@ export default function OnlineOrdersPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon="inbox"
-            title={
-              search
-                ? "No orders match your search"
-                : tab === "issues"
-                  ? "No issues — all clear!"
-                  : "No orders yet"
-            }
-            body={
-              search
-                ? `Try a different search term or clear filters.`
-                : tab === "issues"
-                  ? "Every order is provisioning smoothly."
-                  : "Orders from your website — cart, trials, DMS — appear here as they come in."
-            }
+            title={empty.title}
+            body={empty.body}
             action={
               search ? (
                 <Button variant="default" onClick={() => setSearch("")}>
@@ -834,9 +831,10 @@ export default function OnlineOrdersPage() {
                       </div>
                     </div>
                     <p className="text-xs text-ink-2 truncate mb-2">{o.tier}</p>
-                    <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
-                      <Badge kind={s.kind} size="sm" dot>{s.label}</Badge>
-                      <span className="text-2xs text-ink-3 truncate max-w-[60%] text-right">
+                    {/* R-350: status line wraps to 2 lines on a 375px phone instead of cutting off with "…" */}
+                    <div className="flex items-start justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
+                      <Badge kind={s.kind} size="sm" dot className="shrink-0">{s.label}</Badge>
+                      <span className="min-w-0 text-2xs text-ink-3 text-right line-clamp-2 break-words">
                         {o.nextAction}
                       </span>
                     </div>
@@ -844,7 +842,7 @@ export default function OnlineOrdersPage() {
                   {o.invoiceNo && (
                     <Link
                       href={invoiceHref(o.invoiceNo) as never}
-                      className="mt-1 inline-flex items-center gap-1 px-1 font-mono text-2xs text-indigo-ink hover:underline"
+                      className="mt-1 inline-flex min-h-[40px] items-center gap-1 px-2 font-mono text-2xs text-indigo-ink hover:underline"
                       title="Open GST invoice"
                     >
                       <Icon name="receipt" size={11} />
