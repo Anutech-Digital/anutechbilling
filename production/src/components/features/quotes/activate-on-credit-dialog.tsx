@@ -118,8 +118,8 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
               {!daysOk && <p className="text-xs text-rose mt-1">{CREDIT_MIN_DAYS}–{CREDIT_MAX_DAYS} days.</p>}
             </div>
             <div>
-              <Label>Seats</Label>
-              <p className="h-9 flex items-center font-mono text-sm text-ink">{quote.seats ?? "As on quote"}</p>
+              <Label htmlFor="credit-seats">Seats</Label>
+              <output id="credit-seats" className="h-9 flex items-center font-mono text-sm text-ink">{quote.seats ?? "As on quote"}</output>
             </div>
           </div>
 

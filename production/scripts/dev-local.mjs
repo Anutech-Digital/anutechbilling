@@ -29,6 +29,9 @@ import { spawnSync, spawn } from "node:child_process";
 const ALLOW = new Set([
   "ALLOW_DEV_PAGES", "ALLOW_QUOTE_PAY_SIMULATION", "EMAIL_FROM", "EMAIL_REPLY_TO",
   "GEMINI_MODEL", "TELECALL_PROVIDER", "WHATSAPP_BSP", "NODE_ENV",
+  /* Inbound-only: lets the local test session mark feedback fixed / post test runs to THIS
+     local app (api/agent/*). The app never sends it anywhere (R-355, 7 Oct 2026). */
+  "AGENT_QUEUE_TOKEN",
 ]);
 
 function envKeyNames(file) {
