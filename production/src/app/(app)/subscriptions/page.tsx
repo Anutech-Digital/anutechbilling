@@ -9,6 +9,7 @@ import { SUBSCRIPTION_TABS } from "@/lib/navigation/drilldown";
 import { SUB_FOLDERS, folderOf, folderCounts } from "@/lib/subscriptions/folders";
 import { SUB_FOCI, SUB_FOCUS_LABEL, subInFocus, type SubFocus } from "@/lib/subscriptions/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
+import { hasNoPrice } from "@/lib/subscriptions/list-price-mrr";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
@@ -85,6 +86,10 @@ import { useQuotes } from "@/lib/queries/quotes";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
+
+/* R-317: ?price=missing on the list (Reports links here). */
+const PRICE_FILTERS = ["", "missing"] as const;
+type PriceFilter = (typeof PRICE_FILTERS)[number];
 
 // Vendor pill — capitalised label + a stable colour per vendor (Google/Microsoft
 // blue, Zoho green) so the vendor reads at a glance.
@@ -225,6 +230,9 @@ export default function SubscriptionsPage() {
   const [tab, setTab] = useUrlChoice<string>("tab", SUBSCRIPTION_TABS, "all"); // R-118
   /* R-118: the money tiles' exact set (lib/subscriptions/focus.ts) — "" = none. */
   const [focus, setFocus] = useUrlChoice<SubFocus>("focus", SUB_FOCI, "");
+  /* R-317: ?price=missing — the active subscriptions with no price, linked from the
+     Reports MRR line. Open one to set its plan; until then it adds ₹0 to MRR. */
+  const [price, setPrice] = useUrlChoice<PriceFilter>("price", PRICE_FILTERS, "");
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
   const [vendor, setVendor] = React.useState("all");
@@ -432,6 +440,7 @@ export default function SubscriptionsPage() {
     if (tab === "trials") return false;  // trials handled in separate table below
     if (tab !== "all" && folderOf(s, todayISO) !== tab) return false;
     if (focus && !subInFocus(s, focus)) return false;   // the tile's own predicate
+    if (price === "missing" && !hasNoPrice(s)) return false;   // R-317
     if (vendor !== "all" && s.vendor !== vendor) return false;
     if (search.trim()) {
       const q = search.toLowerCase().trim();
@@ -933,6 +942,13 @@ export default function SubscriptionsPage() {
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
           {focus && (
             <FocusBanner label={SUB_FOCUS_LABEL[focus]} count={filtered.length} onClear={() => setFocus("")} />
+          )}
+          {price === "missing" && (
+            <FocusBanner
+              label="No price — active, ₹0 MRR (open one and set its plan)"
+              count={filtered.length}
+              onClear={() => setPrice("")}
+            />
           )}
           <TabBar className="overflow-y-hidden" value={tab} onChange={tabOn} items={tabs} />
           <div className="flex justify-between items-center gap-3 flex-wrap">

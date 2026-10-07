@@ -34,7 +34,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { readAllRows, type ExistingCustomerRow } from "@/components/features/customers/import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useItems } from "@/lib/queries/items";
-import { buildPlanPriceIndex } from "@/lib/subscriptions/plan-match";
+import { withListPriceMrr } from "@/lib/subscriptions/list-price-mrr";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import { parseGoogle, classifyRows, normDomain, buildSubscriptionRow, type GRow, type Parsed, type RawSub } from "./google-subs-parse";
 
@@ -64,24 +64,18 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
     appSubDomains: Set<string>;
   }>({ byNumber: new Map(), byDomain: new Map(), appSubDomains: new Set() });
 
-  /* Keyed through planKey, not raw lowercase. Google's export says "Google Workspace
-     Business Starter" and the catalogue row is "Google Workspace Starter" — an exact
-     match misses, and on 24 Sep 2026 that imported four subscriptions at ₹0/month while
-     their COST matched, because the cost side already normalised. See the price-side
-     note in lib/subscriptions/plan-match.ts. */
-  const priceIndex = React.useMemo(
-    () => buildPlanPriceIndex((items ?? []).map((it) => ({
-      name: it.name, vendor: it.vendor, msrpPerSeatMonth: it.msrp,
-    }))),
-    [items],
+  /* R-317: every row is priced by lib/subscriptions/list-price-mrr.ts AFTER parsing, and
+     the parser gets an empty map. The old map came from buildPlanPriceIndex, which keys
+     `vendor|planKey`, while the parser looked rows up by bare `planKey(sku)` — the keys
+     never met, so every Google import was written at ₹0. Now: list price × seats where
+     the edition is known (catalogue row by name, or the one Workspace edition the SKU
+     names); ₹0 where it is not — never a guessed edition. */
+  const catalog = React.useMemo(() => items ?? [], [items]);
+  const noPrices = React.useMemo(() => new Map<string, number>(), []);
+  const priceRows = React.useCallback(
+    (p: Parsed): Parsed => ({ ...p, rows: withListPriceMrr(p.rows, catalog, "google") }),
+    [catalog],
   );
-  const priceMap = React.useMemo(() => {
-    /* The downstream parsers take a plain Map keyed by planKey; the index keeps the
-       ambiguity guard, so a key two catalogue rows disagree on never reaches them. */
-    const m = new Map<string, number>();
-    for (const [k, v] of priceIndex.prices) m.set(k, v);
-    return m;
-  }, [priceIndex]);
 
   React.useEffect(() => {
     if (!open) {
@@ -131,7 +125,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
     setFileName(file.name);
     try {
       const text = await file.text();
-      const p = parseGoogle(text, lookups.current, priceMap);
+      const p = priceRows(parseGoogle(text, lookups.current, noPrices));
       if (p.rows.length === 0) { toast.error("No paid subscriptions found in this file.", { description: "Check it is the Google subscriptions export (CSV), not another report." }); return; }
       setParsed(p);
     } catch (err) {
@@ -175,7 +169,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
       const raws: RawSub[] = data.subscriptions ?? [];
       if (raws.length === 0) { toast.error("Google returned no subscriptions.", { description: "Check the reseller account has active customers, or upload the CSV export." }); return; }
       setFileName(`Google Reseller API · ${raws.length} subscriptions (live)`);
-      setParsed({ rows: classifyRows(raws, lookups.current, priceMap), custNumHeader: "Google API (live)", skippedFree: data.skipped ?? 0 });
+      setParsed(priceRows({ rows: classifyRows(raws, lookups.current, noPrices), custNumHeader: "Google API (live)", skippedFree: data.skipped ?? 0 }));
     } catch (err) {
       toastError(err, { fallback: "Sync failed.", description: "Try again, or upload the CSV export instead." });
     } finally {
@@ -191,7 +185,9 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
     const willAdd = createNew ? [...link, ...neu] : link;
     const estMrr = willAdd.filter((x) => x.status === "active").reduce((s, x) => s + x.estMrr, 0);
     const newDomains = new Set(neu.map((x) => x.domain));
-    return { link, neu, inApp, willAdd, estMrr, newCustomers: newDomains.size };
+    /* R-317: rows whose edition is not known go in at ₹0 — say how many, so the MRR is read as a floor. */
+    const noPrice = willAdd.filter((x) => x.estMrr <= 0).length;
+    return { link, neu, inApp, willAdd, estMrr, noPrice, newCustomers: newDomains.size };
   }, [parsed, createNew]);
 
   async function handleAdd() {
@@ -406,8 +402,14 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
 
             <p className="text-2xs text-ink-3">
               Adds into <b className="text-ink">{me?.tenantName ?? "your tenant"}</b> with vendor <b>google</b>.
-              MRR is a catalog estimate — <b>verify the real rate</b> after import. Suspended-on-Google subs are added as <b>paused</b>.
+              MRR is the catalog list price × seats — <b>verify the real rate</b> after import. Suspended-on-Google subs are added as <b>paused</b>.
             </p>
+            {counts.noPrice > 0 && (
+              <p className="text-2xs text-amber-ink">
+                {counts.noPrice} subscription{counts.noPrice === 1 ? "" : "s"} have no known edition, so no price — added at ₹0.
+                Set the plan on each afterwards (Subscriptions → No price).
+              </p>
+            )}
           </div>
         )}
 

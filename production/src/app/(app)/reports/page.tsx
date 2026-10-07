@@ -25,6 +25,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { hasNoPrice } from "@/lib/subscriptions/list-price-mrr";
 import { useCustomers } from "@/lib/queries/customers";
 import { useLeadStageCounts } from "@/lib/queries/leads";
 import { useMrrSnapshots } from "@/lib/queries/seat-requests";
@@ -201,6 +202,9 @@ export default function ReportsPage() {
   const activeSubs = (subs ?? []).filter((s) => s.status === "active");
   const totalMrr   = activeSubs.reduce((s, x) => s + x.mrr, 0);
   const totalArr   = totalMrr * 12;
+  /* R-317: active subscriptions with no price (mostly imports with no edition). They add
+     ₹0 above, so MRR/ARR are a floor while this is non-zero — say so, and link to them. */
+  const noPriceCount = activeSubs.filter(hasNoPrice).length;
   const custCount  = (customers ?? []).length;
   const totalSeats = activeSubs.reduce((s, x) => s + x.seats, 0);
 
@@ -355,6 +359,14 @@ export default function ReportsPage() {
           icon="award"
         />
       </div>
+      {noPriceCount > 0 && (
+        <p role="status" className="-mt-3 mb-6 text-xs text-amber-ink">
+          {noPriceCount} subscription{noPriceCount === 1 ? " has" : "s have"} no price — MRR undercounted.{" "}
+          <Link href="/subscriptions?price=missing" className="font-medium underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm">
+            Set their plan
+          </Link>
+        </p>
+      )}
 
       {/* ── Row 1: MRR trend + Funnel ── */}
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">

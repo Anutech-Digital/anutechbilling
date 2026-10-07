@@ -14,6 +14,8 @@
  *   - mrr (₹/month)   ← (Item Price × Quantity) ÷ period-months, where the period
  *                       is inferred from Start↔End dates (monthly→÷1, quarterly→÷3,
  *                       annual→÷12). Commitment is recorded as annual.
+ *                       R-317: a file with no price at all → catalog list price × seats
+ *                       when the edition is known; refused (never guessed) when not.
  *   - start_date      ← Start Date   (Excel serial OR date string → ISO)
  *   - renewal_date    ← End Date
  *   - domain          ← Domain Name
@@ -41,6 +43,8 @@ import {
   type ImportDedupeIndex, type TrackedSubscription,
 } from "@/lib/subscriptions/import-dedupe";
 import { mapHeader, monthlyRateFrom, periodMonths } from "@/lib/export/subscription-portable";
+import { listPriceMrr, type ListPriceItem } from "@/lib/subscriptions/list-price-mrr";
+import { useItems } from "@/lib/queries/items";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { withStateCode } from "@/lib/gst/gstin-state";
 import { cn, rupee, formatDate } from "@/lib/utils";
@@ -55,6 +59,8 @@ interface ParsedSub {
   seats: number;
   mrr: number;
   periodMonths: number;
+  /** R-317: MRR came from the catalog list price, not the file. */
+  listPriced?: boolean;
   start_date?: string;
   renewal_date?: string;
   domain?: string;
@@ -87,6 +93,8 @@ interface Props {
 
 export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete }: Props) {
   const { data: me } = useCurrentUser();
+  const { data: items } = useItems();
+  const catalog = React.useMemo(() => items ?? [], [items]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const [parsed, setParsed] = React.useState<ParsedSub[] | null>(null);
@@ -142,7 +150,7 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
     setFileName(file.name);
     try {
       const text = await file.text();
-      const rows = parseSubsCsv(text, custMap, domainMap).map((r) => ({
+      const rows = parseSubsCsv(text, custMap, domainMap, catalog).map((r) => ({
         ...r,
         /* Only worth asking for rows that matched a customer — an unmatched row is
            already being skipped and a second reason would just be noise. */
@@ -421,7 +429,7 @@ export function ImportSubscriptionsDialog({ open, onOpenChange, onImportComplete
                         </td>
                         <td className="p-2 text-ink-2">{r.plan}</td>
                         <td className="p-2 text-right tabular-nums text-ink-2">{r.seats}</td>
-                        <td className="p-2 text-right tabular-nums text-ink-2">{r.error || r.duplicate ? "—" : rupee(r.mrr)}</td>
+                        <td className="p-2 text-right tabular-nums text-ink-2">{r.error || r.duplicate ? "—" : rupee(r.mrr)}{!r.error && !r.duplicate && r.listPriced && <span className="text-ink-3"> · list</span>}</td>
                         <td className="p-2 text-ink-2">{r.renewal_date ? formatDate(r.renewal_date) : "—"}</td>
                       </tr>
                     ))}
@@ -520,10 +528,12 @@ function vendorFor(plan: string): ParsedSub["vendor"] {
  * the reader and the writer cannot drift. That file explains why the monthly rate is its
  * own column and why a missing period is REFUSED rather than assumed to be a year.
  */
-function parseSubsCsv(
+export function parseSubsCsv(
   text: string,
   custMap: Map<string, { id: string; name: string }>,
   byDomain: Map<string, { id: string; name: string }>,
+  /** R-317: the tenant's catalogue — the list price for a row whose file carries none. */
+  catalog: readonly ListPriceItem[] = [],
 ): ParsedSub[] {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
@@ -557,7 +567,18 @@ function parseSubsCsv(
     const end = toISODate(cell(idx.end));
 
     const months = periodMonths(start ?? null, end ?? null);
-    const rate = monthlyRateFrom(num(idx.monthly), num(idx.itemPrice), seats, months);
+    let rate = monthlyRateFrom(num(idx.monthly), num(idx.itemPrice), seats, months);
+    /* R-317 (Pardeep, 7 Oct): a file with NO price at all (no MRR column, no Item Price)
+       still gets an MRR when the edition is known — the catalogue's list price × seats.
+       Only that case: a price the file DOES carry is never replaced, and a period the
+       dates cannot give is still refused. Unknown edition → the row stays refused with
+       a reason, rather than going in at a guessed price. */
+    let listPriced = false;
+    if (!rate.ok && num(idx.monthly) == null && num(idx.itemPrice) == null && seats > 0) {
+      const lp = listPriceMrr(catalog, { vendor: vendorFor(plan), plan, seats });
+      if (lp.ok) { rate = { ok: true, mrr: lp.mrr, from: "monthly" }; listPriced = true; }
+      else rate = { ok: false, reason: "no price in the file, and the plan names no edition the catalog prices" };
+    }
 
     const base: ParsedSub = {
       rowNum, customer_number,
@@ -565,6 +586,7 @@ function parseSubsCsv(
       vendor: vendorFor(plan),
       seats,
       mrr: rate.ok ? rate.mrr : 0,
+      listPriced,
       periodMonths: months ?? 0,
       start_date: start ?? undefined,
       renewal_date: end ?? undefined,
