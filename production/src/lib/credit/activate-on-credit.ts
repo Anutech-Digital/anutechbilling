@@ -21,6 +21,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { addDaysISO, istDayStartUtc, toIstDate } from "@/lib/dates/ist";
+import { isSplitBilled } from "@/lib/payments/record-payment-invoice";
 
 export const CREDIT_DEFAULT_DAYS = 15;
 export const CREDIT_MIN_DAYS = 1;
@@ -98,6 +99,22 @@ export function showActivateOnCredit(quote: CreditQuoteFacts, lead: CreditLeadFa
 }
 
 export type CreditEligibility = { ok: true } | { ok: false; reason: string };
+
+/**
+ * R-370 (P0 money): a SPLIT-billed quote (monthly / quarterly / half-yearly) is invoiced one
+ * period at a time by the billing cron. Activating it on credit raised a whole-term invoice
+ * AND let the cron raise every instalment — the customer billed twice. The database refuses it
+ * (migration 20261007150000); this says why before the click. Same test as R-378's
+ * isSplitBilled. The menu item stays visible so the owner sees the reason, not a missing item.
+ */
+export function splitBillingCreditEligibility(billingCycle: string | null | undefined): CreditEligibility {
+  if (!isSplitBilled(billingCycle)) return { ok: true };
+  const cycle = String(billingCycle).replace(/_/g, "-");
+  return {
+    ok: false,
+    reason: `This quote is billed in instalments (${cycle}) — record the first instalment instead, or switch billing to yearly.`,
+  };
+}
 
 /** Customer-side gate, said in words (the menu item is shown; this explains a refusal). */
 export function customerCreditEligibility(

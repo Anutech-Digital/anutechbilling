@@ -27,7 +27,7 @@ import {
   CREDIT_MIN_DAYS, CREDIT_MAX_DAYS,
   defaultCreditDays, validCreditDays, planCredit, creditExposure, overLimitDecision,
   activateQuoteOnCredit, NeedsDatabaseUpdateError,
-  annualLineNames, annualCreditDecision, ANNUAL_OVERRIDE_MIN_REASON,
+  annualLineNames, annualCreditDecision, ANNUAL_OVERRIDE_MIN_REASON, splitBillingCreditEligibility,
 } from "@/lib/credit/activate-on-credit";
 import { useCustomerOpenInvoices } from "@/lib/credit/queries";
 
@@ -38,6 +38,8 @@ interface Props {
     id: string; customer_name: string; amount: number; invoice_id: string | null; seats: number | null;
     /** R-368: an annual line blocks credit unless the owner overrides with a reason. */
     line_items?: ReadonlyArray<{ commitment?: string | null; name?: string | null }> | null;
+    /** R-370: split billing (monthly / quarterly / half-yearly) cannot go on credit. */
+    billing_cycle?: string | null;
   };
   customer: { id: string; name: string; payment_terms_days: number | null; credit_limit?: number | null };
   role: string | null | undefined;
@@ -68,7 +70,9 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
   const annualNames = annualLineNames(quote.line_items);
   const annual = annualCreditDecision(quote.line_items, role, overrideAnnual ? overrideReason : "");
   const annualBlocked = annual.kind === "blocked" || annual.kind === "needs-override";
-  const blocked = annualBlocked || decision?.kind === "refused" || (decision?.kind === "owner-approve" && !approve);
+  /* R-370: the database refuses it too; the dialog says so instead of a failed save. */
+  const split = splitBillingCreditEligibility(quote.billing_cycle);
+  const blocked = !split.ok || annualBlocked || decision?.kind === "refused" || (decision?.kind === "owner-approve" && !approve);
   const canSave = Boolean(plan) && Boolean(exposure) && !blocked && !saving;
 
   const onSave = async () => {
@@ -150,6 +154,13 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
               </ul>
               <p className="mt-2 text-ink-3">Nothing is sent to the customer and nothing is suspended automatically.</p>
             </div>
+          )}
+
+          {/* R-370: split billing would bill twice */}
+          {!split.ok && (
+            <p role="alert" className="flex items-start gap-1.5 rounded-md border border-rose/50 bg-rose-soft p-2.5 mt-3 text-xs text-rose">
+              <Icon name="alert" size={14} className="mt-px shrink-0" /> {split.reason}
+            </p>
           )}
 
           {/* R-368: annual plans need payment first */}

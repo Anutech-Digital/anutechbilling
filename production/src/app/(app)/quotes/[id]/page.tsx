@@ -53,7 +53,7 @@ import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialo
 import { ActivateOnCreditDialog } from "@/components/features/quotes/activate-on-credit-dialog";
 import { duplicateQuoteHref } from "@/lib/quotes/duplicate-customer";
 import { acceptedToast } from "@/lib/quotes/accepted-toast";
-import { showActivateOnCredit, customerCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
+import { showActivateOnCredit, customerCreditEligibility, splitBillingCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
 import { useCreditInvoice } from "@/lib/credit/queries";
 import { LateInterestLine } from "@/components/features/quotes/late-interest-line";
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
@@ -252,6 +252,9 @@ export default function QuoteDetailPage() {
      R-379 (i), the accepted-and-unpaid action row) — same gate, same reasons. */
   const openActivateOnCredit = () => {
     if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
+    /* R-370: split billing would bill twice (credit invoice + instalments) — say why. */
+    const split = splitBillingCreditEligibility(creditQuote?.billing_cycle);
+    if (!split.ok) { toast.info(split.reason); return; }
     const gate = customerCreditEligibility(creditCustomer ?? null);
     if (gate.ok) setCreditOpen(true);
     else toast.info(gate.reason);
@@ -882,6 +885,7 @@ export default function QuoteDetailPage() {
           quote={{
             id: quote.id, customer_name: quote.customer_name, amount: quote.amount ?? 0, invoice_id: quote.invoice_id, seats: quote.seats,
             line_items: Array.isArray(quote.line_items) ? quote.line_items : null,
+            billing_cycle: quote.billing_cycle,
           }}
           customer={{
             id: creditCustomer.id, name: creditCustomer.name,

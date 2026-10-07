@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   CREDIT_DEFAULT_DAYS, CREDIT_DEFAULT_LIMIT,
   defaultCreditDays, validCreditDays, effectiveCreditLimit,
-  showActivateOnCredit, customerCreditEligibility, hasRecurringLine, onTrial,
+  showActivateOnCredit, customerCreditEligibility, splitBillingCreditEligibility, hasRecurringLine, onTrial,
   owedOnInvoices, creditExposure, overLimitDecision,
   planCredit, creditTaskInstant, quoteCreditState, creditSummary,
   isMissingDbObject, activateQuoteOnCredit, NeedsDatabaseUpdateError,
@@ -207,5 +207,28 @@ describe("database not updated yet", () => {
     const rpc = vi.fn();
     await expect(activateQuoteOnCredit({ rpc } as never, { quoteId: "Q1", days: 0, approveOverLimit: false })).rejects.toThrow();
     expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+// R-370 (P0 money): credit invoice + instalment invoices = billed twice. Refused, with the reason.
+describe("splitBillingCreditEligibility", () => {
+  const MSG = /^This quote is billed in instalments \((monthly|quarterly|half-yearly)\) — record the first instalment instead, or switch billing to yearly\.$/;
+
+  it.each(["quarterly", "half_yearly", "monthly"])("%s is refused with the reason", (cycle) => {
+    const r = splitBillingCreditEligibility(cycle);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toMatch(MSG);
+      expect(r.reason).toContain(cycle.replace("_", "-"));
+    }
+  });
+
+  it.each(["yearly", null, undefined, ""])("%s is allowed (one invoice for the term)", (cycle) => {
+    expect(splitBillingCreditEligibility(cycle)).toEqual({ ok: true });
+  });
+
+  it("keeps the menu item visible for a split-billed quote, so the reason can be shown", () => {
+    // showActivateOnCredit does not look at billing_cycle; the click explains the refusal.
+    expect(showActivateOnCredit(accepted, null)).toBe(true);
   });
 });
