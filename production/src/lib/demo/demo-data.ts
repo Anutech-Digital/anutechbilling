@@ -23,6 +23,8 @@
  * Money in whole rupees (CLAUDE.md §13), GST 18% on SaaS (SAC 998313), the CGST/SGST vs
  * IGST split decided by the workspace's own state. Pure: the route inserts what this returns.
  */
+import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
+
 export const DEMO_PREFIX = "DEMO · ";
 /** Ids the app mints itself (quotes, invoices, items, bills, expenses) start with this. */
 export const DEMO_ID_PREFIX = "DEMO-";
@@ -291,6 +293,15 @@ export function demoRows(o: DemoOptions): DemoBundle {
       notes: `${DEMO_PREFIX}test quotation — not a real offer.`,
     };
   });
+
+  // A sent quote moves its deal on, exactly as the Mark-as-sent button would — so the deals
+  // board and the quotes list tell the same story.
+  for (const q of quotes) {
+    if ((q.status !== "sent" && q.status !== "viewed") || !q.lead_id) continue;
+    const lead = leads.find((l) => l.id === q.lead_id);
+    const next = lead ? stageAfterQuoteSent(lead.stage).nextStage : null;
+    if (lead && next) lead.stage = next;
+  }
 
   // Subscriptions — renewals due in 5 and 25 days, one 3 days past its date, two far out.
   const subSpecs: { c: number; code: ItemCode; seats: number; renewIn: number; quote: number | null }[] = [
