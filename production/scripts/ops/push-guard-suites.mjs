@@ -24,6 +24,7 @@ export const PUSH_GUARD_SUITES = [
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
+  "src/lib/security/invoker-function-grants.test.ts", // R-401: Cloud SQL gives no PUBLIC EXECUTE
   // ── repo-source scans (readdirSync / glob over src) ──
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",
