@@ -34,6 +34,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import {
   useFeedbackList,
   useFeedbackCounts,
+  useFeedbackStatuses,
   usePlatformFeedbackList,
   useTriageFeedback,
   useDispatchFeedback,
@@ -44,6 +45,7 @@ import {
   type FeedbackWithShots,
   type FeedbackStatus,
 } from "@/lib/queries/feedback";
+import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
 
 const STATUS_TABS: { id: string; label: string }[] = [
   { id: "open", label: "Open" },
@@ -187,7 +189,31 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
   );
 }
 
-function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId: string | null; meName: string }) {
+/**
+ * R-356: the fixed report's one-line receipt — "Fixed by AI · R-354 · 279cb0d2 · what
+ * changed · when" — plus a link to the screen the bug was filed on, so the owner can look.
+ */
+function AiFixedStrip({ note, resolvedAt, pagePath }: { note: string; resolvedAt: string | null; pagePath: string | null }) {
+  const n = parseFixedNote(note);
+  const href = pagePath && pagePath.startsWith("/") && !pagePath.startsWith("//") ? pagePath : null;
+  return (
+    <div data-testid="ai-fixed-strip" className="mt-1 text-xs text-ink-2 bg-emerald-soft/40 border border-emerald/30 rounded-md px-2 py-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <span className="font-semibold text-emerald-ink">🤖 Fixed by AI</span>
+      {n.card && <><span className="text-ink-4">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
+      {n.commit && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
+      <span className="text-ink-4">·</span>
+      <span className="min-w-0 break-words">{n.text}</span>
+      {resolvedAt && <><span className="text-ink-4">·</span><span className="text-ink-3" title={formatDate(resolvedAt, "long")}>{formatDate(resolvedAt, "relative")}</span></>}
+      {href && (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="ml-auto font-medium text-primary hover:underline inline-flex items-center gap-1">
+          Open the page <Icon name="external" size={12} />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function FeedbackCard({ row, userId, meName, justFixed = false }: { row: FeedbackWithShots; userId: string | null; meName: string; justFixed?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const directiveRef = React.useRef<HTMLPreElement>(null);
   /* Copy failed: open the details and select the directive, after the panel has rendered. */
@@ -324,9 +350,14 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
   };
 
   const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
+  /* A note can survive a Reopen → re-queue; if it names a card, the queued strip shows it. */
+  const queuedCard = row.status === "agent_queued" ? parseFixedNote(row.resolution_note).card : null;
 
   return (
-    <Card className="p-4 space-y-3">
+    <Card
+      data-testid={`feedback-card-${row.id}`}
+      className={"p-4 space-y-3 transition-shadow " + (justFixed ? "ring-2 ring-emerald border-emerald/40" : "")}
+    >
       <div className="flex items-start gap-3">
         <div
           className="flex-shrink-0 w-11 h-11 rounded-lg bg-paper-2 border border-hairline flex flex-col items-center justify-center"
@@ -363,10 +394,17 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
           <p className="mt-1.5 text-sm font-medium text-ink">
             {row.problem_summary || row.title}
           </p>
-          {/* R-200: what the AI did and when it reaches this app (set by /api/agent/feedback-fixed). */}
+          {/* R-200 / R-356: what the AI did, which card + commit, and when (all from the note
+              /api/agent/feedback-fixed stores — no extra columns). */}
           {row.status === "fixed" && row.resolution_note && (
-            <p className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
-              🤖 {row.resolution_note}
+            <AiFixedStrip note={row.resolution_note} resolvedAt={row.resolved_at} pagePath={row.page_path} />
+          )}
+          {/* R-356: a queued report says the AI worker has it, not just a chip. */}
+          {row.status === "agent_queued" && (
+            <p data-testid="ai-queued-strip" className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
+              🤖 AI worker has it{queuedCard ? <> · card <b className="font-mono">{queuedCard}</b></> : null}
+              {row.dispatched_at ? <> · queued {formatDate(row.dispatched_at, "relative")}</> : null}
+              {queuedCard ? null : <span className="text-ink-3"> · card id shows here once it is fixed</span>}
             </p>
           )}
 
@@ -550,6 +588,35 @@ export default function AdminFeedbackPage() {
   const filter = tab === "all" ? {} : { status: tab as FeedbackStatus };
   const { data, isLoading, error } = useFeedbackList(filter);
   const { data: counts } = useFeedbackCounts();
+  const { data: statuses } = useFeedbackStatuses();
+
+  /* R-356: the AI marks a report fixed from outside this page. When a poll (every 30 s,
+     visible tab only) or coming back to the tab sees a report turn fixed WITH an AI note,
+     say so — the card leaves Open on its own, and the toast says where it went. A note-less
+     fix is the owner's own "Mark fixed", which already has its own toast. */
+  const prevStatuses = React.useRef<Record<string, string> | null>(null);
+  const [justFixed, setJustFixed] = React.useState<Set<string>>(() => new Set());
+  React.useEffect(() => {
+    if (!statuses) return;
+    const next: Record<string, string> = {};
+    for (const [id, r] of Object.entries(statuses)) next[id] = r.status;
+    const fresh = newlyFixedIds(prevStatuses.current, next).filter((id) => Boolean(statuses[id]?.resolution_note));
+    prevStatuses.current = next;
+    if (fresh.length === 0) return;
+    const first = parseFixedNote(statuses[fresh[0]].resolution_note);
+    toast.success(fresh.length === 1 ? "Fixed by AI — moved to Fixed" : `${fresh.length} reports fixed by AI — moved to Fixed`, {
+      description: [first.card, first.commit, first.text].filter(Boolean).join(" · ").slice(0, 200),
+      action: { label: "Show", onClick: () => setTab("fixed") },
+      duration: 10_000,
+    });
+    setJustFixed(new Set(fresh));
+  }, [statuses]);
+  /* The green ring is a flash, not a state: gone after 8 s. */
+  React.useEffect(() => {
+    if (justFixed.size === 0) return;
+    const t = setTimeout(() => setJustFixed(new Set()), 8_000);
+    return () => clearTimeout(t);
+  }, [justFixed]);
 
   /* ── Every workspace, for the platform owner ───────────────────────────────
      A tester with his own tenant filed a bug on 22 Aug and nobody could read it:
@@ -677,7 +744,7 @@ export default function AdminFeedbackPage() {
       {!isLoading && !error && rows.length > 0 && (
         <div className="space-y-3">
           {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} />
+            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} justFixed={justFixed.has(row.id)} />
           ))}
         </div>
       )}
