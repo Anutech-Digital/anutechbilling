@@ -101,7 +101,9 @@ describe("lead_source_key / lead_source_label ↔ LEAD_SOURCES", () => {
 
   it("maps every key and lowercased label to the key", () => {
     for (const s of LEAD_SOURCES) {
-      expect(keyFn).toContain(`    when ${sq(s.value)}, ${sq(s.label.toLowerCase())} then ${sq(s.value)}`);
+      /* Searched CASE: Postgres has no `when 'a', 'b'` list form (that is MySQL) — the first
+         version used it and failed on apply (caught 7 Oct applying on local). */
+      expect(keyFn).toContain(`    when lower(btrim(coalesce(p_source, ''))) in (${sq(s.value)}, ${sq(s.label.toLowerCase())}) then ${sq(s.value)}`);
     }
     expect(keyFn.match(/^ {4}when /gm)?.length).toBe(LEAD_SOURCES.length);
   });
