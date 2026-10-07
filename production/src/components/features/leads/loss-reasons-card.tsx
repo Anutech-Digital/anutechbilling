@@ -57,7 +57,7 @@ export function LossReasonsCard({ leads }: { leads: readonly LossLead[] }) {
           <WindowPicker value={win} onChange={setWin} />
         </div>
         <p className="mt-2 text-xs text-ink-3">
-          No deals marked lost in the last {active.label.toLowerCase()}.
+          {emptyLossText(active)}
         </p>
       </Card>
     );
@@ -142,4 +142,12 @@ function WindowPicker({
       ))}
     </div>
   );
+}
+
+/** The "nothing lost" line for a window. "All time" has no "last" (R-349: the card used to say
+ *  "No deals marked lost in the last all time."). Exported for tests. */
+export function emptyLossText(w: { days: number | null; label: string }): string {
+  return w.days == null
+    ? "No deals marked lost yet."
+    : `No deals marked lost in the last ${w.label.toLowerCase()}.`;
 }

@@ -37,6 +37,16 @@ describe("LossReasonsCard", () => {
     expect(screen.getByText(/No deals marked lost/i)).toBeDefined();
   });
 
+  it("empty text reads as English for every window (R-349: was 'in the last all time')", () => {
+    render(<LossReasonsCard leads={[{ stage: "won", value: 1000 } as never]} />);
+    expect(screen.getByText("No deals marked lost in the last 90 days.")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "1 year" }));
+    expect(screen.getByText("No deals marked lost in the last 1 year.")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "All time" }));
+    expect(screen.getByText("No deals marked lost yet.")).toBeDefined();
+    expect(screen.queryByText(/all time\./i)).toBeNull();
+  });
+
   it("surfaces un-recorded losses rather than quietly dropping them", () => {
     render(<LossReasonsCard leads={[lost({ lost_reason: null }), lost({ lost_reason: "price" })]} />);
     expect(screen.getByText("Not recorded")).toBeDefined();

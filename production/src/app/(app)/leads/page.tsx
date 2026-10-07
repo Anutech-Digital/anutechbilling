@@ -22,6 +22,7 @@
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
+import { useUrlList } from "@/lib/hooks/use-url-list";
 import { LEAD_VIEWS } from "@/lib/navigation/drilldown";
 import { useTeamTree } from "@/lib/queries/team-tree";
 import { idsForMode, type TeamViewMode } from "@/lib/team/visibility";
@@ -68,6 +69,8 @@ import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs
 /* Brief mark on the row a deep link opened (R-208) — design tokens only, so it follows the theme. */
 const JUST_OPENED_ROW = ["ring-2", "ring-inset", "ring-primary", "bg-primary-soft"];
 
+const PRIORITY_IDS = ["low", "medium", "high"] as const;
+
 function LeadsPageInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -99,7 +102,9 @@ function LeadsPageInner() {
   const filterStages = filterStagesFor(isDealsPage);
 
 
-  const [search, setSearch] = React.useState("");
+  /* R-349: search + Filter live in the URL (?q=, ?stage=, ?priority=, ?owner=), so a refresh,
+     a shared link, or opening a deal and pressing Back keeps the filtered list. */
+  const [search, setSearch] = useUrlState("q");
   const [addOpen,         setAddOpen]         = React.useState(false);
   const [quickOpen,       setQuickOpen]       = React.useState(false);
   const [shareOpen,       setShareOpen]       = React.useState(false);
@@ -109,9 +114,10 @@ function LeadsPageInner() {
   const [csvImportOpen,    setCsvImportOpen]    = React.useState(false);
   // Filter state — multi-select stages + priorities + owner ("Kiska"). Empty array = no
   // filter (show all). Owner joined 29 Sep 2026, once leads had different owners.
-  const [stageFilter,    setStageFilter]    = React.useState<Lead["stage"][]>([]);
-  const [priorityFilter, setPriorityFilter] = React.useState<Array<"low"|"medium"|"high">>([]);
-  const [ownerFilter,    setOwnerFilter]    = React.useState<string[]>([]);
+  const filterStageIds = React.useMemo(() => filterStages.map((s) => s.id), [filterStages]);
+  const [stageFilter,    setStageFilter]    = useUrlList<Lead["stage"]>("stage", filterStageIds);
+  const [priorityFilter, setPriorityFilter] = useUrlList<(typeof PRIORITY_IDS)[number]>("priority", PRIORITY_IDS);
+  const [ownerFilter,    setOwnerFilter]    = useUrlList("owner");
   // Due-bucket filter driven by the insight band's KPI pills.
   //   today    → follow_up_date === today
   //   overdue  → follow_up_date < today
