@@ -121,9 +121,21 @@ export function buildInvoicePdfProps(args: {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
   // invoice → use the breakdown persisted on the invoice itself (migration 0116).
-  const a: Amounts = quote ? quoteAmounts(quote) : invoiceAmounts(invoice);
-  const total    = quote?.amount   ?? invoice.amount;
-  const subtotal = quote?.subtotal ?? a.subtotal;
+  //
+  // R-375 (audit finding 9): an ISSUED invoice's figures are frozen on the invoice row
+  // (amount / taxable_value / tax_amount). The quote is live — it can be edited, re-priced
+  // or re-accepted after the invoice was issued — so a reprint built from it could print a
+  // different GST invoice from the one in the books. When the invoice carries its own
+  // figures and the quote no longer agrees with them, the invoice's own figures (and lines)
+  // win; the quote is used for its subtotal/discount display only while it still matches.
+  const persisted = invoice.taxable_value != null && invoice.tax_amount != null;
+  const q         = quote ? quoteAmounts(quote) : null;
+  const useQuote  = q !== null && (!persisted || (
+    q.taxable === invoice.taxable_value && q.tax === invoice.tax_amount && q.total === invoice.amount
+  ));
+  const a: Amounts = useQuote && q ? q : invoiceAmounts(invoice);
+  const total    = useQuote ? (quote?.amount ?? invoice.amount) : invoice.amount;
+  const subtotal = useQuote ? (quote?.subtotal ?? a.subtotal) : a.subtotal;
   // GST head: the value persisted at issue time wins; else derive from states,
   // falling back to each party's GSTIN when a state code is missing.
   //
@@ -145,7 +157,9 @@ export function buildInvoicePdfProps(args: {
        quote would print ₹28,320 — and an invoice with no description, HSN or
        quantity does not satisfy CGST Rule 46. This also fills in the project
        milestone invoices that used to print "No line items recorded". */
-    lineItems:   quote?.line_items ?? invoice.line_items ?? [],
+    lineItems:   useQuote
+      ? (quote?.line_items ?? invoice.line_items ?? [])
+      : (invoice.line_items ?? quote?.line_items ?? []),
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,

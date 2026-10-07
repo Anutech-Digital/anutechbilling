@@ -14,6 +14,13 @@
  *   lost date   = leads.lost_at, else stage_changed_at while stage = 'lost'
  * "This month" and "today" are the IST calendar (lib/dates/ist.ts), never the browser's.
  *
+ * ─── WON ₹ NEEDS MONEY (R-375) ────────────────────────────────────────────────
+ * accept_quote sets stage 'won' on ACCEPTANCE, before any payment, so a won deal's value is
+ * only won REVENUE when `paid` is true (lib/payments/won-paid.ts: a part/fully-paid quote or a
+ * project receipt). Won COUNTS (and win rate) stay by stage — winning is a decision, and the
+ * /deals?view=won-mtd list counts the same rows (R-118) — but every won ₹ figure sums paid
+ * deals only. Accepted-but-unpaid value is reported separately as awaiting payment.
+ *
  * Junk is the caller's to filter (the query does it), as in lib/leads/forecast.ts.
  */
 import type { Lead } from "@/lib/supabase/database.types";
@@ -28,7 +35,18 @@ export const OPEN_DEAL_STAGES = ["demo", "trial", "quote"] as const satisfies re
 export type DealRow = Pick<
   Lead,
   "id" | "company" | "stage" | "value" | "expected_close_date" | "stage_changed_at" | "created_at" | "owner_id" | "lost_at"
->;
+> & {
+  /**
+   * R-375: a payment is recorded against this deal (lib/payments/won-paid.ts). Filled by
+   * useDealRows for won rows. Absent / false = no money yet — its value is NOT won revenue.
+   */
+  paid?: boolean;
+};
+
+/** Won value only when money exists (R-375); 0 for an accepted-but-unpaid deal. */
+export function wonRevenue(d: Pick<DealRow, "value" | "paid">): number {
+  return d.paid === true ? (d.value ?? 0) : 0;
+}
 
 const isDealStage = (s: Lead["stage"] | null | undefined): boolean =>
   !!s && (DEAL_STAGES as readonly string[]).includes(s);
@@ -71,8 +89,13 @@ export interface DealStrip {
    * deal whose close date has passed but is still open is exactly one to chase).
    */
   closingThisMonth: CountValue;
-  /** Deals won (stage_changed_at) in the current IST month. */
+  /**
+   * Deals won (stage_changed_at) in the current IST month. `count` = every won deal (matches the
+   * won-mtd list); `value` = only those with a recorded payment (R-375).
+   */
   wonThisMonth: CountValue;
+  /** Won this month but no payment recorded yet — accepted, not revenue (R-375). */
+  wonAwaitingPayment: CountValue;
 }
 
 export function summarizeDealStrip(rows: readonly DealRow[], now: Date = new Date()): DealStrip {
@@ -83,6 +106,7 @@ export function summarizeDealStrip(rows: readonly DealRow[], now: Date = new Dat
     weighted: 0,
     closingThisMonth: { count: 0, value: 0 },
     wonThisMonth: { count: 0, value: 0 },
+    wonAwaitingPayment: { count: 0, value: 0 },
   };
   for (const d of rows) {
     const v = d.value ?? 0;
@@ -97,7 +121,11 @@ export function summarizeDealStrip(rows: readonly DealRow[], now: Date = new Dat
       }
     } else if (inMonth(wonDate(d))) {
       out.wonThisMonth.count++;
-      out.wonThisMonth.value += v;
+      out.wonThisMonth.value += wonRevenue(d);
+      if (d.paid !== true) {
+        out.wonAwaitingPayment.count++;
+        out.wonAwaitingPayment.value += v;
+      }
     }
   }
   return out;
@@ -111,6 +139,7 @@ export interface OwnerDealRow {
   /** users.id, or null for deals nobody owns. */
   ownerId: string | null;
   won: number;
+  /** R-375: paid won deals only. */
   wonValue: number;
   lost: number;
   /** won ÷ (won + lost), integer percent; null when nothing was decided. */
@@ -123,10 +152,15 @@ export interface DealReport {
   since: string;
   won: number;
   lost: number;
+  /** R-375: value of won deals WITH a recorded payment — accepted-but-unpaid is not revenue. */
   wonValue: number;
+  /** Won deals in the window with a recorded payment. */
+  paidWon: number;
+  /** Value of won deals in the window still awaiting any payment. */
+  awaitingPaymentValue: number;
   /** won ÷ (won + lost) in the window, integer percent; null when nothing was decided. */
   winRatePct: number | null;
-  /** Mean value of won deals in the window, whole rupees; null when none were won. */
+  /** Mean value of PAID won deals in the window, whole rupees; null when none were paid. */
   avgWonValue: number | null;
   /** Mean IST days from created_at to the won date, one decimal; null when none. */
   avgDaysToClose: number | null;
@@ -156,7 +190,9 @@ export function dealReport(
   }
 
   const wr = winRate(decided);
-  const wonValue = won.reduce((s, d) => s + (d.value ?? 0), 0);
+  const wonValue = won.reduce((s, d) => s + wonRevenue(d), 0);
+  const paidWon = won.filter((d) => d.paid === true).length;
+  const awaitingPaymentValue = won.reduce((s, d) => s + (d.paid === true ? 0 : (d.value ?? 0)), 0);
 
   let daySum = 0;
   for (const d of won) daySum += Math.max(0, daysBetweenISO(toIstDate(d.created_at), wonDate(d)!));
@@ -165,7 +201,7 @@ export function dealReport(
   for (const d of decided) {
     const key = d.owner_id ?? null;
     const o = owners.get(key) ?? { ownerId: key, won: 0, wonValue: 0, lost: 0, winRatePct: null };
-    if (d.stage === "won") { o.won++; o.wonValue += d.value ?? 0; } else o.lost++;
+    if (d.stage === "won") { o.won++; o.wonValue += wonRevenue(d); } else o.lost++;
     owners.set(key, o);
   }
   const byOwner = [...owners.values()]
@@ -178,8 +214,10 @@ export function dealReport(
     won: wr.won,
     lost: wr.lost,
     wonValue,
+    paidWon,
+    awaitingPaymentValue,
     winRatePct: wr.pct,
-    avgWonValue: won.length > 0 ? Math.round(wonValue / won.length) : null,
+    avgWonValue: paidWon > 0 ? Math.round(wonValue / paidWon) : null,
     avgDaysToClose: won.length > 0 ? Math.round((daySum / won.length) * 10) / 10 : null,
     byOwner,
   };
