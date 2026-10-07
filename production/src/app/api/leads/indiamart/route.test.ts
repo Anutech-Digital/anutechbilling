@@ -142,12 +142,16 @@ describe("POST", () => {
     expect(state.upserts).toEqual([]);
   });
 
-  it("no master key: stores it, says encrypted:false, and the warning log does not carry the key", async () => {
+  it("no master key: REFUSES (503 + next step), stores nothing, never echoes the key (R-051)", async () => {
     delete process.env.SECRETS_MASTER_KEY;
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(await (await POST(req("POST", { crm_key: KEY }))).json()).toEqual({ ok: true, encrypted: false });
-    expect(warn).toHaveBeenCalled();
-    expect(JSON.stringify(warn.mock.calls)).not.toContain(KEY);
+    const logs = [vi.spyOn(console, "warn").mockImplementation(() => {}), vi.spyOn(console, "error").mockImplementation(() => {})];
+    const res = await POST(req("POST", { crm_key: KEY }));
+    const text = await res.text();
+    expect(res.status).toBe(503);
+    expect(JSON.parse(text).error).toMatch(/SECRETS_MASTER_KEY[\s\S]*Next step/);
+    expect(text).not.toContain(KEY);
+    expect(state.upserts).toEqual([]);
+    for (const l of logs) expect(JSON.stringify(l.mock.calls)).not.toContain(KEY);
   });
 
   it("is owner-only", async () => {

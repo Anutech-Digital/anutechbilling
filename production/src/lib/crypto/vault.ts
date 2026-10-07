@@ -37,8 +37,9 @@
  * the value — that orphans every secret already encrypted under the old one.
  *
  * A missing key is therefore treated differently from a wrong one: with no key
- * configured this module refuses to ENCRYPT (so nothing new becomes unreadable)
- * while still passing plaintext through on read.
+ * configured this module refuses to ENCRYPT, and callers refuse to SAVE rather
+ * than store the secret in the clear (R-051), while legacy plaintext still
+ * passes through on read.
  */
 import crypto from "node:crypto";
 
@@ -104,15 +105,38 @@ export function fingerprintPassword(plaintext: string): string | null {
 }
 
 /**
- * Encrypt a secret. Throws when no master key is configured — callers must
- * decide whether to store plaintext or refuse, and doing that silently is how a
- * secret ends up unencrypted while everyone believes otherwise.
+ * What an operator must do when the vault has no usable key. One sentence, shared
+ * by every refusal, so the screen and the server log always name the same fix.
+ * Names the variable, never its value.
+ */
+export const VAULT_NOT_CONFIGURED_MESSAGE =
+  "Encryption key (SECRETS_MASTER_KEY) is not set on this server, so the secret was NOT saved. "
+  + "Next step: an admin sets SECRETS_MASTER_KEY (32 bytes, base64) on the server "
+  + "(locally: node scripts/set-master-key.mjs), restarts it, then saves again.";
+
+/**
+ * Thrown instead of storing a secret in the clear (R-051, 7 Oct 2026).
+ *
+ * Until then `encryptSecretIfPossible` / `sealTenantSecrets` quietly fell back to
+ * PLAINTEXT when the key was missing and only wrote a console.warn — so a
+ * deployment without the key looked healthy while every key it saved sat
+ * readable in the table. Refusing is the only state that cannot be mistaken for
+ * success. Routes turn this into a 503 carrying `VAULT_NOT_CONFIGURED_MESSAGE`.
+ */
+export class VaultNotConfiguredError extends Error {
+  constructor() {
+    super(VAULT_NOT_CONFIGURED_MESSAGE);
+    this.name = "VaultNotConfiguredError";
+  }
+}
+
+/**
+ * Encrypt a secret. Throws `VaultNotConfiguredError` when no master key is
+ * configured — there is deliberately no "store it in the clear instead" path.
  */
 export function encryptSecret(plaintext: string): string {
   const master = masterKey();
-  if (!master) {
-    throw new Error("SECRETS_MASTER_KEY is not set (or is not 32 bytes of base64) — refusing to pretend a value was encrypted");
-  }
+  if (!master) throw new VaultNotConfiguredError();
   if (typeof plaintext !== "string" || plaintext === "") {
     throw new Error("Nothing to encrypt");
   }
@@ -179,19 +203,6 @@ export function decryptSecret(stored: string | null | undefined): string | null 
   } catch {
     throw new Error("Could not decrypt the secret — the stored value was modified");
   }
-}
-
-/**
- * Encrypt when possible, otherwise return the plaintext unchanged.
- *
- * For write paths that must not fail because a deployment has no master key yet.
- * The caller gets told which happened so it can warn rather than assume — a
- * secret quietly stored in the clear is exactly the state this module exists to
- * end, and it must never be indistinguishable from success.
- */
-export function encryptSecretIfPossible(plaintext: string): { value: string; encrypted: boolean } {
-  if (!isVaultConfigured()) return { value: plaintext, encrypted: false };
-  return { value: encryptSecret(plaintext), encrypted: true };
 }
 
 /** Generate a master key, for setup instructions. Never called by the app. */

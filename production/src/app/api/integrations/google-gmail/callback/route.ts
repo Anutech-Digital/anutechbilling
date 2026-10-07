@@ -21,6 +21,7 @@ import { scopesLost, scopeLossMessage } from "@/lib/google/scope-union";
 import {
   outcomeFromGoogleError, outcomeFromExchangeError, type GmailConnectOutcome,
 } from "@/lib/google/gmail-connect-result";
+import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,8 @@ export async function GET(request: NextRequest) {
 
   const creds = googleOAuthCreds();
   if (!creds) return NextResponse.redirect(`${settings}&gmail=notconfigured`);
+  // R-051: the refresh token is stored encrypted or not at all.
+  if (refuseConnectWithoutVault("google-gmail/callback")) return NextResponse.redirect(`${settings}&gmail=vault_missing`);
 
   /* R-160: exchange failures are classified from Google's body (redirect_uri_mismatch,
      invalid_client, invalid_grant) — each needs a different person to act, and all of them
@@ -108,7 +111,8 @@ export async function GET(request: NextRequest) {
       /* Nuksaan hua to wahi likho, `null` nahi. Ye wo jagah hai jahan ek toota hua
          integration apni wajah khud batata hai — usi field ne 26 Aug ko ye bug pakdaya. */
       last_error: lossNote,
-      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+      // Encrypted at rest (R-051); opened only by refreshAccessToken, server-side.
+      ...(tokens.refresh_token ? { refresh_token: sealRefreshToken(tokens.refresh_token) } : {}),
     };
 
     const { error } = await admin

@@ -31,7 +31,7 @@
  */
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { SECRET_COLUMNS, sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { SECRET_COLUMNS, trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { isVaultConfigured, isEncrypted } from "@/lib/crypto/vault";
 
 export const dynamic = "force-dynamic";
@@ -92,17 +92,11 @@ export async function POST() {
     return NextResponse.json({ ok: true, sealed: [], alreadySealed, nothingToDo: true });
   }
 
-  const { row: sealedRow, storedInClear } = sealTenantSecrets(plain);
-
   // Should be impossible — isVaultConfigured() was checked above — but if the key
-  // vanished between the two calls, writing back would silently rewrite plaintext
-  // as plaintext and report success.
-  if (storedInClear.length > 0) {
-    return NextResponse.json({
-      ok: false,
-      error: `Encryption is unavailable, so nothing was changed (${storedInClear.join(", ")}).`,
-    }, { status: 503 });
-  }
+  // vanished between the two calls, sealing refuses (R-051) and nothing is written.
+  const sealed = trySealTenantSecrets(plain);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
+  const sealedRow = sealed.row;
 
   // The cast covers ONE ordering problem, not a type hole: SECRET_COLUMNS now
   // lists `resend_api_key`, but `types.ts` is generated from the live database

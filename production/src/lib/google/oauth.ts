@@ -11,6 +11,7 @@
  * use requires Google's OAuth app verification.
  */
 import { type NextRequest } from "next/server";
+import { openRefreshToken } from "./token-vault";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -214,10 +215,21 @@ export async function exchangeCode(
   return (await res.json()) as GoogleTokenResponse;
 }
 
+/**
+ * Trade a STORED refresh token for a fresh access token.
+ *
+ * Takes the value exactly as read from `user_google_tokens.refresh_token` — the
+ * encrypted envelope, or a legacy plaintext token (R-051). This is the ONE place
+ * it is opened, server-side, immediately before going to Google; every caller
+ * (contacts, Gmail send + inbox cron, Business Profile, Ads) passes the column
+ * through untouched, so none of them can forget to decrypt.
+ */
 export async function refreshAccessToken(
-  refreshToken: string,
+  storedRefreshToken: string,
   creds: { clientId: string; clientSecret: string },
 ): Promise<GoogleTokenResponse> {
+  const refreshToken = openRefreshToken(storedRefreshToken);
+  if (!refreshToken) throw new Error("No refresh token — please reconnect Google");
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

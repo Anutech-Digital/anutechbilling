@@ -13,7 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { maskSecret } from "@/lib/crypto/vault";
 
 export const dynamic = "force-dynamic";
@@ -103,20 +103,16 @@ export async function POST(req: NextRequest) {
   if (parsed.data.model)   patch.gemini_model   = parsed.data.model.trim();
 
   // Seal the API key before it is stored. gemini_model is configuration, not a
-  // credential, and is left readable.
-  const sealed = sealTenantSecrets(patch);
+  // credential, and is left readable. No master key = refuse (503 + next step),
+  // never store the key in the clear (R-051).
+  const sealed = trySealTenantSecrets(patch);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
 
   const admin = createAdminClient();
   const { error } = await admin
     .from("tenant_secrets")
     .upsert(sealed.row, { onConflict: "tenant_id" });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  if (sealed.storedInClear.length > 0) {
-    // Never silent: an operator must not believe a key is encrypted when it is not.
-    console.warn(
-      `[integrations/gemini] stored in PLAINTEXT (${sealed.storedInClear.join(", ")}) — SECRETS_MASTER_KEY is not configured`,
-    );
-  }
 
   return NextResponse.json({ ok: true });
 }

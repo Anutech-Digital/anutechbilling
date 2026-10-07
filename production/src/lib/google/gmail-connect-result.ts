@@ -22,6 +22,7 @@ export const GMAIL_CONNECT_OUTCOMES = [
   "badstate",
   "noscope",
   "notconfigured",
+  "vault_missing",
   "notenant",
   "redirect_mismatch",
   "client_rejected",
@@ -66,6 +67,10 @@ const MESSAGES: Record<GmailConnectOutcome, GmailConnectMessage> = {
   notconfigured: {
     kind: "error",
     text: "Google sign-in is not set up on this server (app keys missing). Ask the ResellerOS admin.",
+  },
+  vault_missing: {
+    kind: "error",
+    text: "This server has no encryption key, so the Google connection was not saved. Ask the ResellerOS admin to set it, then connect again.",
   },
   notenant: {
     kind: "error",

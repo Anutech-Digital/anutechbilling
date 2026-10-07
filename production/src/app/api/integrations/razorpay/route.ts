@@ -15,7 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { razorpayReadiness, razorpayMode } from "@/lib/payments/razorpay-readiness";
-import { sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { buildSecretPatch } from "@/lib/integrations/secret-field";
 import { maskSecret } from "@/lib/crypto/vault";
 
@@ -171,8 +171,10 @@ export async function POST(req: NextRequest) {
 
   // Seal only the fields actually being written. An untouched field is ABSENT
   // from the patch, so the upsert leaves its stored value alone — that absence is
-  // the whole fix.
-  const sealed = sealTenantSecrets(patch);
+  // the whole fix. No master key = refuse (503 + next step), never store the
+  // secret in the clear (R-051).
+  const sealed = trySealTenantSecrets(patch);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
 
   const { error } = await admin
     .from("tenant_secrets")
@@ -185,16 +187,11 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
-  // Say so when a secret had to be stored in the clear. Silence here would let
-  // an operator believe their credentials are encrypted when they are not.
-  if (sealed.storedInClear.length > 0) {
-    console.warn(
-      `[integrations/razorpay] stored in PLAINTEXT (${sealed.storedInClear.join(", ")}) — SECRETS_MASTER_KEY is not configured`,
-    );
-  }
   return NextResponse.json({
     ok: true, mode,
-    encrypted: sealed.storedInClear.length === 0,
+    // Always true now — an unencrypted save is refused above. Kept so the
+    // response shape the settings screen reads does not change.
+    encrypted: true,
     // So the UI can say "webhook secret left unchanged" instead of implying it
     // was rewritten.
     unchanged,

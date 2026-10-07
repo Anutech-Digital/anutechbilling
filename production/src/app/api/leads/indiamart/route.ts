@@ -16,9 +16,9 @@
  * admin client, tenant filter phir bhi har query par likha hai (admin RLS bypass karta hai).
  */
 import { createAdminClient } from "@/lib/supabase/server";
-import { sealTenantSecrets, decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { trySealTenantSecrets, decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { isEncrypted } from "@/lib/crypto/vault";
-import { withRoute, dbFail } from "@/lib/api/with-route";
+import { withRoute, dbFail, RouteError } from "@/lib/api/with-route";
 import { crmKeySchema, keyLast4, type IndiamartKeyStatus } from "@/lib/leads/indiamart-key";
 
 export const dynamic = "force-dynamic";
@@ -62,13 +62,12 @@ export const GET = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId 
 });
 
 export const POST = withRoute({ route: ROUTE, input: crmKeySchema, ...OWNER_ONLY }, async ({ input, tenantId }) => {
-  const sealed = sealTenantSecrets({ tenant_id: tenantId, indiamart_crm_key: input.crm_key });
+  // No master key = refuse with the next step, never store the key in the clear (R-051).
+  const sealed = trySealTenantSecrets({ tenant_id: tenantId, indiamart_crm_key: input.crm_key });
+  if (!sealed.ok) throw new RouteError(sealed.status, sealed.error);
   const { error } = await createAdminClient().from("tenant_secrets").upsert(sealed.row, { onConflict: "tenant_id" });
   dbFail(error, "IndiaMART key save nahi hui — dobara try kariye.");
-  if (sealed.storedInClear.length > 0) {
-    console.warn(`[${ROUTE}] key stored in PLAINTEXT — SECRETS_MASTER_KEY is not configured`);
-  }
-  return { encrypted: sealed.storedInClear.length === 0 };
+  return { encrypted: true };
 });
 
 export const DELETE = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId }) => {
