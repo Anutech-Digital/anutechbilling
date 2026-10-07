@@ -12,6 +12,7 @@
  */
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -44,7 +45,7 @@ function MetricRow({ m }: { m: QualityMetric }) {
         </div>
         <span className={cn("rounded-full px-2 py-0.5 text-2xs font-medium whitespace-nowrap", s.chip)}>{s.label}</span>
         {m.href && (
-          <Link href={m.href} className="text-xs font-medium text-amber-ink underline-offset-2 hover:underline whitespace-nowrap">
+          <Link href={m.href as Route} className="text-xs font-medium text-amber-ink underline-offset-2 hover:underline whitespace-nowrap">
             {m.hrefLabel ?? "Open"}
           </Link>
         )}
