@@ -43,11 +43,21 @@ export function workspaceTierOf(name: string | null | undefined): FlooredTier | 
   return null;
 }
 
+/**
+ * The tier whose list price floors this row, or null. R-387: a support plan named after a tier
+ * ("Google Workspace Business Starter Support") is not the licence — never lift it to ₹270.
+ * (workspaceTierOf itself is unchanged: the public Plus-price rule still hides "Plus Support".)
+ */
+function flooredTierOf(name: string | null | undefined): FlooredTier | null {
+  if (/support/i.test(name ?? "")) return null;
+  return workspaceTierOf(name);
+}
+
 const warned = new Set<string>();
 
 /** The ₹/seat/month to show or quote: `price`, lifted to the tier's list price if below it. */
 export function floorWorkspacePrice(name: string | null | undefined, price: number): number {
-  const tier = workspaceTierOf(name);
+  const tier = flooredTierOf(name);
   if (!tier) return price;
   const floor = WORKSPACE_LIST_PRICE_PM[tier];
   if (Number.isFinite(price) && price >= floor) return price;
@@ -67,7 +77,7 @@ type Tier = { msrp?: number; wholesale?: number } | undefined;
  * Starter/Standard/Plus, or already at/above list, come back as the SAME object.
  */
 export function floorWorkspaceRow<T extends { name: string | null; msrp: number | null; prices?: unknown }>(row: T): T {
-  if (!workspaceTierOf(row.name)) return row;
+  if (!flooredTierOf(row.name)) return row;
   const prices = (row.prices && typeof row.prices === "object" ? row.prices : null) as
     | ({ annual?: Tier; monthly?: Tier } & Record<string, unknown>)
     | null;
@@ -88,4 +98,33 @@ export function floorWorkspaceRow<T extends { name: string | null; msrp: number 
     ? { ...prices, ...(annual ? { annual } : {}), ...(monthly ? { monthly } : {}) }
     : row.prices;
   return { ...row, msrp: msrp ?? row.msrp, prices: nextPrices };
+}
+
+export interface ListPriceGap {
+  itemId:      string;
+  name:        string;
+  /** The row's own ₹/seat/month on annual commitment, as stored. */
+  catalogPm:   number;
+  /** What every screen and quote actually uses instead (the list price). */
+  listPm:      number;
+}
+
+/**
+ * R-387 — a catalogue row whose stored GW price is under the list price. The floor already stops
+ * it reaching a quote; this is how the OWNER finds out, so /items can say "your catalogue says
+ * ₹736, quotes use ₹1,080 — fix the row". Never changes a price (§13: no invented prices).
+ * A price above list is a deliberate rise and is not a gap. Rows with no price (₹0) are not
+ * reported here — that is the "no price" warning's job.
+ */
+export function workspaceListPriceGap(
+  row: { id: string; name: string | null; msrp: number | null; prices?: unknown },
+): ListPriceGap | null {
+  const tier = flooredTierOf(row.name);
+  if (!tier) return null;
+  const prices = (row.prices && typeof row.prices === "object" ? row.prices : null) as { annual?: Tier } | null;
+  const stored = prices?.annual?.msrp ?? row.msrp;
+  if (typeof stored !== "number" || !(stored > 0)) return null;
+  const listPm = WORKSPACE_LIST_PRICE_PM[tier];
+  if (stored >= listPm) return null;
+  return { itemId: row.id, name: row.name ?? row.id, catalogPm: stored, listPm };
 }
