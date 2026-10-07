@@ -100,6 +100,10 @@ export default function CashFlowPage() {
   const meta = rangeBounds(range);
 
   const currentCash = bsAuto?.cashAndBank ?? 0;
+  /* R-179: ye page bank lines ka statement hai, isliye "Cash in bank" bank hi rehta hai. Jo
+     paisa mila par abhi kisi bank line se match nahi hua, wo alag tile me — Balance Sheet ke
+     "Received, not yet in bank" jaisa hi number, taaki dono pages milein. */
+  const unbanked = bsAuto?.undepositedFunds ?? 0;
 
   /* Month drill-down: click a row → its bank lines. */
   const [openYm, setOpenYm] = React.useState<string | null>(null);
@@ -180,6 +184,7 @@ export default function CashFlowPage() {
             { label: "Cash out", value: rupee(totals.cashOut, { compact: true }), tone: "rose" },
             { label: "Net flow", value: `${totals.net < 0 ? "−" : ""}${rupee(Math.abs(totals.net), { compact: true })}`, tone: totals.net >= 0 ? "emerald" : "rose" },
             { label: "Cash in bank now", value: rupee(currentCash, { compact: true }) },
+            ...(unbanked !== 0 ? [{ label: "Received, not yet in bank", value: rupee(unbanked, { compact: true }) }] : []),
           ]}
         />
       )}

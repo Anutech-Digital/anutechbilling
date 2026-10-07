@@ -20,7 +20,7 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Manrope, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { hostingSans as manrope, hostingSerif as serif, hostingMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { isTrialPlan, TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
@@ -41,9 +41,6 @@ import {
   TRIAL_DAYS,
 } from "@/site/lib/data/hosting-landing-v2";
 
-const manrope = Manrope({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--hf-sans", display: "swap" });
-const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", style: "italic", variable: "--hf-serif", display: "swap" });
-const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500", "700"], variable: "--hf-mono", display: "swap" });
 
 const C = {
   ink: "#17120F", ink2: "#4A403A", muted: "#7A6C62", faint: "#9A8B80", onDark: "#C9BAB0",

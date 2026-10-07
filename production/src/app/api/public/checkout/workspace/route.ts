@@ -536,13 +536,13 @@ export async function POST(request: NextRequest) {
       if (!owner.ok) {
         console.error(`[checkout/workspace] simulated order ${quoteId} recorded, but no owner alert: ${owner.reason}`);
       }
-      const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
-      const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
       /* R-120 parity: a test buy sends what a real one sends (webhook) — setup steps to the
          customer, next steps to the lead owner — so the flow can be checked before go-live. */
       const leadOwner = await loadLeadOwner(admin, BUY_PAGE_TENANT_ID, leadId);
       const simBase = new URL(request.url).origin;
       const sellerPerson = (owner.ok ? owner.ownerName : "") || ownerTenant?.name?.trim() || "Your reseller";
+      const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
+      const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
       await Promise.allSettled([
         // Customer copy
         customerReplyTo && sendEmail({
@@ -567,7 +567,7 @@ ORDER SUMMARY
   Domain      ${cleanDomain}
   Total       ${amountFmt} (incl 18% GST)
 
-${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace ${tierName}`, contactName: leadOwner?.name ?? (voice ? "our team" : sellerPerson) })}
+${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace ${tierName}`, contactName: leadOwner?.name ?? sellerPerson })}
 
 ${voice ? voice.signOff : `— ${sellerPerson}`}
    (Simulated email — system test only)`,

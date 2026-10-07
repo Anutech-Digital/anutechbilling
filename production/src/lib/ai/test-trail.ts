@@ -21,7 +21,8 @@
  * hides in it (R-158 rule, kept).
  */
 
-export type TrailKind = "page" | "click" | "error" | "api_fail" | "toast_error";
+/** input_needed (R-176): the app asked the user to fill or choose something — not a bug. */
+export type TrailKind = "page" | "click" | "error" | "api_fail" | "toast_error" | "input_needed";
 
 export interface TrailEvent {
   kind: TrailKind;
@@ -45,6 +46,28 @@ export function pushTrail(trail: readonly TrailEvent[], ev: TrailEvent): TrailEv
 }
 
 export const isProblem = (e: TrailEvent) => e.kind === "error" || e.kind === "api_fail" || e.kind === "toast_error";
+
+/** The class a toast carries when it only asks the user to fill something in (R-176). */
+export const NEEDS_INPUT_CLASS = "toast-needs-input";
+
+/**
+ * Is this red toast a real failure, or the app asking for something the user left out?
+ * (R-176, 6 Oct 2026: "Choose the new customer's state" turned AI Help red — "Error caught,
+ * Report it" — for a form doing exactly its job. Testers got a bug button for every blank box.)
+ *
+ * A toast marked with NEEDS_INPUT_CLASS is always input. Otherwise, words of failure win
+ * (not saved, failed, could not, denied, server…) — a real error must never be hidden — and
+ * only then does "choose / select / add / required / is missing" mean input. Anything else
+ * stays an error: when unsure, keep the button.
+ */
+export function classifyToast(text: string, marked = false): "input_needed" | "toast_error" {
+  if (marked) return "input_needed";
+  const t = text.replace(/\s+/g, " ").trim();
+  if (/\b(not saved|wasn'?t saved|failed|failure|could ?n[o']t|cannot (load|save|connect|reach)|denied|forbidden|unauthori[sz]ed|permission|server|timed? ?out|went wrong|try again|crash|exception)\b|\b5\d\d\b|\b40[134]\b/i.test(t)) return "toast_error";
+  if (/^(please )?(choose|select|pick|add|enter|fill|type|set|give|upload)\b/i.test(t)
+    || /\b(is|are) (required|missing)|\brequired|can'?t be (blank|empty|before|after)|\bmust be\b/i.test(t)) return "input_needed";
+  return "toast_error";
+}
 
 /**
  * Which failed requests are worth a tester's attention. Framework chunks, the UX beacon and a
@@ -74,7 +97,7 @@ export function trailForPrompt(trail: readonly TrailEvent[], now = Date.now()): 
     .slice(-TRAIL_MAX)
     .map((e) => {
       const ago = Math.max(0, Math.round((now - e.at) / 1000));
-      const tag = { page: "OPENED", click: "CLICKED", error: "JS ERROR", api_fail: "API FAILED", toast_error: "ERROR SHOWN" }[e.kind];
+      const tag = { page: "OPENED", click: "CLICKED", error: "JS ERROR", api_fail: "API FAILED", toast_error: "ERROR SHOWN", input_needed: "ASKED USER TO FILL" }[e.kind];
       return `${isProblem(e) ? "!! " : ""}-${ago}s ${tag}: ${e.text}${e.kind === "page" ? "" : ` (on ${e.path})`}`;
     })
     .join("\n");

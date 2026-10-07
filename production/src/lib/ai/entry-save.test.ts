@@ -14,6 +14,11 @@ describe("AI Entry → the insert the normal form would make", () => {
     expect(customerInsert({ name: "Acme", contact_name: "A", contact_email: null, contact_phone: null, gstin: "27AAPFU0939F1ZV", domain: null, address: null }))
       .toMatchObject({ state_code: "27", state: "Maharashtra" });
   });
+  it("R-174: without a GSTIN, a state named in the input becomes the place of supply — never a guess", () => {
+    const base = { name: "Acme", contact_name: "A", contact_email: null, contact_phone: null, gstin: null, domain: null, address: null };
+    expect(customerInsert({ ...base, state: "Punjab" })).toMatchObject({ state_code: "03", state: "Punjab" });
+    expect(customerInsert({ ...base, state: "Dilli" })).not.toHaveProperty("state_code");
+  });
   it("an expense with a payment mode is booked as paid that day", () => {
     expect(expenseInsert({ vendor_name: "Uber", amount: 349.6, expense_date: "2026-10-01", category: "Travel", description: null, paid_by: "upi" }))
       .toMatchObject({ amount: 350, paid: true, paid_date: "2026-10-01", payment_method: "upi" });
@@ -27,6 +32,9 @@ describe("AI Entry → the insert the normal form would make", () => {
   });
   it("says what is missing instead of failing on save", () => {
     expect(missingFor({ kind: "customer", confidence: 1, why: "", fields: { name: "Acme", contact_name: null, contact_email: null, contact_phone: null, gstin: null, domain: null, address: null } })).toMatch(/contact person/);
+    // R-174: a customer with neither a GSTIN nor a GST state name cannot be invoiced.
+    expect(missingFor({ kind: "customer", confidence: 1, why: "", fields: { name: "Acme", contact_name: "A", contact_email: null, contact_phone: null, gstin: null, domain: null, address: null } })).toMatch(/state/);
+    expect(missingFor({ kind: "customer", confidence: 1, why: "", fields: { name: "Acme", contact_name: "A", contact_email: null, contact_phone: null, gstin: null, domain: null, address: null, state: "Kerala" } })).toBeNull();
     expect(missingFor({ kind: "expense", confidence: 1, why: "", fields: { vendor_name: null, amount: null, expense_date: TODAY, category: "Other", description: null, paid_by: null } })).toMatch(/amount/);
   });
   it("law checks follow the proposal kind, and use the year-to-date paid", () => {

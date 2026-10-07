@@ -15,6 +15,7 @@
  * their name, marked filed_via 'ai-chat'. A report nobody looked at is worse than none.
  */
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 export interface HelpMessage { role: "user" | "assistant"; text: string }
 
@@ -32,8 +33,21 @@ export interface BugDraft {
   chatSummary: string;
 }
 
+/**
+ * R-189 (Pardeep, 6 Oct: "AI help ko problem solve karne ki power do taki wo problem ko wahi
+ * solve kar paye"). A fix the AI may OFFER — never run. The panel shows each as a button and
+ * nothing happens until the person presses it; the write then goes through the person's own
+ * login (RLS), exactly as if they had edited the field themselves. The list is closed on
+ * purpose: opening a page, and filling a missing GST state. Nothing that moves money, sends a
+ * message or deletes anything can be expressed here at all.
+ */
+export type HelpAction =
+  | { kind: "open"; label: string; href: string }
+  | { kind: "set_customer_state"; label: string; customerId: string; stateCode: string }
+  | { kind: "set_company_state"; label: string; stateCode: string };
+
 /** checklist (R-162): what to try next on this screen, from the page scan. */
-export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[] }
+export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[]; actions: HelpAction[] }
 
 /**
  * Why AI Help was asked (R-162). "chat" = the person typed; "scan" = they pressed "Check this
@@ -78,8 +92,10 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
         : mode === "check_failed"
           ? "MODE check_failed: the person ran one of your suggested tests (quoted in their message) and pressed 'failed'. Write the bugDraft NOW — do not ask first: the title says what failed and where; expected = what the test said should happen; actual = that it did not, plus anything the trail shows (errors, failed calls); steps = the test itself, from this page. If something is unknown, write 'not recorded' rather than inventing it. reply: one line."
           : "MODE chat: answer the person. checklist may stay empty.",
+    "You may get WORKSPACE FACTS: this company's own setup (company GST state, GSTIN set or not, address, bank/UPI) and customers missing a GST state. Use them to find the REAL cause before guessing — e.g. a GST/IGST question: check the company state and the customer's state first. Quote the fact you used.",
+    "actions (R-189): up to 3 buttons the person can press to fix it right here. Allowed kinds ONLY: {\"kind\":\"open\",\"label\",\"href\"} to open an app page (href starts with /, e.g. /settings?tab=company, /customers/<id>/edit, /invoices); {\"kind\":\"set_customer_state\",\"label\",\"customerId\",\"stateCode\"} only for a customer listed in WORKSPACE FACTS as missing a state AND only when the person told you or the facts show which state it is (never guess a state); {\"kind\":\"set_company_state\",\"label\",\"stateCode\"} only when the facts say the company state is missing and you know it (e.g. from the company GSTIN code). stateCode = 2-digit GST code. label = what the button does, short (e.g. 'Set Acme's state to Delhi (07)'). Anything else (money, invoices, emails, deleting) — explain the steps instead; never offer it as an action. Empty list when there is nothing to fix.",
     "Do not say the report is filed — the person files it with a button after reading your draft. Say: 'Draft taiyaar hai — neeche dekh kar File karein.'",
-    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
+    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
   ].join("\n");
 }
 
@@ -89,7 +105,7 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
  */
 export function helpUserTurn(
   messages: readonly HelpMessage[],
-  extra: { trail?: string | null; findings?: string | null; outline?: string | null } = {},
+  extra: { trail?: string | null; findings?: string | null; outline?: string | null; facts?: string | null } = {},
 ): string {
   const chat = messages
     .slice(-HELP_MAX_MESSAGES)
@@ -99,6 +115,7 @@ export function helpUserTurn(
   if (extra.trail) blocks.push(`WHAT THE APP RECORDED (oldest first):\n${extra.trail.slice(0, 6000)}`);
   if (extra.findings) blocks.push(`AUTOMATIC FINDINGS on this page:\n${extra.findings.slice(0, 5000)}`);
   if (extra.outline) blocks.push(`PAGE OUTLINE:\n${extra.outline.slice(0, 1500)}`);
+  if (extra.facts) blocks.push(`WORKSPACE FACTS (this company's own setup, read just now):\n${extra.facts.slice(0, 3000)}`);
   return blocks.join("\n\n---\n\n");
 }
 
@@ -108,7 +125,40 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice
  * Validate the model's JSON. A reply is required; a bugDraft is kept only when it is
  * complete — a half report (no title, no actual result) is dropped, never filed.
  */
-export function parseHelpAnswer(raw: unknown): HelpAnswer | null {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** An in-app path only: starts with one "/", no scheme, no "//" host, no backslash. */
+const APP_PATH = /^\/(?!\/)[A-Za-z0-9\-._~/?=&%#]*$/;
+
+/**
+ * R-189: keep only actions this panel can safely offer. A set_customer_state must name a
+ * customer the server listed as missing a state (allowedCustomerIds) — the model cannot
+ * point the button at some other row — and every stateCode must be a real GST code.
+ */
+export function parseHelpActions(raw: unknown, allowedCustomerIds: ReadonlySet<string> = new Set()): HelpAction[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HelpAction[] = [];
+  for (const a of raw) {
+    if (!a || typeof a !== "object") continue;
+    const o = a as Record<string, unknown>;
+    const label = str(o.label, 80);
+    if (!label) continue;
+    const code = str(o.stateCode, 2);
+    const validCode = /^\d{2}$/.test(code) && Number(code) < 97 && !!GST_STATE_BY_CODE[code];
+    if (o.kind === "open") {
+      const href = str(o.href, 200);
+      if (APP_PATH.test(href)) out.push({ kind: "open", label, href });
+    } else if (o.kind === "set_customer_state") {
+      const id = str(o.customerId, 36);
+      if (UUID_RE.test(id) && allowedCustomerIds.has(id) && validCode) out.push({ kind: "set_customer_state", label, customerId: id, stateCode: code });
+    } else if (o.kind === "set_company_state") {
+      if (validCode) out.push({ kind: "set_company_state", label, stateCode: code });
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<string>): HelpAnswer | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   // Belt and braces for the "no markdown" rule: the panel would show ** and # as they are.
@@ -116,18 +166,58 @@ export function parseHelpAnswer(raw: unknown): HelpAnswer | null {
   if (!reply) return null;
   const checklist = Array.isArray(o.checklist) ? o.checklist.map((c) => str(c, 200)).filter(Boolean).slice(0, 8) : [];
   const d = o.bugDraft as Record<string, unknown> | null | undefined;
-  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist };
+  const actions = parseHelpActions(o.actions, allowedCustomerIds);
+  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist, actions };
   const title = str(d.title, 160);
   const actual = str(d.actual, 1200);
-  if (!title || !actual) return { reply, bugDraft: null, checklist };
+  if (!title || !actual) return { reply, bugDraft: null, checklist, actions };
   const type = TYPES.includes(d.type as FeedbackType) ? (d.type as FeedbackType) : "bug";
   const severity = SEVERITIES.includes(d.severity as FeedbackSeverity) ? (d.severity as FeedbackSeverity) : "medium";
   const steps = Array.isArray(d.steps) ? d.steps.map((s) => str(s, 300)).filter(Boolean).slice(0, 12) : [];
   return {
     reply,
     checklist,
+    actions,
     bugDraft: { title, type, severity, actual, expected: str(d.expected, 1200), steps, chatSummary: str(d.chatSummary, 600) },
   };
+}
+
+/**
+ * R-195 (Pardeep, 6 Oct: "text select karne par 'Ask with AI' aaye"). What a selection becomes
+ * in AI Help's box: null when it is not worth a button (empty, one character, or a whole
+ * page dragged over); otherwise the text, whitespace collapsed and capped, as a question.
+ */
+export function askAboutSelection(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (t.length < 2 || t.length > 600) return null;
+  return `"${t.length > 300 ? t.slice(0, 300) + "…" : t}" — ye kya hai, aur ispar dhyan dene wali koi baat?`;
+}
+
+/**
+ * R-196 (Pardeep, 6 Oct): "Run these tests in browser". AI Help must not click or submit on
+ * the person's real login (live data), so the "Test next" list becomes a prompt for a NEW
+ * Claude Code session, which runs each test in its own browser on the LOCAL app (test data)
+ * and writes the result on the work board. Pure, so the rules are tested.
+ */
+export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[] }): string {
+  const tests = input.tests.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
+  return [
+    `Is page ke tests browser me chalao aur nateeja do. (Ye prompt ek NAYE Claude Code session me chalana hai.)`,
+    "",
+    "CLOUD CHECK: ye kaam sirf Pardeep ke computer par chalne wale LOCAL session me ho sakta hai (localhost:3001 aur browser pane wahin hain). Agar tum cloud container me ho (path /home/user/..., localhost:3001 nahi khulta, ya browser pane nahi hai) to kuch mat karo — turant bolo: \"Ye cloud session hai — Claude app me naya session LOCAL chun kar chalaiye.\" Aur ruk jao.",
+    "0. FOLDER: agar session kisi folder me nahi hai, to pehle change_directory se C:\\Users\\mso50\\new-reselleros par jao (owner Allow dabayega).",
+    "Asli repo SIRF Anutech-Digital/anutechbilling (remote 'anutech'), branch manager-pardeep. Abhicode0to1/new-reselleros public purana repo hai — wahan kabhi push nahi. staging/deploy mat chhuo.",
+    "Kahan test karna hai: LOCAL app http://localhost:3001 (test data). Live/staging par form submit ya kuch save MAT karo.",
+    "",
+    `Page: ${input.pagePath}`,
+    "Tests:",
+    ...tests.map((t, i) => `${i + 1}. ${t}`),
+    "",
+    "Har test ke liye: browser pane me dikha kar chalao, screenshot lo, aur ✓ (chala) / ✗ (nahi chala, kya hua) likho. Koi test samajh na aaye to ✗ nahi — 'chala nahi paya, kyun' likho.",
+    "✗ wale test: har ek ke liye board par card banao (title me page + kya toota, kadam, screenshot ka varnan). Fix tabhi karo jab owner kahe.",
+    "NATEEJA BOARD PAR: 'Kaam ki list' (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par ek card 'Test run: <page>' status done — har test ka ✓/✗ ek line me. Samay date -u se.",
+    "SESSION ARCHIVE: board par likhne ke baad ye session archive karo (mcp__ccd_session_mgmt__archive_session, session_id \"self\") — SIRF agar ye session ISI prompt se shuru hua. Pehle se koi aur baatcheet ho to archive MAT karo.",
+  ].join("\n");
 }
 
 /** The tag every AI-filed report carries — short, as asked. */

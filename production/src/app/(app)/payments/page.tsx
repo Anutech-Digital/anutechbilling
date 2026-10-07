@@ -68,6 +68,8 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 /* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
+import { usePagedRows, LoadMore, PAYMENTS_PAGE_SIZE } from "./load-more";
+import { paymentMethodLabel } from "./method-label";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -78,7 +80,7 @@ const STATUS_TABS: TabBarItem[] = [
 const METHOD_META: Record<string, { label: string; icon: string }> = {
   upi:           { label: "UPI",        icon: "rupee" },
   razorpay:      { label: "Razorpay",   icon: "zap" },
-  bank_transfer: { label: "Bank",       icon: "receipt" },
+  bank_transfer: { label: "Bank transfer", icon: "receipt" },
   cheque:        { label: "Cheque",     icon: "file" },
   cash:          { label: "Cash",       icon: "rupee" },
   other:         { label: "Other",      icon: "info" },
@@ -191,16 +193,20 @@ function PaymentsPageInner() {
     );
   });
 
+  /* R-104: paint 50 at a time (R-024 rule). Tab counts, KPIs, "collected" and the CSV
+     export still use every payment in `filtered` / `payments`; only the lists are paged. */
+  const paged = usePagedRows(filtered, PAYMENTS_PAGE_SIZE, [tab, focus, customerFilter ?? "", search.trim()].join("|"));
+
   /* j / k / Enter / o over the sales-payments table — opens the payment's quote,
      the same target a click uses. Enabled only while that table is on screen
      (it lives inside the subscription/all block, not the project view), so the
      keys never open a row from a list the user isn't looking at. Keyed by id,
      like /customers, so only that one table lights up. */
   const payKeys = useListKeys({
-    count: filtered.length,
+    count: paged.shown.length,   // only the rows on screen (R-104)
     enabled: view !== "project",
     onOpen: (i) => {
-      const p = filtered[i];
+      const p = paged.shown[i];
       if (p) router.push(`/quotes/${p.quote_id}` as never);
     },
   });
@@ -208,7 +214,7 @@ function PaymentsPageInner() {
   React.useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [payKeys.index]);
-  const payKbSelectedId = payKeys.index >= 0 ? filtered[payKeys.index]?.id ?? null : null;
+  const payKbSelectedId = payKeys.index >= 0 ? paged.shown[payKeys.index]?.id ?? null : null;
 
   const counts: Record<string, number> = { all: payments?.length ?? 0 };
   for (const p of payments ?? []) counts[p.status] = (counts[p.status] ?? 0) + 1;
@@ -257,7 +263,7 @@ function PaymentsPageInner() {
       const ctx = quoteById.get(p.quote_id);
       return [
         formatDate(p.received_at), ctx?.customerName ?? "", p.quote_id, String(p.amount),
-        p.method ?? "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
+        p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
     });
     const csv = [header.map(esc).join(","), ...lines].join("\n");
@@ -350,7 +356,7 @@ function PaymentsPageInner() {
                 </button>
                 <div className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Top Payment Method</p>
-                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? METHOD_META[topMethod[0]]?.label ?? topMethod[0] : "—"}</p>
+                  <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{topMethod ? paymentMethodLabel(topMethod[0]) : "—"}</p>
                 </div>
               </div>
             </div>
@@ -561,7 +567,10 @@ function PaymentsPageInner() {
           <TabBar className="overflow-y-hidden" value={tab} onChange={(v) => { setFocus(""); setTab(v as typeof tab); }} items={tabsWithCounts} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
-              Showing {filtered.length} of {payments.length} payments · {rupee(totalCollected)} collected all-time
+              {paged.hidden > 0
+                ? <>Showing {paged.shown.length} of {filtered.length} payments</>
+                : <>Showing {filtered.length} of {payments.length} payments</>}
+              {" · "}{rupee(totalCollected)} collected all-time
             </div>
             <div className="w-full sm:w-72">
               <Input
@@ -631,7 +640,7 @@ function PaymentsPageInner() {
       {/* Adaptive card list — viewports < 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
         <ul className="xl:hidden space-y-2 mb-3">
-          {filtered.map((p) => {
+          {paged.shown.map((p) => {
             const ctx = quoteById.get(p.quote_id);
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
@@ -649,7 +658,7 @@ function PaymentsPageInner() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base tabular-nums text-ink">{rupee(p.amount)}</p>
-                      <p className="text-3xs text-ink-3">{p.method}</p>
+                      <p className="text-3xs text-ink-3">{paymentMethodLabel(p.method)}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60 text-xs">
@@ -717,7 +726,7 @@ function PaymentsPageInner() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
+              {paged.shown.map((p) => {
                 const ctx = quoteById.get(p.quote_id);
                 const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
                 return (
@@ -737,6 +746,10 @@ function PaymentsPageInner() {
             </tbody>
           </table>
         </Card>
+      )}
+
+      {!isLoading && !error && (
+        <LoadMore hidden={paged.hidden} pageSize={PAYMENTS_PAGE_SIZE} noun="payments" onLoadMore={paged.loadMore} />
       )}
 
       {/* Help */}
@@ -775,8 +788,8 @@ function PaymentsPageInner() {
                       <span className="font-medium text-ink block truncate">{cleanDisplayName(p.customer_name)}</span>
                     )}
                     <Link href={`/projects/${p.project_id}` as never} className="text-2xs text-ink-2 hover:text-amber-ink hover:underline block truncate">{p.project_title}</Link>
-                    <p className="text-2xs text-ink-3 mt-0.5 capitalize">
-                      {(p.method ?? "—").replace("_", " ")}{p.bank_txn_id ? " · reconciled" : ""} · {formatDate(p.received_at)}
+                    <p className="text-2xs text-ink-3 mt-0.5">
+                      {paymentMethodLabel(p.method)}{p.bank_txn_id ? " · reconciled" : ""} · {formatDate(p.received_at)}
                     </p>
                   </div>
                   <p className="font-serif text-base tabular-nums text-ink shrink-0">{rupee(p.amount)}</p>
@@ -807,7 +820,7 @@ function PaymentsPageInner() {
                       <span className="text-ink-3"> · </span>
                       <Link href={`/projects/${p.project_id}` as never} className="text-ink-2 hover:text-amber-ink hover:underline">{p.project_title}</Link>
                     </td>
-                    <td className="px-3 py-2.5 text-ink-2 capitalize">{(p.method ?? "—").replace("_", " ")}{p.bank_txn_id ? " · reconciled" : ""}</td>
+                    <td className="px-3 py-2.5 text-ink-2">{paymentMethodLabel(p.method)}{p.bank_txn_id ? " · reconciled" : ""}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium text-ink">{rupee(p.amount)}</td>
                     <td className="px-4 py-2.5 text-ink-2">{formatDate(p.received_at)}</td>
                   </tr>
@@ -1059,7 +1072,7 @@ function PaymentRowView({
             {methodInfo.label}
           </span>
         ) : (
-          <span className="text-xs text-ink-3">{p.method}</span>
+          <span className="text-xs text-ink-3">{paymentMethodLabel(p.method)}</span>
         )}
         {bankLabel && (
           <div className="text-3xs text-ink-3 mt-0.5 flex items-center gap-1 truncate">

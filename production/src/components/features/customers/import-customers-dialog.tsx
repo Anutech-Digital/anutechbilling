@@ -175,9 +175,12 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
       }
 
       const skipped = parsed.length - valid.length;
+      /* R-174: rows whose state did not map to a GST state are imported, not hidden — but said so. */
+      const noState = valid.filter((r) => !r.state_code).length;
       toast.success(
         `Imported ${inserted} customer${inserted === 1 ? "" : "s"}` +
         (skipped > 0 ? ` · ${skipped} skipped` : ""),
+        noState > 0 ? { description: `${noState} without a state — pick it in Customers → "State missing" before invoicing them.` } : undefined,
       );
       onImportComplete?.();
       onOpenChange(false);
@@ -190,6 +193,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
 
   const validCount = parsed?.filter((r) => !r.error && !r.dup).length ?? 0;
   const dupCount   = parsed?.filter((r) => r.dup && !r.error).length ?? 0;
+  const noStateCount = parsed?.filter((r) => !r.error && !r.dup && !r.state_code).length ?? 0;
   const errorCount = parsed?.filter((r) => r.error).length ?? 0;
 
   return (
@@ -253,6 +257,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
                 <p className="text-xs text-ink-3 mt-0.5 inline-flex items-center gap-2 flex-wrap">
                   <Badge kind="success" size="sm">{validCount} new</Badge>
                   {dupCount > 0 && <Badge kind="warning" size="sm">{dupCount} already exist</Badge>}
+                  {noStateCount > 0 && <Badge kind="warning" size="sm" title="No GST state — their invoice will be refused until a state is picked">{noStateCount} without state</Badge>}
                   {errorCount > 0 && <Badge kind="danger" size="sm">{errorCount} skipped</Badge>}
                 </p>
               </div>
@@ -296,7 +301,7 @@ export function ImportCustomersDialog({ open, onOpenChange, onImportComplete }: 
                           )}
                         </td>
                         <td className="p-2 text-ink-2">{r.contact_name || <span className="text-ink-3">—</span>}</td>
-                        <td className="p-2 text-ink-2">{r.state || <span className="text-ink-3">—</span>}</td>
+                        <td className="p-2 text-ink-2">{r.state_code ? r.state : <span className="text-amber-ink">{r.state ? `${r.state} — not a GST state` : "State missing"}</span>}</td>
                       </tr>
                     ))}
                   </tbody>

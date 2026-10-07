@@ -66,7 +66,7 @@ steps:
     entrypoint: bash
     args:
       - -c
-      - npm ci --no-audit --no-fund && npx prisma generate && npx tsc --noEmit && npx vitest run
+      - npm ci --no-audit --no-fund && npx prisma generate && npx next typegen && npx tsc --noEmit && npx vitest run
 
   # 0b. DEPS CACHE (5 Oct 2026, Pardeep: "cache kar do"). The note on --cache-from below was
   #     right: it never worked because nothing was pulled. Now the deps stage (npm ci, ~43s +
@@ -113,6 +113,8 @@ steps:
       # gets until its own switch-over; the staging trigger sets 1 / authjs.
       - --build-arg=NEXT_PUBLIC_DATA_GATEWAY=$_DATA_GATEWAY
       - --build-arg=NEXT_PUBLIC_AUTH_PROVIDER=$_AUTH_PROVIDER
+      # R-182: the gate above type-checks (typegen + tsc) and push waits for it.
+      - --build-arg=SKIP_BUILD_TYPECHECK=1
       # ⚠️ YE FLAG LAGI HUI HAI PAR KABHI CHALI NAHI. 29 Aug 2026 par naapa: ek build ke
       # poore log me **ek bhi `CACHED` line nahi** — har layer har baar naye sire se banti
       # hai. Yahan pehle likha tha "Reuse the previous image's layers so a typical build is

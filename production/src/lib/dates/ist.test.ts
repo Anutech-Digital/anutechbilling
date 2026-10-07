@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  istGreeting,
   toIstDate, istToday, istMonth, istParts, addDaysISO, daysBetweenISO, istDayStartUtc,
   fyStartYear, fyLabel, fyBounds, monthBounds, formatIstDate,
 } from "./ist";
@@ -75,5 +76,21 @@ describe("formatIstDate", () => {
     expect(formatIstDate("2026-09-05")).toBe("5 Sep 2026");
     expect(formatIstDate("2026-09-27T20:00:00Z")).toBe("28 Sep 2026");
     expect(formatIstDate(new Date("2026-03-31T20:30:00Z"))).toBe("1 Apr 2026");
+  });
+});
+
+/* R-178: the dashboard greeting follows the IST clock, whatever the machine's timezone. */
+describe("istGreeting", () => {
+  it("06:15 UTC is 11:45 IST — morning, though the UTC hour says morning too", () => {
+    expect(istGreeting(new Date("2026-10-06T06:15:00Z"))).toBe("Good morning");
+  });
+  it("06:30 UTC is 12:00 IST — afternoon (the server's getHours() said 6 → morning)", () => {
+    expect(istGreeting(new Date("2026-10-06T06:30:00Z"))).toBe("Good afternoon");
+  });
+  it("11:30 UTC is 17:00 IST — evening", () => {
+    expect(istGreeting(new Date("2026-10-06T11:30:00Z"))).toBe("Good evening");
+  });
+  it("20:00 UTC is 01:30 IST next day — morning (UTC hour 20 would say evening)", () => {
+    expect(istGreeting(new Date("2026-10-06T20:00:00Z"))).toBe("Good morning");
   });
 });

@@ -27,6 +27,8 @@ export interface LeadFields {
 export interface CustomerFields {
   name: string | null; contact_name: string | null; contact_email: string | null; contact_phone: string | null;
   gstin: string | null; domain: string | null; address: string | null;
+  /** R-174: the Indian state named in the input (address, card) — place of supply when there is no GSTIN. */
+  state?: string | null;
 }
 export interface ExpenseFields {
   vendor_name: string | null; amount: number | null; expense_date: string | null; category: string; description: string | null;
@@ -68,7 +70,7 @@ Also return "notes": up to 3 short points where the input looks wrong under Indi
 
 Kinds and fields (use null for anything not stated — NEVER guess a phone, email, GSTIN, amount or date):
 - lead: someone interested in buying. fields: company, contact_name, contact_email, contact_phone, plan (product named, e.g. "Google Workspace Business Starter"), seats (integer), domain, notes (short), follow_up_date (YYYY-MM-DD if a callback/follow-up day is stated)
-- customer: an existing buyer whose details are being recorded (e.g. a visiting card of a client, "add customer ..."). fields: name (company), contact_name, contact_email, contact_phone, gstin, domain, address
+- customer: an existing buyer whose details are being recorded (e.g. a visiting card of a client, "add customer ..."). fields: name (company), contact_name, contact_email, contact_phone, gstin, domain, address, state (the Indian state if written anywhere, e.g. in the address — null if not)
 - expense: money WE spent without a GST tax invoice (cab, tea, petrol, small purchase). fields: vendor_name, amount (INR number), expense_date, category (one of: ${EXPENSE_CATEGORIES.join(", ")}), description, paid_by (cash|upi|bank|card, only if stated)
 - vendor_bill: a supplier's tax invoice/bill to us (anything showing the supplier's GSTIN and GST). fields: vendor_name, vendor_gstin, buyer_gstin (the GSTIN it is billed TO), bill_no, bill_date, subtotal, cgst, sgst, igst, total, paid_by (cash|upi|bank|card, only if stated)
 - task: a to-do or callback. fields: title (imperative, short), due_date (YYYY-MM-DD), company
@@ -155,6 +157,7 @@ function fieldsFor(kind: EntryKind, f: Record<string, unknown>, today: string): 
       const x: CustomerFields = {
         name: str(f.name, 120), contact_name: str(f.contact_name, 80), contact_email: email(f.contact_email),
         contact_phone: phone(f.contact_phone), gstin: gstin(f.gstin), domain: domain(f.domain), address: str(f.address, 300),
+        state: str(f.state, 60),
       };
       return x.name || x.contact_name ? x : null;
     }

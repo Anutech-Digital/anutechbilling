@@ -6,7 +6,7 @@
 import type { AdvanceFields } from "@/lib/ai/data-entry";
 import type { EntryProposal, LeadFields, CustomerFields, ExpenseFields, VendorBillFields, TaskFields } from "@/lib/ai/data-entry";
 import { checkExpense, checkVendorBill, checkPayment, checkCustomer, type LawWarning, type Party } from "@/lib/compliance/entry-rules";
-import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { stateCodeFromGstin, stateCodeFromName } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 export interface Me { userId: string }
@@ -32,7 +32,8 @@ export function leadInsert(f: LeadFields, me: Me, now = Date.now()) {
 }
 
 export function customerInsert(f: CustomerFields) {
-  const state = stateCodeFromGstin(f.gstin);
+  // R-174: GSTIN first; else a state the input names (exact GST state only — never guessed).
+  const state = stateCodeFromGstin(f.gstin) ?? stateCodeFromName(f.state);
   return {
     name: (f.name ?? f.contact_name ?? "").trim(),
     contact_name: f.contact_name,
@@ -93,7 +94,9 @@ export function advanceFormHref(f: AdvanceFields): string {
 export function missingFor(p: EntryProposal): string | null {
   switch (p.kind) {
     case "lead": return p.fields.company || p.fields.contact_name || p.fields.contact_phone || p.fields.contact_email ? null : "Add a company, name or phone.";
-    case "customer": return !p.fields.name ? "Add the company name." : !p.fields.contact_name ? "Add the contact person (a customer needs one)." : null;
+    case "customer": return !p.fields.name ? "Add the company name." : !p.fields.contact_name ? "Add the contact person (a customer needs one)."
+      /* R-174: without a place of supply the customer's GST invoice is refused. */
+      : !stateCodeFromGstin(p.fields.gstin) && !stateCodeFromName(p.fields.state) ? "Add the state (e.g. Punjab) or a valid GSTIN — the GST invoice needs it." : null;
     case "expense": return !p.fields.amount ? "Add the amount." : !p.fields.expense_date ? "Add the date." : null;
     case "vendor_bill": return !p.fields.vendor_name ? "Add the vendor." : !p.fields.total ? "Add the bill total." : !p.fields.bill_date ? "Add the bill date." : null;
     case "task": return !p.fields.title ? "Add what to do." : !p.fields.due_date ? "Add the day." : null;

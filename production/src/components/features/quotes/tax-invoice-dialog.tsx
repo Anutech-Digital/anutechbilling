@@ -297,17 +297,22 @@ export function TaxInvoiceDialog({
         <DialogTitle className="sr-only">Tax Invoice · {invoice.id}</DialogTitle>
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
-          <div className="flex items-center gap-2">
+        {/* R-187: on a phone the buttons used to sit on one line and push "Download PDF" off
+            the right edge. The row and the button group now wrap, and the title stays on
+            one line (the "GST-compliant" tag shows from sm up; the document itself says it). */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-3 border-b border-hairline bg-paper-2 sticky top-0 z-10 print:hidden">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <Icon name="receipt" size={16} className="text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Tax Invoice · GST-compliant</span>
+            <span className="text-sm font-semibold text-ink whitespace-nowrap">
+              Tax Invoice<span className="hidden sm:inline"> · GST-compliant</span>
+            </span>
             {advancesAdjusted > 0 && (
               <span className="text-3xs uppercase tracking-wider bg-emerald-soft text-emerald-ink px-2 py-0.5 rounded-full font-semibold">
                 ₹{advancesAdjusted.toLocaleString("en-IN")} advance adjusted
               </span>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2" data-toolbar-actions>
             {invoice.quote_id && (
               /* "View quote", not "Edit Quote".
                  Two things were wrong with the old label, and the smaller one is that this

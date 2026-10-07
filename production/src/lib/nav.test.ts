@@ -281,6 +281,14 @@ describe("breadcrumbs — one sidebar section, one name", () => {
     expect(billing.crumb).toBe("Billing");
   });
 
+  it("names the Buy pages after the sidebar's Billing app, not 'Buy' (R-177)", () => {
+    // Purchase Inbox … Reimbursements read "Buy ›" while the sidebar tab said Billing.
+    const buy = sections.find((s) => s.name === "Buy")!;
+    expect(buy.crumbsInUse).toEqual(["Billing"]);
+    expect(getCrumb("/purchase-orders")).toEqual(["Billing", "Purchase Orders"]);
+    expect(getCrumb("/accounting/bill-payments")[0]).toBe("Billing");
+  });
+
   it("gives every nav page a breadcrumb", () => {
     // A page reachable from the nav with no entry falls back to a generic crumb and
     // tells the operator nothing about where they are.

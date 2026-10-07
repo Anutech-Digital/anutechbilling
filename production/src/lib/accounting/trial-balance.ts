@@ -66,6 +66,7 @@ export function buildTrialBalance(args: {
 
   // ── Assets ──
   put("Assets", "Cash & bank", bs.cashAndBank, "debit", "Bank accounts: opening + credits − debits");
+  put("Assets", "Received, not yet in bank", bs.undepositedFunds, "debit", "Customer receipts not matched to any bank line (undeposited funds)");
   put("Assets", "Trade receivables", bs.receivables, "debit", "Pending / overdue invoices (project milestones excluded)");
   put("Assets", "Project receivables", bs.projectReceivable, "debit", "Invoiced project milestones − received");
   put("Assets", "TDS receivable", bs.tdsReceivable, "debit", "TDS deducted by customers, not yet claimed");

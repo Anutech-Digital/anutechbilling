@@ -4765,6 +4765,8 @@ export type Database = {
         Row: {
           ai_chat_summary: string | null
           body: string
+          checked_at: string | null
+          checked_by_name: string | null
           created_at: string
           directive: string | null
           dispatched_at: string | null
@@ -4796,6 +4798,8 @@ export type Database = {
         Insert: {
           ai_chat_summary?: string | null
           body: string
+          checked_at?: string | null
+          checked_by_name?: string | null
           created_at?: string
           directive?: string | null
           dispatched_at?: string | null
@@ -4827,6 +4831,8 @@ export type Database = {
         Update: {
           ai_chat_summary?: string | null
           body?: string
+          checked_at?: string | null
+          checked_by_name?: string | null
           created_at?: string
           directive?: string | null
           dispatched_at?: string | null
@@ -7109,6 +7115,156 @@ export type Database = {
           },
           {
             foreignKeyName: "payment_mandates_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_run_items: {
+        Row: {
+          amount: number
+          doc_id: string
+          doc_ref: string | null
+          id: string
+          run_id: string
+          source: string
+          tenant_id: string
+          vendor_id: string | null
+          vendor_name: string
+        }
+        Insert: {
+          amount: number
+          doc_id: string
+          doc_ref?: string | null
+          id?: string
+          run_id: string
+          source: string
+          tenant_id: string
+          vendor_id?: string | null
+          vendor_name: string
+        }
+        Update: {
+          amount?: number
+          doc_id?: string
+          doc_ref?: string | null
+          id?: string
+          run_id?: string
+          source?: string
+          tenant_id?: string
+          vendor_id?: string | null
+          vendor_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_run_items_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "payment_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_run_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_run_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_run_items_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_runs: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          bank_account_id: string
+          cancelled_at: string | null
+          cancelled_by: string | null
+          created_at: string
+          created_by: string
+          id: string
+          note: string | null
+          paid_at: string | null
+          paid_by: string | null
+          paid_on: string | null
+          pay_on: string
+          run_no: string
+          status: string
+          tenant_id: string
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          bank_account_id: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          created_by: string
+          id?: string
+          note?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          paid_on?: string | null
+          pay_on?: string
+          run_no: string
+          status?: string
+          tenant_id: string
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          bank_account_id?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          note?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          paid_on?: string | null
+          pay_on?: string
+          run_no?: string
+          status?: string
+          tenant_id?: string
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_runs_bank_account_id_fkey"
+            columns: ["bank_account_id"]
+            isOneToOne: false
+            referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_runs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_runs_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "v_tenant_with_parent"
@@ -12066,105 +12222,6 @@ export type Database = {
           },
         ]
       }
-      payment_run_items: {
-        Row: {
-          amount: number
-          doc_id: string
-          doc_ref: string | null
-          id: string
-          run_id: string
-          source: string
-          tenant_id: string
-          vendor_id: string | null
-          vendor_name: string
-        }
-        Insert: {
-          amount?: number
-          doc_id?: string
-          doc_ref?: string | null
-          id?: string
-          run_id?: string
-          source?: string
-          tenant_id?: string
-          vendor_id?: string | null
-          vendor_name?: string
-        }
-        Update: {
-          amount?: number
-          doc_id?: string
-          doc_ref?: string | null
-          id?: string
-          run_id?: string
-          source?: string
-          tenant_id?: string
-          vendor_id?: string | null
-          vendor_name?: string
-        }
-        Relationships: []
-      }
-      payment_runs: {
-        Row: {
-          approved_at: string | null
-          approved_by: string | null
-          bank_account_id: string
-          cancelled_at: string | null
-          cancelled_by: string | null
-          created_at: string
-          created_by: string
-          id: string
-          note: string | null
-          paid_at: string | null
-          paid_by: string | null
-          paid_on: string | null
-          pay_on: string
-          run_no: string
-          status: string
-          tenant_id: string
-          total: number
-          updated_at: string
-        }
-        Insert: {
-          approved_at?: string | null
-          approved_by?: string | null
-          bank_account_id?: string
-          cancelled_at?: string | null
-          cancelled_by?: string | null
-          created_at?: string
-          created_by?: string
-          id?: string
-          note?: string | null
-          paid_at?: string | null
-          paid_by?: string | null
-          paid_on?: string | null
-          pay_on?: string
-          run_no?: string
-          status?: string
-          tenant_id?: string
-          total?: number
-          updated_at?: string
-        }
-        Update: {
-          approved_at?: string | null
-          approved_by?: string | null
-          bank_account_id?: string
-          cancelled_at?: string | null
-          cancelled_by?: string | null
-          created_at?: string
-          created_by?: string
-          id?: string
-          note?: string | null
-          paid_at?: string | null
-          paid_by?: string | null
-          paid_on?: string | null
-          pay_on?: string
-          run_no?: string
-          status?: string
-          tenant_id?: string
-          total?: number
-          updated_at?: string
-        }
-        Relationships: []
-      }
       vendor_bills: {
         Row: {
           attachment_url: string | null
@@ -12937,6 +12994,7 @@ export type Database = {
         Args: { p_claim_id: string }
         Returns: undefined
       }
+      approve_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       auto_backup_if_stale: { Args: never; Returns: Json }
       backup_all_tenants: { Args: { p_label?: string }; Returns: Json }
       backup_tenant: {
@@ -13015,6 +13073,7 @@ export type Database = {
         Returns: Json
       }
       can_see_record: { Args: { p_owner: string }; Returns: boolean }
+      cancel_payment_run: { Args: { p_run_id: string }; Returns: undefined }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
         Returns: {
@@ -13066,6 +13125,15 @@ export type Database = {
           quote_id: string
           tax_rate: number
         }[]
+      }
+      create_payment_run: {
+        Args: {
+          p_bank_account_id: string
+          p_items: Json
+          p_note?: string
+          p_pay_on?: string
+        }
+        Returns: string
       }
       create_project_direct_invoice: {
         Args: {
@@ -13471,6 +13539,10 @@ export type Database = {
         Args: { p_employee_id: string; p_ip?: string; p_pin: string }
         Returns: string
       }
+      mark_payment_run_paid: {
+        Args: { p_paid_on?: string; p_run_id: string }
+        Returns: undefined
+      }
       mark_self_attendance: { Args: never; Returns: string }
       match_existing_customer: {
         Args: {
@@ -13570,21 +13642,6 @@ export type Database = {
         }
         Returns: undefined
       }
-      approve_payment_run: { Args: { p_run_id: string }; Returns: undefined }
-      cancel_payment_run: { Args: { p_run_id: string }; Returns: undefined }
-      create_payment_run: {
-        Args: {
-          p_bank_account_id: string
-          p_items: Json
-          p_note?: string
-          p_pay_on?: string
-        }
-        Returns: string
-      }
-      mark_payment_run_paid: {
-        Args: { p_paid_on?: string; p_run_id: string }
-        Returns: undefined
-      }
       pay_vendor_bill: {
         Args: {
           p_amount: number
@@ -13595,6 +13652,11 @@ export type Database = {
         }
         Returns: undefined
       }
+      payment_run_outstanding: {
+        Args: { p_doc: string; p_source: string; p_tenant: string }
+        Returns: number
+      }
+      payment_run_role: { Args: never; Returns: string }
       plan_key: { Args: { p_name: string }; Returns: string }
       portal_customer_exists: { Args: { p_email: string }; Returns: boolean }
       portal_ensure_customer_link: { Args: never; Returns: string }
@@ -13873,6 +13935,7 @@ export type Database = {
           salary_payable: number
           tax_payments: Json
           tds_receivable: number
+          undeposited_funds: number
         }[]
       }
       report_day_book: { Args: { p_from: string; p_to: string }; Returns: Json }

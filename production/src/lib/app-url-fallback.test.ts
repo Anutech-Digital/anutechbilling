@@ -67,7 +67,7 @@ const SRC = join(ROOT, "src");
  *                                                              owner / accountant
  *   (provision-hosting — gone 24 Sep 2026: the worker now provisions through the
  *    DMS engine and its owner alerts carry no app link)
- *   trial-expiry              "Open the lead: …"           -> staff
+ *   trial-expiry              owner alert — REMOVED 6 Oct 2026 (R-065, no trial owner email)
  *   enquiry/general, enquiry/workspace, trial/hosting, trial/workspace,
  *   inbound/ingest            "Open the lead: …"           -> staff
  *   trial/hosting/confirm x3  owner alerts — REMOVED 30 Sep 2026 (no trial owner email)
@@ -89,7 +89,6 @@ const SRC = join(ROOT, "src");
 const KNOWN = [
   "app/api/cron/ai-support-sla/route.ts",
   "app/api/cron/compliance-reminders/route.ts",
-  "app/api/cron/trial-expiry/route.ts",
   "app/api/public/enquiry/general/route.ts",
   "app/api/public/enquiry/workspace/route.ts",
   "app/api/public/trial/hosting/confirm/route.ts",

@@ -32,6 +32,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import { buildComplianceRows } from "@/lib/compliance/obligations";
 import { dueReminders, renderReminder, type PlannedReminder } from "@/lib/compliance/reminders";
+import { noTdsDeductedPredicate, tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
@@ -161,7 +162,21 @@ async function handle(req: Request) {
         (sentRows ?? []).map((r) => sentKey(r.obligation_key, r.period_key, r.days_before, r.recipient_email)),
       );
 
-      const rows = buildComplianceRows(today, filed);
+      // R-181: a finished month with no TDS deducted has no TDS to deposit, so
+      // its "Deposit TDS" reminder is not sent. If the TDS read fails, every
+      // month counts as before — a stray reminder beats a missed deadline.
+      const lookback = tdsLookbackFrom(today);
+      const [tdsSal, tdsExp] = await Promise.all([
+        supabase.from("salary_payments").select("period, tds")
+          .eq("tenant_id", tenant.id).gte("period", lookback.slice(0, 7)).gt("tds", 0),
+        supabase.from("expenses").select("expense_date, tds_amount")
+          .eq("tenant_id", tenant.id).gte("expense_date", lookback).gt("tds_amount", 0),
+      ]);
+      const notApplicable = tdsSal.error || tdsExp.error
+        ? undefined
+        : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data), today);
+
+      const rows = buildComplianceRows(today, filed, undefined, notApplicable);
       // A rung counts as done for the tenant only once EVERY recipient has it —
       // otherwise adding a CA halfway through a window would never reach them.
       const plans: PlannedReminder[] = dueReminders(rows, (o, p, d) =>

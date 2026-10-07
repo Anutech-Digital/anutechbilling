@@ -22,6 +22,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { maskPII } from "@/lib/ux/signals";
 import { pagePurpose } from "@/lib/ai/page-purpose";
+import { helpFacts } from "@/lib/ai/help-facts";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES } from "@/lib/ai/app-help";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
@@ -32,7 +33,7 @@ const bodySchema = z.object({
   /** check_failed: the "Test next" line the person marked as failed. */
   failedCheck: z.string().trim().max(300).optional(),
   trail: z.array(z.object({
-    kind: z.enum(["page", "click", "error", "api_fail", "toast_error"]),
+    kind: z.enum(["page", "click", "error", "api_fail", "toast_error", "input_needed"]),
     at: z.number(),
     text: z.string().max(400),
     path: z.string().max(300),
@@ -42,9 +43,17 @@ const bodySchema = z.object({
     detail: z.string().max(400),
   })).max(FINDINGS_MAX).optional(),
   outline: z.string().max(2000).optional(),
+  /** R-189: one screenshot with this message (page capture or pasted), JPEG/PNG base64, ≤ ~1.5 MB. */
+  image: z.object({
+    mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+    base64: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/),
+  }).optional(),
 });
 
 const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to upar 'Report Bug' button (Ctrl+Shift+B) se seedha bhej dijiye.";
+/** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
+    Say what is missing and where to add it. */
+const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to 'Report Bug' button (Ctrl+Shift+B) se bhej dijiye.";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
@@ -67,6 +76,13 @@ export async function POST(request: NextRequest) {
     messages.push({ role: "user", text: `Ye test fail hua: "${parsed.data.failedCheck}". Iski bug report banao.` });
   } else if (mode !== "chat") messages.push({ role: "user", text: MODE_PROMPT[mode] });
   if (!messages.length || messages[messages.length - 1].role !== "user") return NextResponse.json({ error: "Last message must be yours." }, { status: 400 });
+  const image = parsed.data.image;
+  if (image) {
+    const last = messages[messages.length - 1];
+    messages[messages.length - 1] = { ...last, text: `${last.text}
+
+[Screenshot attached: the screen the person is looking at. Read it — labels, numbers, errors — and use it in your answer.]` };
+  }
 
   const trail: TrailEvent[] = (parsed.data.trail ?? []).map((e) => ({ ...e, text: maskPII(e.text, 200) ?? "", path: e.path }));
   const findings: Finding[] = (parsed.data.findings ?? []).map((f) => ({ ...f, detail: maskPII(f.detail, 300) ?? "" }));
@@ -74,7 +90,11 @@ export async function POST(request: NextRequest) {
   // RLS scopes these reads to the caller's own row and tenant.
   const { data: me } = await supabase.from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
-  if (!gemini.apiKey) return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });
+  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], ai: false, reason: "no_key" });
+
+  /* R-189: the company's own setup, read with the person's login (RLS) — not for error
+     reports, which are about what just broke. */
+  const facts = me?.tenant_id && mode !== "error" ? await helpFacts(supabase, me.tenant_id).catch(() => null) : null;
 
   let failure = "";
   const raw = await geminiJson<unknown>({
@@ -85,13 +105,15 @@ export async function POST(request: NextRequest) {
       trail: trail.length ? trailForPrompt(trail) : null,
       findings: mode === "scan" ? findingsForPrompt(findings) : null,
       outline: mode === "scan" && outline ? maskPII(outline, 1500) : null,
+      facts: facts?.text ?? null,
     }),
     temperature: 0.3,
-    timeoutMs: 25_000,
+    timeoutMs: image ? 40_000 : 25_000,
+    ...(image ? { attachment: { mimeType: image.mimeType, base64: image.base64 } } : {}),
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });
-  const answer = parseHelpAnswer(raw);
+  const answer = parseHelpAnswer(raw, facts?.customerIds);
   if (!answer) {
     if (failure) console.error("[ai/help] no answer:", failure);
     return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });

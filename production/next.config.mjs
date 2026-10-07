@@ -55,6 +55,13 @@ const nextConfig = {
      `next lint` on every push (.github/workflows/ci.yml) and the local gate runs it too.
      Type checking stays ON here: it is what catches typedRoutes, which plain tsc does not. */
   eslint: { ignoreDuringBuilds: true },
+  /* R-182, 6 Oct 2026: the type check above took 3.9 of the 9.8 minutes of `next build` in
+     Cloud Build (build 8f49a985). The image build now sets SKIP_BUILD_TYPECHECK=1 and the
+     cloudbuild.yaml gate runs `next typegen` + `tsc --noEmit` instead — typegen writes the
+     .next/types route files, so tsc catches typedRoutes there too. The gate runs beside the
+     image build and `push` waits for it, so a type error still stops the deploy. A plain
+     `npm run build` (local, CI) leaves the variable unset and checks types as before. */
+  typescript: { ignoreBuildErrors: process.env.SKIP_BUILD_TYPECHECK === "1" },
   /* 5 Oct 2026: two Cloud Build runs died with SIGKILL inside `next build` on the 8 GB
      E2_HIGHCPU_8 machine (once in the morning, once after R-161 added `prisma generate`).
      The main process may take 6 GB (NODE_HEAP_MB) and Next starts cpus-1 = 7 worker

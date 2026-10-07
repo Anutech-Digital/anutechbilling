@@ -30,7 +30,7 @@
  * default-on hosting selection legitimate.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Manrope, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { domainSans as manrope, domainSerif as serif, domainMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, type DomainResult } from "@/site/lib/domain-search";
 import { TLDS, type Tld } from "@/site/lib/data/catalog";
@@ -45,9 +45,6 @@ import {
   DOMAIN_FAQS,
 } from "@/site/lib/data/domains-landing";
 
-const manrope = Manrope({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--df-sans", display: "swap" });
-const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["normal", "italic"], variable: "--df-serif", display: "swap" });
-const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500", "700"], variable: "--df-mono", display: "swap" });
 
 const C = {
   ink: "#17120F", ink2: "#4A403A", muted: "#7A6C62", faint: "#9A8B80", onDark: "#C9BAB0",

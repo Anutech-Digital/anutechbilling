@@ -4,7 +4,7 @@ import type { BalanceSheetAuto, BalanceSheetItem } from "@/lib/queries/balance-s
 import type { PnLNumbers } from "./pnl-assemble";
 
 const bs: BalanceSheetAuto = {
-  cashAndBank: 130500, receivables: 15900, advancesFromCustomers: 7000, projectReceivable: 30000,
+  cashAndBank: 130500, undepositedFunds: 0, receivables: 15900, advancesFromCustomers: 7000, projectReceivable: 30000,
   tdsReceivable: 1500, employeeLoans: 15000, prepaidAdvances: 8000, fixedAssets: 84000,
   payables: 10000, salaryPayable: 20000, salaryDuesPayable: 6450, reimbursementsPayable: 1500,
   creditCardPayable: 8000, emiLoansPayable: 40000, businessLoansPayable: 75000,

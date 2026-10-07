@@ -19,6 +19,7 @@ import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/queries/customers";
 import { validateGstin, gstStateFromGstin } from "@/lib/utils";
@@ -367,7 +368,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     /* The state field sits on the Address tab, which may be closed — say what is missing
        instead of a Save button that silently does nothing (R-173). */
     submit: handleSubmit(onSubmit, (errs) => {
-      if (errs.state?.message) toast.error("State is missing", { description: String(errs.state.message) });
+      if (errs.state?.message) toast.error("State is missing", { className: NEEDS_INPUT_CLASS, description: String(errs.state.message) });
     }),
   };
 }

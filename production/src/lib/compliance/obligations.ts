@@ -453,7 +453,8 @@ export const OBLIGATIONS: Obligation[] = [
 ];
 
 // ── Status derivation ─────────────────────────────────────────────────────
-export type ComplianceStatus = "filed" | "overdue" | "due_soon" | "upcoming";
+/** `not_applicable` — nothing to file for that period (e.g. no TDS deducted that month, R-181). */
+export type ComplianceStatus = "filed" | "not_applicable" | "overdue" | "due_soon" | "upcoming";
 
 export interface ComplianceRow {
   ob: Obligation;
@@ -463,11 +464,19 @@ export interface ComplianceRow {
   filedDate?: string | null;
 }
 
-/** Build the display rows for today, folding in the tenant's filed-log. */
+/**
+ * Build the display rows for today, folding in the tenant's filed-log.
+ *
+ * `notApplicable` marks periods with nothing to file (R-181: a month with no TDS
+ * deducted has no TDS to deposit). The picker skips them exactly like filed ones,
+ * so the row moves on to the next real deadline instead of a false "overdue".
+ * Omitted → every period counts, as before.
+ */
 export function buildComplianceRows(
   today: Date,
   filed: Map<string, string>, // `${key}|${periodKey}` → filedDate
   categories?: ComplianceCategory[],
+  notApplicable?: (obligationKey: string, periodKey: string) => boolean,
 ): ComplianceRow[] {
   const t0 = day0(today).getTime();
   const list = categories?.length
@@ -477,19 +486,22 @@ export function buildComplianceRows(
     .map((ob) => {
       // Tell the picker what is already done, so it advances past a filed period
       // to the next real deadline instead of showing a settled row for 45 days.
-      const inst = ob.next(today, (periodKey) => filed.has(`${ob.key}|${periodKey}`));
+      const na = (periodKey: string) => Boolean(notApplicable?.(ob.key, periodKey));
+      const inst = ob.next(today, (periodKey) => filed.has(`${ob.key}|${periodKey}`) || na(periodKey));
       const filedDate = filed.get(`${ob.key}|${inst.periodKey}`) ?? null;
       const daysToDue = Math.round((new Date(inst.dueDate).getTime() - t0) / 864e5);
       let status: ComplianceStatus;
       if (filedDate) status = "filed";
+      else if (na(inst.periodKey)) status = "not_applicable";
       else if (daysToDue < 0) status = "overdue";
       else if (daysToDue <= 15) status = "due_soon";
       else status = "upcoming";
       return { ob, inst, status, daysToDue, filedDate };
     })
     .sort((a, b) => {
-      // Overdue + due-soon first (by due date); filed sinks to the bottom.
-      const rank = (r: ComplianceRow) => (r.status === "filed" ? 2 : r.status === "overdue" ? 0 : 1);
+      // Overdue + due-soon first (by due date); filed / not-applicable sink to the bottom.
+      const rank = (r: ComplianceRow) =>
+        (r.status === "filed" || r.status === "not_applicable" ? 2 : r.status === "overdue" ? 0 : 1);
       if (rank(a) !== rank(b)) return rank(a) - rank(b);
       return a.inst.dueDate.localeCompare(b.inst.dueDate);
     });

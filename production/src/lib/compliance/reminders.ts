@@ -52,7 +52,7 @@ export interface PlannedReminder {
  * rung.
  */
 export function reminderStepFor(row: Pick<ComplianceRow, "status" | "daysToDue">): ReminderStep | null {
-  if (row.status === "filed") return null;
+  if (row.status === "filed" || row.status === "not_applicable") return null;
   if (row.daysToDue < 0) return null;
 
   // The MOST URGENT rung reached = the smallest step still ≥ daysToDue.

@@ -25,7 +25,8 @@ import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 
 import { createClient } from "@/lib/supabase/client";
-import { useComplianceLog, toFiledMap } from "@/lib/queries/compliance";
+import { useComplianceLog, toFiledMap, useTdsMonths } from "@/lib/queries/compliance";
+import { noTdsDeductedPredicate } from "@/lib/compliance/tds-not-applicable";
 import { useTodayDealItems } from "@/lib/queries/deals";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canSeeDeals } from "@/lib/deals/access";
@@ -111,9 +112,17 @@ export default function TodayPage() {
   const [kindFilter, setKindFilter] = React.useState<string | null>(null);
   const now = Date.now();
 
+  /* R-181: no TDS deducted in a finished month → no "Deposit TDS" item for it. */
+  const tdsToday = React.useMemo(() => new Date(), []);
+  const tdsMonths = useTdsMonths(tdsToday);
   const complianceItems = React.useMemo(
-    () => (compliance.data ? complianceTodayItems(new Date(), toFiledMap(compliance.data)) : []),
-    [compliance.data],
+    () => (compliance.data
+      ? complianceTodayItems(
+          new Date(), toFiledMap(compliance.data),
+          tdsMonths.data ? noTdsDeductedPredicate(tdsMonths.data, tdsToday) : undefined,
+        )
+      : []),
+    [compliance.data, tdsMonths.data, tdsToday],
   );
   const all = React.useMemo(
     () => rankTodayItems([...(inbox.data ?? []), ...complianceItems, ...deals.items]),

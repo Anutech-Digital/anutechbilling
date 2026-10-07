@@ -641,7 +641,7 @@ export async function POST(request: NextRequest) {
   const whatNext = isHostingOrder
     ? `WHAT HAPPENS NEXT\n  • Your hosting account is being set up now\n  • You'll get a separate email with your control-panel login\n  • Moving from another host? Reply and we'll migrate you free`
     /* R-120: the whole setup, step by step — who does what, with the exact DNS values. */
-    : customerSetupSteps({ domain, seats, tierName, contactName: leadOwner?.name ?? contactWho, contactPhone: sellerPhone });
+    : customerSetupSteps({ domain, seats, tierName, contactName: leadOwner?.name ?? sellerPerson, contactPhone: sellerPhone });
   const productDesc = isHostingOrder ? tierName : `${seats} users of ${tierName}`;
 
   await Promise.allSettled([
