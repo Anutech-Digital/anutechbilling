@@ -81,6 +81,21 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const identity = supplierIdentity(me);
   const supplier = identity.ok ? identity.supplier : null;
 
+  /* R-248: `?pdf=1` (from Record payment's "Generate invoice" / "View invoice" toast
+     button) opens the Tax Invoice dialog once, as soon as the supplier identity is known —
+     never before, for the same reason the PDF button refuses without it. The param is
+     then dropped so Refresh/Back do not keep reopening it. */
+  const pdfIntentHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (pdfIntentHandled.current || !supplier) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("pdf") !== "1") return;
+    pdfIntentHandled.current = true;
+    setPdfDialogOpen(true);
+    url.searchParams.delete("pdf");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  }, [supplier]);
+
   /* R-010. A project-milestone invoice has no quote — it is raised from a milestone — and
      a subscription instalment deliberately leaves quote_id null. Both write their own
      `invoices.line_items`, and this read of the quote alone is why the dialog and the PDF

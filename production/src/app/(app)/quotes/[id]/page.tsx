@@ -233,6 +233,21 @@ export default function QuoteDetailPage() {
     if (action === "open") setPaymentOpen(true);
     router.replace(`/quotes/${quote.id}` as never);
   }, [payParam, quote, paymentHistory, totalReceivedSoFar, router]);
+
+  /* R-248: ?receipt=<paymentId> (Record payment's "Send receipt" toast button) opens that
+     payment's Receipt Voucher — the same dialog as the row's Receipt button. Waits for the
+     payment to appear: the list is refetching right after the payment was recorded. A
+     different id later (a second payment) opens again; the URL is then cleaned. */
+  const receiptParam = searchParams.get("receipt");
+  const receiptIntentHandled = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!receiptParam || !quote || receiptIntentHandled.current === receiptParam) return;
+    const p = (paymentHistory ?? []).find((x) => x.id === receiptParam && x.status === "received");
+    if (!p) return;
+    receiptIntentHandled.current = receiptParam;
+    setReceiptPayment(p);
+    router.replace(`/quotes/${quote.id}` as never);
+  }, [receiptParam, quote, paymentHistory, router]);
   // Records that keep this quote un-deletable (must be voided/refunded first).
   const receivedPayments = (paymentHistory ?? []).filter((p) => p.status === "received");
 

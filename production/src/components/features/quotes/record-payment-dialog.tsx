@@ -16,7 +16,10 @@ import { subscriptionExpectation, type QuoteLine } from "@/lib/subscriptions/orp
 import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
-import { useDocumentSeries } from "@/lib/queries/invoices";
+import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
+import { useRouter } from "next/navigation";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { paymentToast, cashReference, type PaymentToastActionKind } from "@/lib/payments/record-payment-toast";
 
 import {
   Sheet,
@@ -48,7 +51,8 @@ import { istToday } from "@/lib/dates/ist";
 const schema = z.object({
   amount:       z.coerce.number().int().min(1, "Amount received required"),
   method:       z.string().min(1, "Method required"),
-  reference:    z.string().min(1, "Transaction reference required"),
+  // R-248: cash may be left blank — it is saved as cashReference() (date + IST time).
+  reference:    z.string(),
   receivedDate: z.string().min(1, "Payment date required"),
   notes:        z.string().optional(),
   // Optional — the customer's domain (Google Workspace / M365 subscriptions need
@@ -64,6 +68,7 @@ const schema = z.object({
   // txn id / cheque number always has digits; cash/other can be looser.
   const ref = d.reference.trim();
   const digital = d.method !== "cash" && d.method !== "other";
+  if (d.method === "cash") return;
   if (digital && (ref.length < 4 || !/\d/.test(ref))) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -272,6 +277,28 @@ export function RecordPaymentDialog({
     setValue("amount", Math.max(0, remaining - (tdsDeducted ? tdsAmount : 0) - appliedCreditAmount));
   }, [tdsDeducted, tdsAmount, remaining, amountEdited, appliedCreditAmount, setValue]);
 
+  /* R-248 — the result toast's buttons. Each one NAVIGATES rather than opening a dialog
+     here, because several callers unmount this sheet the moment it closes (invoice detail,
+     /payments, subscriptions) and a dialog rendered from it would vanish with it.
+       generate-invoice → the same useGenerateInvoice the quote page's button uses, then
+                          the invoice page with its Tax Invoice dialog open (?pdf=1)
+       view-invoice     → that invoice page, dialog open
+       send-receipt     → the quote page with this payment's Receipt Voucher open (?receipt=) */
+  const router = useRouter();
+  const generateInvoice = useGenerateInvoice();
+  const runToastAction = (kind: PaymentToastActionKind, paymentId: string | null) => {
+    if (kind === "generate-invoice") {
+      generateInvoice
+        .mutateAsync(quoteId)
+        .then(({ invoiceId: newId }) => router.push(`${invoiceHref(newId)}?pdf=1` as never))
+        .catch(() => { /* useGenerateInvoice already shows the reason */ });
+    } else if (kind === "view-invoice" && invoiceId) {
+      router.push(`${invoiceHref(invoiceId)}?pdf=1` as never);
+    } else if (kind === "send-receipt" && paymentId) {
+      router.push(`/quotes/${encodeURIComponent(quoteId)}?receipt=${encodeURIComponent(paymentId)}` as never);
+    }
+  };
+
   const recordPayment = useMutation({
     mutationFn: async (data: FormData) => {
       const supabase = createClient();
@@ -306,9 +333,9 @@ export function RecordPaymentDialog({
       const notes  = [
         data.notes || null,
         tdsActive
-          ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ₹${tdsAmount.toLocaleString("en-IN")} on pre-GST ₹${quotePreGST.toLocaleString("en-IN")}`
+          ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(quotePreGST)}`
           : null,
-        appliedCredit > 0 ? `Advance credit applied ₹${appliedCredit.toLocaleString("en-IN")}` : null,
+        appliedCredit > 0 ? `Advance credit applied ${rupee(appliedCredit)}` : null,
       ].filter(Boolean).join(" · ") || null;
 
       const { data: r, error } = tdsActive
@@ -421,6 +448,8 @@ export function RecordPaymentDialog({
       // Uploaded AFTER the money is recorded, via the admin server route. A
       // failed upload only warns — the payment is already saved and the file
       // can be re-attached later. Skipped on replay (no new row to attach to).
+      // R-248: the failure is reported as a line of the ONE result toast, not its own toast.
+      let receiptUploadFailed = false;
       if (receiptFile && r.payment_id && !isReplay) {
         try {
           const fd = new FormData();
@@ -429,11 +458,11 @@ export function RecordPaymentDialog({
           if (!res.ok) {
             const j = await res.json().catch(() => ({}));
             console.error("[record-payment] receipt upload failed (payment still recorded):", j?.error);
-            toast.warning("Payment saved — the receipt didn't attach. You can add it later from the payment.");
+            receiptUploadFailed = true;
           }
         } catch (e) {
           console.error("[record-payment] receipt upload error (payment still recorded):", e);
-          toast.warning("Payment saved — the receipt didn't attach. You can add it later from the payment.");
+          receiptUploadFailed = true;
         }
       }
 
@@ -505,6 +534,9 @@ export function RecordPaymentDialog({
         tdsRecorded:            tdsSaved,
         tdsAttempted:           tdsActive && tdsAmount > 0,
         tdsAmount:              tdsActive ? tdsAmount : 0,
+        // R-248 — for the one result toast's buttons + lines.
+        receiptVoucherNo:       r.receipt_voucher_no ?? null,
+        receiptUploadFailed,
       };
     },
     onSuccess: async (res) => {
@@ -523,143 +555,67 @@ export function RecordPaymentDialog({
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       qc.invalidateQueries({ queryKey: ["customer_credits"] });
 
-      if (res.renewalRolledForward) {
-        // Renewal quote fully paid — subscription rolled forward 1 year
-        toast.success("Renewal payment received · subscription rolled forward 1 year 🎉", { duration: 6000 });
-        setTimeout(() => toast.info("Reminder cadence reset · next cycle starts T-15 of new renewal date", { duration: 6000 }), 800);
-      } else if (res.isRenewalQuote && !res.isFullyPaid) {
-        // Partial payment against a renewal quote — sub NOT rolled forward yet
-        toast.success(`Partial renewal payment recorded · ₹${res.outstanding.toLocaleString("en-IN")} still due to renew`, { duration: 6000 });
-      } else if (res.convertedNow) {
-        // First payment on prospect — customer created. Only claim the
-        // subscription was activated if the RPC actually created one (it skips
-        // creation when the quote has no billing commitment) — never fake it.
-        const subPart = res.subscriptionCreated ? " + subscription activated" : "";
-        if (res.isFullyPaid) {
-          toast.success(`Paid in full · Customer created${subPart} 🎉`, { duration: 5000 });
-        } else {
-          toast.success(`Advance received · Customer created${subPart}`, { duration: 5000 });
-          setTimeout(() => toast.info(`₹${res.outstanding.toLocaleString("en-IN")} outstanding — balance pending`, { duration: 6000 }), 600);
-        }
-        if (res.subscriptionCreated) {
-          setTimeout(() => toast.success("Subscription created · renewal in 1 year", { duration: 5000 }), 1200);
-        }
-        /* The "no subscription" case used to be explained HERE, and that was the bug: this
-           branch only runs when the payment also CREATED the customer (converted_now). A
-           tester paid a quote whose customer already existed, so the branch was skipped and
-           he was told nothing at all — twice, on 22 Aug. The explanation now lives after
-           the whole chain, where every path reaches it. */
-      } else if (res.invoicePaid) {
-        // Post-invoice balance payment that fully cleared the invoice
-        toast.success("Balance received · invoice marked paid 🎉", { duration: 5000 });
-      } else if (res.hasExistingInvoice) {
-        // Post-invoice payment but invoice still has balance
-        toast.success(
-          `Payment recorded against invoice · ₹${res.outstanding.toLocaleString("en-IN")} still pending`,
-          { duration: 5000 },
-        );
-      } else if (res.isFullyPaid) {
-        toast.success("Final payment received · invoice can now be generated", { duration: 5000 });
-      } else {
-        toast.success(
-          `Payment recorded · ₹${res.outstanding.toLocaleString("en-IN")} still pending`,
-          { duration: 5000 },
-        );
-      }
+      /* ── ONE result toast (R-248) ──────────────────────────────────────────
+         This used to fire a headline toast and then 1–4 more on staggered setTimeouts
+         (reminder reset, balance pending, subscription created, excess credit, TDS,
+         "no subscription"), so one payment produced a stack nobody read to the end, and
+         "invoice can now be generated" had no button. Wording, lines and buttons now come
+         from lib/payments/record-payment-toast.ts (unit-tested); this only renders it. */
+
       /* ── Why there is no subscription ──────────────────────────────────────
-         Fired for any first payment that produced none, not only for a conversion.
-         The wording depends on the cause, because the responses differ: a one-off needs
-         nothing, a monthly plan needs a diary note (record_payment does not track those
-         yet), and an annual one that produced nothing is a genuine fault. Saying the same
-         thing for all three is what left a tester unable to tell a correct outcome from a
-         broken one. */
-      /* ── AN ADD-SEATS QUOTE HAS NO SUBSCRIPTION TO CREATE ──────────────────
-         Reported 21 Sep 2026. Abhishek fixed a licence leak the way the app told him to:
-         "Bill the 1 extra seat" → pro-rata quote → accept → record payment. The seats had
-         ALREADY been added to the existing subscription by /api/subscriptions/[id]/add-seats
-         before the quote even existed, so record_payment correctly created nothing — and
-         this warning then told him to "open the quote and add it".
+         Reported for any first payment that produced none, not only for a conversion.
+         A one-off needs nothing and must not be dressed as a problem; a plan that
+         produced nothing is a genuine fault (record_payment creates monthly + annual).
 
-         Following that instruction would have created a SECOND subscription for
-         B.S.ENVI-Tech, splitting one customer's renewal date, seat count and MRR across
-         two rows. The warning was steering him into the exact failure it exists to
-         prevent.
-
-         `lib/subscriptions/orphan-quote.ts` already knew: it takes `isAddSeats` and
-         reports "not due". The quote page passes it; this toast never did, so the page
-         and the toast disagreed about one quote — which the comment below claims is the
-         whole reason they share a rule.
-
-         Read here rather than added as a prop: four screens open this dialog and only two
-         of them hold the quote row, so a prop would be silently absent on the other two.
-         One select, on the only path that can show the warning. */
-      let quoteIsAddSeats = false;
+         AN ADD-SEATS QUOTE HAS NO SUBSCRIPTION TO CREATE (21 Sep 2026): the seats were
+         already added to the existing subscription by /api/subscriptions/[id]/add-seats,
+         and telling the operator to "add it" would create a SECOND subscription for the
+         same customer. Read here rather than added as a prop: four screens open this
+         dialog and only two of them hold the quote row. One select, on the only path that
+         can show the note. subscriptionExpectation is the SAME rule the quote page's
+         orphan warning uses, so the toast and the page cannot disagree. */
+      let subscriptionNote: { kind: "one-off" | "missing"; item: string } | null = null;
       if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote) {
         const { data: q } = await createClient()
           .from("quotes").select("is_add_seats").eq("id", quoteId).maybeSingle();
-        quoteIsAddSeats = q?.is_add_seats === true;
+        if (q?.is_add_seats !== true) {
+          const first = (lineItems ?? [])[0];
+          const expectation = first ? subscriptionExpectation(first) : "one-off";
+          subscriptionNote = {
+            kind: expectation === "one-off" ? "one-off" : "missing",
+            item: first?.name?.trim() || "This item",
+          };
+        }
       }
 
-      if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote && !quoteIsAddSeats) {
-        /* subscriptionExpectation is the SAME function the quote page's orphan warning
-           uses. One rule, read the way record_payment reads it — a second copy here
-           would be the toast and the page disagreeing about one quote, which is worse
-           than either being wrong on its own. */
-        const first = (lineItems ?? [])[0];
-        const expectation = first ? subscriptionExpectation(first) : "one-off";
-        const item = first?.name?.trim() || "This item";
-
-        setTimeout(() => {
-          if (expectation === "one-off") {
-            /* Correct, and it must not be dressed as a problem. The old message said
-               "check the quote's billing commitment, then add the subscription
-               manually", which sends somebody to fix a domain purchase. */
-            toast.info(
-              `${item} is a one-time purchase — there is no subscription to renew.`,
-              { duration: 6000 },
-            );
-          } else {
-            /* Monthly and annual read the same here now. Monthly used to say "not tracked
-               yet — diarise it", which was true for a few hours and then stopped being
-               true when record_payment learned to create them. A reassurance that has gone
-               stale is worse than the silence it replaced, because it tells somebody not
-               to look. */
-            toast.warning(
-              "No subscription was created for this plan. That should not happen — open the quote and add it, so the renewal is not missed.",
-              { duration: 9000 },
-            );
-          }
-        }, 1200);
-      }
-
-      // Overpayment acknowledgement — money was received above the quote and
-      // saved as an advance credit (not lost).
-      if (res.overpaidCredit > 0) {
-        setTimeout(() => {
-          toast.info(
-            `₹${res.overpaidCredit.toLocaleString("en-IN")} received in excess — saved as an advance credit for ${customerName}. Adjust it against their next bill.`,
-            { duration: 8000 },
-          );
-        }, 900);
-      }
-      // TDS receivable acknowledgement — only when the row ACTUALLY saved.
-      if (res.tdsRecorded && res.tdsAmount > 0) {
-        setTimeout(() => {
-          toast.info(
-            `TDS receivable ₹${res.tdsAmount.toLocaleString("en-IN")} logged · chase Form 16A from ${customerName}`,
-            { duration: 6000 },
-          );
-        }, 700);
-      } else if (res.tdsAttempted) {
-        // TDS was requested but the row failed to save — tell the truth so the
-        // owner adds it manually and doesn't lose the credit at ITR time.
-        setTimeout(() => {
-          toast.warning(
-            `Payment saved, but the TDS receivable row failed — add it manually so you don't lose the ₹${res.tdsAmount.toLocaleString("en-IN")} credit`,
-            { duration: 8000 },
-          );
-        }, 700);
-      }
+      const t = paymentToast({
+        outstanding:          res.outstanding,
+        isFullyPaid:          res.isFullyPaid,
+        convertedNow:         res.convertedNow,
+        subscriptionCreated:  res.subscriptionCreated,
+        invoicePaid:          res.invoicePaid,
+        hasExistingInvoice:   res.hasExistingInvoice,
+        isRenewalQuote:       res.isRenewalQuote,
+        renewalRolledForward: res.renewalRolledForward,
+        overpaidCredit:       res.overpaidCredit,
+        tdsRecorded:          res.tdsRecorded,
+        tdsAttempted:         res.tdsAttempted,
+        tdsAmount:            res.tdsAmount,
+        paymentId:            res.newPaymentId ?? null,
+        receiptVoucherNo:     res.receiptVoucherNo,
+        customerName,
+        invoiceId,
+        subscriptionNote,
+        receiptUploadFailed:  res.receiptUploadFailed,
+      });
+      const run = (kind: PaymentToastActionKind) => () => runToastAction(kind, res.newPaymentId ?? null);
+      (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
+        description: t.lines.length ? t.lines.join("\n") : undefined,
+        duration: t.tone === "warning" || t.primary ? 12000 : 6000,
+        action: t.primary ? { label: t.primary.label, onClick: run(t.primary.kind) } : undefined,
+        cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary.kind) } : undefined,
+        classNames: t.lines.length ? { description: "whitespace-pre-line" } : undefined,
+      });
       /* After the toasts, before the sheet closes. Handed the RPC's own result so a
          caller cannot re-derive "was this fully paid" and get a different answer. */
       onRecorded?.({
@@ -775,7 +731,14 @@ export function RecordPaymentDialog({
            * §24: say what is wrong and take them to it.
            */
           onSubmit={handleSubmit(
-            (data) => recordPayment.mutate(data),
+            /* R-248: cash needs no reference. A blank one is filled ONCE here (not inside
+               mutationFn) so a react-query retry of this submit sends the same value and
+               stays an idempotent replay; see cashReference() for why it is not just "Cash". */
+            (data) => recordPayment.mutate(
+              data.method === "cash" && !data.reference.trim()
+                ? { ...data, reference: cashReference(data.receivedDate) }
+                : data,
+            ),
             (formErrors) => {
               const order: Array<keyof FormData> = ["amount", "method", "reference", "receivedDate"];
               const firstKey = order.find((k) => formErrors[k]) ?? (Object.keys(formErrors)[0] as keyof FormData | undefined);
@@ -821,7 +784,7 @@ export function RecordPaymentDialog({
                 </ul>
                 {newRunningTotal < expectedAmount && (
                   <p className="mt-1.5">
-                    <b>Service activates with ₹{(expectedAmount - newRunningTotal).toLocaleString("en-IN")} outstanding</b> —
+                    <b>Service activates with {rupee(expectedAmount - newRunningTotal)} outstanding</b> —
                     you'll continue to see this in the subscription card until paid.
                   </p>
                 )}
@@ -904,7 +867,7 @@ export function RecordPaymentDialog({
               error={errors.amount?.message}
               helper={
                 tdsDeducted
-                  ? `Customer withheld ₹${tdsAmount.toLocaleString("en-IN")} TDS, so you should receive ₹${Math.max(0, remaining - tdsAmount).toLocaleString("en-IN")} in bank. Net + TDS = ₹${(watchedAmount + tdsAmount).toLocaleString("en-IN")} settles against the quote.`
+                  ? `Customer withheld ${rupee(tdsAmount)} TDS, so you should receive ${rupee(Math.max(0, remaining - tdsAmount))} in bank. Net + TDS = ${rupee(watchedAmount + tdsAmount)} settles against the quote.`
                   : hasPriorPayments
                     ? `Defaults to remaining ${rupee(remaining)}. Edit if partial.`
                     : `Defaults to full ${rupee(expectedAmount)}. Edit if partial.`
@@ -1017,7 +980,7 @@ export function RecordPaymentDialog({
                 method === "razorpay" ? "Unique Razorpay payment ID starting with pay_." :
                 method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement." :
                 method === "cheque" ? "Enter 6-digit cheque number and customer's bank name for clearing." :
-                "Optional internal cash voucher or receipt reference."
+                method === "cash" ? "Optional. Leave blank and it is saved as Cash + date and time." : "Optional internal cash voucher or receipt reference."
               }
             </p>
           </FormField>
@@ -1107,7 +1070,7 @@ export function RecordPaymentDialog({
                   </div>
                   <div className="text-3xs text-ink-3 mt-2 leading-relaxed">
                     Adjust &quot;Amount received&quot; above to match what actually hit your bank.
-                    The quote will be marked fully satisfied — ₹{tdsAmount.toLocaleString("en-IN")} TDS appears as a receivable in <a href="/accounting/tds-receivable" className="underline">/accounting/tds-receivable</a>.
+                    The quote will be marked fully satisfied — {rupee(tdsAmount)} TDS appears as a receivable in <a href="/accounting/tds-receivable" className="underline">/accounting/tds-receivable</a>.
                   </div>
                 </div>
               </div>
