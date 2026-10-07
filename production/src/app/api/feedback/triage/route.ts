@@ -206,6 +206,7 @@ export async function POST(request: NextRequest) {
     reporterName: row.reporter_name,
     reporterEmail: row.reporter_email,
     screenshotCount: shotCount ?? 0,
+    reportId: row.id,
     reportedAt: row.created_at
       ? new Date(row.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
       : null,
