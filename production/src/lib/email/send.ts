@@ -41,6 +41,7 @@ export interface EmailAttachment {
 }
 
 import { recordEmail } from "./log";
+import { isUndeliverableAddress } from "./reserved-address";
 import { resolveAutonomy, type AiAction } from "@/lib/ai/autonomy";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
 
@@ -208,7 +209,12 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailSendResult> {
     }
   }
 
-  const result = await sendEmailInner(msg);
+  /* R-361: an address on `.invalid` can never be delivered — it is what demo data gives
+     every pretend customer, so the dunning and renewal crons, which do not know a row is
+     demo, stop here instead of handing it to the provider. Recorded like any refusal. */
+  const result: EmailSendResult = isUndeliverableAddress(msg.to)
+    ? { status: "failed", providerId: null, errorMessage: "not sent — .invalid address (demo/test data)", provider: "stub" }
+    : await sendEmailInner(msg);
   await recordEmail({
     tenantId: msg.route?.tenantId ?? null,
     recipient: msg.to,

@@ -2,7 +2,9 @@
 
 /**
  * R-201: "+ Demo data" next to the STAGING / LOCAL badge. Never rendered in production (the
- * route refuses there too). Add: 6 customers + 10 deals named "DEMO · …". Clear: only those.
+ * route refuses there too). R-361: Add fills every module — customers, deals, quotes,
+ * subscriptions, invoices, payments, tasks, catalogue, vendors, bills, expenses — all tagged
+ * "DEMO · …". A second Add changes nothing. Clear: only those rows.
  */
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,13 +24,22 @@ export function DemoDataButton() {
     setBusy(true);
     try {
       const res = await fetch("/api/demo-data", { method });
-      const j = (await res.json().catch(() => ({}))) as { error?: string; customers?: number; leads?: number };
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string; already?: boolean; summary?: string; invoicesSkipped?: string | null;
+      };
       if (!res.ok) {
         toast.error(method === "POST" ? "Could not add demo data." : "Could not clear demo data.", { description: j.error ?? "Try again in a moment." });
         return;
       }
+      if (j.already) {
+        toast.info("Demo data is already here.", { description: "Nothing added. Clear it first to start again." });
+        return;
+      }
+      const note = j.invoicesSkipped ? ` ${j.invoicesSkipped}` : "";
       toast.success(method === "POST" ? "Demo data added." : "Demo data cleared.", {
-        description: `${j.customers ?? 0} customers and ${j.leads ?? 0} deals ${method === "POST" ? "— names start with “DEMO ·”" : "removed"}.`,
+        description: method === "POST"
+          ? `${j.summary || "Nothing"} — names start with “DEMO ·”.${note}`
+          : `${j.summary ? `${j.summary} removed.` : "Nothing to remove."}${note}`,
       });
       await qc.invalidateQueries();
     } finally {
@@ -50,7 +61,7 @@ export function DemoDataButton() {
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Test data (staging / local only)</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => void run("POST")}>
-          <Icon name="plus" size={14} /> Add 6 customers + 10 deals
+          <Icon name="plus" size={14} /> Add test data to every module
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void run("DELETE")}>
