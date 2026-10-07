@@ -246,16 +246,17 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                 {visible.map((p) => {
                   const on = (lines[p.name] ?? 0) > 0;
                   const locked = !on && !annual && annualOnly(p); // annual only, monthly quote
+                  const lockNoteId = `annual-only-${p.name.replace(/[^A-Za-z0-9_-]/g, "-")}`;
                   return (
                     <div key={p.name} style={{ borderTop: "1px solid var(--border-hairline)" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0" }}>
-                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`} disabled={locked}
+                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`} disabled={locked} aria-describedby={locked ? lockNoteId : undefined}
                           style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: `1.5px solid ${on ? "var(--success)" : "var(--border-strong)"}`, background: on ? "var(--success)" : locked ? "var(--tint)" : "#fff", color: "#fff", cursor: locked ? "not-allowed" : "pointer", fontSize: 13, lineHeight: 1 }}>{on ? "✓" : ""}</button>
-                        <button onClick={() => toggle(p.name)} disabled={locked} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit", padding: 0 }}>
+                        <button onClick={() => toggle(p.name)} disabled={locked} aria-describedby={locked ? lockNoteId : undefined} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit", padding: 0 }}>
                           <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "var(--text)" }}>{p.label}</span>
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
-                        <span className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                        <span id={locked ? lockNoteId : undefined} className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
                           {!annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
                         </span>
                         {on && (
