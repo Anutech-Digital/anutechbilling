@@ -12,6 +12,9 @@
 --   D. same-state customer, no quote terms → due = issue + 30 (was issue day), 18% CGST+SGST.
 --   E. seller with no state but a GSTIN → its prefix is used.
 
+-- R-380: own begin/rollback so scripts/test-sql.mjs (CI) runs it after the migrations are applied.
+begin;
+
 select set_config('request.jwt.claims', '', true);
 
 insert into public.tenants (id, name, email, state_code, doc_code)
@@ -112,3 +115,5 @@ begin
 end $$;
 
 select 'R-372 subscription billing place-of-supply: ALL PASS' as result;
+
+rollback;

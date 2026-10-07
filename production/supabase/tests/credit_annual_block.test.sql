@@ -10,6 +10,9 @@
 --   C. owner without a reason (or a 2-letter one) refused; owner with a reason → active, reason + owner kept.
 --   D. the old 3-argument signature is gone; tenants.udyam_number rejects a bad format.
 
+-- R-380: own begin/rollback so scripts/test-sql.mjs (CI) runs it after the migrations are applied.
+begin;
+
 select set_config('request.jwt.claims', '', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000036801','R368 Co','r368@example.in','07','R368A');
@@ -101,3 +104,5 @@ begin
   if not ok then raise exception 'FAIL D: bad Udyam number accepted'; end if;
   raise notice 'PASS D: no way around the check; Udyam format enforced';
 end $$;
+
+rollback;

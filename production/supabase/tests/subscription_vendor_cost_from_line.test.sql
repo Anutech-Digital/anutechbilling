@@ -12,6 +12,9 @@
 --   D. record_payment, bulk line cost 1260/yr → 105 on every per-domain subscription.
 --   E. activate_quote_on_credit (owner, annual with reason) → 110 too; monthly line → as is.
 
+-- R-380: own begin/rollback so scripts/test-sql.mjs (CI) runs it after the migrations are applied.
+begin;
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000037801','R378 Co','r378@example.in','07','R378A');
@@ -84,3 +87,5 @@ begin
   if m is distinct from 90 then raise exception 'FAIL E: credit monthly line should be 90, got %', m; end if;
   raise notice 'PASS E: activate_quote_on_credit carries the line cost too';
 end $$;
+
+rollback;

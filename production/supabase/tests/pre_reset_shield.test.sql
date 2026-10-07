@@ -16,6 +16,15 @@
 -- this ran" are different claims, and only the second one matters at 2am.
 --
 -- Run by hand — NOT in CI, NOT in the Stop hook (CLAUDE.md §25.2).
+-- (R-380, 7 Oct: CI now runs every file. The shield needs the backup schema, which the
+--  baseline does not create — Cloud SQL gets it from cloudsql/06 — so on a database without
+--  it the file reports NOT APPLICABLE, like backup_per_tenant.)
+do $$
+begin
+  if to_regnamespace('backup') is null or to_regclass('backup.snapshots') is null then
+    raise exception 'NOT APPLICABLE HERE: backup schema is database par nahi hai (baseline defect; Cloud SQL par cloudsql/06 se aata hai)';
+  end if;
+end $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1 + 2) Snapshot exists, rows gone, and the snapshot still HOLDS those rows

@@ -1,7 +1,7 @@
 -- R-346 (7 Oct 2026): Activate now, pay later. Migration 20261007073000_activate_on_credit.
 -- Self-asserting, ONE transaction, rolled back. Run on a dev/test DB only:
 --   begin; \i 20261007073000_activate_on_credit.sql; \i activate_on_credit.test.sql; rollback;
--- (the file itself does not begin/commit, so it can sit inside the migration's transaction).
+-- (R-380: the file now has its own begin/rollback, so CI runs it; inside an outer begin it still works.)
 --
 -- Proves:
 --   A. activate → GST invoice due today+15, every recurring line's subscription ACTIVE,
@@ -13,6 +13,9 @@
 --   D. a quote on a trial is refused; Pay later off is refused; only the owner changes it.
 
 -- ── Fixtures (no jwt yet: system writes) ─────────────────────────────────────
+-- R-380: own begin/rollback so scripts/test-sql.mjs (CI) runs it after the migrations are applied.
+begin;
+
 select set_config('request.jwt.claims', '', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000034601','R346 Co','r346@example.in','07','R346A');
@@ -49,15 +52,18 @@ insert into public.quotes (id, tenant_id, customer_id, lead_id, customer_name, a
           1180, 1000, 18, 'accepted', 'awaiting',
           '[{"name":"Google Workspace Business Starter","qty":1,"rate":1000,"commitment":"annual_yearly"}]'::jsonb);
 
--- ── As the SALES user from here ──────────────────────────────────────────────
+-- ── As the OWNER for A + B ───────────────────────────────────────────────────
+-- R-368: a quote with an annual line activates on credit only by the owner, with a written
+-- reason (credit_annual_block.test.sql proves the refusal). R-370: these quotes have no split
+-- billing_cycle, so the split-billing guard does not apply.
 select set_config('request.jwt.claims',
-  '{"sub":"aaaaaaaa-0000-0000-0000-000000034602","role":"authenticated"}', true);
+  '{"sub":"aaaaaaaa-0000-0000-0000-000000034601","role":"authenticated"}', true);
 
 -- A. Activate
 do $$
 declare r jsonb; v_inv record; n int; n_tasks int; v_q record; v_out int; v_owner uuid;
 begin
-  r := public.activate_quote_on_credit('Q-R346-A', 15);
+  r := public.activate_quote_on_credit('Q-R346-A', 15, false, 'Customer of 6 years, always pays');
   select * into v_inv from public.invoices where id = r->>'invoice_id';
   if v_inv.id is null then raise exception 'FAIL A: no invoice'; end if;
   if v_inv.due_date <> public.ist_today() + 15 then
@@ -91,7 +97,7 @@ begin
     raise exception 'FAIL A: quote not marked'; end if;
 
   -- second call = no-op
-  r := public.activate_quote_on_credit('Q-R346-A', 15);
+  r := public.activate_quote_on_credit('Q-R346-A', 15, false, 'Customer of 6 years, always pays');
   if not (r->>'already_active')::boolean then raise exception 'FAIL A: second call not idempotent'; end if;
   select count(*) into n from public.subscriptions where quote_id = 'Q-R346-A';
   if n <> 2 then raise exception 'FAIL A: second call created subscriptions'; end if;
@@ -118,7 +124,9 @@ begin
   raise notice 'PASS B: payment → same 2 subscriptions, invoice paid, credit tasks closed';
 end $$;
 
--- C. Over the limit
+-- C. Over the limit (as the SALES user)
+select set_config('request.jwt.claims',
+  '{"sub":"aaaaaaaa-0000-0000-0000-000000034602","role":"authenticated"}', true);
 do $$
 declare r jsonb; ok boolean;
 begin
@@ -146,7 +154,7 @@ begin
     ok := sqlerrm like '%Approve over limit%';
   end;
   if not ok then raise exception 'FAIL C: owner without approve was not stopped'; end if;
-  r := public.activate_quote_on_credit('Q-R346-B', 15, true);
+  r := public.activate_quote_on_credit('Q-R346-B', 15, true, 'Long-standing customer, owner approves');
   if not (r->>'over_limit')::boolean then raise exception 'FAIL C: over_limit not reported'; end if;
   if (select credit_over_limit_approved_by from public.quotes where id = 'Q-R346-B') <> 'aaaaaaaa-0000-0000-0000-000000034601' then
     raise exception 'FAIL C: approver not recorded'; end if;
@@ -197,3 +205,5 @@ begin
   if exists (select 1 from public.invoices where quote_id = 'Q-R346-C') then raise exception 'FAIL D: refusal left an invoice'; end if;
   raise notice 'PASS D2: owner turned Pay later off; activation refused, nothing written';
 end $$;
+
+rollback;

@@ -11,6 +11,9 @@
 --   B. half_yearly and monthly → refused too.
 --   C. yearly quote → activates (invoice + subscription), as before.
 
+-- R-380: own begin/rollback so scripts/test-sql.mjs (CI) runs it after the migrations are applied.
+begin;
+
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('dddddddd-0000-0000-0000-000000037001','R370 Co','r370@example.in','07','R370A');
@@ -65,3 +68,5 @@ begin
   end if;
   raise notice 'PASS Y: yearly quote activates on credit as before';
 end $$;
+
+rollback;
