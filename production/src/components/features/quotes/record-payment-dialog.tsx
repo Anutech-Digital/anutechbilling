@@ -53,6 +53,7 @@ import { createClient } from "@/lib/supabase/client";
 import { rupee } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { istToday } from "@/lib/dates/ist";
+import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
 
 const schema = z.object({
   amount:       z.coerce.number().int().min(1, "Amount received required"),
@@ -544,14 +545,27 @@ export function RecordPaymentDialog({
       // already set (never overwrite). Non-money metadata — a failure only logs;
       // the domain can still be added later on the Subscriptions page. Matches 0
       // rows harmlessly for one-off / direct-invoice quotes (no subscription).
+      /* R-389 (F8): ONE row, chosen by pickDomainStampTarget. Updating every null-domain
+         subscription of the quote gave two rows the same domain, the unique index
+         (tenant, quote, lower(domain)) refused it, and NOTHING was stamped — a Workspace +
+         Support quote (Q-FBB9-27-0013) kept domain NULL through two payments. */
       const domainVal = data.domain?.trim();
       if (domainVal) {
-        const { error: domErr } = await supabase
+        const { data: quoteSubs, error: subsErr } = await supabase
           .from("subscriptions")
-          .update({ domain: domainVal })
+          .select("id, vendor, domain")
           .eq("quote_id", quoteId)
-          .is("domain", null);
-        if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
+          .order("created_at", { ascending: true });
+        if (subsErr) console.error("[record-payment] could not read the quote's subscriptions for the domain:", subsErr);
+        const targetId = subsErr ? null : pickDomainStampTarget(quoteSubs ?? [], domainVal);
+        if (targetId) {
+          const { error: domErr } = await supabase
+            .from("subscriptions")
+            .update({ domain: domainVal })
+            .eq("id", targetId)
+            .is("domain", null);
+          if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
+        }
       }
 
       // ── 3. TDS receivable — now committed ATOMICALLY inside

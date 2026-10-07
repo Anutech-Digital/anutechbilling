@@ -64,3 +64,45 @@ export function paymentDomainDefault(sources: DomainSources): string | undefined
   }
   return undefined;
 }
+
+/**
+ * R-389 (F8) — which ONE subscription of this quote should take the domain the operator
+ * typed into Record payment?
+ *
+ * ─── THE BUG ────────────────────────────────────────────────────────────────
+ * Q-FBB9-27-0013 (7 Oct): two payments, both with "testkapoorexports.in", and BOTH of the
+ * quote's subscriptions (Google Workspace + Standard Support) stayed domain NULL. The
+ * dialog ran `update subscriptions set domain = X where quote_id = Q and domain is null`,
+ * which tries to give the SAME domain to every subscription of the quote — and
+ * `subscriptions_tenant_quote_domain_unique (tenant_id, quote_id, lower(domain))` refuses
+ * the second row, so Postgres rolls back the whole statement and nothing is stamped. The
+ * error was only console-logged. A single-line quote (Q-FBB9-27-0010) has one row, which
+ * is why the domain was saved there.
+ *
+ * ─── THE RULE ───────────────────────────────────────────────────────────────
+ * The same one record_payment follows when it creates subscriptions: a quote's domain
+ * goes on one subscription — repeats stay null. Prefer the licence the domain belongs
+ * to (Google / Microsoft / Zoho seats) over support, hosting or "other"; skip it entirely
+ * when some subscription of this quote already carries this domain.
+ */
+export interface DomainStampCandidate {
+  id: string;
+  vendor?: string | null;
+  domain?: string | null;
+}
+
+const DOMAIN_VENDOR_RANK: Record<string, number> = { google: 0, microsoft: 1, zoho: 2 };
+
+export function pickDomainStampTarget(
+  subs: readonly DomainStampCandidate[],
+  domain: string | null | undefined,
+): string | null {
+  const want = domain?.trim().toLowerCase();
+  if (!want) return null;
+  if (subs.some((s) => s.domain?.trim().toLowerCase() === want)) return null;
+  const blank = subs.filter((s) => !s.domain?.trim());
+  if (blank.length === 0) return null;
+  const rank = (s: DomainStampCandidate) => DOMAIN_VENDOR_RANK[(s.vendor ?? "").toLowerCase()] ?? 9;
+  /* Stable: equal ranks keep the order the caller passed (oldest first). */
+  return [...blank].sort((a, b) => rank(a) - rank(b))[0].id;
+}

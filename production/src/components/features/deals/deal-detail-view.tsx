@@ -50,6 +50,7 @@ import {
   DealSummaryCard, DealDetailsCard, DealFollowupsCard, DealQuotesCard, DealMoneyCard,
 } from "@/components/features/deals/deal-side-cards";
 import type { Lead } from "@/lib/supabase/database.types";
+import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 const AddTaskDialog = dynamic(() => import("@/components/features/tasks/add-task-dialog").then((m) => m.AddTaskDialog), { ssr: false });
 const LeadEmailComposer = dynamic(() => import("@/components/features/leads/lead-email-composer").then((m) => m.LeadEmailComposer), { ssr: false });
@@ -225,15 +226,8 @@ export function DealDetailView({ leadId }: { leadId: string }) {
       router.push((lead.project_id ? `/projects/${lead.project_id}` : `/deals?projectQuote=${lead.id}`) as never);
       return;
     }
-    const p = new URLSearchParams();
-    p.set("leadId", lead.id);
-    p.set("company", lead.company);
-    if (lead.plan) p.set("plan", lead.plan);
-    if (lead.seats != null) p.set("seats", String(lead.seats));
-    if (lead.contact_name) p.set("contact", lead.contact_name);
-    if (lead.contact_email) p.set("email", lead.contact_email);
-    if (lead.contact_phone) p.set("phone", lead.contact_phone);
-    router.push(`/quotes/new?${p.toString()}` as never);
+    /* R-389 (F5): id + plan/seats only — no email/phone in the URL. */
+    router.push(leadQuoteHref(lead) as never);
   };
 
   return (

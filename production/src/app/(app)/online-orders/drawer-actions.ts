@@ -9,6 +9,7 @@
  * guide, escalate to Google, winback email) is not shown at all.
  */
 import { formatWhatsAppPhone } from "@/lib/whatsapp";
+import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 export interface DrawerActionInput {
   type: "paid" | "trial";
@@ -43,18 +44,12 @@ function validEmail(email: string): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
 }
 
-/** Same params the lead surfaces pass to the builder (lib/leads/use-outcome.ts). */
+/** Same link every lead surface uses (lib/leads/lead-quote-href.ts) — R-389 (F5): only the
+ *  lead id + plan/seats; the builder loads company and contact from the lead, so no email
+ *  or phone sits in the URL. */
 export function convertQuoteHref(i: DrawerActionInput): string | null {
   if (!i.leadId) return null;
-  const q = new URLSearchParams({ leadId: i.leadId, company: i.company });
-  if (i.plan) q.set("plan", i.plan);
-  if (i.seats) q.set("seats", String(i.seats));
-  if (i.contact.name && i.contact.name !== "—") q.set("contact", i.contact.name);
-  const email = validEmail(i.contact.email);
-  if (email) q.set("email", email);
-  const phone = phoneDigits(i.contact.phone);
-  if (phone) q.set("phone", i.contact.phone.trim());
-  return `/quotes/new?${q.toString()}`;
+  return leadQuoteHref({ id: i.leadId, plan: i.plan, seats: i.seats });
 }
 
 export function orderDrawerActions(i: DrawerActionInput): DrawerAction[] {

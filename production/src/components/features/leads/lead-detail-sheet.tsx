@@ -45,6 +45,7 @@ import { LeadDetailFooter } from "@/components/features/leads/lead-detail-footer
 import { LeadDetailHeader } from "@/components/features/leads/lead-detail-header";
 import { leadTitle } from "@/lib/leads/display-name";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 type DrawerTab = "email" | "details" | "followups" | "activity";
 /* "auto" = no tab chosen yet: the drawer picks one from what the lead has (below). */
@@ -301,18 +302,11 @@ export function LeadDetailSheet({
       router.push(`${drawerPath}?projectQuote=${lead.id}` as never);
       return;
     }
-    // Pass lead context to QuoteBuilder via URL params
-    const params = new URLSearchParams();
-    params.set("leadId",  lead.id);
-    params.set("company", lead.company);
-    if (lead.plan)            params.set("plan",  lead.plan);
-    if (lead.seats != null)   params.set("seats", String(lead.seats));
-    if (lead.contact_name)    params.set("contact", lead.contact_name);
-    if (lead.contact_email)   params.set("email", lead.contact_email);
-    if (lead.contact_phone)   params.set("phone", lead.contact_phone);
+    /* R-389 (F5): the lead id (+ plan/seats) only — the builder loads company and contact
+       from the lead, so the customer's email and phone never sit in the URL / history. */
     /* No onClose() before leaving for another page (R-342) — it clears ?lead from the
        history entry, and Back would land on a closed drawer. The page unmounts anyway. */
-    router.push(`/quotes/new?${params.toString()}` as never);
+    router.push(leadQuoteHref(lead) as never);
   };
 
   // If lead already has a quote, default the primary CTA to "Revise & resend"
@@ -321,14 +315,8 @@ export function LeadDetailSheet({
   const latestQuote = quotesForLead[0]; // sorted by created_date desc
   const handleReviseQuote = () => {
     if (!latestQuote) return handleSendQuote();
-    const params = new URLSearchParams();
-    params.set("duplicate", latestQuote.id);
-    params.set("leadId",    lead.id);
-    params.set("company",   lead.company);
-    if (lead.contact_name)  params.set("contact", lead.contact_name);
-    if (lead.contact_email) params.set("email",   lead.contact_email);
-    if (lead.contact_phone) params.set("phone",   lead.contact_phone);
-    router.push(`/quotes/new?${params.toString()}` as never);
+    /* The duplicated quote brings its own lines — only the lead id rides along (R-389 F5). */
+    router.push(leadQuoteHref({ id: lead.id }, { duplicate: latestQuote.id }) as never);
   };
 
   /* Opens the in-app composer instead of Gmail.

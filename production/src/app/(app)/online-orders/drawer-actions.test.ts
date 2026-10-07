@@ -52,9 +52,11 @@ describe("R-236 order drawer actions do real work", () => {
     const url = new URL(a!.href!, "https://x.test");
     expect(url.pathname).toBe("/quotes/new");
     expect(url.searchParams.get("leadId")).toBe("L-42");
-    expect(url.searchParams.get("company")).toBe("Acme Pvt Ltd");
     expect(url.searchParams.get("seats")).toBe("5");
-    expect(url.searchParams.get("email")).toBe("ravi@acme.in");
+    /* R-389 (F5): no personal data in the URL — the builder loads contact from the lead. */
+    expect(url.searchParams.get("email")).toBeNull();
+    expect(url.searchParams.get("phone")).toBeNull();
+    expect(url.searchParams.get("company")).toBeNull();
   });
 
   it("early trial gets Log call (opens the call-log popup), not a fake toast", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { quotePlaceOfSupply } from "./quote-place-of-supply";
+import { quotePlaceOfSupply, gstHeadLabel } from "./quote-place-of-supply";
 
 /* R-376 (f): the quote's place of supply names the buyer's STATE and code (Rule 46(n)),
    and a quote raised on a lead takes the lead's state — it used to print "Intra-state"
@@ -59,5 +59,22 @@ describe("quotePlaceOfSupply", () => {
     const p = quotePlaceOfSupply({ customer: { state_code: "06", country: "USA" }, seller: DELHI_SELLER });
     expect(p).toMatchObject({ isExport: true, interState: false, posCode: null });
     expect(p.label).toBe("Export · USA (96)");
+  });
+});
+
+describe("R-389 (F9): gstHeadLabel", () => {
+  it("inter-state is IGST, not 'GST'", () => {
+    expect(gstHeadLabel({ ratePct: 18, interState: true })).toBe("IGST 18%");
+  });
+  it("intra-state splits CGST + SGST", () => {
+    expect(gstHeadLabel({ ratePct: 18, interState: false })).toBe("CGST 9% + SGST 9%");
+  });
+  it("export is zero-rated", () => {
+    expect(gstHeadLabel({ ratePct: 0, interState: false, isExport: true })).toBe("GST 0% (export)");
+    expect(gstHeadLabel({ ratePct: 0, interState: false })).toBe("GST 0%");
+  });
+  it("matches quotePlaceOfSupply for a Haryana buyer of a Delhi seller", () => {
+    const pos = quotePlaceOfSupply({ customer: { state_code: "06" }, seller: { state_code: "07" } });
+    expect(gstHeadLabel({ ratePct: 18, interState: pos.interState, isExport: pos.isExport })).toBe("IGST 18%");
   });
 });

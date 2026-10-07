@@ -73,6 +73,8 @@ import {
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
+import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -943,7 +945,17 @@ export function QuoteBuilder() {
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
-  const updateCommitment = (id: string, commitment: LineCommitment) => {
+  const updateCommitment = (id: string, commitment: LineCommitment | null) => {
+    /* R-389 (F4): "One-time" = no commitment — record_payment makes no subscription for it.
+       The rate is kept as typed: a one-time price has no per-month / per-year unit. */
+    if (commitment === null) {
+      setLineItems((s) => s.map((l) => {
+        if (l.id !== id) return l;
+        const { commitment: _was, ...oneTime } = l;
+        return oneTime;
+      }));
+      return;
+    }
     if (refuseMixedTerm(lineItems.map((l) => (l.id === id ? { ...l, commitment } : l)))) return;
     setLineItems((s) =>
       s.map((l) => {
@@ -1126,7 +1138,10 @@ export function QuoteBuilder() {
         status,
         notes:         notes || null,
         expires_date:  addDaysISO(istToday(), validityDays),
-        seats:         lineItems.reduce((s, l) => s + l.qty, 0),
+        /* R-389 (F7): licence lines only — support / one-time services are not seats
+           (Q-FBB9-27-0013 saved 27 for 25 Workspace seats). A quote with no licence line
+           keeps the old total so the column is never newly empty. */
+        seats:         quoteSeatCount(lineItems) ?? lineItems.reduce((s, l) => s + l.qty, 0),
         plan:          lineItems[0]?.name ?? null,
         // Direct invoice: a one-time invoice must NOT create a subscription on
         // payment; a recurring one should. Ignored for normal quotes.
@@ -1150,7 +1165,7 @@ export function QuoteBuilder() {
       // Leads (raw) tab forever.
       if (isLeadMode && linkedLeadId && status === "sent") {
         try {
-          const totalSeats = lineItems.reduce((s, l) => s + l.qty, 0);
+          const totalSeats = quoteSeatCount(lineItems) ?? 0;   // R-389 (F7): licence lines only
           // Forward-only, through the same rule the two server-side send paths use. This line
           // was `stage: "quote"` unconditionally — which, on an upsell quote to a WON customer,
           // dragged them back into the pipeline and restarted their stage age. The judgement
@@ -1826,7 +1841,6 @@ export function QuoteBuilder() {
               const lineDiv     = perInvoiceDivisor(billingN, commitment);
               const displayRate = Math.round(line.rate / lineDiv);
               const displayCost = Math.round(line.cost / lineDiv);
-              const commitType: "monthly" | "annual" = commitment === "monthly" ? "monthly" : "annual";
               const lineDiscountPct = line.discount_pct ?? 0;
               const netRate  = line.rate * (1 - lineDiscountPct / 100);
               const lineMargin = computeMargin(line.cost * line.qty, netRate * line.qty);
@@ -1872,12 +1886,11 @@ export function QuoteBuilder() {
                     <label className="block col-span-2">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
                       <select
-                        value={commitType}
-                        onChange={(e) => updateCommitment(line.id, e.target.value === "monthly" ? "monthly" : "annual_yearly")}
+                        value={commitChoiceOf(line.commitment)}
+                        onChange={(e) => updateCommitment(line.id, commitmentForChoice(e.target.value))}
                         className="mt-0.5 w-full px-2 py-1.5 text-sm border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
                       >
-                        <option value="monthly">Monthly flex</option>
-                        <option value="annual">Annual (1-yr)</option>
+                        {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </select>
                     </label>
                   </div>
@@ -1990,13 +2003,9 @@ export function QuoteBuilder() {
                 const handleRateChange = (perInvoice: number) => updateRate(line.id, perInvoice * lineDiv);
                 const handleCostChange = (perInvoice: number) => updateCost(line.id, perInvoice * lineDiv);
 
-                // Commitment selector: "monthly" (flex) OR "annual". Flipping to
-                // flex → "monthly"; flipping to annual → default annual_yearly
-                // (the quote-level picker then sets the billing frequency).
-                const commitType: "monthly" | "annual" = commitment === "monthly" ? "monthly" : "annual";
-                const handleCommitTypeChange = (t: "monthly" | "annual") => {
-                  updateCommitment(line.id, t === "monthly" ? "monthly" : "annual_yearly");
-                };
+                // Commitment selector: One-time (no commitment), "monthly" (flex) or
+                // annual → annual_yearly (the quote-level picker sets billing frequency).
+                // R-389 (F4): shows the SAVED value — a null commitment is One-time.
 
                 return (
                   <tr key={line.id} className="border-b border-hairline last:border-0">
@@ -2047,12 +2056,11 @@ export function QuoteBuilder() {
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
                           <select
                             aria-label={`Commitment for ${line.name}`}
-                            value={commitType}
-                            onChange={(e) => handleCommitTypeChange(e.target.value as "monthly" | "annual")}
+                            value={commitChoiceOf(line.commitment)}
+                            onChange={(e) => updateCommitment(line.id, commitmentForChoice(e.target.value))}
                             className="text-2xs px-1.5 py-0.5 border border-hairline rounded bg-paper focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
                           >
-                            <option value="monthly">Monthly flex</option>
-                            <option value="annual">Annual (1-yr)</option>
+                            {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                           </select>
                         </div>
                         <div className="flex items-center gap-1">

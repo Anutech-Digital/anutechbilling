@@ -30,6 +30,7 @@ import {
   annualLineNames, annualCreditDecision, ANNUAL_OVERRIDE_MIN_REASON, splitBillingCreditEligibility,
 } from "@/lib/credit/activate-on-credit";
 import { useCustomerOpenInvoices } from "@/lib/credit/queries";
+import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 
 interface Props {
   open: boolean;
@@ -37,7 +38,7 @@ interface Props {
   quote: {
     id: string; customer_name: string; amount: number; invoice_id: string | null; seats: number | null;
     /** R-368: an annual line blocks credit unless the owner overrides with a reason. */
-    line_items?: ReadonlyArray<{ commitment?: string | null; name?: string | null }> | null;
+    line_items?: ReadonlyArray<{ commitment?: string | null; name?: string | null; qty?: number | null; item_id?: string | null }> | null;
     /** R-370: split billing (monthly / quarterly / half-yearly) cannot go on credit. */
     billing_cycle?: string | null;
   };
@@ -47,6 +48,9 @@ interface Props {
 
 export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, role }: Props) {
   const qc = useQueryClient();
+  /* R-389 (F7): licence lines only — quotes.seats summed support + migration too ("Seats 27"
+     for 25 Workspace seats). The stored column is the fallback for a quote without lines. */
+  const seatCount = quote.line_items ? quoteSeatCount(quote.line_items) : quote.seats;
   const initialDays = defaultCreditDays(customer.payment_terms_days);
   const [days, setDays] = React.useState(String(initialDays));
   const [approve, setApprove] = React.useState(false);
@@ -136,7 +140,7 @@ export function ActivateOnCreditDialog({ open, onOpenChange, quote, customer, ro
             </div>
             <div>
               <Label htmlFor="credit-seats">Seats</Label>
-              <output id="credit-seats" className="h-9 flex items-center font-mono text-sm text-ink">{quote.seats ?? "As on quote"}</output>
+              <output id="credit-seats" className="h-9 flex items-center font-mono text-sm text-ink">{seatCount ?? "As on quote"}</output>
             </div>
           </div>
 
