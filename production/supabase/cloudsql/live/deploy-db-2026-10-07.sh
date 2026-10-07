@@ -71,7 +71,7 @@ peek() { # $1 = sql file that RAISEs 'PEEK …'; prints the PEEK line (the impor
   gcloud sql import sql "$I" "$B/$(basename "$1")" --database="$DB" --user=resellersos_migration --project="$P" --quiet >/dev/null 2>&1 || true
   gcloud sql operations list --instance="$I" --project="$P" --limit=1 --format=json | grep -oE 'PEEK[^\\"]*' | head -1
 }
-is_true() { echo "$1" | grep -qE "(^| )$2=true( |$)"; }   # $1 = PEEK line, $2 = key
+is_true() { echo "$1" | grep -qE "(^| )$2=true([^a-z0-9_]|$)"; }   # $1 = PEEK line, $2 = key (last key is glued to "CONTEXT:")
 
 say "0. Who is logged in (must be your account) and which project"
 gcloud config get-value account
