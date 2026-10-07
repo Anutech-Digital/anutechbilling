@@ -32,7 +32,7 @@ import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
 import { loadLastPageTestRun, lastTestedLine, summarizeRun, type PageTestRun } from "@/lib/ai/page-test-runs";
 import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
-import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
+import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
 
@@ -323,7 +323,8 @@ function useTrail(pathname: string) {
         if (!url.includes("/api/ai/help") && apiFailureWorthNoting(url, res.status)) add("api_fail", apiFailText(method, url, res.status));
         return res;
       } catch (err) {
-        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help")) add("api_fail", apiFailText(method, url, 0));
+        /* R-365: a refused data:/blob: fetch (the PDF engine's inlined wasm) is not an API call. */
+        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help") && !isInPageUrl(url)) add("api_fail", apiFailText(method, url, 0));
         throw err;
       }
     };
