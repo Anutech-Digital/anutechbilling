@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { withRoute, RouteError, dbFail } from "@/lib/api/with-route";
+import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { sendWhatsApp, resolveWhatsAppCreds } from "@/lib/whatsapp/client";
 import {
   slotValues, bodyComponents, renderBody, normalizeWaPhone, firstName, templateProblem,
@@ -36,7 +37,15 @@ const schema = z.object({
 
 type Stage = "new" | "contact" | "demo" | "trial" | "quote" | "won" | "lost";
 
-export const POST = withRoute({ route: "api/marketing/whatsapp/broadcast", input: schema }, async ({ input, tenantId, user }) => {
+/* R-051: a broadcast reaches every lead at once — same gate as a campaign send. The page was
+   owner/manager-only in nav, but the API took any signed-in member, so a sales login could
+   POST here directly. */
+export const POST = withRoute({
+  route: "api/marketing/whatsapp/broadcast",
+  input: schema,
+  roles: ACTION_ROLES["campaign.send"],
+  roleHint: forbiddenMessage("campaign.send"),
+}, async ({ input, tenantId, user }) => {
   const { templateId, audience, dryRun } = input;
 
   /* Service role from here, every query pinned to this tenant. S21: whatsapp_* tables ab
