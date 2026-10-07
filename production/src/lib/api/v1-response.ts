@@ -38,3 +38,36 @@ export const serverError = (message: string) =>
 
 export const badRequest = (message: string) =>
   apiError(400, "bad_request", message);
+
+/**
+ * Scopes an API key can carry (`api_keys.scopes`, default `{read}`).
+ *
+ *   read        — every GET under /api/v1/customers/* (billing status for DMS).
+ *   telecalling — POST /api/v1/telecalling/make-call. It places a paid phone call in the
+ *                 workspace's name, so a read-only key must not be able to reach it.
+ *
+ * R-050 (7 Oct 2026): until then no /api/v1 route read `scopes` at all — any key, including
+ * one minted only to read billing, could ask the telecaller to ring a customer.
+ */
+export type ApiScope = "read" | "telecalling";
+
+/**
+ * The ONE scope gate for /api/v1. Call it right after `authenticateApiKey`:
+ *
+ *   const denied = requireScope(auth, "read");
+ *   if (denied) return denied;
+ *
+ * Returns null when the key holds the scope, else a 403 that names the missing scope, so the
+ * integrator knows what to ask the workspace owner for instead of guessing.
+ */
+export function requireScope(
+  auth: { scopes?: readonly string[] | null },
+  scope: ApiScope,
+): NextResponse | null {
+  if ((auth.scopes ?? []).includes(scope)) return null;
+  return apiError(
+    403,
+    "insufficient_scope",
+    `This API key does not have the "${scope}" scope. Ask the workspace owner for a key with the "${scope}" scope.`,
+  );
+}

@@ -11,7 +11,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { authenticateApiKey } from "@/lib/api-keys/auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { mapCustomer, mapCustomerListItem, parsePagination, paginationMeta } from "@/lib/api/v1-mappers";
-import { unauthorized, notFound, serverError } from "@/lib/api/v1-response";
+import { unauthorized, notFound, serverError, requireScope } from "@/lib/api/v1-response";
 import { likeLiteral, sameEmail } from "@/lib/api/v1-email-match";
 import type { Customer as CustomerRow } from "@/lib/supabase/database.types";
 
@@ -37,6 +37,8 @@ async function activeCustomerIds(
 export async function GET(req: NextRequest) {
   const auth = await authenticateApiKey(req);
   if (!auth) return unauthorized();
+  const denied = requireScope(auth, "read");
+  if (denied) return denied;
 
   const admin = createAdminClient();
   const sp = req.nextUrl.searchParams;

@@ -205,12 +205,34 @@ export function resetSharedStoreState(): void {
   sharedDownUntil = 0;
 }
 
+/** R-050: ek API key ek ghante me itni hi AI phone calls maang sakti hai (make-call route, per KEY). */
+export const MAKE_CALL_PER_KEY = { limit: 30, windowMs: 60 * 60_000 } as const;
+
 /**
- * /api/public/* aur signup ke liye ek hi jagah tay ki hui seemayein.
+ * /api/public/*, signup, /api/v1/* aur attendance/punch ke liye ek hi jagah tay ki hui seemayein
+ * (sab bina session ke chalte hain; middleware inhe auth se pehle IP par ginta hai).
  * Number chune hue hain, nape hue nahi — asli traffic aane par inhe
  * naap kar kasna/dheela karna (tab tak "bahut" ka matlab "anant nahi").
  */
 export function publicApiLimit(pathname: string): { limit: number; windowMs: number } | null {
+  /* R-050 (7 Oct 2026): machine-to-machine raaste. Inki seema UDAAR hai — DMS ka server ek hi
+     IP se apne sab grahakon ke liye /api/v1 padhta hai, aur Meta/Retell webhooks jhund me aate
+     hain; maqsad sirf "anant nahi" hai, asli traffic rokna nahi. */
+  if (pathname.startsWith("/api/v1/")) {
+    // Paisa kharch: har request ek AI phone call maang sakti hai. Route me per-KEY seema alag se.
+    if (pathname.startsWith("/api/v1/telecalling/make-call")) return { limit: 30, windowMs: 10 * 60_000 };
+    // Vendor webhooks (WhatsApp/email inbound, telecall result) — signature-checked, bursty.
+    if (pathname.startsWith("/api/v1/integrations/") || pathname.startsWith("/api/v1/telecalling/")) {
+      return { limit: 600, windowMs: 60_000 };
+    }
+    // PDF render CPU khaata hai; customer link par click karta hai, loop nahi.
+    if (pathname.startsWith("/api/v1/documents/")) return { limit: 120, windowMs: 5 * 60_000 };
+    // API-key reads (DMS billing status).
+    return { limit: 600, windowMs: 60_000 };
+  }
+  // Office ka biometric bridge: kuch minute me ek batch. Galat ingest-key ka andaaza bhi yahi rokta hai.
+  if (pathname === "/api/attendance/punch") return { limit: 120, windowMs: 5 * 60_000 };
+
   if (!pathname.startsWith("/api/public/") && pathname !== "/api/auth/signup") return null;
 
   // AI chat: har message Gemini hai. Ek insaan ki asli baat-cheet ~1 msg/8s

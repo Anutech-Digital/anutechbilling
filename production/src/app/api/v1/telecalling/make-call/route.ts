@@ -22,7 +22,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authenticateApiKey } from "@/lib/api-keys/auth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { unauthorized, badRequest, notFound } from "@/lib/api/v1-response";
+import { unauthorized, badRequest, notFound, requireScope } from "@/lib/api/v1-response";
+import { rateLimitShared, MAKE_CALL_PER_KEY } from "@/lib/security/rate-limit";
 import { loadSalesCatalog } from "@/lib/ai/sales-agent.server";
 import { dispatchTelecall } from "@/lib/ai/actions/telecall-dispatcher";
 import type { TelecallType } from "@/lib/ai/telecall";
@@ -50,6 +51,19 @@ function asId(v: unknown): string | null {
 export async function POST(req: NextRequest) {
   const auth = await authenticateApiKey(req);
   if (!auth) return unauthorized();
+  const denied = requireScope(auth, "telecalling");
+  if (denied) return denied;
+
+  /* Per KEY, not only per IP (middleware already counts per IP): a leaked key used from many
+     machines would otherwise get a fresh bucket on each one. dispatchTelecall still owns the
+     per-person rules (24-hour gap, attempt ceiling); this only bounds how fast one key can ask. */
+  const rl = await rateLimitShared(`v1-make-call:${auth.keyId}`, MAKE_CALL_PER_KEY);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: `Too many call requests for this API key. Try again in ${rl.retryAfterSec} seconds.`, code: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
 
   let body: MakeCallBody;
   try {
