@@ -1,3 +1,5 @@
+-- deploy-key: testruns
+-- deploy-peek: (to_regclass('public.page_test_runs') is not null)
 -- ============================================================================
 -- R-352 (7 Oct 2026): page_test_runs — browser test results come back into the app
 --

@@ -1,3 +1,5 @@
+-- deploy-key: undep
+-- deploy-peek: exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and pg_get_function_result(oid) like '%undeposited_funds%')
 -- R-179 — Balance Sheet: customer se mila paisa jo kisi bank line se match nahi hua.
 --
 -- ─── BUG ────────────────────────────────────────────────────────────────────

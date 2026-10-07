@@ -1,3 +1,5 @@
+-- deploy-key: subbillpos
+-- deploy-peek: exists(select 1 from pg_proc where proname='raise_subscription_billing' and prosrc like '%has no state (or GSTIN) on record%')
 -- 20261007130000_subscription_billing_place_of_supply.sql
 --
 -- R-372 (P0 money/GST, 7 Oct 2026). Money-flow audit finding 4.

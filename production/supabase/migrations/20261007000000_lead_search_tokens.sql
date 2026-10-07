@@ -1,3 +1,5 @@
+-- deploy-key: leadsrch
+-- deploy-peek: (exists(select 1 from pg_proc where proname='list_leads' and pronamespace='public'::regnamespace and prosrc like '%lead_search_hit%') and exists(select 1 from pg_proc where proname='lead_counts' and pronamespace='public'::regnamespace and prosrc like '%lead_search_hit%'))
 -- 20261007000000_lead_search_tokens
 --
 -- WHAT THIS CHANGES (R-221, 6 Oct 2026 — staging report 5289b49f, Pardeep's leads area)

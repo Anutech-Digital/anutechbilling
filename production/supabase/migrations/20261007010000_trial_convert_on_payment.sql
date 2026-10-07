@@ -1,3 +1,5 @@
+-- deploy-key: trialconv
+-- deploy-peek: exists(select 1 from pg_trigger where tgname='trg_trial_convert_on_payment' and tgrelid='public.payments'::regclass and not tgisinternal)
 -- R-282: a trial started from an accepted quote converts when the payment lands.
 --
 -- "Start trial (pay later)" on an accepted, unpaid quote puts the quote's lead at stage 'trial'

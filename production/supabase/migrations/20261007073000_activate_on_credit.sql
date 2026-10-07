@@ -1,3 +1,5 @@
+-- deploy-key: credit
+-- deploy-peek: exists(select 1 from pg_proc where proname='activate_quote_on_credit' and pronamespace='public'::regnamespace)
 -- R-346 (7 Oct 2026): "Activate now, pay later" — a credit sale from an accepted quote.
 --
 -- Pardeep's rules (7 Oct, approved):

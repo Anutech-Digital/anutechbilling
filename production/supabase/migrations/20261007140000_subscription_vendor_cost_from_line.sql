@@ -1,3 +1,5 @@
+-- deploy-key: vendcost
+-- deploy-peek: (exists(select 1 from pg_proc where proname='record_payment' and prosrc like '%v_cost_pm%') and exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%v_cost_pm%'))
 -- 20261007140000_subscription_vendor_cost_from_line.sql
 --
 -- R-378 (7 Oct 2026, AI flow test finding g). Subscriptions filed by record_payment and

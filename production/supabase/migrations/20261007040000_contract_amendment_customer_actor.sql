@@ -1,3 +1,5 @@
+-- deploy-key: amendactor
+-- deploy-peek: exists(select 1 from pg_proc where proname='record_contract_amendment' and pronamespace='public'::regnamespace and prosrc like '%actor_label%')
 -- R-096 (7 Oct 2026): a portal customer's seat / price / plan change no longer dies on
 -- contract_amendments_changed_by_fkey, and the amendment names them as "Customer <name>".
 --

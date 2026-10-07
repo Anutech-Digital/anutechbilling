@@ -1,3 +1,5 @@
+-- deploy-key: creditsplit
+-- deploy-peek: exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%billed in instalments%')
 -- 20261007150000_credit_refuse_split_billing.sql
 --
 -- R-370 (P0 money, 7 Oct 2026 money-flow audit finding 2). "Activate now, pay later" on a

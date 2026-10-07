@@ -1,3 +1,5 @@
+-- deploy-key: aggturn
+-- deploy-peek: exists(select 1 from pg_constraint where conname='tenants_aggregate_turnover_check')
 -- R-337: the tenant's aggregate annual turnover (AATO) bracket, for e-invoice readiness.
 --
 -- GST: AATO above ₹5 Cr in any FY since 2017-18 → every B2B invoice needs an IRN from the
