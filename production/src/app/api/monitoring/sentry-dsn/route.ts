@@ -28,6 +28,7 @@
  * visitor's crash matters most.
  */
 import { NextResponse } from "next/server";
+import { sentryRelease } from "@/lib/sentry-env";
 
 /* Not negotiable for this route: the entire point is that the value is read while
    serving. Without it a prerender pass would capture the build-time env and reintroduce
@@ -37,9 +38,12 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const dsn = process.env.SENTRY_DSN?.trim() || null;
+  /* R-333: the build SHA, so browser events carry the same release as server ones. Read
+     here because BUILD_SHA is a runtime env (the Dockerfile keeps it out of the bundle). */
+  const release = sentryRelease(process.env.BUILD_SHA ?? process.env.COMMIT_SHA) ?? null;
 
   return NextResponse.json(
-    { dsn },
+    { dsn, release },
     {
       /* Never cached. A cached null would pin monitoring off for the CDN's whole TTL, and
          the failure would look exactly like a missing variable again. */
