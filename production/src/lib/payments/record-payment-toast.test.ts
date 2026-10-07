@@ -48,6 +48,8 @@ describe("paymentToast (R-248)", () => {
   it("post-invoice payment has no receipt voucher → View invoice, never Send receipt", () => {
     const r = t({ invoicePaid: true, hasExistingInvoice: true, isFullyPaid: true, invoiceId: "INV-1", receiptVoucherNo: null });
     expect(r.primary?.kind).toBe("view-invoice");
+    // R-323: the button opens THAT invoice's own page, dialog open — not the list.
+    expect(r.primary?.href).toBe("/invoices/INV-1?pdf=1");
     expect(r.secondary).toBeNull();
   });
 

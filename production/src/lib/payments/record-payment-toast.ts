@@ -10,12 +10,17 @@
  * Pure: no toast, no router, no Supabase. Tested in record-payment-toast.test.ts.
  */
 import { rupee } from "@/lib/utils";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 export type PaymentToastActionKind = "generate-invoice" | "view-invoice" | "send-receipt";
 
 export interface PaymentToastAction {
   kind: PaymentToastActionKind;
   label: string;
+  /** Where the button goes when that is already known. Set for "view-invoice": that
+   *  invoice's own page with its Tax Invoice dialog open. The label names one invoice, so
+   *  the address is built here beside it (R-323, invoice-link.test.ts). */
+  href?: `/invoices/${string}`;
 }
 
 export interface PaymentToastInput {
@@ -102,7 +107,7 @@ export function paymentToast(r: PaymentToastInput): PaymentToast {
   let primary: PaymentToastAction | null = null;
   let secondary: PaymentToastAction | null = null;
   if (r.invoiceId && (r.hasExistingInvoice || r.invoicePaid)) {
-    primary = { kind: "view-invoice", label: "View invoice" };
+    primary = { kind: "view-invoice", label: "View invoice", href: `${invoiceHref(r.invoiceId)}?pdf=1` };
   } else if (r.isFullyPaid && !r.hasExistingInvoice && !r.invoiceId) {
     /* Same button the quote page shows once money is in (quoteMoneyActions); the
        generate_invoice RPC itself refuses a quote that is already invoiced. */

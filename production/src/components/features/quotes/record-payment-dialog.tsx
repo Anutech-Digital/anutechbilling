@@ -19,7 +19,7 @@ import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { paymentToast, cashReference, type PaymentToastActionKind } from "@/lib/payments/record-payment-toast";
+import { paymentToast, cashReference, type PaymentToastAction } from "@/lib/payments/record-payment-toast";
 
 import {
   Sheet,
@@ -286,14 +286,15 @@ export function RecordPaymentDialog({
        send-receipt     → the quote page with this payment's Receipt Voucher open (?receipt=) */
   const router = useRouter();
   const generateInvoice = useGenerateInvoice();
-  const runToastAction = (kind: PaymentToastActionKind, paymentId: string | null) => {
+  const runToastAction = (action: PaymentToastAction, paymentId: string | null) => {
+    const { kind } = action;
     if (kind === "generate-invoice") {
       generateInvoice
         .mutateAsync(quoteId)
         .then(({ invoiceId: newId }) => router.push(`${invoiceHref(newId)}?pdf=1` as never))
         .catch(() => { /* useGenerateInvoice already shows the reason */ });
-    } else if (kind === "view-invoice" && invoiceId) {
-      router.push(`${invoiceHref(invoiceId)}?pdf=1` as never);
+    } else if (kind === "view-invoice" && action.href) {
+      router.push(action.href as never);
     } else if (kind === "send-receipt" && paymentId) {
       router.push(`/quotes/${encodeURIComponent(quoteId)}?receipt=${encodeURIComponent(paymentId)}` as never);
     }
@@ -608,12 +609,12 @@ export function RecordPaymentDialog({
         subscriptionNote,
         receiptUploadFailed:  res.receiptUploadFailed,
       });
-      const run = (kind: PaymentToastActionKind) => () => runToastAction(kind, res.newPaymentId ?? null);
+      const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
         duration: t.tone === "warning" || t.primary ? 12000 : 6000,
-        action: t.primary ? { label: t.primary.label, onClick: run(t.primary.kind) } : undefined,
-        cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary.kind) } : undefined,
+        action: t.primary ? { label: t.primary.label, onClick: run(t.primary) } : undefined,
+        cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary) } : undefined,
         classNames: t.lines.length ? { description: "whitespace-pre-line" } : undefined,
       });
       /* After the toasts, before the sheet closes. Handed the RPC's own result so a
