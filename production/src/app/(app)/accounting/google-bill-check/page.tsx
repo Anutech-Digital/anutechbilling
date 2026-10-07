@@ -21,7 +21,8 @@ import { rupee } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { AddFromBillDialog, createFromBill } from "@/components/features/reconcile/add-from-bill";
-import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, type SubLite, type CustomerLite, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
+import { useItems } from "@/lib/queries/items";
+import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type SubLite, type CustomerLite, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
 
 const inr = (n: number) => rupee(n, { decimals: 2 });
 const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "success" | "info" }> = {
@@ -77,6 +78,8 @@ function useBooks() {
 
 export default function GoogleBillCheckPage() {
   const books = useBooks();
+  // R-320: the tenant's Google catalogue prices the subscriptions Add makes (list price, R-205 floor).
+  const catalog = useItems({ vendor: "google" });
   const qc = useQueryClient();
   const { data: me } = useCurrentUser();
   const confirm = useConfirm();
@@ -136,19 +139,34 @@ export default function GoogleBillCheckPage() {
   async function addAllMissing() {
     if (!check || !me?.tenantId) return;
     const missing = check.rows.filter((r) => r.status === "no_customer");
+    // R-320: edition + users from the bill line, price from the catalogue — never ₹0 by default.
+    const drafts = missing.map((r) => ({ r, d: draftFromBill(r, catalog.data) }));
+    const priced = drafts.filter((x) => x.d.sellPerUserMonth !== null).length;
+    const unknown = drafts.filter((x) => x.d.editionUnknown).length;
+    const noPrice = [...new Set(drafts.filter((x) => x.d.noCatalogPrice).map((x) => x.d.plan))];
+    const body = [
+      "One customer per domain (named after it — rename later) and a Google subscription with this month's Google cost saved as the cost price.",
+      priced > 0 ? `${priced} get the edition and users from Google's bill and your catalogue list price.` : "",
+      unknown > 0 ? `${unknown} have no edition or user count on this bill (Google's PDF does not show them — the invoice CSV does): they are added as 1 user with no price and show "Set price & users".` : "",
+      noPrice.length > 0 ? `No catalogue price for ${noPrice.join(", ")} — those are added with no price ("Set price & users"). Add the plan in Catalog first to price them.` : "",
+      `Their state is not on the bill either — they appear in Customers → "State missing" until you pick it (a GST invoice needs it).`,
+    ].filter(Boolean).join("\n");
     const ok = await confirm({
       title: `Add ${missing.length} customers and subscriptions?`,
-      body: `One customer per domain (named after it — rename later) and a Google subscription with this month's Google cost saved as the cost price.\nUsers (1) and your selling price are not on Google's bill, so they are left for you: each row will show "Set price & users".
-Their state is not on the bill either — they appear in Customers → "State missing" until you pick it (a GST invoice needs it).`,
+      body,
       confirmLabel: `Add ${missing.length}`,
     });
     if (!ok) return;
     setBulkBusy(true);
     try {
-      const res = await createFromBill(me.tenantId, missing.map((r) => ({
-        domain: r.domain, googleCost: r.googleCost, customerName: nameFromDomain(r.domain), plan: "Google Workspace", users: 1, sellPerUserMonth: null,
+      const res = await createFromBill(me.tenantId, drafts.map(({ r, d }) => ({
+        domain: r.domain, googleCost: r.googleCost, customerName: nameFromDomain(r.domain),
+        plan: d.plan, users: d.users, sellPerUserMonth: d.sellPerUserMonth, itemId: d.itemId,
       })));
-      toast.success(`Added ${res.customers} customers and ${res.subscriptions} subscriptions`, { description: "Set users and price on each — the rows now say 'Set price & users'. Pick each customer's state in Customers → 'State missing' before invoicing." });
+      const unpriced = res.subscriptions - priced;
+      toast.success(`Added ${res.customers} customers and ${res.subscriptions} subscriptions`, {
+        description: `${unpriced > 0 ? `${unpriced} still need users and price ('Set price & users'). ` : ""}Pick each customer's state in Customers → 'State missing' before invoicing.`,
+      });
       refreshBooks();
     } catch (e) {
       toast.error((e as Error).message, { description: "Some rows may have been added. Refresh — the list shows what is still missing." });
@@ -189,7 +207,7 @@ Their state is not on the bill either — they appear in Customers → "State mi
         >
           <Icon name="upload" size={22} className="mx-auto text-ink-3" />
           <div className="text-sm font-semibold text-ink mt-1.5">{reading ? "Reading the PDF…" : fileName ? `${fileName} — choose another` : "Upload Google's invoice PDF"}</div>
-          <div className="text-xs text-ink-3 mt-0.5">Drop it here or click to choose. It is read in your browser — nothing is uploaded or saved.</div>
+          <div className="text-xs text-ink-3 mt-0.5">Drop it here or click to choose. Google&apos;s invoice CSV works too, and adds each domain&apos;s edition and users. It is read in your browser — nothing is uploaded or saved.</div>
         </div>
         {readError && <p className="text-xs text-rose">{readError}</p>}
         <details className="text-xs text-ink-3" open={!!text && !fileName}>
@@ -270,7 +288,7 @@ Their state is not on the bill either — they appear in Customers → "State mi
             <div className="flex gap-2">
               <Button size="sm" variant="ghost" onClick={() => setShowOk((v) => !v)}>{showOk ? "Hide OK rows" : `Show OK rows (${check.rows.filter((r) => r.status === "ok").length})`}</Button>
               {canAdd && check.rows.some((r) => r.status === "no_customer") && (
-                <Button size="sm" variant="primary" icon="plus" loading={bulkBusy} onClick={() => void addAllMissing()}>
+                <Button size="sm" variant="primary" icon="plus" loading={bulkBusy} disabled={catalog.isLoading} onClick={() => void addAllMissing()}>
                   Add all missing ({check.rows.filter((r) => r.status === "no_customer").length})
                 </Button>
               )}
@@ -313,7 +331,7 @@ Their state is not on the bill either — they appear in Customers → "State mi
               <tbody className="divide-y divide-hairline">
                 {visibleRows.map((r) => (
                   <tr key={r.domain + r.customerId}>
-                    <td className="px-3 py-2"><div className="font-medium text-ink">{r.domain}</div><div className="text-2xs text-ink-3 font-mono">{r.customerId}</div></td>
+                    <td className="px-3 py-2"><div className="font-medium text-ink">{r.domain}</div><div className="text-2xs text-ink-3 font-mono">{r.customerId}{r.billPlan && <span className="font-sans"> · {r.billPlan}{r.billSeats ? ` × ${r.billSeats}` : ""}</span>}</div></td>
                     <td className="px-3 py-2">
                       {r.customerRef ? <Link href={`/customers/${r.customerRef}` as never} className="text-ink hover:underline">{r.customerName}</Link> : <span className="text-ink-3">—</span>}
                       {r.plans.length > 0 && <div className="text-2xs text-ink-3">{r.plans.join(" + ")} · {usersLabel(r.seats)}</div>}
@@ -349,8 +367,8 @@ Their state is not on the bill either — they appear in Customers → "State mi
           )}
         </>
       )}
-      {addRow && me?.tenantId && books.data && (
-        <AddFromBillDialog row={addRow} customers={books.data.customers} tenantId={me.tenantId} onClose={() => setAddRow(null)} onDone={refreshBooks} />
+      {addRow && me?.tenantId && books.data && !catalog.isLoading && (
+        <AddFromBillDialog row={addRow} customers={books.data.customers} catalog={catalog.data ?? []} tenantId={me.tenantId} onClose={() => setAddRow(null)} onDone={refreshBooks} />
       )}
     </div>
   );

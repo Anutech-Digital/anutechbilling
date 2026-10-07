@@ -9,9 +9,11 @@
  * spelt differently is LINKED, not duplicated), plan, users, selling price. Google's cost for the
  * month is spread over the users into vendor_cost_per_seat_month (lib/reconcile/google-bill.ts).
  *
- * All missing at once: createFromBill — a customer named after each domain and a subscription
- * with 1 user and NO price. Price and users are not on the PDF and are never guessed: those rows
- * come back as "Set price & users".
+ * All missing at once: createFromBill — a customer named after each domain and a subscription.
+ * R-320: the edition and users come from the bill line when it names them (Google's invoice CSV)
+ * and the price from the tenant catalogue's list price for that edition (draftFromBill). The PDF
+ * names neither, and a missing catalogue row has no price — those are never guessed and come back
+ * as "Set price & users".
  */
 import * as React from "react";
 import { toast } from "sonner";
@@ -22,7 +24,7 @@ import { FormField } from "@/components/ui/label";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE, rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
-import { GOOGLE_PLANS, newSubscriptionRow, nameFromDomain, type CheckRow, type CustomerLite } from "@/lib/reconcile/google-bill";
+import { GOOGLE_PLANS, catalogPriceForEdition, draftFromBill, newSubscriptionRow, nameFromDomain, type BillCatalogRow, type CheckRow, type CustomerLite } from "@/lib/reconcile/google-bill";
 
 export interface BillItem {
   domain: string;
@@ -33,6 +35,8 @@ export interface BillItem {
   plan: string;
   users: number;
   sellPerUserMonth: number | null;
+  /** R-320: the catalogue row the price came from. */
+  itemId?: string | null;
   /** R-174: new customer's GST state code (or "export"); omitted = not known — the customer then
    *  shows in Customers → "State missing" until someone picks it. */
   stateCode?: string;
@@ -57,7 +61,7 @@ export async function createFromBill(tenantId: string, items: readonly BillItem[
   const syncedAt = new Date().toISOString();
   const subs = items.map((i) => newSubscriptionRow({
     tenantId, customerId: i.customerId ?? idByDomain.get(i.domain) ?? "", customerName: i.customerName.trim() || nameFromDomain(i.domain),
-    domain: i.domain, plan: i.plan, users: i.users, sellPerUserMonth: i.sellPerUserMonth, googleCostMonth: i.googleCost, syncedAt,
+    domain: i.domain, plan: i.plan, users: i.users, sellPerUserMonth: i.sellPerUserMonth, googleCostMonth: i.googleCost, syncedAt, itemId: i.itemId ?? null,
   }));
   if (subs.some((s) => !s.customer_id)) throw new Error("A customer could not be matched to its subscription — nothing more was added. Refresh and try again.");
   for (let k = 0; k < subs.length; k += 200) {
@@ -70,16 +74,28 @@ export async function createFromBill(tenantId: string, items: readonly BillItem[
 /** Whole figures stay whole; a paise figure shows its 2 decimals. */
 const inr = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
 
-export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }: {
-  row: CheckRow; customers: readonly CustomerLite[]; tenantId: string; onClose: () => void; onDone: () => void;
+export function AddFromBillDialog({ row, customers, catalog, tenantId, onClose, onDone }: {
+  row: CheckRow; customers: readonly CustomerLite[]; catalog: readonly BillCatalogRow[]; tenantId: string; onClose: () => void; onDone: () => void;
 }) {
+  const draft = React.useMemo(() => draftFromBill(row, catalog), [row, catalog]);
   const existingRef = row.status === "no_subscription" ? row.customerRef : null;
   const [mode, setMode] = React.useState<"new" | "existing">(existingRef ? "existing" : "new");
   const [name, setName] = React.useState(nameFromDomain(row.domain));
   const [pick, setPick] = React.useState(existingRef ? row.customerName ?? "" : "");
-  const [plan, setPlan] = React.useState<string>(GOOGLE_PLANS[0]);
-  const [users, setUsers] = React.useState("1");
-  const [price, setPrice] = React.useState("");
+  // R-320: edition + users from the bill when it names them; price from the catalogue for that edition.
+  const [plan, setPlan] = React.useState<string>(draft.editionUnknown ? GOOGLE_PLANS[0] : draft.plan);
+  const [users, setUsers] = React.useState(String(draft.users));
+  const [price, setPrice] = React.useState(draft.sellPerUserMonth ? String(draft.sellPerUserMonth) : "");
+  /** Typed by hand → a plan change no longer overwrites it with the catalogue price. */
+  const [priceTyped, setPriceTyped] = React.useState(false);
+  const catalogPrice = React.useMemo(() => catalogPriceForEdition(plan, catalog), [plan, catalog]);
+  function changePlan(p: string) {
+    setPlan(p);
+    if (!priceTyped) {
+      const cp = catalogPriceForEdition(p, catalog);
+      setPrice(cp ? String(cp.perSeatPm) : "");
+    }
+  }
   const [saving, setSaving] = React.useState(false);
   const [stateCode, setStateCode] = React.useState("");
 
@@ -106,6 +122,7 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
         customerId: mode === "existing" ? picked!.id : undefined,
         customerName: mode === "existing" ? (existingRef ? row.customerName ?? name : pick) : name,
         plan, users: u, sellPerUserMonth: sell,
+        itemId: catalogPrice && sell === catalogPrice.perSeatPm ? catalogPrice.itemId : null,
         stateCode: mode === "new" ? stateCode : undefined,
       }]);
       toast.success(`${row.domain}: ${mode === "new" ? "customer and " : ""}subscription added`);
@@ -149,7 +166,7 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
           )}
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Plan" htmlFor="afb-plan">
-              <select id="afb-plan" value={plan} onChange={(e) => setPlan(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-2 py-2 text-sm">
+              <select id="afb-plan" value={plan} onChange={(e) => changePlan(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-2 py-2 text-sm">
                 {GOOGLE_PLANS.map((p) => <option key={p}>{p}</option>)}
               </select>
             </FormField>
@@ -157,8 +174,16 @@ export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }:
               <input id="afb-users" value={users} onChange={(e) => setUsers(e.target.value)} inputMode="numeric" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm" />
             </FormField>
           </div>
-          <FormField label="Your price per user per month (₹, before GST)" htmlFor="afb-price" hint="Leave empty if not known — it will show as 'Set price & users'">
-            <input id="afb-price" value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="e.g. 270" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm" />
+          {!draft.editionUnknown && (
+            <p className="text-2xs text-ink-3">From Google&apos;s bill: {draft.plan}{row.billSeats ? `, ${row.billSeats} user${row.billSeats === 1 ? "" : "s"}` : ""}.</p>
+          )}
+          <FormField label="Your price per user per month (₹, before GST)" htmlFor="afb-price"
+            hint={catalogPrice
+              ? (sell === catalogPrice.perSeatPm ? "Your catalogue list price for this plan" : `Catalogue list price is ${inr(catalogPrice.perSeatPm)}`)
+              : plan === "Google Workspace"
+                ? "Pick the edition to use your catalogue price — or leave empty: it will show as 'Set price & users'"
+                : `No catalogue price for ${plan} — add it in Catalog or type your price. Empty shows as 'Set price & users'`}>
+            <input id="afb-price" value={price} onChange={(e) => { setPrice(e.target.value); setPriceTyped(true); }} inputMode="decimal" placeholder="e.g. 270" className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm" />
           </FormField>
           <div className="rounded-lg bg-paper-2 p-3 text-xs text-ink-2 space-y-0.5">
             <div>Google cost: {inr(row.googleCost)} ÷ {u} user{u > 1 ? "s" : ""} = <b>{inr(Math.round(costPerUser))}</b> per user / month (saved as cost price)</div>

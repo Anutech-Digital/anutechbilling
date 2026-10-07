@@ -16,9 +16,26 @@
  * The PDF has no seat counts, so the Net2Secure margin is estimated from OUR seat counts; the
  * per-SKU check waits for Google's CSV. The checks are read-only maths; the page writes only
  * when a person presses Add (newSubscriptionRow below).
+ *
+ * R-320 (7 Oct 2026): "Add all missing" made every subscription "Google Workspace", 1 user, ₹0 —
+ * 145 rows on 5 Oct with no edition and no MRR. Now a bill that names the edition and quantity
+ * (Google's invoice CSV) gives them to the subscription, and the price is the tenant catalogue's
+ * list price for that edition (draftFromBill). The PDF names neither, so those rows still need a
+ * person — and the page says why instead of quietly saving ₹0.
  */
+import { planPricePerSeat } from "@/lib/catalog/plan-price";
 
-export interface BillLine { domain: string; customerId: string; amount: number }
+export interface BillLine {
+  domain: string;
+  customerId: string;
+  amount: number;
+  /** R-320: the Workspace edition on the bill ("Business Starter"), or absent/null when the bill
+   *  does not say — the PDF summary never does; Google's invoice CSV does, per line. Mixed
+   *  editions on one domain stay null (never guessed). */
+  plan?: string | null;
+  /** R-320: licences of that edition on the bill (CSV quantity), or absent/null when not given. */
+  seats?: number | null;
+}
 
 export interface ParsedBill {
   invoiceNo: string | null;
@@ -39,6 +56,7 @@ const money = (s: string) => Number(s.replace(/[₹,\s]/g, ""));
 const LINE_RE = /^\s*([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\s+(C[0-9a-z]{6,12})\s+(-?[\d,]+\.\d{2})\s*$/i;
 
 export function parseGoogleBill(text: string): ParsedBill {
+  if (looksLikeCsv(text)) return parseGoogleBillCsv(text);
   const lines: BillLine[] = [];
   const unread: string[] = [];
   const seen = new Set<string>();
@@ -90,6 +108,111 @@ export function parseGoogleBill(text: string): ParsedBill {
   return { invoiceNo, periodLabel: period, lines, subtotal, gst, total, linesTotal, unread };
 }
 
+// ─── Google's invoice CSV (R-320) ───────────────────────────────────────────────
+
+/**
+ * The Workspace edition a bill line's description / SKU names, as a plan label, or null.
+ * "Google Workspace Business Starter - Annual Plan" → "Business Starter". Add-ons (Vault, Voice,
+ * archived user…), other products and a description naming no edition → null: unknown, not guessed.
+ */
+export function billEditionOf(desc: string | null | undefined): string | null {
+  const n = (desc ?? "").toLowerCase();
+  if (!/\b(workspace|g ?suite)\b/.test(n)) return null;
+  if (/vault|voice|archiv|essentials|add-?on|gemini|frontline|education|nonprofit/.test(n)) return null;
+  const tiers = (["starter", "standard", "plus"] as const).filter((t) => new RegExp(`\\b${t}\\b`).test(n));
+  if (/\benterprise\b/.test(n)) {
+    if (tiers.length > 1 || tiers[0] === "starter") return null;
+    return tiers[0] === "standard" ? "Enterprise Standard" : tiers[0] === "plus" ? "Enterprise Plus" : "Enterprise";
+  }
+  if (tiers.length !== 1) return null;
+  return tiers[0] === "starter" ? "Business Starter" : tiers[0] === "standard" ? "Business Standard" : "Business Plus";
+}
+
+/** One CSV record → its cells; a quoted cell may hold commas and doubled quotes. */
+function csvCells(line: string): string[] {
+  const out: string[] = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { out.push(cur.trim()); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/** Index of the CSV header row (has a domain and an amount/cost column), or -1. */
+function csvHeaderIndex(rows: readonly string[]): number {
+  return rows.findIndex((l) => {
+    const cells = csvCells(l).map((c) => c.toLowerCase());
+    return cells.length >= 3 && cells.some((c) => /domain/.test(c)) && cells.some((c) => /amount|cost/.test(c));
+  });
+}
+
+/** A CSV export (header row near the top) rather than the PDF's text. */
+function looksLikeCsv(text: string): boolean {
+  const i = csvHeaderIndex(text.split(/\r?\n/).slice(0, 5));
+  return i >= 0;
+}
+
+/**
+ * Google's invoice CSV (R-320): one row per charge — domain, customer id, description / SKU,
+ * quantity, amount. Columns are found by header name, so a reordered export still reads. Rows add
+ * up per domain. The edition and seats are kept only when the domain's licence rows name ONE
+ * edition; seats = the largest quantity on its rows (a mid-month change is two rows of the same
+ * edition, not twice the users). A quantity that is not a whole number is not a seat count → null.
+ */
+export function parseGoogleBillCsv(text: string): ParsedBill {
+  const raw = text.split(/\r?\n/);
+  const h = csvHeaderIndex(raw);
+  const head = csvCells(raw[h] ?? "").map((c) => c.toLowerCase());
+  const col = (...res: RegExp[]) => {
+    for (const re of res) { const i = head.findIndex((c) => re.test(c)); if (i >= 0) return i; }
+    return -1;
+  };
+  const iDomain = col(/domain/);
+  const iId = col(/customer.?id/);
+  const iDesc = col(/description/, /sku.?name/, /product/, /sku/, /plan/, /order.?name/);
+  const iQty = col(/^quantity$/, /^qty$/, /licen[cs]es?/, /^seats$/);
+  const iAmt = col(/^amount/, /amount/, /^cost/, /cost/);
+  type Acc = { domain: string; customerId: string; amount: number; seatsBy: Map<string, number> };
+  const acc = new Map<string, Acc>();
+  const unread: string[] = [];
+  for (const l of raw.slice(h + 1)) {
+    if (!l.trim()) continue;
+    const c = csvCells(l);
+    const domain = normDomain(c[iDomain]);
+    const amtCell = (c[iAmt] ?? "").trim();
+    const amount = money(amtCell);
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(domain) || !amtCell || !Number.isFinite(amount)) {
+      if (domain) unread.push(l.trim());
+      continue;
+    }
+    const customerId = iId >= 0 ? c[iId] ?? "" : "";
+    const key = `${domain}|${customerId}`;
+    const a = acc.get(key) ?? { domain, customerId, amount: 0, seatsBy: new Map<string, number>() };
+    a.amount += amount;
+    const plan = iDesc >= 0 ? billEditionOf(c[iDesc]) : null;
+    const qty = iQty >= 0 ? Number((c[iQty] ?? "").replace(/,/g, "")) : NaN;
+    if (plan) a.seatsBy.set(plan, Math.max(a.seatsBy.get(plan) ?? 0, Number.isInteger(qty) && qty > 0 ? qty : 0));
+    acc.set(key, a);
+  }
+  const lines: BillLine[] = [...acc.values()].map((a) => {
+    const one = a.seatsBy.size === 1 ? [...a.seatsBy.entries()][0] : null;
+    return {
+      domain: a.domain, customerId: a.customerId, amount: Math.round(a.amount * 100) / 100,
+      plan: one ? one[0] : null, seats: one && one[1] > 0 ? one[1] : null,
+    };
+  });
+  const linesTotal = Math.round(lines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+  return { invoiceNo: null, periodLabel: null, lines, subtotal: null, gst: null, total: null, linesTotal, unread };
+}
+
 // ─── Matching ────────────────────────────────────────────────────────────────
 
 export interface SubLite {
@@ -124,6 +247,9 @@ export interface CheckRow {
   plans: string[];
   margin: number;
   status: RowStatus;
+  /** R-320: edition and licences as Google's bill states them (CSV); null when it does not. */
+  billPlan: string | null;
+  billSeats: number | null;
 }
 
 /** sub_status is active | paused | expired | cancelled. Paused stays in: Google may still bill a suspended account. */
@@ -166,6 +292,7 @@ export function checkBill(lines: readonly BillLine[], subs: readonly SubLite[], 
       customerName: ss[0]?.customer_name ?? cust?.name ?? null,
       customerRef: ss[0]?.customer_id ?? cust?.id ?? null,
       ourMonthly, seats, plans: [...new Set(ss.map((s) => s.plan))], margin, status,
+      billPlan: l.plan ?? null, billSeats: l.seats ?? null,
     };
   });
 
@@ -206,7 +333,7 @@ export function expectedPartnerBill(googleSubtotal: number, seats: number, perSe
 
 // ─── Making the missing subscription ───────────────────────────────────────────
 
-export const GOOGLE_PLANS = ["Business Starter", "Business Standard", "Business Plus", "Enterprise", "Google Workspace"] as const;
+export const GOOGLE_PLANS = ["Business Starter", "Business Standard", "Business Plus", "Enterprise Standard", "Enterprise Plus", "Enterprise", "Google Workspace"] as const;
 
 /**
  * The subscription row for a domain on Google's bill (5 Oct 2026, Pardeep: "customer add karne
@@ -220,6 +347,8 @@ export const GOOGLE_PLANS = ["Business Starter", "Business Standard", "Business 
 export function newSubscriptionRow(a: {
   tenantId: string; customerId: string; customerName: string; domain: string;
   plan: string; users: number; sellPerUserMonth: number | null; googleCostMonth: number; syncedAt: string;
+  /** R-320: the catalogue row the price came from. */
+  itemId?: string | null;
 }) {
   const users = Math.max(1, Math.round(a.users));
   return {
@@ -238,6 +367,7 @@ export function newSubscriptionRow(a: {
     vendor_seats: users,
     vendor_cost_per_seat_month: Math.round(Math.max(0, a.googleCostMonth) / users),
     vendor_synced_at: a.syncedAt,
+    ...(a.itemId ? { item_id: a.itemId } : {}),
   };
 }
 
@@ -251,4 +381,54 @@ export function nameFromDomain(domain: string): string {
   while (i > 0 && (SLD.has(labels[i]) || labels[i].length <= 2)) i -= 1;
   const base = (labels[Math.max(0, i)] ?? "").replace(/[-_]+/g, " ").trim();
   return base ? base.split(" ").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ") : domain;
+}
+
+// ─── Pricing a subscription made from the bill (R-320) ─────────────────────────
+
+/** A catalogue row as the bill pricing reads it (the shape plan-price.ts takes, plus vendor). */
+export type BillCatalogRow = NonNullable<Parameters<typeof planPricePerSeat>[1]>[number] & { vendor?: string | null };
+
+/** The Google subscription the bill implies for one domain, before anyone edits it. */
+export interface BillSubDraft {
+  /** The bill's edition, or "Google Workspace" when the bill does not name one. */
+  plan: string;
+  users: number;
+  /** ₹/seat/month from the tenant catalogue (list price, R-205 floor applied), or null. */
+  sellPerUserMonth: number | null;
+  itemId: string | null;
+  /** True when the bill names an edition we know but the catalogue has no priced row for it. */
+  noCatalogPrice: boolean;
+  /** True when the bill names no edition (the PDF) — price and users are left to a person. */
+  editionUnknown: boolean;
+}
+
+/**
+ * The catalogue price for a Workspace edition: the tenant's Google rows only, by exact name
+ * first, then the catalogue's own wording ("Google Workspace Business Starter"). Priced through
+ * planPricePerSeat → catalogYearlyPrice, so it is the same number a quote shows (R-387). No
+ * fallback list: a plan the tenant does not sell has no price here, never an invented one.
+ */
+export function catalogPriceForEdition(plan: string, catalog: readonly BillCatalogRow[] | null | undefined): { perSeatPm: number; itemId: string } | null {
+  // Only a named edition is priced: a catalogue row called just "Google Workspace" must not price an unknown one.
+  if (!billEditionOf(`Google Workspace ${plan}`)) return null;
+  const google = (catalog ?? []).filter((r) => !r.vendor || r.vendor.toLowerCase() === "google");
+  for (const name of [plan, `Google Workspace ${plan}`]) {
+    const p = planPricePerSeat(name, google, {});
+    if (p?.source === "catalog" && p.itemId) return { perSeatPm: p.perSeatPm, itemId: p.itemId };
+  }
+  return null;
+}
+
+/** Edition + seats from the bill line, price from the catalogue. */
+export function draftFromBill(row: Pick<CheckRow, "billPlan" | "billSeats">, catalog: readonly BillCatalogRow[] | null | undefined): BillSubDraft {
+  const users = row.billSeats && row.billSeats > 0 ? Math.round(row.billSeats) : 1;
+  if (!row.billPlan) {
+    return { plan: "Google Workspace", users, sellPerUserMonth: null, itemId: null, noCatalogPrice: false, editionUnknown: true };
+  }
+  const price = catalogPriceForEdition(row.billPlan, catalog);
+  return {
+    plan: row.billPlan, users,
+    sellPerUserMonth: price?.perSeatPm ?? null, itemId: price?.itemId ?? null,
+    noCatalogPrice: !price, editionUnknown: false,
+  };
 }
