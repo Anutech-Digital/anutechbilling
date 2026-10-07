@@ -8,7 +8,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn, idsKey, type PageResponse } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -25,9 +25,18 @@ type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
 export type TaskWithLink = Task & {
   /* R-279: contact fields too — a lead with no company is named by its contact (leadTitle). */
   leads?:     { company: string; contact_name?: string | null; contact_email?: string | null; contact_phone?: string | null } | null;
-  customers?: { name: string } | null;
+  /* R-354: the customer's contact phone/email too, so a task row can call / WhatsApp / copy. */
+  customers?: { name: string; contact_name?: string | null; contact_phone?: string | null; contact_email?: string | null } | null;
   quotes?:    { customer_name: string } | null;
 };
+
+/**
+ * One select for every task list: the task plus whom it is about, embedded through the
+ * task's own foreign keys (one request, no per-row lookups). The embedded lead / customer
+ * rows are read under their own RLS, so they are always the task's tenant.
+ */
+export const TASK_SELECT =
+  "*, leads(company, contact_name, contact_email, contact_phone), customers(name, contact_name, contact_phone, contact_email), quotes(customer_name)";
 
 // ────────────────────────────────────────────────────────────────
 // Filters
@@ -62,7 +71,7 @@ export function useTasks(bucket: TaskBucket = "all") {
       const supabase = createClient();
       // Embed the linked entity's display name (lead company / customer name /
       // quote customer) so the list can show who each task is about.
-      let q = supabase.from("tasks").select("*, leads(company, contact_name, contact_email, contact_phone), customers(name), quotes(customer_name)");
+      let q = supabase.from("tasks").select(TASK_SELECT);
 
       const { startISO, endISO } = todayBoundariesIST();
 
@@ -91,6 +100,48 @@ export function useTasks(bucket: TaskBucket = "all") {
       return (data ?? []) as unknown as TaskWithLink[];
     },
   });
+}
+
+/**
+ * R-354 — the /tasks page in one read: every open task (pending / snoozed, all pages) plus
+ * the 100 most recently completed, with the linked lead / customer contact embedded
+ * (TASK_SELECT). Grouped into Overdue / Today / Upcoming / Done on the client by IST day
+ * (components/features/tasks/task-groups.ts) — replaces five per-tab queries. Filtered by
+ * tenant explicitly as well as by RLS.
+ */
+export const DONE_TASKS_SHOWN = 100;
+
+export function useTaskList(tenantId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["tasks", "list", tenantId],
+    enabled: !!tenantId,
+    queryFn: () => fetchTaskList(createClient(), tenantId!),
+  });
+}
+
+type TasksDb = Pick<ReturnType<typeof createClient>, "from">;
+
+/** The useTaskList read, separate so a test can drive it with a stub client. */
+export async function fetchTaskList(supabase: TasksDb, tenantId: string): Promise<TaskWithLink[]> {
+  const [open, done] = await Promise.all([
+    fetchAllRows<TaskWithLink>((from, to) => supabase
+      .from("tasks")
+      .select(TASK_SELECT)
+      .eq("tenant_id", tenantId)
+      .in("status", ["pending", "snoozed"])
+      .order("due_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<PageResponse<TaskWithLink>>),
+    supabase
+      .from("tasks")
+      .select(TASK_SELECT)
+      .eq("tenant_id", tenantId)
+      .eq("status", "done")
+      .order("completed_at", { ascending: false, nullsFirst: false })
+      .limit(DONE_TASKS_SHOWN),
+  ]);
+  if (done.error) throw done.error;
+  return [...open, ...((done.data ?? []) as unknown as TaskWithLink[])];
 }
 
 /**
@@ -227,10 +278,70 @@ export function useUpdateTask() {
   });
 }
 
-/** Mark a task done. Completion stamps (completed_at, completed_by) are
- *  applied by the DB trigger. */
+type TaskPatch = Partial<Pick<Task, "status" | "completed_at" | "completed_by">>;
+
+/**
+ * R-354 — `patch` applied to task `id` inside one ["tasks", …] cache entry (a list, or the
+ * single-task deep-link query). Anything that is not a task row (the bell's count) comes
+ * back untouched. Pure, so the optimistic path is testable without a server.
+ */
+export function patchTaskInCache(old: unknown, id: string, patch: TaskPatch): unknown {
+  const hit = (row: unknown): row is { id: string } =>
+    !!row && typeof row === "object" && (row as { id?: unknown }).id === id;
+  if (Array.isArray(old)) {
+    return old.some(hit) ? old.map((row) => (hit(row) ? { ...row, ...patch } : row)) : old;
+  }
+  return hit(old) ? { ...old, ...patch } : old;
+}
+
+type QC = ReturnType<typeof useQueryClient>;
+type CacheSnapshot = [readonly unknown[], unknown][];
+
+function optimisticPatch(qc: QC, id: string, patch: TaskPatch): CacheSnapshot {
+  const snapshot = qc.getQueriesData<unknown>({ queryKey: ["tasks"] });
+  qc.setQueriesData<unknown>({ queryKey: ["tasks"] }, (old: unknown) => patchTaskInCache(old, id, patch));
+  return snapshot;
+}
+
+function restoreSnapshot(qc: QC, snapshot: CacheSnapshot | undefined) {
+  for (const [key, data] of snapshot ?? []) qc.setQueryData(key, data);
+}
+
+export const UNDO_TOAST_MS = 5_000;
+
+/** Put a completed task back to pending — the Undo on the "Marked done" toast. */
+export function useReopenTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: "pending", completed_at: null, completed_by: null })
+        .eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["tasks"] });
+      return { snapshot: optimisticPatch(qc, id, { status: "pending", completed_at: null, completed_by: null }) };
+    },
+    onError: (err, _id, ctx) => {
+      restoreSnapshot(qc, ctx?.snapshot);
+      toastError(err, { fallback: "Couldn't undo — the task is still marked done." });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+  });
+}
+
+/**
+ * Mark a task done — one click. R-354: optimistic (the row moves to Done at once), rolled
+ * back with toastError when the save fails, and the success toast carries a 5-second Undo.
+ * Completion stamps (completed_at, completed_by) are applied by the DB trigger.
+ */
 export function useCompleteTask() {
   const qc = useQueryClient();
+  const reopen = useReopenTask();
   return useMutation({
     mutationFn: async (id: string) => {
       const supabase = createClient();
@@ -243,11 +354,21 @@ export function useCompleteTask() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tasks"] });
-      toast.success("Marked done ✓");
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["tasks"] });
+      return { snapshot: optimisticPatch(qc, id, { status: "done", completed_at: new Date().toISOString() }) };
     },
-    onError: (err) => toastError(err),
+    onError: (err, _id, ctx) => {
+      restoreSnapshot(qc, ctx?.snapshot);
+      toastError(err, { fallback: "Couldn't mark the task done." });
+    },
+    onSuccess: (_data, id) => {
+      toast.success("Marked done ✓", {
+        duration: UNDO_TOAST_MS,
+        action: { label: "Undo", onClick: () => reopen.mutate(id) },
+      });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });
 }
 
