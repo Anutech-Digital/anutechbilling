@@ -39,6 +39,7 @@ import type { Invoice, Tenant } from "@/lib/supabase/database.types";
 import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server";
 import { dunningReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { isMissingDbObject } from "@/lib/credit/activate-on-credit";
+import { runOverdueSuspension, type OverdueSuspensionResult } from "@/lib/collections/overdue-suspension.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -82,6 +83,8 @@ interface DunningResult {
   errors: { invoice_id: string; message: string }[];
   /** S28 — WhatsApp copy of each step. `disabled` = company ne switch ON nahi kiya (default). */
   whatsapp?: { sent: number; skipped: number; failed: number; disabled: number };
+  /** R-116: the per-company "pause after N days overdue" pass (notice first, then pause). */
+  overdue_pause?: OverdueSuspensionResult | { error: string };
 }
 
 async function handle(req: Request): Promise<NextResponse<DunningResult | { error: string }>> {
@@ -219,8 +222,14 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
       amountDue,
       lastStepSent: lastStepByInvoice.get(inv.id) ?? null,
       subscriptionId,
-      autoSuspend: tenant?.auto_suspend_on_overdue ?? false,
+      /* R-116: the pause no longer fires from this ladder's Day 14. It is the separate pass
+         below (runOverdueSuspension): the company's own N days, and only after a final notice
+         naming the pause date. So Day 14 here always tells the reseller. */
+      autoSuspend: false,
     }, asOf);
+    if (decision.action === "escalate" && tenant?.auto_suspend_on_overdue) {
+      decision.reason = `${decision.daysOverdue} days past due. Auto-pause is on for your company: the customer gets a final notice, then the linked subscription is paused once the invoice passes your overdue limit.`;
+    }
 
     if (!decision.shouldSend || decision.action === "none") { result.skipped++; continue; }
 
@@ -395,6 +404,15 @@ automatically. Decide whether to call them, agree a plan, or pause the service.`
     }
   }
   result.whatsapp = { ...wa.totals };
+
+  /* R-116 — after the reminders, so today's ladder email and the pause notice are logged in
+     that order. Its own try: a failure here must not hide the reminder results above. */
+  try {
+    result.overdue_pause = await runOverdueSuspension(supabase, { asOf, dryRun, creditQuoteIds });
+  } catch (e) {
+    result.overdue_pause = { error: errorMessage(e) };
+    result.errors.push({ invoice_id: "-", message: `overdue pause: ${errorMessage(e)}` });
+  }
 
   return NextResponse.json(reportCron("invoice-dunning", result));
 }

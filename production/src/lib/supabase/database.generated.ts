@@ -5751,6 +5751,70 @@ export type Database = {
           },
         ]
       }
+      invoice_write_off_drafts: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          days_overdue: number
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          invoice_id: string
+          reason: string
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          days_overdue: number
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          invoice_id: string
+          reason: string
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          days_overdue?: number
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          invoice_id?: string
+          reason?: string
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_write_off_drafts_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_write_off_drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_write_off_drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           adjusted_advances: Json
@@ -10038,7 +10102,10 @@ export type Database = {
           seats: number
           start_date: string | null
           status: Database["public"]["Enums"]["sub_status"]
+          suspend_reason: string | null
           suspended_at: string | null
+          suspended_by: string | null
+          suspended_invoice_id: string | null
           tenant_id: string
           term_months: number
           updated_at: string
@@ -10077,7 +10144,10 @@ export type Database = {
           seats: number
           start_date?: string | null
           status?: Database["public"]["Enums"]["sub_status"]
+          suspend_reason?: string | null
           suspended_at?: string | null
+          suspended_by?: string | null
+          suspended_invoice_id?: string | null
           tenant_id: string
           term_months?: number
           updated_at?: string
@@ -10116,7 +10186,10 @@ export type Database = {
           seats?: number
           start_date?: string | null
           status?: Database["public"]["Enums"]["sub_status"]
+          suspend_reason?: string | null
           suspended_at?: string | null
+          suspended_by?: string | null
+          suspended_invoice_id?: string | null
           tenant_id?: string
           term_months?: number
           updated_at?: string
@@ -10130,6 +10203,13 @@ export type Database = {
           written_off_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "subscriptions_suspended_invoice_fkey"
+            columns: ["suspended_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subscriptions_customer_id_fkey"
             columns: ["customer_id"]
@@ -11446,6 +11526,7 @@ export type Database = {
           ai_kill_switch: boolean
           attendance_ingest_key: string | null
           auto_suspend_on_overdue: boolean
+          overdue_suspend_days: number
           books_locked_until: string | null
           contact_name: string | null
           created_at: string
@@ -11486,6 +11567,7 @@ export type Database = {
           ai_kill_switch?: boolean
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
+          overdue_suspend_days?: number
           books_locked_until?: string | null
           contact_name?: string | null
           created_at?: string
@@ -11526,6 +11608,7 @@ export type Database = {
           ai_kill_switch?: boolean
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
+          overdue_suspend_days?: number
           books_locked_until?: string | null
           contact_name?: string | null
           created_at?: string
@@ -13239,6 +13322,10 @@ export type Database = {
       current_user_is_owner: { Args: never; Returns: boolean }
       customer_name_key: { Args: { p_name: string }; Returns: string }
       customer_names_agree: { Args: { a: string; b: string }; Returns: boolean }
+      decide_invoice_write_off: {
+        Args: { p_decision: string; p_draft_id: string }
+        Returns: string
+      }
       default_doc_prefix: { Args: { p_doc_type: string }; Returns: string }
       delete_bank_account: {
         Args: { p_account_id: string }
@@ -14096,6 +14183,10 @@ export type Database = {
           match_label: string
           match_type: string
         }[]
+      }
+      suggest_invoice_write_off: {
+        Args: { p_invoice_id: string }
+        Returns: string
       }
       sync_domain_catalog: { Args: { p_tlds: Json }; Returns: number }
       sync_hosting_catalog: { Args: { p_plans: Json }; Returns: number }

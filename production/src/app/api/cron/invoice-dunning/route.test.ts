@@ -87,10 +87,12 @@ describe("invoice-dunning at scale", () => {
     db.current = fakePostgrest(data);
     const body = await (await GET(req())).json();
     const byId = new Map(body.details.map((d: { invoice_id: string; action: string }) => [d.invoice_id, d.action]));
-    expect(byId.get("INV-00000")).toBe("suspend");
-    expect(byId.get("INV-00001")).toBe("suspend");
+    /* R-116: Day 14 of the ladder no longer pauses — the company's own N-day rule does that,
+       after a final notice (runOverdueSuspension). So every one of these tells the reseller. */
+    expect(byId.get("INV-00000")).toBe("escalate");
+    expect(byId.get("INV-00001")).toBe("escalate");
     expect(byId.get("INV-00002")).toBe("escalate");       // ambiguous → no subscription to suspend
-    const subReads = db.current.calls.filter((c) => c.table === "subscriptions");
+    const subReads = db.current.calls.filter((c) => c.table === "subscriptions" && c.inLists.some((l) => l.col === "quote_id"));
     expect(subReads.length).toBe(1);                       // one chunk of quote ids, not one per invoice
     expect(subReads[0].filters.some((f) => f.startsWith("quote_id="))).toBe(false);
   });
