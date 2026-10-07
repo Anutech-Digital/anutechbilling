@@ -45,7 +45,7 @@ export const runtime  = "nodejs";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 
 /** business_type / gst_filing are newer than database.types.ts — absent before the migration. */
-interface TenantRow { id: string; name: string; business_type?: unknown; gst_filing?: unknown }
+interface TenantRow { id: string; name: string; business_type?: unknown; gst_filing?: unknown; lut_number?: unknown }
 
 interface Sent { tenant: string; obligation: string; period: string; daysBefore: number; to: string; status: string }
 
@@ -110,12 +110,12 @@ async function handle(req: Request) {
   try {
     try {
       tenants = await fetchAllRows<TenantRow>((from, to) => supabase
-        .from("tenants").select("id, name, business_type, gst_filing")
+        .from("tenants").select("id, name, business_type, gst_filing, lut_number")
         .order("id", { ascending: true }).range(from, to) as unknown as PageQuery<TenantRow>);
     } catch (e) {
       if (!isMissingColumnError(e as PgErrorLike)) throw e;
       tenants = await fetchAllRows((from, to) => supabase
-        .from("tenants").select("id, name").order("id", { ascending: true }).range(from, to));
+        .from("tenants").select("id, name, lut_number").order("id", { ascending: true }).range(from, to));
     }
   } catch (e) {
     return NextResponse.json({ error: `tenants fetch failed: ${errorMessage(e)}` }, { status: 500 });

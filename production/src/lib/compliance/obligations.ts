@@ -28,6 +28,12 @@ export type GstFiling = "monthly" | "qrmp";
 export interface ComplianceProfile {
   businessType: BusinessType | null;
   gstFiling: GstFiling | null;
+  /**
+   * R-334: the seller has an LUT on file (tenants.lut_number set) — it exports without
+   * paying IGST, so it must renew the LUT (Form GST RFD-11) before every FY. Optional:
+   * omitted / false → no LUT reminder, and every other row is unchanged.
+   */
+  exportsUnderLut?: boolean;
 }
 export const UNKNOWN_PROFILE: ComplianceProfile = { businessType: null, gstFiling: null };
 
@@ -83,6 +89,8 @@ export interface Obligation {
   entities?: readonly BusinessType[];
   /** R-262: only for this GST filing mode. Omitted = both. Not set yet = "monthly". */
   gstMode?: GstFiling;
+  /** R-334: only for a seller exporting under an LUT (profile.exportsUnderLut). */
+  lutOnly?: boolean;
   /**
    * Next actionable instance given today.
    *
@@ -537,6 +545,21 @@ function pmt06Next(): Obligation["next"] {
   });
 }
 
+/**
+ * R-334: LUT renewal. An LUT (Form GST RFD-11) is valid for one financial year and has to
+ * be furnished before the year starts, so the due date is 31 March and the PERIOD is the FY
+ * that begins the next day — unlike annualNext(), which labels the FY just ended.
+ */
+function lutRenewNext(): Obligation["next"] {
+  return (t, isFiled) => {
+    const cands: ComplianceInstance[] = [-1, 0, 1].map((off) => {
+      const y = t.getFullYear() + off;
+      return { dueDate: iso(y, 3, 31), periodKey: `fy${y}`, periodLabel: fyLabel(y) };
+    });
+    return pick(t, cands, isFiled);
+  };
+}
+
 /** Replaces the monthly GSTR-1 / GSTR-3B rows for a QRMP filer — same keys, quarterly periods. */
 const QRMP_REPLACEMENTS: Record<string, Partial<Obligation>> = {
   gst_gstr1: {
@@ -552,6 +575,21 @@ const QRMP_REPLACEMENTS: Record<string, Partial<Obligation>> = {
 };
 
 export const EXTRA_OBLIGATIONS: Obligation[] = [
+  {
+    key: "gst_lut_rfd11", name: "Renew LUT (Form GST RFD-11)", authority: "GST",
+    category: "gst", freq: "annual", form: "GST RFD-11", lutOnly: true,
+    penalty: "Without a valid LUT, IGST is payable on every export invoice (refund claim later)",
+    link: "https://www.gst.gov.in/",
+    applies: "Exporters billing at 0% GST under an LUT — a fresh LUT for each financial year, before 31 March.",
+    filingSteps: [
+      "gst.gov.in → Services → User Services → Furnish Letter of Undertaking (LUT).",
+      "Pick the next financial year; enter the previous LUT's ARN if asked.",
+      "Fill the two independent witnesses (name, address, occupation) and the place.",
+      "Sign with DSC or EVC → submit → download the acknowledgement and note the new ARN.",
+      "Settings → Company → LUT number: save the new ARN (it prints on every export invoice), then Mark filed here.",
+    ],
+    next: lutRenewNext(),
+  },
   {
     key: "gst_pmt06", name: "PMT-06 — monthly GST payment (QRMP)", authority: "GST",
     category: "gst", freq: "monthly", form: "PMT-06", gstMode: "qrmp",
@@ -620,6 +658,7 @@ function appliesTo(ob: Obligation, p: ComplianceProfile): boolean {
   const gst = p.gstFiling ?? "monthly";
   if (ob.entities && !ob.entities.includes(type)) return false;
   if (ob.gstMode && ob.gstMode !== gst) return false;
+  if (ob.lutOnly && !p.exportsUnderLut) return false;
   return true;
 }
 

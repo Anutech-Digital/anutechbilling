@@ -41,7 +41,7 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     inv.customer_id
       ? admin.from("customers").select("*").eq("id", inv.customer_id).maybeSingle()
       : Promise.resolve({ data: null }),
-    admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch").eq("id", inv.tenant_id).maybeSingle(),
+    admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch, lut_number").eq("id", inv.tenant_id).maybeSingle(),
   ]);
 
   /* R-038. Whether this seller can take a Razorpay payment at all. Read here rather
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
       name: inv.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,
-      remit_ifsc: null, remit_branch: null,
+      remit_ifsc: null, remit_branch: null, lut_number: null,
     },
   });
 

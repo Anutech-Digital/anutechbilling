@@ -35,10 +35,10 @@ export function useComplianceProfile() {
     queryFn: async (): Promise<ComplianceProfileState> => {
       const { data, error } = await untyped()
         .from("tenants")
-        .select("business_type, gst_filing")
+        .select("business_type, gst_filing, lut_number")
         .eq("id", tenantId as string)
         .maybeSingle();
-      return profileFromRow(data as { business_type?: unknown; gst_filing?: unknown } | null, error);
+      return profileFromRow(data as { business_type?: unknown; gst_filing?: unknown; lut_number?: unknown } | null, error);
     },
   });
 }

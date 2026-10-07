@@ -35,7 +35,7 @@ export function isMissingColumnError(err: PgErrorLike | null | undefined): boole
 
 /** Turn a tenants row read (data + error) into a profile. Any other error is thrown. */
 export function profileFromRow(
-  row: { business_type?: unknown; gst_filing?: unknown } | null,
+  row: { business_type?: unknown; gst_filing?: unknown; lut_number?: unknown } | null,
   err: PgErrorLike | null,
 ): ComplianceProfileState {
   if (isMissingColumnError(err)) return { ...UNKNOWN_PROFILE, columnsMissing: true };
@@ -43,6 +43,9 @@ export function profileFromRow(
   return {
     businessType: toBusinessType(row?.business_type),
     gstFiling: toGstFiling(row?.gst_filing),
+    /* R-334: an LUT on file → the yearly RFD-11 renewal row. Only added when true, so a
+       profile without an LUT keeps exactly its pre-R-334 shape. */
+    ...(typeof row?.lut_number === "string" && row.lut_number.trim() !== "" ? { exportsUnderLut: true } : {}),
     columnsMissing: false,
   };
 }

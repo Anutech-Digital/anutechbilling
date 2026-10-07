@@ -56,6 +56,11 @@ export interface TenantPdfInfo {
   remit_account_number: string | null;
   remit_ifsc:           string | null;
   remit_branch:         string | null;
+  /**
+   * R-334. tenants.lut_number (LUT ARN) for the Rule 46 export endorsement. Optional so the
+   * quote route (a quote is not an export invoice) need not select it; the invoice route does.
+   */
+  lut_number?:          string | null;
 }
 
 interface Amounts {
@@ -164,6 +169,7 @@ export function buildInvoicePdfProps(args: {
     tenantAddress: tenant.address,
     tenantState:   tenant.state,
     tenantLogo:    args.logoDataUri ?? null,
+    lutNumber:     tenant.lut_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
     // Foreign-currency display (books stay ₹). Carried on the backing quote — an
