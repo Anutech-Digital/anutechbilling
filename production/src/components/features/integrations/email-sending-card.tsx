@@ -28,6 +28,9 @@ import { Label } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { blockerText, type SenderCandidate } from "@/lib/email/sender-candidates";
+import {
+  gmailConnectMessage, parseGmailConnectOutcome, type GmailConnectMessage,
+} from "@/lib/google/gmail-connect-result";
 
 interface EmailSettings {
   provider: "resend" | "gmail";
@@ -57,6 +60,26 @@ export default function EmailSendingCard() {
   const [fromName, setFromName] = React.useState("");
   const [resendKey, setResendKey] = React.useState("");
   const [dirty, setDirty] = React.useState(false);
+  const [connectResult, setConnectResult] = React.useState<GmailConnectMessage | null>(null);
+
+  /* ── What the Google callback said (R-160) ──────────────────────────────────
+     The callback has always redirected here with `?gmail=<outcome>`, and nothing read it:
+     a tenant whose connect failed came back to a page that looked untouched. Read from
+     window.location (not useSearchParams) so this card needs no Suspense boundary of its
+     own; the param is then dropped so a reload does not repeat an old result. */
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = parseGmailConnectOutcome(params.get("gmail"));
+    if (!outcome) return;
+    const msg = gmailConnectMessage(outcome);
+    setConnectResult(msg);
+    if (msg.kind === "ok") toast.success(msg.text);
+    else if (msg.kind === "warn") toast.warning(msg.text);
+    else toast.error(msg.text);
+    params.delete("gmail");
+    const qs = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+  }, []);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["integrations", "email-provider"],
@@ -223,6 +246,33 @@ export default function EmailSendingCard() {
             </Button>
           </a>
         </div>
+
+        {/* The last connect attempt's result, kept on the card (the toast fades). */}
+        {connectResult && (
+          <p
+            role={connectResult.kind === "ok" ? "status" : "alert"}
+            className={[
+              "mt-2 rounded-md px-2.5 py-2 text-2xs leading-relaxed",
+              connectResult.kind === "ok"
+                ? "bg-emerald-soft/40 text-ink-2"
+                : connectResult.kind === "warn"
+                  ? "bg-amber-soft/40 text-ink-2"
+                  : "bg-rose-soft/40 text-ink-2",
+            ].join(" ")}
+          >
+            {connectResult.text}
+          </p>
+        )}
+
+        {/* Some failures never come back here: Google shows its own page (app in testing,
+            app not verified, redirect URI not registered). Say what to do with that page. */}
+        {!gmailReady && (
+          <p className="mt-2 text-2xs leading-relaxed text-ink-3">
+            If Google shows its own error page (for example &quot;Access blocked&quot; or
+            &quot;Error 400&quot;), send a screenshot to the ResellerOS admin — that is fixed in
+            Google Cloud, not here.
+          </p>
+        )}
 
         {/* ── Which teammate's account sends ───────────────────────────────────
             PATCH has always accepted a gmailSenderUserId; this card never sent one, so the
