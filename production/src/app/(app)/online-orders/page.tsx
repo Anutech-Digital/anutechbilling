@@ -35,7 +35,8 @@ import { WEBSITE_ORDER_FILTER, orderChannel, isTrialOrder, trialWindow } from "@
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
-import { invoiceByLead, invoiceHref, type QuoteInvoiceRow } from "./invoice-links";
+import { invoiceHref } from "./invoice-links";
+import { orderPaymentView, paymentByLead, type OrderPayment, type QuotePaymentRow } from "./order-payment";
 import { ordersEmptyState } from "./empty-state";
 import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
 import { useLeadOutcome } from "@/lib/leads/use-outcome";
@@ -77,8 +78,11 @@ interface Order {
   /** The trial's own length — hosting 15, Workspace 14 — from the lead's dates. */
   trialLength: number | null;
   trialEndsOn: string | null;
-  /** True only when the lead is won — a cart order awaiting payment is NOT paid. */
+  /** R-351: true only when a full payment is recorded on the order's quote (order-payment.ts) —
+      never from the lead stage. Badge, Paid tab, KPIs and the Payment step all read this. */
   paid:        boolean;
+  /** R-351: drawer Invoice row text when there is no invoice to link. */
+  invoiceText: string;
   razorpayId:  string | null;
   /** R-083: the GST invoice raised for this order's quote (R-079), or null if none yet. */
   invoiceNo:   string | null;
@@ -261,7 +265,7 @@ function OrderDetailDrawer({
                       {order.invoiceNo}
                     </Link>
                   ) : (
-                    <span className="font-sans text-ink-3">{order.paid ? "Not issued yet" : "After payment"}</span>
+                    <span className="font-sans text-ink-3">{order.invoiceText}</span>
                   )}
                 </DrawerRow>
               </>
@@ -427,14 +431,15 @@ function domainFromNotes(notes: string | null, email: string | null): string {
   return "—";
 }
 
-/** Status badge derived from lead stage + source. */
-function statusFromLead(l: LeadRow): OrderStatus {
+/** Status badge derived from lead stage + source + the RECORDED payment (R-351). */
+function statusFromLead(l: LeadRow, paid: boolean): OrderStatus {
   if (isTrialOrder(l)) {
     const w = trialWindow(l);
     return w.state === "expired" ? "trial-expired" : w.state === "converting" ? "trial-converting" : "trial-active";
   }
   if (l.stage === "lost")  return "issue";
-  if (l.stage === "won")   return "active";
+  /* R-351: "Paid" only with a recorded payment — a lead marked won by hand is not money. */
+  if (paid)                return "active";
   /* R-077: a cart order sits at stage 'quote' until Razorpay confirms — it was shown as
      "DNS pending" (and anything else as "Provisioning"), which nothing measured. */
   return "awaiting-payment";
@@ -454,7 +459,7 @@ function formatCreatedAt(iso: string): string {
 }
 
 /** Reasonable "next action" string based on stage + age. */
-function nextActionFromLead(l: LeadRow): string {
+function nextActionFromLead(l: LeadRow, paid: boolean): string {
   if (isTrialOrder(l)) {
     const w = trialWindow(l);
     if (w.state === "expired")    return `Trial ended ${w.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} · convert or close`;
@@ -462,18 +467,20 @@ function nextActionFromLead(l: LeadRow): string {
     if (w.day >= 7)               return `Day ${w.day} of ${w.length} · scheduled health-check`;
     return `Day ${w.day} of ${w.length} · onboarding in progress`;
   }
+  if (paid) return "Paid · provisioning in progress";
   switch (l.stage) {
     case "new":      return "New lead · qualify and call within 30 min";
     case "contact":  return "Contacted · waiting for response";
     case "quote":    return "Quote sent · awaiting acceptance";
-    case "won":      return "Paid · provisioning in progress";
+    case "won":      return "Marked won, but no payment is recorded · record it on the quote";
     case "lost":     return "Lost — review reason in notes";
     default:         return "Review lead";
   }
 }
 
-function leadToOrder(l: LeadRow, invoiceId: string | null = null): Order {
+function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
   const isTrial = isTrialOrder(l);
+  const pay     = orderPaymentView(payment);
   const win     = isTrial ? trialWindow(l) : null;
   const tier    = tierFromPlan(l.plan);
   const seats   = l.seats ?? 0;
@@ -505,17 +512,20 @@ function leadToOrder(l: LeadRow, invoiceId: string | null = null): Order {
     trialDay:    day,
     trialLength: win?.length ?? null,
     trialEndsOn: win ? win.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null,
-    paid:        l.stage === "won",
+    paid:        pay.paid,
     razorpayId:  null,    // future: from payments table
-    invoiceNo:   invoiceId,
-    status:      statusFromLead(l),
+    invoiceNo:   pay.invoiceNo,
+    invoiceText: pay.invoiceText,
+    status:      statusFromLead(l, pay.paid),
     source:      orderChannel(l.source, l.utm_source),
     progress:    isTrial
       ? { trial: "done", onboarding: "active", checkin: "pending", convert: "pending" }
-      : { payment: "pending", invoice: "pending", tenant: "pending", users: "pending", dns: "pending", welcome: "pending" },
+      /* R-351: Payment + GST Invoice from the recorded payment (same view as the badge); the
+         rest is not measured yet, so it honestly stays "Pending". */
+      : { payment: pay.steps.payment, invoice: pay.steps.invoice, tenant: "pending", users: "pending", dns: "pending", welcome: "pending" },
     /* Was the literal "Pardeep A" on every row. The lead's real owner, or says so. */
     amAssigned:  l.owner?.full_name?.trim() || "Unassigned",
-    nextAction:  nextActionFromLead(l),
+    nextAction:  nextActionFromLead(l, pay.paid),
     lead:        l,
   };
 }
@@ -559,24 +569,24 @@ export default function OnlineOrdersPage() {
     const leads = (data ?? []) as unknown as LeadRow[];
 
     /* R-083: the invoice R-079 issues on payment sits on the order's quote
-       (quotes.lead_id -> quotes.invoice_id). A failure here only hides the links —
-       the orders themselves still show. */
-    let invoices = new Map<string, string>();
+       (quotes.lead_id -> quotes.invoice_id). R-351: the same rows say whether the order is
+       PAID (quotes.payment_status) — the one source for the badge and the steps. A failure
+       here shows nothing as paid (never a guess) — the orders themselves still show. */
+    let payments = new Map<string, OrderPayment>();
     const leadIds = leads.map((l) => l.id);
     if (leadIds.length) {
       const { data: qRows, error: qErr } = await supabase
         .from("quotes")
-        .select("lead_id, invoice_id, created_at")
-        .in("lead_id", leadIds)
-        .not("invoice_id", "is", null);
+        .select("lead_id, payment_status, invoice_id, created_at")
+        .in("lead_id", leadIds);
       if (signal?.cancelled) return;
-      if (qErr) console.error("[online-orders] invoice lookup failed:", qErr);
-      else invoices = invoiceByLead((qRows ?? []) as QuoteInvoiceRow[]);
+      if (qErr) console.error("[online-orders] payment/invoice lookup failed:", qErr);
+      else payments = paymentByLead((qRows ?? []) as QuotePaymentRow[]);
     }
 
     // Real orders only — no demo/seed data. An empty buy-flow correctly shows
     // an empty state, never fabricated revenue.
-    setOrders(leads.map((l) => leadToOrder(l, invoices.get(l.id) ?? null)));
+    setOrders(leads.map((l) => leadToOrder(l, payments.get(l.id))));
     setLoading(false);
   }, []);
 
