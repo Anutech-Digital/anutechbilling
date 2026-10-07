@@ -38,6 +38,7 @@ import { parseGstr2b, reconcile2b, type Reconciliation } from "@/lib/gst/gstr2b"
 import { createClient } from "@/lib/supabase/client";
 import { Term } from "@/components/shared/term";
 import { toIstDate } from "@/lib/dates/ist";
+import { isCreditNoteLate } from "@/lib/gst/credit-note-deadline";
 import { gstLastMonth, gstThisMonth, gstThisQuarter, istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
 import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
 
@@ -71,6 +72,8 @@ interface OutputRow {
   taxRate:      number;        // GST rate %
   interState:   boolean;       // true → IGST; false → CGST + SGST
   docType:      "invoice" | "credit_note" | "debit_note";  // credit/debit notes net the output tax
+  /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
+  lateCreditNote?: boolean;
   /** Per-line HSN/SAC share of the taxable value (catalogue item's `hsn`). See lib/gst/gstr1.ts. */
   lines?:       { hsn: string; description?: string; taxable: number }[];
 }
@@ -113,6 +116,8 @@ interface GstReport {
   sellerGstin:     string | null;
   /** Receipt-voucher advances relevant to GSTR-1 Table 11A / 11B (lib/gst/gstr1.ts buildAdvances). */
   advances:        Advance[];
+  /** R-335: credit notes in this period issued after their invoice's s.34 time limit. */
+  lateCreditNotes: number;
 }
 
 function useGstReport(range: DateRange) {
@@ -202,13 +207,16 @@ function useGstReport(range: DateRange) {
       const linesOf = (raw: unknown): HsnSourceLine[] => (Array.isArray(raw) ? raw as HsnSourceLine[] : []);
       const linesByInvoice = new Map<string, HsnSourceLine[]>();
       for (const i of invoices ?? []) linesByInvoice.set(i.id, linesOf(i.line_items));
+      // R-335: parent invoice dates, for the s.34 credit-note time limit.
+      const invoiceDateById = new Map<string, string | null>();
+      for (const i of invoices ?? []) invoiceDateById.set(i.id, i.invoice_date);
       const noteParentIds = Array.from(new Set([...(creditNotes ?? []), ...(debitNotes ?? [])]
         .map((n) => n.invoice_id).filter((x): x is string => !!x && !linesByInvoice.has(x))));
       if (noteParentIds.length) {
         const { data: parents } = await supabase.from("invoices")
-          .select("id, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
+          .select("id, invoice_date, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
           .in("id", noteParentIds);
-        for (const iv of parents ?? []) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); }
+        for (const iv of parents ?? []) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); invoiceDateById.set(iv.id, iv.invoice_date); }
       }
       const itemIds = Array.from(new Set(Array.from(linesByInvoice.values()).flatMap((ls) => ls.map((l) => l.item_id)).filter((x): x is string => !!x)));
       const hsnByItem = new Map<string, string | null>();
@@ -256,6 +264,7 @@ function useGstReport(range: DateRange) {
           customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           amount: -(n.amount ?? 0), taxableValue: -(n.taxable_value ?? 0), gst: -(n.tax_amount ?? 0),
           taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "credit_note",
+          lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
           lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
         });
       }
@@ -404,7 +413,9 @@ function useGstReport(range: DateRange) {
       const inputGST     = inputRows.reduce((s, r) => s + r.gst, 0);
       const netLiability = outputGST - inputGST;
 
-      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances };
+      const lateCreditNotes = outputRows.filter((r) => r.lateCreditNote).length;
+
+      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
     },
   });
 }
@@ -849,6 +860,14 @@ function GstReportInner() {
           />
         </Card>
       ) : (
+        <>
+        {data.lateCreditNotes > 0 && (
+          <div role="alert" className="mb-3 rounded-md bg-amber-soft/60 border border-amber/40 px-3 py-2 text-xs text-amber-ink leading-relaxed">
+            <b>{data.lateCreditNotes} late credit note{data.lateCreditNotes === 1 ? "" : "s"}</b> — issued after GST s.34&apos;s
+            limit for the invoice (30 Nov after its financial year, or the annual return date if earlier). They may not
+            reduce output GST; confirm with your CA before filing. Marked &ldquo;Late&rdquo; below.
+          </div>
+        )}
         <Card className="overflow-hidden mb-6">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -869,7 +888,12 @@ function GstReportInner() {
                   const s = docHeads(r);
                   return (
                   <tr key={r.invoiceId} className="hover:bg-paper-2/40">
-                    <td className="px-4 py-3 font-mono text-ink-2">{r.invoiceId}</td>
+                    <td className="px-4 py-3 font-mono text-ink-2">
+                      {r.invoiceId}
+                      {r.lateCreditNote && (
+                        <span title="Credit note issued after the GST s.34 time limit — confirm with your CA" className="ml-2 rounded bg-amber-soft/60 px-1.5 py-0.5 font-sans text-3xs font-semibold text-amber-ink">Late</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-ink-2">{formatDate(r.invoiceDate)}</td>
                     <td className="px-4 py-3 text-ink">{r.customerName}</td>
                     <td className="px-4 py-3 font-mono text-ink-3 text-xs">{r.customerGstin ?? "—"}</td>
@@ -906,6 +930,7 @@ function GstReportInner() {
             </table>
           </div>
         </Card>
+        </>
       )}
 
       {/* GSTR-2B milaan — only what the supplier filed is credit (s.16(2)(aa)). */}
