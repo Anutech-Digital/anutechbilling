@@ -18,6 +18,9 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { TASK_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { createClient } from "@/lib/supabase/client";
 import {
   useTasks,
   useCompleteTask,
@@ -66,6 +69,36 @@ export default function TasksPage() {
   const [tab, setTab] = useUrlChoice<TaskBucket>("tab", TASK_TABS, "today"); // R-118
   const [addOpen, setAddOpen] = React.useState(false);
   const [editingTask, setEditingTask] = React.useState<TaskWithLink | null>(null);
+
+  /* R-341: `/tasks?task=<id>` opens that task's dialog — the lead Activity tab's task rows
+     link here. Fetched by id, not looked up in the "all" list: that list is cut at 1000 rows,
+     and the task a rep just clicked must open even when it is not among them. Opened once per
+     id; closing the dialog drops the param so a reload does not pop it back up. */
+  const [taskParam, setTaskParam] = useUrlState("task", "");
+  const linkedTask = useQuery({
+    queryKey: ["tasks", "one", taskParam],
+    enabled: taskParam !== "",
+    queryFn: async (): Promise<TaskWithLink | null> => {
+      const { data, error } = await createClient()
+        .from("tasks")
+        .select("*, leads(company, contact_name, contact_email, contact_phone), customers(name), quotes(customer_name)")
+        .eq("id", taskParam)
+        .maybeSingle();
+      if (error) throw error;
+      return (data ?? null) as unknown as TaskWithLink | null;
+    },
+  });
+  const openedFor = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!taskParam || openedFor.current === taskParam || !linkedTask.isSuccess) return;
+    openedFor.current = taskParam;
+    if (linkedTask.data) setEditingTask(linkedTask.data);
+    else { toast.error("That task no longer exists."); setTaskParam(""); }
+  }, [taskParam, linkedTask.isSuccess, linkedTask.data, setTaskParam]);
+  const closeEditing = React.useCallback(() => {
+    setEditingTask(null);
+    if (taskParam) setTaskParam("");
+  }, [taskParam, setTaskParam]);
 
   // We pull each bucket independently for accurate counts on the tab badges.
   // For a typical SMB tenant (<200 active tasks) this is fine. Could
@@ -215,7 +248,7 @@ export default function TasksPage() {
       {editingTask && (
         <AddTaskDialog
           open
-          onOpenChange={(o) => { if (!o) setEditingTask(null); }}
+          onOpenChange={(o) => { if (!o) closeEditing(); }}
           linkTo={null}
           linkLabel={taskLeadName(editingTask) ?? editingTask.customers?.name ?? editingTask.quotes?.customer_name ?? undefined}
           task={editingTask}
