@@ -2,11 +2,14 @@
  * Setup Wizard — matches prototype screen "setup-wizard".
  *
  * 5-step first-run wizard (order = first-value-first):
- *   1. Company details (legal name, GSTIN, state, address)  → SAVES to tenants
+ *   1. Company details (legal name, GSTIN, state, address, optional UPI/bank)  → SAVES to tenants
  *   2. Import customers (CSV / fresh) — opens the real ImportCustomersDialog
- *   3. Razorpay — preview only; real connect lives in Settings → Integrations
- *   4. Google CSP API — preview of the 5–7 day application
- *   5. All set — celebration + next steps  → stamps setup_completed_at
+ *   3. Razorpay — optional; real status, connect lives in Settings → Integrations
+ *   4. Google Reseller API — optional; real status, set up in Settings → Integrations
+ *   5. All set — statuses from real data + next steps
+ *
+ * R-260: EVERY way of reaching step 5 (Finish, Skip, progress bar) stamps
+ * setup_completed_at — see wizard-nav.ts.
  *
  * Step 1 pre-fills from `useCurrentUser` so re-running the wizard never wipes
  * what was already saved in Settings → Company. The actual persistence is
@@ -24,7 +27,6 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { useCustomers } from "@/lib/queries/customers";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
 import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
@@ -34,6 +36,11 @@ import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { useItems, useLoadDefaultCatalog } from "@/lib/queries/items";
 import { productCount } from "@/lib/items/catalog-state";
+import type { ChecklistItem } from "./done-checklist";
+import { StepDone } from "./done-screen";
+import { useGoogleResellerStatus, useRazorpayStatus } from "./integration-status";
+import { paymentDetailsPatch, paymentDetailsProblem } from "./payment-details";
+import { DONE_STEP, wizardMove } from "./wizard-nav";
 
 // ─── Step config ──────────────────────────────────────────────────────────────
 
@@ -41,12 +48,12 @@ import { productCount } from "@/lib/items/catalog-state";
 // that actually lights up renewals/margins/dashboard) → then the two integration
 // steps that can only be *started* here and finish later (Razorpay KYC, Google CSP
 // approval). Index 0 must stay Company (saves the tenant) and index 3 stays the last
-// content step before Done (fires finishSetup); see `next()`.
+// content step before Done (DONE_STEP = 4 fires finishSetup); see wizard-nav.ts.
 const STEPS = [
   { id: "company",  label: "Company",    icon: "building" },
   { id: "import",   label: "Import",     icon: "upload"   },
   { id: "razorpay", label: "Razorpay",   icon: "rupee"    },
-  { id: "csp",      label: "Google CSP", icon: "globe"    },
+  { id: "csp",      label: "Google",     icon: "globe"    },
   { id: "done",     label: "All set",    icon: "rocket"   },
 ] as const;
 
@@ -64,10 +71,12 @@ interface WizardData {
   invoiceCode:   string;
   contactName:   string;
   contactEmail:  string;
-  razorpayKey:   string;
-  razorpayConnected: boolean;
-  cspId:         string;
-  cspStage:      "intro" | "applied" | "approved";
+  /** R-260: optional payment details (tenants.upi_vpa / remit_*), same columns as Settings. */
+  upiVpa:        string;
+  bankName:      string;
+  accountName:   string;
+  accountNumber: string;
+  ifsc:          string;
   importMode:    "csv" | "skip";
 }
 
@@ -100,11 +109,13 @@ function StepCompany({
   update,
   codeState,
   codeError,
+  payError,
 }: {
   data: WizardData;
   update: (k: keyof WizardData, v: string | boolean) => void;
   codeState: InvoiceCodeState | undefined;
   codeError: string | null;
+  payError: string | null;
 }) {
   // Pull cached verification from the tenant — re-running the wizard
   // shouldn't lose the green checkmark someone earned earlier.
@@ -119,8 +130,8 @@ function StepCompany({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field htmlFor="setup-legal-company-name" label="Legal company name" className="col-span-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field htmlFor="setup-legal-company-name" label="Legal company name" className="sm:col-span-2">
           <Input id="setup-legal-company-name"
             placeholder="e.g. Sharma Cloud Solutions Pvt Ltd"
             value={data.companyName}
@@ -202,14 +213,14 @@ function StepCompany({
             </p>
           )}
         </Field>
-        <Field htmlFor="setup-registered-address" label="Registered address" className="col-span-2">
+        <Field htmlFor="setup-registered-address" label="Registered address" className="sm:col-span-2">
           <Input id="setup-registered-address"
             placeholder="Office address"
             value={data.address}
             onChange={(e) => update("address", e.target.value)}
           />
         </Field>
-        <Field htmlFor="setup-invoice-code" label="Invoice code (2–4 letters)" className="col-span-2">
+        <Field htmlFor="setup-invoice-code" label="Invoice code (2–4 letters)" className="sm:col-span-2">
           <InvoiceCodeField
             id="setup-invoice-code"
             value={data.invoiceCode}
@@ -244,27 +255,99 @@ function StepCompany({
         </Field>
       </div>
 
-      <div className="flex items-start gap-2.5 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-700">
-        <Icon name="info" size={14} className="mt-0.5 shrink-0 text-indigo-600" />
-        <p>
-          We auto-verify your GSTIN against the government portal. Your registered
-          business name will be confirmed automatically.
-        </p>
-      </div>
+      {/* R-260: the old GSTIN note claimed verification happened by itself; it was false — verifying is the
+          Verify button above. Replaced by the optional payment details. */}
+      <details className="rounded-lg border border-hairline p-3" open={payError ? true : undefined}>
+        <summary className="cursor-pointer text-sm font-medium text-ink">
+          How customers pay you{" "}
+          <span className="font-normal text-ink-3">
+            {data.upiVpa.trim() || data.accountNumber.trim() ? "(added)" : "(optional)"}
+          </span>
+        </summary>
+        <p className="mt-1 text-xs text-ink-3">Printed on every invoice. UPI also prints as a scan-to-pay QR.</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field htmlFor="setup-upi" label="UPI ID" className="sm:col-span-2">
+            <Input id="setup-upi"
+              className="font-mono"
+              placeholder="e.g. yourname@okhdfcbank"
+              value={data.upiVpa}
+              onChange={(e) => update("upiVpa", e.target.value)}
+            />
+          </Field>
+          <Field htmlFor="setup-bank-name" label="Bank name">
+            <Input id="setup-bank-name"
+              placeholder="e.g. HDFC Bank"
+              value={data.bankName}
+              onChange={(e) => update("bankName", e.target.value)}
+            />
+          </Field>
+          <Field htmlFor="setup-account-name" label="Account holder name">
+            <Input id="setup-account-name"
+              placeholder="As on the bank account"
+              value={data.accountName}
+              onChange={(e) => update("accountName", e.target.value)}
+            />
+          </Field>
+          <Field htmlFor="setup-account-number" label="Account number">
+            <Input id="setup-account-number"
+              className="font-mono"
+              inputMode="numeric"
+              value={data.accountNumber}
+              onChange={(e) => update("accountNumber", e.target.value)}
+            />
+          </Field>
+          <Field htmlFor="setup-ifsc" label="IFSC">
+            <Input id="setup-ifsc"
+              className="font-mono"
+              placeholder="e.g. HDFC0001234"
+              value={data.ifsc}
+              onChange={(e) => update("ifsc", e.target.value.toUpperCase())}
+            />
+          </Field>
+        </div>
+        {payError && (
+          <p role="alert" className="mt-2 inline-flex items-center gap-1 text-xs text-rose">
+            <Icon name="alert" size={11} /> {payError}
+          </p>
+        )}
+      </details>
     </div>
   );
 }
 
 // ─── Step 2: Razorpay ────────────────────────────────────────────────────────
 
+type LineStatus = Exclude<ChecklistItem["status"], "unknown">;
+
+function IntegrationStatusLine({ status, text }: { status: LineStatus; text: string }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline p-3 text-sm">
+      <span className="inline-flex items-center gap-2 text-ink">
+        <Icon
+          name={status === "done" ? "check_circle" : status === "pending" ? "alert" : status === "checking" ? "clock" : "info"}
+          size={14}
+          className={status === "done" ? "text-emerald" : status === "pending" ? "text-amber" : "text-ink-3"}
+        />
+        {text}
+      </span>
+      <Link href="/settings?tab=integrations" className="text-xs font-medium text-ink-2 underline underline-offset-2 hover:text-amber-ink">
+        {status === "done" ? "Manage" : "Set up in Settings"}
+      </Link>
+    </div>
+  );
+}
+
 function StepRazorpay() {
+  // R-260: real status from the same GET as Settings → Integrations.
+  const { data: rz, isLoading } = useRazorpayStatus();
+  const state = rz?.readiness?.state ?? (rz?.configured ? "ready" : "not_configured");
   return (
     <div className="space-y-4">
       <div>
         <h2 className="font-serif text-2xl text-ink">Connect Razorpay</h2>
         <p className="mt-1 text-sm text-ink-3">
-          So customers can pay you via UPI, cards, net banking — and money lands in
-          your bank within 2 days.
+          Optional. Lets customers pay online by UPI, card or net banking, and marks
+          the invoice paid by itself.
         </p>
       </div>
 
@@ -275,22 +358,23 @@ function StepRazorpay() {
         <div>
           <p className="text-lg font-semibold text-white">Razorpay</p>
           <p className="text-sm text-white/80">
-            India's #1 payment gateway · 2% per transaction · T+2 settlement
+            Payment gateway · Razorpay charges a fee per payment
           </p>
         </div>
       </div>
 
-      {/* Honest: this wizard step is a preview. The real connection (keys +
-          verify) lives in Settings → Integrations — we don't fake a "connected"
-          state here or capture keys that wouldn't be saved. */}
-      <div className="flex items-start gap-2.5 rounded-lg bg-amber-soft p-3 text-sm text-amber-ink">
-        <Icon name="info" size={14} className="mt-0.5 shrink-0" />
-        <p>
-          You don't need Razorpay right now. After setup, add your Razorpay keys in{" "}
-          <strong>Settings → Integrations</strong> to turn on live payments in 2 minutes.
-          Until then you can still create quotes/invoices and send them on WhatsApp.
-        </p>
-      </div>
+      <IntegrationStatusLine
+        status={isLoading ? "checking" : state === "ready" ? "done" : state === "collect_only" ? "pending" : "todo"}
+        text={isLoading ? "Checking…"
+          : rz === null ? "Could not read the status"
+          : state === "ready" ? "Connected"
+          : state === "collect_only" ? "Keys saved. Add the webhook secret"
+          : "Not connected"}
+      />
+      <p className="text-sm text-ink-3">
+        You can skip this. Quotes and invoices work without Razorpay, and customers
+        can still pay by UPI or bank transfer.
+      </p>
     </div>
   );
 }
@@ -298,13 +382,15 @@ function StepRazorpay() {
 // ─── Step 3: Google CSP ──────────────────────────────────────────────────────
 
 function StepCsp() {
+  // R-260: real status from the same probe as Settings → Integrations.
+  const { data: g, isLoading } = useGoogleResellerStatus();
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="font-serif text-2xl text-ink">Google CSP API access</h2>
+        <h2 className="font-serif text-2xl text-ink">Google Reseller API</h2>
         <p className="mt-1 text-sm text-ink-3">
-          Connect to Google's Cloud Solution Provider API to auto-provision Workspace
-          tenants for your customers.
+          Optional. For Google Workspace resellers: syncs your customers&apos;
+          subscriptions and seats from Google.
         </p>
       </div>
 
@@ -320,26 +406,27 @@ function StepCsp() {
           <div>
             <p className="font-semibold text-ink">Google Workspace Reseller</p>
             <p className="text-xs text-ink-3">
-              Auto-provision tenants · sync subscriptions · pull billing
+              Sync subscriptions and seats
             </p>
           </div>
         </div>
         <ul className="ml-4 list-disc space-y-1 text-sm text-ink-3">
-          <li>The application is made directly with Google — approval takes 5–7 business days</li>
-          <li>Needs: Partner status, a few customers already provisioned, and business verification (PAN, GST, agreement)</li>
+          <li>Needs a Google Workspace reseller account</li>
+          <li>Enable the Reseller API in Google Cloud, then log in with your reseller-admin Google account</li>
         </ul>
       </div>
 
-      {/* Honest: there's no in-app CSP application yet — this step is a preview
-          so we don't fake a "submitted / connected" state. */}
-      <div className="flex items-start gap-2.5 rounded-lg bg-amber-soft p-3 text-sm text-amber-ink">
-        <Icon name="info" size={14} className="mt-0.5 shrink-0" />
-        <p>
-          You don't need CSP right now. You can keep provisioning tenants manually from
-          the Google Partner console, and quotes/invoices/renewals all work without it.
-          The option to connect CSP will live in <strong>Settings → Integrations</strong> later.
-        </p>
-      </div>
+      <IntegrationStatusLine
+        status={isLoading ? "checking" : g?.connected ? "done" : "todo"}
+        text={isLoading ? "Checking…"
+          : g?.connected ? "Connected"
+          : g?.code === "api_disabled" ? "Reseller API not enabled in Google Cloud"
+          : g?.code === "needs_reauth" ? "Log in with your reseller-admin Google account"
+          : "Not connected"}
+      />
+      <p className="text-sm text-ink-3">
+        You can skip this. Quotes, invoices and renewals all work without it.
+      </p>
     </div>
   );
 }
@@ -392,7 +479,7 @@ function StepImport({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {IMPORT_OPTIONS.map((opt) => {
           const active = data.importMode === opt.id;
           return (
@@ -435,7 +522,7 @@ function StepImport({
       </div>
 
       {data.importMode === "csv" && (
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-paper-2 p-3 text-sm text-ink-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-paper-2 p-3 text-sm text-ink-3">
           <span>📎 The importer has a downloadable template + Zoho/Tally header matching.</span>
           <Button
             variant="primary"
@@ -483,143 +570,6 @@ function StepImport({
   );
 }
 
-// ─── Step 5: Done ────────────────────────────────────────────────────────────
-
-type ChecklistItem = { label: string; status: "done" | "pending" | "todo"; note?: string };
-
-const NEXT_STEPS = [
-  "Send your first quote — open Quote Builder",
-  "Set up WhatsApp Business API for customer chat",
-  "Import your renewal calendar from existing system",
-  "Configure email templates in Automations",
-  "Invite your team — Sales rep, Accountant, Support",
-];
-
-function StepDone() {
-  const [checked, setChecked] = React.useState<Set<number>>(new Set());
-
-  // Derive the checklist from REAL state — never claim GSTIN/customers are done
-  // when they aren't (a "Start fresh" user hasn't imported anyone).
-  const { data: me } = useCurrentUser();
-  const { data: customers } = useCustomers();
-  const hasCustomers = (customers?.length ?? 0) > 0;
-  const gstinStatus: ChecklistItem["status"] =
-    me?.tenantGstinVerifiedAt ? "done" : me?.tenantGstin ? "pending" : "todo";
-
-  const doneChecklist: ChecklistItem[] = [
-    {
-      label: gstinStatus === "done" ? "Company GSTIN verified" : "Company GSTIN",
-      status: gstinStatus,
-      note: gstinStatus === "done" ? undefined
-        : gstinStatus === "pending" ? "Verify it in Settings → Company"
-        : "Add your GSTIN in Settings → Company",
-    },
-    { label: "GST tax invoice (PDF)", status: "done", note: "e-invoice IRN/QR coming later" },
-    { label: "Razorpay payments",     status: "todo", note: "Finish in Settings → Integrations" },
-    { label: "Google CSP API",        status: "pending", note: "Approval in 5–7 days" },
-    {
-      label: hasCustomers ? "Customers added" : "Add your customers",
-      status: hasCustomers ? "done" : "todo",
-      note: hasCustomers ? undefined : "Import a CSV or add your first customer",
-    },
-    { label: "WhatsApp Business API",  status: "todo", note: "Set up later" },
-  ];
-
-  return (
-    <div className="py-4 text-center">
-      {/* Rocket icon */}
-      <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full text-emerald-600"
-        style={{ background: "linear-gradient(135deg, #dcfce7 0%, #fef3c7 100%)", boxShadow: "0 12px 32px rgba(22,101,52,0.18)" }}>
-        <Icon name="rocket" size={36} />
-      </div>
-
-      <h2 className="font-serif text-3xl text-ink">You're all set.</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-3">
-        Your reseller workspace is live. Here's what's ready and what to do next.
-      </p>
-
-      {/* Status checklist */}
-      <div className="mx-auto mt-6 grid max-w-md grid-cols-2 gap-2.5 text-left">
-        {doneChecklist.map((it) => (
-          <div key={it.label} className="flex items-center gap-2 text-sm">
-            <span
-              className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white",
-                it.status === "done"    ? "bg-emerald-600"
-                  : it.status === "pending" ? "bg-amber"
-                  : "bg-hairline",
-              )}
-            >
-              <Icon
-                name={
-                  it.status === "done" ? "check" : it.status === "pending" ? "clock" : "plus"
-                }
-                size={10}
-              />
-            </span>
-            <div>
-              <p className="font-medium text-ink">{it.label}</p>
-              {it.note && (
-                <p className="text-xs text-ink-3">{it.note}</p>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Next-steps checklist */}
-      <div className="mx-auto mt-6 max-w-md rounded-xl border border-hairline bg-paper-2 p-4 text-left">
-        <p className="mb-3 text-3xs font-bold uppercase tracking-widest text-ink-3">
-          Suggested first week
-        </p>
-        <div className="space-y-2">
-          {NEXT_STEPS.map((t, i) => (
-            <label key={i} className="flex cursor-pointer items-center gap-2.5 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={checked.has(i)}
-                onChange={() =>
-                  setChecked((prev) => {
-                    const next = new Set(prev);
-                    next.has(i) ? next.delete(i) : next.add(i);
-                    return next;
-                  })
-                }
-                className="rounded border-hairline"
-              />
-              <span className={cn(checked.has(i) && "line-through text-ink-3")}>
-                {t}
-              </span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* CTAs */}
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        <Button variant="primary" asChild>
-          <Link href="/dashboard">
-            <Icon name="home" size={14} />
-            Open dashboard
-          </Link>
-        </Button>
-        <Button variant="default" asChild>
-          <Link href="/quotes/new">
-            <Icon name="file" size={14} />
-            Send first quote
-          </Link>
-        </Button>
-        <Button variant="ghost" asChild>
-          <Link href="/settings">
-            <Icon name="settings" size={14} />
-            Settings
-          </Link>
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SetupPage() {
@@ -636,10 +586,11 @@ export default function SetupPage() {
     invoiceCode:       "",
     contactName:       "",
     contactEmail:      "",
-    razorpayKey:       "",
-    razorpayConnected: false,
-    cspId:             "",
-    cspStage:          "intro",
+    upiVpa:            "",
+    bankName:          "",
+    accountName:       "",
+    accountNumber:     "",
+    ifsc:              "",
     importMode:        "csv",
   });
 
@@ -656,11 +607,18 @@ export default function SetupPage() {
       pinCode:      me.tenantPinCode    || d.pinCode,
       contactName:  me.tenantContactName || me.fullName || d.contactName,
       contactEmail: me.tenantEmail      || me.authEmail || d.contactEmail,
+      upiVpa:        me.tenantUpiVpa             || d.upiVpa,
+      bankName:      me.tenantRemitBankName      || d.bankName,
+      accountName:   me.tenantRemitAccountName   || d.accountName,
+      accountNumber: me.tenantRemitAccountNumber || d.accountNumber,
+      ifsc:          me.tenantRemitIfsc          || d.ifsc,
     }));
   }, [me]);
 
+  const [payError, setPayError] = React.useState<string | null>(null);
   const update = (k: keyof WizardData, v: string | boolean) => {
     if (k === "invoiceCode") setCodeError(null);
+    if (k === "upiVpa" || k === "bankName" || k === "accountName" || k === "accountNumber" || k === "ifsc") setPayError(null);
     setData((d) => ({ ...d, [k]: v }));
   };
 
@@ -695,6 +653,17 @@ export default function SetupPage() {
       toast.error("Choose your state", { description: "It decides IGST vs CGST + SGST on every invoice." });
       return;
     }
+    // R-260: optional UPI / bank — blank is fine, a wrong UPI ID or IFSC is not.
+    const payment = {
+      upiVpa: data.upiVpa, bankName: data.bankName, accountName: data.accountName,
+      accountNumber: data.accountNumber, ifsc: data.ifsc,
+    };
+    const payProblem = paymentDetailsProblem(payment);
+    if (payProblem) {
+      setPayError(payProblem);
+      toast.error("Check your payment details", { description: payProblem });
+      return;
+    }
     // R-259: save the invoice code first — if another business has it, stay on this step.
     const code = normalizeInvoiceCode(data.invoiceCode);
     if (code && codeState && !codeState.locked && code !== codeState.saved) {
@@ -718,6 +687,7 @@ export default function SetupPage() {
         pin_code:     data.pinCode.trim()      || null,
         contact_name: data.contactName.trim()  || null,
         email:        data.contactEmail.trim() || me?.tenantEmail || "",
+        ...paymentDetailsPatch(payment),
       });
       setStep((s) => Math.min(STEPS.length - 1, s + 1));
     } catch (e) {
@@ -725,33 +695,36 @@ export default function SetupPage() {
     }
   };
 
-  // On final Continue (Step 3 → Step 4) stamp setup_completed_at so the
-  // sidebar can hide the Wizard or mark it "Done".
+  // Reaching the Done screen — by Finish, Skip or the progress bar — stamps
+  // setup_completed_at so the dashboard's setup prompt closes (R-260).
   const finishSetup = async () => {
     try {
       await updateTenant.mutateAsync({
         setup_completed_at: new Date().toISOString(),
       });
-      setStep((s) => Math.min(STEPS.length - 1, s + 1));
     } catch {
-      // Non-fatal — let visitor see the "All set" screen even if stamping failed
-      setStep((s) => Math.min(STEPS.length - 1, s + 1));
+      // Non-fatal — useUpdateTenant already toasts the error; still show the Done screen.
     }
+    setStep(DONE_STEP);
   };
 
-  const next = () => {
-    if (step === 0) { void saveCompanyAndAdvance(); return; }
-    if (step === 3) { void finishSetup();           return; }
-    setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  const goTo = (target: number) => {
+    const move = wizardMove(step, target);
+    if (move === "save-company") { void saveCompanyAndAdvance(); return; }
+    if (move === "finish")       { void finishSetup();           return; }
+    setStep(Math.max(0, Math.min(STEPS.length - 1, target)));
   };
+  const next = () => goTo(step + 1);
   // R-250: Continue stays off on step 1 until a state is chosen (or a valid GSTIN gives one).
   const companyStateReady = resolveCompanyState(data.state, data.gstin) !== null;
   const back = () => setStep((s) => Math.max(0, s - 1));
-  const skip = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  // R-260: Skip on the last step used to bypass finishSetup — it now goes through goTo.
+  const skip = () => goTo(step + 1);
+  const busy = updateTenant.isPending || saveInvoiceCode.isPending;
 
   return (
     <div
-      className="min-h-screen px-6 py-10"
+      className="min-h-screen px-4 py-8 sm:px-6 sm:py-10"
       style={{
         background: "linear-gradient(180deg, var(--color-paper, #fff) 0%, var(--color-paper-2, #f9f9f9) 100%)",
       }}
@@ -791,8 +764,13 @@ export default function SetupPage() {
               <button
                 key={s.id}
                 type="button"
-                onClick={() => i <= step + 1 && !(step === 0 && i > 0 && !companyStateReady) && setStep(i)}
-                disabled={i > step + 1 || (step === 0 && i > 0 && !companyStateReady)}
+                aria-label={`Go to step ${i + 1}: ${s.label}`}
+                onClick={() => {
+                  if (i === step || i > step + 1 || (step === 0 && i > 0 && !companyStateReady)) return;
+                  if (i < step) { setStep(i); return; }
+                  goTo(i); // R-260: forward goes through the same save / finish rules as the buttons
+                }}
+                disabled={i > step + 1 || (step === 0 && i > 0 && !companyStateReady) || busy}
                 className={cn(
                   "h-1 rounded-full border-0 transition-colors",
                   i < step
@@ -845,8 +823,8 @@ export default function SetupPage() {
         </div>
 
         {/* ── Step content ── */}
-        <Card className="p-6">
-          {step === 0 && <StepCompany  data={data} update={update} codeState={codeState} codeError={codeError} />}
+        <Card className="p-4 sm:p-6">
+          {step === 0 && <StepCompany  data={data} update={update} codeState={codeState} codeError={codeError} payError={payError} />}
           {step === 1 && <StepImport   data={data} update={update} />}
           {step === 2 && <StepRazorpay />}
           {step === 3 && <StepCsp />}
@@ -855,28 +833,28 @@ export default function SetupPage() {
 
         {/* ── Footer actions ── */}
         {step < 4 && (
-          <div className="mt-5 flex items-center justify-between">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
             <Button
               variant="ghost"
               onClick={back}
-              disabled={step === 0}
+              disabled={step === 0 || busy}
             >
               <Icon name="arrow_left" size={14} />
               Back
             </Button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               {step > 0 && (
-                <Button variant="ghost" onClick={skip}>
-                  Skip for now
+                <Button variant="ghost" onClick={skip} disabled={busy}>
+                  {step === 3 ? "Skip and finish" : "Skip for now"}
                 </Button>
               )}
               <Button
                 variant="primary"
                 onClick={next}
-                loading={step === 0 && (updateTenant.isPending || saveInvoiceCode.isPending)}
-                disabled={step === 0 && ((updateTenant.isPending || saveInvoiceCode.isPending) || !companyStateReady)}
+                loading={busy}
+                disabled={busy || (step === 0 && !companyStateReady)}
               >
-                {step === 0 && (updateTenant.isPending || saveInvoiceCode.isPending)
+                {busy
                   ? "Saving…"
                   : step === 3 ? "Finish setup" : "Continue"}
                 <Icon name="arrow_right" size={14} />
@@ -887,8 +865,7 @@ export default function SetupPage() {
 
         {/* ── Trust footer ── */}
         <p className="mt-10 text-center text-xs text-ink-3">
-          Your data stays on your tenant · DPDP Act 2023 compliant · ISO 27001 in
-          progress
+          Your data stays in your own workspace. Change any of this later in Settings.
         </p>
       </div>
     </div>
