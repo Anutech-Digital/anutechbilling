@@ -53,6 +53,7 @@ MIGS=(
   "custrls|20261007233000_customer_rls_leaks.sql|resellersos_migration|(not exists(select 1 from pg_policy where polname in ('tenants_select_own_customer','quotes_select_own_customer','subscriptions_select_own_customer')) and exists(select 1 from pg_proc where proname='portal_my_tenant' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='current_customer_id' and pronamespace='public'::regnamespace and prosrc like '%R-395%'))"
   "fburgent|20261007234000_feedback_urgent.sql|resellersos_migration|(exists (select 1 from information_schema.columns where table_schema='public' and table_name='feedback' and column_name='urgent_at') and exists (select 1 from information_schema.columns where table_schema='public' and table_name='feedback' and column_name='urgent_by'))"
   "custrls2|20261007235000_customer_rls_payments_self.sql|resellersos_migration|(not exists(select 1 from pg_policy where polname in ('payments_select_own_customer','customers_select_self_customer')) and exists(select 1 from pg_proc where proname='portal_my_payments' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='portal_my_customer' and pronamespace='public'::regnamespace))"
+  "auditactor|20261007240000_audit_actor_admin_writes.sql|resellersos_migration|exists(select 1 from pg_proc where proname='audit_service_actor' and pronamespace='public'::regnamespace)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
