@@ -44,6 +44,7 @@ MIGS=(
   "credann|20261007123000_credit_annual_block_udyam.sql|resellersos_migration|(exists (select 1 from information_schema.columns where table_schema='public' and table_name='quotes' and column_name='credit_annual_override_reason') and exists (select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='udyam_number'))"
   "subbillpos|20261007130000_subscription_billing_place_of_supply.sql|resellersos_migration|exists(select 1 from pg_proc where proname='raise_subscription_billing' and prosrc like '%has no state (or GSTIN) on record%')"
   "vendcost|20261007140000_subscription_vendor_cost_from_line.sql|resellersos_migration|(exists(select 1 from pg_proc where proname='record_payment' and prosrc like '%v_cost_pm%') and exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%v_cost_pm%'))"
+  "creditsplit|20261007150000_credit_refuse_split_billing.sql|resellersos_migration|exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%billed in instalments%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
