@@ -61,6 +61,8 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   for m in "${MIGS[@]}"; do
     printf "   %s'%s=' || (%s)::text\n" "$sep" "$(field "$m" 1)" "$(field "$m" 4)"
   done
+  # apply() rewrites auth.uid() to these helpers — they must exist first (R-161).
+  echo "   ,'cuid=' || (exists(select 1 from pg_proc where proname='current_user_id' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='current_request_role' and pronamespace='public'::regnamespace))::text"
   echo '  ) INTO r;'
   echo "  RAISE EXCEPTION 'PEEK %', r; END \$\$;"
 } > "$TMP/peek-staging.sql"
@@ -91,10 +93,16 @@ say "2. What staging has now (read-only)"
 BEFORE="$(peek "$TMP/peek-staging.sql")"
 echo "$BEFORE"
 [ -n "$BEFORE" ] || { echo "Could not read staging — nothing changed. Send Claude a screenshot."; exit 1; }
+is_true "$BEFORE" cuid || { echo "Staging has no public.current_user_id()/current_request_role() (R-161) — nothing changed. Send Claude this screen."; exit 1; }
 
 apply() { # $1 = migration file name, $2 = db user
-  local f="$HERE/migrations/$1"
-  echo "-- applying $1 as $2"
+  # Staging runs R-161 (Auth.js + Prisma path): there auth.uid() is NULL and every function was
+  # rewritten to public.current_user_id() / current_request_role() (prisma 20261005120000_tenant_context).
+  # Today's files still say auth.uid(), so apply the same token rewrite here — STAGING ONLY. Both
+  # helpers fall back to auth.uid()/auth.role() for the PostgREST path, so nothing else changes.
+  local f="$TMP/$1"
+  sed -e 's/auth\.uid()/public.current_user_id()/g' -e 's/auth\.role()/public.current_request_role()/g' "$HERE/migrations/$1" > "$f"
+  echo "-- applying $1 as $2 (auth.uid/role -> current_user_id/current_request_role)"
   gcloud storage cp "$f" "$B/$1" --project="$P" -q >/dev/null
   if ! gcloud sql import sql "$I" "$B/$1" --database="$DB" --user="$2" --project="$P" --quiet; then
     echo; echo "STOPPED at $1. Files after it were NOT applied. (feedback_checked + salary_payments roll back whole; the others have no begin/commit and may be partly in — all are re-runnable, but Claude checks before any retry.)"
