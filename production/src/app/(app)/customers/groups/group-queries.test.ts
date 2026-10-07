@@ -92,6 +92,21 @@ describe("page wiring", () => {
     expect(src).toMatch(/useGroupMemberCounts\(\)/);
   });
 
+  /* R-359 (staging, 6 Oct: ~29 s even with zero groups): staging still ran the pre-R-222 page
+     (useCustomers = select * of every customer, 1000 rows a request, one after another).
+     The list page's two reads must stay slim AND start together — the counts never wait for
+     the groups (no `enabled` gate), and the page reads nothing else. */
+  it("list page starts its two slim reads at once — no waterfall, nothing else read", () => {
+    const src = read("page.tsx");
+    const queries = read("group-queries.ts");
+    const start = queries.indexOf("export function useGroupMemberCounts");
+    const countsHook = queries.slice(start).split(/\r?\n\}\r?\n/)[0];
+    expect(countsHook).not.toMatch(/enabled\s*:/);
+    const hooks = [...src.matchAll(/\b(use[A-Z]\w*)\(/g)].map((m) => m[1]);
+    expect(hooks.filter((h) => !["useRouter", "useState"].includes(h)).sort())
+      .toEqual(["useCustomerGroups", "useGroupMemberCounts"]);
+  });
+
   it("detail page reads this group's members and their MRR, not every customer + subscription", () => {
     const src = read("[id]/page.tsx");
     expect(src).not.toMatch(/useCustomers\(/);
