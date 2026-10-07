@@ -332,15 +332,17 @@ function AddSupportPlanDialog({
           className="space-y-4"
           onSubmit={(e) => { e.preventDefault(); void save(); }}
         >
-          <FormField label="Name" required>
+          <FormField label="Name" required htmlFor="support-add-name">
             <Input
+              id="support-add-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               error={touched && !nameOk ? "Enter a name." : undefined}
             />
           </FormField>
-          <FormField label={`Price (₹ ${per})`} required>
+          <FormField label={`Price (₹ ${per})`} required htmlFor="support-add-price">
             <Input
+              id="support-add-price"
               inputMode="numeric"
               prefix="₹"
               value={price}
