@@ -14,6 +14,8 @@ import { formatDate } from "@/lib/utils";
 import { parseFixedNote } from "@/lib/feedback/fixed-note";
 import { canQueue, dispatchSummary, type PlatformDispatchBody } from "@/lib/feedback/platform-dispatch";
 import type { PlatformFeedbackRow } from "@/lib/queries/feedback";
+import { isUrgent } from "@/lib/feedback/urgent";
+import { UrgentStrip, urgentAtOf } from "./urgent-toggle";
 
 type AiRow = Pick<PlatformFeedbackRow, "id" | "status" | "dispatched_at" | "resolution_note" | "resolved_at">;
 
@@ -26,6 +28,8 @@ function cardFor(row: AiRow): string | null {
 export function PlatformAiStatus({ row }: { row: AiRow }) {
   if (row.status === "agent_queued") {
     const card = cardFor(row);
+    /* R-397: "⚡ Urgent · AI worker has it · R-xxx". */
+    if (isUrgent(row)) return <UrgentStrip card={card} urgentAt={urgentAtOf(row)} className="inline-block text-2xs" />;
     return (
       <p data-testid="platform-ai-queued" className="mt-1 text-2xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1 inline-block">
         🤖 AI worker has it{card ? <> · card <b className="font-mono">{card}</b></> : null}

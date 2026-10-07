@@ -49,6 +49,8 @@ import {
 import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
 import { PlatformAiStatus, SendToAiButton, SendAllOpenButton } from "./platform-ai";
 import { RecheckTypeScore } from "./recheck";
+import { UrgentToggle, UrgentStrip, urgentAtOf } from "./urgent-toggle";
+import { isUrgent, mayMarkUrgent } from "@/lib/feedback/urgent";
 
 const STATUS_TABS: { id: string; label: string }[] = [
   { id: "open", label: "Open" },
@@ -216,7 +218,7 @@ function AiFixedStrip({ note, resolvedAt, pagePath }: { note: string; resolvedAt
   );
 }
 
-function FeedbackCard({ row, userId, meName, justFixed = false }: { row: FeedbackWithShots; userId: string | null; meName: string; justFixed?: boolean }) {
+function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = false }: { row: FeedbackWithShots; userId: string | null; meName: string; justFixed?: boolean; canUrgent?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const directiveRef = React.useRef<HTMLPreElement>(null);
   /* Copy failed: open the details and select the directive, after the panel has rendered. */
@@ -405,7 +407,9 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
             <AiFixedStrip note={row.resolution_note} resolvedAt={row.resolved_at} pagePath={row.page_path} />
           )}
           {/* R-356: a queued report says the AI worker has it, not just a chip. */}
-          {row.status === "agent_queued" && (
+          {/* R-397: an urgent report says so first — "⚡ Urgent · AI worker has it · R-xxx". */}
+          {row.status === "agent_queued" && isUrgent(row) && <UrgentStrip card={queuedCard} urgentAt={urgentAtOf(row)} />}
+          {row.status === "agent_queued" && !isUrgent(row) && (
             <p data-testid="ai-queued-strip" className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
               🤖 AI worker has it{queuedCard ? <> · card <b className="font-mono">{queuedCard}</b></> : null}
               {row.dispatched_at ? <> · queued {formatDate(row.dispatched_at, "relative")}</> : null}
@@ -455,6 +459,8 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
             Run AI Auto-Fix
           </Button>
         )}
+        {/* R-397: owner/manager (or platform owner) only; hidden until the urgent migration is applied. */}
+        {canUrgent && <UrgentToggle row={row} disabled={busy} />}
         {row.status === "fixed" ? (
           <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy} title="Copies a prompt: re-test this in a browser, fix it if still broken">
             <Icon name="copy" size={14} className="mr-1.5" />
@@ -749,7 +755,7 @@ export default function AdminFeedbackPage() {
       {!isLoading && !error && rows.length > 0 && (
         <div className="space-y-3">
           {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} justFixed={justFixed.has(row.id)} />
+            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} justFixed={justFixed.has(row.id)} canUrgent={Boolean(me?.isPlatformAdmin) || mayMarkUrgent(me?.role)} />
           ))}
         </div>
       )}
@@ -840,6 +846,8 @@ function PlatformFeedbackList({
               </div>
             )}
             <SendToAiButton row={r} />
+            {/* R-397: the platform owner may mark another workspace's report urgent. */}
+            <UrgentToggle row={r} className="mt-2 mr-2 py-0.5 text-2xs" />
             {r.directive && (
               <button
                 type="button"

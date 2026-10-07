@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { AGENT_CLAIMED_AT_COLUMN, isMissingColumnError } from "@/lib/feedback/auto-send";
+import { URGENT_AT_COLUMN, isUrgent, urgentFirst } from "@/lib/feedback/urgent";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,27 +42,30 @@ export async function GET(req: Request) {
      R-357: a report an AI card already took (agent_claimed_at set) is not handed out again.
      The claim column arrives with migration 20261007110000; until then the first read fails
      on the unknown column and the plain read runs — nothing can be claimed yet anyway. */
+  /* R-397: urgent reports first (urgent_at, migration 20261007234000), each with `urgent: true`.
+     Before that migration the urgent read fails on the unknown column and the R-357 read runs:
+     same list, same order as before. Urgent rows are ordered first in the DB too, so a long
+     queue cannot push one past FETCH. */
   const admin = createAdminClient();
-  const read = async (cols: string) => {
-    const { data, error } = await admin
-      .from("feedback")
-      .select(cols)
-      .eq("status", "agent_queued")
-      .order("dispatched_at", { ascending: true })
-      .limit(FETCH);
+  const read = async (cols: string, urgent: boolean) => {
+    let q = admin.from("feedback").select(cols).eq("status", "agent_queued");
+    if (urgent) q = q.order(URGENT_AT_COLUMN, { ascending: true, nullsFirst: false });
+    const { data, error } = await q.order("dispatched_at", { ascending: true }).limit(FETCH);
     return { rows: (data ?? []) as unknown as Array<Record<string, unknown>>, error };
   };
-  let res = await read(`${COLS}, ${AGENT_CLAIMED_AT_COLUMN}`);
-  if (res.error && isMissingColumnError(res.error)) res = await read(COLS);
+  let res = await read(`${COLS}, ${AGENT_CLAIMED_AT_COLUMN}, ${URGENT_AT_COLUMN}`, true);
+  if (res.error && isMissingColumnError(res.error)) res = await read(`${COLS}, ${AGENT_CLAIMED_AT_COLUMN}`, false);
+  if (res.error && isMissingColumnError(res.error)) res = await read(COLS, false);
   if (res.error) return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
 
-  const items = res.rows
-    .filter((r) => !r[AGENT_CLAIMED_AT_COLUMN])
+  const items = urgentFirst(res.rows.filter((r) => !r[AGENT_CLAIMED_AT_COLUMN]))
     .slice(0, LIMIT)
     .map((r) => {
-      const out = { ...r };
+      const urgent = isUrgent(r);
+      const out: Record<string, unknown> = { ...r };
       delete out[AGENT_CLAIMED_AT_COLUMN];
-      return out;
+      delete out[URGENT_AT_COLUMN];
+      return urgent ? { ...out, urgent: true } : out;
     });
 
   return NextResponse.json({ env: process.env.NEXT_PUBLIC_APP_ENV || "production", items });
