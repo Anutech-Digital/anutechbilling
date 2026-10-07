@@ -240,8 +240,9 @@ Mono, Anutech blue `#1668E3` (`site/site.css`). Built in DMS (`a40887b8`, `03d50
 - **Admin → Appearance in DMS** holds footer template, GSTIN and social links only; the Support widget
   and "Phone number (Call Us)" switches changed nothing and were removed (owner, 5 Oct 2026).
 Any new customer-facing email or screen in DMS follows this; never a separate DMS identity.
-The DMS repo's working branch for Pawan is `website-pawan` too (renamed from `pawan-api-system` on
-3 Oct 2026; the old branch is deleted).
+The DMS repo's working branch for Pawan is **`Pawan`** (renamed from `website-pawan` on 7 Oct 2026 to match
+the ResellerOS `Pawan` branch on Anutech-Digital/anutechbilling; before that `pawan-api-system`). The old
+branches are deleted.
 
 **The invoice PDF names each line's website and shows a settled invoice as paid** (3 Oct 2026,
 `add72978`; display only, no stored data changes). `lib/pdf/invoice-display.ts`, used by
