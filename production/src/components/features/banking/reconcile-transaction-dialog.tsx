@@ -67,6 +67,7 @@ import { useVendorBills } from "@/lib/queries/vendor-bills";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
+import { InvoiceCreditMatchSection } from "@/components/features/banking/invoice-credit-match-section";
 
 /** Sentinel option value for "+ Naya customer banao" in the customer select. */
 const NEW_CUSTOMER = "__new_customer__";
@@ -749,6 +750,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 </ul>
               )}
             </div>
+
+            {/* R-109: money for an invoice that is already raised but not yet marked paid —
+                one operator click records the payment and reconciles this line. */}
+            {isCredit && (
+              <InvoiceCreditMatchSection transaction={transaction} onDone={() => onOpenChange(false)} />
+            )}
 
             {/* Income from a sale — credit lines only. Most money-in with no
                 match is a customer paying for a sale that wasn't invoiced yet.
