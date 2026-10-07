@@ -63,6 +63,14 @@ const ADDED_FOR_OWNER = ["/marketing/indiamart"];
  *  guard bounced it to /leads), so this is a real, named grant — not a snapshot drift. */
 const ADDED_DEALS = ["/deals"];
 const DEALS_ROLES = ["owner", "manager", "sales", "sales_senior"];
+/** R-382 (7 Oct 2026, owner decision — Pardeep: "contact page ko sales tab me show karo"):
+ *  Contacts back in Sell, after Tasks, for the same roles as Tasks (owner, manager, sales;
+ *  sales_senior sees what sales sees). A real, named route grant; the guard matches by prefix,
+ *  so this one entry also admits /contacts/[id] (the "every page route" test checks it).
+ *  Not a snapshot drift: it had been removed from the menu on purpose on 10 Sep and the
+ *  guard bounced sales users. */
+const ADDED_7OCT_CONTACTS = ["/contacts"];
+const CONTACTS_ROLES = ["owner", "manager", "sales", "sales_senior"];
 /** 3 Oct 2026 — "koi bhi hidden link nahi rahna chahiye" (Pardeep): pages that existed but
  *  had no menu row, plus AI Entry / Packages / UX & UI Insights. Each at the roles the page
  *  was already built for. Real route grants (not only menu rows): billing → /ai-entry and
@@ -115,6 +123,7 @@ const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_FOR_OWNER_MANAGER : []),
   ...(role === "owner" ? ADDED_FOR_OWNER : []),
   ...(DEALS_ROLES.includes(role) ? ADDED_DEALS : []),
+  ...(CONTACTS_ROLES.includes(role) ? ADDED_7OCT_CONTACTS : []),
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
@@ -216,8 +225,10 @@ describe("2. structure", () => {
     const rows = APP_NAV.reduce((n, s) => n + s.items.length, 0);
     expect(rows).toBeGreaterThanOrEqual(35);
     // 46 since R-204 (6 Oct 2026): Orders (website) left Payments Received's accordion for its own Sell row.
-    expect(rows).toBeLessThanOrEqual(46);
-    for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(8);
+    // 47 since R-382 (7 Oct 2026): Contacts back in Sell — owner decision, one named row only.
+    expect(rows).toBeLessThanOrEqual(47);
+    // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
+    for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
   });
 
   it("lists every href exactly once (the old nav had 9 duplicates)", () => {

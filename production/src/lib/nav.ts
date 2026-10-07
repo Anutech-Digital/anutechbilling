@@ -365,7 +365,6 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
   "/vendor-portal": "Not built yet — the page says so",
-  "/contacts": "Removed from the menu on purpose (10 Sep 2026): people live on the customer or the lead",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -407,9 +406,12 @@ export const APP_NAV: NavSection[] = [
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
       { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
       { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"] },
-      /* Contacts is GONE from the nav entirely (10 Sep 2026): a customer's people live ON
-         the customer (migration 20260910100000); somebody who is not a customer yet is a
-         LEAD. */
+      /* Contacts — back in the menu 7 Oct 2026 (R-382, Pardeep: "contact page ko sales tab
+         me show karo"). Removed 10 Sep (people live on the customer or the lead), but the
+         page stayed and holds the Google Contacts sync, so it was reachable only by URL.
+         Same roles as Tasks (sales_senior sees what sales sees); the "/contacts" row
+         admits /contacts/[id] by prefix. */
+      { id: "contacts",        href: "/contacts",         label: "Contacts",      icon: "user",   roles: ["owner", "manager", "sales"], hint: "Every person across leads and customers" },
       {
         /* Marketing answers "where do leads come from and what does each cost" — owner/
            manager only, it shows ad spend and CAC. Fifteen sidebar rows became one: the
