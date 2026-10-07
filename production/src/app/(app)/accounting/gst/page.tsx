@@ -17,7 +17,7 @@
 
 import * as React from "react";
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -39,6 +39,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Term } from "@/components/shared/term";
 import { toIstDate } from "@/lib/dates/ist";
 import { gstLastMonth, gstThisMonth, gstThisQuarter, istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
+import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
 
 // ────────────────────────────────────────────────────────────────
 // Date range helpers — month default (most common GST filing cadence)
@@ -449,11 +450,26 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
 // Page
 // ────────────────────────────────────────────────────────────────
 
-const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter];
+/* R-257: "This FY" and "All to date" join the month/quarter chips — "All to date" is the
+   span the Accounting Overview "GST to pay" tile covers, so the tile lands on a lit chip. */
+const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter, () => gstThisFy(), () => gstAllToDate()];
 
+/* useSearchParams needs a Suspense boundary or the build refuses to prerender the page
+   (same as ledger/loans). */
 export default function GstReportPage() {
+  return (
+    <React.Suspense fallback={<div className="p-4 md:p-6 lg:p-8"><Skeleton className="h-8 w-48" /></div>}>
+      <GstReportInner />
+    </React.Suspense>
+  );
+}
+
+function GstReportInner() {
   const router = useRouter();
-  const [range, setRange] = React.useState<DateRange>(thisMonth());
+  const search = useSearchParams();
+  /* R-257: ?from=&to= opens the page on the range a link names (the Overview tile);
+     otherwise last month on the 1st–20th (the return being filed), this month after. */
+  const [range, setRange] = React.useState<DateRange>(() => gstRangeFromParams(search.get("from"), search.get("to")));
   const { data, isLoading } = useGstReport(range);
   const { data: taxPayments } = useTaxPayments();
   const gstPaidInRange = gstPaidForPeriods(taxPayments ?? [], range.from.slice(0, 7), range.to.slice(0, 7));
@@ -688,34 +704,48 @@ export default function GstReportPage() {
           rowLabel="bill/expense"
         />
         <Card className="p-4 md:p-5 border-2 border-amber/30 bg-amber-soft/20">
-          <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-            <Term k="net_liability">Net liability</Term>
-          </div>
-          {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
-            <>
-              <div className={`font-serif text-2xl md:text-3xl ${data && data.netLiability >= 0 ? "text-rose" : "text-emerald"}`}>
-                {data ? rupee(data.netLiability) : "—"}
-              </div>
-              <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
-                {data && data.netLiability >= 0
-                  ? "Payable to government via GSTR-3B"
-                  : "Refundable / carry-forward input tax credit"}
-              </div>
-              {/* GST already paid for these return months (booked from the bank). Shown
-                  only when some was paid, so an unpaid month still reads as plain "payable". */}
-              {data && gstPaidInRange > 0 && (
-                <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
-                  <div className="flex justify-between text-ink-2">
-                    <span>Paid for these months</span><span>− {rupee(gstPaidInRange)}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold text-ink">
-                    <span>{data.netLiability - gstPaidInRange >= 0 ? "Still to pay" : "Paid more than due"}</span>
-                    <span>{rupee(Math.abs(data.netLiability - gstPaidInRange))}</span>
-                  </div>
+          {/* R-257: the big number is what is LEFT to pay (net − GST already paid for these
+              months) — the same figure the Overview "GST to pay" tile shows, so tile and
+              headline agree. With nothing paid it is simply the net liability. The net and
+              the payment stay visible below as the working. Same figures as before, only
+              which one is the headline changed. */}
+          {(() => {
+            const paid = data ? gstPaidInRange : 0;
+            const left = data ? data.netLiability - paid : 0;
+            return (
+              <>
+                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
+                  {left < 0
+                    ? (paid > 0 ? "Paid more than due" : "GST credit")
+                    : paid > 0 ? "GST still to pay" : <Term k="net_liability">Net liability</Term>}
                 </div>
-              )}
-            </>
-          )}
+                {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
+                  <>
+                    <div className={`font-serif text-2xl md:text-3xl ${data && left >= 0 ? "text-rose" : "text-emerald"}`}>
+                      {data ? rupee(Math.abs(left)) : "—"}
+                    </div>
+                    <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
+                      {data && left >= 0
+                        ? "Payable to government via GSTR-3B"
+                        : "Refundable / carry-forward input tax credit"}
+                    </div>
+                    {/* GST already paid for these return months (booked from the bank). Shown
+                        only when some was paid, so an unpaid month still reads as plain "payable". */}
+                    {data && paid > 0 && (
+                      <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
+                        <div className="flex justify-between text-ink-2">
+                          <span><Term k="net_liability">Net liability</Term></span><span>{rupee(data.netLiability)}</span>
+                        </div>
+                        <div className="flex justify-between text-ink-2">
+                          <span>Paid for these months</span><span>− {rupee(paid)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </Card>
       </div>
 

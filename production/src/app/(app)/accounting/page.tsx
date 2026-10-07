@@ -33,6 +33,8 @@ import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { gstAllToDateHref } from "./gst/range";
 import { LoadErrorBanner } from "@/components/shared/load-error";
 import { cn, rupee } from "@/lib/utils";
 import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
@@ -118,7 +120,31 @@ export default function AccountingOverviewPage() {
       a.creditCardPayable + a.emiLoansPayable + a.businessLoansPayable
     : 0;
   const gstDue = a?.gstPayable ?? 0;
-  const fyLabel = a?.fyLabel ?? "";
+  /* R-257: every tile opens something whose headline is the tile's number.
+     • GST: gstPayable is CUMULATIVE (all returns to date, net of GST paid — migration
+       20261006140000), not "this FY" as the old label said, and plain /accounting/gst
+       opened on the current month. The link now opens the page on "All to date", where
+       the headline ("GST still to pay" / "Net liability") is the same figure.
+     • Owed to you / You owe: no single page carries these sums (Aging is invoices only;
+       Expenses is not loans or salary), so the tile opens its own breakdown — headline =
+       tile total, one line per part, each linking to the page that holds it (same lines
+       and links as the Balance Sheet). */
+  const gstHref = React.useMemo(() => gstAllToDateHref(), []);
+  const owedLines: BreakdownLine[] = a ? [
+    { label: "Unpaid invoices", amount: a.receivables, href: "/invoices" },
+    { label: "Project sales, unpaid", amount: a.projectReceivable, href: "/invoices" },
+    { label: "TDS receivable", amount: a.tdsReceivable, href: "/accounting/tds-receivable" },
+    { label: "Employee loans / advances", amount: a.employeeLoans, href: "/accounting/loans" },
+  ] : [];
+  const oweLines: BreakdownLine[] = a ? [
+    { label: "Unpaid vendor bills", amount: a.payables, href: "/accounting/bills" },
+    { label: "Salary payable", amount: a.salaryPayable, href: "/accounting/payroll" },
+    { label: "Statutory dues (TDS, PF, ESI)", amount: a.salaryDuesPayable, href: "/accounting/payroll" },
+    { label: "Reimbursements payable", amount: a.reimbursementsPayable, href: "/accounting/reimbursements" },
+    { label: "Credit cards", amount: a.creditCardPayable, href: "/accounting/banking" },
+    { label: "EMI / asset loans", amount: a.emiLoansPayable, href: "/accounting/assets" },
+    { label: "Bank / business loans", amount: a.businessLoansPayable, href: "/accounting/business-loans" },
+  ] : [];
 
   /* The two alerts the four folders genuinely do NOT cover, kept as a thin strip above
      them rather than folded in:
@@ -147,11 +173,13 @@ export default function AccountingOverviewPage() {
         <HeroKpi label="Cash & bank" value={cash} tone={cash < 0 ? "rose" : "emerald"} loading={loading}
           hint={unbanked > 0 ? `Includes ${rupee(unbanked)} received, not yet in bank` : "Money you actually have"} href="/accounting/banking" />
         <HeroKpi label="Owed to you" value={owedToYou} tone="amber" loading={loading}
-          hint="Receivables + advances" href="/accounting/aging" />
+          hint="Invoices, projects, TDS, staff loans" breakdown={owedLines} />
         <HeroKpi label="You owe" value={youOwe} tone={youOwe > 0 ? "rose" : "ink"} loading={loading}
-          hint={salaryHidden ? "Payables, loans, GST-side · salary not shown for your role" : "Payables, salary, loans, GST-side"} href="/accounting/expenses" />
-        <HeroKpi label={`GST due · ${fyLabel}`} value={gstDue} tone={gstDue > 0 ? "rose" : "emerald"} loading={loading}
-          hint="Net output − input, before filing" href="/accounting/gst" />
+          hint={salaryHidden ? "Bills, loans, cards · salary not shown for your role" : "Bills, salary, dues, loans, cards"} breakdown={oweLines} />
+        {/* Shown unsigned, like the GST page headline: a negative net is a credit, and the
+            label says so rather than a minus sign. */}
+        <HeroKpi label={gstDue < 0 ? "GST credit" : "GST to pay"} value={Math.abs(gstDue)} tone={gstDue > 0 ? "rose" : "emerald"} loading={loading}
+          hint="All returns to date, after GST paid" href={gstHref} />
       </div>
 
       <BooksLockCard />
@@ -203,7 +231,9 @@ export default function AccountingOverviewPage() {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         {MONEY_FOLDERS.map((f) => (
-          <MoneyFolderCard key={f.id} folder={f} state={inbox[f.id]} loading={inboxLoading} />
+          /* R-257: the GST folder shows the same cumulative figure as the GST tile, so it
+             opens the same "All to date" range. */
+          <MoneyFolderCard key={f.id} folder={f.id === "gst" ? { ...f, href: gstHref } : f} state={inbox[f.id]} loading={inboxLoading} />
         ))}
       </div>
 
@@ -299,22 +329,63 @@ function toneText(t: Tone) {
   return t === "rose" ? "text-rose" : t === "amber" ? "text-amber-ink" : t === "indigo" ? "text-indigo" : t === "emerald" ? "text-emerald" : "text-ink-2";
 }
 
-function HeroKpi({ label, value, tone, hint, href, loading }: {
-  label: string; value: number; tone: Tone; hint: string; href: string; loading: boolean;
+type BreakdownLine = { label: string; amount: number; href: string };
+
+/**
+ * A hero tile. With `href` it is a link; with `breakdown` it opens a panel whose headline is
+ * the tile's own number and whose lines are its parts (R-257) — so the click never lands on
+ * a page showing a different figure. Zero lines are left out; the total is the tile value
+ * as computed above, never re-added here.
+ */
+function HeroKpi({ label, value, tone, hint, href, breakdown, loading }: {
+  label: string; value: number; tone: Tone; hint: string; href?: string; breakdown?: BreakdownLine[]; loading: boolean;
 }) {
+  const body = (
+    <Card className="p-3.5 h-full hover:border-hairline-strong transition-colors group text-left">
+      <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1 truncate">{label}</div>
+      {loading ? <Skeleton className="h-8 w-24" /> : (
+        <div className={`font-serif text-2xl md:text-[28px] leading-none ${toneText(tone)}`}>{rupee(value)}</div>
+      )}
+      <div className="text-xs text-ink-3 mt-1.5 flex items-center gap-1">
+        {hint}
+        <Icon name={breakdown ? "chevron_down" : "arrow_right"} size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+    </Card>
+  );
+  if (!breakdown) return <Link href={(href ?? "/accounting") as never}>{body}</Link>;
+  const lines = breakdown.filter((l) => l.amount !== 0);
   return (
-    <Link href={href as never}>
-      <Card className="p-3.5 h-full hover:border-hairline-strong transition-colors group">
-        <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1 truncate">{label}</div>
-        {loading ? <Skeleton className="h-8 w-24" /> : (
-          <div className={`font-serif text-2xl md:text-[28px] leading-none ${toneText(tone)}`}>{rupee(value)}</div>
-        )}
-        <div className="text-xs text-ink-3 mt-1.5 flex items-center gap-1">
-          {hint}
-          <Icon name="arrow_right" size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" aria-label={`${label}: ${rupee(value)} — show breakdown`}
+          className="block h-full w-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+          {body}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-0">
+        <div className="px-4 pt-3 pb-2 border-b border-hairline">
+          <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">{label}</div>
+          <div className={`font-serif text-2xl leading-tight tabular-nums ${toneText(tone)}`}>{rupee(value)}</div>
         </div>
-      </Card>
-    </Link>
+        {lines.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-ink-3">Nothing here right now.</p>
+        ) : (
+          <ul className="py-1">
+            {lines.map((l) => (
+              <li key={l.label}>
+                <Link href={l.href as Route}
+                  className="flex items-center justify-between gap-3 px-4 py-2 text-[13px] hover:bg-paper-2/60 focus-visible:bg-paper-2/60 focus-visible:outline-none">
+                  <span className="text-ink-2 min-w-0">{l.label}</span>
+                  <span className="flex items-center gap-1 font-mono tabular-nums text-ink shrink-0">
+                    {rupee(l.amount)} <Icon name="arrow_right" size={12} className="text-ink-3" />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
