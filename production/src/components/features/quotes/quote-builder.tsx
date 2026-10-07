@@ -71,6 +71,7 @@ import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
+import { canEditSupportCatalog } from "@/lib/support/catalog-row";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
@@ -2572,6 +2573,11 @@ export function QuoteBuilder() {
                 cycleLabel: line.commitment === "monthly" ? "per year, billed monthly" : "per year",
               } : null}
               onRemove={line ? () => removeLine(line.id) : undefined}
+              /* R-364: owner/manager (who can open Catalog & Products) get "Add to catalog"
+                 on a missing plan; everyone else keeps the "ask an owner" line. */
+              catalogAccess={currentUser && canEditSupportCatalog(currentUser.role)
+                ? { tenantId: currentUser.tenantId, tenantName: currentUser.tenantName }
+                : null}
             />
           );
           if (!hasProductSupport || line) return picker;

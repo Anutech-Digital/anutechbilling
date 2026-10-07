@@ -21,7 +21,17 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { FormField } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { cn, rupee } from "@/lib/utils";
+import { useCreateItem } from "@/lib/queries/items";
+import {
+  isValidSupportPrice, knownSupportPrice, supportCatalogName, supportCatalogRow,
+  supportLineRate, supportRowPrice,
+} from "@/lib/support/catalog-row";
 import {
   SUPPORT_TIERS, annualSaving, findSupportSku, supportPrice,
   type SupportTier,
@@ -57,21 +67,42 @@ export interface SupportPlanPickerProps {
   selected?: { name: string; annualRate: number; cycleLabel: string } | null;
   /** Take the support line off the quote. */
   onRemove?: () => void;
+  /**
+   * R-364: set only when the signed-in role may edit the catalogue
+   * (canEditSupportCatalog). A missing plan then gets an "Add to catalog" button
+   * instead of only a red line. Absent = no button: the catalogue is not theirs to change.
+   */
+  catalogAccess?: { tenantId: string; tenantName: string | null } | null;
 }
 
-/** What a tier costs on the chosen cycle, expressed the way a quote line wants it. */
-function annualRateFor(tier: SupportTier, cycle: Cycle): number {
-  /* A quote line's `rate` is the ANNUAL figure whatever the billing frequency
-     (database.types.ts:1010). For a monthly plan that is twelve months of it; for a
-     yearly plan it is the discounted total, used as-is. */
-  return cycle === "yearly" ? tier.annualTotal : supportPrice(tier, "monthly") * 12;
-}
-
-export function SupportPlanPicker({ items, onAdd, selected, onRemove }: SupportPlanPickerProps) {
+export function SupportPlanPicker({ items, onAdd, selected, onRemove, catalogAccess }: SupportPlanPickerProps) {
   const [cycle, setCycle] = React.useState<Cycle>("yearly");
   /* "Change" reopens the cards without removing the line — the operator is choosing, not
      yet deciding, and taking their plan away mid-thought would be its own small betrayal. */
   const [changing, setChanging] = React.useState(false);
+  /* R-364: the plan whose "Add to catalog" dialog is open, if any. */
+  const [creating, setCreating] = React.useState<{ tier: SupportTier; cycle: Cycle } | null>(null);
+
+  /* One place that puts a plan on the quote — used by "Add to quote" and right after
+     "Add to catalog", so both write the same line. A quote line's `rate` is the ANNUAL
+     figure whatever the billing frequency (database.types.ts); the catalogue row's own
+     price wins over the tier definition (supportLineRate). */
+  const addPlan = (tier: SupportTier, planCycle: Cycle, sku: Pick<Item, "id" | "name" | "msrp" | "prices">) => {
+    /* Changing plan removes the old line first, so the quote never carries
+       two support plans — a quote with both Standard and Enterprise on it
+       is not a choice the customer made. */
+    if (changing && onRemove) onRemove();
+    onAdd({
+      id:        `sup-${tier.id}-${planCycle}-${Date.now()}`,
+      item_id:   sku.id,
+      name:      sku.name,
+      qty:       1,
+      rate:      supportLineRate(sku, tier, planCycle),
+      cost:      0,
+      commitment: planCycle === "yearly" ? "annual_yearly" : "monthly",
+    });
+    setChanging(false);
+  };
 
   /* ── DECIDED: one line, not three cards ─────────────────────────────────── */
   if (selected && !changing) {
@@ -139,8 +170,10 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove }: SupportP
         {SUPPORT_TIERS.map((tier) => {
           const sku    = findSupportSku(items, tier.id, cycle);
           const saving = annualSaving(tier);
-          const rate   = annualRateFor(tier, cycle);
           const isFree = tier.monthly === 0 && tier.annualTotal === 0;
+          /* The catalogue row's price when there is one, so the card shows what the
+             quote line will carry (R-364: a price typed in "Add to catalog" is real). */
+          const shownPrice = (sku ? supportRowPrice(sku, cycle) : null) ?? supportPrice(tier, cycle);
 
           return (
             <div key={tier.id} className="rounded-lg border border-hairline p-3">
@@ -155,7 +188,7 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove }: SupportP
               </div>
 
               <p className="mb-1.5 font-serif text-lg tabular-nums text-ink">
-                {isFree ? "Free" : rupee(supportPrice(tier, cycle))}
+                {isFree ? "Free" : rupee(shownPrice)}
                 {!isFree && (
                   <span className="ml-1 text-2xs font-sans text-ink-3">
                     {cycle === "yearly" ? "/yr" : "/mo"}
@@ -195,33 +228,34 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove }: SupportP
                   Included by default — nothing to add to a quote.
                 </p>
               ) : !sku ? (
-                /* Never fall back to a price computed here. If the row is missing the
-                   catalogue is what needs fixing, and saying so is the next step. */
-                <p className="text-2xs leading-snug text-rose">
-                  Not in your catalogue yet. Add it under Catalog &amp; Products, then
-                  it can go on a quote.
-                </p>
+                /* Never quote a plan the catalogue does not hold. If the row is missing the
+                   catalogue is what needs fixing — R-364: and for someone who may edit it,
+                   fixing it is one click here rather than a trip to another page. */
+                catalogAccess ? (
+                  <div className="space-y-1.5">
+                    <p className="text-2xs leading-snug text-ink-3">Not in your catalogue yet.</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      icon="plus"
+                      className="w-full justify-center"
+                      onClick={() => setCreating({ tier, cycle })}
+                    >
+                      Add to catalog
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-2xs leading-snug text-rose">
+                    Not in your catalogue yet. Ask an owner or manager to add it under
+                    Catalog &amp; Products, then it can go on a quote.
+                  </p>
+                )
               ) : (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="w-full justify-center"
-                  onClick={() => {
-                    /* Changing plan removes the old line first, so the quote never carries
-                       two support plans — a quote with both Standard and Enterprise on it
-                       is not a choice the customer made. */
-                    if (changing && onRemove) onRemove();
-                    onAdd({
-                      id:        `sup-${tier.id}-${cycle}-${Date.now()}`,
-                      item_id:   sku.id,
-                      name:      sku.name,
-                      qty:       1,
-                      rate,
-                      cost:      0,
-                      commitment: cycle === "yearly" ? "annual_yearly" : "monthly",
-                    });
-                    setChanging(false);
-                  }}
+                  onClick={() => addPlan(tier, cycle, sku)}
                 >
                   {changing ? "Use this plan" : "Add to quote"}
                 </Button>
@@ -230,6 +264,101 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove }: SupportP
           );
         })}
       </div>
+
+      {creating && catalogAccess && (
+        <AddSupportPlanDialog
+          tier={creating.tier}
+          cycle={creating.cycle}
+          access={catalogAccess}
+          onClose={() => setCreating(null)}
+          onCreated={(row) => {
+            setCreating(null);
+            addPlan(creating.tier, creating.cycle, row);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * R-364 — create a missing support plan in the catalogue, then put it on the quote.
+ *
+ * Reuses useCreateItem (the catalogue page's own mutation: stamps the caller's tenant,
+ * RLS refuses any other, errors go through toastError). Name is prefilled the way the
+ * seed names it; the price is prefilled only from SUPPORT_TIERS — the definition the
+ * seed itself used — and is required, whole rupees, editable.
+ */
+function AddSupportPlanDialog({
+  tier, cycle, access, onClose, onCreated,
+}: {
+  tier: SupportTier;
+  cycle: Cycle;
+  access: { tenantId: string; tenantName: string | null };
+  onClose: () => void;
+  onCreated: (row: Item) => void;
+}) {
+  const create = useCreateItem();
+  const known  = knownSupportPrice(tier, cycle);
+  const [name, setName]   = React.useState(() => supportCatalogName(tier, cycle, access.tenantName));
+  const [price, setPrice] = React.useState(() => (known === null ? "" : String(known)));
+  const [touched, setTouched] = React.useState(false);
+
+  const priceOk = isValidSupportPrice(price);
+  const nameOk  = name.trim().length > 0;
+  const per     = cycle === "yearly" ? "per year" : "per month";
+
+  const save = async () => {
+    setTouched(true);
+    if (!priceOk || !nameOk || create.isPending) return;
+    try {
+      const row = await create.mutateAsync(
+        supportCatalogRow({ tier, cycle, tenantId: access.tenantId, name, price: Number(price.trim()) }),
+      );
+      onCreated(row);
+    } catch {
+      /* useCreateItem already showed the reason via toastError; the dialog stays open. */
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="md:!max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add {tier.label} support ({cycle === "yearly" ? "Yearly" : "Monthly"}) to catalog</DialogTitle>
+          <DialogDescription>{tier.summary}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => { e.preventDefault(); void save(); }}
+        >
+          <FormField label="Name" required>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              error={touched && !nameOk ? "Enter a name." : undefined}
+            />
+          </FormField>
+          <FormField label={`Price (₹ ${per})`} required>
+            <Input
+              inputMode="numeric"
+              prefix="₹"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              onBlur={() => setTouched(true)}
+              placeholder="Whole rupees"
+              error={touched && !priceOk ? "Enter a price in whole rupees, above ₹0." : undefined}
+              helper={known !== null ? "Your standard price for this plan. Change it if you charge differently." : undefined}
+            />
+          </FormField>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={create.isPending} disabled={!priceOk || !nameOk}>
+              Add to catalog and quote
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
