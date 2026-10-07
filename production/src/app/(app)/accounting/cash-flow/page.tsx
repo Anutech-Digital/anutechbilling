@@ -24,7 +24,8 @@ import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { Icon } from "@/components/ui/icon";
 import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-month-sheet";
-import { cashFlowByActivity, type CashFlowTxn } from "@/lib/accounting/cash-flow-lines";
+import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
+import { loadCashFlow, type CashFlowData } from "./load";
 import { monthRows, runway as computeRunway, type MonthRow } from "@/lib/accounting/cash-flow-summary";
 import { utcDateISO } from "@/lib/dates/ist";
 
@@ -52,43 +53,8 @@ function useCashFlow(range: RangeKey) {
   const { from, to } = rangeBounds(range);
   return useQuery({
     queryKey: ["cash-flow", { from, to }],
-    /* The whole line, not just amounts: the month drill-down lists these same rows,
-       so its totals are the row's totals by construction. */
-    queryFn: async (): Promise<{ lines: CashFlowTxn[]; balanceBefore: number }> => {
-      const supabase = createClient();
-      /* The balance the first month starts from: every account's opening balance plus
-         every line dated before the range — the same sum bank_account_current_balance()
-         makes, so the last month ends on the bank's own balance. */
-      const [{ data: accts, error: aErr }, { data: before, error: bErr }] = await Promise.all([
-        supabase.from("bank_accounts").select("opening_balance"),
-        from
-          ? supabase.from("bank_transactions").select("credit, debit").lt("txn_date", from)
-          : Promise.resolve({ data: [] as { credit: number | null; debit: number | null }[], error: null }),
-      ]);
-      if (aErr) throw aErr;
-      if (bErr) throw bErr;
-      const balanceBefore = (accts ?? []).reduce((s, a) => s + (a.opening_balance ?? 0), 0)
-        + (before ?? []).reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
-
-      let q = supabase
-        .from("bank_transactions")
-        .select("id, bank_account_id, txn_date, description, debit, credit, matched_to_type, category");
-      if (from) q = q.gte("txn_date", from);
-      if (to)   q = q.lte("txn_date", to);
-      const { data, error } = await q;
-      if (error) throw error;
-      const lines = (data ?? []).map((t) => ({
-        id: t.id,
-        bank_account_id: t.bank_account_id,
-        txn_date: t.txn_date,
-        description: t.description ?? null,
-        debit: t.debit ?? 0,
-        credit: t.credit ?? 0,
-        matched_to_type: t.matched_to_type ?? null,
-        category: t.category ?? null,
-      }));
-      return { lines, balanceBefore };
-    },
+    /* Every row, past PostgREST's 1000-row cap (R-265) — cash-flow/load.ts. */
+    queryFn: (): Promise<CashFlowData> => loadCashFlow(createClient(), from, to),
   });
 }
 

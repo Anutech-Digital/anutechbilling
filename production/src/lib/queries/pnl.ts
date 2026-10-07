@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
 import { assemblePnl, type PnLNumbers, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 
 export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
@@ -36,44 +37,38 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
 
-      const [
-        rpc,
-        { data: subs, error: sErr },
-        { data: labourRows, error: lErr },
-        { data: emps, error: empErr },
-        { data: projects, error: prErr },
-      ] = await Promise.all([
+      /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
+         at PostgREST's 1000-row cap and the subscription cost / project cost would silently
+         cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
+      const [rpc, subs, labourRows, emps, projects] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
            `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
            to claim a 100% gross margin. The subscriptions carry the cost; lib/accounting/
            pnl.ts prorates it by how long each ran inside the window and labels the basis,
            so an estimate never renders as a fact. */
-        supabase.from("subscriptions")
-          .select("vendor, seats, mrr, start_date, renewal_date, item_id, status")
-          .neq("status", "cancelled"),
+        fetchAllRows((a, b) => supabase.from("subscriptions")
+          .select("id, vendor, seats, mrr, start_date, renewal_date, item_id, status")
+          .neq("status", "cancelled")
+          .order("id").range(a, b)),
         /* ── PROJECT DELIVERY COST — salary spent building customers' software ──
            project_labour says who worked on which project; that salary moves from operating
            expenses into cost of goods — moved, never added (lib/accounting/project-cost.ts). */
-        supabase.from("project_labour").select("project_id, employee_id, percent, months, start_date, end_date"),
-        supabase.from("employees").select("id, name, monthly_gross"),
-        supabase.from("project_sales").select("id, title, customer_name, start_date"),
+        fetchAllRows((a, b) => supabase.from("project_labour")
+          .select("id, project_id, employee_id, percent, months, start_date, end_date")
+          .order("id").range(a, b)),
+        fetchAllRows((a, b) => supabase.from("employees").select("id, name, monthly_gross").order("id").range(a, b)),
+        fetchAllRows((a, b) => supabase.from("project_sales").select("id, title, customer_name, start_date").order("id").range(a, b)),
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      if (sErr) throw sErr;
-      if (lErr) throw lErr;
-      if (empErr) throw empErr;
-      if (prErr) throw prErr;
 
-      const itemIds = [...new Set((subs ?? []).map((s) => s.item_id).filter((id): id is string => !!id))];
-      const { data: items, error: itErr } = itemIds.length
-        ? await supabase.from("items").select("id, wholesale").in("id", itemIds)
-        : { data: [] as { id: string; wholesale: number | null }[], error: null };
-      if (itErr) throw itErr;
-      const wholesaleById = new Map((items ?? []).map((i) => [i.id, i.wholesale ?? 0]));
+      const itemIds = [...new Set(subs.map((s) => s.item_id).filter((id): id is string => !!id))];
+      const items = await fetchAllRowsIn(itemIds, (ids, a, b) =>
+        supabase.from("items").select("id, wholesale").in("id", ids).order("id").range(a, b));
+      const wholesaleById = new Map(items.map((i) => [i.id, i.wholesale ?? 0]));
 
       const vendors = vendorsFromSubscriptions(
-        (subs ?? []).map((s) => ({
+        subs.map((s) => ({
           vendor: String(s.vendor ?? "other"),
           seats: s.seats ?? 0,
           mrr: s.mrr ?? 0,
@@ -86,10 +81,10 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
 
       return assemblePnl(range, row, {
         vendors,
-        allocations: (labourRows ?? []).map((l) => ({ ...l, percent: Number(l.percent), months: Number(l.months) })),
-        monthlyGross: new Map((emps ?? []).map((e) => [e.id, e.monthly_gross ?? 0])),
-        projects: projects ?? [],
-        employeeNames: new Map((emps ?? []).map((e) => [e.id, e.name])),
+        allocations: labourRows.map((l) => ({ ...l, percent: Number(l.percent), months: Number(l.months) })),
+        monthlyGross: new Map(emps.map((e) => [e.id, e.monthly_gross ?? 0])),
+        projects,
+        employeeNames: new Map(emps.map((e) => [e.id, e.name])),
       });
     },
   });
