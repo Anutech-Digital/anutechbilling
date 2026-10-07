@@ -63,6 +63,7 @@ import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board
 import { LeadsNoResults, LeadsStatusStates } from "@/components/features/leads/leads-empty-states";
 import { LeadsHeaderBar } from "@/components/features/leads/leads-header-bar";
 import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs";
+import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 /* Page parts live in components/features/leads/ and the rules that pick rows in
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
@@ -322,15 +323,9 @@ function LeadsPageInner() {
       router.push((lead.project_id ? `/projects/${lead.project_id}` : `${pathname}?projectQuote=${lead.id}`) as never);
       return;
     }
-    const params = new URLSearchParams();
-    params.set("leadId",  lead.id);
-    params.set("company", lead.company);
-    if (lead.plan)          params.set("plan",  lead.plan);
-    if (lead.seats != null) params.set("seats", String(lead.seats));
-    if (lead.contact_name)  params.set("contact", lead.contact_name);
-    if (lead.contact_email) params.set("email", lead.contact_email);
-    if (lead.contact_phone) params.set("phone", lead.contact_phone);
-    router.push(`/quotes/new?${params.toString()}` as never);
+    /* R-389 (F5): lead id + plan/seats only — the builder loads company and contact from
+       the lead, so the customer's email and phone never go into the URL. */
+    router.push(leadQuoteHref(lead) as never);
   }, [router, pathname]);
 
   // ── Leads vs Deals split ────────────────────────────────────────────────
