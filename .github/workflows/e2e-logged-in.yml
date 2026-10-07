@@ -15,19 +15,24 @@ name: E2E (logged-in)
 #   2. This one needs secrets and a live site. ci.yml must stay runnable on a fork
 #      and on a branch nobody has configured.
 #
-# ─── IT FAILS WHEN IT CANNOT TEST. THAT IS THE FEATURE ───────────────────────
+# ─── NOT CONFIGURED = A LABELLED SKIP, NEVER A GREEN-BUT-EMPTY RUN ───────────
 # Every logged-in spec calls test.skip() when its role password is missing, and
 # Playwright reports skips as a green run — "8 passed, 70 skipped" looks like a tick.
-# e2e/suite-health.spec.ts exists to make that impossible locally, and the preflight
-# below does the same thing here, earlier and with the variable names spelled out.
-#
-# So until the secrets are added this workflow is RED, deliberately. A skipped or
-# green-but-empty run is the outcome this whole file exists to prevent. If the noise
-# is unwanted before then, DISABLE the workflow in the Actions tab — do not make it
-# pass quietly.
+# e2e/suite-health.spec.ts exists to make that impossible, and the preflight below
+# (e2e/fixtures/ci-preflight.mjs) decides BEFORE Playwright is even installed:
+#   refuse  a target is production         → red, always
+#   skip    no secret set at all           → job ends at preflight with a ::notice::
+#                                            and a step summary naming every missing
+#                                            secret; no step after it runs
+#   fail    some secrets set, some missing → red (a half-done setup must not hide)
+#   ok      all set                        → seed + suite run against the target
+# R-058 (7 Oct 2026): this used to go RED on every push while unconfigured — a
+# permanent red X on every commit that hid the real failures beside it. The skip is
+# loud (notice + summary), not a pass: nothing after preflight runs.
 #
 # ─── SECRETS AND VARIABLES A HUMAN MUST ADD (no AI can, and none should) ─────
-#   vars.E2E_BASE_URL                      the test site, e.g. https://reseller<os>-test-….run.app
+#   vars.E2E_BASE_URL                      optional — default is STAGING,
+#                                          https://resellersos-staging-njvk4nxhdq-as.a.run.app
 #   secrets.E2E_SUPABASE_URL               the test site's Supabase (data plane) URL
 #   secrets.E2E_SUPABASE_ANON_KEY          its anon key
 #   secrets.E2E_SUPABASE_SERVICE_ROLE_KEY  seed only — creates the four users
@@ -74,10 +79,13 @@ jobs:
           cache: npm
           cache-dependency-path: production/package-lock.json
 
-      # ── Preflight: say what is missing BEFORE anything looks green ──────────
+      # ── Preflight: refuse prod, SKIP if unconfigured, fail if half set up ──────
       # Names only, never values. Runs before `npm ci` so a misconfigured repo gets
-      # its answer in seconds instead of after a three-minute install.
+      # its answer in seconds. Logic + tests: e2e/fixtures/ci-preflight.mjs and
+      # tests/e2e-ci-preflight.test.ts. Outputs: configured (true|false), base_url
+      # (vars.E2E_BASE_URL, else staging) — every later step is gated on configured.
       - name: Preflight — required configuration
+        id: preflight
         env:
           E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
@@ -87,56 +95,20 @@ jobs:
           E2E_MANAGER_PASSWORD: ${{ secrets.E2E_MANAGER_PASSWORD }}
           E2E_SALES_PASSWORD: ${{ secrets.E2E_SALES_PASSWORD }}
           E2E_ACCOUNTANT_PASSWORD: ${{ secrets.E2E_ACCOUNTANT_PASSWORD }}
-        run: |
-          node --input-type=module -e '
-            const { E2E_ROLES, missingEnvFor, productionHostReason } =
-              await import("./e2e/fixtures/e2e-roles.mjs");
+        # Plain node, no install: ci-preflight.mjs and e2e-roles.mjs import only node:*.
+        # Exit 1 = refuse (production) or fail (half set up). Skip exits 0 with a notice.
+        run: node e2e/fixtures/ci-preflight.mjs
 
-            const missing = [];
-            if (!process.env.E2E_BASE_URL) missing.push("vars.E2E_BASE_URL");
-            if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push("secrets.E2E_SUPABASE_SERVICE_ROLE_KEY");
-            // The role passwords and the Supabase pair, from the same helper the specs
-            // and the seed use — so this list can never disagree with what they need.
-            // The two Supabase names are mapped because the secret is called
-            // E2E_SUPABASE_* here (it points at the TEST site) while the code reads it
-            // as NEXT_PUBLIC_SUPABASE_*; printing the code name would send somebody to
-            // create a secret that this workflow never looks at.
-            const SECRET_NAME = {
-              NEXT_PUBLIC_SUPABASE_URL:      "secrets.E2E_SUPABASE_URL",
-              NEXT_PUBLIC_SUPABASE_ANON_KEY: "secrets.E2E_SUPABASE_ANON_KEY",
-            };
-            for (const name of missingEnvFor(E2E_ROLES)) missing.push(SECRET_NAME[name] ?? `secrets.${name}`);
-
-            if (missing.length) {
-              console.error("\nThis workflow cannot test anything yet. Missing:\n" +
-                missing.map((m) => "  · " + m).join("\n") +
-                "\n\nAdd them under Settings → Secrets and variables → Actions." +
-                "\nNames only are printed here; no value is ever logged." +
-                "\nWithout them every logged-in spec SKIPS and the run would report green." +
-                "\nSee production/e2e/README.md, \"Logged-in E2E\".\n");
-              process.exit(1);
-            }
-
-            // Production is refused by the repo deny list, not by a copy of it here.
-            for (const [label, value] of [["vars.E2E_BASE_URL", process.env.E2E_BASE_URL],
-                                          ["secrets.E2E_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL]]) {
-              const reason = productionHostReason(value);
-              if (reason) {
-                console.error(`\nREFUSING: ${label} points at production — ${reason}.` +
-                  "\nThis suite creates invoices, credit notes and salary runs, and resets user passwords.\n");
-                process.exit(1);
-              }
-            }
-            console.log("Preflight OK — configuration present and the target is not production.");
-          '
-
-      - run: npm ci
+      - name: Install dependencies
+        if: steps.preflight.outputs.configured == 'true'
+        run: npm ci
 
       # suite-health.spec.ts asserts that production/.env.test EXISTS, because on a
       # laptop its absence is the usual reason the suite is secretly empty. In CI the
       # values come from secrets, so the file is written here to satisfy the same
       # check. It is gitignored and lives only on the runner.
       - name: Write .env.test from secrets
+        if: steps.preflight.outputs.configured == 'true'
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
@@ -164,12 +136,14 @@ jobs:
           echo "wrote .env.test ($(wc -l < .env.test) lines, values not shown)"
 
       - name: Install Chromium
+        if: steps.preflight.outputs.configured == 'true'
         # Only the browser the wNN specs use — the mobile project ignores them
         # (playwright.config.ts testIgnore), so the other engines are download time
         # spent on tests that will not run.
         run: npx playwright install --with-deps chromium
 
       - name: Seed the E2E test company
+        if: steps.preflight.outputs.configured == 'true'
         env:
           E2E_ALLOW_SEED: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
@@ -182,8 +156,9 @@ jobs:
         run: node e2e/fixtures/seed-e2e-tenant.mjs
 
       - name: Run the logged-in workflows
+        if: steps.preflight.outputs.configured == 'true'
         env:
-          PLAYWRIGHT_BASE_URL: ${{ vars.E2E_BASE_URL }}
+          PLAYWRIGHT_BASE_URL: ${{ steps.preflight.outputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
@@ -199,7 +174,7 @@ jobs:
         run: npx playwright test e2e/w0 e2e/w1 e2e/suite-health.spec.ts --project=chromium --workers=1
 
       - name: Upload the Playwright report
-        if: failure()
+        if: failure() && steps.preflight.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_id }}
