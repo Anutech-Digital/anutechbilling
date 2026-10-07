@@ -60,6 +60,8 @@ export const LICENCE_EDITIONS: readonly LicenceEdition[] = [
   { name: "GW Business Starter", note: "30 GB per user", annual: 270, monthly: 325 },
   { name: "GW Business Standard", note: "2 TB per user, recordings", annual: 1080, monthly: 1300 },
   { name: "GW Business Plus", note: "5 TB, Vault, eDiscovery", annual: 1380, monthly: 1620 },
+  /* R-076 (7 Oct 2026): M365 and Zoho are live too (live-catalog.ts merges the app's
+     "Microsoft 365 …" / "Zoho …" items over these). Same rule: fallback only. */
   { name: "M365 Business Basic", note: "Web Office, 50 GB mail", annual: 145, monthly: 175 },
   { name: "M365 Business Standard", note: "Desktop Office, 1 TB", annual: 770, monthly: 900 },
   { name: "Zoho Workplace", note: "Mail + Office suite", annual: 90, monthly: 110 },

@@ -3,7 +3,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { EditionTabs } from "@/site/components/email/EditionTabs";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { PICK_GUIDES } from "@/site/lib/data/catalog";
-import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { fetchLiveWorkspace, mergeEditions, suitePriceRows } from "@/site/lib/live-catalog";
 
 export const metadata: Metadata = { title: "Compare editions — GW, M365, Zoho" };
 
@@ -11,14 +11,8 @@ export const metadata: Metadata = { title: "Compare editions — GW, M365, Zoho"
 export const revalidate = 600;
 
 export default async function CompareEditionsPage() {
-  const editions = mergeEditions(await fetchLiveWorkspace());
-  const rate = (name: string) => {
-    const e = editions.find((x) => x.name === name);
-    return e ? `₹${Math.round(e.annual).toLocaleString("en-IN")}/mo` : "—";
-  };
-  const prices = {
-    "Google Workspace": [rate("GW Business Starter"), rate("GW Business Standard"), rate("GW Business Plus")] as const,
-  };
+  /* R-076: every suite's price row (GW, M365, Zoho) from the catalogue, typed cell as fallback. */
+  const prices = suitePriceRows(mergeEditions(await fetchLiveWorkspace()));
   return (
     <>
       <section className="section rise">

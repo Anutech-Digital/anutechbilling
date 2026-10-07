@@ -38,15 +38,19 @@ import { CartDrawer } from "@/site/components/cart/CartDrawer";
 import { Header } from "@/site/components/chrome/Header";
 import { UtilityBar, CtaBand, Footer, WhatsAppButton, ConsentBanner } from "@/site/components/chrome/Chrome";
 import { AgentChat } from "@/site/components/agent/AgentChat";
+import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 
 
-export default function MarketingLayout({ children }: { children: React.ReactNode }) {
+export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
+  /* R-076: the header's "Mailboxes from ₹…" teaser reads the live catalogue (10-min cache,
+     typed fallback if the app is unreachable) — the same figure the home page shows. */
+  const emailFrom = emailFromRate(mergeEditions(await fetchLiveWorkspace()));
   return (
     <div className={`anutech-site ${archivo.variable} ${plexMono.variable}`}>
       <CartProvider>
         <a href="#main" className="skip-link">Skip to content</a>
         <UtilityBar />
-        <Header />
+        <Header emailFrom={emailFrom} />
         <main id="main">{children}</main>
         <CtaBand />
         <Footer />
