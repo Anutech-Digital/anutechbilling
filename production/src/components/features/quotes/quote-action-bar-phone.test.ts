@@ -49,8 +49,9 @@ describe("quote builder sticky bar on a phone (R-315)", () => {
 
   it("keeps Save & send visible on a phone with a short label", () => {
     const { body } = bar();
-    expect(body).toMatch(/<span className="md:hidden">Save &amp; send<\/span>/);
-    expect(body).toMatch(/<span className="hidden md:inline">Save &amp; send quote<\/span>/);
+    // R-408: the label comes from saveAndSendLabel() ("Save & send" / "Mark sent" short).
+    expect(body).toMatch(/<span className="md:hidden">\{sendLabel\.short\}<\/span>/);
+    expect(body).toMatch(/<span className="hidden md:inline">\{sendLabel\.full\}<\/span>/);
   });
 
   it("puts every other action in a phone-only More menu with the same handlers", () => {

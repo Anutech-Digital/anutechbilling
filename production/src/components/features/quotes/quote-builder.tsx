@@ -21,6 +21,12 @@ import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { canSend, requiredApproval } from "@/lib/quotes/approval";
+import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import {
+  sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
+  quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
+} from "@/lib/quotes/send-quote-email";
 import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 
 import { Card } from "@/components/ui/card";
@@ -82,6 +88,12 @@ import { SolutionPackagePicker } from "@/components/features/quotes/solution-pac
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
 import { canEditSupportCatalog } from "@/lib/support/catalog-row";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
+
+/** R-408: a new quote has no approval record yet — canSend() then judges by the lines alone. */
+const NO_APPROVAL_ROW = {
+  approval_status: "not_required" as const, approval_tier: null, approval_requested_by: null, approved_by: null,
+  approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
+};
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
  *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
@@ -1037,11 +1049,54 @@ export function QuoteBuilder() {
   // Same rule the three send buttons always used — named once so the menu matches them.
   const sendDisabled = !isLeadMode && !customerId && !prospectName.trim();
 
+  /* R-408: "Save & send quote" used to only set status = 'sent' — no email went, and the
+     owner believed the customer had it. Now it emails through the same call as the
+     "Send via email" sheet (lib/quotes/send-quote-email.ts), when there is an address and
+     the discount/margin needs nobody's sign-off. With no address the button says
+     "Save & mark sent" and the toast says plainly that no email went. */
+  const sendRecipient = quoteRecipient(isLeadMode ? leadEmail : customer?.contact_email);
+  const sendAllowed = React.useMemo(() => canSend(
+    quoteApprovalRecord(editOf && sourceQuote ? sourceQuote : NO_APPROVAL_ROW),
+    requiredApproval(lineEconomics(lineItems)),
+  ).allowed, [editOf, sourceQuote, lineItems]);
+  const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
+  const [emailing, setEmailing] = React.useState(false);
+  const sendLabel = saveAndSendLabel(sendPlan);
+
+  /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
+  const emailSavedQuote = async (id: string, to: string): Promise<boolean> => {
+    let out;
+    setEmailing(true);
+    try {
+      out = quoteEmailOutcome(await sendQuoteEmail(id, { to }), { quoteId: id });
+    } catch (err) {
+      out = quoteEmailErrorOutcome(err);
+    } finally {
+      setEmailing(false);
+    }
+    if (out.ok) {
+      toast.success(out.title, out.description ? { description: out.description } : undefined);
+      return true;
+    }
+    toast.error(out.title, {
+      description: out.description,
+      duration: 15000,
+      action: {
+        label: "Try again",
+        onClick: () => {
+          void emailSavedQuote(id, to).then((ok) => { if (ok) router.push(`/quotes/${id}` as never); });
+        },
+      },
+    });
+    return false;
+  };
+
   // Submit
   // afterAction lets the caller request a follow-up on the detail page
   // (open the email or WhatsApp dialog as soon as we land). The detail
   // page reads `?send=whatsapp` / `?send=email` from the URL.
-  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp") => {
+  // "send-now" = the main "Save & send" button (R-408): save, then email right here.
+  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now") => {
     // In lead mode, customer is NOT required (lead = potential customer).
     // A real customer record gets created only after payment.
     // In customer mode, accept EITHER an existing customer pick OR a typed
@@ -1072,6 +1127,12 @@ export function QuoteBuilder() {
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
       return;
     }
+
+    /* R-408: when emailing (or held for approval) the row is saved as a DRAFT and the send
+       route flips it to 'sent' only after the mail went — so a failed email never shows
+       as sent. With no address it is saved as 'sent' and the toast says no email went. */
+    const plan = afterAction === "send-now" ? sendPlan : null;
+    const saveStatus: "draft" | "sent" = plan === "email" || plan === "needs-approval" ? "draft" : status;
 
     try {
       // Allocate the sequential quote ID via the central numbering RPC.
@@ -1147,7 +1208,7 @@ export function QuoteBuilder() {
         // Invoice payment terms → generate_invoice stamps the due date (0163).
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
         terms_conditions:   termsConditions.trim() || null,
-        status,
+        status:        saveStatus,
         notes:         notes || null,
         expires_date:  addDaysISO(istToday(), validityDays),
         /* R-389 (F7): licence lines only — support / one-time services are not seats
@@ -1168,6 +1229,13 @@ export function QuoteBuilder() {
         prospect_country:    (!isLeadMode && !customerId) ? (prospectCountry.trim() || "India") : null,
       });
 
+      let wentOut = saveStatus === "sent";
+      let emailFailed = false;
+      if (plan === "email" && sendRecipient) {
+        wentOut = await emailSavedQuote(quote.id, sendRecipient);
+        emailFailed = !wentOut;
+      }
+
       // If created from a lead AND quote actually went out (not just saved as
       // draft), graduate the lead from "raw" (Leads tab) to "qualified"
       // (Deals tab) AND advance its stage to "quote". We pull plan/seats/value
@@ -1175,7 +1243,7 @@ export function QuoteBuilder() {
       // is actually being quoted — otherwise a raw lead would end up in
       // stage='quote' with plan=NULL, looking like a Quote Sent lead in the
       // Leads (raw) tab forever.
-      if (isLeadMode && linkedLeadId && status === "sent") {
+      if (isLeadMode && linkedLeadId && status === "sent" && wentOut) {
         try {
           const totalSeats = quoteSeatCount(lineItems) ?? 0;   // R-389 (F7): licence lines only
           // Forward-only, through the same rule the two server-side send paths use. This line
@@ -1208,7 +1276,7 @@ export function QuoteBuilder() {
         } catch {
           // Don't block the redirect if stage update fails; quote is saved.
         }
-      } else if (isLeadMode && linkedLeadId && status === "draft") {
+      } else if ((isLeadMode && linkedLeadId && status === "draft") || (isLeadMode && linkedLeadId && !wentOut)) {
         // For drafts: still persist contact-info edits to the lead so they
         // don't get lost when the user comes back. Stage stays as-is.
         const contactPatch = {
@@ -1244,7 +1312,17 @@ export function QuoteBuilder() {
         return;
       }
 
-      const suffix = afterAction ? `?send=${afterAction}` : "";
+      // Email failed: stay here — the toast's "Try again" and this button both retry.
+      if (emailFailed) return;
+      if (plan === "mark-sent") {
+        const out = markedSentOutcome(quote.id);
+        toast.warning(out.title, { description: out.description, duration: 10000 });
+      } else if (plan === "needs-approval") {
+        const out = needsApprovalOutcome(quote.id);
+        toast.warning(out.title, { description: out.description, duration: 10000 });
+      }
+
+      const suffix = afterAction && afterAction !== "send-now" ? `?send=${afterAction}` : "";
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1261,12 +1339,16 @@ export function QuoteBuilder() {
      send a quote the button refuses to send is a shortcut that bypasses a guard — here,
      the one stopping a quote going out with no customer on it. */
   const canSendNow = isLeadMode || !!customerId || !!prospectName.trim();
+  /* R-408: the listener below is bound once per canSendNow change, so it must call the
+     LATEST handleSubmit — a captured one carried old line items and an old send plan. */
+  const handleSubmitRef = React.useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         if (!canSendNow || createQuote.isPending) return;
         e.preventDefault();
-        void handleSubmit("sent");
+        void handleSubmitRef.current("sent", "send-now");
         return;
       }
       if (e.altKey && e.key.toLowerCase() === "a") {
@@ -2645,12 +2727,13 @@ export function QuoteBuilder() {
           <Button
             variant="primary"
             icon="send"
-            onClick={() => handleSubmit("sent")}
-            loading={createQuote.isPending}
+            onClick={() => handleSubmit("sent", "send-now")}
+            loading={createQuote.isPending || emailing}
             disabled={sendDisabled}
+            title={sendPlan === "email" && sendRecipient ? `Saves and emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — marks it sent without emailing" : undefined}
           >
-            <span className="md:hidden">Save &amp; send</span>
-            <span className="hidden md:inline">Save &amp; send quote</span>
+            <span className="md:hidden">{sendLabel.short}</span>
+            <span className="hidden md:inline">{sendLabel.full}</span>
             <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
           </Button>
           </div>

@@ -36,6 +36,7 @@ import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { sendQuoteConsequences } from "@/lib/quotes/send-consequences";
+import { sendQuoteEmail, quoteEmailOutcome, quoteEmailErrorOutcome } from "@/lib/quotes/send-quote-email";
 
 const schema = z.object({
   to:      z.string().email("Invalid email"),
@@ -112,54 +113,26 @@ export function SendQuoteDialog({
   }, [open, defaultRecipient, reset]);
 
   const sendQuote = useMutation({
-    mutationFn: async (data: FormData) => {
-      const res = await fetch(`/api/quotes/${quoteId}/send`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          to:      data.to.trim(),
-          subject: data.subject?.trim() || undefined,
-          message: data.message?.trim() || undefined,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error ?? "Send failed");
-      }
-      return json as {
-        status:       "sent" | "stubbed" | "failed";
-        email_mode:   "real" | "stub";
-        providerId:   string | null;
-        errorMessage: string | null;
-        recipient:    string;
-        attachedPdf:  boolean;
-        quoteStatus:  string;
-      };
-    },
+    /* R-408: the same call the builder's "Save & send quote" makes — one path. */
+    mutationFn: (data: FormData) =>
+      sendQuoteEmail(quoteId, { to: data.to, subject: data.subject, message: data.message }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
       qc.invalidateQueries({ queryKey: ["quote-send-log", quoteId] });
 
-      if (res.status === "sent") {
-        toast.success(
-          `${alreadySent ? "Resent" : "Sent"} quote ${quoteId} to ${res.recipient}` +
-          (res.attachedPdf ? " · PDF attached" : "")
-        );
-      } else if (res.status === "stubbed") {
-        toast.success(
-          `Logged ${quoteId} (stub mode — no real email sent yet)`,
-          { description: "Add RESEND_API_KEY to .env.local to flip on real delivery." }
-        );
-      } else {
-        toast.error(`Send failed: ${res.errorMessage ?? "unknown error"}`);
-      }
-      if (res.status !== "failed") {
+      const out = quoteEmailOutcome(res, { quoteId, alreadySent });
+      if (out.ok) {
+        toast.success(out.title, out.description ? { description: out.description } : undefined);
         onOpenChange(false);
+      } else {
+        // Sheet stays open so "Send now" is the retry.
+        toast.error(out.title, { description: out.description });
       }
     },
     onError: (err) => {
-      toast.error((err as Error).message);
+      const out = quoteEmailErrorOutcome(err, { alreadySent });
+      toast.error(out.title, { description: out.description });
     },
   });
 
