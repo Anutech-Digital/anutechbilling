@@ -11,6 +11,8 @@
  * contract behind it), quotes "within 1 working day" (SLA.quote), migration "usually
  * 1–2 working days, planned to avoid downtime" (SLA.migration), and /pricing support
  * times in working hours.
+ *
+ * R-347 adds "overnight" (a migration promise; customer `quote:` lines stay as said).
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -54,6 +56,8 @@ const OLD_PROMISES: Array<[string, RegExp]> = [
   ["migration in 24–48 hours", /24\s*[-–]\s*48 hours/i],
   ["zero downtime migration", /zero downtime|with no downtime/i],
   ["support time in clock hours", /\b\d+ hours ·|reply within 24 hours/i],
+  // R-347: migration timing comes from SLA.migration, not "overnight"
+  ["overnight migration", /\bovernight\b/i],
 ];
 
 /** Customer testimonials are their words, not our promise — skip `quote:` lines. */

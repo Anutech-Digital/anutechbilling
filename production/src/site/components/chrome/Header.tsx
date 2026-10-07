@@ -16,7 +16,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { CLIENT_AREA_URL } from "@/site/lib/config";
+import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
 import { emailFromRate } from "@/site/lib/live-catalog";
 
@@ -96,7 +96,7 @@ const MENUS: readonly Menu[] = [
         { label: "SSL certificates", note: "DV free, OV/EV when needed", href: "/ssl" },
       ],
     ],
-    promo: { tag: "FREE MIGRATION", title: "Forty mailboxes moved overnight", body: "Mail, folders, contacts and calendars — moved by us, nothing lost.", cta: "Get a mailbox quote", href: "/quote" },
+    promo: { tag: "FREE MIGRATION", title: "Mailboxes moved by us, free", body: `Mail, folders, contacts and calendars, nothing lost — ${SLA.migration}.`, cta: "Get a mailbox quote", href: "/quote" },
   },
   {
     label: "ResellerOS", href: "/reselleros",

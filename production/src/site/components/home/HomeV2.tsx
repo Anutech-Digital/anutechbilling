@@ -104,6 +104,9 @@ function featuresFor(v: Vendor, i: number): string[] {
   return out;
 }
 
+/** R-347: migration timing from SLA.migration (was "overnight"). */
+const MIGRATION_CELL = `✓ ₹0, done by us, ${SLA.migration}`;
+
 /** Cross-vendor comparison — the handoff's own copy (GW vs M365 vs Zoho). Cells
  *  lead with a marker: ✓ included · ✕ not included · ₹ costs extra. Bill-per-user
  *  is computed live from the entry edition of each suite. */
@@ -115,7 +118,7 @@ const CROSS_ROWS: readonly { label: string; gw: string; ms: string; zoho: string
   { label: "Compliance / audit tools", gw: "✓ Vault, in Business Plus (price on request)", ms: "₹ Purchased separately", zoho: "✕ Not in this plan" },
   { label: "User limit", gw: "Up to 300; Enterprise after that", ms: "Up to 300 on Business plans", zoho: "No practical limit" },
   { label: "Where the data sits", gw: "Google, India region pricing", ms: "Microsoft's regions", zoho: "Zoho's Indian datacentre" },
-  { label: "Migration and support", gw: "✓ ₹0, overnight, done by us", ms: "✓ ₹0, overnight, done by us", zoho: "✓ ₹0, overnight, done by us" },
+  { label: "Migration and support", gw: MIGRATION_CELL, ms: MIGRATION_CELL, zoho: MIGRATION_CELL },
 ];
 
 /** "The rest of the catalogue" — the handoff's four cards, wired to the app's

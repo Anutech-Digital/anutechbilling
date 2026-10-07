@@ -8,13 +8,16 @@
  */
 import { SLA } from "../config";
 
+/** R-347: "1–2 WORKING DAYS" from SLA.migration (was "OVERNIGHT"). */
+const MIGRATION_CHIP = SLA.migration.replace(/^usually\s+/i, "").split(",")[0].toUpperCase();
+
 export const CATALOGUE = [
   { name: "Domains", from: "from ₹249/yr", body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
   { name: "Web hosting", from: "from ₹49.99/mo", body: "cPanel and LiteSpeed on NVMe, in Mumbai and Bengaluru.", chips: ["CPANEL", "LITESPEED", "99.9% SLA"], href: "/hosting" },
   { name: "Business email", from: "from ₹79/mo", body: "Anutech Mail, Google Workspace or Microsoft 365 — quoted side by side.", chips: ["NO SEAT MINIMUM", "FREE MIGRATION"], href: "/email" },
   { name: "SSL & security", from: "from ₹0", body: "Free DV on every site, wildcard and OV when a client needs the paperwork.", chips: ["DV", "OV", "WILDCARD"], href: "/ssl" },
   { name: "Reseller program", from: "₹0 to join", body: "Published wholesale rates with no slabs and no advance deposit.", chips: ["NO DEPOSIT", "ONE RATE", "WHITE LABEL"], href: "/reseller" },
-  { name: "Migration desk", from: "free", body: "Sites, mail and DNS moved by us, outside your business hours.", chips: ["ANY SIZE", "ANY HOST", "OVERNIGHT"], href: "/contact" },
+  { name: "Migration desk", from: "free", body: "Sites, mail and DNS moved by us, outside your business hours.", chips: ["ANY SIZE", "ANY HOST", MIGRATION_CHIP], href: "/contact" },
 ] as const;
 
 export const CASES = [
