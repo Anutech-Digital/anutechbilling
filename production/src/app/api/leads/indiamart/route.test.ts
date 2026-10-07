@@ -6,6 +6,9 @@
  * ever contains the key; POST seals it; DELETE clears it; only the owner gets in.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import type { NextRequest } from "next/server";
 
 const KEY = "SYNTHETIC-IM-KEY-0123456789-wxyz";
@@ -27,7 +30,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "owner@example.invalid" } } }) },
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: "T1", role: state.role }, error: null }) }) }) }),
   }),
-  createAdminClient: () => ({
+  createAdminClientFor: (actor: string) => (actors.push(actor), {
     from: (table: string) => {
       const b = {
         select: () => b,
@@ -56,6 +59,7 @@ const req = (method: string, body?: unknown) =>
 
 let originalMaster: string | undefined;
 beforeEach(() => {
+  actors.length = 0;
   originalMaster = process.env.SECRETS_MASTER_KEY;
   process.env.SECRETS_MASTER_KEY = MASTER;
   Object.assign(state, { role: "owner", stored: null, sync: null, importCount: 0, upserts: [], updates: [], eqs: [] });
@@ -71,6 +75,7 @@ describe("GET", () => {
   it("no key: not configured, nothing to hint at", async () => {
     const res = await GET(req("GET"));
     expect(res.status).toBe(200);
+    expect(actors).toEqual(["U1"]); // R-051: audit log names the signed-in owner
     expect(await res.json()).toEqual({
       ok: true, configured: false, encrypted: false, key_last4: null,
       last_run_at: null, last_ok: null, last_error: null, last_imported: null, total_imported: 0,

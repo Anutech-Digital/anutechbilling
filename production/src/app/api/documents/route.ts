@@ -9,7 +9,7 @@
  * Body: multipart/form-data — file, title, category, expiry_date?, notes?
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   const cat = (CATEGORIES.includes(category) ? category : "other") as
     "legal" | "finance" | "hr" | "operations" | "sales_marketing" | "admin" | "branding" | "other";
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
   const clean = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path  = `${me.tenant_id}/${crypto.randomUUID()}-${clean}`;
   const buf   = Buffer.from(await f.arrayBuffer());

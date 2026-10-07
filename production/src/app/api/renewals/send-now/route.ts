@@ -21,7 +21,7 @@
 
 import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import {
   triggersForTerm,
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 
   // Admin client for the cross-table reads/writes (RLS would already protect,
   // but service role keeps the logic identical to the cron path).
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(authData.user.id);
 
   // ── Load subscription + verify tenant ownership ─────────────────
   const { data: sub, error: subErr } = await supabase

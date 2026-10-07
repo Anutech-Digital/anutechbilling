@@ -13,7 +13,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const admin  = createAdminClient();
+  const admin  = createAdminClientFor(authData.user.id);
   const { rows, source } = parsed.data;
 
   // Pre-fetch existing emails in this tenant

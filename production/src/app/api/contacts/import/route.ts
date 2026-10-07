@@ -19,7 +19,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import type { ContactSource } from "@/lib/supabase/database.types";
 import { CONTACT_IMPORT_RETIRED, contactImportRetired } from "@/lib/contacts/retired";
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
   }
   const { source, rows } = parsed.data;
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
 
   // ── Pre-fetch existing emails in this tenant for dedup ──────────
   const incomingEmails = rows

@@ -7,7 +7,7 @@
  * 2. Internal Team Reports: Bug reports submitted by internal Anutech Digital team employees.
  */
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform";
 import type { TablesUpdate } from "@/lib/supabase/database.types";
 
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const isAdmin = isPlatformAdmin(user.email);
-  const client = isAdmin ? createAdminClient() : supabase;
+  const client = isAdmin ? createAdminClientFor(user.id) : supabase;
 
   // 1. Fetch user's tenant ID if not platform admin
   let tenantId: string | null = null;
@@ -89,7 +89,7 @@ export async function PATCH(request: Request) {
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const isAdmin = isPlatformAdmin(user.email);
-  const client = isAdmin ? createAdminClient() : supabase;
+  const client = isAdmin ? createAdminClientFor(user.id) : supabase;
 
   const body = await request.json().catch(() => ({}));
   const { id, status, resolution_note } = body;

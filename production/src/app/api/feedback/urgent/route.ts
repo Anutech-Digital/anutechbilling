@@ -21,7 +21,7 @@
  * naming the file (the page hides the button then anyway).
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { isPlatformAdmin } from "@/lib/platform";
 import { isMissingColumnError } from "@/lib/feedback/auto-send";
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     myTenant = me.tenant_id as string;
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(auth.user.id);
   const { data: found, error: readErr } = await admin.from("feedback").select("*").eq("id", parsed.data.id).maybeSingle();
   if (readErr) return NextResponse.json({ error: "Could not read the report." }, { status: 500 });
   if (!found || (!platform && found.tenant_id !== myTenant)) {

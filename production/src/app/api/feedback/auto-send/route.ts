@@ -11,7 +11,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import {
   AUTO_SEND_COLUMN,
@@ -33,13 +33,17 @@ async function me() {
   if (!auth?.user) return null;
   const { data } = await supabase.from("users").select("tenant_id, role").eq("id", auth.user.id).maybeSingle();
   if (!data?.tenant_id) return null;
-  return { tenantId: data.tenant_id as string, isOwner: data.role === "owner" };
+  return {
+    tenantId: data.tenant_id as string,
+    isOwner: data.role === "owner",
+    admin: createAdminClientFor(auth.user.id), // R-051: audit log names the caller
+  };
 }
 
 export async function GET() {
   const who = await me();
   if (!who) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  const admin = createAdminClient();
+  const admin = who.admin;
   const { data, error } = await admin.from("tenants").select("*").eq("id", who.tenantId).maybeSingle();
   if (error) return NextResponse.json({ error: "Could not read the setting." }, { status: 500 });
   return NextResponse.json({
@@ -62,7 +66,7 @@ export async function POST(req: NextRequest) {
   /* Typed as the table Update: database.generated.ts learns this column only after the
      migration is applied and the types are regenerated (scripts/check-db-types.mjs --write). */
   const patch = { [AUTO_SEND_COLUMN]: parsed.on, updated_at: new Date().toISOString() } as TenantUpdate;
-  const admin = createAdminClient();
+  const admin = who.admin;
   const { error } = await admin.from("tenants").update(patch).eq("id", who.tenantId);
   if (error) {
     if (isMissingColumnError(error)) {

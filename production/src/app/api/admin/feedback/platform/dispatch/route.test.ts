@@ -6,6 +6,9 @@
  * patch touches only the R-357 columns.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import type { NextRequest } from "next/server";
 
 type Row = { id: string; tenant_id: string; status: string; dispatched_at: string | null; dispatched_by?: string | null };
@@ -52,7 +55,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     auth: { getUser: async () => ({ data: { user: db.email === null ? null : { id: "caller-1", email: db.email } } }) },
   }),
-  createAdminClient: () => { db.adminCreated++; return { from: adminFrom }; },
+  createAdminClientFor: (actor: string) => { actors.push(actor); db.adminCreated++; return { from: adminFrom }; },
 }));
 
 import { POST } from "./route";
@@ -68,6 +71,7 @@ const call = (body: unknown) =>
   }) as unknown as NextRequest);
 
 beforeEach(() => {
+  actors.length = 0;
   db.email = "owner@platform.test";
   db.adminCreated = 0; db.patches = []; db.updateFilters = [];
   db.rows = [
@@ -95,6 +99,7 @@ describe("POST /api/admin/feedback/platform/dispatch — R-366", () => {
   it("queues an open row of another workspace, pinned to that row's own tenant", async () => {
     const r = await call({ id: A, tenant_id: "tenant-attacker" });
     expect(r.status).toBe(200);
+    expect(actors).toContain("caller-1"); // R-051: audit log names the signed-in founder
     expect(await r.json()).toEqual({ queued: [A], skipped: [] });
     expect(db.rows[0]).toMatchObject({ status: "agent_queued", dispatched_by: "caller-1" });
     expect(db.rows[0].dispatched_at).toEqual(expect.any(String));

@@ -19,7 +19,7 @@
  * dialog NULLed a live webhook secret.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { canSendWithScopes, type EmailProvider } from "@/lib/email/provider";
 import { listSenderCandidates, type SenderCandidateInput } from "@/lib/email/sender-candidates";
 import { resolveSecretField } from "@/lib/integrations/secret-field";
@@ -36,7 +36,7 @@ interface TenantEmailRow {
 }
 
 /** Narrow view of the columns 0235/0237 added; the generated types predate them. */
-function emailDb(admin: ReturnType<typeof createAdminClient>) {
+function emailDb(admin: ReturnType<typeof createAdminClientFor>) {
   return admin as unknown as {
     from(t: "tenants"): {
       select(c: string): { eq(c: string, v: string): { maybeSingle(): Promise<{ data: TenantEmailRow | null; error: { message: string } | null }> } };
@@ -54,8 +54,7 @@ function emailDb(admin: ReturnType<typeof createAdminClient>) {
  * choice the server will not reject. Tenant-scoped by the caller's own tenant_id, never by
  * anything from the request.
  */
-async function loadSenderCandidates(tenantId: string): Promise<ReturnType<typeof listSenderCandidates>> {
-  const admin = createAdminClient();
+async function loadSenderCandidates(admin: ReturnType<typeof createAdminClientFor>, tenantId: string): Promise<ReturnType<typeof listSenderCandidates>> {
   const { data: team } = await admin
     .from("users").select("id, email, role").eq("tenant_id", tenantId).eq("is_active", true);
   if (!team || team.length === 0) return [];
@@ -80,13 +79,13 @@ async function loadSenderCandidates(tenantId: string): Promise<ReturnType<typeof
   return listSenderCandidates(inputs);
 }
 
-async function loadContext(userId: string) {
+async function loadContext(user: { id: string }) {
   const supabase = createClient();
   const { data: me } = await supabase
-    .from("users").select("tenant_id, role").eq("id", userId).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return null;
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id); // R-051: audit log names the caller
   const db = emailDb(admin);
 
   const { data: tenant } = await db.from("tenants")
@@ -101,7 +100,7 @@ async function loadContext(userId: string) {
   // PATCH disagree: the card said "Not connected" for an account that was in
   // fact connected and able to send, and pressing Gmail would have worked. A
   // status screen that contradicts the button beside it is worse than no status.
-  const senderId = tenant?.gmail_sender_user_id ?? userId;
+  const senderId = tenant?.gmail_sender_user_id ?? user.id;
   const isDesignated = Boolean(tenant?.gmail_sender_user_id);
   let gmail = {
     senderId, isDesignated,
@@ -131,7 +130,7 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-  const ctx = await loadContext(user.id);
+  const ctx = await loadContext(user);
   if (!ctx) return NextResponse.json({ error: "No tenant." }, { status: 403 });
 
   const provider = ctx.tenant?.email_provider ?? "resend";
@@ -141,7 +140,7 @@ export async function GET() {
      mail was leaving as pardeep@anutech.in with no screen able to change it. Offering the
      list is the missing half. Ineligible teammates are included on purpose: "not in the
      list" and "has not connected Google" are different problems. */
-  const candidates = await loadSenderCandidates(ctx.me.tenant_id);
+  const candidates = await loadSenderCandidates(ctx.admin, ctx.me.tenant_id);
 
   return NextResponse.json({
     provider,
@@ -166,7 +165,7 @@ export async function PATCH(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-  const ctx = await loadContext(user.id);
+  const ctx = await loadContext(user);
   if (!ctx) return NextResponse.json({ error: "No tenant." }, { status: 403 });
   if (ctx.me.role !== "owner") {
     return NextResponse.json({ error: "Only the workspace owner can change email settings." }, { status: 403 });

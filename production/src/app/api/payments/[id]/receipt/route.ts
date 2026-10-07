@@ -13,7 +13,7 @@
  * Body: multipart/form-data — file
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
 
 export const runtime = "nodejs";
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: "Only images (JPG/PNG/WEBP) or PDF" }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
   const clean = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path  = `${me.tenant_id}/payments/${paymentId}-${clean}`;
   const buf   = Buffer.from(await f.arrayBuffer());

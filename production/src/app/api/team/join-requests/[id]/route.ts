@@ -18,7 +18,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
 import { INVITABLE_ROLES, type InvitableRole } from "@/lib/auth/roles";
 
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
 
   // ── Caller must be the OWNER of the tenant this request belongs to ──────
   const { data: me } = await admin

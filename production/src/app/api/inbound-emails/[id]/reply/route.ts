@@ -31,7 +31,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 import { recordDraftFeedback } from "@/lib/ai/draft-feedback.server";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
@@ -86,7 +86,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json({ error: "A subject and a message are both required." }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
   const { data: enquiry } = await admin
     .from("inbound_emails")
     .select("id, tenant_id, from_email, subject, lead_id")
@@ -217,7 +217,7 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
     .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return NextResponse.json({ replies: [] });
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
   const { data: enquiry } = await admin
     .from("inbound_emails")
     .select("id, from_email, created_at")

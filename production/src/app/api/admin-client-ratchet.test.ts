@@ -115,7 +115,52 @@ const ACTOR_AUDITED = [
   "subscriptions/[id]/add-seats",
   "subscriptions/[id]/extend",
   "campaigns/send",
+  // R-051 part 4: the rest of the signed-in WRITE routes in bucket (b).
+  // money
+  "payments/[id]/receipt",
+  "quotes/[id]/send",
+  "quotes/[id]/recreate-subscription",
+  "subscriptions/[id]/generate-renewal-quote",
+  "renewals/send-now",
+  "leads/start-trial",
+  "my-advances",
+  // team
+  "team/join-requests/[id]",
+  "team/members/[id]/temp-password",
+  "academy/apprentices/[id]/login",
+  // customers + documents
+  "contacts/[id]/promote",
+  "contacts/import",
+  "documents",
+  "gstin/verify",
+  "inbound-emails/[id]/convert",
+  "inbound-emails/[id]/state",
+  "inbound-emails/[id]/reply",
+  "leads/[id]/email",
+  "leads/google-import",
+  // settings + company credentials
+  "settings/logo",
+  "integrations/email-provider",
+  "integrations/gemini",
+  "integrations/razorpay",
+  "integrations/sandbox",
+  "integrations/whatsapp",
+  "integrations/seal",
+  "leads/indiamart",
+  "marketing/ads",
+  "marketing/whatsapp/reminders",
+  "marketing/whatsapp/reminders/submit",
+  // feedback + support
+  "feedback/urgent",
+  "feedback/auto-send",
+  "admin/feedback/platform/dispatch",
+  "support/call-request",
+  "support/tickets",
+  "ux/insights",
 ];
+
+/** The verified caller, as each route names it — never a request body field. */
+const VERIFIED_ACTOR = /createAdminClientFor\s*\(\s*((user|authData\.user|auth\.user)\.id|callerId)\s*\)/;
 
 type Kind = "secret" | "platform" | "user" | "self" | "public" | "FINDING";
 
@@ -172,7 +217,7 @@ describe("service-role API routes prove their caller (R-051 ratchet)", () => {
     const plain = ACTOR_AUDITED.filter((r) => {
       const f = path.join(API, r, "route.ts");
       const src = fs.existsSync(f) ? code(fs.readFileSync(f, "utf8")) : "";
-      return !/createAdminClientFor\s*\(\s*(user|authData\.user)\.id\s*\)/.test(src) || /createAdminClient\s*\(/.test(src);
+      return !VERIFIED_ACTOR.test(src) || /createAdminClient\s*\(/.test(src);
     });
     expect(plain, "use createAdminClientFor(user.id) — the verified caller, never a body field").toEqual([]);
   });

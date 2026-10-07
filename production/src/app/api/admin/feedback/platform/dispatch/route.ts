@@ -8,7 +8,7 @@
  * the service role is created. The tenant of each row is read from the row, never the body.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform";
 import {
   platformDispatchBody,
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Body must be {"id": "<report id>"} or {"all": true}.' }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(auth.user.id);
   const read = admin.from("feedback").select("id, tenant_id, status, dispatched_at");
   const { data: found, error: readErr } =
     "id" in parsed.data

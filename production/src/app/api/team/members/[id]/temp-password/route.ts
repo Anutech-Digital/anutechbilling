@@ -19,7 +19,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { rateLimitShared } from "@/lib/security/rate-limit";
 import {
   TEMP_PASSWORD_RATE,
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return fail("Send either nothing or { password }.", 400);
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(callerId);
   const { data: caller } = await admin
     .from("users")
     .select("id, role, tenant_id")

@@ -27,7 +27,7 @@
  * uses to stay quiet is the rule this route uses to say no.
  */
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { orphanState, isOrphan, missingLines } from "@/lib/subscriptions/orphan-quote";
 import { rebuildTerm } from "@/lib/subscriptions/rebuild-term";
 import { istToday } from "@/lib/dates/ist";
@@ -67,7 +67,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     );
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
 
   /* Scoped by id AND tenant_id: the admin client bypasses RLS, so an id on its own is a
      valid key to any row in the table. */

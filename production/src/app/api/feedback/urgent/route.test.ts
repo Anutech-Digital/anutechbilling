@@ -5,6 +5,9 @@
  * only the flag, closed reports refuse, and before the migration it answers 409.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import type { NextRequest } from "next/server";
 
 type Row = Record<string, unknown> & { id: string; tenant_id: string; status: string };
@@ -60,7 +63,7 @@ vi.mock("@/lib/supabase/server", () => ({
       return q;
     },
   }),
-  createAdminClient: () => { db.adminCreated++; return { from: adminFrom }; },
+  createAdminClientFor: (actor: string) => { actors.push(actor); db.adminCreated++; return { from: adminFrom }; },
 }));
 
 import { POST } from "./route";
@@ -78,6 +81,7 @@ const call = (body: unknown) =>
 const find = (id: string) => db.rows.find((r) => r.id === id)!;
 
 beforeEach(() => {
+  actors.length = 0;
   db.user = { id: "u-owner", email: "owner@ws.test" };
   db.me = { tenant_id: "t1", role: "owner" };
   db.adminCreated = 0; db.patches = []; db.updateFilters = []; db.updateError = null; db.afterRead = null;
@@ -119,6 +123,7 @@ describe("POST /api/feedback/urgent — R-397", () => {
   it("open → queued AND urgent in one conditional write (still open, same dispatched_at)", async () => {
     const r = await call({ id: OPEN, urgent: true });
     expect(r.status).toBe(200);
+    expect(actors).toEqual(["u-owner"]); // R-051: audit log names the signed-in caller
     expect(await r.json()).toEqual({ ok: true, urgent: true, queued: true });
     const row = find(OPEN);
     expect(row.status).toBe("agent_queued");
@@ -158,6 +163,7 @@ describe("POST /api/feedback/urgent — R-397", () => {
     db.me = { tenant_id: "t1", role: "sales" }; // ignored for the platform owner
     const r = await call({ id: OTHER, urgent: true });
     expect(r.status).toBe(200);
+    expect(actors).toEqual(["u-boss"]); // R-051: audit log names the platform owner, not the workspace
     expect(find(OTHER).urgent_by).toBe("u-boss");
     expect(db.updateFilters[0]).toContainEqual(["eq", "tenant_id", "t2"]);
   });

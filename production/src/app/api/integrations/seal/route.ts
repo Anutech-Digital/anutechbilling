@@ -30,7 +30,7 @@
  * • Never returns or logs a secret value; only names and counts.
  */
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { SECRET_COLUMNS, trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { isVaultConfigured, isEncrypted } from "@/lib/crypto/vault";
 
@@ -62,7 +62,7 @@ export async function POST() {
     }, { status: 503 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
   const { data: row, error: readErr } = await admin
     .from("tenant_secrets")
     .select("*")

@@ -6,6 +6,9 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
+
 const T1 = "11111111-1111-4111-8111-111111111111";
 const T2 = "22222222-2222-4222-8222-222222222222";
 const OWNER  = "a0000000-0000-4000-8000-000000000001";
@@ -40,7 +43,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     auth: { getUser: async () => ({ data: { user: st.sessionUserId ? { id: st.sessionUserId } : null } }) },
   }),
-  createAdminClient: () => ({
+  createAdminClientFor: (actor: string) => (actors.push(actor), {
     auth: {
       admin: {
         updateUserById: async (id: string, attrs: Record<string, unknown>) => {
@@ -103,6 +106,7 @@ const call = (target: string, body: unknown = {}) =>
 
 const spies: Array<ReturnType<typeof vi.spyOn>> = [];
 beforeEach(() => {
+  actors.length = 0;
   st.sessionUserId = OWNER;
   st.inserts = []; st.auditUpdates = []; st.authUpdates = []; st.order = [];
   st.auditFails = false; st.authFails = false; st.rateOk = true;
@@ -163,6 +167,7 @@ describe("POST /api/team/members/[id]/temp-password", () => {
   it("sets a generated password + must_change flag, audits first, returns it ONCE, logs nothing", async () => {
     const r = await call(SALES);
     expect(r.status).toBe(200);
+    expect(actors).toEqual([OWNER]); // R-051: auth + users writes name the owner who reset it
     expect(r.headers.get("Cache-Control")).toBe("no-store");
     const json = await r.json() as { password: string; mustChange: boolean };
     expect(json.password).toMatch(/^[A-Za-z2-9]{16}$/);
