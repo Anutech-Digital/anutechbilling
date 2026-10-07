@@ -97,6 +97,10 @@ export default function CheckoutPage() {
   const [method, setMethod] = useState<string>("UPI");
   const [agreed, setAgreed] = useState(false);
   const [paying, setPaying] = useState(false);
+  /* On the way to /done (7 Oct 2026, Pawan: "I see the empty cart, then the page"). The cart is
+     emptied just before router.push, so for a moment this page rendered "The cart is empty".
+     Once set, the page keeps the progress card up until /done opens. */
+  const [leaving, setLeaving] = useState<string | null>(null);
   /* True while the server prepares a PAID order, until Razorpay's own window opens — the
      progress panel must not keep counting behind Razorpay (30 Sep 2026). */
   const [preparingPayment, setPreparingPayment] = useState(false);
@@ -178,6 +182,14 @@ export default function CheckoutPage() {
     } catch { /* ignore */ }
   }, [name, company, email, gstin, phone, domain, planDomain, addrLine1, addrCity, stateCode, addrPin]);
 
+  if (leaving) {
+    return (
+      <section className="section rise">
+        <BusyPanel active variant="modal" title={leaving} steps={["Opening your confirmation page"]} />
+      </section>
+    );
+  }
+
   if (cart.lines.length === 0) {
     return (
       <section className="section rise">
@@ -237,6 +249,7 @@ export default function CheckoutPage() {
         window.sessionStorage.setItem("anutech.trial.sent", json.confirmationSent === false ? "0" : "1");
         window.sessionStorage.removeItem("anutech.order");
       } catch { /* done page falls back */ }
+      setLeaving("Starting your free trial");
       cart.clear();
       router.push("/done" as never);
     } catch {
@@ -293,6 +306,7 @@ export default function CheckoutPage() {
 
       if (json.simulated) {
         try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); } catch { /* default shown */ }
+        setLeaving("Placing your order");
         cart.clear();
         router.push("/done" as never);
         return;
@@ -351,6 +365,7 @@ export default function CheckoutPage() {
         theme: { color: "#1668E3" },
         handler: () => {
           try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
+          setLeaving("Payment received");
           cart.clear();
           afterRazorpay();
           router.push("/done" as never);
