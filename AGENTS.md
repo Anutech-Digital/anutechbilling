@@ -267,6 +267,13 @@ admin → purge the rows.
 DMS replays a stored outcome — except a failure that never reached a provider, which it now runs again (DMS
 `1c6180bf`). Before that, one DirectAdmin timeout turned a paid order into "failed, set it up by hand".
 
+**The Customer Portal login comes with the payment, not with the hosting (7 Oct 2026).** The Razorpay
+webhook calls DMS `customer.ensure` (lib/provisioning/portal-account.server.ts) for a new hosting/domain
+order, so DMS creates the portal account and emails "Your Customer Portal is ready" with a one-time
+password within seconds; the hosting/domain is set up by the cron afterwards and finds the same account.
+On the live DMS it needs **`ENGINE_CUSTOMER_ACCOUNT_LIVE=1`** (deploy setting); without it the account is
+still made at provisioning time, as before. The customer chooses their own password at first sign-in.
+
 Open items for the integration are tracked in `Todos.md`, not here.
 
 ---

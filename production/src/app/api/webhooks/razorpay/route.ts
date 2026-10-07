@@ -43,6 +43,7 @@ import {
 } from "@/lib/domains/renewal";
 import { HOSTING_RENEWAL_PLAN, hostingRenewalEnabled } from "@/lib/hosting/renewal";
 import { commandsConfigured } from "@/lib/dms-engine/commands";
+import { ensurePortalAccount } from "@/lib/provisioning/portal-account.server";
 import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { isProductionDeployment } from "@/lib/checkout/live-guards";
@@ -554,6 +555,24 @@ export async function POST(request: NextRequest) {
     } else {
       console.warn(`[webhooks/razorpay] not provisioning ${quote.id} ${product.vendor} — ${provisioning.reason}`);
     }
+  }
+
+  /* ── The Customer Portal login, now — not when provisioning gets to it ─────────
+     (7 Oct 2026, Pawan: "We should see the login details … immediately. Hosting can be
+     assigned in background in meanwhile"). DMS creates the account and emails its one-time
+     password; the hosting/domain above is set up by its cron as before and finds the same
+     account. Best-effort: the payment is recorded whatever happens here. */
+  if (!isRenewal) {
+    const account = await ensurePortalAccount(admin, {
+      tenantId: quote.tenant_id,
+      quoteId: quote.id,
+      leadId: quote.lead_id ?? null,
+      customerName: quote.customer_name ?? null,
+      paymentEmail: payment?.email ?? notes.email ?? "",
+      vendors: products.map((p) => p.vendor),
+    }).catch((e: unknown) => ({ kind: "not_done" as const, reason: e instanceof Error ? e.message : String(e) }));
+    if (account.kind === "not_done") console.warn(`[webhooks/razorpay] ${quote.id}: portal account not created now (${account.reason}); provisioning will create it.`);
+    else if (account.kind === "done") console.log(`[webhooks/razorpay] ${quote.id}: portal account ${account.created ? "created and emailed" : "already existed"}.`);
   }
 
   /* ── A yearly subscription for each domain this sale bought ─────────────────
