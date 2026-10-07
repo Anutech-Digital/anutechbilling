@@ -32,6 +32,9 @@ const ALLOW = new Set([
   /* Inbound-only: lets the local test session mark feedback fixed / post test runs to THIS
      local app (api/agent/*). The app never sends it anywhere (R-355, 7 Oct 2026). */
   "AGENT_QUEUE_TOKEN",
+  /* Local-only vault key made by scripts/set-master-key.mjs (never the staging/live one).
+     Since R-051 the vault refuses to save any secret without it (7 Oct 2026). */
+  "SECRETS_MASTER_KEY",
 ]);
 
 function envKeyNames(file) {
