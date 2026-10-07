@@ -41,6 +41,7 @@ import { toIstDate } from "@/lib/dates/ist";
 import { isCreditNoteLate } from "@/lib/gst/credit-note-deadline";
 import { gstLastMonth, gstThisMonth, gstThisQuarter, istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
 import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
+import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
 // Date range helpers — month default (most common GST filing cadence)
@@ -523,6 +524,46 @@ function GstReportInner() {
     ]);
   }
 
+  /* ── R-343: GSTR-1 vs books ───────────────────────────────────────────
+     The filed GSTR-1 JSON is read in the browser and compared with the period rebuilt
+     from the books (same buildGstr1). Export only: no tax is computed here, nothing saved.
+     GSTR-1A has no upload file (GSTN: online / GSP only), so this is a worklist. */
+  const [vs1, setVs1] = React.useState<{ fp: string | null; result: Gstr1VsBooks; fileName: string } | null>(null);
+  const filedRef = React.useRef<HTMLInputElement>(null);
+  /* A comparison belongs to the period it was made for — a new range clears it. */
+  React.useEffect(() => { setVs1(null); }, [range.from, range.to]);
+  async function onPickFiledGstr1(file: File | null) {
+    if (!file || !data) return;
+    try {
+      const parsed = parseGstr1Json(JSON.parse(await file.text()));
+      if (parsed.errors.length) {
+        toast.error("This isn't a GSTR-1 JSON file.", {
+          description: "Pick the GSTR-1 JSON you uploaded for this period (the file from Download GSTR-1 JSON).",
+        });
+        return;
+      }
+      if (data.sellerGstin && parsed.gstin && parsed.gstin.toUpperCase() !== data.sellerGstin.toUpperCase()) {
+        toast.error(`This file is for GSTIN ${parsed.gstin}, not yours (${data.sellerGstin}).`, {
+          description: "Pick the GSTR-1 JSON filed for your own GSTIN.",
+        });
+        return;
+      }
+      const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
+      const result = compareGstr1(parsed, returnFromBooks(data.outputRows.map(toGstr1Doc), seller));
+      setVs1({ fp: parsed.fp, result, fileName: file.name });
+      const fp = range.from.slice(5, 7) + range.from.slice(0, 4);
+      if (parsed.fp && parsed.fp !== fp) toast.warning(`This GSTR-1 is for ${parsed.fp}, the page shows ${fp}. Set the date range to the same month.`);
+    } catch {
+      toast.error("Couldn't read this file.", { description: "It isn't valid JSON. Pick the GSTR-1 JSON you uploaded for this period." });
+    } finally {
+      if (filedRef.current) filedRef.current.value = "";
+    }
+  }
+  function exportVs1() {
+    if (!vs1) return;
+    downloadCSV(`gstr1-vs-books-${range.from}-to-${range.to}.csv`, [...GSTR1_VS_BOOKS_HEADERS], gstr1VsBooksCsv(vs1.result));
+  }
+
   function exportOutput() {
     if (!data) return;
     downloadCSV(
@@ -784,6 +825,67 @@ function GstReportInner() {
               </Button>
             </div>
           </div>
+        </Card>
+      )}
+
+      {/* R-343: GSTR-1 vs books — what to amend / add in GSTR-1A before GSTR-3B locks it */}
+      {data && (
+        <Card className="mb-6 p-4 md:p-5 border border-indigo/30 bg-indigo/5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">GSTR-1 vs books — {range.label}</p>
+              <p className="text-xs text-ink-2 mt-0.5 leading-relaxed max-w-3xl">
+                After filing GSTR-1, pick the GSTR-1 JSON you uploaded. Every invoice or note changed, added or removed in the
+                books since then is listed. Fix them in <b>GSTR-1A</b> on the portal <b>before filing GSTR-3B</b> — 3B sales figures
+                are auto-filled from GSTR-1/1A and locked. GSTR-1A is filled online only (no upload file). The file is read in
+                your browser and not saved.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <input ref={filedRef} type="file" accept=".json,application/json" className="hidden" aria-label="Filed GSTR-1 JSON" onChange={(e) => onPickFiledGstr1(e.target.files?.[0] ?? null)} />
+              <Button variant="default" size="sm" onClick={() => filedRef.current?.click()}><Icon name="file" size={14} className="mr-1.5" />Pick filed GSTR-1 JSON</Button>
+              {vs1 && (vs1.result.docs.length > 0 || vs1.result.b2cs.length > 0) && <Button variant="ghost" size="sm" icon="download" onClick={exportVs1}>CSV</Button>}
+            </div>
+          </div>
+          {vs1 && (() => {
+            const r = vs1.result;
+            const changed = r.docs.filter((d) => d.status === "changed");
+            const missing = r.docs.filter((d) => d.status === "missing_in_return");
+            const notInBooks = r.docs.filter((d) => d.status === "not_in_books");
+            const totalDiff = r.taxDiff.igst + r.taxDiff.cgst + r.taxDiff.sgst;
+            return (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Changed</div><div className="font-mono text-ink font-semibold">{changed.length}</div><div className="text-xs text-ink-3">{r.unchanged} same</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Missing in return</div><div className="font-mono text-ink font-semibold">{missing.length}</div><div className="text-xs text-ink-3">add in GSTR-1A</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Not in books</div><div className="font-mono text-ink font-semibold">{notInBooks.length}</div><div className="text-xs text-ink-3">check books</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Tax: books − filed</div><div className={`font-mono font-semibold ${totalDiff === 0 ? "text-emerald" : "text-rose"}`}>{rupee(totalDiff)}</div><div className="text-xs text-ink-3 truncate" title={vs1.fileName}>{vs1.fp ?? "?"} · {vs1.fileName}</div></div>
+                </div>
+                {r.docs.length > 0 && (
+                  <ul className="text-xs text-ink-2 space-y-1.5">
+                    {r.docs.slice(0, 30).map((d) => (
+                      <li key={`${d.status}|${d.table}|${d.num}`} className="rounded-md bg-paper px-2.5 py-1.5">
+                        <div className="flex justify-between gap-3">
+                          <span className="truncate"><b className="text-ink">{d.num}</b> · {d.table}{d.date ? ` · ${formatDate(d.date)}` : ""}{d.ctin ? ` · ${d.ctin}` : ""}</span>
+                          <span className="font-mono shrink-0">{d.taxDiff === 0 ? "tax same" : `tax ${d.taxDiff > 0 ? "+" : ""}${rupee(d.taxDiff)}`}</span>
+                        </div>
+                        {d.changes.length > 0 && <div className="text-ink-3">{d.changes.join(" · ")}</div>}
+                        <div className={d.gstinChanged ? "text-rose" : "text-indigo-ink"}>{d.action}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {r.docs.length > 30 && <p className="text-xs text-ink-3">+{r.docs.length - 30} more in the CSV.</p>}
+                {r.b2cs.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-ink mb-1">B2CS (small B2C) totals differ — amend these lines in GSTR-1A</p>
+                    <ul className="text-xs text-ink-2 space-y-0.5">{r.b2cs.map((l) => <li key={`${l.pos}|${l.rate}`} className="flex justify-between gap-3"><span>Place of supply {l.pos} · {l.rate}%</span><span className="font-mono">taxable {rupee(l.filed?.taxable ?? 0)} → {rupee(l.books?.taxable ?? 0)}</span></li>)}</ul>
+                  </div>
+                )}
+                {r.docs.length === 0 && r.b2cs.length === 0 && <p className="text-xs text-emerald">Books match the filed GSTR-1 — no GSTR-1A needed.</p>}
+              </div>
+            );
+          })()}
         </Card>
       )}
 
