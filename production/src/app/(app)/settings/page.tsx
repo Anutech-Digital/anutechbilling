@@ -17,7 +17,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { stateCodeFromName } from "@/lib/gst/gstin-state";
+import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode } from "../setup/company-state";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -31,7 +31,7 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
-import { isValidGstin, gstStateFromGstin, validateGstin, formatDate } from "@/lib/utils";
+import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { contactsCardState } from "@/lib/google/contacts-card-state";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
@@ -101,8 +101,9 @@ const companySchema = z.object({
     const r = validateGstin(v);
     if (!r.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: r.message });
   }),
-  state:      z.string().trim().max(40).optional(),
-  state_code: z.string().trim().regex(/^\d{0,2}$/, "1–2 digit code (e.g. 27)").optional(),
+  // R-250: state comes only from the GST state select — always a known 2-digit code.
+  state_code: z.string().trim()
+    .refine((v) => normalizeStateCode(v) !== null, "Choose your state"),
   email:      z.string().email("Invalid email").or(z.literal("")).optional(),
   phone:      z.string().trim().max(20).optional(),
   address:    z.string().trim().max(300).optional(),
@@ -145,8 +146,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
       name:         me?.tenantName        ?? "",
       contact_name: me?.tenantContactName ?? "",
       gstin:        me?.tenantGstin       ?? "",
-      state:        me?.tenantState       ?? "",
-      state_code:   me?.tenantStateCode   ?? "",
+      state_code:   initialStateCode(me?.tenantState, me?.tenantStateCode),
       email:        me?.tenantEmail       ?? "",
       phone:        me?.tenantPhone       ?? "",
       address:      me?.tenantAddress     ?? "",
@@ -188,8 +188,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
   const watchedGstin = watch("gstin");
   React.useEffect(() => {
     const { code, name } = gstStateFromGstin(watchedGstin ?? "");
-    if (code) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
-    if (name) setValue("state",      name, { shouldDirty: true, shouldValidate: true });
+    if (code && name) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
   }, [watchedGstin, setValue]);
 
   const onSubmit = (values: CompanyForm) => {
@@ -198,9 +197,13 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
       name:         values.name.trim(),
       contact_name: values.contact_name?.trim() || null,
       gstin:        values.gstin?.trim()        || null,
-      state:        values.state?.trim()        || null,
-      // R-165: a typed state counts too (GSTIN verify was the only way in), else invoices refuse.
-      state_code:   values.state_code?.trim()   || stateCodeFromName(values.state) || null,
+      // R-250: name follows the chosen code, so state and state_code can never disagree.
+      ...(() => {
+        const code = normalizeStateCode(values.state_code);
+        return code
+          ? { state: GST_STATE_BY_CODE[code], state_code: code }
+          : { state: null, state_code: null };
+      })(),
       email:        values.email?.trim()        || me?.tenantEmail || "",  // keep existing if blanked — email is NOT NULL on tenants
       phone:        values.phone?.trim()        || null,
       address:      values.address?.trim()      || null,
@@ -293,22 +296,34 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                     if (v.legal_name)                  setValue("name",       v.legal_name,                  { shouldDirty: true, shouldValidate: true });
                     if (v.address)                     setValue("address",    v.address,                     { shouldDirty: true, shouldValidate: true });
                     if (v.principal_address?.pin_code) setValue("pin_code",   v.principal_address.pin_code,  { shouldDirty: true, shouldValidate: true });
-                    if (v.state_code)                  setValue("state_code", v.state_code,                  { shouldDirty: true, shouldValidate: true });
+                    const code = normalizeStateCode(v.state_code);
+                    if (code)                          setValue("state_code", code,                          { shouldDirty: true, shouldValidate: true });
                   }}
                 />
               </Field>
 
-              {/* Hidden state_code — derived from GSTIN, but RHF still
-                  manages it so the form submission carries the value. */}
-              <input type="hidden" {...register("state_code")} />
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* R-250: same select as the setup wizard — the value is always a 2-digit
+                    GST state code, so a typo can no longer save state_code = null. */}
                 <Field htmlFor="settings-registered-state" label="Registered state">
-                  <Input id="settings-registered-state"
-                    placeholder="Auto-filled from GSTIN — usually no need to edit"
-                    error={errors.state?.message}
-                    {...register("state")}
-                  />
+                  <select id="settings-registered-state"
+                    className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
+                    aria-invalid={!!errors.state_code}
+                    aria-describedby={errors.state_code ? "settings-registered-state-error" : undefined}
+                    {...register("state_code")}
+                  >
+                    <option value="" disabled>Choose your state</option>
+                    {GST_STATE_OPTIONS.map(({ code, name }) => (
+                      <option key={code} value={code}>
+                        {name} ({code})
+                      </option>
+                    ))}
+                  </select>
+                  {errors.state_code?.message && (
+                    <p id="settings-registered-state-error" className="mt-1 text-3xs text-rose">
+                      {errors.state_code.message}
+                    </p>
+                  )}
                 </Field>
                 <Field htmlFor="settings-pin-code" label="PIN code">
                   <Input id="settings-pin-code"

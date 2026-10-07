@@ -26,7 +26,8 @@ import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useCustomers } from "@/lib/queries/customers";
 import { useUpdateTenant } from "@/lib/queries/tenant";
-import { GST_STATE_BY_CODE, gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
+import { gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
+import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { useItems, useLoadDefaultCatalog } from "@/lib/queries/items";
@@ -53,6 +54,7 @@ const STEPS = [
 interface WizardData {
   companyName:   string;
   gstin:         string;
+  /** R-250: 2-digit GST state code, "" = not chosen yet (no default). */
   state:         string;
   address:       string;
   pinCode:       string;
@@ -128,7 +130,7 @@ function StepCompany({
               // First 2 digits of a GSTIN encode the state per GSTN master list.
               // Auto-fill the State dropdown when those digits match a known code.
               const { code, name } = gstStateFromGstin(v);
-              if (code && name) update("state", `${name} (${code})`);
+              if (code && name) update("state", code);
             }}
           />
           {/* Live feedback — same logic as Settings → Company. Suppress
@@ -165,27 +167,32 @@ function StepCompany({
               if (v.legal_name)                  update("companyName", v.legal_name);
               if (v.address)                     update("address",     v.address);
               if (v.principal_address?.pin_code) update("pinCode",     v.principal_address.pin_code);
-              if (v.state_code) {
-                const name = GST_STATE_BY_CODE[v.state_code];
-                if (name) update("state", `${name} (${v.state_code})`);
-              }
+              const code = normalizeStateCode(v.state_code);
+              if (code) update("state", code);
             }}
           />
         </Field>
         <Field htmlFor="setup-state" label="State">
+          {/* R-250: no default — a wrong state means the wrong IGST/CGST on every invoice. */}
           <select id="setup-state"
             className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
             value={data.state}
+            aria-invalid={!resolveCompanyState(data.state, data.gstin)}
+            aria-describedby={resolveCompanyState(data.state, data.gstin) ? undefined : "setup-state-hint"}
             onChange={(e) => update("state", e.target.value)}
           >
-            {Object.entries(GST_STATE_BY_CODE)
-              .sort(([, a], [, b]) => a.localeCompare(b))
-              .map(([code, name]) => (
-                <option key={code} value={`${name} (${code})`}>
-                  {name} ({code})
-                </option>
-              ))}
+            <option value="" disabled>Choose your state</option>
+            {GST_STATE_OPTIONS.map(({ code, name }) => (
+              <option key={code} value={code}>
+                {name} ({code})
+              </option>
+            ))}
           </select>
+          {!resolveCompanyState(data.state, data.gstin) && (
+            <p id="setup-state-hint" className="mt-1 text-3xs text-ink-3">
+              Needed for the right GST on your invoices.
+            </p>
+          )}
         </Field>
         <Field htmlFor="setup-registered-address" label="Registered address" className="col-span-2">
           <Input id="setup-registered-address"
@@ -598,24 +605,6 @@ function StepDone() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-/** Compose "Maharashtra (27)" display string. Wizard stores the dropdown
- *  choice as one string; we split it on save. Falls back to looking up the
- *  code by name in the full GST_STATE_BY_CODE map when not provided. */
-function stateLabelFromParts(name: string | null, code: string | null): string {
-  if (!name) return "Maharashtra (27)"; // default
-  const c =
-    code ??
-    Object.entries(GST_STATE_BY_CODE).find(([, n]) => n === name)?.[0] ??
-    "";
-  return c ? `${name} (${c})` : name;
-}
-
-function parseStateLabel(label: string): { name: string; code: string } {
-  const m = /^(.+?)\s*\((\d{1,2})\)\s*$/.exec(label.trim());
-  if (m) return { name: m[1], code: m[2] };
-  return { name: label.trim(), code: "" };
-}
-
 export default function SetupPage() {
   const { data: me, isLoading: meLoading } = useCurrentUser();
   const updateTenant = useUpdateTenant();
@@ -624,7 +613,7 @@ export default function SetupPage() {
   const [data, setData] = React.useState<WizardData>({
     companyName:       "",
     gstin:             "",
-    state:             "Maharashtra (27)",
+    state:             "", // R-250: no default state
     address:           "",
     pinCode:           "",
     contactName:       "",
@@ -644,7 +633,7 @@ export default function SetupPage() {
       ...d,
       companyName:  me.tenantName       || d.companyName,
       gstin:        me.tenantGstin      || d.gstin,
-      state:        stateLabelFromParts(me.tenantState, me.tenantStateCode) || d.state,
+      state:        initialStateCode(me.tenantState, me.tenantStateCode) || d.state,
       address:      me.tenantAddress    || d.address,
       pinCode:      me.tenantPinCode    || d.pinCode,
       contactName:  me.tenantContactName || me.fullName || d.contactName,
@@ -664,13 +653,18 @@ export default function SetupPage() {
       toast.error("GSTIN is invalid", { description: "Check the 15 characters, or leave the field blank for now." });
       return;
     }
-    const { name: stateName, code: stateCode } = parseStateLabel(data.state);
+    // R-250: never save a guessed state — chosen, or proven by a valid GSTIN.
+    const companyState = resolveCompanyState(data.state, data.gstin);
+    if (!companyState) {
+      toast.error("Choose your state", { description: "It decides IGST vs CGST + SGST on every invoice." });
+      return;
+    }
     try {
       await updateTenant.mutateAsync({
         name:         data.companyName.trim() || me?.tenantName || "Workspace",
         gstin:        data.gstin.trim()        || null,
-        state:        stateName                || null,
-        state_code:   stateCode                || null,
+        state:        companyState.name,
+        state_code:   companyState.code,
         address:      data.address.trim()      || null,
         pin_code:     data.pinCode.trim()      || null,
         contact_name: data.contactName.trim()  || null,
@@ -701,6 +695,8 @@ export default function SetupPage() {
     if (step === 3) { void finishSetup();           return; }
     setStep((s) => Math.min(STEPS.length - 1, s + 1));
   };
+  // R-250: Continue stays off on step 1 until a state is chosen (or a valid GSTIN gives one).
+  const companyStateReady = resolveCompanyState(data.state, data.gstin) !== null;
   const back = () => setStep((s) => Math.max(0, s - 1));
   const skip = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
 
@@ -746,8 +742,8 @@ export default function SetupPage() {
               <button
                 key={s.id}
                 type="button"
-                onClick={() => i <= step + 1 && setStep(i)}
-                disabled={i > step + 1}
+                onClick={() => i <= step + 1 && !(step === 0 && i > 0 && !companyStateReady) && setStep(i)}
+                disabled={i > step + 1 || (step === 0 && i > 0 && !companyStateReady)}
                 className={cn(
                   "h-1 rounded-full border-0 transition-colors",
                   i < step
@@ -829,7 +825,7 @@ export default function SetupPage() {
                 variant="primary"
                 onClick={next}
                 loading={step === 0 && updateTenant.isPending}
-                disabled={step === 0 && updateTenant.isPending}
+                disabled={step === 0 && (updateTenant.isPending || !companyStateReady)}
               >
                 {step === 0 && updateTenant.isPending
                   ? "Saving…"
