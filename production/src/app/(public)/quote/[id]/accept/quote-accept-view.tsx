@@ -19,6 +19,7 @@ import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
 import { quoteInstalments } from "@/lib/billing/instalments";
+import { whatsAppLink } from "@/lib/marketing/review-request";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -70,7 +71,7 @@ interface Props {
   tenantPhone?:  string | null;
   tenantAddress?: string | null;
   /** UPI QR built server-side (`qrcode` never reaches the customer's bundle). */
-  upiQr?: { dataUrl: string; vpa: string } | null;
+  upiQr?: { dataUrl: string; vpa: string; amount: number } | null;
 }
 
 export function QuoteAcceptView({
@@ -147,7 +148,7 @@ export function QuoteAcceptView({
     lines: Array<{ lineId: string; qty: number; included: boolean; rate: number; amount: number; bandLabel: string | null; rePriced: boolean }>;
   } | null>(null);
   const [pricing, setPricing] = React.useState(false);
-  const [signerName, setSignerName] = React.useState("");
+  const [signerName, setSignerName] = React.useState(quote.customer_name ?? "");
   /* Set when Confirm is pressed with no name, so the press says why (29 Sep 2026: a
      hover title was the only explanation, and a phone has no hover). */
   const [nameNudge, setNameNudge] = React.useState(false);
@@ -296,7 +297,21 @@ export function QuoteAcceptView({
 
   const handleRequestChanges = () => {
     if (!tenantEmail) {
-      toast.info("Reach out to the reseller via the email they sent you.");
+      /* No email on file — WhatsApp the reseller's phone, or call it, instead of a
+         toast that leads nowhere (R-234). */
+      const wa = whatsAppLink(
+        tenantPhone,
+        `Hi ${tenantName}, I'd like to discuss some changes on quote ${quote.id} (total ${fmtC(dTotal)}) before accepting.`,
+      );
+      if (wa) {
+        window.open(wa, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (tenantPhone) {
+        window.location.href = `tel:${tenantPhone}`;
+        return;
+      }
+      toast.info(`Reply to the message ${tenantName} sent you with this quote to request changes.`);
       return;
     }
     const subject = `Changes requested on quote ${quote.id}`;
@@ -799,8 +814,8 @@ export function QuoteAcceptView({
                 is the question a customer asks with their card already out. */}
             {payOnline && !liveConfig?.changed && isFlex && (
               <p className="text-[12px] leading-snug text-ink-3">
-                Flex plan: har mahine ki apni invoice banti hai aur usi se bhugtan hota
-                hai — aaj sirf is mahine ka {fmtC(dTotal)} lagta hai.
+                Flex plan: each month has its own invoice and is paid from it — today
+                you pay only this month&apos;s {fmtC(dTotal)}.
               </p>
             )}
             {payOnline && !liveConfig?.changed && dueToday && (
@@ -838,14 +853,16 @@ export function QuoteAcceptView({
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={upiQr.dataUrl}
-                    alt={`UPI QR code to pay ${tenantName} ${fmtC(dTotal)}`}
+                    alt={`UPI QR code to pay ${tenantName} ${fmtC(upiQr.amount)}`}
                     className="h-32 w-32 shrink-0 rounded border border-hairline bg-white"
                   />
                   <div className="min-w-0 text-[12px] leading-snug">
                     <p className="text-ink-3">UPI ID</p>
                     <p className="font-mono font-medium text-ink break-all">{upiQr.vpa}</p>
-                    <p className="mt-2 text-ink-3">Amount</p>
-                    <p className="font-medium text-ink tabular-nums">{fmtC(dTotal)}</p>
+                    <p className="mt-2 text-ink-3">
+                      {dueToday ? `Amount · instalment 1 of ${dueToday.count}` : "Amount"}
+                    </p>
+                    <p className="font-medium text-ink tabular-nums">{fmtC(upiQr.amount)}</p>
                   </div>
                 </div>
                 <Button

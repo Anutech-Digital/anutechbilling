@@ -13,7 +13,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import type { Quote, QuoteLineItem, LineCommitment } from "@/lib/supabase/database.types";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteUpiAmount } from "./upi-amount";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -176,12 +176,16 @@ export default async function QuoteAcceptPage(props: Props) {
      `buildQuoteUpiQr` returns null for a non-₹ quote, a malformed VPA, or an
      already-invoiced quote (two documents asking for the same money is how a
      customer pays twice). Null simply means the block does not render. */
-  const upi = await buildQuoteUpiQr({
+  /* R-234: on a split-billed quote the QR asks for instalment 1 — the same figure the
+     Pay button charges — not the whole term. See ./upi-amount.ts. */
+  const upiAmount = quoteUpiAmount(quote, lineItems[0]?.commitment ?? null);
+  const upiQrImg = await buildQuoteUpiQr({
     vpa:        tenant?.upi_vpa,
     payeeName:  tenant?.upi_payee_name || tenant?.name,
     quoteId:    quote.id,
-    amountDue:  quoteAmountDue(quote),
+    amountDue:  upiAmount,
   });
+  const upi = upiQrImg ? { ...upiQrImg, amount: upiAmount } : null;
 
   return (
     <QuoteAcceptView
