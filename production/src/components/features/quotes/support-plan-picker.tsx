@@ -247,7 +247,7 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove, catalogAcc
                 ) : (
                   <p className="text-2xs leading-snug text-rose">
                     Not in your catalogue yet. Ask an owner or manager to add it under
-                    Catalog &amp; Products, then it can go on a quote.
+                    Products, then it can go on a quote.
                   </p>
                 )
               ) : (

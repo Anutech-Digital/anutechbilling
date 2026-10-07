@@ -1715,7 +1715,7 @@ export default function SubscriptionsPage() {
                     <p className="text-2xs leading-snug text-ink-2">
                       Google bills you for {sub.vendor_seats} seats. This customer is billed for {sub.seats}.
                       {leak.monthlyImpact == null
-                        ? " This plan has no catalogue cost, so the rupee amount is unknown — add it under Catalog & Products."
+                        ? " This plan has no catalogue cost, so the rupee amount is unknown — add it under Products."
                         : ` That is ${rupee(leak.monthlyImpact)}/month of margin going out.`}
                     </p>
                     <p className="text-2xs leading-snug text-ink-3 mt-1.5">

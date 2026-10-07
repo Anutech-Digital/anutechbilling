@@ -365,6 +365,9 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
   "/vendor-portal": "Not built yet — the page says so",
+  /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
+  "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
+  "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -467,12 +470,14 @@ export const APP_NAV: NavSection[] = [
       { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: SALES_READ },
       { id: "projects",      href: "/projects",      label: "Project Sales",     icon: "package", roles: ["owner", "manager", "sales", "delivery", "billing"] },
       {
-        id: "items",     href: "/items",           label: "Catalog & Products", icon: "package", roles: OM,
+        id: "items",     href: "/items",           label: "Products", icon: "package", roles: OM,
         children: [
-          /* The two catalogs lived as tabs on /items with no link of their own, so the menu
-             showed only Packages (Pardeep, 4 Oct 2026). Each now has its own address. */
-          { id: "catalog-subscriptions", href: "/items/subscriptions", label: "Subscription catalog", icon: "repeat",  roles: OM, hint: "Google, Microsoft, hosting — monthly and yearly prices" },
-          { id: "catalog-products",      href: "/items/products", label: "Product catalog",      icon: "package", roles: OM, hint: "One-time products and services" },
+          /* R-384 (7 Oct 2026, owner decision — Pardeep): this row was "Catalog & Products"
+             with two children added 4 Oct, "Subscription catalog" (/items/subscriptions) and
+             "Product catalog" (/items/products). Both were tabs of this same page, so the
+             menu named one page three times. Now one row, "Products", whose page has the
+             Subscriptions | One-time products tabs. Both addresses still work (the tabs link
+             to them, the guard admits /items/*) and keep their own crumbs in EXTRA_SCREENS. */
           { id: "packages", href: "/items/packages", label: "Packages", icon: "package", roles: OM, hint: "Product bundles — one click in a quote" },
         ],
       },
@@ -594,7 +599,8 @@ export const APP_NAV: NavSection[] = [
          first on a phone. */
       { id: "my-expenses", href: "/my-expenses", label: "Advances & Expenses", icon: "wallet", roles: STAFF, hint: "Advance cash balances & mobile expense entries." },
       {
-        id: "employees",         href: "/accounting/employees",       label: "Employees & Team",       icon: "users", roles: OMB,
+        /* R-384 (7 Oct 2026, owner decision): label was "Employees & Team". */
+        id: "employees",         href: "/accounting/employees",       label: "Employees & Users",      icon: "users", roles: OMB,
         children: [
           /* Was reachable only by URL. */
           { id: "scorecard",       href: "/scorecard",                  label: "Scorecards",             icon: "award", roles: OM },
@@ -735,6 +741,9 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/performance":            { tail: ["Team Performance"], under: "Team" },
   "/assessments":            { tail: ["Reasoning Tests"], under: "Team" },
   "/attendance/kiosk":       { tail: ["Attendance Kiosk"], under: "Team" },
+  // R-384 (7 Oct 2026): the two tabs of Products lost their own menu rows — crumbs kept.
+  "/items/subscriptions":    { tail: ["Subscriptions"] },
+  "/items/products":         { tail: ["One-time products"] },
   "/reports/profit":         { tail: ["Profit by product/service"] },
   "/reports/purchases":      { tail: ["Purchase report"] },
   "/mobile":                 { tail: ["Mobile (PWA)"], under: "Settings" },

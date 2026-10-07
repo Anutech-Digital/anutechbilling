@@ -147,7 +147,7 @@ export function marginBadge(m: DealMargin): {
       no_plan:         "No plan on this lead, so there is nothing to price.",
       no_seats:        "No seat count, so the cost cannot be worked out.",
       no_value:        "No deal value yet.",
-      not_in_catalog:  "This plan has no row in Catalog & Products, so its vendor cost is unknown.",
+      not_in_catalog:  "This plan has no row in Products, so its vendor cost is unknown.",
       ambiguous_plan:  "More than one catalogue product carries this name at different costs — it cannot be priced without a vendor.",
     };
     return { label: "—", kind: "muted", title: `Margin unknown. ${why[m.reason]}` };

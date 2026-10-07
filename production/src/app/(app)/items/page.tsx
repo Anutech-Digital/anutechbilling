@@ -109,7 +109,7 @@ export default function ItemsPage() {
   const confirm = useConfirm();
 
   /* /items and /items/subscriptions = subscription catalog, /items/products = product
-     catalog — one page, three addresses, so the menu can link to each and the tab keeps the URL in step. */
+     catalog — one page, three addresses; the menu row "Products" opens /items (R-384) and the tab keeps the URL in step. */
   const pathname = usePathname();
   const router = useRouter();
   const catalogType: "subscription" | "one_time" = pathname?.startsWith("/items/products") ? "one_time" : "subscription";
@@ -161,8 +161,8 @@ export default function ItemsPage() {
   const kindTabsWithCounts = KIND_TABS.map((t) => ({ ...t, count: kindCounts[t.id] ?? 0 }));
 
   const CATALOG_TABS: TabBarItem[] = [
-    { id: "subscription", label: "Subscription Catalog", count: subItems.length },
-    { id: "one_time",     label: "Product Catalog",      count: oneTimeItems.length },
+    { id: "subscription", label: "Subscriptions",     count: subItems.length },
+    { id: "one_time",     label: "One-time products", count: oneTimeItems.length },
   ];
 
   // Aggregates (subscription)
@@ -191,9 +191,9 @@ export default function ItemsPage() {
       {/* Header */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Catalog</p>
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Products</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">
-            {catalogType === "subscription" ? "Subscription Catalog" : "Product Catalog"}
+            {catalogType === "subscription" ? "Subscriptions" : "One-time products"}
           </h1>
           <p className="text-sm text-ink-3 mt-1">
             {catalogType === "subscription"

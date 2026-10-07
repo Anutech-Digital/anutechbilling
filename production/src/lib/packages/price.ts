@@ -132,5 +132,5 @@ export function packageLines(p: PricedPackage, opts: { startDate?: string } = {}
 export function missingMessage(p: PricedPackage, nameOf: (itemId: string) => string | undefined): string | null {
   if (p.missing.length === 0) return null;
   const names = p.missing.map((m) => nameOf(m.item_id) ?? m.item_id);
-  return `${names.join(", ")} ${names.length === 1 ? "is" : "are"} no longer active in your catalogue — edit the package or turn the item back on under Catalog & Products.`;
+  return `${names.join(", ")} ${names.length === 1 ? "is" : "are"} no longer active in your catalogue — edit the package or turn the item back on under Products.`;
 }

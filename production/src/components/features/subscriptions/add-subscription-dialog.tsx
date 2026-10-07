@@ -1299,7 +1299,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
                 <p className="mt-1 text-2xs leading-snug text-ink-3">
                   Your catalogue is empty. Add products in{" "}
                   <a href="/items" className="font-semibold text-primary hover:underline">
-                    Catalog &amp; Products
+                    Products
                   </a>{" "}
                   to get prices and margin checks, or use a custom product name.
                 </p>

@@ -28,7 +28,7 @@ export function supportCatalogId(tier: SupportTier, cycle: Cycle, tenantId: stri
 }
 
 /**
- * Who sees "Add to catalog": the roles that can open Catalog & Products (/items —
+ * Who sees "Add to catalog": the roles that can open Products (/items —
  * owner and manager), so the button never offers a write the catalogue page itself
  * does not. Unlike canWriteMoney, an unknown role (still loading) is NO: a button
  * that appears and then vanishes is worse than one that appears a moment late.

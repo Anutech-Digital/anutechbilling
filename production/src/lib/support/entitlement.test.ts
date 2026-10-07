@@ -90,7 +90,7 @@ describe("unknown — the answer that stops both mistakes", () => {
     const v = coverageFor("microsoft", [support({ covered: null, planName: "Legacy AMC" })]);
     if (v.state === "unknown") {
       expect(v.reason).toContain("Legacy AMC");
-      expect(v.nextStep).toMatch(/Catalog/);
+      expect(v.nextStep).toMatch(/in Products/);
     }
   });
 

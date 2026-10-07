@@ -84,7 +84,7 @@ describe("the quote line uses the catalogue's own price", () => {
 });
 
 describe("who may add to the catalogue", () => {
-  it("is the roles that can open Catalog & Products", () => {
+  it("is the roles that can open Products", () => {
     expect(canEditSupportCatalog("owner")).toBe(true);
     expect(canEditSupportCatalog("manager")).toBe(true);
     for (const r of ["sales", "sales_senior", "billing", "accountant", "support", "delivery"]) {

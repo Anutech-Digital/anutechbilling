@@ -85,7 +85,12 @@ const ADDED_3OCT_OM = ["/ai-entry", "/online-orders", "/items/packages", "/accou
  *  (Pardeep: "subscription catalog aur product catalog bhi hone chahiye"). Same page, same
  *  owner/manager roles as /items — new addresses, not new access. */
 /** …and Apprentice Academy (R-149), owner / manager in phase 1. */
-const ADDED_4OCT_OM = ["/items/subscriptions", "/items/products", "/marketing/landing-pages", "/academy"];
+/** R-384 (7 Oct 2026, owner decision — Pardeep): the two catalog rows are gone again; one
+ *  menu row "Products" (/items) opens the page and its tabs link to /items/subscriptions and
+ *  /items/products. So those two leave this list (no longer separate guard entries), and the
+ *  "every page route on disk" test below — plus the explicit check in "2. structure" — proves
+ *  the guard still admits both through /items. Same access, fewer menu rows. */
+const ADDED_4OCT_OM = ["/marketing/landing-pages", "/academy"];
 /** R-163 (5 Oct 2026): Payment Runs, a child of Payments Made — same owner/manager/billing roles. */
 const ADDED_5OCT_OMB = ["/accounting/payment-runs", "/accounting/google-bill-check"];
 const ADDED_3OCT_OWNER = ["/vault/personal/banking", "/vault/personal/expenses", "/vault/personal/wealth"];
@@ -229,6 +234,27 @@ describe("2. structure", () => {
     expect(rows).toBeLessThanOrEqual(47);
     // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
     for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
+  });
+
+  it("R-384 (7 Oct 2026): one 'Products' row for the catalog, Packages its only child, both tabs still open", () => {
+    const items = APP_NAV.find((s) => s.section === "Bill")!.items.find((i) => i.id === "items")!;
+    expect(items.label).toBe("Products");
+    expect(items.href).toBe("/items");
+    expect(items.children?.map((c) => c.href)).toEqual(["/items/packages"]);
+    for (const h of ["/items/subscriptions", "/items/products"]) {
+      expect(flat.some((e) => e.item.href === h), `${h} should not be its own menu row`).toBe(false);
+      for (const r of ["owner", "manager"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(true);
+      for (const r of ["sales", "billing", "support"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(isRouteAllowed(r, "/items"));
+    }
+    expect(getCrumb("/items")).toEqual(["Billing", "Products"]);
+    expect(getCrumb("/items/subscriptions")).toEqual(["Billing", "Products", "Subscriptions"]);
+    expect(getCrumb("/items/products")).toEqual(["Billing", "Products", "One-time products"]);
+  });
+
+  it("R-384 (7 Oct 2026): the employees row reads 'Employees & Users' (was 'Employees & Team')", () => {
+    const row = flat.find((e) => e.item.id === "employees")!.item;
+    expect(row.href).toBe("/accounting/employees");
+    expect(row.label).toBe("Employees & Users");
   });
 
   it("lists every href exactly once (the old nav had 9 duplicates)", () => {
