@@ -17,6 +17,7 @@ import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
 import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
+import { includedSupportLine } from "./quote-support-line";
 
 /** Supplier fields needed on both PDFs (from the tenants row). */
 export interface TenantPdfInfo {
@@ -260,6 +261,9 @@ export function buildQuotePdfProps(args: {
     billingCycle:  quote.billing_cycle,
     notes:         quote.notes ?? undefined,
     termsConditions: quote.terms_conditions ?? null,
+    /* R-367: "Support: Free — Included" when no support line is on the quote — the same
+       builder the preview dialog calls, so the two documents agree. */
+    includedSupport: includedSupportLine(quote.line_items ?? []),
     isRenewal:     quote.is_renewal,
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */

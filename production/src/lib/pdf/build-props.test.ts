@@ -206,3 +206,28 @@ describe("quote Bill-to carries the state and GSTIN (R-175)", () => {
     expect(buildQuotePdfProps({ quote, customer: null, tenant }).customerState).toBe("Punjab");
   });
 });
+
+/* R-367 (7 Oct 2026): quote PDF + preview never said the default free support comes with
+   the quote. build-props carries the line from the shared builder (quote-support-line). */
+describe("included free support line (R-367)", () => {
+  const base = { id: "Q-1", customer_name: "X", subtotal: 1000, discount_pct: 0, tax_rate: 18, amount: 1180 };
+  const licence = { id: "l1", name: "Google Workspace Business Starter", qty: 1, rate: 1000, cost: 900 };
+
+  it("no support line on the quote → 'Support: Free — Included'", () => {
+    const quote = { ...base, line_items: [licence] } as unknown as Quote;
+    const p = buildQuotePdfProps({ quote, customer: null, tenant });
+    expect(p.includedSupport?.text).toBe("Support: Free — Included");
+    expect(p.includedSupport?.planName).toBe("Free");
+  });
+
+  it("paid support plan on the quote → no included line (its priced row stands)", () => {
+    const quote = { ...base, line_items: [licence,
+      { id: "s1", item_id: "SUP-STANDARD-YR-abc", name: "Standard Support (Yearly)", qty: 1, rate: 9996, cost: 0 }] } as unknown as Quote;
+    expect(buildQuotePdfProps({ quote, customer: null, tenant }).includedSupport).toBeNull();
+  });
+
+  it("empty quote → nothing", () => {
+    const quote = { ...base, line_items: [] } as unknown as Quote;
+    expect(buildQuotePdfProps({ quote, customer: null, tenant }).includedSupport).toBeNull();
+  });
+});

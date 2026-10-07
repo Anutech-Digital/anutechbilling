@@ -22,6 +22,7 @@ import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
+import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -121,6 +122,8 @@ export function QuotePreviewDialog({
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
   const intra        = splitIntraStateTax(tax);
+  // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
+  const includedSupport = includedSupportLine(lineItems);
 
   const handlePrint = () => {
     window.print();
@@ -347,6 +350,14 @@ export function QuotePreviewDialog({
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Default free support, included (R-367) */}
+          {includedSupport && (
+            <div className="mb-6 pt-4 border-t border-hairline" data-testid="included-support">
+              <p className="text-sm text-ink-2">{includedSupport.text}</p>
+              <p className="text-2xs text-ink-3">{includedSupport.detail}</p>
             </div>
           )}
 

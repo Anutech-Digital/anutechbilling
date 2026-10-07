@@ -37,6 +37,7 @@ import {
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invoice-divisor";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
+import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 
@@ -103,6 +104,12 @@ export interface QuotePDFProps {
   billingCycle?: BillingCycle;
   notes?:        string;
   termsConditions?: string | null;
+  /**
+   * R-367. The default free support line ("Support: Free — Included"), from
+   * includedSupportLine() — the builder the preview dialog uses too. `undefined` →
+   * derived here from `lineItems` (callers that build props by hand); `null` → none.
+   */
+  includedSupport?: IncludedSupportLine | null;
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
@@ -408,6 +415,9 @@ export function QuotePDF(props: QuotePDFProps) {
     isPaid = false,
     upiQrDataUrl, upiVpa,
   } = props;
+  const includedSupport = props.includedSupport !== undefined
+    ? props.includedSupport
+    : includedSupportLine(lineItems);
 
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
   /* The monogram was never a placeholder waiting to be replaced — it is the fallback, and it
@@ -742,6 +752,14 @@ export function QuotePDF(props: QuotePDFProps) {
                 )}
               </View>
             </View>
+          </View>
+        )}
+
+        {/* ── R-367: default free support, included ───────────────── */}
+        {includedSupport && (
+          <View style={s.notesBox}>
+            <Text style={s.notesText}>{pdfText(includedSupport.text)}</Text>
+            <Text style={[s.notesText, { marginTop: 2, color: COLORS.ink3 }]}>{pdfText(includedSupport.detail)}</Text>
           </View>
         )}
 
