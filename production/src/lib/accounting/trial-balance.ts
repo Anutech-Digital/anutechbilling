@@ -14,6 +14,14 @@
  * jaata hai ("Difference — opening capital & retained earnings b/f"). Balance Sheet ka
  * equity plug bhi yahi karta hai. Us line ko chhupana TB ko "tally" dikhata par jhooth hota.
  *
+ * S45 slice 1 (7 Oct 2026): har money event ke pehle/baad Dr − Cr naapa
+ * (supabase/tests/tb_money_events_balanced.test.sql). Part payment, TDS wala payment aur
+ * invoice ke baad customer ka bakaaya (overpayment / paid invoice par credit note) TB ko
+ * hilaate the — migration 20261007290000 ne theek kiye. Abhi bhi hilaate hain (slice 2,
+ * asli journal): Razorpay fee, bina bank line ka cash expense, salary "other" deduction.
+ * Isliye ye line abhi bhi zaroori hai — par ab usme sirf opening capital / pichhle saal ka
+ * profit / upar ke known gaps hain, roz ke receipts nahi.
+ *
  * ─── EXPENSE HEADS GROSS, ITC ALAG ─────────────────────────────────────────
  * P&L ki category list GST-inclusive `amount` hai, aur P&L ka `expenses` usme se claimable
  * ITC ghata kar. TB dono dikhata hai: category heads gross (Dr) + ek Cr line "ITC inside
@@ -78,7 +86,8 @@ export function buildTrialBalance(args: {
 
   // ── Liabilities ──
   put("Liabilities", "Trade payables", bs.payables, "credit", "Vendor bills − paid");
-  put("Liabilities", "Advances from customers", bs.advancesFromCustomers, "credit", "Received before an invoice was raised");
+  put("Liabilities", "Advances from customers", bs.advancesFromCustomers, "credit",
+    "Received before an invoice was raised, plus anything paid over an invoice or credited after payment");
   put("Liabilities", "Salary payable", bs.salaryPayable, "credit", "Net salary booked, not yet paid");
   put("Liabilities", "Statutory dues (TDS / PF / ESI)", bs.salaryDuesPayable, "credit", "Withheld + employer share − challans");
   put("Liabilities", "Reimbursements payable", bs.reimbursementsPayable, "credit", "Paid from someone's own pocket, not yet repaid");

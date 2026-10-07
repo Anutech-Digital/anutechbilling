@@ -65,14 +65,34 @@ export interface BalanceSheetAuto {
  * `net_payable` is preferred over `amount` because migration 0005 freezes the
  * advance adjustment into it (CGST Rule 53) — using `amount` would re-count an
  * advance that was already applied.
+ *
+ * S45 (7 Oct 2026): minus `paid_amount` (record_payment writes it on every part payment,
+ * R-015; Aging reads the same). Counting the whole net_payable while the part payment is
+ * also money received put that amount on the Dr side twice — the Trial Balance moved by it.
  */
 export function computeTradeReceivables(
-  openInvoices: ReadonlyArray<{ id: string; amount?: number | null; net_payable?: number | null }>,
+  openInvoices: ReadonlyArray<{ id: string; amount?: number | null; net_payable?: number | null; paid_amount?: number | null }>,
   projectInvoiceIds: ReadonlySet<string>,
 ): number {
   return openInvoices
     .filter((i) => !projectInvoiceIds.has(i.id))
-    .reduce((s, i) => s + (i.net_payable ?? i.amount ?? 0), 0);
+    .reduce((s, i) => s + Math.max(0, (i.net_payable ?? i.amount ?? 0) - (i.paid_amount ?? 0)), 0);
+}
+
+/**
+ * S45 (7 Oct 2026): money owed BACK to customers after the invoice — overpayment, or a
+ * credit note on an invoice already paid. Per invoiced quote: received − (invoice − credit
+ * notes + debit notes), when positive. Before this it was nowhere: the money sat in cash /
+ * undeposited funds with no liability against it, and the Trial Balance moved by it.
+ * Only a quote's single, non-project invoice (split billing / milestones have their own
+ * arithmetic). Mirrors report_balance_sheet (migration 20261007290000); it is added to
+ * `advancesFromCustomers`.
+ */
+export function computeOwedBackToCustomers(
+  invoicedQuotes: ReadonlyArray<{ received: number; invoice_amount: number; credit_notes: number; debit_notes: number }>,
+): number {
+  return invoicedQuotes.reduce(
+    (s, q) => s + Math.max(0, q.received - (q.invoice_amount - q.credit_notes + q.debit_notes)), 0);
 }
 
 /**

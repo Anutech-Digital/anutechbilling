@@ -59,9 +59,19 @@ select json_build_object(
     'accounts',  (select coalesce(json_agg(json_build_object('id', id, 'opening_balance', opening_balance, 'account_type', account_type)), '[]') from public.bank_accounts),
     -- rpc("bank_account_current_balance", { p_account_id }) har account ke liye
     'balanceOf', (select coalesce(json_object_agg(id, public.bank_account_current_balance(id)), '{}') from public.bank_accounts),
-    'openInv',   (select coalesce(json_agg(json_build_object('id', id, 'amount', amount, 'net_payable', net_payable, 'status', status)), '[]') from public.invoices where status in ('pending','overdue')),
-    -- R-179: receipts jin par koi bank line match nahi (undeposited funds)
-    'unbankedPays',     (select coalesce(json_agg(json_build_object('amount', amount)), '[]') from public.payments p where status = 'received' and not exists (select 1 from public.bank_transactions t where t.matched_to_type = 'payment' and t.matched_to_id = p.id::text)),
+    'openInv',   (select coalesce(json_agg(json_build_object('id', id, 'amount', amount, 'net_payable', net_payable, 'paid_amount', paid_amount, 'status', status)), '[]') from public.invoices where status in ('pending','overdue')),
+    -- R-179: receipts jin par koi bank line match nahi (undeposited funds); S45: us payment ka TDS
+    'unbankedPays',     (select coalesce(json_agg(json_build_object('amount', amount, 'tds', (select sum(t.tds_amount) from public.tds_receivable t where t.payment_id = p.id))), '[]') from public.payments p where status = 'received' and not exists (select 1 from public.bank_transactions t where t.matched_to_type = 'payment' and t.matched_to_id = p.id::text)),
+    -- S45: quote ka ek hi, non-project invoice — mila vs invoice ± notes
+    'invoicedQuotes', (select coalesce(json_agg(json_build_object(
+        'received', (select coalesce(sum(p.amount), 0) from public.payments p where p.quote_id = q.id and p.status = 'received'),
+        'invoice_amount', i.amount,
+        'credit_notes', (select coalesce(sum(c.amount), 0) from public.credit_notes c where c.invoice_id = i.id),
+        'debit_notes', (select coalesce(sum(d.amount), 0) from public.debit_notes d where d.invoice_id = i.id))), '[]')
+       from public.quotes q join public.invoices i on i.id = q.invoice_id
+      where i.status in ('pending','paid','overdue')
+        and not exists (select 1 from public.invoices i2 where i2.quote_id = q.id and i2.id <> i.id)
+        and not exists (select 1 from public.project_milestones pm where pm.invoice_id = i.id)),
     'unbankedProjPays', (select coalesce(json_agg(json_build_object('amount', amount)), '[]') from public.project_payments where bank_txn_id is null),
     'msInv',     (select coalesce(json_agg(json_build_object('invoice_id', invoice_id)), '[]') from public.project_milestones where invoice_id is not null),
     'recdPays',  (select coalesce(json_agg(json_build_object('quote_id', quote_id, 'amount', amount, 'status', status)), '[]') from public.payments where status = 'received'),
@@ -151,6 +161,7 @@ function dump(): Dump {
     "supabase/migrations/20260928110000_report_functions.sql",
     "supabase/migrations/20260928190000_report_fixes_ist_ledger_trend_cn.sql",
     "supabase/migrations/20261006140000_undeposited_funds.sql",
+    "supabase/migrations/20261007290000_tb_customer_balances.sql",
   ].map((p) => readFileSync(join(ROOT, p), "utf8")).join("\n");
   const testSql = readFileSync(join(ROOT, "supabase/tests/report_functions.test.sql"), "utf8");
   const fixture = testSql.split("-- FIXTURE:BEGIN")[1]?.split("-- FIXTURE:END")[0];
@@ -161,6 +172,10 @@ function dump(): Dump {
     "begin;",
     // PostgREST timestamptz UTC me deta hai; purana ledger usi string ka slice(0, 10) leta tha.
     "set local timezone = 'UTC';",
+    /* S45: 20260928110000 ka `create or replace` purane RETURNS TABLE se hai; jis DB par
+       20261006140000 (undeposited_funds column) lag chuka, wahan wo "cannot change return
+       type" deta tha — parity test local DB par chalta hi nahi tha. Rollback ke andar hai. */
+    "drop function if exists public.report_balance_sheet(date);",
     migration,
     "do $$ begin perform set_config('request.jwt.claims', '{\"role\":\"service_role\"}', true); end $$;",
     fixture,

@@ -196,7 +196,8 @@ begin
   if r.cash_and_bank           <> 130500 then raise exception 'FAIL BS cash_and_bank: expected 130500 (130000 current + 500 overpaid card), got %', r.cash_and_bank; end if;
   if r.credit_card_payable     <>   8000 then raise exception 'FAIL BS credit_card_payable: expected 8000, got %', r.credit_card_payable; end if;
   if r.receivables             <>  15900 then raise exception 'FAIL BS receivables: expected 15900 (INV1 net 10000 + INV2 5900; INV4 project, INV5 void excluded), got %', r.receivables; end if;
-  if r.advances_from_customers <>   7000 then raise exception 'FAIL BS advances: expected 7000, got %', r.advances_from_customers; end if;
+  -- S45-TB: + 1180 — INV3 paid in full (23600) then CN1 1180 → that 1180 is owed back to the customer.
+  if r.advances_from_customers <>   8180 then raise exception 'FAIL BS advances: expected 8180 (P1 7000 advance + 1180 owed back on INV3 after CN1), got %', r.advances_from_customers; end if;
   if r.project_receivable      <>  30000 then raise exception 'FAIL BS project_receivable: expected 30000, got %', r.project_receivable; end if;
   if r.tds_receivable          <>   1500 then raise exception 'FAIL BS tds_receivable: expected 1500, got %', r.tds_receivable; end if;
   if r.employee_loans          <>  15000 then raise exception 'FAIL BS employee_loans: expected 15000, got %', r.employee_loans; end if;
