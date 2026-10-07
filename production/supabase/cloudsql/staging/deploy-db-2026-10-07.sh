@@ -40,6 +40,7 @@ MIGS=(
   "aggturn|20261007060000_tenant_aggregate_turnover.sql|resellersos_migration|exists(select 1 from pg_constraint where conname='tenants_aggregate_turnover_check')"
   "credit|20261007073000_activate_on_credit.sql|resellersos_migration|exists(select 1 from pg_proc where proname='activate_quote_on_credit' and pronamespace='public'::regnamespace)"
   "testruns|20261007090000_page_test_runs.sql|resellersos_migration|(to_regclass('public.page_test_runs') is not null)"
+  "fbclaim|20261007110000_feedback_agent_claim.sql|resellersos_migration|(exists (select 1 from information_schema.columns where table_schema='public' and table_name='feedback' and column_name='agent_card') and exists (select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='feedback_auto_send'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -113,8 +113,12 @@ describe("Bug Reports page stays current (R-356)", () => {
   it("polls every 30 s, and not in a background tab", async () => {
     renderPage();
     await screen.findByTestId(`feedback-card-${db.rows[0].id}`);
-    // The queue list and the status/count read; the platform list is off for this user.
-    const queries = qc.getQueryCache().findAll({ queryKey: ["feedback"] }).filter((q) => q.queryKey[1] !== "platform");
+    // The queue list and the status/count read; the platform list is off for this user, and the
+    // R-357 auto-send switch is a setting, not a list, so it does not poll.
+    const queries = qc
+      .getQueryCache()
+      .findAll({ queryKey: ["feedback"] })
+      .filter((q) => q.queryKey[1] !== "platform" && q.queryKey[1] !== "auto-send");
     expect(queries.length).toBeGreaterThanOrEqual(2); // list + statuses/counts
     for (const q of queries) {
       for (const o of q.observers) {

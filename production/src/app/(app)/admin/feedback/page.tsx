@@ -31,6 +31,7 @@ import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatDate } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { FeedbackAutoSendToggle } from "@/components/feedback/auto-send-toggle";
 import {
   useFeedbackList,
   useFeedbackCounts,
@@ -351,7 +352,9 @@ function FeedbackCard({ row, userId, meName, justFixed = false }: { row: Feedbac
 
   const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
   /* A note can survive a Reopen → re-queue; if it names a card, the queued strip shows it. */
-  const queuedCard = row.status === "agent_queued" ? parseFixedNote(row.resolution_note).card : null;
+  // R-357: the worker's claim (agent_card) names the card once the claim migration is applied.
+  const claimedCard = (row as { agent_card?: string | null }).agent_card ?? null;
+  const queuedCard = row.status === "agent_queued" ? claimedCard ?? parseFixedNote(row.resolution_note).card : null;
 
   return (
     <Card
@@ -642,6 +645,8 @@ export default function AdminFeedbackPage() {
           <kbd className="px-1 py-0.5 rounded bg-paper-2 border border-hairline font-mono text-2xs">B</kbd>, triaged and turned into a directive for a coding agent.
         </p>
       </div>
+
+      <FeedbackAutoSendToggle />
 
       {/* Only the platform owner sees this. Everyone else gets the page exactly as before. */}
       {me?.isPlatformAdmin && (
