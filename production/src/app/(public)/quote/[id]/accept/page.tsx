@@ -14,6 +14,9 @@ import type { Quote, QuoteLineItem, LineCommitment } from "@/lib/supabase/databa
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteUpiAmount } from "./upi-amount";
+import { acceptedPayNow } from "./accepted-pay";
+import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -59,7 +62,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at")
+    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -122,7 +125,7 @@ export default async function QuoteAcceptPage(props: Props) {
   // calls happen on the visible phone number).
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("name, gstin, email, phone, address, upi_vpa, upi_payee_name")
+    .select("name, gstin, email, phone, address, upi_vpa, upi_payee_name, state_code")
     .eq("id", quote.tenant_id)
     .maybeSingle();
 
@@ -187,6 +190,33 @@ export default async function QuoteAcceptPage(props: Props) {
   });
   const upi = upiQrImg ? { ...upiQrImg, amount: upiAmount } : null;
 
+  /* R-377: what the ACCEPTED screen offers to collect — the same figure the pay route
+     charges, and only when this tenant has a way to be paid. See ./accepted-pay.ts. */
+  const acceptedPay = acceptedPayNow({
+    quote,
+    firstCommitment: lineItems[0]?.commitment ?? null,
+    payOnline,
+    hasUpi: Boolean(upi),
+  });
+
+  /* R-376(b): the tax heads exactly as the quote preview / PDF print them — seller vs
+     buyer state through the shared place-of-supply helper (same call as the send route).
+     Only state codes and GSTINs are read; only the resulting boolean reaches the page. */
+  const { data: buyer } = quote.customer_id
+    ? await supabase
+        .from("customers")
+        .select("gstin, state_code")
+        .eq("id", quote.customer_id)
+        .maybeSingle()
+    : { data: null };
+  const interState = isInterStateSupply(buyer?.state_code, tenant?.state_code, {
+    customerGstin: buyer?.gstin, sellerGstin: tenant?.gstin,
+  });
+
+  /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
+     fed the raw lines (it needs item_id to spot a catalogue support row). */
+  const supportLine = includedSupportLine((quote.line_items ?? []) as QuoteLineItem[]);
+
   return (
     <QuoteAcceptView
       quote={publicQuote}
@@ -199,6 +229,9 @@ export default async function QuoteAcceptPage(props: Props) {
       tenantPhone={tenant?.phone ?? null}
       tenantAddress={tenant?.address ?? null}
       upiQr={upi}
+      acceptedPay={acceptedPay}
+      interState={interState}
+      supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />
   );
 }
