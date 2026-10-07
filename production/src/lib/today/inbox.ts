@@ -18,7 +18,7 @@
  * just under "paid, not delivered" (90), because it costs money per day and the
  * penalty has no cap on several of them.
  */
-import { buildComplianceRows, type ComplianceCategory } from "@/lib/compliance/obligations";
+import { buildComplianceRows, type ComplianceCategory, type ComplianceProfile } from "@/lib/compliance/obligations";
 import { daysBetweenISO, toIstDate } from "@/lib/dates/ist";
 
 export type TodayKind =
@@ -93,13 +93,18 @@ function istMidnightISO(date: string): string {
  * marked filed. `filed` is the same map the /compliance page builds from
  * compliance_log (`${obligation_key}|${period_key}` → filed date). `notApplicable`
  * is the same predicate too (R-181: no TDS deducted → no TDS deposit to chase).
+ *
+ * R-325: `profile` is the tenant's business type + GST mode (R-262), the same one the
+ * /compliance page uses — so a QRMP filer sees the quarterly GSTR-3B / monthly PMT-06,
+ * not a monthly GSTR-3B. Omitted / unknown → the Pvt Ltd, monthly-GST list, as before.
  */
 export function complianceTodayItems(
   today: Date,
   filed: Map<string, string>,
   notApplicable?: (obligationKey: string, periodKey: string) => boolean,
+  profile?: ComplianceProfile,
 ): TodayItem[] {
-  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable)
+  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable, profile)
     .filter((r) => r.status !== "filed" && r.status !== "not_applicable" && r.daysToDue <= COMPLIANCE_WINDOW_DAYS)
     .map((r) => ({
       kind: "compliance",

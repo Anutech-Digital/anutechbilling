@@ -27,6 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { useComplianceLog, toFiledMap, useTdsMonths } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate } from "@/lib/compliance/tds-not-applicable";
+import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useTodayDealItems } from "@/lib/queries/deals";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canSeeDeals } from "@/lib/deals/access";
@@ -110,14 +111,18 @@ export default function TodayPage() {
   /* R-181: no TDS deducted in a finished month → no "Deposit TDS" item for it. */
   const tdsToday = React.useMemo(() => new Date(), []);
   const tdsMonths = useTdsMonths(tdsToday);
+  /* R-325: business type + GST mode (R-262). Not loaded / not migrated → undefined → the
+     original Pvt Ltd, monthly-GST list, so a slow or failed read never hides a deadline. */
+  const profile = useComplianceProfile();
   const complianceItems = React.useMemo(
     () => (compliance.data
       ? complianceTodayItems(
           new Date(), toFiledMap(compliance.data),
           tdsMonths.data ? noTdsDeductedPredicate(tdsMonths.data, tdsToday) : undefined,
+          profile.data,
         )
       : []),
-    [compliance.data, tdsMonths.data, tdsToday],
+    [compliance.data, tdsMonths.data, tdsToday, profile.data],
   );
   const all = React.useMemo(
     () => rankTodayItems([...(inbox.data ?? []), ...complianceItems, ...deals.items]),

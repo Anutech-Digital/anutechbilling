@@ -45,6 +45,20 @@ describe("complianceTodayItems — GST/TDS from the same catalog /compliance use
     const i = complianceTodayItems(TODAY, JULY_FILED()).find((x) => x.id === "gst_gstr3b|2026-08")!;
     expect(i.due_at).toBe("2026-09-19T18:30:00.000Z");
   });
+
+  /* R-325: Today reads the business profile (R-262) like /compliance does. */
+  it("a QRMP filer gets PMT-06, not the monthly GSTR-3B", () => {
+    const ids = complianceTodayItems(TODAY, JULY_FILED(), undefined, { businessType: "proprietor", gstFiling: "qrmp" })
+      .map((i) => i.id);
+    expect(ids).not.toContain("gst_gstr3b|2026-08");
+    expect(ids.some((id) => id.startsWith("gst_pmt06|"))).toBe(true);
+    expect(ids.some((id) => id.startsWith("roc_"))).toBe(false);
+  });
+
+  it("an unknown profile gives exactly today's list", () => {
+    const unknown = complianceTodayItems(TODAY, JULY_FILED(), undefined, { businessType: null, gstFiling: null });
+    expect(unknown).toEqual(complianceTodayItems(TODAY, JULY_FILED()));
+  });
 });
 
 describe("rankTodayItems — the same order as today_inbox()'s ORDER BY", () => {

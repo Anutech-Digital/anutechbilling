@@ -18,42 +18,11 @@ import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import {
-  toBusinessType, toGstFiling, UNKNOWN_PROFILE,
-  type BusinessType, type ComplianceProfile, type GstFiling,
-} from "./obligations";
+import type { BusinessType, GstFiling } from "./obligations";
+import { profileFromRow, isMissingColumnError, type ComplianceProfileState } from "./profile-row";
 
-export interface ComplianceProfileState extends ComplianceProfile {
-  /** True when the database has no columns for this yet (migration not applied). */
-  columnsMissing: boolean;
-}
-
-interface PgErrorLike { code?: string | null; message?: string | null }
-
-/**
- * Postgres says 42703 for an unknown column in a SELECT; PostgREST says PGRST204 when an
- * UPDATE names a column its schema cache does not have. Either one means "not migrated".
- */
-export function isMissingColumnError(err: PgErrorLike | null | undefined): boolean {
-  if (!err) return false;
-  if (err.code === "42703" || err.code === "PGRST204") return true;
-  const m = err.message ?? "";
-  return /(business_type|gst_filing)/.test(m) && /(does not exist|could not find)/i.test(m);
-}
-
-/** Turn a tenants row read (data + error) into a profile. Any other error is thrown. */
-export function profileFromRow(
-  row: { business_type?: unknown; gst_filing?: unknown } | null,
-  err: PgErrorLike | null,
-): ComplianceProfileState {
-  if (isMissingColumnError(err)) return { ...UNKNOWN_PROFILE, columnsMissing: true };
-  if (err) throw Object.assign(new Error(err.message ?? "Could not read the compliance profile"), { code: err.code });
-  return {
-    businessType: toBusinessType(row?.business_type),
-    gstFiling: toGstFiling(row?.gst_filing),
-    columnsMissing: false,
-  };
-}
+/* R-325: the row helpers live in profile-row.ts (no client imports) so the cron can use them too. */
+export { profileFromRow, isMissingColumnError, type ComplianceProfileState };
 
 const untyped = () => createClient() as unknown as SupabaseClient;
 
