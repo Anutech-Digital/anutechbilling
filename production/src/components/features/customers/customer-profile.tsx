@@ -58,6 +58,8 @@ import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-cho
 import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { COPY } from "@/lib/copy";
 
@@ -78,6 +80,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
      no quote clicks or New quote buttons for it. */
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenQuotes(me?.role);
+  /* R-255: the accountant reads the profile; edit / invoice / archive / delete stay with the team. */
+  const canWrite = canWriteSales(me?.role);
   const openQuote = (id: string) => (canQuotes ? () => router.push(`/quotes/${id}` as never) : undefined);
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
@@ -376,6 +380,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             })()}
           </div>
         </div>
+        {canWrite && (
         <div className="flex gap-2 flex-wrap items-center">
           <Button icon="award" onClick={() => setReferralOpen(true)}>
             {(agreements ?? []).some((a) => a.status === "active") ? "Referral ✓" : "Add referral"}
@@ -412,7 +417,10 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             Delete
           </Button>
         </div>
+        )}
       </div>
+
+      {!canWrite && <ViewOnlyNote what="edit, invoice or archive customers" />}
 
       {/* Top tabs — Zoho-style customer 360 */}
       <TabBar
@@ -483,7 +491,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             sub={svcView === "subscription"
               ? (allSubs.length > 0 ? `${insights.activeSubs.length} active` : undefined)
               : ((projects ?? []).length > 0 ? `${(projects ?? []).length} project${(projects ?? []).length > 1 ? "s" : ""}` : undefined)}
-            actions={svcView !== "project" && !canQuotes ? undefined : (
+            actions={!canWrite || (svcView !== "project" && !canQuotes) ? undefined : (
               <Button
                 size="sm"
                 variant="primary"

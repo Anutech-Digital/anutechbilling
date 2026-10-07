@@ -31,6 +31,8 @@ import {
 } from "@/components/ui/select";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
 import {
   useBalanceSheetAuto,
   useBalanceSheetItems,
@@ -444,8 +446,11 @@ function BSLine({
   onEdit?: () => void; onDelete?: () => void; onInfo?: () => void;
 }) {
   const router = useRouter();
-  const clickable = !!href;
-  const go = () => { if (href) router.push(href as never); };
+  /* R-255: a line links to its source page only when this role may open it — the guard used to
+     send the accountant to the P&L, silently, from a link it could not follow. */
+  const role = useCurrentUser().data?.role;
+  const clickable = !!href && canOpenRoute(role, href);
+  const go = () => { if (href && clickable) router.push(href as never); };
   return (
     <div
       className={`flex items-start justify-between gap-3 py-1.5 group rounded-md ${clickable ? "cursor-pointer hover:bg-paper-2/50 -mx-2 px-2" : ""}`}

@@ -44,6 +44,8 @@ import { collectedInMonth } from "@/lib/company/summary";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -141,6 +143,8 @@ function PaymentsPageInner() {
   /* R-237: billing cannot open /quotes (middleware sends it to /invoices) — no quote links
      for it, and Record payment opens the dialog here for everyone. */
   const canQuotes = canOpenQuotes(me?.role);
+  /* R-255: the accountant reads payments; recording, reminders, refunds stay with the team. */
+  const canWrite = canWriteSales(me?.role);
   const [payQuoteId, setPayQuoteId] = React.useState<string | null>(null);
   const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
@@ -325,6 +329,8 @@ function PaymentsPageInner() {
         </div>
       </div>
 
+      {!canWrite && <ViewOnlyNote what="record, edit or refund payments" />}
+
       {/* All / Subscription / Project payments toggle (mirrors the Invoices page) */}
       <TabBar
         className="overflow-y-hidden"
@@ -456,7 +462,7 @@ function PaymentsPageInner() {
                         <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot>{o.days_outstanding}d</Badge>
                         <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
                       </div>
-                      {o.quote_id && (
+                      {o.quote_id && canWrite && (
                         <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayQuoteId(o.quote_id)}>
                           Record payment
                         </Button>
@@ -514,6 +520,7 @@ function PaymentsPageInner() {
                         }
                       }}
                       onRecordPayment={o.quote_id ? () => setPayQuoteId(o.quote_id) : null}
+                      readOnly={!canWrite}
                     />
                   ))}
                 </tbody>
@@ -531,7 +538,7 @@ function PaymentsPageInner() {
       {/* Action needed — the two "close the loop" worklists (collect balance +
           generate the paid-but-uninvoiced GST invoices) merged into ONE compact
           card so they don't push the payment table down as two stacked bands. */}
-      {!isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0) && (
+      {canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0) && (
         <GeminiCard title="Action needed to close the loop" compact>
           <ul className="space-y-2">
             {partialQuotes.length > 0 && (
@@ -725,7 +732,7 @@ function PaymentsPageInner() {
                 </MaybeQuoteLink>
                 {(p.status === "received" || p.receipt_file_path) && (
                 <div className="flex border-t border-hairline/60">
-                  {p.status === "received" && (
+                  {p.status === "received" && canWrite && (
                     <button
                       type="button"
                       onClick={() => setEditPayment(p)}
@@ -856,7 +863,7 @@ function PaymentsPageInner() {
         onOpenChange={(o) => { if (!o) setPayQuoteId(null); }}
       />
       <EditPaymentDialog
-        open={!!editPayment}
+        open={!!editPayment && canWrite}
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
         payment={editPayment}
         customerName={
@@ -895,8 +902,11 @@ function OutstandingRowView({
   onResume,
   onWriteOff,
   onRecordPayment,
+  readOnly = false,
 }: {
   o: OutstandingRow;
+  /** R-255: a view-only role (the accountant) sees the row with no action buttons. */
+  readOnly?: boolean;
   onReminder: () => void;
   onSuspend:  () => void;
   onResume:   () => void;
@@ -937,6 +947,7 @@ function OutstandingRowView({
         {o.last_reminder_at ? formatDate(o.last_reminder_at) : <span className="italic">never</span>}
       </td>
       <td className="p-2 text-right">
+        {readOnly ? <span className="text-2xs text-ink-3">View only</span> : (
         <div className="flex justify-end gap-1 flex-wrap">
           {onRecordPayment && (
             <Button size="sm" variant="primary" icon="rupee" onClick={onRecordPayment}>
@@ -957,6 +968,7 @@ function OutstandingRowView({
             </Button>
           )}
         </div>
+        )}
       </td>
     </tr>
   );
@@ -1012,6 +1024,7 @@ function PaymentRowView({
   const [receiptOpen, setReceiptOpen] = React.useState(false);
   /* R-237: billing cannot open quotes — every quote link/row-click below is for the rest. */
   const canQuotes = canOpenQuotes(me?.role);
+  const canWrite = canWriteSales(me?.role); // R-255
   const openQuote = canQuotes
     ? { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) }
     : undefined;
@@ -1184,7 +1197,7 @@ function PaymentRowView({
                   </Link>
                 </DropdownMenuItem>
               )}
-              {p.status === "received" && (
+              {p.status === "received" && canWrite && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
                   <Icon name="edit" size={16} /> Edit details
                 </DropdownMenuItem>
@@ -1199,6 +1212,7 @@ function PaymentRowView({
                   <Icon name="external" size={16} /> View attached receipt
                 </DropdownMenuItem>
               )}
+              {canWrite && (<>
               <DropdownMenuSeparator />
               {p.status === "received" && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleRefund}>
@@ -1208,6 +1222,7 @@ function PaymentRowView({
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleDelete}>
                 <Icon name="trash" size={16} /> Delete payment
               </DropdownMenuItem>
+              </>)}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

@@ -245,6 +245,9 @@ export function allowedRoutesForRole(role: UserRole, opts: NavFilterOpts = {}): 
  */
 export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
   billing: ["/accounting/balance-sheet"],
+  /* R-255: the accountant READS Customers (the /customers row admits its sub-pages by prefix);
+     the Add-customer form is a write it does not do. */
+  accountant: ["/customers/new"],
 };
 
 /** The route guard: allowed by the nav (prefix) and not denied for this role. */
@@ -308,11 +311,44 @@ export function canWriteMoney(role: string | null | undefined): boolean {
   return (MONEY_WRITE_ROLES as string[]).includes(role);
 }
 
+/**
+ * R-255 (7 Oct 2026): the accountant / CA reads Sales but does not change it (manager's call
+ * for Pardeep: "accountant ko jo logically sahi ho"). The database still lets an accountant
+ * write invoices and payments (money roles, 20260930175000) — this is a menu rule, so the
+ * list pages hide New / Record / Edit / Delete for these roles and show one "View only" line.
+ */
+export const SALES_READ_ONLY_ROLES: UserRole[] = ["accountant"];
+
+/** True when the signed-in role may create or change customers, invoices and payments. An
+ *  unknown role (still loading) counts as allowed, like canWriteMoney. */
+export function canWriteSales(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return !(SALES_READ_ONLY_ROLES as string[]).includes(role);
+}
+
+/**
+ * Should a link to `href` be shown to this role? (R-255) A report row that links to a page the
+ * role cannot open used to bounce it to ROLE_HOME with no message — the accountant clicking
+ * "Trade receivables" on the Balance Sheet landed on the P&L. Query string and hash are
+ * ignored. Unknown role (still loading) → true, so owners never see links flicker away.
+ */
+export function canOpenRoute(role: string | null | undefined, href: string): boolean {
+  if (!role) return true;
+  const path = href.split(/[?#]/)[0] || "/";
+  return isRouteAllowed(role as UserRole, path);
+}
+
 /** Payroll Overview + Salary Register: the roles that had them, plus the accountant (R-061).
  *  Billing is read-only here (R-254): see MONEY_WRITE_ROLES. */
 const PAYROLL_ROLES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Books: the accountant / CA reads every one of these. */
 const BOOKS: UserRole[] = ["owner", "manager", "billing", "accountant"];
+/** Sales lists the accountant READS (R-255): Customers, Invoices, Payments Received. Writes
+ *  are hidden in the pages for SALES_READ_ONLY_ROLES. */
+const SALES_READ: UserRole[] = ["owner", "manager", "billing", "accountant"];
+/** Purchases — Vendors, Bills, Payments Made, Expenses (R-255): the accountant books these. The
+ *  guard already admitted them through /accounting; now they are in the menu too. */
+const PURCHASES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Everyone on the team except the external partner agent. */
 const STAFF: UserRole[] = ["owner", "manager", "sales", "sales_senior", "accountant", "support", "billing", "delivery"];
 
@@ -416,7 +452,7 @@ export const APP_NAV: NavSection[] = [
     icon: "rupee",
     items: [
       {
-        id: "customers",       href: "/customers",        label: "Customers",       icon: "users",   roles: OMB,
+        id: "customers",       href: "/customers",        label: "Customers",       icon: "users",   roles: SALES_READ,
         children: [
           { id: "customer-groups", href: "/customers/groups", label: "Parent Accounts", icon: "layout",  roles: OM },
         ],
@@ -424,9 +460,9 @@ export const APP_NAV: NavSection[] = [
       { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"] },
       { id: "subscriptions", href: "/subscriptions", label: "Subscriptions",     icon: "refresh", roles: OMB },
       { id: "renewals",      href: "/renewals",      label: "Renewals",          icon: "clock",   roles: ["owner", "manager", "billing", "support"] },
-      { id: "invoices",      href: "/invoices",      label: "Invoices",          icon: "receipt", roles: OMB },
+      { id: "invoices",      href: "/invoices",      label: "Invoices",          icon: "receipt", roles: SALES_READ },
       /* Online Orders was a child of this row until 6 Oct 2026 — moved to Sell (R-204). */
-      { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: OMB },
+      { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: SALES_READ },
       { id: "projects",      href: "/projects",      label: "Project Sales",     icon: "package", roles: ["owner", "manager", "sales", "delivery", "billing"] },
       {
         id: "items",     href: "/items",           label: "Catalog & Products", icon: "package", roles: OM,
@@ -455,30 +491,30 @@ export const APP_NAV: NavSection[] = [
          It showed hardcoded demo bids saved to localStorage; the route now says "not built
          yet" and points back to Vendors / Purchase Orders. Not in the nav, on purpose. */
       { id: "purchase-orders", href: "/purchase-orders",           label: "Purchase Orders",      icon: "cart", roles: OMB },
-      { id: "vendors",         href: "/accounting/vendors",        label: "Vendors Master",       icon: "users", roles: OMB },
+      { id: "vendors",         href: "/accounting/vendors",        label: "Vendors Master",       icon: "users", roles: PURCHASES },
       {
-        id: "bills",           href: "/accounting/bills",          label: "COGS Bills",           icon: "receipt", roles: OMB,
+        id: "bills",           href: "/accounting/bills",          label: "COGS Bills",           icon: "receipt", roles: PURCHASES,
         children: [
           /* R-164: Google's monthly invoice (via Net2Secure) checked domain by domain. */
-          { id: "google-bill-check", href: "/accounting/google-bill-check", label: "Google bill check", icon: "search", roles: OMB, hint: "Google's monthly bill — customer per domain, leakage, margin" },
+          { id: "google-bill-check", href: "/accounting/google-bill-check", label: "Google bill check", icon: "search", roles: PURCHASES, hint: "Google's monthly bill — customer per domain, leakage, margin" },
         ],
       },
       {
-        id: "bill-payments",   href: "/accounting/bill-payments",  label: "Payments Made",        icon: "rupee", roles: OMB,
+        id: "bill-payments",   href: "/accounting/bill-payments",  label: "Payments Made",        icon: "rupee", roles: PURCHASES,
         children: [
           /* R-163: pick due bills → owner approves → one bank bulk file → mark paid. A child, not
              a row: the nav is at its 45-row cap (nav-s30.test.ts). */
-          { id: "payment-runs", href: "/accounting/payment-runs", label: "Payment Runs", icon: "send", roles: OMB, hint: "Due bills ek saath — approve, bank file, paid" },
+          { id: "payment-runs", href: "/accounting/payment-runs", label: "Payment Runs", icon: "send", roles: PURCHASES, hint: "Due bills ek saath — approve, bank file, paid" },
         ],
       },
       {
-        id: "expenses",        href: "/accounting/expenses",       label: "Expenses",             icon: "rupee", roles: OMB,
+        id: "expenses",        href: "/accounting/expenses",       label: "Expenses",             icon: "rupee", roles: PURCHASES,
         children: [
           /* Money paid to a vendor before the service (Facebook ad top-ups) and the
              month-end invoices booked against it (Pardeep, 26 Sep 2026). */
-          { id: "prepaid",         href: "/accounting/prepaid",        label: "Prepaid / Advances",   icon: "wallet", roles: OMB },
-          { id: "emp-advances",    href: "/accounting/advances",       label: "Employee Advances",    icon: "wallet", roles: OMB, hint: "Expense advances to staff — given, spent, balance" },
-          { id: "reimbursements",  href: "/accounting/reimbursements", label: "Reimbursements",       icon: "receipt", roles: OMB },
+          { id: "prepaid",         href: "/accounting/prepaid",        label: "Prepaid / Advances",   icon: "wallet", roles: PURCHASES },
+          { id: "emp-advances",    href: "/accounting/advances",       label: "Employee Advances",    icon: "wallet", roles: PURCHASES, hint: "Expense advances to staff — given, spent, balance" },
+          { id: "reimbursements",  href: "/accounting/reimbursements", label: "Reimbursements",       icon: "receipt", roles: PURCHASES },
         ],
       },
     ],

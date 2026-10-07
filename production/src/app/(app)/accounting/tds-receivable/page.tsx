@@ -39,6 +39,8 @@ import {
 import { TdsDetailDialog } from "@/components/features/accounting/tds-detail-dialog";
 import { Tds26asImport } from "@/components/features/accounting/tds-26as-import";
 import { istToday } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
 
 // ────────────────────────────────────────────────────────────────
 // Status color mapping
@@ -63,6 +65,8 @@ export default function TdsReceivablePage() {
   /* R-118: in the URL so each KPI (and a link) opens its own entries. */
   const [activeTab, setActiveTab] = useUrlChoice<TdsStatus | "all" | "claimable">("tab", TDS_TABS, "all");
   const [selected, setSelected]   = React.useState<TdsReceivable | null>(null);
+  /* R-255: "Record Payment" links to Payments Received only for a role that may open it. */
+  const canOpenPayments = canOpenRoute(useCurrentUser().data?.role, "/payments");
 
   const summaryQ = useTdsSummary(fy);
   const listQ    = useTdsReceivables({
@@ -167,7 +171,11 @@ export default function TdsReceivablePage() {
               amount is deposited with govt against your PAN.
             </p>
             <p>
-              TDS entries get auto-created from the <Link href="/payments" className="text-amber-ink underline">Record Payment</Link> dialog
+              TDS entries get auto-created from the{" "}
+              {canOpenPayments
+                ? <Link href="/payments" className="text-amber-ink underline">Record Payment</Link>
+                : <span>Record Payment</span>}{" "}
+              dialog
               when you check &quot;TDS was deducted&quot;. Each entry travels through:
               <span className="font-mono text-xs mt-1 block bg-paper px-2 py-1 rounded">
                 Pending cert → Cert received → Verified on 26AS → Claimed in ITR

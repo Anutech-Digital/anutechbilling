@@ -88,6 +88,13 @@ const ADDED_3OCT_SALES = ["/ai-entry"];
 /** R-061 (6 Oct 2026): the accountant could already open these by URL (the guard admits all of
  *  /accounting/* through BOOKS) but had no menu row. A menu row only — the guard answer is unchanged. */
 const ADDED_6OCT_ACCOUNTANT = ["/accounting/payroll", "/accounting/salary-register"];
+/** R-255 (7 Oct 2026): the accountant / CA menu — Purchases in full (the guard already admitted
+ *  them through /accounting) and Sales read-only: Customers, Invoices, Payments Received. */
+const ADDED_7OCT_ACCOUNTANT = [
+  "/customers", "/invoices", "/payments",
+  "/accounting/vendors", "/accounting/bills", "/accounting/google-bill-check", "/accounting/bill-payments",
+  "/accounting/payment-runs", "/accounting/expenses", "/accounting/prepaid", "/accounting/advances", "/accounting/reimbursements",
+];
 /** R-263 (6 Oct 2026): Quality Score, owner / manager — a new page, next to Bug Reports. */
 const ADDED_6OCT_OM = ["/quality"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
@@ -103,6 +110,7 @@ const addedFor = (role: string) => [
   ...(role === "billing" ? ADDED_3OCT_BILLING : []),
   ...(role === "sales" || role === "sales_senior" ? ADDED_3OCT_SALES : []),
   ...(role === "accountant" ? ADDED_6OCT_ACCOUNTANT : []),
+  ...(role === "accountant" ? ADDED_7OCT_ACCOUNTANT : []),
   ...(role === "owner" || role === "manager" ? ADDED_6OCT_OM : []),
   ...(role === "owner" || role === "manager" ? ADDED_FOR_OWNER_MANAGER : []),
   ...(role === "owner" ? ADDED_FOR_OWNER : []),

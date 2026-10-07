@@ -61,6 +61,9 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
 // (receivables + unused credit + subscriptions).
@@ -159,6 +162,8 @@ export default function CustomersPage() {
 
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
+  /* R-255: the accountant reads customers; adding, importing and editing stay with the team. */
+  const canWrite = canWriteSales(useCurrentUser().data?.role);
   /* `?contact=` arrives from the "Serves N customers" chip on a contact. It seeds the
      search box rather than living as a filter of its own, so the operator lands on an
      ordinary search they can widen, narrow or clear — and so there is one filter to
@@ -596,19 +601,25 @@ export default function CustomersPage() {
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={handleExport}>
                 <Icon name="download" size={15} /> Export CSV
               </DropdownMenuItem>
+              {canWrite && (<>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setImportOpen(true)}>
                 <Icon name="upload" size={15} /> Import customers
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setDomainsOpen(true)}>
                 <Icon name="link" size={15} /> Link domains
               </DropdownMenuItem>
+              </>)}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
-            Add customer
-          </Button>
+          {canWrite && (
+            <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
+              Add customer
+            </Button>
+          )}
         </div>
       </div>
+
+      {!canWrite && <ViewOnlyNote what="add, import or edit customers" />}
 
       {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (
@@ -714,9 +725,11 @@ export default function CustomersPage() {
                 <span className="rounded-full bg-paper-2 px-1.5 tabular-nums text-2xs text-ink-3">{archivedCount}</span>
               </button>
             )}
-            <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
-              Add customer
-            </Button>
+            {canWrite && (
+              <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
+                Add customer
+              </Button>
+            )}
           </div>
           {/* Quick Sort Bar */}
           <div className="flex items-center gap-2 pt-1 border-t border-hairline/60 text-xs text-ink-3 overflow-x-auto [ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -801,8 +814,8 @@ export default function CustomersPage() {
           icon="users"
           title="No customers yet"
           body="Add your first customer to start tracking subscriptions, invoices, and renewals."
-          action={<Button variant="primary" icon="plus" onClick={goAdd}>Add your first customer</Button>}
-          secondary={<Button icon="download" onClick={() => setImportOpen(true)}>Import CSV</Button>}
+          action={canWrite ? <Button variant="primary" icon="plus" onClick={goAdd}>Add your first customer</Button> : undefined}
+          secondary={canWrite ? <Button icon="download" onClick={() => setImportOpen(true)}>Import CSV</Button> : undefined}
         />
       )}
 
@@ -1050,6 +1063,7 @@ export default function CustomersPage() {
                             onNewQuote={() => router.push(`/quotes/new?customer=${c.id}` as never)}
                             onInvoice={() => setInvoiceForCustomer(c.id)}
                             onManageSubs={() => router.push(`/customers/${c.id}` as never)}
+                            readOnly={!canWrite}
                           />
                         </td>
                       </tr>
@@ -1167,6 +1181,7 @@ export default function CustomersPage() {
         onSetGroup={(g) => void bulkSetGroup(g)}
         onDelete={() => void bulkDelete()}
         onDeselectAll={clearPicked}
+        readOnly={!canWrite}
       />
 
       <ImportCustomersDialog open={importOpen} onOpenChange={setImportOpen} onImportComplete={() => refetch()} />
@@ -1234,9 +1249,11 @@ function SortHead({
 /** Per-row overflow menu (View · Edit · New quote · Create invoice · Manage subs).
  *  stopPropagation on the trigger so opening it doesn't also fire the row click. */
 function RowActions({
-  customerName, onView, onEdit, onNewQuote, onInvoice, onManageSubs,
+  customerName, onView, onEdit, onNewQuote, onInvoice, onManageSubs, readOnly = false,
 }: {
   customerName: string;
+  /** R-255: view-only role — View details and the profile only. */
+  readOnly?: boolean;
   onView: () => void;
   onEdit: () => void;
   onNewQuote: () => void;
@@ -1259,6 +1276,7 @@ function RowActions({
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onView)}>
           <Icon name="eye" size={15} /> View details
         </DropdownMenuItem>
+        {!readOnly && (<>
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onEdit)}>
           <Icon name="edit" size={15} /> Edit customer
         </DropdownMenuItem>
@@ -1271,6 +1289,7 @@ function RowActions({
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onManageSubs)}>
           <Icon name="refresh" size={15} /> Manage subscriptions
         </DropdownMenuItem>
+        </>)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

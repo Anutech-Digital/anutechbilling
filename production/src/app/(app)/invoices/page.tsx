@@ -58,6 +58,8 @@ import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
@@ -82,6 +84,8 @@ function InvoicesPageInner() {
   /* R-237: billing (whose home this page is) cannot open /quotes — no quote links for it. */
   const { data: me } = useCurrentUser();
   const canQuotes    = canOpenQuotes(me?.role);
+  /* R-255: the accountant reads invoices; issuing, payments and notes stay with the team. */
+  const canWrite     = canWriteSales(me?.role);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
   /* R-245: the reminder goes to the customer's phone — from the cached customer list. */
@@ -297,6 +301,8 @@ function InvoicesPageInner() {
         </div>
       </div>
 
+      {!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}
+
       {/* Subscription vs Project invoices toggle */}
       <div className="mb-4">
         <TabBar
@@ -320,7 +326,8 @@ function InvoicesPageInner() {
              31-60d  = OVERDUE — legal violation, audit risk
              60+d    = critical — penalty likely
       */}
-      {view !== "project" && pending && pending.length > 0 && (() => {
+      {/* R-255: a queue of invoices to issue — nothing a view-only role can act on. */}
+      {canWrite && view !== "project" && pending && pending.length > 0 && (() => {
         const now = Date.now();
         const buckets = {
           fresh:   pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) <= 15 * 86400000; }),
@@ -620,7 +627,7 @@ function InvoicesPageInner() {
           button styling and dismiss wording. No action's behaviour changed here except the
           WhatsApp one, which was mislabelled; see below. */}
       <BulkActionBar count={selected.size} noun="invoice" onClear={() => setSelected(new Set())}>
-        <BulkBarButton
+        {canWrite && <BulkBarButton
           icon="whatsapp"
           onClick={() => {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
@@ -645,7 +652,7 @@ function InvoicesPageInner() {
           }}
         >
           {selected.size > 1 ? "WhatsApp first" : "WhatsApp"}
-        </BulkBarButton>
+        </BulkBarButton>}
 
         <BulkBarButton
           icon="download"
@@ -707,12 +714,12 @@ function InvoicesPageInner() {
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- pre-existing plain <a> (full navigation), kept as-is by the Next 15 upgrade; eslint-plugin-next 15 now also scans app/ */}
               <a href="/quotes/new">Create a quote</a>
             </Button>
-          ) : (
+          ) : canWrite ? (
             /* R-253: billing's way in. Record payment works on Payments Received for every role. */
             <Button asChild variant="primary" icon="rupee">
               <Link href="/payments">Record payment</Link>
             </Button>
-          )}
+          ) : undefined}
         />
       )}
 
@@ -918,6 +925,7 @@ function InvoiceRow({
   const { data: customers } = useCustomers();
   const { data: me } = useCurrentUser();
   const canQuotes = canOpenQuotes(me?.role);
+  const canWrite = canWriteSales(me?.role); // R-255
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
   const [subPayOpen, setSubPayOpen] = React.useState(false);
@@ -1023,7 +1031,8 @@ function InvoiceRow({
              a second condition that could never be true — every overdue invoice is stored
              as `pending` — so it read as coverage that was not there (L112). */
           const due = invoiceBucket(inv);
-          const moneyDue = due === "pending" || due === "overdue";
+          /* R-255: a view-only role gets View on every row, never Record payment. */
+          const moneyDue = canWrite && (due === "pending" || due === "overdue");
           return (
         <div className="flex gap-1 items-center justify-end">
           {/* One contextual primary action keeps the column tight (no h-scroll).
@@ -1083,6 +1092,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                 </>
               )}
+              {canWrite && (<>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setCnOpen(true)}>
                 <Icon name="receipt" size={15} /> Issue credit note
@@ -1111,6 +1121,7 @@ function InvoiceRow({
                   </span>
                 </DropdownMenuItem>
               )}
+              </>)}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

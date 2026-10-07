@@ -25,6 +25,7 @@ import { RecordPaymentDialog } from "@/components/features/quotes/record-payment
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { canWriteSales } from "@/lib/nav";
 import { useProjectPaymentsByInvoice } from "@/lib/queries/projects";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -59,7 +60,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-237: billing cannot open /quotes — hide "View quote", give it Record payment here. */
   const canQuotes = canOpenQuotes(me?.role);
   const bucket = invoiceBucket(invoice);
-  const moneyDue = bucket === "pending" || bucket === "overdue";
+  /* R-255: the accountant reads invoices — no Record payment, no WhatsApp reminder. */
+  const canWrite = canWriteSales(me?.role);
+  const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
 
@@ -176,14 +179,16 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   View quote
                 </Button>
               )}
-              <Button
-                size="sm"
-                variant="primary"
-                icon="whatsapp"
-                onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
-              >
-                WhatsApp
-              </Button>
+              {canWrite && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon="whatsapp"
+                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
+                >
+                  WhatsApp
+                </Button>
+              )}
               {/* §24 — a block never dead-ends. The button stays visible and clickable so
                   the operator learns WHY rather than wondering why nothing happens, and
                   the toast carries the route to the fix. */}

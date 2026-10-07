@@ -29,6 +29,8 @@ import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import { utcDateISO } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
 
 // ────────────────────────────────────────────────────────────────
 // Range helpers (Indian FY = Apr 1 → Mar 31)
@@ -255,6 +257,8 @@ function useProfitability(range: DateRange) {
 export default function ProfitabilityPage() {
   const [range, setRange] = React.useState<DateRange>(thisFY());
   const { data, isLoading, isError, refetch } = useProfitability(range);
+  /* R-255: the customer name links to the profile only for a role that may open it. */
+  const canOpenCustomer = canOpenRoute(useCurrentUser().data?.role, "/customers/x");
   /* R-270: a failed load printed ₹0 revenue, 0.0% margin and "No paid customers". */
   const failed = isError && !data;
 
@@ -377,7 +381,7 @@ export default function ProfitabilityPage() {
                       }`} />
                     </td>
                     <td className="px-4 py-3">
-                      {r.customerId ? (
+                      {r.customerId && canOpenCustomer ? (
                         <Link href={`/customers/${r.customerId}`} className="font-medium text-ink hover:text-amber-ink hover:underline">
                           {r.customerName}
                         </Link>
@@ -443,7 +447,7 @@ export default function ProfitabilityPage() {
                     }`} />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-ink leading-tight">
-                        {r.customerId ? (
+                        {r.customerId && canOpenCustomer ? (
                           <Link href={`/customers/${r.customerId}`} className="hover:text-amber-ink">
                             {r.customerName}
                           </Link>
