@@ -66,6 +66,7 @@ import { usePagedRows, LoadMore } from "../payments/load-more";
 import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
+import { anyCostUnknown } from "@/lib/quotes/line-cost";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -116,7 +117,8 @@ function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { 
   if (lines.length === 0) return { ...computeMargin(0, 0), known: false };
 
   const cost = lines.reduce((s, l) => s + l.qty * l.cost, 0);
-  const known = !lines.some((l) => l.cost <= 0 && l.rate > 0);
+  /* R-388: same rule as the approval matrix — our own support plan at ₹0 is known. */
+  const known = !anyCostUnknown(lines);
   return { ...computeMargin(cost, taxable), known };
 }
 

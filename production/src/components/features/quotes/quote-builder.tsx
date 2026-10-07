@@ -71,6 +71,8 @@ import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
+import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
+import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -111,7 +113,9 @@ export function QuoteBuilder() {
   const { data: customers, isLoading: customersLoading } = useCustomers();
   // Subscription quotes only pull recurring items — one-time products live in
   // the separate Items Catalog and are quoted via project quotes.
-  const { data: allCatalog } = useItems();
+  /* R-388: `isPending` is the only honest "has the catalogue answered yet?" — `catalog`
+     below is `[]` while loading, which the lead prefill used to read as "no such plan". */
+  const { data: allCatalog, isPending: catalogPending } = useItems();
   /* R-205: a GW Starter/Standard/Plus row under the list price (the old ₹136 seed) is lifted
      to the list price here, so the product chips, the lead prefill and every added line quote
      ₹270 / ₹1,080 / ₹1,380 — never a loss-making price. */
@@ -399,6 +403,15 @@ export function QuoteBuilder() {
   React.useEffect(() => { if (leadCountryInit) setLeadCountry(leadCountryInit); }, [leadCountryInit]);
   const [notes, setNotes] = React.useState("");
   const [lineItems, setLineItems] = React.useState<QuoteLineItem[]>([]);
+  /* R-388 — a line's cost has three states, and `cost: number` alone cannot say which:
+       • PENDING  (costPendingRef): never known — prefilled before/without a catalogue row.
+                  Filled the moment the catalogue can answer (see the backfill effect).
+       • TYPED    (costTypedRef):   the user entered it. Never overwritten by a catalogue
+                  load or a background refetch.
+       • neither: came from the catalogue, follows it.
+     Refs, not state: they steer the effects below and never render anything. */
+  const costPendingRef = React.useRef<Set<string>>(new Set());
+  const costTypedRef   = React.useRef<Set<string>>(new Set());
 
   // No react-hook-form here, so "dirty" is defined explicitly: a line item
   // added, or a customer chosen. Deliberately NOT every keystroke — a quote
@@ -452,9 +465,15 @@ export function QuoteBuilder() {
       const listBefore = l.list_rate ?? l.rate;
       const ratio = listBefore > 0 && l.rate < listBefore ? l.rate / listBefore : 1;
       const rate = Math.round(annualRate * ratio);
-      return l.rate === rate && l.cost === annualCost && (l.list_rate ?? l.rate) === annualRate
+      /* R-388: a cost the user TYPED is theirs — a catalogue (re)load or a background
+         refetch must not replace it. And a catalogue that cannot answer (wholesale 0 /
+         missing) never wipes a cost the line already knows: 0 there means "unknown",
+         and swapping a real ₹7,440 for it is how a margin silently becomes 98%. */
+      const cost = costTypedRef.current.has(l.id) || (annualCost <= 0 && l.cost > 0) ? l.cost : annualCost;
+      if (cost > 0) costPendingRef.current.delete(l.id);
+      return l.rate === rate && l.cost === cost && (l.list_rate ?? l.rate) === annualRate
         ? l
-        : { ...l, rate, list_rate: annualRate, cost: annualCost };
+        : { ...l, rate, list_rate: annualRate, cost };
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currency, exchangeRate, catalog, usdPricingBasis]);
@@ -486,43 +505,20 @@ export function QuoteBuilder() {
   React.useEffect(() => {
     if (prefilledRef.current) return;
     if (!leadCompany) return;
-    // Wait for catalog to load — so we can use the tenant's actual prices,
-    // not the hardcoded fallback map.
-    if (!catalog) return;
+    /* Wait for the catalogue query to ANSWER — so we use the tenant's actual prices,
+       not the hardcoded fallback map. R-388: this used to be `if (!catalog) return`, but
+       `catalog` is `[]` while loading, never falsy — so on a reload (empty query cache)
+       the prefill ran against nothing, fell back to the plan map with cost 0, and the
+       Workspace line's ₹7,440 cost was lost for good. If the query FAILS we go on with
+       the fallback; the backfill effect below fills the cost when a retry succeeds. */
+    if (catalogPending) return;
 
     prefilledRef.current = true;
 
     const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
 
-    // 1. Find the matching catalog item — tries exact / substring / tier-keyword.
-    //    Normalize hyphens to spaces because lead plans coming from the buy
-    //    page are stored as slugs like "google-workspace-standard" while
-    //    catalog item names use spaces ("Google Workspace Standard").
-    const normalize = (s: string) => s.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
-    const target = leadPlan ? normalize(leadPlan) : "";
-
-    let catalogItem = target
-      ? catalog.find((c) => normalize(c.name) === target)
-      : undefined;
-
-    if (!catalogItem && target) {
-      // Substring match: normalized catalog name contains the lead's plan keyword (or vice versa)
-      catalogItem = catalog.find((c) => {
-        const n = normalize(c.name);
-        return n.includes(target) || target.includes(n);
-      });
-    }
-
-    if (!catalogItem && target) {
-      // Last-resort: pluck out a tier keyword ("starter" / "standard" / "plus" /
-      // "enterprise") from the lead plan and find a catalog item containing it.
-      // Handles slugs like "google-workspace-standard" cleanly.
-      const TIER_KEYWORDS = ["enterprise", "plus", "standard", "starter"];
-      const tierWord = TIER_KEYWORDS.find((k) => target.includes(k));
-      if (tierWord) {
-        catalogItem = catalog.find((c) => normalize(c.name).includes(tierWord));
-      }
-    }
+    // 1. Find the matching catalog item — exact / substring / tier-keyword (lib/quotes/lead-plan-match.ts).
+    const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
 
     let rate = 0;
     let cost = 0;
@@ -569,9 +565,13 @@ export function QuoteBuilder() {
     }
 
     if (leadPlan && seatsNum > 0 && rate > 0) {
+      const lineId = `line-${Date.now()}`;
+      /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
+         fills it the moment the catalogue can answer (until the user types one). */
+      if (cost <= 0) costPendingRef.current.add(lineId);
       setLineItems([
         {
-          id:         `line-${Date.now()}`,
+          id:         lineId,
           item_id:    catalogItem?.id,
           // Use the full catalog name when matched (so "Starter" → "Google Workspace Business Starter")
           name:       catalogItem?.name ?? leadPlan,
@@ -608,7 +608,33 @@ export function QuoteBuilder() {
       (leadContact ? `Attn: ${leadContact}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog]);
+  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending]);
+
+  /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
+     The prefill above waits for the catalogue, but if that query failed (or a row
+     was added since), a prefilled line still carries "cost unknown". When the
+     catalogue (re)loads, fill only those lines — by item_id, or by the plan name for
+     a line that had no catalogue row — and never a cost the user typed. */
+  React.useEffect(() => {
+    if (catalog.length === 0 || costPendingRef.current.size === 0) return;
+    setLineItems((prev) => {
+      const { lines, filled } = fillUnknownCosts(
+        prev,
+        (l) => costPendingRef.current.has(l.id) && !costTypedRef.current.has(l.id),
+        (l) => {
+          const item = (l.item_id ? catalog.find((c) => c.id === l.item_id) : undefined)
+            ?? matchCatalogItemForPlan(catalog, l.name);
+          if (!item) return null;
+          const perSeatMonth = isAnnualTier(l.commitment)
+            ? slabPricing(item, l.qty).wholesalePerSeatMonth
+            : (item.prices?.monthly?.wholesale ?? item.wholesale);
+          return { cost: storedLineRate(perSeatMonth, l.commitment), item_id: item.id };
+        },
+      );
+      for (const l of filled) costPendingRef.current.delete(l.id);
+      return lines;
+    });
+  }, [catalog]);
 
   // ── Pre-fill from existing quote (Duplicate / Revise & resend / in-place Edit) ──
   const duplicatedRef = React.useRef(false);
@@ -718,9 +744,9 @@ export function QuoteBuilder() {
   /* Lines that are actually being SOLD but whose cost nobody knows. A ₹0 line is
      excluded — a free line legitimately costs nothing, and flagging it would train
      people to dismiss the banner. A support plan is excluded too: it is our own
-     service, so ₹0 is its real cost. */
-  const costUnknown       = (it: { cost: number; rate: number; item_id?: string | null }) =>
-    it.cost <= 0 && it.rate > 0 && !isSupportSkuId(it.item_id);
+     service, so ₹0 is its real cost. R-388: the same rule the saved-quote approval
+     uses (lib/quotes/line-cost.ts), so the builder and the approval never disagree. */
+  const costUnknown       = lineCostUnknown;
   const costlessLines     = lineItems.filter(costUnknown);
   /* One-tap product chips for an empty quote, from the lead's interest. */
   const planChips         = suggestPlanProducts(catalog, leadPlan);
@@ -898,6 +924,9 @@ export function QuoteBuilder() {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, rate: Math.max(0, rate) } : l)));
   };
   const updateCost = (id: string, cost: number) => {
+    /* R-388: a typed cost is the user's — no catalogue load may replace it. */
+    costTypedRef.current.add(id);
+    costPendingRef.current.delete(id);
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, cost: Math.max(0, cost) } : l)));
   };
   const updateStartDate = (id: string, date: string) => {

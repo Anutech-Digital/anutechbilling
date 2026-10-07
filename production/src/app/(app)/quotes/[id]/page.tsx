@@ -63,6 +63,7 @@ import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quot
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
 import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
 import { useCustomer } from "@/lib/queries/customers";
@@ -546,7 +547,8 @@ export default function QuoteDetailPage() {
      and there is one of them per product, so they are what both this page and the
      approval matrix read — one source, and they cannot disagree. */
   const lineCostTotal = items.reduce((s, l) => s + l.qty * l.cost, 0);
-  const marginKnown   = !items.some((l) => l.cost <= 0 && l.rate > 0);
+  /* R-388: shared rule — our own support plan at ₹0 is a known cost. */
+  const marginKnown   = !anyCostUnknown(items);
   const margin = computeMargin(lineCostTotal, taxable);
 
   const acceptUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}`;
