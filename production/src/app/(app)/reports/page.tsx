@@ -365,8 +365,7 @@ export default function ReportsPage() {
         >
           {trendData.length === 0 ? (
             <p className="text-sm text-ink-3 py-8 text-center">
-              Pehla snapshot mahine ki 1 taareekh ko banega — cron har mahine
-              MRR ka bindu jodta hai.
+              The first snapshot is taken on the 1st of next month.
             </p>
           ) : (
             <>
@@ -406,9 +405,7 @@ export default function ReportsPage() {
               </ResponsiveContainer>
               {trendData.length < 3 && (
                 <p className="mt-2 text-xs text-ink-3">
-                  History {trendData[0].month} se shuru hui hai — curve mahine-dar-mahine
-                  apne aap banegi. (Pehle yahan 12 mahine ka DEMO data tha; wo kisi
-                  faisle ke kaam ka nahi tha.)
+                  History starts in {trendData[0].month}. A new point is added on the 1st of each month.
                 </p>
               )}
             </>
