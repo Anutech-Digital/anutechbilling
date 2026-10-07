@@ -9,6 +9,7 @@
  * to /change-password. Renders nothing.
  */
 import * as React from "react";
+import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { changePasswordUrl } from "@/lib/auth/must-change-password";
@@ -21,7 +22,7 @@ export function MustChangePasswordGate() {
   React.useEffect(() => {
     if (!me?.mustChangePassword) return;
     const search = typeof window === "undefined" ? "" : window.location.search;
-    router.replace(changePasswordUrl(`${pathname ?? ""}${search}`));
+    router.replace(changePasswordUrl(`${pathname ?? ""}${search}`) as Route);
   }, [me?.mustChangePassword, pathname, router]);
 
   return null;

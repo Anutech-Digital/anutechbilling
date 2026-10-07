@@ -16,6 +16,7 @@
 "use client";
 
 import * as React from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useUpdateLead, useSetLeadJunk } from "@/lib/queries/leads";
@@ -58,7 +59,7 @@ export function useLeadOutcome() {
            One link for every surface (lib/leads/lead-quote-href.ts), so the same chip
            prefills the same everywhere. R-389 (F5): id + plan/seats only — the builder
            loads company and contact from the lead, so no email or phone sits in the URL. */
-        router.push(leadQuoteHref(lead));
+        router.push(leadQuoteHref(lead) as Route);
         return;
       }
 
