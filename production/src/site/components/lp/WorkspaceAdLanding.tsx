@@ -456,7 +456,7 @@ function CallbackForm({ landing, plan, compact = false }: { landing: string; pla
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ts.ready) { setErr("Ek second — spam check chal raha hai"); setState("error"); return; }
+    if (!ts.ready) { setErr("One second — running a spam check"); setState("error"); return; }
     const f = new FormData(e.currentTarget);
     const fullName = String(f.get("fullName") ?? "").trim();
     const phone = String(f.get("phone") ?? "").trim();
@@ -469,12 +469,12 @@ function CallbackForm({ landing, plan, compact = false }: { landing: string; pla
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(typeof j?.error === "string" ? j.error : "Request nahi gayi");
+        throw new Error(typeof j?.error === "string" ? j.error : "Request did not go through");
       }
       setName(fullName); setState("done");
       void reportLeadConversion();
     } catch (x) {
-      setErr(x instanceof Error ? x.message : "Request nahi gayi"); setState("error");
+      setErr(x instanceof Error ? x.message : "Request did not go through"); setState("error");
     }
   }
 
@@ -529,7 +529,7 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ts.ready) { setErr("Ek second — spam check chal raha hai"); setState("error"); return; }
+    if (!ts.ready) { setErr("One second — running a spam check"); setState("error"); return; }
     const f = new FormData(e.currentTarget);
     const users = Math.max(1, Math.min(300, Number(f.get("users")) || 1));
     const body = {
@@ -555,12 +555,12 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(typeof j?.error === "string" ? j.error : "Request nahi gayi");
+        throw new Error(typeof j?.error === "string" ? j.error : "Request did not go through");
       }
       setSent({ name: body.fullName, users }); setState("done");
       void reportLeadConversion();   // no-op until GOOGLE_ADS_SEND_TO is set
     } catch (x) {
-      setErr(x instanceof Error ? x.message : "Request nahi gayi"); setState("error");
+      setErr(x instanceof Error ? x.message : "Request did not go through"); setState("error");
     }
   }
 
@@ -592,7 +592,7 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
               <label>Mobile number<input name="phone" type="tel" required minLength={10} inputMode="tel" autoComplete="tel" /></label>
               <label>Number of users<input name="users" type="number" min={1} max={300} defaultValue={defaultUsers} /></label>
               {ts.widget}
-              {state === "error" && <p className="gw-err" role="alert">{err} — dobara try karein.</p>}
+              {state === "error" && <p className="gw-err" role="alert">{err} — please try again.</p>}
               <button type="submit" className="gw-btn gw-trial gw-full" disabled={state === "sending"}>
                 {state === "sending" ? "Bhej rahe hain…" : "Submit enquiry →"}
               </button>
