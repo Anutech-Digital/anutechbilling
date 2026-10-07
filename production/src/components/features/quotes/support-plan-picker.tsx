@@ -84,9 +84,9 @@ export function SupportPlanPicker({ items, onAdd, selected, onRemove, catalogAcc
   const [creating, setCreating] = React.useState<{ tier: SupportTier; cycle: Cycle } | null>(null);
 
   /* One place that puts a plan on the quote — used by "Add to quote" and right after
-     "Add to catalog", so both write the same line. A quote line's `rate` is the ANNUAL
-     figure whatever the billing frequency (database.types.ts); the catalogue row's own
-     price wins over the tier definition (supportLineRate). */
+     "Add to catalog", so both write the same line. A yearly plan's `rate` is the year, a
+     monthly (flex) plan's is one month (R-369, lib/quotes/line-rate-unit.ts); the
+     catalogue row's own price wins over the tier definition (supportLineRate). */
   const addPlan = (tier: SupportTier, planCycle: Cycle, sku: Pick<Item, "id" | "name" | "msrp" | "prices">) => {
     /* Changing plan removes the old line first, so the quote never carries
        two support plans — a quote with both Standard and Enterprise on it

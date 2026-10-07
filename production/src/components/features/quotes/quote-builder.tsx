@@ -13,7 +13,9 @@
 
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
-import { convertRateForCommitment } from "@/lib/quotes/commitment-rate";
+import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
+import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
+import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
@@ -420,11 +422,15 @@ export function QuoteBuilder() {
       if (!l.item_id || l.bulk) return l;
       const it = catalog.find((c) => c.id === l.item_id);
       if (!it) return l;
+      /* R-369: "annualRate" is the line's STORED unit — the year on an annual line, one
+         month on a flex ("monthly") line. ×12 on a flex line re-priced every saved flex
+         quote to twelve months the moment it was opened for editing. */
+      const lineCommitment = l.commitment ?? "annual_yearly";
       let annualRate: number, annualCost: number;
       const usd = it.prices?.usd;
       if (usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0) {
-        annualRate = Math.round(usd.msrp * 12 * fx);
-        annualCost = Math.round(usd.wholesale * 12 * fx);
+        annualRate = storedLineRate(usd.msrp * fx, lineCommitment);
+        annualCost = storedLineRate(usd.wholesale * fx, lineCommitment);
       } else if (headlinePrice(it).unit === "yr") {
         /* A yearly-total plan (support "(Yearly)", msrp 0). msrp × 12 here re-priced it
            to ₹0 the moment this effect re-ran (2 Oct 2026). */
@@ -432,10 +438,9 @@ export function QuoteBuilder() {
         annualRate = p.rate;
         annualCost = p.cost;
       } else {
-        const commitment = l.commitment ?? "annual_yearly";
-        const tier = it.prices?.[commitment === "monthly" ? "monthly" : "annual"];
-        annualRate = (tier?.msrp ?? it.msrp) * 12;
-        annualCost = (tier?.wholesale ?? it.wholesale) * 12;
+        const tier = it.prices?.[lineCommitment === "monthly" ? "monthly" : "annual"];
+        annualRate = storedLineRate(tier?.msrp ?? it.msrp, lineCommitment);
+        annualCost = storedLineRate(tier?.wholesale ?? it.wholesale, lineCommitment);
       }
       /* Keep the line's discount: a package (or a rep) priced it below list, and a
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
@@ -794,9 +799,14 @@ export function QuoteBuilder() {
   const dispTotal    = isUsdBill ? dRound(dispTaxable + dispTax) : total;
   const dispListGross = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.list_rate ?? l.rate)), 0)) : listGross;
   const dispCustomerDiscount = Math.max(0, dRound(dispListGross - dispSubtotal));
-  // Per-invoice-aware formatter for a DISPLAY-currency ANNUAL figure.
+  /* R-369: what the stored totals are divided by for one invoice — the PDF's own rule
+     (first line's commitment). An annual quote billed monthly stores the YEAR (÷12); a
+     flex quote stores one MONTH (÷1). Dividing a flex total by 12 showed a twelfth. */
+  const totalsDiv   = quoteTotalsDivisor(billingN, lineItems);
+  const totalsYear  = (stored: number) => stored * (billingN / totalsDiv);
+  // Per-invoice-aware formatter for a DISPLAY-currency STORED figure.
   const fmtTotalC = (annualDisp: number) =>
-    showPerInvoice ? `${fmtDispC(dRound(annualDisp / billingN))}${billingUnit}` : fmtDispC(annualDisp);
+    showPerInvoice ? `${fmtDispC(dRound(annualDisp / totalsDiv))}${billingUnit}` : fmtDispC(annualDisp);
   const fmtPayableC = (annualDisp: number) =>
     isUsdBill
       ? (roundTotal ? formatForeign(Math.round(annualDisp), currency ?? "USD", 0) : formatForeign(annualDisp, currency ?? "USD"))
@@ -839,6 +849,9 @@ export function QuoteBuilder() {
          because they added a seat would undo a decision they made on a call. */
       const item = l.item_id ? catalog.find((c) => c.id === l.item_id) : undefined;
       if (!item) return { ...l, qty: nextQty };
+      /* Seat bands price the ANNUAL tier, in ₹/seat/YEAR. A flex line is per MONTH
+         (R-369) and has no band table of its own — never re-price it from one. */
+      if (!isAnnualTier(l.commitment)) return { ...l, qty: nextQty };
 
       const atOldQty = slabPricing(item, l.qty);
       const untouched = Math.round(atOldQty.msrpPerSeatMonth * 12) === l.rate;
@@ -894,11 +907,17 @@ export function QuoteBuilder() {
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
           const tier    = item?.prices?.[tierKey];
           if (tier && tier.msrp > 0) {
+            /* R-369: the tier is ₹/seat/MONTH. An annual line stores the year (×12); a
+               flex line stores the month as-is — that is what the PDF, e-mail, accept
+               page and record_payment read. `tier.msrp * 12` on a flex line was a
+               twelvefold overcharge ("Payable each month ₹24,072" for ₹2,040). */
+            const rate = storedLineRate(tier.msrp, commitment);
             return {
               ...l,
               commitment,
-              rate: tier.msrp * 12,        // store as ₹/seat/year
-              cost: tier.wholesale * 12,
+              rate,
+              list_rate: rate,
+              cost: storedLineRate(tier.wholesale, commitment),
             };
           }
         }
@@ -920,7 +939,15 @@ export function QuoteBuilder() {
         const conv = convertRateForCommitment({
           rate: l.rate, cost: l.cost, from: l.commitment, to: commitment,
         });
-        return { ...l, commitment, rate: conv.rate, cost: conv.cost };
+        /* The frozen list price is in the same unit as the rate (R-369) — convert it too,
+           or a ₹3,240/yr list beside a ₹270/month rate reads as a ₹2,970 "discount". */
+        const listConv = l.list_rate == null ? null : convertRateForCommitment({
+          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment,
+        });
+        return {
+          ...l, commitment, rate: conv.rate, cost: conv.cost,
+          ...(listConv ? { list_rate: listConv.rate } : {}),
+        };
       }),
     );
   };
@@ -1743,8 +1770,10 @@ export function QuoteBuilder() {
             {lineItems.map((line) => {
               const commitment  = line.commitment ?? "annual_yearly";
               const unitLabel   = billingUnit;   // quote-level frequency (0161)
-              const displayRate = Math.round(line.rate / billingN);
-              const displayCost = Math.round(line.cost / billingN);
+              /* R-369: a flex line already IS one month; only an annual line is divided. */
+              const lineDiv     = perInvoiceDivisor(billingN, commitment);
+              const displayRate = Math.round(line.rate / lineDiv);
+              const displayCost = Math.round(line.cost / lineDiv);
               const commitType: "monthly" | "annual" = commitment === "monthly" ? "monthly" : "annual";
               const lineDiscountPct = line.discount_pct ?? 0;
               const netRate  = line.rate * (1 - lineDiscountPct / 100);
@@ -1784,7 +1813,7 @@ export function QuoteBuilder() {
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
                         value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * billingN); }}
+                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
                         className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
                       />
                     </label>
@@ -1850,7 +1879,7 @@ export function QuoteBuilder() {
                       aria-label={`Cost for ${line.name}`}
                       type="number" min={0} step={isUsdBill ? "0.01" : "1"}
                       value={isUsdBill ? Number((displayCost / fxRate).toFixed(2)) : displayCost}
-                      onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateCost(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * billingN); }}
+                      onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateCost(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
                       className="w-14 px-1 py-0.5 text-2xs text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
                     />
                     {/* "Margin unknown" beats "Margin 100%" when cost is 0 — see the
@@ -1867,7 +1896,7 @@ export function QuoteBuilder() {
                   </details>
                   <div className="flex items-center justify-between border-t border-hairline pt-2">
                     <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Amount</span>
-                    <span className="font-medium text-sm tabular-nums">{fmtDispC(dispAmt(line.rate, line.qty, line.discount_pct ?? 0))}{billingN > 1 ? " /yr" : ""}</span>
+                    <span className="font-medium text-sm tabular-nums">{fmtDispC(dispAmt(line.rate, line.qty, line.discount_pct ?? 0))}{lineAmountSuffix(commitment, billingN)}</span>
                   </div>
                 </div>
               );
@@ -1893,17 +1922,21 @@ export function QuoteBuilder() {
                 const netRate         = line.rate * (1 - lineDiscountPct / 100);
                 const lineMargin      = computeMargin(line.cost * line.qty, netRate * line.qty);
 
-                // Display unit depends on commitment + billing term.
-                // Storage is always ₹/seat/YEAR — divide by invoicesPerYear for display.
+                // Display unit depends on commitment + billing term (R-369): an annual
+                // line stores ₹/seat/YEAR and is divided by invoices-per-year; a flex
+                // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
                 const unitLabel   = billingUnit;   // quote-level frequency (0161)
-                const displayRate = Math.round(line.rate / billingN);
-                const displayCost = Math.round(line.cost / billingN);
+                const lineDiv     = perInvoiceDivisor(billingN, commitment);
+                const displayRate = Math.round(line.rate / lineDiv);
+                const displayCost = Math.round(line.cost / lineDiv);
                 const isPerInvoice = billingN > 1; // anything other than yearly invoice
+                /* Invoices this line's stored amount covers in a year: 1 for annual, 12 for flex. */
+                const yearFactor  = billingN / lineDiv;
 
-                // When user edits, convert back to annual for storage
-                const handleRateChange = (raw: number) => updateRate(line.id, raw * billingN);
-                const handleCostChange = (raw: number) => updateCost(line.id, raw * billingN);
+                // When user edits, convert back to the line's storage unit
+                const handleRateChange = (perInvoice: number) => updateRate(line.id, perInvoice * lineDiv);
+                const handleCostChange = (perInvoice: number) => updateCost(line.id, perInvoice * lineDiv);
 
                 // Commitment selector: "monthly" (flex) OR "annual". Flipping to
                 // flex → "monthly"; flipping to annual → default annual_yearly
@@ -2054,9 +2087,9 @@ export function QuoteBuilder() {
                           {/* Per-invoice amount = what customer pays each billing cycle */}
                           <div>{fmtDispC(dispAmt(displayRate, line.qty, lineDiscountPct))}{unitLabel}</div>
                           <div className="text-3xs text-ink-3 font-normal">
-                            = {fmtDispC(dispAmt(line.rate, line.qty, lineDiscountPct))}/yr
+                            = {fmtDispC(dispAmt(line.rate * yearFactor, line.qty, lineDiscountPct))}/yr
                             {lineDiscountPct > 0 && (
-                              <span className="text-ink-3"> (was {fmtDispC(dispAmt(line.rate, line.qty))})</span>
+                              <span className="text-ink-3"> (was {fmtDispC(dispAmt(line.rate * yearFactor, line.qty))})</span>
                             )}
                           </div>
                         </>
@@ -2347,12 +2380,12 @@ export function QuoteBuilder() {
                   <div className="text-right">
                     <span className="font-serif text-3xl text-amber tabular-nums">
                       {showPerInvoice
-                        ? fmtPayableC(dRound(dispTotal / billingN))
+                        ? fmtPayableC(dRound(dispTotal / totalsDiv))
                         : fmtPayableC(dispTotal)}
                     </span>
                     {showPerInvoice && (
                       <div className="text-2xs text-ink-3 font-normal mt-0.5">
-                        per invoice ({billingN}/yr) · = {fmtPayableC(dispTotal)} / year
+                        per invoice ({billingN}/yr) · = {fmtPayableC(dRound(totalsYear(dispTotal)))} / year
                       </div>
                     )}
                     {isForeign && (
@@ -2418,10 +2451,10 @@ export function QuoteBuilder() {
               {!showPerInvoice && billingN === 1 ? "Total payable now" : "Total"}
             </span>
             <span className="font-serif text-xl md:text-2xl text-amber tabular-nums whitespace-nowrap leading-tight">
-              {showPerInvoice ? fmtPayableC(dRound(dispTotal / billingN)) : fmtPayableC(dispTotal)}
+              {showPerInvoice ? fmtPayableC(dRound(dispTotal / totalsDiv)) : fmtPayableC(dispTotal)}
             </span>
             {showPerInvoice && (
-              <span className="text-3xs md:text-2xs text-ink-3 whitespace-nowrap truncate">/invoice · {fmtPayableC(dispTotal)}/yr</span>
+              <span className="text-3xs md:text-2xs text-ink-3 whitespace-nowrap truncate">/invoice · {fmtPayableC(dRound(totalsYear(dispTotal)))}/yr</span>
             )}
           </div>
           {isInvoiceMode ? (
@@ -2569,7 +2602,8 @@ export function QuoteBuilder() {
               onAdd={addLine}
               selected={line ? {
                 name: line.name,
-                annualRate: line.rate,
+                /* A monthly plan's rate is one month (R-369); the card states the year. */
+                annualRate: isAnnualTier(line.commitment) ? line.rate : line.rate * 12,
                 cycleLabel: line.commitment === "monthly" ? "per year, billed monthly" : "per year",
               } : null}
               onRemove={line ? () => removeLine(line.id) : undefined}
@@ -2724,6 +2758,8 @@ function LineBandNote({ line, catalog }: { line: QuoteLineItem; catalog: Item[] 
   const item = line.item_id ? catalog.find((c) => c.id === line.item_id) : undefined;
   const slabs = item?.prices?.slabs;
   if (!item || !slabs || slabs.length === 0) return null;
+  /* Bands are annual ₹/seat/YEAR; a flex line is per month (R-369) and is never banded. */
+  if (!isAnnualTier(line.commitment)) return null;
 
   const priced = slabPricing(item, line.qty);
   if (priced.source !== "slab") return null;

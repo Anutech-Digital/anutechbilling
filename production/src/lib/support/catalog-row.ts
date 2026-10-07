@@ -104,10 +104,13 @@ export function supportRowPrice(row: Pick<Item, "msrp" | "prices">, cycle: Cycle
 }
 
 /**
- * The ANNUAL rate a quote line carries for this plan (database.types.ts: a line's
- * `rate` is the year whatever the billing frequency). The catalogue row's own price
- * wins, so a price typed in "Add to catalog" is the price quoted; a row with no price
- * falls back to the tier definition, which is what the picker always used.
+ * The rate a quote line carries for this plan, in the unit its commitment implies
+ * (R-369, lib/quotes/line-rate-unit.ts): a yearly plan is an `annual_yearly` line, so
+ * its rate is the YEAR; a monthly plan is a `monthly` (flex) line, so its rate is one
+ * MONTH — the unit the PDF, e-mail, accept page and record_payment MRR all read. This
+ * used to return `term * 12`, which billed a ₹999/month plan as ₹11,988 "each month".
+ * The catalogue row's own price wins, so a price typed in "Add to catalog" is the price
+ * quoted; a row with no price falls back to the tier definition.
  */
 export function supportLineRate(
   row: Pick<Item, "msrp" | "prices"> | null,
@@ -115,6 +118,5 @@ export function supportLineRate(
   cycle: Cycle,
 ): number {
   const own = row ? supportRowPrice(row, cycle) : null;
-  const term = own ?? supportPrice(tier, cycle);
-  return cycle === "yearly" ? term : term * 12;
+  return own ?? supportPrice(tier, cycle);
 }

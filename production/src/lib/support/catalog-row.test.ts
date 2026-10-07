@@ -73,12 +73,12 @@ describe("naming", () => {
 describe("the quote line uses the catalogue's own price", () => {
   it("reads the row's price, so a price typed in the dialog is the price quoted", () => {
     expect(supportLineRate({ msrp: 0, prices: { annual_total: { msrp: 12_000, wholesale: 0 } } } as never, std, "yearly")).toBe(12_000);
-    expect(supportLineRate({ msrp: 1_199, prices: {} } as never, std, "monthly")).toBe(1_199 * 12);
+    expect(supportLineRate({ msrp: 1_199, prices: {} } as never, std, "monthly")).toBe(1_199);
   });
 
   it("falls back to the plan definition when the row holds no price (old behaviour)", () => {
     expect(supportLineRate({ msrp: 0, prices: {} } as never, std, "yearly")).toBe(9_996);
-    expect(supportLineRate(null, std, "monthly")).toBe(999 * 12);
+    expect(supportLineRate(null, std, "monthly")).toBe(999);
     expect(supportRowPrice({ msrp: 0, prices: {} } as never, "monthly")).toBeNull();
   });
 });

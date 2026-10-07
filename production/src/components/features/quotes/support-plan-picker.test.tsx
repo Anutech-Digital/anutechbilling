@@ -101,7 +101,7 @@ describe("support plan picker — Add to catalog (R-364)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Add to catalog and quote/ }));
     await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
     expect((mutateAsync.mock.calls[0][0] as { msrp: number }).msrp).toBe(1_199);
-    expect(onAdd.mock.calls[0][0]).toMatchObject({ rate: 1_199 * 12, commitment: "monthly" });
+    expect(onAdd.mock.calls[0][0]).toMatchObject({ rate: 1_199, commitment: "monthly" });
   });
 
   it("keeps the dialog open and adds nothing when the save fails", async () => {

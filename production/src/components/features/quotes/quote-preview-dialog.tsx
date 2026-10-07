@@ -23,6 +23,7 @@ import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
+import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -111,6 +112,8 @@ export function QuotePreviewDialog({
   const billingN     = cycleInvoicesPerYear(effectiveCycle);
   const billingUnit  = cycleUnitLabel(effectiveCycle);
   const perInvoice   = billingN > 1;
+  /* R-369: the PDF's divisor — a flex quote's stored totals are already one MONTH. */
+  const totalsDiv    = perInvoiceDivisor(billingN, firstCommitment);
   // Foreign customer → show the whole quote in their currency (USD…); books stay ₹,
   // so the INR equivalent is printed as a GST reference near the total.
   const isForeign    = isForeignCurrency(currency);
@@ -118,7 +121,7 @@ export function QuotePreviewDialog({
   const money        = (n: number) =>
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
   const fmt          = (n: number) =>
-    perInvoice ? `${money(Math.round(n / billingN))}${billingUnit}` : money(n);
+    perInvoice ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
   const intra        = splitIntraStateTax(tax);
@@ -259,10 +262,12 @@ export function QuotePreviewDialog({
               ) : (
                 lineItems.map((line) => {
                   // Frequency is quote-level now (0161) — every line shares it.
+                  /* R-369: a flex line's rate is already one month; only annual lines divide. */
                   const lineN    = billingN;
+                  const lineDiv  = perInvoiceDivisor(billingN, line.commitment);
                   const lineUnit = billingUnit;
                   const showPer  = lineN > 1;
-                  const rate     = showPer ? Math.round(line.rate / lineN) : line.rate;
+                  const rate     = showPer ? Math.round(line.rate / lineDiv) : line.rate;
                   const amount   = line.qty * rate;
                   return (
                     <tr key={line.id} className="border-b border-hairline">
@@ -288,7 +293,7 @@ export function QuotePreviewDialog({
                         <div>{money(amount)}{showPer ? lineUnit : ""}</div>
                         {showPer && (
                           <div className="text-3xs font-normal text-ink-3">
-                            = {money(line.qty * line.rate)}/yr
+                            = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
                           </div>
                         )}
                       </td>
@@ -332,14 +337,14 @@ export function QuotePreviewDialog({
                     </span>
                     <span className="font-serif text-2xl tabular-nums">
                       {perInvoice
-                        ? `${money(Math.round(total / billingN))}${billingUnit}`
+                        ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}
                     </span>
                   </div>
                   {perInvoice && (
                     <div className="flex justify-between items-baseline mt-1.5 text-ink-3">
                       <span className="text-2xs">Annual contract value</span>
-                      <span className="text-sm tabular-nums">{money(total)}/yr</span>
+                      <span className="text-sm tabular-nums">{money(annualContractValue(total, billingN, firstCommitment))}/yr</span>
                     </div>
                   )}
                   {isForeign && (
