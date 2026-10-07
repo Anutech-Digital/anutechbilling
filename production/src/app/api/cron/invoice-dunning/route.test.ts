@@ -95,6 +95,57 @@ describe("invoice-dunning at scale", () => {
     expect(subReads[0].filters.some((f) => f.startsWith("quote_id="))).toBe(false);
   });
 
+  /* R-346: "Activate now, pay later" invoices are followed up by the owner's tasks only —
+     no customer message, never an automatic suspension. */
+  it("skips invoices of quotes activated on credit (no email, no suspend)", async () => {
+    const data = seed() as ReturnType<typeof seed> & { quotes?: unknown[] };
+    data.invoice_dunning_log = data.invoice_dunning_log.filter((l) => !["INV-00000", "INV-00001"].includes(l.invoice_id));
+    (data.subscriptions as unknown[]).push({ id: "S0", quote_id: "Q0" }, { id: "S1", quote_id: "Q1" });
+    data.quotes = [
+      { id: "Q0", credit_activated_at: "2026-09-01T05:00:00Z" },
+      { id: "Q1", credit_activated_at: null },
+    ];
+    db.current = fakePostgrest(data as never);
+    const body = await (await GET(req())).json();
+    const decided = new Set(body.details.map((d: { invoice_id: string }) => d.invoice_id));
+    expect(decided.has("INV-00000")).toBe(false);   // on credit → skipped
+    expect(decided.has("INV-00001")).toBe(true);    // ordinary invoice → chased as before
+    expect(body.skipped).toBe(199);                  // 198 with final already sent + the credit one
+  });
+
+  it("before the migration (no credit column) the run carries on unchanged", async () => {
+    db.current = fakePostgrest(seed());
+    const inner = db.current.client;
+    db.current.client = {
+      from: (t: string) => {
+        const b = inner.from(t) as unknown as Record<string, unknown>;
+        if (t === "quotes") {
+          b.then = (ok: (v: unknown) => unknown) =>
+            Promise.resolve({ data: null, error: { code: "42703", message: "column quotes.credit_activated_at does not exist" } }).then(ok);
+        }
+        return b as never;
+      },
+    };
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect((await res.json()).considered).toBe(2500);
+  });
+
+  it("any other failure reading credit quotes stops the run (500)", async () => {
+    db.current = fakePostgrest(seed());
+    const inner = db.current.client;
+    db.current.client = {
+      from: (t: string) => {
+        const b = inner.from(t) as unknown as Record<string, unknown>;
+        if (t === "quotes") {
+          b.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "boom" } }).then(ok);
+        }
+        return b as never;
+      },
+    };
+    expect((await GET(req())).status).toBe(500);
+  });
+
   it("a failed history read stops the run (500) instead of re-sending steps", async () => {
     db.current = fakePostgrest(seed());
     const inner = db.current.client;

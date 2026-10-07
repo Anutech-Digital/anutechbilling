@@ -30,6 +30,7 @@ import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCr
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
+import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { usePayments, useDeletePayment } from "@/lib/queries/payments";
@@ -478,6 +479,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
               because the PRIMARY contact here is who invoices and payment reminders
               actually go to — see migration 20260910100000. */}
           <CustomerContactsCard customerId={params.id} customerName={c.name} />
+
+          {/* R-346: may this customer be activated on credit, and up to how much. */}
+          <CreditSettingsCard customer={c} isOwner={me?.role === "owner"} />
 
           {/* Is customer ke email/phone par aayi LEADS — quotation/invoice ki tarah
              yahan bhi itihaas dikhe (Pardeep, 1 Sep 2026). */}

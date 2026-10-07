@@ -32,6 +32,7 @@ import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { MsmePayablesCard } from "@/components/features/accounting/msme-payables-card";
+import { useCreditSummary } from "@/lib/credit/queries";
 
 // ────────────────────────────────────────────────────────────────
 // Aggregation hook
@@ -166,6 +167,8 @@ function whatsappLink(phone: string, message: string): string {
 
 export default function AgingPage() {
   const { data, isLoading, isError, refetch } = useAging();
+  /* R-346: subscriptions switched on before payment ("Activate now, pay later"). */
+  const { data: credit } = useCreditSummary();
   /* R-270: on a failed load the tiles used to read ₹0 and the table "No outstanding
      receivables. Nice." — the opposite of the truth when money is owed. */
   const failed = isError && !data;
@@ -214,6 +217,18 @@ export default function AgingPage() {
             receivable should be {totals.total > 0 ? Math.round((totals.current / totals.total) * 100) : 0}%+ in
             the &quot;Current&quot; bucket — chase the 31+ day rows below.
           </div>
+        </Card>
+      )}
+
+      {/* R-346: what is live on credit and not yet paid. Hidden when there is none (or before
+          the database update), so it never reads as a zero that means "unknown". */}
+      {credit && credit.subscriptions > 0 && (
+        <Card className="p-4 mb-6 border-amber/50 bg-amber-soft/40">
+          <p className="text-sm text-ink-2">
+            <Icon name="clock" size={16} className="text-amber-ink inline mr-1.5 align-text-bottom" />
+            Subscriptions running on credit: <b>{credit.subscriptions}</b> · <b>{rupee(credit.amountDue)}</b> due.
+            {" "}Their reminders are tasks for the owner; nothing is suspended automatically.
+          </p>
         </Card>
       )}
 

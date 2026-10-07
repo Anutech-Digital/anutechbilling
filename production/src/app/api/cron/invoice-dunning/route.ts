@@ -37,6 +37,7 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import type { Invoice, Tenant } from "@/lib/supabase/database.types";
 import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server";
 import { dunningReminderKind } from "@/lib/marketing/whatsapp-reminders";
+import { isMissingDbObject } from "@/lib/credit/activate-on-credit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -158,6 +159,22 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
   const tenantById = new Map(tenants.map((t) => [t.id, t]));
   const subscriptionByQuote = subscriptionIdByQuote(subs);
 
+  /* R-346 (Pardeep, 7 Oct 2026): an invoice raised by "Activate now, pay later" is followed up
+     by the owner's tasks — never by this cron. No message to the customer, and never an
+     automatic suspension. Before the migration the column does not exist: nothing is on
+     credit then, so the run goes on unchanged. Any OTHER read failure stops the run, like the
+     prefetches above — emailing a credit customer by mistake is the worse error. */
+  let creditQuoteIds = new Set<string>();
+  try {
+    const rows = await fetchAllRowsIn(invoices.map((i) => i.quote_id), (ids, from, to) => supabase
+      .from("quotes").select("id")
+      .in("id", ids).not("credit_activated_at", "is", null)
+      .order("id", { ascending: true }).range(from, to));
+    creditQuoteIds = new Set((rows as { id: string }[]).map((r) => r.id));
+  } catch (e) {
+    if (!isMissingDbObject(e)) return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+  }
+
   /* dunningRank() is IMPORTED, not redeclared. This block used to keep its own copy of
      the ordering, and the copy is exactly how adding `pre_due` would have broken it:
      an unknown key returns undefined, `undefined > 0` is false, so a nudge already in
@@ -183,6 +200,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
 
   for (const inv of invoices) {
     result.considered++;
+    if (inv.quote_id && creditQuoteIds.has(inv.quote_id)) { result.skipped++; continue; }  // R-346
     const tenant = tenantById.get(inv.tenant_id);
 
     /* A subscription is found through the invoice's source quote. No quote means no

@@ -50,6 +50,9 @@ import { ProvisioningCard } from "@/components/features/quotes/provisioning-card
 import { quoteLifecycle } from "@/lib/quotes/lifecycle";
 import { withTrialStep, quoteTrialState, quoteTrialEligibility, formatIstDate } from "@/lib/trials/start-from-quote";
 import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialog";
+import { ActivateOnCreditDialog } from "@/components/features/quotes/activate-on-credit-dialog";
+import { showActivateOnCredit, customerCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
+import { useCreditInvoice } from "@/lib/credit/queries";
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
@@ -220,6 +223,31 @@ export default function QuoteDetailPage() {
         trialLead,
       )
     : null;
+
+  /* R-346: activate now, pay later. Columns read loosely: before the migration they are simply
+     absent (undefined), and the menu item then says a database update is needed. */
+  const [creditOpen, setCreditOpen] = React.useState(false);
+  const creditQuote = quote as (typeof quote & {
+    credit_activated_at?: string | null; credit_due_date?: string | null;
+    is_one_off?: boolean | null; is_add_seats?: boolean | null;
+  }) | undefined;
+  const creditCustomer = customer as (typeof customer & {
+    allow_pay_later?: boolean | null; credit_limit?: number | null; payment_terms_days?: number | null;
+  }) | undefined;
+  const creditDbReady = Boolean(creditCustomer && "allow_pay_later" in creditCustomer);
+  const showCredit = creditQuote
+    ? showActivateOnCredit(
+        {
+          status: creditQuote.status, payment_status: creditQuote.payment_status, received: totalReceivedSoFar,
+          is_one_off: creditQuote.is_one_off, is_add_seats: creditQuote.is_add_seats,
+          line_items: creditQuote.line_items, credit_activated_at: creditQuote.credit_activated_at,
+        },
+        trialLead,
+      )
+    : false;
+  const isOnCredit = Boolean(creditQuote?.credit_activated_at);
+  const { data: creditInvoice } = useCreditInvoice(quote?.invoice_id, isOnCredit);
+  const creditState = creditQuote ? quoteCreditState(creditQuote, creditInvoice) : null;
 
   /* R-243: ?pay=1 opens Record payment directly (amount filled), like ?send= above — once
      per navigation, then the URL is cleaned. A quote that takes no payment just drops it. */
@@ -784,6 +812,20 @@ export default function QuoteDetailPage() {
                   <Icon name="clock" size={15} /> Start trial (pay later)
                 </DropdownMenuItem>
               )}
+              {/* R-346: credit sale. Hidden on a trial quote (trial ≠ credit) and once on credit. */}
+              {showCredit && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => {
+                    if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
+                    const gate = customerCreditEligibility(creditCustomer ?? null);
+                    if (gate.ok) setCreditOpen(true);
+                    else toast.info(gate.reason);
+                  }}
+                >
+                  <Icon name="check_circle" size={15} /> Activate now, pay later
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {deleteBlock ? (
                 <DropdownMenuItem
@@ -819,7 +861,29 @@ export default function QuoteDetailPage() {
                 : <>Trial ended <b>{formatIstDate(trialState.endDate)}</b> · payment not in. Extend, stop or convert — nothing is suspended automatically.</>}
             </p>
           )}
+          {/* R-346: activated on credit — what is due and when, in words. */}
+          {creditState && creditState.kind !== "paid" && (
+            <p className={cn("mt-3 border-t border-hairline pt-2.5 text-xs", creditState.kind === "overdue" ? "text-rose" : "text-ink-2")}>
+              {creditState.kind === "due"
+                ? <>Active on credit · <b>{rupee(creditState.amountDue)}</b> due <b>{formatIstDate(creditState.dueDate)}</b> ({creditState.daysLeft === 0 ? "today" : `${creditState.daysLeft} ${creditState.daysLeft === 1 ? "day" : "days"} left`})</>
+                : <>Active on credit · <b>{rupee(creditState.amountDue)}</b> was due <b>{formatIstDate(creditState.dueDate)}</b> ({creditState.daysLate} {creditState.daysLate === 1 ? "day" : "days"} late). Nothing is suspended automatically.</>}
+            </p>
+          )}
         </Card>
+      )}
+
+      {creditOpen && quote && creditCustomer && (
+        <ActivateOnCreditDialog
+          open={creditOpen}
+          onOpenChange={setCreditOpen}
+          quote={{ id: quote.id, customer_name: quote.customer_name, amount: quote.amount ?? 0, invoice_id: quote.invoice_id, seats: quote.seats }}
+          customer={{
+            id: creditCustomer.id, name: creditCustomer.name,
+            payment_terms_days: creditCustomer.payment_terms_days ?? null,
+            credit_limit: creditCustomer.credit_limit ?? null,
+          }}
+          role={me?.role}
+        />
       )}
 
       {trialOpen && (
