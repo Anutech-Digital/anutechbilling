@@ -12,6 +12,7 @@
  */
 import type { Metadata } from "next";
 import { PublicTopBar, PublicFooter } from "../_components/public-shell";
+import { SLA } from "@/site/lib/config";
 import {
   PricingHero,
   BetaBanner,
@@ -100,7 +101,7 @@ const COMPARISON = [
       { feature: "White-label PDFs",          starter: false, growth: false, pro: true },
       { feature: "Custom portal domain",      starter: false, growth: false, pro: true },
       { feature: "Custom integrations",       starter: false, growth: false, pro: "Tally + Zoho Books" },
-      { feature: "Support response time",     starter: "48 hours · email", growth: "12 hours · email + WhatsApp", pro: "4 hours · WhatsApp + Slack" },
+      { feature: "Support response time",     starter: "2 working days · email", growth: "12 working hours · email + WhatsApp", pro: `${SLA.short.firstReply} · WhatsApp + Slack` },
       { feature: "Quarterly founder review",  starter: false, growth: false, pro: true },
     ],
   },

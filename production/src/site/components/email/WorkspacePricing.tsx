@@ -18,7 +18,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS, offerPercentOff } from "@/site/lib/workspace-offer";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
-import { WHATSAPP_URL } from "@/site/lib/config";
+import { WHATSAPP_URL, SLA } from "@/site/lib/config";
 
 export type PlanKey = "starter" | "standard" | "plus" | "enterprise";
 export interface PricedPlan {
@@ -220,7 +220,7 @@ export function WorkspacePricing({ plans, head, intro }: {
                 {edition == null ? (
                   <b className="wp-talk">Let&apos;s talk</b>
                 ) : onRequest ? (
-                  <><b className="wp-talk">{CONTACT_FOR_PRICING}</b><small>We send the price for your team the same working day</small></>
+                  <><b className="wp-talk">{CONTACT_FOR_PRICING}</b><small>We send the price for your team {SLA.quote}</small></>
                 ) : rate == null ? (
                   <><b className="wp-talk">Annual only</b><small>Switch to Annual to see the price</small></>
                 ) : (

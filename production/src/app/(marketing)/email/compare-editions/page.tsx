@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "@/site/components/ui/SiteLink";
+import { SLA } from "@/site/lib/config";
 import { EditionTabs } from "@/site/components/email/EditionTabs";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { PICK_GUIDES } from "@/site/lib/data/catalog";
@@ -35,7 +36,7 @@ export default async function CompareEditionsPage() {
           <SectionHead
             eyebrow="WHICH ONE"
             title="Six situations, six answers"
-            body="If none of these is you, send a headcount and we answer the same working day."
+            body={`If none of these is you, send a headcount and we answer ${SLA.quote}.`}
           />
           <div className="grid-3">
             {PICK_GUIDES.map((g) => (

@@ -1693,12 +1693,12 @@ export function BuyWorkspaceClient({
                   <div className="font-serif text-2xl text-ink">{stdPrice}</div>
                 </div>
                 <ul className="space-y-2.5">
-                  <CompareBullet positive>Hand-held migration from M365/Zoho (zero downtime)</CompareBullet>
+                  <CompareBullet positive>Hand-held migration from M365/Zoho, planned to avoid downtime</CompareBullet>
                   <CompareBullet positive>Hindi + English phone support, {COMPANY.hours}</CompareBullet>
                   <CompareBullet positive>Dedicated account manager (one human, not a ticket queue)</CompareBullet>
                   <CompareBullet positive>GST invoice with HSN code (CGST + SGST or IGST)</CompareBullet>
                   <CompareBullet positive>Razorpay · UPI · NEFT · card · net-banking</CompareBullet>
-                  <CompareBullet positive>Same-day domain verification + DNS setup</CompareBullet>
+                  <CompareBullet positive>Domain verification + DNS setup done by us</CompareBullet>
                   <CompareBullet positive>Annual upfront with single invoice</CompareBullet>
                   <CompareBullet positive>Direct Google escalation via Premier Partner status</CompareBullet>
                 </ul>
@@ -1931,7 +1931,7 @@ export function BuyWorkspaceClient({
             />
             <FaqItem
               q="What if I'm switching from Microsoft 365 / Zoho?"
-              a="We do the migration for you — emails, contacts, calendars, drive files — free, for any number of users. Most migrations finish in 24-48 hours with zero downtime."
+              a={`We do the migration for you — emails, contacts, calendars, drive files — free, for any number of users. How long: ${SLA.migration}.`}
             />
             <FaqItem
               q="Annual or monthly — what's better?"
@@ -1954,7 +1954,7 @@ export function BuyWorkspaceClient({
         <Card className="p-8 text-center">
           <h2 className="font-serif text-3xl mb-3">Ready to switch?</h2>
           <p className="text-base text-ink-3 mb-6 leading-relaxed">
-            Tell us how many users and we'll send a GST quote the same working day.
+            Tell us how many users and we&apos;ll send a GST quote {SLA.quote}.
           </p>
           <Button
             variant="primary"
@@ -2124,7 +2124,7 @@ function PricingCard({
             {isPublicPriceHiddenTier(tier.id) ? (
               <>
                 <div className="font-serif text-3xl text-ink">{CONTACT_FOR_PRICING}</div>
-                <div className="text-xs text-ink-3 mt-1">We send the price for your team the same working day</div>
+                <div className="text-xs text-ink-3 mt-1">We send the price for your team {SLA.quote}</div>
               </>
             ) : (
               <>

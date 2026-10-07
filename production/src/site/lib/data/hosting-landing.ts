@@ -23,6 +23,8 @@
  * `hostingplans` prices are disregarded.
  */
 
+import { SLA } from "../config";
+
 export interface LandingPlan {
   planId: string;
   name: string;
@@ -48,7 +50,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "20 GB Bandwidth",
       "Host 1 Website",
       "Phone, WhatsApp & Email Support",
-      "99.99% Uptime Guarantee",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Backup",
     ],
@@ -67,7 +69,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "30 GB Bandwidth",
       "Host Multiple Websites",
       "Phone, WhatsApp & Email Support",
-      "99.99% Uptime Guarantee",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Backup",
     ],
@@ -86,7 +88,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "40 GB Bandwidth",
       "Host Multiple Websites",
       "Phone, WhatsApp & Email Support",
-      "99.99% Uptime Guarantee",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Priority Support",
       "Advanced Security Features",
@@ -116,7 +118,7 @@ export const HOSTING_COMPARISON: readonly { feature: string; typical: "yes" | "n
   { feature: "Free Website Migration",      typical: "partial" },
   { feature: "15-Day Free Trial",           typical: "no" },
   { feature: "Daily Backups",               typical: "yes" },
-  { feature: "99.99% Uptime Guarantee",     typical: "partial" },
+  { feature: "Live Uptime Status Page",     typical: "partial" },
   { feature: "Support From Real People",     typical: "no" },
   { feature: "No Hidden Fees",              typical: "no" },
 ] as const;
@@ -131,7 +133,7 @@ export const HOSTING_STEPS = [
 export const HOSTING_FAQS = [
   { question: "How does the 15-Day Free Trial work?", answer: "Start your trial with full access to all hosting features for 15 days — no credit card required. If you love it, upgrade to a paid plan anytime. If not, simply let it expire." },
   { question: "Do I need a credit card to start the trial?", answer: "No. You can start your 15-day free trial without entering any payment details. You only pay when you decide to continue after the trial." },
-  { question: "Can I migrate my website to Anutech for free?", answer: "Yes! We offer free website migration on all plans. Our team moves your site over with no downtime and no technical hassle on your end." },
+  { question: "Can I migrate my website to Anutech for free?", answer: `Yes! We offer free website migration on all plans. Our team moves your site over — ${SLA.migration} — with no technical hassle on your end.` },
   { question: "What happens after the 15-Day Trial?", answer: "When the trial ends you can convert to any paid plan to keep your website live. Your first invoice is generated only at that point — that is when your card / UPI mandate is charged for the first time." },
   { question: "Do you offer a money-back guarantee?", answer: "Yes, we offer a 30-day money-back guarantee on all yearly hosting plans. Monthly plans and domain registrations are not covered by this guarantee." },
   { question: "Can I upgrade or downgrade my plan anytime?", answer: "Absolutely. You can change your plan at any time from your dashboard, and we prorate the difference automatically." },

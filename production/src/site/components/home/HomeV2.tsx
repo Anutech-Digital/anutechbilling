@@ -34,7 +34,7 @@ import { TRUST } from "@/site/lib/data/copy";
 import { editionDelta } from "@/site/lib/edition-delta";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { HOSTING_FROM_MO } from "@/site/lib/data/hosting-landing-v2";
-import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
+import { WHATSAPP_URL, COMPANY, SLA } from "@/site/lib/config";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { MAIL_OPTIONS } from "@/site/lib/data/copy";
 import { MAIL_RATES } from "@/site/lib/data/catalog";
@@ -371,7 +371,7 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
                   <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>{LABEL[PLUS_EDITION]}</div>
                   <p style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, margin: "4px 0 14px", minHeight: 36 }}>{DESC[PLUS_EDITION]}</p>
                   <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: C.ink, lineHeight: 1.2 }}>{CONTACT_FOR_PRICING}</div>
-                  <div style={{ fontSize: 12, color: C.sec, marginTop: 4 }}>We send the price for {seats} user{seats > 1 ? "s" : ""} the same working day</div>
+                  <div style={{ fontSize: 12, color: C.sec, marginTop: 4 }}>We send the price for {seats} user{seats > 1 ? "s" : ""} {SLA.quote}</div>
                   <Link href={quoteHref as never} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: "#fff", border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
                     Get a quote
                   </Link>

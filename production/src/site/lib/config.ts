@@ -124,6 +124,10 @@ export const SLA = {
   domainRegistered: `within ${SLA_SHORT.domainRegistered} of payment`,
   domainDelay: "If the registry is slow, we tell you by email.",
   sslLive: `within ${SLA_SHORT.sslLive} of the domain pointing to us`,
+  /** R-340: a priced quote for a headcount (was "the same working day"). */
+  quote: "within 1 working day",
+  /** R-340: mail/site migration (was "24–48 hours, zero downtime" — not a promise we can keep). */
+  migration: "usually 1–2 working days, planned to avoid downtime",
 } as const;
 
 /** Three lines shown on checkout and the done page under "After you pay". */

@@ -6,6 +6,11 @@
  * 10:00–19:00. Pardeep's manager fixed realistic values; they live in SLA (config.ts)
  * and every page reads them from there. This test fails if an old promise comes back
  * anywhere in the public site's source.
+ *
+ * R-340 extends it to the promises R-229 left: no "99.99% Uptime Guarantee" (no SLA
+ * contract behind it), quotes "within 1 working day" (SLA.quote), migration "usually
+ * 1–2 working days, planned to avoid downtime" (SLA.migration), and /pricing support
+ * times in working hours.
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -43,14 +48,28 @@ const OLD_PROMISES: Array<[string, RegExp]> = [
   ["within 4 hours (not working hours)", /within 4 hours/i],
   ["same day", /\bsame day\b/i],
   ["24x7 / 24/7", /\b24\s*[x×/]\s*7\b/i],
+  // R-340
+  ["99.99% / uptime guarantee", /99\.99% uptime|uptime guarantee/i],
+  ["same working day quote", /same[- ]day quote|(quote|price|answer)[^.\n]{0,80}same working day/i],
+  ["migration in 24–48 hours", /24\s*[-–]\s*48 hours/i],
+  ["zero downtime migration", /zero downtime|with no downtime/i],
+  ["support time in clock hours", /\b\d+ hours ·|reply within 24 hours/i],
 ];
+
+/** Customer testimonials are their words, not our promise — skip `quote:` lines. */
+function withoutTestimonials(src: string): string {
+  return src
+    .split("\n")
+    .filter((l) => !/^\s*quote:\s/.test(l))
+    .join("\n");
+}
 
 describe("R-229 public site promises", () => {
   it("no old or contradicting time promise is left in the public site", () => {
     const hits: string[] = [];
     for (const d of DIRS) {
       for (const f of sourceFiles(path.join(ROOT, d))) {
-        const text = withoutComments(fs.readFileSync(f, "utf8"));
+        const text = withoutTestimonials(withoutComments(fs.readFileSync(f, "utf8")));
         for (const [name, re] of OLD_PROMISES) {
           if (re.test(text)) hits.push(`${path.relative(ROOT, f)}: ${name}`);
         }
@@ -66,6 +85,8 @@ describe("R-229 public site promises", () => {
     expect(SLA.hostingLive).toBe("within 4 working hours of payment");
     expect(SLA.domainRegistered).toBe("within 2 working hours of payment");
     expect(SLA.sslLive).toBe("within 1 working day of the domain pointing to us");
+    expect(SLA.quote).toBe("within 1 working day");
+    expect(SLA.migration).toBe("usually 1–2 working days, planned to avoid downtime");
     expect(COMPANY.hours).toBe(SLA.hours);
   });
 

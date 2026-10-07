@@ -6,6 +6,7 @@
  * ⚠️ Client names, case-study figures and review quotes are PLACEHOLDERS to be replaced
  * with real ones before launch — the handoff marks them so.
  */
+import { SLA } from "../config";
 
 export const CATALOGUE = [
   { name: "Domains", from: "from ₹249/yr", body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
@@ -67,12 +68,12 @@ export const DOMAIN_FEATURES = [
 ] as const;
 
 export const EMAIL_FEATURES = [
-  { title: "Free migration", body: "Mail, folders, contacts and calendars moved across. Done overnight, nothing lost." },
+  { title: "Free migration", body: `Mail, folders, contacts and calendars moved across — ${SLA.migration}.` },
   { title: "No seat minimum", body: "One mailbox is a valid order. Add and remove seats month to month." },
   { title: "Deliverability setup", body: "SPF, DKIM and DMARC configured and tested, not left as a support article." },
   { title: "Hosted in India", body: "Anutech Mail stays on Indian infrastructure. Useful when a client asks where data sits." },
   { title: "Works with your app", body: "Outlook, Apple Mail, Thunderbird, Gmail app. Standard protocols, no lock-in." },
-  { title: "Same-day quotes", body: "Send a headcount, get all three options priced side by side the same working day." },
+  { title: "Quotes in 1 working day", body: `Send a headcount, get all three options priced side by side ${SLA.quote}.` },
   { title: "Retention and archive", body: "Configurable retention with recovery of deleted mail inside the window." },
   { title: "Mixed estates", body: "Run Workspace for sales and Anutech Mail for the rest. One invoice." },
 ] as const;
