@@ -53,9 +53,18 @@ export function pathsOverlap(a, b) {
   return x === y || y.startsWith(x + "/") || x.startsWith(y + "/");
 }
 
-/** A claim like "src" or "src/app" would lock out every other worker — refuse it. */
+/**
+ * A claim like "src" or "src/app" would lock out every other worker — refuse it.
+ * R-345: an exact FILE (name with an extension, e.g. sentry.client.config.ts,
+ * scripts/setup-cloud-scheduler.sh) locks only itself, so it is fine at any depth.
+ * Folders still need 3 parts; ".", "*" and wildcards are always refused.
+ */
 export function tooBroad(area) {
-  return normPath(area).split("/").filter(Boolean).length < 3;
+  const n = normPath(area);
+  if (!n || n === "." || n.includes("*")) return true;
+  const parts = n.split("/").filter(Boolean);
+  if (/^[^.].*\.[a-z0-9]{1,8}$|^\..+\..+$/i.test(parts[parts.length - 1])) return false;
+  return parts.length < 3;
 }
 
 /** Most workers allowed at once. 6 Oct 2026: 8 at once left 2 GB of 24 GB free and hung the machine. */

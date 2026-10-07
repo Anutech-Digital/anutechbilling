@@ -19,6 +19,22 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(tooBroad("src")).toBe(true);
     expect(tooBroad("src/app")).toBe(true);
     expect(tooBroad("src/lib/deals")).toBe(false);
+    expect(tooBroad("scripts/ops")).toBe(true);
+    expect(tooBroad(".")).toBe(true);
+    expect(tooBroad("")).toBe(true);
+    expect(tooBroad("*")).toBe(true);
+    expect(tooBroad("src/*")).toBe(true);
+    expect(tooBroad("src/lib/*.ts")).toBe(true);
+    expect(tooBroad(".github")).toBe(true);
+  });
+
+  it("R-345: an exact FILE path is fine at any depth (root config files can be locked)", () => {
+    expect(tooBroad("sentry.client.config.ts")).toBe(false);
+    expect(tooBroad("production/next.config.ts")).toBe(false);
+    expect(tooBroad("scripts/setup-cloud-scheduler.sh")).toBe(false);
+    expect(tooBroad("tests/worker-lock.test.ts")).toBe(false);
+    expect(tooBroad(".env.example")).toBe(false);
+    expect(tooBroad("production\\package.json")).toBe(false);
   });
 
   it("names the other card and both paths on a conflict, and ignores its own lock", () => {
