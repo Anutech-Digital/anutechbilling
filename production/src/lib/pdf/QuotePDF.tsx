@@ -29,6 +29,7 @@ import { pdfRupee } from "./pdf-money";
 import { pdfText } from "./pdf-text";
 import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
@@ -475,6 +476,14 @@ export function QuotePDF(props: QuotePDFProps) {
   const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount)                  : taxable;
   const dTax      = isForeign ? dRound(dTaxable * (taxRate / 100))             : tax;
   const dTotal    = isForeign ? dRound(dTaxable + dTax)                        : total;
+  /* R-212: CGST/SGST from lib/gst/tax-split — the split the preview and the email print.
+     A foreign quote's tax is in cents, so it is split as a whole number of cents: the helper
+     keeps a whole-unit tax in whole-unit heads (right for ₹, where every quote tax is whole
+     rupees), which would print $7.00 as $4.00 + $3.00. Integer cents also avoid the float
+     trap of the old `dRound(dTax / 2)` ($9.95 / 2 → $4.97, the odd cent going to SGST). */
+  const intra = isForeign
+    ? (({ cgst, sgst }) => ({ cgst: cgst / 100, sgst: sgst / 100 }))(splitIntraStateTax(Math.round(dTax * 100)))
+    : splitIntraStateTax(dTax);
 
   return (
     <Document
@@ -673,11 +682,11 @@ export function QuotePDF(props: QuotePDFProps) {
                 <>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>CGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(dRound(dTax / 2))}</Text>
+                    <Text style={s.totalValue}>{fmtInv(intra.cgst)}</Text>
                   </View>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>SGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(dRound(dTax - dRound(dTax / 2)))}</Text>
+                    <Text style={s.totalValue}>{fmtInv(intra.sgst)}</Text>
                   </View>
                 </>
               )}

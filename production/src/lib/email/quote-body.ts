@@ -37,6 +37,7 @@
  * anybody noticing it never said "monthly".
  */
 import { rupee, formatDate } from "@/lib/utils";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 
 /** The supplier's own particulars, as they must appear on a GST document. */
@@ -157,13 +158,14 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
     : "Sub:  Quotation";
 
   /* GST heads, split the way the invoice will be raised. Half each and NOT recomputed from
-     the rate: the halves must add back to the `tax` the row already committed to. */
-  const half = Math.round(input.tax / 2);
+     the rate: the halves must add back to the `tax` the row already committed to. R-212: the
+     split is lib/gst/tax-split's — the same one the preview and the PDF print. */
+  const intra = splitIntraStateTax(input.tax);
   const gstRows = input.interState
     ? [row(`IGST ${input.taxRate}%`, `${rupee(input.tax)}${unit}`)]
     : [
-        row(`CGST ${input.taxRate / 2}%`, `${rupee(half)}${unit}`),
-        row(`SGST ${input.taxRate / 2}%`, `${rupee(input.tax - half)}${unit}`),
+        row(`CGST ${input.taxRate / 2}%`, `${rupee(intra.cgst)}${unit}`),
+        row(`SGST ${input.taxRate / 2}%`, `${rupee(intra.sgst)}${unit}`),
       ];
 
   const t = input.terms ?? {};

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
@@ -117,6 +118,9 @@ export function QuotePreviewDialog({
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
   const fmt          = (n: number) =>
     perInvoice ? `${money(Math.round(n / billingN))}${billingUnit}` : money(n);
+
+  // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
+  const intra        = splitIntraStateTax(tax);
 
   const handlePrint = () => {
     window.print();
@@ -314,8 +318,8 @@ export function QuotePreviewDialog({
                   <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />
                 ) : (
                   <>
-                    <Row label={`CGST (${taxRate / 2}%)`} value={fmt(Math.round(tax / 2))} />
-                    <Row label={`SGST (${taxRate / 2}%)`} value={fmt(tax - Math.round(tax / 2))} />
+                    <Row label={`CGST (${taxRate / 2}%)`} value={fmt(intra.cgst)} />
+                    <Row label={`SGST (${taxRate / 2}%)`} value={fmt(intra.sgst)} />
                   </>
                 )}
                 <div className="border-t-2 border-ink pt-2 mt-2">
