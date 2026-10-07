@@ -12,14 +12,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { subscriptionExpectation, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
+import type { QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { paymentToast, cashReference, type PaymentToastAction } from "@/lib/payments/record-payment-toast";
+import { paymentToast, cashReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
   shouldIssueAfterPayment,
@@ -212,6 +212,7 @@ export function RecordPaymentDialog({
     reset,
     watch,
     setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -327,6 +328,16 @@ export function RecordPaymentDialog({
       setAmountEdited(false);
     }
   }, [open, reset, remaining, customerTdsDefaults]);
+
+  /* R-379 (j): the reset above passes no `domain`, and react-hook-form's reset(values)
+     replaces ALL values — so the required Domain field opened empty even when the page
+     knew the domain (Q-FBB9-27-0011: the customer's subscription carried it). Filled here,
+     after that reset, and again when the default arrives late (subscriptions load after
+     the quote). Never overwrites what the operator typed. */
+  React.useEffect(() => {
+    if (!open || !defaultDomain) return;
+    if (!(getValues("domain") ?? "").trim()) setValue("domain", defaultDomain);
+  }, [open, defaultDomain, getValues, setValue]);
 
   // Keep the bank amount locked to (remaining − TDS) until the user hand-edits
   // it, so net + TDS always settles the quote EXACTLY — no accidental ₹-few
@@ -635,18 +646,28 @@ export function RecordPaymentDialog({
          dialog and only two of them hold the quote row. One select, on the only path that
          can show the note. subscriptionExpectation is the SAME rule the quote page's
          orphan warning uses, so the toast and the page cannot disagree. */
-      let subscriptionNote: { kind: "one-off" | "missing"; item: string } | null = null;
+      /* R-379 (k): "nothing created on THIS call" is not "missing" — a quote activated on
+         credit already got its subscription at activation (Q-FBB9-27-0011 warned falsely).
+         So count the quote's subscriptions and read credit_activated_at before warning.
+         select("*") because credit_activated_at is absent before the R-346 migration; a
+         named column would fail the whole read there. Rule: subscriptionNoteFor(). */
+      let subscriptionNote: SubscriptionNote = null;
       if (res.isFirstPayment && !res.subscriptionCreated && !res.isRenewalQuote) {
-        const { data: q } = await createClient()
-          .from("quotes").select("is_add_seats").eq("id", quoteId).maybeSingle();
-        if (q?.is_add_seats !== true) {
-          const first = (lineItems ?? [])[0];
-          const expectation = first ? subscriptionExpectation(first) : "one-off";
-          subscriptionNote = {
-            kind: expectation === "one-off" ? "one-off" : "missing",
-            item: first?.name?.trim() || "This item",
-          };
-        }
+        const sb = createClient();
+        const [{ data: q }, { count: subCount }] = await Promise.all([
+          sb.from("quotes").select("*").eq("id", quoteId).maybeSingle(),
+          sb.from("subscriptions").select("id", { count: "exact", head: true }).eq("quote_id", quoteId),
+        ]);
+        const qRow = q as { is_add_seats?: boolean | null; credit_activated_at?: string | null } | null;
+        subscriptionNote = subscriptionNoteFor({
+          isFirstPayment:      res.isFirstPayment,
+          subscriptionCreated: res.subscriptionCreated,
+          isRenewalQuote:      res.isRenewalQuote,
+          isAddSeats:          qRow?.is_add_seats,
+          creditActivatedAt:   qRow?.credit_activated_at,
+          existingSubs:        subCount ?? 0,
+          lines:               lineItems,
+        });
       }
 
       /* R-378: issue the GST invoice now, through the SAME useGenerateInvoice the quote
