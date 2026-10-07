@@ -6,8 +6,10 @@
  *                         customers via invoices
  *   Input GST (purchases): amount of CGST + SGST + IGST paid to vendors
  *                         via vendor_bills + expenses
- *   Net liability        : Output − Input. Positive = payable. Negative =
- *                         refundable / carry-forward credit.
+ *   Cash to pay          : output tax left after input credit is set off in
+ *                         the s.49(5) / Rule 88A order (IGST credit first, never
+ *                         CGST↔SGST), plus reverse charge — R-258, lib/gst/gstr3b.ts.
+ *                         Unused credit is carried forward per head.
  *
  * Two CSV export buttons let Pardeep hand his CA a ready-to-import file
  * for GSTR-1 / GSTR-3B filing on the IRP portal. (Real IRN generation
@@ -33,7 +35,8 @@ import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { rupee, formatDate } from "@/lib/utils";
 import { buildGstr1, buildAdvances, docHeads, docHsnLines, gstr1Csv, gstr1Json, gstr3bClass, isExportDoc, GSTR1_HEADERS, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
-import { computeGstr3b, gstr3bRows, type Heads } from "@/lib/gst/gstr3b";
+import { computeGstr3b, expenseHeadsByState, gstr3bRows, type Heads } from "@/lib/gst/gstr3b";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { parseGstr2b, reconcile2b, type Reconciliation } from "@/lib/gst/gstr2b";
 import { createClient } from "@/lib/supabase/client";
 import { Term } from "@/components/shared/term";
@@ -104,7 +107,6 @@ interface GstReport {
   outputGST:     number;
   inputTotal:    number;
   inputGST:      number;
-  netLiability:  number;
   /** Expense GST that is NOT credit (kaccha bill, no vendor GSTIN, s.17(5)) — lib/gst/itc.ts. Not in inputRows. */
   blockedItc:    ItcSplit;
   /** The s.17(5) part of that, by head — reported gross in 3B 4(A)(5) and reversed in 4(B)(1). */
@@ -359,10 +361,20 @@ function useGstReport(range: DateRange) {
       const withGstin = (expenses ?? []).map((e) => ({ ...e, vendorGstin: e.vendor_id ? vendorGstinOf.get(e.vendor_id) ?? null : null }));
       const blockedItc = splitItc(withGstin);
       const claimable = withGstin.filter((e) => itcEligibility(e).eligible);
+      /* R-258: a guessed split (no IGST/CGST on the bill) follows the vendor GSTIN's state —
+         another state than ours means the vendor charged IGST, not CGST+SGST. */
+      const ownStateCode = sellerStateCode ?? stateCodeFromGstin(sellerGstin);
+      const headsOf = (e: (typeof withGstin)[number]) => {
+        const h = expenseGstHeads(e);
+        const vendorState = stateCodeFromGstin(e.vendorGstin);
+        const heads = expenseHeadsByState(h, vendorState, ownStateCode);
+        const byState = !h.measured && heads.igst > h.igst;
+        return { ...heads, measured: h.measured, assumption: byState ? `Bill par batwara nahi tha — vendor GSTIN doosre rajya (${vendorState}) ka hai, isliye IGST maana gaya` : h.assumption };
+      };
       /* s.17(5) blocked rows keep their heads: 3B wants them in 4(A)(5) and again in 4(B)(1). */
       const blocked17Heads: Heads[] = withGstin
         .filter((e) => (itcEligibility(e).reason ?? "").includes("17(5)"))
-        .map((e) => { const h = expenseGstHeads(e); return { igst: h.igst, cgst: h.cgst, sgst: h.sgst }; });
+        .map((e) => { const h = headsOf(e); return { igst: h.igst, cgst: h.cgst, sgst: h.sgst }; });
 
       /* ── Ab MAANA nahi jata jab NAAPA hua maujood ho (29 Aug 2026) ──────────
          Yahan pehle har kharche par ye chalta tha:
@@ -384,7 +396,7 @@ function useGstReport(range: DateRange) {
          maan kar bhi SAAF likh kar. */
       const inputRowsExpenses: InputRow[] = claimable.map((e) => {
         const g = e.gst_paid ?? 0;
-        const h = expenseGstHeads(e);
+        const h = headsOf(e);
         return {
           source:       "expense" as const,
           id:           e.id,
@@ -412,11 +424,10 @@ function useGstReport(range: DateRange) {
       const outputGST    = outputRows.reduce((s, r) => s + r.gst, 0);
       const inputTotal   = inputRows.reduce((s, r) => s + r.taxableValue, 0);
       const inputGST     = inputRows.reduce((s, r) => s + r.gst, 0);
-      const netLiability = outputGST - inputGST;
 
       const lateCreditNotes = outputRows.filter((r) => r.lateCreditNote).length;
 
-      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
+      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
     },
   });
 }
@@ -694,7 +705,7 @@ function GstReportInner() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight">GST Reports</h1>
         <p className="text-sm text-ink-3 mt-1">
-          Output GST (collected from customers) − Input GST (paid to vendors) = Net liability.
+          Output GST (collected from customers), less Input GST credit (paid to vendors) set off head by head = cash to pay.
           Hand the CSV exports to your CA for GSTR-1 / GSTR-3B filing.
         </p>
       </div>
@@ -756,42 +767,57 @@ function GstReportInner() {
           rowLabel="bill/expense"
         />
         <Card className="p-4 md:p-5 border-2 border-amber/30 bg-amber-soft/20">
-          {/* R-257: the big number is what is LEFT to pay (net − GST already paid for these
-              months) — the same figure the Overview "GST to pay" tile shows, so tile and
-              headline agree. With nothing paid it is simply the net liability. The net and
-              the payment stay visible below as the working. Same figures as before, only
-              which one is the headline changed. */}
+          {/* R-258: the big number is CASH — output tax left after input credit is set off in
+              the statutory order (s.49(5) / Rule 88A: IGST credit first, never CGST↔SGST;
+              lib/gst/gstr3b.ts setOffItc), plus reverse-charge tax, less GST already paid for
+              these months (R-257). The old "output − input" ignored both rules. Per-head
+              working (credit used, cash, carried forward) sits below. */}
           {(() => {
             const paid = data ? gstPaidInRange : 0;
-            const left = data ? data.netLiability - paid : 0;
+            const so = g3b?.setOff;
+            const cash = g3b ? g3b.pay.igst + g3b.pay.cgst + g3b.pay.sgst : 0;
+            const carry = so ? so.carryForward.igst + so.carryForward.cgst + so.carryForward.sgst : 0;
+            const left = cash - paid;
+            const creditOnly = left === 0 && paid === 0 && carry > 0;
+            const heads = [["IGST", "igst"], ["CGST", "cgst"], ["SGST", "sgst"]] as const;
             return (
               <>
                 <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-                  {left < 0
-                    ? (paid > 0 ? "Paid more than due" : "GST credit")
-                    : paid > 0 ? "GST still to pay" : <Term k="net_liability">Net liability</Term>}
+                  {left < 0 ? "Paid more than due" : creditOnly ? "GST credit" : paid > 0 ? "GST still to pay" : "Cash to pay"}
                 </div>
                 {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
                   <>
-                    <div className={`font-serif text-2xl md:text-3xl ${data && left >= 0 ? "text-rose" : "text-emerald"}`}>
-                      {data ? rupee(Math.abs(left)) : "—"}
+                    <div className={`font-serif text-2xl md:text-3xl ${data && left > 0 ? "text-rose" : "text-emerald"}`}>
+                      {data ? rupee(creditOnly ? carry : Math.abs(left)) : "—"}
                     </div>
                     <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
-                      {data && left >= 0
-                        ? "Payable to government via GSTR-3B"
-                        : "Refundable / carry-forward input tax credit"}
+                      {!data ? "" : left > 0
+                        ? "Payable in cash via GSTR-3B, after input credit is used"
+                        : creditOnly ? "Unused input credit, carried forward to next month" : left < 0 ? "Paid more than the cash due" : "Nothing to pay in cash"}
                     </div>
-                    {/* GST already paid for these return months (booked from the bank). Shown
-                        only when some was paid, so an unpaid month still reads as plain "payable". */}
                     {data && paid > 0 && (
                       <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
-                        <div className="flex justify-between text-ink-2">
-                          <span><Term k="net_liability">Net liability</Term></span><span>{rupee(data.netLiability)}</span>
-                        </div>
-                        <div className="flex justify-between text-ink-2">
-                          <span>Paid for these months</span><span>− {rupee(paid)}</span>
-                        </div>
+                        <div className="flex justify-between text-ink-2"><span>Cash after credit</span><span>{rupee(cash)}</span></div>
+                        <div className="flex justify-between text-ink-2"><span>Paid for these months</span><span>− {rupee(paid)}</span></div>
                       </div>
+                    )}
+                    {so && (so.liability.igst + so.liability.cgst + so.liability.sgst + carry) > 0 && (
+                      <table className="w-full mt-2 pt-2 border-t border-amber/20 text-xs tabular-nums" aria-label="GST set-off by head">
+                        <thead className="text-3xs uppercase tracking-wider text-ink-3">
+                          <tr><th className="text-left font-semibold py-0.5">Head</th><th className="text-right font-semibold">Output</th><th className="text-right font-semibold">Credit used</th><th className="text-right font-semibold">Cash</th><th className="text-right font-semibold">Carried fwd</th></tr>
+                        </thead>
+                        <tbody className="text-ink-2">
+                          {heads.map(([label, k]) => (
+                            <tr key={k}>
+                              <td className="py-0.5">{label}</td>
+                              <td className="text-right">{rupee(so.liability[k] + (k === "igst" ? g3b.rcmTax : 0))}</td>
+                              <td className="text-right">{rupee(so.paidByCredit[k])}</td>
+                              <td className="text-right">{rupee(g3b.pay[k])}</td>
+                              <td className="text-right">{rupee(so.carryForward[k])}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                   </>
                 )}
@@ -919,7 +945,7 @@ function GstReportInner() {
               <tbody className="divide-y divide-hairline font-mono">
                 {gstr3bRows(g3b).map((r) => {
                   const box = String(r[0]);
-                  const isNet = box === "Net", isRev = box === "4(B)(1)", isInfo = box === "—", isItc = box.startsWith("4(") && !isRev;
+                  const isNet = box === "Net", isRev = box === "4(B)(1)", isInfo = box === "—", isItc = (box.startsWith("4(") && !isRev) || box === "C/F";
                   const cell = (v: string | number) => (v === "" ? "—" : typeof v === "number" ? rupee(v) : v);
                   const tone = isNet ? "font-semibold text-rose" : isRev ? "text-amber-ink" : isItc ? "text-emerald" : isInfo ? "text-ink-3" : "text-ink";
                   return (
@@ -937,9 +963,10 @@ function GstReportInner() {
             </table>
           </div>
           <p className="text-xs text-ink-3 mt-2 leading-relaxed">
-            Net = output − ITC per head (floored at 0). The portal also lets IGST credit set off CGST/SGST,
-            so your actual cash payable can be lower. Expense ITC is assumed intra-state (CGST+SGST) — adjust
-            if any expense was inter-state / import (IGST). Add reverse-charge, interest or late fee separately.
+            6.1 = credit set off in the legal order: IGST credit pays IGST first, then CGST/SGST; CGST credit pays
+            CGST, then IGST; SGST credit pays SGST, then IGST. CGST and SGST credit never pay each other. Net = cash
+            left to pay (reverse charge always in cash); unused credit is carried forward. Where a bill had no
+            IGST/CGST split, the vendor GSTIN state decides (other state = IGST). Interest and late fee are extra.
           </p>
         </Card>
       )}
@@ -1134,7 +1161,7 @@ function GstReportInner() {
                 </p>
                 <p className="text-xs text-ink-2">
                   In par bill ka IGST/CGST batwara nahi mila, isliye intra-state maan kar aadha-aadha
-                  baanta gaya hai. <strong>GSTR-3B me IGST aur CGST/SGST alag column hain</strong> —
+                  baanta gaya hai (vendor ka GSTIN doosre rajya ka ho to poora IGST maana gaya). <strong>GSTR-3B me IGST aur CGST/SGST alag column hain</strong> —
                   agar inme koi doosre rajya ka bill hai (jaise Amazon), to uska credit galat khaane
                   me chala jayega aur GSTR-2B se mel nahi khayega. Neeche table me aisi row par{" "}
                   <span className="font-semibold">maana hua</span> likha hai.

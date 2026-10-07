@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeGstr3b, gstr3bRows } from "./gstr3b";
+import { computeGstr3b, expenseHeadsByState, gstr3bRows, setOffItc } from "./gstr3b";
 
 const H = (igst = 0, cgst = 0, sgst = 0) => ({ igst, cgst, sgst });
 
@@ -35,7 +35,7 @@ describe("GSTR-3B worksheet", () => {
   it("kaccha / no-GSTIN GST is reported outside the boxes", () => {
     expect(g.notIn2b).toBe(180);
     const rows = gstr3bRows(g);
-    expect(rows.map((r) => r[0])).toEqual(["3.1(a)", "3.1(d)", "4(A)(3)", "4(A)(5)", "4(B)(1)", "4(C)", "Net", "—"]);
+    expect(rows.map((r) => r[0])).toEqual(["3.1(a)", "3.1(d)", "4(A)(3)", "4(A)(5)", "4(B)(1)", "4(C)", "6.1", "6.1", "6.1", "Net", "—"]);
   });
 
   it("no RCM, no blocked → only the classic four rows", () => {
@@ -85,5 +85,115 @@ describe("WC-gst: 3.1(b) zero-rated and 3.2 unregistered inter-state", () => {
     });
     expect(a.outTaxable).toBe(5_000);
     expect(a.out).toEqual(H(0, 450, 450));
+  });
+});
+
+describe("R-258: ITC set-off — s.49(5) / s.49A / Rule 88A", () => {
+  const sum = (h: { igst: number; cgst: number; sgst: number }) => h.igst + h.cgst + h.sgst;
+
+  it("card example: ₹10k IGST credit, ₹6k CGST + ₹6k SGST output → ₹2k cash, not ₹12k", () => {
+    const s = setOffItc(H(0, 6_000, 6_000), H(10_000));
+    expect(sum(s.cash)).toBe(2_000);
+    expect(s.used.igst).toEqual(H(0, 6_000, 4_000));
+    expect(s.cash).toEqual(H(0, 0, 2_000));
+    expect(s.carryForward).toEqual(H());
+    /* and through the worksheet: */
+    const g = computeGstr3b({ output: [{ taxableValue: 66_667, heads: H(0, 6_000, 6_000) }], itc: [H(10_000)], blocked17: [], notIn2b: 0, rcm: [] });
+    expect(sum(g.pay)).toBe(2_000);
+  });
+
+  it("IGST credit goes to IGST liability FIRST, the remainder to CGST/SGST", () => {
+    const s = setOffItc(H(5_000, 4_000, 4_000), H(8_000));
+    expect(s.used.igst).toEqual(H(5_000, 3_000, 0));
+    expect(s.cash).toEqual(H(0, 1_000, 4_000));
+    expect(sum(s.cash)).toBe(13_000 - 8_000);
+  });
+
+  it("Rule 88A remainder goes to the head its own credit cannot cover — no cash while credit is carried forward", () => {
+    /* CGST credit covers CGST fully; SGST has no credit. The IGST remainder must go to SGST. */
+    const s = setOffItc(H(0, 5_000, 5_000), H(5_000, 5_000, 0));
+    expect(s.used.igst).toEqual(H(0, 0, 5_000));
+    expect(s.used.cgst).toEqual(H(0, 5_000, 0));
+    expect(s.cash).toEqual(H());
+    expect(s.carryForward).toEqual(H());
+  });
+
+  it("s.49A: IGST credit is exhausted before CGST/SGST credit is used; the CGST/SGST credit is carried forward", () => {
+    const s = setOffItc(H(0, 3_000, 3_000), H(10_000, 2_000, 2_000));
+    expect(s.used.igst).toEqual(H(0, 3_000, 3_000));
+    expect(s.used.cgst).toEqual(H());
+    expect(s.used.sgst).toEqual(H());
+    expect(s.cash).toEqual(H());
+    expect(s.carryForward).toEqual(H(4_000, 2_000, 2_000));
+  });
+
+  it("CGST credit pays CGST then IGST; SGST credit pays SGST then IGST", () => {
+    const s = setOffItc(H(10_000, 1_000, 1_000), H(0, 4_000, 3_000));
+    expect(s.used.cgst).toEqual(H(3_000, 1_000, 0));
+    expect(s.used.sgst).toEqual(H(2_000, 0, 1_000));
+    expect(s.cash).toEqual(H(5_000, 0, 0));
+    expect(s.paidByCredit).toEqual(H(5_000, 1_000, 1_000));
+  });
+
+  it("CGST credit NEVER pays SGST, SGST credit NEVER pays CGST", () => {
+    const a = setOffItc(H(0, 0, 5_000), H(0, 5_000, 0));
+    expect(a.cash).toEqual(H(0, 0, 5_000));
+    expect(a.carryForward).toEqual(H(0, 5_000, 0));
+    expect(a.used.cgst.sgst).toBe(0);
+    const b = setOffItc(H(0, 5_000, 0), H(0, 0, 5_000));
+    expect(b.cash).toEqual(H(0, 5_000, 0));
+    expect(b.carryForward).toEqual(H(0, 0, 5_000));
+    expect(b.used.sgst.cgst).toBe(0);
+  });
+
+  it("excess credit is carried forward per head; cash never negative", () => {
+    const s = setOffItc(H(1_000, 1_000, 1_000), H(5_000, 3_000, 2_000));
+    expect(s.cash).toEqual(H());
+    /* IGST 5k: 1k IGST, 1k CGST, 1k SGST → 2k left; CGST/SGST credit untouched. */
+    expect(s.carryForward).toEqual(H(2_000, 3_000, 2_000));
+    expect(sum(s.carryForward)).toBe(10_000 - 3_000);
+  });
+
+  it("whole rupees; negative / non-finite inputs count as 0", () => {
+    const s = setOffItc(H(100.4, -50, Number.NaN), H(40.6, 0, -10));
+    expect(s.liability).toEqual(H(100, 0, 0));
+    expect(s.credit).toEqual(H(41, 0, 0));
+    expect(s.cash).toEqual(H(59, 0, 0));
+  });
+
+  it("invariant: liability = credit used + cash, credit = used + carried, for every head", () => {
+    const cases: [ReturnType<typeof H>, ReturnType<typeof H>][] = [
+      [H(7, 13, 2), H(3, 1, 20)], [H(0, 9, 9), H(4, 0, 0)], [H(50, 0, 0), H(0, 10, 10)], [H(1, 2, 3), H(9, 9, 9)],
+    ];
+    for (const [l, c] of cases) {
+      const s = setOffItc(l, c);
+      for (const k of ["igst", "cgst", "sgst"] as const) {
+        expect(s.paidByCredit[k] + s.cash[k]).toBe(s.liability[k]);
+        expect(sum(s.used[k]) + s.carryForward[k]).toBe(s.credit[k]);
+        expect(s.cash[k]).toBeGreaterThanOrEqual(0);
+      }
+      expect(s.used.cgst.sgst).toBe(0);
+      expect(s.used.sgst.cgst).toBe(0);
+    }
+  });
+
+  it("RCM tax stays cash even when ITC is spare; worksheet shows 6.1 and C/F rows", () => {
+    const g = computeGstr3b({ output: [], itc: [H(0, 500, 500)], blocked17: [], notIn2b: 0, rcm: [{ amount: 10_000, tax: 1_800 }] });
+    expect(g.pay).toEqual(H(1_800));
+    expect(g.setOff.carryForward).toEqual(H(1_800, 500, 500));
+    expect(gstr3bRows(g).map((r) => r[0])).toEqual(["3.1(a)", "3.1(d)", "4(A)(3)", "4(A)(5)", "4(C)", "Net", "C/F"]);
+  });
+});
+
+describe("R-258: guessed expense heads follow the vendor's GSTIN state", () => {
+  const guessed = { igst: 0, cgst: 90, sgst: 90, measured: false };
+  it("other-state vendor → IGST", () => expect(expenseHeadsByState(guessed, "09", "07")).toEqual(H(180)));
+  it("same state or unknown state → keeps CGST+SGST", () => {
+    expect(expenseHeadsByState(guessed, "07", "07")).toEqual(H(0, 90, 90));
+    expect(expenseHeadsByState(guessed, null, "07")).toEqual(H(0, 90, 90));
+    expect(expenseHeadsByState(guessed, "09", null)).toEqual(H(0, 90, 90));
+  });
+  it("a split read from the bill is never changed", () => {
+    expect(expenseHeadsByState({ igst: 0, cgst: 90, sgst: 90, measured: true }, "09", "07")).toEqual(H(0, 90, 90));
   });
 });
