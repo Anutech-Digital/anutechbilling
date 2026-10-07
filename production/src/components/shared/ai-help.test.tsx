@@ -77,3 +77,58 @@ describe("AI Help panel — Last tested line", () => {
     expect(screen.queryByTestId("ai-help-last-tested")).toBeNull();
   });
 });
+
+describe("AI Help panel — follow-up chips (R-353)", () => {
+  const fetchMock = vi.fn();
+  /* The panel wraps window.fetch once (trail of failed calls) and keeps the first fetch it
+     saw in __aiHelpFetch — so the mock goes there, not on globalThis. */
+  const w = window as Window & { __aiHelpFetch?: typeof fetch };
+  let saved: typeof fetch | undefined;
+  beforeEach(() => { fetchMock.mockReset(); saved = w.__aiHelpFetch; w.__aiHelpFetch = fetchMock as unknown as typeof fetch; });
+  afterEach(() => { w.__aiHelpFetch = saved; });
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  const answer = (body: unknown) => Promise.resolve(json(body));
+
+  async function askTyped(q: string) {
+    const box = screen.getByLabelText("Your question");
+    fireEvent.change(box, { target: { value: q } });
+    await act(async () => { fireEvent.submit(box.closest("form")!); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("shows chips under the last answer; a tap sends that question; the new answer replaces them", async () => {
+    fetchMock
+      .mockReturnValueOnce(answer({ reply: "Inme se kaunsa pehle?", ai: true, followUps: ["Quick Add bar pehle", "Bulk reschedule pehle"] }))
+      .mockReturnValueOnce(answer({ reply: "Theek hai, Quick Add bar.", ai: true, followUps: [] }));
+    await openPanel();
+    await askTyped("Tasks page better kaise ho?");
+    const chips = await screen.findByTestId("ai-help-followups");
+    expect(chips.textContent).toContain("Quick Add bar pehle");
+    const chip = screen.getByRole("button", { name: "Ask: Quick Add bar pehle" });
+    expect(chip.className).toContain("min-h-10");
+
+    await act(async () => { fireEvent.click(chip); });
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body as string) as { messages: { role: string; text: string }[]; mode: string };
+    expect(body.mode).toBe("chat");
+    expect(body.messages[body.messages.length - 1]).toEqual({ role: "user", text: "Quick Add bar pehle" });
+    expect(await screen.findByText("Theek hai, Quick Add bar.")).toBeTruthy();
+    expect(screen.queryByTestId("ai-help-followups")).toBeNull();
+  });
+
+  it("hides old chips as soon as a new message is sent, and an answer without followUps shows none", async () => {
+    let release: (v: Response) => void = () => {};
+    fetchMock
+      .mockReturnValueOnce(answer({ reply: "Pehla jawab", ai: true, followUps: ["Agla sawal?"] }))
+      .mockReturnValueOnce(new Promise<Response>((r) => { release = r; }));
+    await openPanel();
+    await askTyped("pehla");
+    expect(await screen.findByTestId("ai-help-followups")).toBeTruthy();
+    await askTyped("doosra");
+    expect(screen.queryByTestId("ai-help-followups")).toBeNull();
+    await act(async () => { release(json({ reply: "Doosra jawab", ai: true })); });
+    expect(await screen.findByText("Doosra jawab")).toBeTruthy();
+    expect(screen.queryByTestId("ai-help-followups")).toBeNull();
+  });
+});

@@ -46,8 +46,15 @@ export type HelpAction =
   | { kind: "set_customer_state"; label: string; customerId: string; stateCode: string }
   | { kind: "set_company_state"; label: string; stateCode: string };
 
-/** checklist (R-162): what to try next on this screen, from the page scan. */
-export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[]; actions: HelpAction[] }
+/**
+ * checklist (R-162): what to try next on this screen, from the page scan.
+ * followUps (R-353): 0–3 next questions the person can tap instead of typing — part of the
+ * same JSON answer, never a second AI call.
+ */
+export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[]; actions: HelpAction[]; followUps: string[] }
+
+export const FOLLOW_UP_MAX = 3;
+export const FOLLOW_UP_MAX_CHARS = 70;
 
 /**
  * Why AI Help was asked (R-162). "chat" = the person typed; "scan" = they pressed "Check this
@@ -94,13 +101,14 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
           : "MODE chat: answer the person. checklist may stay empty.",
     "You may get WORKSPACE FACTS: this company's own setup (company GST state, GSTIN set or not, address, bank/UPI) and customers missing a GST state. Use them to find the REAL cause before guessing — e.g. a GST/IGST question: check the company state and the customer's state first. Quote the fact you used.",
     "actions (R-189): up to 3 buttons the person can press to fix it right here. Allowed kinds ONLY: {\"kind\":\"open\",\"label\",\"href\"} to open an app page (href starts with /, e.g. /settings?tab=company, /customers/<id>/edit, /invoices); {\"kind\":\"set_customer_state\",\"label\",\"customerId\",\"stateCode\"} only for a customer listed in WORKSPACE FACTS as missing a state AND only when the person told you or the facts show which state it is (never guess a state); {\"kind\":\"set_company_state\",\"label\",\"stateCode\"} only when the facts say the company state is missing and you know it (e.g. from the company GSTIN code). stateCode = 2-digit GST code. label = what the button does, short (e.g. 'Set Acme's state to Delhi (07)'). Anything else (money, invoices, emails, deleting) — explain the steps instead; never offer it as an action. Empty list when there is nothing to fix.",
+    `followUps (R-353): 0-${FOLLOW_UP_MAX} short next questions the person is likely to ask now, written AS the person (first person, in their language — Hinglish reply means Hinglish followUps), each at most ${FOLLOW_UP_MAX_CHARS} characters, tied to this page and your reply, useful for their work — never generic like 'aur batao'. If your reply itself asks them to choose (e.g. 'Inme se kaunsa pehle?'), the followUps ARE those options as answers (e.g. 'Quick Add bar pehle', 'Bulk reschedule pehle'). Empty list when nothing obvious follows (e.g. right after a bugDraft).`,
     "Do not say the report is filed — the person files it with a button after reading your draft. Say: 'Draft taiyaar hai — neeche dekh kar File karein.'",
     /* R-352: the page's last browser test run, so "Check this page" does not hand back tests
        that already passed. Absent when there is no run (or the table is not set up yet). */
     ...(ctx.testHistory
       ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${ctx.testHistory}`]
       : []),
-    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
+    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "followUps": string[], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
   ].join("\n");
 }
 
@@ -163,6 +171,33 @@ export function parseHelpActions(raw: unknown, allowedCustomerIds: ReadonlySet<s
   return out;
 }
 
+/**
+ * R-353: the tap-to-ask chips. Strings only, whitespace collapsed, no markdown, never longer
+ * than FOLLOW_UP_MAX_CHARS (cut at a word, with "…"), no duplicates, at most FOLLOW_UP_MAX.
+ * An answer without the field (older model output) simply has none.
+ */
+export function parseFollowUps(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    let t = v.replace(/\*\*|`/g, "").replace(/^#{1,6}\s+/, "").replace(/\s+/g, " ").trim();
+    if (!t) continue;
+    if (t.length > FOLLOW_UP_MAX_CHARS) {
+      const cut = t.slice(0, FOLLOW_UP_MAX_CHARS - 1);
+      const sp = cut.lastIndexOf(" ");
+      t = (sp > FOLLOW_UP_MAX_CHARS / 2 ? cut.slice(0, sp) : cut).replace(/[\s,.;:-]+$/, "") + "…";
+    }
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= FOLLOW_UP_MAX) break;
+  }
+  return out;
+}
+
 export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<string>): HelpAnswer | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -172,10 +207,11 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
   const checklist = Array.isArray(o.checklist) ? o.checklist.map((c) => str(c, 200)).filter(Boolean).slice(0, 8) : [];
   const d = o.bugDraft as Record<string, unknown> | null | undefined;
   const actions = parseHelpActions(o.actions, allowedCustomerIds);
-  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist, actions };
+  const followUps = parseFollowUps(o.followUps);
+  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist, actions, followUps };
   const title = str(d.title, 160);
   const actual = str(d.actual, 1200);
-  if (!title || !actual) return { reply, bugDraft: null, checklist, actions };
+  if (!title || !actual) return { reply, bugDraft: null, checklist, actions, followUps };
   const type = TYPES.includes(d.type as FeedbackType) ? (d.type as FeedbackType) : "bug";
   const severity = SEVERITIES.includes(d.severity as FeedbackSeverity) ? (d.severity as FeedbackSeverity) : "medium";
   const steps = Array.isArray(d.steps) ? d.steps.map((s) => str(s, 300)).filter(Boolean).slice(0, 12) : [];
@@ -183,6 +219,7 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
     reply,
     checklist,
     actions,
+    followUps,
     bugDraft: { title, type, severity, actual, expected: str(d.expected, 1200), steps, chatSummary: str(d.chatSummary, 600) },
   };
 }

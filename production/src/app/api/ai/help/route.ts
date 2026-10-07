@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
   // RLS scopes these reads to the caller's own row and tenant.
   const { data: me } = await supabase.from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
-  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], ai: false, reason: "no_key" });
+  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" });
 
   /* R-189: the company's own setup, read with the person's login (RLS) — not for error
      reports, which are about what just broke. */
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
   const answer = parseHelpAnswer(raw, facts?.customerIds);
   if (!answer) {
     if (failure) console.error("[ai/help] no answer:", failure);
-    return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });
+    return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], followUps: [], ai: false });
   }
 
   // Same bug already open in this workspace? RLS limits the read to the caller's tenant.

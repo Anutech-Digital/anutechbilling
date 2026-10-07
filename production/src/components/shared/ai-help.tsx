@@ -234,6 +234,8 @@ interface ChatItem extends HelpMessage {
   checklist?: string[];
   /** R-189: fixes the AI offers — nothing runs until the person presses one */
   actions?: HelpAction[];
+  /** R-353: tap-to-ask next questions — shown only under the LAST answer */
+  followUps?: string[];
   similar?: { id: string; title: string }[];
   /** the trail as it was when this answer came back — filed with the report */
   recorded?: string | null;
@@ -507,7 +509,7 @@ export function AiHelp() {
           ...(image ? { image: { mimeType: image.mimeType, base64: image.base64 } } : {}),
         }),
       });
-      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
+      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; followUps?: string[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
       let reply = j.reply || j.error || "No answer came back — please try again.";
       if (scan && scan.findings.length && j.ai !== true) reply += `\n\nAutomatic jaanch ne ${scan.findings.length} cheez(ein) pakdi:\n` + scan.findings.map((f) => `• ${f.detail}`).join("\n");
       setItems((s) => {
@@ -517,7 +519,7 @@ export function AiHelp() {
           ? s.filter((x) => x.draft && looksLikeSameBug({ title: j.bugDraft!.title, pagePath: pathname }, { title: x.draft.title, page_path: x.page ?? null }))
               .map((x) => ({ id: x.filedId ?? "draft", title: x.draft!.title }))
           : [];
-        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
+        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], followUps: Array.isArray(j.followUps) ? j.followUps.filter((f): f is string => typeof f === "string" && f.trim() !== "").slice(0, 3) : [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
       setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still use 'Report Bug'." }]);
@@ -526,15 +528,21 @@ export function AiHelp() {
     }
   }
 
-  function send(e?: React.FormEvent) {
+  function send(e?: React.FormEvent, chip?: string) {
     e?.preventDefault();
-    const q = text.trim() || (shot ? "What is wrong in this screenshot?" : "");
+    const q = chip ?? (text.trim() || (shot ? "What is wrong in this screenshot?" : ""));
     if (!q || busy) return;
-    setText("");
+    /* R-353: a chip is sent exactly like a typed question; whatever is half-typed stays. */
+    if (!chip) setText("");
     const s = shot;
     setShot(null);
     void ask("chat", q, s);
   }
+
+  /* R-353: chips belong to the last answer only — any new message (typed, chip, scan, error)
+     makes them disappear, and they are hidden while an answer is on its way. */
+  const last = items[items.length - 1];
+  const followUps = !busy && last?.role === "assistant" ? last.followUps ?? [] : [];
 
   async function file(idx: number) {
     const it = items[idx];
@@ -724,6 +732,17 @@ export function AiHelp() {
             <div ref={endRef} />
           </div>
 
+          {followUps.length > 0 && (
+            <div data-testid="ai-help-followups" role="group" aria-label="Suggested next questions" className="border-t border-hairline px-2 pt-2 flex flex-wrap gap-1.5">
+              {followUps.map((f) => (
+                <button key={f} type="button" onClick={() => send(undefined, f)}
+                  aria-label={`Ask: ${f}`}
+                  className="min-h-10 max-w-full rounded-full border border-hairline bg-paper-2 px-3 py-1.5 text-left text-xs text-ink hover:bg-amber-soft hover:border-amber focus:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                  {f}
+                </button>
+              ))}
+            </div>
+          )}
           {shot && (
             <div className="border-t border-hairline px-2 pt-2 flex items-center gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
