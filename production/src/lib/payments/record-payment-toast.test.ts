@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { paymentToast, cashReference, type PaymentToastInput } from "./record-payment-toast";
+import { paymentToast, cashReference, subscriptionNoteFor, type PaymentToastInput, type SubscriptionNoteInput } from "./record-payment-toast";
 
 const base: PaymentToastInput = {
   outstanding: 0,
@@ -101,5 +101,41 @@ describe("record-payment-dialog source", () => {
   it("no longer staggers toasts with setTimeout", () => {
     expect(src).not.toMatch(/setTimeout\(\s*\(\)\s*=>\s*toast/);
     expect(src).not.toMatch(/setTimeout\(\(\) => \{\s*(if|toast)/);
+  });
+});
+
+/* R-379 (k): credit-activated quote → part payment must not warn "No subscription was created". */
+
+describe("subscriptionNoteFor (R-379 k)", () => {
+  const annual = [{ name: "Google Workspace Business Starter", qty: 5, rate: 1650, commitment: "annual_yearly" }];
+  const baseNote: SubscriptionNoteInput = {
+    isFirstPayment: true, subscriptionCreated: false, isRenewalQuote: false,
+    isAddSeats: false, creditActivatedAt: null, existingSubs: 0, lines: annual,
+  };
+  const n = (o: Partial<SubscriptionNoteInput>) => subscriptionNoteFor({ ...baseNote, ...o });
+
+  it("plan paid, nothing created, nothing exists → missing (the real fault still warns)", () => {
+    expect(n({})).toEqual({ kind: "missing", item: "Google Workspace Business Starter" });
+    expect(t({ subscriptionNote: n({}) }).tone).toBe("warning");
+  });
+  it("quote already has a subscription (created at credit activation) → no note, success toast", () => {
+    const note = n({ existingSubs: 1 });
+    expect(note).toBeNull();
+    const r = t({ subscriptionNote: note, outstanding: 5000 });
+    expect(r.tone).toBe("success");
+    expect(r.lines.join(" ")).not.toMatch(/No subscription was created/);
+  });
+  it("credit-activated quote → no note even if the subscription read came back empty", () => {
+    expect(n({ creditActivatedAt: "2026-10-07T06:00:00Z" })).toBeNull();
+  });
+  it("add-seats, renewal, later payment, or created now → no note", () => {
+    expect(n({ isAddSeats: true })).toBeNull();
+    expect(n({ isRenewalQuote: true })).toBeNull();
+    expect(n({ isFirstPayment: false })).toBeNull();
+    expect(n({ subscriptionCreated: true })).toBeNull();
+  });
+  it("one-off line → one-off note (not a warning)", () => {
+    expect(n({ lines: [{ name: "Domain Registration", qty: 1, rate: 900, commitment: null }] }))
+      .toEqual({ kind: "one-off", item: "Domain Registration" });
   });
 });

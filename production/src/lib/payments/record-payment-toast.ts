@@ -11,6 +11,7 @@
  */
 import { rupee } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { subscriptionExpectation, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 
 export type PaymentToastActionKind = "generate-invoice" | "view-invoice" | "send-receipt";
 
@@ -118,6 +119,45 @@ export function paymentToast(r: PaymentToastInput): PaymentToast {
   }
 
   return { tone: warn ? "warning" : "success", title: headline(r), lines, primary, secondary };
+}
+
+export type SubscriptionNote = { kind: "one-off" | "missing"; item: string } | null;
+
+export interface SubscriptionNoteInput {
+  /* From the record_payment RPC result. */
+  isFirstPayment: boolean;
+  subscriptionCreated: boolean;
+  isRenewalQuote: boolean;
+  /* From the quote row, read after the payment. */
+  isAddSeats: boolean | null | undefined;
+  /** `quotes.credit_activated_at` — set by "Activate now, pay later" (R-346). */
+  creditActivatedAt: string | null | undefined;
+  /** Subscriptions whose quote_id is this quote, counted after the payment. */
+  existingSubs: number;
+  lines: readonly QuoteLine[] | null | undefined;
+}
+
+/**
+ * R-379 (k) — why no subscription appeared on THIS payment, or null when that is not a question.
+ *
+ * record_payment reports `subscriptionCreated: false` whenever it did not create one on this
+ * call. That is also true when the subscription ALREADY existed: a quote activated on credit
+ * (R-346) gets its subscription at activation, so the first payment that follows creates
+ * nothing — correctly. Live 7 Oct on Q-FBB9-27-0011: activated on credit (subscription
+ * created), then a ₹20,000 part payment toasted "No subscription was created for this plan.
+ * That should not happen" — a false alarm that teaches the owner to ignore the one warning
+ * that guards renewal revenue. So the note only appears when the quote really has no
+ * subscription and was not credit-activated.
+ */
+export function subscriptionNoteFor(i: SubscriptionNoteInput): SubscriptionNote {
+  if (!i.isFirstPayment || i.subscriptionCreated || i.isRenewalQuote) return null;
+  /* Add-seats: the seats went onto the existing subscription (21 Sep 2026). */
+  if (i.isAddSeats === true) return null;
+  if (i.existingSubs > 0) return null;
+  if (i.creditActivatedAt) return null;
+  const first = (i.lines ?? [])[0];
+  const expectation = first ? subscriptionExpectation(first) : "one-off";
+  return { kind: expectation === "one-off" ? "one-off" : "missing", item: first?.name?.trim() || "This item" };
 }
 
 /**

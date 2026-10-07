@@ -30,6 +30,7 @@ import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import type { Quote } from "@/lib/supabase/database.types";
+import { acceptedToast } from "@/lib/quotes/accepted-toast";
 
 interface QuoteActionBarProps {
   quote: Quote;
@@ -61,17 +62,13 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
       const res = await fetch(`/api/quotes/${quote.id}/mark-accepted`, { method: "POST" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Could not mark as accepted");
-      return json as { customerId: string; convertedNow: boolean };
+      return json as { customerId: string; convertedNow: boolean; matchedExisting?: boolean; customerName?: string | null };
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["leads"] });
-      toast.success(
-        data.convertedNow
-          ? "Quote accepted · customer record created · awaiting payment"
-          : "Quote accepted · awaiting payment",
-      );
+      toast.success(acceptedToast(data));
       onChanged?.();
     },
     onError: (e) => toast.error((e as Error).message),

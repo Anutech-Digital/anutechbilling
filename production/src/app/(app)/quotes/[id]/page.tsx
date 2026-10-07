@@ -51,6 +51,8 @@ import { quoteLifecycle } from "@/lib/quotes/lifecycle";
 import { withTrialStep, quoteTrialState, quoteTrialEligibility, formatIstDate } from "@/lib/trials/start-from-quote";
 import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialog";
 import { ActivateOnCreditDialog } from "@/components/features/quotes/activate-on-credit-dialog";
+import { duplicateQuoteHref } from "@/lib/quotes/duplicate-customer";
+import { acceptedToast } from "@/lib/quotes/accepted-toast";
 import { showActivateOnCredit, customerCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
 import { useCreditInvoice } from "@/lib/credit/queries";
 import { LateInterestLine } from "@/components/features/quotes/late-interest-line";
@@ -246,6 +248,14 @@ export default function QuoteDetailPage() {
         trialLead,
       )
     : false;
+  /* One click handler for both places "Activate now, pay later" appears (More menu and,
+     R-379 (i), the accepted-and-unpaid action row) — same gate, same reasons. */
+  const openActivateOnCredit = () => {
+    if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
+    const gate = customerCreditEligibility(creditCustomer ?? null);
+    if (gate.ok) setCreditOpen(true);
+    else toast.info(gate.reason);
+  };
   const isOnCredit = Boolean(creditQuote?.credit_activated_at);
   const { data: creditInvoice } = useCreditInvoice(quote?.invoice_id, isOnCredit);
   const creditState = creditQuote ? quoteCreditState(creditQuote, creditInvoice) : null;
@@ -397,18 +407,14 @@ export default function QuoteDetailPage() {
       const res  = await fetch(`/api/quotes/${params.id}/mark-accepted`, { method: "POST" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Could not mark as accepted");
-      return json as { customerId: string; convertedNow: boolean };
+      return json as { customerId: string; convertedNow: boolean; matchedExisting?: boolean; customerName?: string | null };
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", params.id] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["leads"] });
-      toast.success(
-        data.convertedNow
-          ? "Quote accepted · customer record created · awaiting payment"
-          : "Quote accepted · awaiting payment",
-      );
+      toast.success(acceptedToast(data));
     },
     onError: (e) => toastError(e),
   });
@@ -790,12 +796,8 @@ export default function QuoteDetailPage() {
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => {
-                  // Carry lead context forward if this quote was for a prospect
-                  const params = new URLSearchParams();
-                  params.set("duplicate", quote.id);
-                  if (quote.lead_id)       params.set("leadId",  quote.lead_id);
-                  if (quote.customer_name) params.set("company", quote.customer_name);
-                  router.push(`/quotes/new?${params.toString()}` as any);
+                  // Lead context only for a prospect quote — R-379 (h): see duplicate-customer.ts.
+                  router.push(duplicateQuoteHref(quote) as never);
                 }}
               >
                 <Icon name="copy" size={15} /> Duplicate & edit
@@ -817,12 +819,7 @@ export default function QuoteDetailPage() {
               {showCredit && (
                 <DropdownMenuItem
                   className="gap-2.5 py-2 cursor-pointer"
-                  onClick={() => {
-                    if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
-                    const gate = customerCreditEligibility(creditCustomer ?? null);
-                    if (gate.ok) setCreditOpen(true);
-                    else toast.info(gate.reason);
-                  }}
+                  onClick={openActivateOnCredit}
                 >
                   <Icon name="check_circle" size={15} /> Activate now, pay later
                 </DropdownMenuItem>
@@ -1131,6 +1128,14 @@ export default function QuoteDetailPage() {
                   {money.outstanding > 0 && money.outstanding === total
                     ? "Invoice now (before payment)"
                     : "Generate GST Invoice"}
+                </Button>
+              )}
+
+              {/* R-379 (i): credit sale beside Record payment, not only in More. Same gate
+                  as the menu item (showActivateOnCredit), so it vanishes once activated. */}
+              {showCredit && money.stage === "unpaid" && (
+                <Button variant="default" icon="check_circle" onClick={openActivateOnCredit}>
+                  Activate now, pay later
                 </Button>
               )}
 
@@ -1519,6 +1524,12 @@ export default function QuoteDetailPage() {
           quoteDomain:    quote.domain,
           customerDomain: customer?.domain,
           leadDomain:     lead?.domain,
+          /* R-379 (j): a domain already on a subscription — this quote's (credit
+             activation creates one) and then the customer's others. */
+          quoteSubscriptionDomains: quoteSubs.map((s) => s.domain),
+          customerSubscriptionDomains: quote.customer_id
+            ? (allSubs ?? []).filter((s) => s.customer_id === quote.customer_id).map((s) => s.domain)
+            : [],
         })}
       />
 
