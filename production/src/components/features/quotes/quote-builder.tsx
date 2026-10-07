@@ -21,6 +21,7 @@ import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1082,9 +1083,11 @@ export function QuoteBuilder() {
         const { data: newId, error: seqErr } = await supabase
           .rpc("next_document_number", { p_doc_type: "quote" });
         if (seqErr || !newId) {
+          /* S31: no dead end — one click to the numbering settings (lib/onboarding/setup-links). */
           toastError(seqErr, {
             fallback: "Couldn't get a quote number.",
-            description: "Nothing was saved and no number was used up. Click the button again.",
+            description: NUMBERING_FIX.description,
+            action: { label: NUMBERING_FIX.label, onClick: () => router.push(NUMBERING_FIX.href as never) },
           });
           return;
         }
