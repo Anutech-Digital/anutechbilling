@@ -29,6 +29,7 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { triageFeedback, type FeedbackSeverity, type FeedbackType, FEEDBACK_TYPES } from "@/lib/feedback/triage";
 import { buildDirective } from "@/lib/feedback/directive";
+import { isAutoSendOn, shouldAutoDispatch } from "@/lib/feedback/auto-send";
 
 const bodySchema = z.object({ feedbackId: z.string().uuid() });
 
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
 
   const { data: row, error: readErr } = await supabase
     .from("feedback")
-    .select("id, tenant_id, reported_type, reported_severity, title, body, page_path, reporter_name, reporter_email, created_at")
+    .select("id, tenant_id, reported_type, reported_severity, title, body, page_path, reporter_name, reporter_email, created_at, status, dispatched_at, triaged_at")
     .eq("id", parsed.feedbackId)
     .maybeSingle();
 
@@ -233,7 +234,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: writeErr.message }, { status: 500 });
   }
 
+  /* R-357: straight to the AI queue — the same write "Run AI Auto-Fix" makes — when the
+     workspace switch is ON (default) and this is a fresh, real report. Never fatal: the
+     report and its triage are already saved, and a failed send leaves it in Open where the
+     button still works. The conditional update keeps a concurrent manual press from being
+     overwritten. dispatched_by stays null: nobody pressed anything. */
+  let autoSent = false;
+  if (
+    shouldAutoDispatch({
+      status: row.status,
+      dispatchedAt: row.dispatched_at,
+      triagedAtBefore: row.triaged_at,
+      title: row.title,
+      body: row.body,
+    })
+  ) {
+    const { data: tenant } = await supabase.from("tenants").select("*").eq("id", row.tenant_id).maybeSingle();
+    if (isAutoSendOn(tenant)) {
+      const now = new Date().toISOString();
+      const { data: sent } = await supabase
+        .from("feedback")
+        .update({ status: "agent_queued", dispatched_at: now, dispatched_by: null, updated_at: now })
+        .eq("id", row.id)
+        .eq("status", "open")
+        .is("dispatched_at", null)
+        .select("id");
+      autoSent = Boolean(sent && sent.length > 0);
+    }
+  }
+
   return NextResponse.json({
+    autoSent,
     mode,
     severityScore: triage.severityScore,
     inferredType: triage.inferredType,

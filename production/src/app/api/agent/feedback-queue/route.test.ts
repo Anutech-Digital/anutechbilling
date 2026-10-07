@@ -11,6 +11,8 @@ const db = vi.hoisted(() => ({
   writes: 0,
   rows: [] as Array<Record<string, unknown>>,
   error: null as null | { message: string },
+  /** R-357: the first read fails on an unknown column (claim migration not applied yet). */
+  missingColumnOnce: false,
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -21,7 +23,13 @@ vi.mock("@/lib/supabase/server", () => ({
         select(cols: string) { db.select = cols; return q; },
         eq(col: string, v: unknown) { db.filters.push([col, v]); return q; },
         order() { return q; },
-        limit() { return Promise.resolve({ data: db.error ? null : db.rows, error: db.error }); },
+        limit() {
+          if (db.missingColumnOnce) {
+            db.missingColumnOnce = false;
+            return Promise.resolve({ data: null, error: { code: "42703", message: "column feedback.agent_claimed_at does not exist" } });
+          }
+          return Promise.resolve({ data: db.error ? null : db.rows, error: db.error });
+        },
         update() { db.writes++; return q; },
         delete() { db.writes++; return q; },
       };
@@ -37,7 +45,7 @@ const call = (token?: string) =>
 const ENV = { ...process.env };
 
 beforeEach(() => {
-  db.select = ""; db.filters = []; db.writes = 0; db.error = null;
+  db.select = ""; db.filters = []; db.writes = 0; db.error = null; db.missingColumnOnce = false;
   db.rows = [{ id: "f1", title: "Add browser automation to AI Help", directive: "Do X", reported_severity: "low" }];
   process.env.AGENT_QUEUE_TOKEN = "q-token";
 });
@@ -71,6 +79,24 @@ describe("GET /api/agent/feedback-queue", () => {
     await call("q-token");
     expect(db.select).not.toMatch(/reporter_|reported_by|body|ai_chat_summary/);
     expect(db.writes).toBe(0);
+  });
+
+  it("R-357: does not hand out a report an AI card already claimed", async () => {
+    db.rows = [
+      { id: "f1", title: "A", agent_claimed_at: null },
+      { id: "f2", title: "B", agent_claimed_at: "2026-10-07T06:00:00Z" },
+    ];
+    const body = await (await call("q-token")).json();
+    expect(body.items).toEqual([{ id: "f1", title: "A" }]);
+    expect(db.select).toContain("agent_claimed_at");
+  });
+
+  it("R-357: before the claim migration it falls back to the plain read", async () => {
+    db.missingColumnOnce = true;
+    const r = await call("q-token");
+    expect(r.status).toBe(200);
+    expect((await r.json()).items).toEqual(db.rows);
+    expect(db.select).not.toContain("agent_claimed_at");
   });
 
   it("says so on a read error instead of returning an empty queue", async () => {
