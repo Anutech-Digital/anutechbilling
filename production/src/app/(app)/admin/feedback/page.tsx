@@ -47,6 +47,7 @@ import {
   type FeedbackStatus,
 } from "@/lib/queries/feedback";
 import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
+import { PlatformAiStatus, SendToAiButton, SendAllOpenButton } from "./platform-ai";
 
 const STATUS_TABS: { id: string; label: string }[] = [
   { id: "open", label: "Open" },
@@ -759,13 +760,13 @@ export default function AdminFeedbackPage() {
 
 
 /**
- * Other workspaces' reports — READ ONLY, and it says so.
+ * Other workspaces' reports.
  *
  * Every mutation on this page (triage, auto-fix, mark fixed) goes through the browser
  * client, so RLS would refuse a row belonging to another tenant. Rather than render
- * buttons that fail, this list offers the two things that genuinely work across a tenant
- * boundary: reading the report, and copying the directive that was already generated for
- * it. Showing an action that cannot succeed is worse than not showing it.
+ * buttons that fail, this list offers what genuinely works across a tenant boundary:
+ * reading the report, copying its directive, and (R-366) "Send to AI" — a server route
+ * that re-checks the platform allowlist and queues the row with the service role.
  */
 function PlatformFeedbackList({
   rows, isLoading, error,
@@ -799,9 +800,10 @@ function PlatformFeedbackList({
       <div className="px-4 py-2.5 border-b border-hairline bg-paper-2/50">
         <p className="text-[12px] text-ink-2">
           <b className="text-ink">{others.length} report{others.length === 1 ? "" : "s"} from other workspaces.</b>{" "}
-          Read-only here — triage and Auto-Fix act on your own workspace, so those buttons
-          would fail on these rows rather than do nothing.
+          Send to AI puts a report in the AI worker&apos;s queue; triage and Mark fixed stay with
+          that workspace.
         </p>
+        <div className="mt-1.5"><SendAllOpenButton rows={rows} /></div>
       </div>
       <ul className="divide-y divide-hairline">
         {others.map((r) => (
@@ -815,6 +817,7 @@ function PlatformFeedbackList({
                 <span className="text-2xs text-ink-3 tabular-nums">{r.severity_score}/100</span>
               )}
             </div>
+            <PlatformAiStatus row={r} />
             <p className="mt-1 text-[12px] text-ink-2 leading-snug">{r.body}</p>
             <p className="mt-1 text-2xs text-ink-3">
               {r.reporter_name ?? "someone"} &middot; {r.reporter_email ?? "no email"}
@@ -837,6 +840,7 @@ function PlatformFeedbackList({
                 )}
               </div>
             )}
+            <SendToAiButton row={r} />
             {r.directive && (
               <button
                 type="button"
