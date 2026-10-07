@@ -45,6 +45,7 @@ MIGS=(
   "subbillpos|20261007130000_subscription_billing_place_of_supply.sql|resellersos_migration|exists(select 1 from pg_proc where proname='raise_subscription_billing' and prosrc like '%has no state (or GSTIN) on record%')"
   "vendcost|20261007140000_subscription_vendor_cost_from_line.sql|resellersos_migration|(exists(select 1 from pg_proc where proname='record_payment' and prosrc like '%v_cost_pm%') and exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%v_cost_pm%'))"
   "creditsplit|20261007150000_credit_refuse_split_billing.sql|resellersos_migration|exists(select 1 from pg_proc where proname='activate_quote_on_credit' and prosrc like '%billed in instalments%')"
+  "oneterm|20261007160000_quote_one_billing_term.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_quotes_one_billing_term')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
