@@ -4,7 +4,9 @@
  * (produced here by running the real runner against a fake DB), not from a copy of them.
  */
 import { describe, it, expect, vi } from "vitest";
-import { crmKeySchema, keyLast4, istDateTime, pullSummary, PULL_SCHEDULE_TEXT, KEY_SOURCE_TEXT } from "./indiamart-key";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { crmKeySchema, keyLast4, istDateTime, pullSummary, saveKeyFailure, PULL_SCHEDULE_TEXT, KEY_SOURCE_TEXT, PLAINTEXT_KEY_NOTE } from "./indiamart-key";
 
 vi.mock("@/lib/supabase/server", () => ({ createAdminClient: () => { throw new Error("no DB in unit tests"); } }));
 import { runIndiamartPull } from "./indiamart.server";
@@ -124,5 +126,42 @@ describe("pullSummary", () => {
     expect(s.detail).toContain(KEY_SOURCE_TEXT);
     // …and the record the screen shows never carries the key itself.
     expect(JSON.stringify(db.upserts)).not.toContain(KEY);
+  });
+});
+
+/* R-399: since R-051 the vault refuses to save without SECRETS_MASTER_KEY (503 + next step),
+   so "saved, not encrypted" can never be the result of a save — the screen must say the
+   key was NOT saved, and show the vault's own next step. */
+describe("saving the key: sealed or refused, never 'saved, not encrypted' (R-399)", () => {
+  it("a 503 is the vault refusing: shows its message, says NOT saved, never 'paste it again'", async () => {
+    const { VAULT_NOT_CONFIGURED_MESSAGE } = await import("@/lib/crypto/vault");
+    const f = saveKeyFailure(503, VAULT_NOT_CONFIGURED_MESSAGE);
+    expect(f.vaultMissing).toBe(true);
+    expect(f.title).toMatch(/not saved/i);
+    expect(f.description).toBe(VAULT_NOT_CONFIGURED_MESSAGE);
+    expect(f.description).not.toMatch(/paste it again/i);
+  });
+
+  it("any other failure keeps the retry advice", () => {
+    const f = saveKeyFailure(500, "Server error");
+    expect(f.vaultMissing).toBe(false);
+    expect(f.description).toMatch(/paste it again/i);
+  });
+
+  it("an old plaintext key is explained as saved before encryption, not as a missing server key", () => {
+    expect(PLAINTEXT_KEY_NOTE).toMatch(/before encryption/);
+    expect(PLAINTEXT_KEY_NOTE).not.toMatch(/SECRETS_MASTER_KEY is not set/);
+  });
+
+  it("the screen and its hooks no longer carry the impossible 'saved, not encrypted' branch", () => {
+    const root = join(__dirname, "..", "..");
+    const queries = readFileSync(join(__dirname, "indiamart-key-queries.ts"), "utf8");
+    const page = readFileSync(join(root, "app", "(app)", "marketing", "indiamart", "page.tsx"), "utf8");
+    expect(queries).not.toMatch(/saved, not encrypted/i);
+    expect(queries).not.toMatch(/toast\.warning/);
+    expect(queries).toMatch(/saveKeyFailure\(/);
+    expect(page).not.toMatch(/SECRETS_MASTER_KEY is not set on the server, so the key is stored/);
+    expect(page).toMatch(/PLAINTEXT_KEY_NOTE/);
+    expect(page).toMatch(/vaultMissing\?\.vaultMissing/);
   });
 });

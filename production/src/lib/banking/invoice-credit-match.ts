@@ -189,3 +189,40 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   const rank: Record<InvoiceMatchConfidence, number> = { certain: 0, likely: 1, possible: 2 };
   return out.sort((a, b) => rank[a.confidence] - rank[b.confidence] || b.score - a.score || a.invoiceId.localeCompare(b.invoiceId));
 }
+
+/** The bank-line fields the list chip needs (a subset of BankTransactionRow). */
+export interface ChipTxn {
+  id: string;
+  credit: number;
+  txn_date: string;
+  description: string | null;
+  reference: string | null;
+  matched_to_type: string | null;
+}
+
+/**
+ * R-399: the "Matches INV-…" chip on the banking transaction list. For every UNMATCHED
+ * credit line whose best candidate is "certain" (name or invoice no. in the narration AND
+ * the amount fits), the invoice it most likely paid. Two "certain" candidates for one line
+ * (same customer, same amount, two invoices) get NO chip — the drawer lists both and the
+ * operator picks; a chip naming one of them would be a guess dressed as a fact.
+ *
+ * The chip only points; it never records anything. Clicking it opens the same reconcile
+ * drawer, where InvoiceCreditMatchSection shows the reasons and the one-click button.
+ */
+export function certainInvoiceMatches(
+  txns: readonly ChipTxn[],
+  invoices: readonly OpenInvoice[],
+): Map<string, InvoiceMatch> {
+  const out = new Map<string, InvoiceMatch>();
+  if (invoices.length === 0) return out;
+  for (const t of txns) {
+    if (t.matched_to_type !== null || !(t.credit > 0)) continue;
+    const ms = matchCreditToInvoices(
+      { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
+      invoices,
+    );
+    if (ms[0]?.confidence === "certain" && ms[1]?.confidence !== "certain") out.set(t.id, ms[0]);
+  }
+  return out;
+}

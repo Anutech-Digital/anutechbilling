@@ -33,8 +33,11 @@ import {
   useBankTransactions,
   useReconcileTransaction,
   useAutoReconcile,
+  useOpenInvoicesForCreditMatch,
   type BankTransactionRow,
 } from "@/lib/queries/bank";
+import { certainInvoiceMatches, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
+import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
@@ -99,6 +102,19 @@ export default function BankAccountDetailPage() {
     return { all, unmatched, matched };
   }, [transactions]);
   const salaryLineCount = React.useMemo(() => salaryLinesOf(transactions ?? []).length, [transactions]);
+
+  /* R-399: "Matches INV-…" chip on unmatched credit rows whose best open-invoice candidate
+     is certain (R-109 matcher). Only for someone who can reconcile — the chip opens the
+     drawer — and only fetched when there is an unmatched credit to look at. */
+  const hasUnmatchedCredit = React.useMemo(
+    () => (transactions ?? []).some((t) => t.matched_to_type === null && t.credit > 0),
+    [transactions],
+  );
+  const { data: openInvoices } = useOpenInvoicesForCreditMatch(canWrite && hasUnmatchedCredit);
+  const invoiceChips = React.useMemo(
+    () => certainInvoiceMatches(transactions ?? [], openInvoices ?? []),
+    [transactions, openInvoices],
+  );
 
   const tabs: TabBarItem[] = [
     { id: "all",       label: "All",        count: counts.all       },
@@ -405,6 +421,7 @@ export default function BankAccountDetailPage() {
                     <TransactionRow
                       key={txn.id}
                       txn={txn}
+                      invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                       onReconcile={canWrite ? () => setReconcileTxn(txn) : undefined}
                       onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined}
                     />
@@ -420,7 +437,7 @@ export default function BankAccountDetailPage() {
               show every column + the Reconcile button without clipping). */}
           <ul className="lg:hidden space-y-2.5">
             {visibleTxns.map((txn) => (
-              <TransactionCard key={txn.id} txn={txn} onReconcile={canWrite ? () => setReconcileTxn(txn) : undefined} onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined} />
+              <TransactionCard key={txn.id} txn={txn} invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined} onReconcile={canWrite ? () => setReconcileTxn(txn) : undefined} onUnreconcile={canWrite ? () => setUnreconcileTxn(txn) : undefined} />
             ))}
           </ul>
         </>
@@ -473,10 +490,13 @@ function TxnStatusBadge({ txn }: { txn: BankTransactionRow }) {
 // ============================================================
 function TransactionRow({
   txn,
+  invoiceMatch,
   onReconcile,
   onUnreconcile,
 }: {
   txn: BankTransactionRow;
+  /** R-399: a certain open-invoice match for this unmatched credit — the chip opens the drawer. */
+  invoiceMatch?: InvoiceMatch;
   /** Both left out for a read-only viewer (R-254) — the status shows, the buttons do not. */
   onReconcile?: () => void;
   onUnreconcile?: () => void;
@@ -494,6 +514,9 @@ function TransactionRow({
         <div className="font-medium text-ink break-words leading-snug">{txn.description}</div>
         {txn.reference && (
           <div className="text-xs text-ink-3 font-mono mt-0.5 break-all">{txn.reference}</div>
+        )}
+        {invoiceMatch && onReconcile && (
+          <div className="mt-1"><InvoiceMatchChip match={invoiceMatch} onOpen={onReconcile} /></div>
         )}
       </td>
       <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium text-rose">
@@ -542,7 +565,7 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, onReconcile, onUnreconcile }: { txn: BankTransactionRow; onReconcile?: () => void; onUnreconcile?: () => void }) {
+function TransactionCard({ txn, invoiceMatch, onReconcile, onUnreconcile }: { txn: BankTransactionRow; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void }) {
   const reconcile = useReconcileTransaction();
   return (
     <li>
@@ -554,6 +577,9 @@ function TransactionCard({ txn, onReconcile, onUnreconcile }: { txn: BankTransac
               {formatDate(txn.txn_date)}
               {txn.reference ? <span className="font-mono"> · {txn.reference}</span> : ""}
             </div>
+            {invoiceMatch && onReconcile && (
+              <div className="mt-1"><InvoiceMatchChip match={invoiceMatch} onOpen={onReconcile} /></div>
+            )}
           </div>
           <div className="shrink-0 text-right font-serif text-base tabular-nums">
             <TxnAmount txn={txn} />

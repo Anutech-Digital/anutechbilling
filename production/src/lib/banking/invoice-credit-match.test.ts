@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchCreditToInvoices, tdsRateFor, referencesDocument, type OpenInvoice } from "./invoice-credit-match";
+import { matchCreditToInvoices, certainInvoiceMatches, tdsRateFor, referencesDocument, type OpenInvoice, type ChipTxn } from "./invoice-credit-match";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 
 const inv = (o: Partial<OpenInvoice> & { id: string }): OpenInvoice => ({
@@ -116,5 +116,44 @@ describe("matchCreditToInvoices (R-109)", () => {
 
   it("zero / negative credit returns nothing", () => {
     expect(matchCreditToInvoices(credit(0, "x"), [inv({ id: "INV-2026-0001" })])).toEqual([]);
+  });
+});
+
+describe("certainInvoiceMatches — the 'Matches INV-…' chip on the bank list (R-399)", () => {
+  const txn = (o: Partial<ChipTxn> & { id: string }): ChipTxn => ({
+    credit: 11800, txn_date: "2026-10-01", description: "UPI-MUKUL BHARDWAJ-9896033878-2@AXL-BARB",
+    reference: null, matched_to_type: null, ...o,
+  });
+
+  it("an unmatched credit with a certain top match gets that invoice", () => {
+    const m = certainInvoiceMatches([txn({ id: "t1" })], [inv({ id: "INV-2026-0001" })]);
+    expect(m.get("t1")?.invoiceId).toBe("INV-2026-0001");
+    expect(m.get("t1")?.confidence).toBe("certain");
+  });
+
+  it("no chip for a likely/possible top match (amount only, nobody named)", () => {
+    const m = certainInvoiceMatches([txn({ id: "t1", description: "NEFT-UTR519009330625" })], [inv({ id: "INV-2026-0001" })]);
+    expect(m.has("t1")).toBe(false);
+  });
+
+  it("no chip for debits or lines already reconciled", () => {
+    const m = certainInvoiceMatches(
+      [txn({ id: "d1", credit: 0 }), txn({ id: "r1", matched_to_type: "payment" })],
+      [inv({ id: "INV-2026-0001" })],
+    );
+    expect(m.size).toBe(0);
+  });
+
+  it("two certain candidates (same customer, same amount) → no chip; the drawer lets the operator choose", () => {
+    const m = certainInvoiceMatches([txn({ id: "t1" })], [inv({ id: "INV-2026-0001" }), inv({ id: "INV-2026-0002" })]);
+    expect(matchCreditToInvoices(
+      { amount: 11800, txnDate: "2026-10-01", description: "UPI-MUKUL BHARDWAJ-9896033878-2@AXL-BARB", reference: null },
+      [inv({ id: "INV-2026-0001" }), inv({ id: "INV-2026-0002" })],
+    ).filter((x) => x.confidence === "certain")).toHaveLength(2);
+    expect(m.has("t1")).toBe(false);
+  });
+
+  it("no open invoices → no chips, and no matching work", () => {
+    expect(certainInvoiceMatches([txn({ id: "t1" })], []).size).toBe(0);
   });
 });

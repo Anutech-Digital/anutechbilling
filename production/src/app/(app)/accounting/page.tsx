@@ -34,7 +34,7 @@ import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { gstAllToDateHref, gstDefaultRange, gstRangeHref } from "./gst/range";
+import { gstDefaultRange, gstRangeHref } from "./gst/range";
 import { useGstCashToPay } from "./gst/report";
 import { receivableRows } from "./receivables";
 import { LoadErrorBanner } from "@/components/shared/load-error";
@@ -46,7 +46,7 @@ import { useInvoices } from "@/lib/queries/invoices";
 import { BooksLockCard } from "@/components/features/accounting/books-lock-card";
 import { GstHealthCard } from "@/components/features/accounting/gst-health-card";
 import {
-  MONEY_FOLDERS, moneyInboxState, totalOpenItems,
+  MONEY_FOLDERS, moneyInboxState, totalOpenItems, gstInboxFields,
   type MoneyDirection, type MoneyFolderMeta, type MoneyFolderState,
 } from "@/lib/accounting/money-inbox";
 import { localDateISO } from "@/lib/leads/outcomes";
@@ -69,6 +69,21 @@ export default function AccountingOverviewPage() {
   const creditsQ  = useUnmatchedBankCredits();
   const billsQ    = useUnpaidBillsDue();
 
+  /* R-394: the GST tile is the GST page headline — cash left after input credit is set off
+     (s.49(5) / Rule 88A, lib/gst/gstr3b.ts setOffItc), less GST already paid — for the
+     page's default range (last month on the 1st–20th, this month after). Same loader and
+     same pure helper (gst/report.ts → gst/cash-to-pay.ts gstCashHeadline); the old
+     cumulative output − input (gstPayable) disagreed with the page.
+     R-399: the money inbox "GST & Tax" folder reads the same headline + range + link. */
+  const gstRange = React.useMemo(() => gstDefaultRange(), []);
+  const gstQ = useGstCashToPay(gstRange);
+  const gstHl = gstQ.headline;
+  const gstTileHref = gstRangeHref(gstRange);
+  const gstTileHint = !gstHl ? gstRange.label
+    : gstHl.state === "credit" ? `${gstRange.label} · credit carried forward`
+    : gstHl.carryForward > 0 && gstHl.state !== "overpaid" ? `${gstRange.label} · ${rupee(gstHl.carryForward)} credit carried fwd`
+    : `${gstRange.label} · after input credit`;
+
   const today = React.useMemo(() => localDateISO(new Date()), []);
   const inbox = React.useMemo(() => {
     /* Receivables come from the SAME invoice statuses the dunning cron chases
@@ -85,30 +100,16 @@ export default function AccountingOverviewPage() {
       billsDue: (billsQ.data ?? []).map((b) => ({
         amountDue: b.amount, daysOverdue: b.daysOverdue ?? 0,
       })),
-      gstNet: autoQ.data?.gstPayable ?? 0,
+      ...gstInboxFields(gstHl, gstRange.label),
     });
-  }, [invoicesQ.data, creditsQ.data, billsQ.data, autoQ.data, today]);
+  }, [invoicesQ.data, creditsQ.data, billsQ.data, gstHl, gstRange.label, today]);
 
-  const inboxLoading = invoicesQ.isLoading || creditsQ.isLoading || billsQ.isLoading;
+  const inboxLoading = invoicesQ.isLoading || creditsQ.isLoading || billsQ.isLoading || gstQ.isLoading;
 
   // Data-integrity: a cash account can't be negative in reality.
   const negativeCash = (accountsQ.data ?? []).filter(
     (a) => a.account_type === "cash" && (a.current_balance ?? a.opening_balance) < 0,
   );
-
-  /* R-394: the GST tile is the GST page headline — cash left after input credit is set off
-     (s.49(5) / Rule 88A, lib/gst/gstr3b.ts setOffItc), less GST already paid — for the
-     page's default range (last month on the 1st–20th, this month after). Same loader and
-     same pure helper (gst/report.ts → gst/cash-to-pay.ts gstCashHeadline); the old
-     cumulative output − input (gstPayable) disagreed with the page. */
-  const gstRange = React.useMemo(() => gstDefaultRange(), []);
-  const gstQ = useGstCashToPay(gstRange);
-  const gstHl = gstQ.headline;
-  const gstTileHref = gstRangeHref(gstRange);
-  const gstTileHint = !gstHl ? gstRange.label
-    : gstHl.state === "credit" ? `${gstRange.label} · credit carried forward`
-    : gstHl.carryForward > 0 && gstHl.state !== "overpaid" ? `${gstRange.label} · ${rupee(gstHl.carryForward)} credit carried fwd`
-    : `${gstRange.label} · after input credit`;
 
   const a = autoQ.data;
   const loading = autoQ.isLoading;
@@ -127,14 +128,12 @@ export default function AccountingOverviewPage() {
       a.creditCardPayable + a.emiLoansPayable + a.businessLoansPayable
     : 0;
   /* R-257: every tile opens something whose headline is the tile's number.
-     • GST folder (the tile follows the GST page headline since R-394, above): gstPayable
-       is CUMULATIVE (all returns to date, net of GST paid — migration 20261006140000), so
-       the folder opens the page on "All to date".
+     • GST tile + GST folder (R-394 / R-399, above): both show the GST page headline for
+       gstRange, so both open the page on exactly that range (gstTileHref).
      • Owed to you / You owe: no single page carries these sums (Aging is invoices only;
        Expenses is not loans or salary), so the tile opens its own breakdown — headline =
        tile total, one line per part, each linking to the page that holds it (same lines
        and links as the Balance Sheet). */
-  const gstHref = React.useMemo(() => gstAllToDateHref(), []);
   const owedLines: BreakdownLine[] = a ? [
     { label: "Unpaid invoices", amount: a.receivables, href: "/invoices" },
     { label: "Project sales, unpaid", amount: a.projectReceivable, href: "/invoices" },
@@ -235,9 +234,9 @@ export default function AccountingOverviewPage() {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         {MONEY_FOLDERS.map((f) => (
-          /* R-257: the GST folder shows the same cumulative figure as the GST tile, so it
-             opens the same "All to date" range. */
-          <MoneyFolderCard key={f.id} folder={f.id === "gst" ? { ...f, href: gstHref } : f} state={inbox[f.id]} loading={inboxLoading} />
+          /* R-399: the GST folder shows the same figure as the GST tile (the GST page
+             headline for gstRange), so it opens the same range. */
+          <MoneyFolderCard key={f.id} folder={f.id === "gst" ? { ...f, href: gstTileHref } : f} state={inbox[f.id]} loading={inboxLoading} />
         ))}
       </div>
 
