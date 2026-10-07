@@ -27,6 +27,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { decideDunning, dunningMessage, dunningRank, type DunningStep } from "@/lib/invoices/dunning";
 import { upiPayLink } from "@/lib/invoices/pay-link";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { dunningLogStatus, reachedNobody } from "@/lib/invoices/dunning-log-status";
 import { primaryContactEmail } from "@/lib/contacts/primary";
@@ -120,7 +121,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
      in ONE url. Worse, a dunning-log read that came back short or failed (its error was
      never checked) made steps that already went out look unsent, so they went out again.
      A failed prefetch now stops the run with a 500 instead of emailing on partial history. */
-  type InvoiceRow = Pick<Invoice, "id" | "tenant_id" | "customer_id" | "customer_name" | "amount" | "paid_amount" | "status" | "due_date" | "quote_id">;
+  type InvoiceRow = Pick<Invoice, "id" | "tenant_id" | "customer_id" | "customer_name" | "amount" | "net_payable" | "paid_amount" | "status" | "due_date" | "quote_id">;
   let invoices: InvoiceRow[];
   let tenants: Pick<Tenant, "id" | "name" | "email" | "auto_suspend_on_overdue" | "upi_vpa" | "upi_payee_name">[];
   let logs: { invoice_id: string | null; dunning_step: string }[];
@@ -128,7 +129,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
   try {
     invoices = await fetchAllRows<InvoiceRow>((from, to) => supabase
       .from("invoices")
-      .select("id, tenant_id, customer_id, customer_name, amount, paid_amount, status, due_date, quote_id")
+      .select("id, tenant_id, customer_id, customer_name, amount, net_payable, paid_amount, status, due_date, quote_id")
       .in("status", ["pending", "overdue"])
       .not("due_date", "is", null)
       .order("id", { ascending: true })
@@ -207,7 +208,11 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
        subscription, which decideDunning treats as "nothing to suspend". */
     const subscriptionId: string | null = inv.quote_id ? subscriptionByQuote.get(inv.quote_id) ?? null : null;
 
-    const amountDue = Math.max(0, (inv.amount ?? 0) - (inv.paid_amount ?? 0));
+    /* R-371: net_payable (after credit notes / advances adjusted at issue) minus receipts
+       since — the function the invoice PDF and QR use. `amount − paid_amount` asked
+       INV-9B8C-2026-27-0003 for ₹11,800 when ₹10,620 was owed. Every message below (email,
+       escalation, WhatsApp, UPI link) reads this one number. */
+    const amountDue = invoiceAmountDue(inv);
     const decision = decideDunning({
       dueDate: inv.due_date,
       status: inv.status,

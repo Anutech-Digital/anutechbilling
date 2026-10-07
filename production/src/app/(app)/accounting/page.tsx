@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { gstAllToDateHref } from "./gst/range";
+import { receivableRows } from "./receivables";
 import { LoadErrorBanner } from "@/components/shared/load-error";
 import { cn, rupee } from "@/lib/utils";
 import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
@@ -69,19 +70,10 @@ export default function AccountingOverviewPage() {
 
   const today = React.useMemo(() => localDateISO(new Date()), []);
   const inbox = React.useMemo(() => {
-    const todayMs = Date.parse(`${today}T00:00:00+05:30`);
     /* Receivables come from the SAME invoice statuses the dunning cron chases
-       (pending / overdue), so the folder count and the reminder engine can never
-       disagree about who owes money. */
-    const receivables = (invoicesQ.data ?? [])
-      .filter((i) => i.status === "pending" || i.status === "overdue")
-      .map((i) => ({
-        amountDue: Math.max(0, (i.amount ?? 0) - (i.paid_amount ?? 0)),
-        daysOverdue: i.due_date
-          ? Math.round((todayMs - Date.parse(`${i.due_date.slice(0, 10)}T00:00:00+05:30`)) / 86_400_000)
-          : 0,
-      }))
-      .filter((r) => r.amountDue > 0);
+       (pending / overdue), and (R-371) the SAME balance — net_payable − paid via
+       invoiceAmountDue — so the folder and the reminder engine agree on who owes AND how much. */
+    const receivables = receivableRows(invoicesQ.data ?? [], today);
 
     return moneyInboxState({
       receivables,

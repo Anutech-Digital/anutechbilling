@@ -48,6 +48,15 @@ describe("invoiceIsOverdue", () => {
     expect(invoiceIsOverdue(inv({ due_date: "2026-01-01", amount: 5000, paid_amount: 4999 }), TODAY)).toBe(true);
   });
 
+  it("R-371: balance is net_payable − paid (credit note / advance), not amount − paid", () => {
+    // Fully covered by a credit note + advance at issue → nothing owed → not overdue.
+    expect(invoiceIsOverdue(inv({ due_date: "2026-01-01", amount: 5000, net_payable: 0 }), TODAY)).toBe(false);
+    // net 4,000 with 4,000 received since → settled, even though amount − paid = 1,000.
+    expect(invoiceIsOverdue(inv({ due_date: "2026-01-01", amount: 5000, net_payable: 4000, paid_amount: 4000 }), TODAY)).toBe(false);
+    // still a balance after the credit note → overdue
+    expect(invoiceIsOverdue(inv({ due_date: "2026-01-01", amount: 11800, net_payable: 10620 }), TODAY)).toBe(true);
+  });
+
   it("honours a stored 'overdue' if one ever arrives", () => {
     /* Nothing writes it today. If a later cron or a data import does, the page must not
        argue with it — including when the due date is missing. */
