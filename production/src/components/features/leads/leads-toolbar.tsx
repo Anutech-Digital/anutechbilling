@@ -39,6 +39,7 @@ import type { StageMeta } from "@/lib/leads/stage-meta";
 import { istToday } from "@/lib/dates/ist";
 import { UNASSIGNED } from "@/lib/leads/list-selectors";
 import { useTeamMembers } from "@/lib/queries/team";
+import { sourceFilterOptions, sourceLabel } from "@/lib/leads/lead-sources";
 
 /** R-056: why the Kanban button does nothing on a phone. */
 export const KANBAN_MOBILE_HINT = "Kanban needs a larger screen";
@@ -84,6 +85,9 @@ export interface LeadsToolbarProps {
   /** "Kiska" — owner ids, or UNASSIGNED; empty = everyone. */
   ownerFilter: string[];
   setOwnerFilter: React.Dispatch<React.SetStateAction<string[]>>;
+  /** R-392: canonical source keys (lead-sources.ts); empty = every source. */
+  sourceFilter: string[];
+  setSourceFilter: React.Dispatch<React.SetStateAction<string[]>>;
   isSales: boolean;
   kpiOpen: boolean;
   setKpiOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -97,12 +101,20 @@ export function LeadsToolbar({
   pool, leadMeMember, leadTeam, leadTeamMode, setLeadTeamMode, search, setSearch, viewCounts,
   everythingCount, isDealsPage = false, currentUser, duplicateCountForTab, junkCount, junkSuspectCount, smartView,
   selectSmartView, folderRows, folder, selectFolder, effectiveView, setView, isMobile = false, activeFilterCount,
-  filterStages, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, ownerFilter, setOwnerFilter, isSales, kpiOpen,
+  filterStages, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, ownerFilter, setOwnerFilter, sourceFilter, setSourceFilter, isSales, kpiOpen,
   setKpiOpen, setCsvImportOpen, setCampaignOpen, setGoogleImportOpen, setShareOpen,
 }: LeadsToolbarProps) {
   // Names for the "Kiska" filter — the reporting tree (leadTeam) carries ids and roles only.
   const { data: members = [] } = useTeamMembers();
   const meId = currentUser?.userId ?? leadMeMember?.id ?? null;
+  /* A source picked from a shared link that this workspace has no lead for still shows
+     (count 0), so it can be un-ticked. */
+  const sourceOptions = React.useMemo(() => {
+    const opts = sourceFilterOptions(pool.by_source);
+    const missing = sourceFilter.filter((s) => !opts.some((o) => o.value === s))
+      .map((s) => ({ value: s, label: sourceLabel(s), count: 0 }));
+    return [...opts, ...missing];
+  }, [pool.by_source, sourceFilter]);
   const [exporting, setExporting] = React.useState(false);
   /* Data-portability (audit B7): saari leads, jaisi darj hain. Fetched on the click, in
      pages — the export used to write whatever the page had loaded, which stopped at 1000. */
@@ -220,7 +232,7 @@ export function LeadsToolbar({
               )}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-56 max-h-[70vh] overflow-y-auto">
             <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Stage</DropdownMenuLabel>
             {filterStages.map((s) => (
               <DropdownMenuCheckboxItem
@@ -264,7 +276,9 @@ export function LeadsToolbar({
             {members.length > 1 && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Owner</DropdownMenuLabel>
+                {/* R-392: the lead's owner_id IS the person it is assigned to ("Mine" =
+                    assigned to you) — so the heading says that, not "Owner". */}
+                <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Assigned to</DropdownMenuLabel>
                 {[
                   ...(meId ? [{ id: meId, label: "Me" }] : []),
                   ...members
@@ -290,11 +304,32 @@ export function LeadsToolbar({
                 })}
               </>
             )}
+            {/* R-392: Source — only the sources this workspace's leads carry, labelled,
+                with server counts (lead_counts().pool.by_source). Kept in the URL (?source=). */}
+            {sourceOptions.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Source</DropdownMenuLabel>
+                {sourceOptions.map((o) => (
+                  <DropdownMenuCheckboxItem
+                    key={o.value}
+                    checked={sourceFilter.includes(o.value)}
+                    onCheckedChange={(checked) => {
+                      setSourceFilter((prev) => (checked ? [...prev, o.value] : prev.filter((x) => x !== o.value)));
+                    }}
+                    className="text-sm"
+                  >
+                    <span className="flex-1 truncate">{o.label}</span>
+                    <span className="ml-2 text-xs text-ink-3 tabular-nums">{o.count}</span>
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </>
+            )}
             {activeFilterCount > 0 && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onSelect={() => { setStageFilter([]); setPriorityFilter([]); setOwnerFilter([]); }}
+                  onSelect={() => { setStageFilter([]); setPriorityFilter([]); setOwnerFilter([]); setSourceFilter([]); }}
                   className="text-sm text-rose"
                 >
                   Clear all filters
