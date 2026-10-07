@@ -7,6 +7,7 @@
 "use client";
 
 import * as React from "react";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
@@ -76,7 +77,8 @@ function vendorRegion(gstin: string | null | undefined): string | null {
 
 export default function VendorsPage() {
   const { data: vendors, isLoading } = useVendors();
-  const [search, setSearch] = React.useState("");
+  /* R-287: search in the URL, so Back / reload keeps the filtered vendor list. */
+  const [search, setSearch] = useUrlState("q");
   const [addOpen, setAddOpen] = React.useState(false);
   const [editVendor, setEditVendor] = React.useState<Vendor | null>(null);
   const [detailVendor, setDetailVendor] = React.useState<Vendor | null>(null);
@@ -466,10 +468,10 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 
           {/* Products & Services Supplied Selection */}
           <div className="space-y-1.5 p-3 bg-paper-2/60 border border-hairline rounded-xl">
-            <label className="block text-xs uppercase tracking-wider text-primary font-bold">
+            <p id="vendor-products-label" className="block text-xs uppercase tracking-wider text-primary font-bold">
               🛒 Products & Services Supplied by Vendor *
-            </label>
-            <div className="flex flex-wrap gap-1.5 pt-1">
+            </p>
+            <div role="group" aria-labelledby="vendor-products-label" className="flex flex-wrap gap-1.5 pt-1">
               {VENDOR_SUPPLIED_PRODUCTS.map((prod) => {
                 const isSel = selectedProducts.includes(prod);
                 return (

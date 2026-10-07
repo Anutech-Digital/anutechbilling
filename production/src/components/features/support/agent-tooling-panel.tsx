@@ -259,9 +259,9 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
       {/* ── Canned replies ── */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <label className="block text-xs font-bold text-ink-3 uppercase tracking-wider">
+          <p id="canned-replies-heading" className="block text-xs font-bold text-ink-3 uppercase tracking-wider">
             Canned replies
-          </label>
+          </p>
           <button
             type="button"
             onClick={() => setShowNewCanned((v) => !v)}
@@ -287,7 +287,7 @@ export function AgentToolingPanel({ ticketId, onInsertText }: AgentToolingPanelP
         )}
 
         {canned.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div role="group" aria-labelledby="canned-replies-heading" className="flex flex-wrap gap-1.5">
             {canned.map((c) => (
               <button
                 key={c.id}

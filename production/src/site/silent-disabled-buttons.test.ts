@@ -48,6 +48,10 @@ const ALLOWED: Record<string, string> = {
     "a single-unit line's quantity stepper, locked at 1 — singleUnitNote() prints why under it",
   "src/site/components/cart/CartDrawer.tsx|locked":
     "same locked stepper in the cart drawer, with singleUnitNote() beside it",
+  "src/site/components/quote/QuoteBuilder.tsx|off":
+    "Flexible monthly while an annual-only plan is picked — #annual-only-note right below names the plan and says to remove it (aria-describedby)",
+  "src/site/components/quote/QuoteBuilder.tsx|locked":
+    "an annual-only row's checkbox + name on a monthly quote — the row's own price column reads \"Annual only\" (aria-describedby)",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

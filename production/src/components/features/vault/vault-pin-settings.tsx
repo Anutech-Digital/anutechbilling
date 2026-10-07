@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,13 +56,13 @@ export function VaultPinSettings() {
     // Checked here as well as on the server so the reason arrives instantly and in the
     // same words. The server check is the one that counts.
     const check = validateNewPin(next);
-    if (!check.ok) { toast.error(check.error as string); return; }
+    if (!check.ok) { toast.error(check.error as string, { description: "Choose a different PIN and save again." }); return; }
     try {
       await setPin.mutateAsync({ pin: next, currentPin: configured ? current : undefined });
       toast.success(configured ? "PIN badal gaya." : "PIN set ho gaya.");
       reset();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "PIN set nahi hua");
+      toastError(e, { fallback: "Could not set the PIN.", description: "Nothing was changed. Check the current PIN and try again." });
     }
   };
 
@@ -71,7 +72,7 @@ export function VaultPinSettings() {
       toast.success("PIN hata diya. Vault ab bina PIN ke khulega.");
       reset();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "PIN hataya nahi ja saka");
+      toastError(e, { fallback: "Could not remove the PIN.", description: "The vault is still PIN-locked. Check the current PIN and try again." });
     }
   };
 

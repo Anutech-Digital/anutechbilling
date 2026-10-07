@@ -27,10 +27,12 @@ const TAG: Record<RelatedKind, { label: string; cls: string }> = {
 };
 
 export function TaskRelatedPicker({
-  value, onChange,
+  value, onChange, id = "related",
 }: {
   value: RelatedValue | null;
   onChange: (v: RelatedValue | null) => void;
+  /** Ties the caller's <FormField htmlFor> to the search box (add-task-dialog uses "related"). */
+  id?: string;
 }) {
   const { data: customers } = useCustomers();
   const { data: quotes } = useQuotes();
@@ -86,6 +88,7 @@ export function TaskRelatedPicker({
   return (
     <div className="relative">
       <Input
+        id={id}
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}

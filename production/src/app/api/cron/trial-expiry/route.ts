@@ -132,6 +132,27 @@ async function handle(req: Request) {
     for (const t of tenantRows) tenantById.set(t.id, t as TenantContact);
   }
 
+  /* R-282 — a trial started from an ACCEPTED quote ("trial first, pay later") ends with an
+     owner task only: Pardeep decided no automatic message to that customer, and no suspension.
+     The customer mails below are for self-serve trials. If this lookup fails, no customer is
+     mailed in this run (a missed mail is recoverable; a wrong one is not). Stamping goes on. */
+  let quoteTrialLeads = new Set<string>();
+  let quoteTrialLookupFailed = false;
+  try {
+    const rows = await fetchAllRowsIn(leads.map((l) => l.id), (ids, from, to) => admin
+      .from("quotes")
+      .select("id, lead_id")
+      .in("lead_id", ids)
+      .eq("status", "accepted")
+      .order("id", { ascending: true })
+      .range(from, to));
+    quoteTrialLeads = new Set(rows.map((r) => r.lead_id).filter((x): x is string => Boolean(x)));
+  } catch (e) {
+    quoteTrialLookupFailed = true;
+    console.error("[trial-expiry] accepted-quote lookup failed, no customer mail this run:", errorMessage(e));
+  }
+  const mayMailCustomer = (leadId: string) => !quoteTrialLookupFailed && !quoteTrialLeads.has(leadId);
+
   for (const lead of leads) {
     try {
       // Stamp expiry
@@ -171,7 +192,7 @@ async function handle(req: Request) {
       // matches the account.
       const isHosting = lead.source === "buy-hosting-trial";
       if (isHosting) {
-        if (lead.contact_email && owner.ok) {
+        if (mayMailCustomer(lead.id) && lead.contact_email && owner.ok) {
           try {
             await sendEmail({
               to:        lead.contact_email,
@@ -202,7 +223,7 @@ ${sellerPhone ? `Prefer to talk? WhatsApp ${contactWho} on ${sellerPhone}.\n\n` 
          reseller's address it used to point at a hardcoded third party, which is
          worse than not sending: the customer replies and nobody who can help ever
          sees it. So this now requires `owner.ok`, and the skip is counted. */
-      if (!isHosting && lead.contact_email && owner.ok) {
+      if (!isHosting && mayMailCustomer(lead.id) && lead.contact_email && owner.ok) {
         try {
           await sendEmail({
             to:      lead.contact_email,

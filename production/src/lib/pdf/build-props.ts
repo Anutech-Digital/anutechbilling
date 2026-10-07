@@ -12,11 +12,13 @@
  * interState (GST head) uses the shared place-of-supply helper.
  */
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "../gst/place-of-supply";
+import { quotePlaceOfSupply } from "../quotes/quote-place-of-supply";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
 import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
+import { includedSupportLine } from "./quote-support-line";
 
 /** Supplier fields needed on both PDFs (from the tenants row). */
 export interface TenantPdfInfo {
@@ -56,6 +58,17 @@ export interface TenantPdfInfo {
   remit_account_number: string | null;
   remit_ifsc:           string | null;
   remit_branch:         string | null;
+  /**
+   * R-334. tenants.lut_number (LUT ARN) for the Rule 46 export endorsement. Optional so the
+   * quote route (a quote is not an export invoice) need not select it; the invoice route does.
+   */
+  lut_number?:          string | null;
+  /**
+   * R-368. tenants.udyam_number — the company's MSME registration, printed under the GSTIN.
+   * Optional and read SEPARATELY (lib/compliance/udyam.ts readTenantUdyam), never in the
+   * tenant select: before its migration the column does not exist and the select would fail.
+   */
+  udyam_number?:        string | null;
 }
 
 interface Amounts {
@@ -164,6 +177,8 @@ export function buildInvoicePdfProps(args: {
     tenantAddress: tenant.address,
     tenantState:   tenant.state,
     tenantLogo:    args.logoDataUri ?? null,
+    lutNumber:     tenant.lut_number ?? null,
+    udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
     // Foreign-currency display (books stay ₹). Carried on the backing quote — an
@@ -199,9 +214,18 @@ export function buildQuotePdfProps(args: {
    * running on the inbound-mail webhook. Omitted → the document draws its monogram.
    */
   logoDataUri?: string | null;
+  /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
+  lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
 }): QuotePDFProps {
   const { quote, customer, tenant } = args;
   const a = quoteAmounts(quote);
+  /* R-376 (f): customer → lead → typed prospect; one helper for preview, PDF and accept page. */
+  const pos = quotePlaceOfSupply({
+    customer,
+    lead: args.lead ?? null,
+    quote: quote as { prospect_state_code?: string | null; prospect_country?: string | null },
+    seller: tenant,
+  });
   const validityDays =
     quote.created_date && quote.expires_date
       ? Math.max(0, Math.round((new Date(quote.expires_date).getTime() - new Date(quote.created_date).getTime()) / 86_400_000))
@@ -210,6 +234,7 @@ export function buildQuotePdfProps(args: {
   return {
     tenantName:    tenant.name,
     tenantGstin:   tenant.gstin,
+    udyamNumber:   tenant.udyam_number ?? null,
     tenantEmail:   tenant.email,
     tenantPhone:   tenant.phone,
     tenantAddress: tenant.address,
@@ -235,25 +260,18 @@ export function buildQuotePdfProps(args: {
     total:         a.total,
     // A quote is not yet a tax document, so unlike an invoice there is nothing
     // frozen to respect — always compute the best answer available today.
-    interState:    isInterStateSupply(
-      customer?.state_code, tenant.state_code,
-      { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-    ),
-    isExport:      isExportSupply(customer?.country),
-    /* R-175: name the buyer's state, as the invoice does — today's customer, else the
-       prospect state the quote was priced for. */
-    placeOfSupply: placeOfSupplyLabel({
-      posCode: customer?.state_code ?? (quote as { prospect_state_code?: string | null }).prospect_state_code ?? null,
-      interState: isInterStateSupply(
-        customer?.state_code, tenant.state_code,
-        { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-      ),
-    }),
+    interState:    pos.interState,
+    isExport:      pos.isExport,
+    /* R-175 / R-376 (f): name the buyer's state, as the invoice does — "Haryana (06) · IGST". */
+    placeOfSupply: pos.label,
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
     billingCycle:  quote.billing_cycle,
     notes:         quote.notes ?? undefined,
     termsConditions: quote.terms_conditions ?? null,
+    /* R-367: "Support: Free — Included" when no support line is on the quote — the same
+       builder the preview dialog calls, so the two documents agree. */
+    includedSupport: includedSupportLine(quote.line_items ?? []),
     isRenewal:     quote.is_renewal,
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */

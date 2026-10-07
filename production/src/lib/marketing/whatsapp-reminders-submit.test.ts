@@ -29,7 +29,7 @@ describe("example values", () => {
   });
 
   it("refuses a map that does not fit the body", () => {
-    expect(() => starterExampleValues("Hi {{1}} {{2}}", ["customer_name"])).toThrow(/2 jagah/);
+    expect(() => starterExampleValues("Hi {{1}} {{2}}", ["customer_name"])).toThrow(/2 slots/);
   });
 });
 
@@ -84,11 +84,11 @@ describe("Meta answers", () => {
     expect(isDuplicateTemplateError({ error: { message: "Invalid parameter" } })).toBe(false);
     expect(isDuplicateTemplateError({})).toBe(false);
   });
-  it("error text is Hinglish, actionable, and never carries the token", () => {
+  it("error text is plain English, actionable, and never carries the token", () => {
     const t = metaErrorText({ error: { message: "bad token EAAsecret123" } }, 400, "EAAsecret123");
     expect(t).not.toContain("EAAsecret123");
-    expect(t).toMatch(/dobara bhejo/);
+    expect(t).toMatch(/resubmit/);
     expect(metaErrorText({ error: { code: 190 } }, 401, "x")).toMatch(/Settings → Integrations/);
-    expect(metaErrorText({}, 429, "x")).toMatch(/minute baad/);
+    expect(metaErrorText({}, 429, "x")).toMatch(/try again in 10–15 minutes/);
   });
 });

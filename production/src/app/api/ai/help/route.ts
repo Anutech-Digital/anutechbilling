@@ -12,7 +12,7 @@
  * workspace that look like the same bug come back as `similar`, so nobody files it twice.
  *
  * Gemini through geminiJson (timeout + circuit breaker, null on every failure). With no
- * key or a failed call it says so plainly and points at the Report Bug button — the chat is
+ * key or a failed call it says so plainly and points at the Help panel's Report a problem tab — the chat is
  * a help, never the only way to report.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -23,6 +23,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { maskPII } from "@/lib/ux/signals";
 import { pagePurpose } from "@/lib/ai/page-purpose";
 import { helpFacts } from "@/lib/ai/help-facts";
+import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES } from "@/lib/ai/app-help";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
@@ -50,10 +51,10 @@ const bodySchema = z.object({
   }).optional(),
 });
 
-const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to upar 'Report Bug' button (Ctrl+Shift+B) se seedha bhej dijiye.";
+const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to isi Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se seedha bhej dijiye.";
 /** R-190 (6 Oct 2026): another company had no AI key and was told only "not available".
     Say what is missing and where to add it. */
-const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to 'Report Bug' button (Ctrl+Shift+B) se bhej dijiye.";
+const NO_KEY = "Is company ke liye AI (Gemini) key nahi lagi hai, isliye AI Help jawab nahi de sakta. Owner Settings → Integrations → Gemini me key daal de (/settings?tab=integrations). Tab tak bug ho to Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se bhej dijiye.";
 
 /** What the person "said" when they pressed a button instead of typing. */
 const MODE_PROMPT = { scan: "Is page ko jaancho.", error: "Abhi jo error aaya, uski report banao." } as const;
@@ -90,17 +91,25 @@ export async function POST(request: NextRequest) {
   // RLS scopes these reads to the caller's own row and tenant.
   const { data: me } = await supabase.from("users").select("tenant_id, full_name, role").eq("id", user.id).maybeSingle();
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
-  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], ai: false, reason: "no_key" });
+  if (!gemini.apiKey) return NextResponse.json({ reply: NO_KEY, bugDraft: null, checklist: [], followUps: [], ai: false, reason: "no_key" });
 
   /* R-189: the company's own setup, read with the person's login (RLS) — not for error
      reports, which are about what just broke. */
   const facts = me?.tenant_id && mode !== "error" ? await helpFacts(supabase, me.tenant_id).catch(() => null) : null;
 
+  /* R-352: the page's last browser test run (owner/manager, RLS) so "Check this page" does
+     not hand back tests that already passed. No table yet / no run / no access → null, and
+     the prompt is what it was before. */
+  const lastRun = me?.tenant_id && (mode === "scan" || mode === "chat")
+    ? await loadLastPageTestRun(supabase, me.tenant_id, pagePath ?? null)
+    : null;
+  const testHistory = testHistoryForPrompt(lastRun, process.env.BUILD_SHA?.trim() || "dev");
+
   let failure = "";
   const raw = await geminiJson<unknown>({
     apiKey: gemini.apiKey,
     model: gemini.model,
-    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath) }),
+    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory }),
     user: helpUserTurn(messages, {
       trail: trail.length ? trailForPrompt(trail) : null,
       findings: mode === "scan" ? findingsForPrompt(findings) : null,
@@ -116,7 +125,7 @@ export async function POST(request: NextRequest) {
   const answer = parseHelpAnswer(raw, facts?.customerIds);
   if (!answer) {
     if (failure) console.error("[ai/help] no answer:", failure);
-    return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], ai: false });
+    return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], followUps: [], ai: false });
   }
 
   // Same bug already open in this workspace? RLS limits the read to the caller's tenant.

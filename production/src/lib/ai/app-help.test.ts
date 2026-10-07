@@ -4,7 +4,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseHelpAnswer, parseHelpActions, askAboutSelection, buildTestRunPrompt, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
+import { parseHelpAnswer, parseHelpActions, parseFollowUps, FOLLOW_UP_MAX_CHARS, askAboutSelection, buildTestRunPrompt, bugReportText, helpUserTurn, helpSystemPrompt, AI_FILED_TAG, HELP_MAX_MESSAGES } from "./app-help";
+import { testHistoryForPrompt } from "./page-test-runs";
 
 const draft = { title: "Invoice PDF shows IGST for a Delhi customer", type: "bug", severity: "critical", actual: "IGST 18% on a Delhi-to-Delhi invoice", expected: "CGST 9% + SGST 9%", steps: ["Open Invoices", "Open INV-1", "Download PDF"], chatSummary: "Asked why tax looked wrong; same state as ours." };
 
@@ -163,5 +164,70 @@ describe("buildTestRunPrompt — cloud check", () => {
     const p = buildTestRunPrompt({ pagePath: "/deals", tests: ["x"] });
     expect(p).toContain("CLOUD CHECK");
     expect(p).toMatch(/naya session LOCAL chun kar chalaiye/);
+  });
+});
+
+describe("R-352: test results come back into the app", () => {
+  const T = "93b38539-0a9b-4942-bb33-3daa6cff97df";
+  it("the test-run prompt posts the result to the agent endpoint on the local app, token never printed", () => {
+    const p = buildTestRunPrompt({ pagePath: "/deals?tab=kanban", tests: ["x"], tenantId: T });
+    expect(p).toContain("http://localhost:3001/api/agent/page-test-runs");
+    expect(p).toContain(`"tenantId":"${T}"`);
+    expect(p).toContain(`"page":"/deals"`);
+    expect(p).toContain("rev-parse --short HEAD");
+    expect(p).toContain("Authorization: Bearer $(grep '^AGENT_QUEUE_TOKEN=' production/.env.local");
+    expect(p).toMatch(/Token KABHI print/);
+    // after the board step, not instead of it
+    expect(p.indexOf("NATEEJA BOARD PAR")).toBeLessThan(p.indexOf("NATEEJA APP ME"));
+  });
+  it("a missing or odd tenant id becomes a placeholder, not injected text", () => {
+    expect(buildTestRunPrompt({ pagePath: "/deals", tests: ["x"] })).toContain("<tenant uuid");
+    expect(buildTestRunPrompt({ pagePath: "/deals", tests: ["x"], tenantId: "\"; rm -rf" })).not.toContain("rm -rf");
+  });
+  it("the system prompt carries the previous results and the no-repeat rule only when there is a run", () => {
+    const history = testHistoryForPrompt({
+      pagePath: "/deals", runAt: "2026-10-07T05:22:00Z", buildSha: "51629ab", runBy: "AI browser test",
+      results: [{ test: "Add a deal with ₹0 value", result: "pass" }, { test: "Back button keeps the filter", result: "fail" }],
+    }, "51629ab");
+    const withRun = helpSystemPrompt({ pagePath: "/deals", userName: null, role: "owner", mode: "scan", testHistory: history });
+    expect(withRun).toContain("PREVIOUS TESTS on this page");
+    expect(withRun).toContain("✓ passed: Add a deal with ₹0 value");
+    expect(withRun).toContain("✗ failed: Back button keeps the filter");
+    expect(withRun).toMatch(/do NOT suggest any ✓ passed test again/);
+    const without = helpSystemPrompt({ pagePath: "/deals", userName: null, role: "owner", mode: "scan", testHistory: null });
+    expect(without).not.toContain("PREVIOUS TESTS");
+    expect(without).toBe(helpSystemPrompt({ pagePath: "/deals", userName: null, role: "owner", mode: "scan" }));
+  });
+});
+
+describe("followUps (R-353)", () => {
+  it("keeps 0–3 clean questions from the same answer", () => {
+    expect(parseHelpAnswer({ reply: "ok" })?.followUps).toEqual([]);
+    expect(parseHelpAnswer({ reply: "ok", followUps: [] })?.followUps).toEqual([]);
+    expect(parseHelpAnswer({ reply: "ok", followUps: ["Quick Add bar pehle"] })?.followUps).toEqual(["Quick Add bar pehle"]);
+    expect(parseHelpAnswer({ reply: "ok", followUps: ["a?", "b?", "c?", "d?", "e?"] })?.followUps).toEqual(["a?", "b?", "c?"]);
+  });
+  it("also comes with a bug draft", () => {
+    expect(parseHelpAnswer({ reply: "Draft", bugDraft: draft, followUps: ["Aur kya check karun?"] })?.followUps).toEqual(["Aur kya check karun?"]);
+  });
+  it("cuts a long one at a word with …, never over the limit", () => {
+    const long = "Is page par overdue tasks ko ek saath agle hafte kaise shift karun bina har ek khole aur bina galti ke";
+    const [f] = parseFollowUps([long]);
+    expect(f.length).toBeLessThanOrEqual(FOLLOW_UP_MAX_CHARS);
+    expect(f.endsWith("…")).toBe(true);
+    expect(long.startsWith(f.slice(0, -1))).toBe(true);
+    expect(f.slice(0, -1).endsWith(" ")).toBe(false);
+  });
+  it("ignores wrong types, blanks, markdown and duplicates", () => {
+    expect(parseFollowUps("Quick Add pehle")).toEqual([]);
+    expect(parseFollowUps(null)).toEqual([]);
+    expect(parseFollowUps([1, null, { q: "x" }, "  ", "**Bulk  reschedule** pehle", "bulk reschedule pehle", "Quick Add pehle"]))
+      .toEqual(["Bulk reschedule pehle", "Quick Add pehle"]);
+  });
+  it("the prompt asks for them in the person's language and as options when the reply asks to choose", () => {
+    const p = helpSystemPrompt({ pagePath: "/tasks", userName: null, role: "owner" });
+    expect(p).toContain('"followUps": string[]');
+    expect(p).toMatch(/Hinglish reply means Hinglish followUps/);
+    expect(p).toMatch(/followUps ARE those options/);
   });
 });

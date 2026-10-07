@@ -38,9 +38,9 @@ export function SentryBoot() {
       try {
         const res = await fetch("/api/monitoring/sentry-dsn", { cache: "no-store" });
         if (!res.ok) return;
-        const json = (await res.json()) as { dsn?: string | null };
+        const json = (await res.json()) as { dsn?: string | null; release?: string | null };
         if (cancelled) return;
-        initClientSentry(json.dsn);
+        initClientSentry(json.dsn, json.release);
       } catch {
         /* Swallowed deliberately, and this is the one place it is right to. Monitoring
            failing to start must never be the thing that breaks the page it was meant to

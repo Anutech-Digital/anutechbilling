@@ -14,6 +14,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -67,7 +68,11 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
       ));
       toast.success(`Parsed ${parsed.rows.length} contacts from ${f.name}`);
     } catch (err) {
-      toast.error("Could not parse CSV: " + (err instanceof Error ? err.message : "unknown"));
+      // Parser text stays in the console for support; the operator gets the next step (§24).
+      console.error("[import-contacts] CSV parse failed", err);
+      toast.error("Could not read this CSV file.", {
+        description: "Export it again from Google Contacts (Export → Google CSV) and choose that file.",
+      });
     } finally {
       setParsing(false);
     }
@@ -91,7 +96,9 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
 
   async function onSubmit() {
     if (selected.size === 0) {
-      toast.error("Select at least one contact");
+      toast.error("Select at least one contact", {
+        description: "Tick the contacts you want in the list below, then import.",
+      });
       return;
     }
     setSubmitting(true);
@@ -115,7 +122,10 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Import failed");
+        toastError(json.error, {
+          fallback: "Import failed.",
+          description: "Nothing was imported. Try again — if it keeps failing, report it from Help.",
+        });
         return;
       }
       toast.success(
@@ -128,7 +138,10 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
       reset();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, {
+        fallback: "Couldn't reach the server.",
+        description: "Nothing was imported. Check your internet connection and try again.",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -202,6 +215,7 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
                     <th className="px-2 py-2 w-8">
                       <input
                         type="checkbox"
+                        aria-label="Select all contacts"
                         checked={allSelected}
                         onChange={toggleAll}
                         className="accent-amber"
@@ -224,7 +238,14 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
                         className={`border-t border-hairline cursor-pointer ${isSel ? "bg-amber-soft/40" : "hover:bg-paper-2/40"}`}
                       >
                         <td className="px-2 py-1.5">
-                          <input type="checkbox" checked={isSel} onChange={() => toggle(r.rowIndex)} className="accent-amber" />
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.fullName}`}
+                            checked={isSel}
+                            onChange={() => toggle(r.rowIndex)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="accent-amber"
+                          />
                         </td>
                         <td className="px-2 py-1.5 font-medium text-ink truncate max-w-[180px]">{r.fullName}</td>
                         <td className="px-2 py-1.5 text-ink-2 font-mono text-2xs truncate max-w-[200px]">{r.email ?? "—"}</td>

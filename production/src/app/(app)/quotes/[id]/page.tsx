@@ -18,7 +18,7 @@ import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { quoteMoneyActions } from "@/lib/quotes/money-stage";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ActivityTimeline, type TimelineEvent } from "@/components/shared/activity-timeline";
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { payIntent } from "./pay-intent";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
@@ -47,6 +48,14 @@ import { ApprovalDrawer } from "@/components/features/quotes/approval-drawer";
 import { LifecycleStepper } from "@/components/features/quotes/lifecycle-stepper";
 import { ProvisioningCard } from "@/components/features/quotes/provisioning-card";
 import { quoteLifecycle } from "@/lib/quotes/lifecycle";
+import { withTrialStep, quoteTrialState, quoteTrialEligibility, formatIstDate } from "@/lib/trials/start-from-quote";
+import { QuoteTrialDialog } from "@/components/features/quotes/quote-trial-dialog";
+import { ActivateOnCreditDialog } from "@/components/features/quotes/activate-on-credit-dialog";
+import { duplicateQuoteHref } from "@/lib/quotes/duplicate-customer";
+import { acceptedToast } from "@/lib/quotes/accepted-toast";
+import { showActivateOnCredit, customerCreditEligibility, splitBillingCreditEligibility, quoteCreditState, NEEDS_DB_UPDATE_MESSAGE } from "@/lib/credit/activate-on-credit";
+import { useCreditInvoice } from "@/lib/credit/queries";
+import { LateInterestLine } from "@/components/features/quotes/late-interest-line";
 import { overallProvisionStatus, type ProvisionStatus } from "@/lib/provisioning/plan";
 import { useProvisioning } from "@/lib/queries/provisioning";
 import { useQuoteSignature } from "@/lib/queries/quote-signatures";
@@ -66,6 +75,7 @@ import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment } from "@/lib/supabase/database.types";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 // ============================================================
 // Status meta
@@ -203,11 +213,96 @@ export default function QuoteDetailPage() {
     : null;
 
   const totalReceivedSoFar = sumReceived(paymentHistory ?? []);
+
+  /* R-282: trial first, pay later. TRIAL sits between SIGNED and PAID while the quote's lead
+     is on a trial; its end day is the payment due date. Rules in lib/trials/start-from-quote.ts. */
+  const [trialOpen, setTrialOpen] = React.useState(false);
+  const trialLead = quote?.lead_id ? lead : null;
+  const trialSteps = lifecycle && quote ? withTrialStep(lifecycle.steps, trialLead, quote.status) : null;
+  const trialState = trialLead ? quoteTrialState(trialLead) : null;
+  const trialEligibility = quote
+    ? quoteTrialEligibility(
+        { status: quote.status, payment_status: quote.payment_status, received: totalReceivedSoFar },
+        trialLead,
+      )
+    : null;
+
+  /* R-346: activate now, pay later. Columns read loosely: before the migration they are simply
+     absent (undefined), and the menu item then says a database update is needed. */
+  const [creditOpen, setCreditOpen] = React.useState(false);
+  const creditQuote = quote as (typeof quote & {
+    credit_activated_at?: string | null; credit_due_date?: string | null;
+    is_one_off?: boolean | null; is_add_seats?: boolean | null;
+  }) | undefined;
+  const creditCustomer = customer as (typeof customer & {
+    allow_pay_later?: boolean | null; credit_limit?: number | null; payment_terms_days?: number | null;
+  }) | undefined;
+  const creditDbReady = Boolean(creditCustomer && "allow_pay_later" in creditCustomer);
+  const showCredit = creditQuote
+    ? showActivateOnCredit(
+        {
+          status: creditQuote.status, payment_status: creditQuote.payment_status, received: totalReceivedSoFar,
+          is_one_off: creditQuote.is_one_off, is_add_seats: creditQuote.is_add_seats,
+          line_items: creditQuote.line_items, credit_activated_at: creditQuote.credit_activated_at,
+        },
+        trialLead,
+      )
+    : false;
+  /* One click handler for both places "Activate now, pay later" appears (More menu and,
+     R-379 (i), the accepted-and-unpaid action row) — same gate, same reasons. */
+  const openActivateOnCredit = () => {
+    if (!creditDbReady) { toast.info(NEEDS_DB_UPDATE_MESSAGE); return; }
+    /* R-370: split billing would bill twice (credit invoice + instalments) — say why. */
+    const split = splitBillingCreditEligibility(creditQuote?.billing_cycle);
+    if (!split.ok) { toast.info(split.reason); return; }
+    const gate = customerCreditEligibility(creditCustomer ?? null);
+    if (gate.ok) setCreditOpen(true);
+    else toast.info(gate.reason);
+  };
+  const isOnCredit = Boolean(creditQuote?.credit_activated_at);
+  const { data: creditInvoice } = useCreditInvoice(quote?.invoice_id, isOnCredit);
+  const creditState = creditQuote ? quoteCreditState(creditQuote, creditInvoice) : null;
+
+  /* R-243: ?pay=1 opens Record payment directly (amount filled), like ?send= above — once
+     per navigation, then the URL is cleaned. A quote that takes no payment just drops it. */
+  const payParam = searchParams.get("pay");
+  const payIntentHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (payIntentHandled.current || !quote) return;
+    const action = payIntent(payParam, quote, paymentHistory === undefined ? null : totalReceivedSoFar);
+    if (action === "none") return;
+    payIntentHandled.current = true;
+    if (action === "open") setPaymentOpen(true);
+    router.replace(`/quotes/${quote.id}` as never);
+  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router]);
+
+  /* R-248: ?receipt=<paymentId> (Record payment's "Send receipt" toast button) opens that
+     payment's Receipt Voucher — the same dialog as the row's Receipt button. Waits for the
+     payment to appear: the list is refetching right after the payment was recorded. A
+     different id later (a second payment) opens again; the URL is then cleaned. */
+  const receiptParam = searchParams.get("receipt");
+  const receiptIntentHandled = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!receiptParam || !quote || receiptIntentHandled.current === receiptParam) return;
+    const p = (paymentHistory ?? []).find((x) => x.id === receiptParam && x.status === "received");
+    if (!p) return;
+    receiptIntentHandled.current = receiptParam;
+    setReceiptPayment(p);
+    router.replace(`/quotes/${quote.id}` as never);
+  }, [receiptParam, quote, paymentHistory, router]);
   // Records that keep this quote un-deletable (must be voided/refunded first).
   const receivedPayments = (paymentHistory ?? []).filter((p) => p.status === "received");
 
-  // Inter-state? Compare customer state code vs tenant (seller) state code.
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
+  /* Place of supply — customer → lead → typed prospect (R-376 f / R-381), named with its
+     state ("Haryana (06) · IGST"). Comparing the customer alone left a lead quote with no
+     state, so a Haryana lead of a Delhi seller previewed and downloaded as intra-state. */
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    lead: quote?.customer_id ? null : (lead ?? null),
+    quote: quote ?? null,
+    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
+  });
+  const interState = pos.interState;
 
   // Delete — blocked for quotes with a recorded payment (cascade would wipe the
   // ledger). On success, navigate back to the list since this record is gone.
@@ -323,18 +418,14 @@ export default function QuoteDetailPage() {
       const res  = await fetch(`/api/quotes/${params.id}/mark-accepted`, { method: "POST" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Could not mark as accepted");
-      return json as { customerId: string; convertedNow: boolean };
+      return json as { customerId: string; convertedNow: boolean; matchedExisting?: boolean; customerName?: string | null };
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", params.id] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["leads"] });
-      toast.success(
-        data.convertedNow
-          ? "Quote accepted · customer record created · awaiting payment"
-          : "Quote accepted · awaiting payment",
-      );
+      toast.success(acceptedToast(data));
     },
     onError: (e) => toastError(e),
   });
@@ -493,6 +584,8 @@ export default function QuoteDetailPage() {
       tax,
       total,
       interState,
+      placeOfSupply: pos.label,
+      isExport:      pos.isExport,
       notes:         quote.notes ?? "",
       /* R-034. Same rule as the server builder — a paid quote downloads as a record of
          the order, not as an offer with a validity window and Net-7 terms on it. */
@@ -716,16 +809,34 @@ export default function QuoteDetailPage() {
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => {
-                  // Carry lead context forward if this quote was for a prospect
-                  const params = new URLSearchParams();
-                  params.set("duplicate", quote.id);
-                  if (quote.lead_id)       params.set("leadId",  quote.lead_id);
-                  if (quote.customer_name) params.set("company", quote.customer_name);
-                  router.push(`/quotes/new?${params.toString()}` as any);
+                  // Lead context only for a prospect quote — R-379 (h): see duplicate-customer.ts.
+                  router.push(duplicateQuoteHref(quote) as never);
                 }}
               >
                 <Icon name="copy" size={15} /> Duplicate & edit
               </DropdownMenuItem>
+              {/* R-282: only an accepted quote with no money in. A running trial still shows
+                  the item, and says why it cannot start a second one. */}
+              {quote.status === "accepted" && totalReceivedSoFar === 0 && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => {
+                    if (trialEligibility?.ok) setTrialOpen(true);
+                    else if (trialEligibility) toast.info(trialEligibility.reason);
+                  }}
+                >
+                  <Icon name="clock" size={15} /> Start trial (pay later)
+                </DropdownMenuItem>
+              )}
+              {/* R-346: credit sale. Hidden on a trial quote (trial ≠ credit) and once on credit. */}
+              {showCredit && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={openActivateOnCredit}
+                >
+                  <Icon name="check_circle" size={15} /> Activate now, pay later
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {deleteBlock ? (
                 <DropdownMenuItem
@@ -751,8 +862,65 @@ export default function QuoteDetailPage() {
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
         <Card>
-          <LifecycleStepper steps={lifecycle.steps} dead={lifecycle.dead} />
+          <LifecycleStepper steps={trialSteps ?? lifecycle.steps} dead={lifecycle.dead} />
+          {/* R-282: the trial's last day IS the payment due date — said in words, because the
+              stepper's detail line is hidden on a phone. */}
+          {quote.status === "accepted" && totalReceivedSoFar === 0 && trialState && trialState.kind !== "converted" && (
+            <p className={cn("mt-3 border-t border-hairline pt-2.5 text-xs", trialState.kind === "ended" ? "text-rose" : "text-ink-2")}>
+              {trialState.kind === "running"
+                ? <>Trial running · payment due <b>{formatIstDate(trialState.endDate)}</b> ({trialState.daysLeft === 0 ? "today" : `${trialState.daysLeft} ${trialState.daysLeft === 1 ? "day" : "days"} left`})</>
+                : <>Trial ended <b>{formatIstDate(trialState.endDate)}</b> · payment not in. Extend, stop or convert — nothing is suspended automatically.</>}
+            </p>
+          )}
+          {/* R-346: activated on credit — what is due and when, in words. */}
+          {creditState && creditState.kind !== "paid" && (
+            <p className={cn("mt-3 border-t border-hairline pt-2.5 text-xs", creditState.kind === "overdue" ? "text-rose" : "text-ink-2")}>
+              {creditState.kind === "due"
+                ? <>Active on credit · <b>{rupee(creditState.amountDue)}</b> due <b>{formatIstDate(creditState.dueDate)}</b> ({creditState.daysLeft === 0 ? "today" : `${creditState.daysLeft} ${creditState.daysLeft === 1 ? "day" : "days"} left`})</>
+                : <>Active on credit · <b>{rupee(creditState.amountDue)}</b> was due <b>{formatIstDate(creditState.dueDate)}</b> ({creditState.daysLate} {creditState.daysLate === 1 ? "day" : "days"} late). Nothing is suspended automatically.</>}
+            </p>
+          )}
+          {/* R-368: 18% p.a. late interest — shown; charged only by an owner/billing click. Stays
+              after a late payment until it is charged (or there was none). */}
+          {isOnCredit && quote?.invoice_id && (
+            <LateInterestLine quoteId={quote.id} invoiceId={quote.invoice_id} role={me?.role} />
+          )}
         </Card>
+      )}
+
+      {creditOpen && quote && creditCustomer && (
+        <ActivateOnCreditDialog
+          open={creditOpen}
+          onOpenChange={setCreditOpen}
+          quote={{
+            id: quote.id, customer_name: quote.customer_name, amount: quote.amount ?? 0, invoice_id: quote.invoice_id, seats: quote.seats,
+            line_items: Array.isArray(quote.line_items) ? quote.line_items : null,
+            billing_cycle: quote.billing_cycle,
+          }}
+          customer={{
+            id: creditCustomer.id, name: creditCustomer.name,
+            payment_terms_days: creditCustomer.payment_terms_days ?? null,
+            credit_limit: creditCustomer.credit_limit ?? null,
+          }}
+          role={me?.role}
+        />
+      )}
+
+      {trialOpen && (
+        <QuoteTrialDialog
+          open={trialOpen}
+          onOpenChange={setTrialOpen}
+          quote={{
+            id: quote.id, tenant_id: quote.tenant_id, lead_id: quote.lead_id, customer_id: quote.customer_id,
+            customer_name: quote.customer_name, domain: quote.domain, seats: quote.seats,
+          }}
+          lead={lead ? { id: lead.id, notes: lead.notes } : null}
+          customer={customer ? {
+            contact_name: customer.contact_name, contact_email: customer.contact_email,
+            contact_phone: customer.contact_phone, domain: customer.domain,
+          } : null}
+          ownerId={me?.userId}
+        />
       )}
 
       {/* Status-aware action bar */}
@@ -977,6 +1145,14 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
 
+              {/* R-379 (i): credit sale beside Record payment, not only in More. Same gate
+                  as the menu item (showActivateOnCredit), so it vanishes once activated. */}
+              {showCredit && money.stage === "unpaid" && (
+                <Button variant="default" icon="check_circle" onClick={openActivateOnCredit}>
+                  Activate now, pay later
+                </Button>
+              )}
+
               {money.canRecordPayment && (
                 <Button variant="primary" icon="rupee" onClick={() => setPaymentOpen(true)}>
                   {money.recordLabel}
@@ -1030,7 +1206,7 @@ export default function QuoteDetailPage() {
                     This button names a specific document — "View invoice
                     INV-ADPL-2026-27-0018" — and used to land on `/invoices`, leaving the
                     reader to find that row among 21. The exact destination already
-                    existed: `/invoices?open=<id>` auto-opens that invoice's dialog, and
+                    existed (now its own page, invoiceHref → /invoices/<id>, R-218), and
                     five other places already used it (the Quotes LIST's own Invoiced
                     button, payments, the customer panel, the command palette, and the
                     invoices page's copy-link). This screen was the odd one out, which is
@@ -1040,7 +1216,7 @@ export default function QuoteDetailPage() {
                   <Link
                     href={
                       quote.invoice_id
-                        ? (`/invoices?open=${quote.invoice_id}` as any)
+                        ? (invoiceHref(quote.invoice_id) as any)
                         : (`/invoices` as any)
                     }
                   >
@@ -1362,6 +1538,12 @@ export default function QuoteDetailPage() {
           quoteDomain:    quote.domain,
           customerDomain: customer?.domain,
           leadDomain:     lead?.domain,
+          /* R-379 (j): a domain already on a subscription — this quote's (credit
+             activation creates one) and then the customer's others. */
+          quoteSubscriptionDomains: quoteSubs.map((s) => s.domain),
+          customerSubscriptionDomains: quote.customer_id
+            ? (allSubs ?? []).filter((s) => s.customer_id === quote.customer_id).map((s) => s.domain)
+            : [],
         })}
       />
 
@@ -1388,6 +1570,8 @@ export default function QuoteDetailPage() {
         tax={tax}
         total={total}
         interState={interState}
+        placeOfSupply={pos.label}
+        isExport={pos.isExport}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
@@ -1491,6 +1675,8 @@ export default function QuoteDetailPage() {
               tax,
               total,
               interState,
+              placeOfSupply: pos.label,
+              isExport:      pos.isExport,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
             });
@@ -1510,11 +1696,11 @@ export default function QuoteDetailPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Icon name="lock" size={18} className="text-amber" />
-              Ye quote abhi delete nahi ho sakta
+              This quote can't be deleted yet
             </DialogTitle>
             <DialogDescription>
-              Is quote pe paisa laga hua hai. Delete karne se payment ledger + audit trail mit jaayega.
-              Pehle in related records ko hatana / void karna padega:
+              Money is recorded against this quote. Deleting it would erase the payment ledger and audit trail.
+              Clear these related records first:
             </DialogDescription>
           </DialogHeader>
 
@@ -1525,11 +1711,11 @@ export default function QuoteDetailPage() {
                   <Icon name="receipt" size={16} className="text-emerald shrink-0" />
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-ink truncate">Invoice {quote.invoice_id}</div>
-                    <div className="text-2xs text-ink-3">Pehle ise credit-note / void karo</div>
+                    <div className="text-2xs text-ink-3">Issue a credit note or void it first</div>
                   </div>
                 </div>
                 <Button asChild variant="ghost" size="sm" icon="external" className="shrink-0">
-                  <Link href={"/invoices" as any}>Open</Link>
+                  <Link href={invoiceHref(quote.invoice_id) as any}>Open</Link>
                 </Button>
               </div>
             )}
@@ -1549,7 +1735,7 @@ export default function QuoteDetailPage() {
                     </li>
                   ))}
                 </ul>
-                <div className="text-2xs text-ink-3 mt-1.5 pl-6">Pehle inhe refund / void karo (Payment history se).</div>
+                <div className="text-2xs text-ink-3 mt-1.5 pl-6">Refund or void these first (from Payment history).</div>
               </div>
             )}
 
@@ -1559,7 +1745,7 @@ export default function QuoteDetailPage() {
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="primary" onClick={() => setBlockedOpen(false)}>Samajh gaya</Button>
+            <Button type="button" variant="primary" onClick={() => setBlockedOpen(false)}>OK</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -16,6 +16,8 @@
 "use client";
 
 import * as React from "react";
+import type { Route } from "next";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -36,7 +38,10 @@ import { parseGstr2b, reconcile2b, type Reconciliation } from "@/lib/gst/gstr2b"
 import { createClient } from "@/lib/supabase/client";
 import { Term } from "@/components/shared/term";
 import { toIstDate } from "@/lib/dates/ist";
+import { isCreditNoteLate } from "@/lib/gst/credit-note-deadline";
 import { gstLastMonth, gstThisMonth, gstThisQuarter, istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
+import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
+import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
 // Date range helpers — month default (most common GST filing cadence)
@@ -68,6 +73,8 @@ interface OutputRow {
   taxRate:      number;        // GST rate %
   interState:   boolean;       // true → IGST; false → CGST + SGST
   docType:      "invoice" | "credit_note" | "debit_note";  // credit/debit notes net the output tax
+  /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
+  lateCreditNote?: boolean;
   /** Per-line HSN/SAC share of the taxable value (catalogue item's `hsn`). See lib/gst/gstr1.ts. */
   lines?:       { hsn: string; description?: string; taxable: number }[];
 }
@@ -110,6 +117,8 @@ interface GstReport {
   sellerGstin:     string | null;
   /** Receipt-voucher advances relevant to GSTR-1 Table 11A / 11B (lib/gst/gstr1.ts buildAdvances). */
   advances:        Advance[];
+  /** R-335: credit notes in this period issued after their invoice's s.34 time limit. */
+  lateCreditNotes: number;
 }
 
 function useGstReport(range: DateRange) {
@@ -199,13 +208,16 @@ function useGstReport(range: DateRange) {
       const linesOf = (raw: unknown): HsnSourceLine[] => (Array.isArray(raw) ? raw as HsnSourceLine[] : []);
       const linesByInvoice = new Map<string, HsnSourceLine[]>();
       for (const i of invoices ?? []) linesByInvoice.set(i.id, linesOf(i.line_items));
+      // R-335: parent invoice dates, for the s.34 credit-note time limit.
+      const invoiceDateById = new Map<string, string | null>();
+      for (const i of invoices ?? []) invoiceDateById.set(i.id, i.invoice_date);
       const noteParentIds = Array.from(new Set([...(creditNotes ?? []), ...(debitNotes ?? [])]
         .map((n) => n.invoice_id).filter((x): x is string => !!x && !linesByInvoice.has(x))));
       if (noteParentIds.length) {
         const { data: parents } = await supabase.from("invoices")
-          .select("id, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
+          .select("id, invoice_date, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
           .in("id", noteParentIds);
-        for (const iv of parents ?? []) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); }
+        for (const iv of parents ?? []) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); invoiceDateById.set(iv.id, iv.invoice_date); }
       }
       const itemIds = Array.from(new Set(Array.from(linesByInvoice.values()).flatMap((ls) => ls.map((l) => l.item_id)).filter((x): x is string => !!x)));
       const hsnByItem = new Map<string, string | null>();
@@ -253,6 +265,7 @@ function useGstReport(range: DateRange) {
           customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           amount: -(n.amount ?? 0), taxableValue: -(n.taxable_value ?? 0), gst: -(n.tax_amount ?? 0),
           taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "credit_note",
+          lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
           lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
         });
       }
@@ -401,7 +414,9 @@ function useGstReport(range: DateRange) {
       const inputGST     = inputRows.reduce((s, r) => s + r.gst, 0);
       const netLiability = outputGST - inputGST;
 
-      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances };
+      const lateCreditNotes = outputRows.filter((r) => r.lateCreditNote).length;
+
+      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
     },
   });
 }
@@ -447,10 +462,26 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
 // Page
 // ────────────────────────────────────────────────────────────────
 
-const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter];
+/* R-257: "This FY" and "All to date" join the month/quarter chips — "All to date" is the
+   span the Accounting Overview "GST to pay" tile covers, so the tile lands on a lit chip. */
+const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter, () => gstThisFy(), () => gstAllToDate()];
 
+/* useSearchParams needs a Suspense boundary or the build refuses to prerender the page
+   (same as ledger/loans). */
 export default function GstReportPage() {
-  const [range, setRange] = React.useState<DateRange>(thisMonth());
+  return (
+    <React.Suspense fallback={<div className="p-4 md:p-6 lg:p-8"><Skeleton className="h-8 w-48" /></div>}>
+      <GstReportInner />
+    </React.Suspense>
+  );
+}
+
+function GstReportInner() {
+  const router = useRouter();
+  const search = useSearchParams();
+  /* R-257: ?from=&to= opens the page on the range a link names (the Overview tile);
+     otherwise last month on the 1st–20th (the return being filed), this month after. */
+  const [range, setRange] = React.useState<DateRange>(() => gstRangeFromParams(search.get("from"), search.get("to")));
   const { data, isLoading } = useGstReport(range);
   const { data: taxPayments } = useTaxPayments();
   const gstPaidInRange = gstPaidForPeriods(taxPayments ?? [], range.from.slice(0, 7), range.to.slice(0, 7));
@@ -464,13 +495,22 @@ export default function GstReportPage() {
     if (!file || !data) return;
     try {
       const parsed = parseGstr2b(JSON.parse(await file.text()));
-      if (parsed.errors.length) { toast.error(parsed.errors.join(" ")); return; }
+      if (parsed.errors.length) {
+        toast.error("This isn't a GSTR-2B file.", {
+          description: "On the GST portal open Returns → GSTR-2B, download the JSON, and pick that file.",
+        });
+        return;
+      }
       const books = data.inputRows.map((r) => ({ id: r.id, source: r.source, vendor: r.vendor, vendorGstin: r.vendorGstin, billNo: r.billNo, date: r.date, taxable: r.taxableValue, igst: r.igst, cgst: r.cgst, sgst: r.sgst }));
       const recon = reconcile2b(parsed.invoices, books);
       setTwoB({ period: parsed.period, recon, count: parsed.invoices.length });
       const fp = range.from.slice(5, 7) + range.from.slice(0, 4);
-      if (parsed.period && parsed.period !== fp) toast.warning(`2B ka period ${parsed.period} hai, page par ${fp} — range wahi mahina rakho.`);
-    } catch { toast.error("JSON padha nahi gaya — portal se GSTR-2B ka JSON download karke wahi file chuno."); }
+      if (parsed.period && parsed.period !== fp) toast.warning(`This 2B is for ${parsed.period}, the page shows ${fp} — set the date range to the same month.`);
+    } catch {
+      toast.error("Couldn't read this file.", {
+        description: "It isn't valid JSON. On the GST portal open Returns → GSTR-2B, download the JSON, and pick that file.",
+      });
+    }
     if (fileRef.current) fileRef.current.value = "";
   }
   function export2b() {
@@ -482,6 +522,46 @@ export default function GstReportPage() {
       ...r.onlyIn2b.map((x): (string | number)[] => ["Only in 2B (bill missing in books)", x.gstin, x.invoiceNo, x.date ?? "", "", x.igst + x.cgst + x.sgst, "", ""]),
       ...r.onlyInBooks.map((b): (string | number)[] => ["Only in books (supplier not filed — hold)", b.vendorGstin ?? "", b.billNo ?? "", b.date, b.id, "", b.igst + b.cgst + b.sgst, ""]),
     ]);
+  }
+
+  /* ── R-343: GSTR-1 vs books ───────────────────────────────────────────
+     The filed GSTR-1 JSON is read in the browser and compared with the period rebuilt
+     from the books (same buildGstr1). Export only: no tax is computed here, nothing saved.
+     GSTR-1A has no upload file (GSTN: online / GSP only), so this is a worklist. */
+  const [vs1, setVs1] = React.useState<{ fp: string | null; result: Gstr1VsBooks; fileName: string } | null>(null);
+  const filedRef = React.useRef<HTMLInputElement>(null);
+  /* A comparison belongs to the period it was made for — a new range clears it. */
+  React.useEffect(() => { setVs1(null); }, [range.from, range.to]);
+  async function onPickFiledGstr1(file: File | null) {
+    if (!file || !data) return;
+    try {
+      const parsed = parseGstr1Json(JSON.parse(await file.text()));
+      if (parsed.errors.length) {
+        toast.error("This isn't a GSTR-1 JSON file.", {
+          description: "Pick the GSTR-1 JSON you uploaded for this period (the file from Download GSTR-1 JSON).",
+        });
+        return;
+      }
+      if (data.sellerGstin && parsed.gstin && parsed.gstin.toUpperCase() !== data.sellerGstin.toUpperCase()) {
+        toast.error(`This file is for GSTIN ${parsed.gstin}, not yours (${data.sellerGstin}).`, {
+          description: "Pick the GSTR-1 JSON filed for your own GSTIN.",
+        });
+        return;
+      }
+      const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
+      const result = compareGstr1(parsed, returnFromBooks(data.outputRows.map(toGstr1Doc), seller));
+      setVs1({ fp: parsed.fp, result, fileName: file.name });
+      const fp = range.from.slice(5, 7) + range.from.slice(0, 4);
+      if (parsed.fp && parsed.fp !== fp) toast.warning(`This GSTR-1 is for ${parsed.fp}, the page shows ${fp}. Set the date range to the same month.`);
+    } catch {
+      toast.error("Couldn't read this file.", { description: "It isn't valid JSON. Pick the GSTR-1 JSON you uploaded for this period." });
+    } finally {
+      if (filedRef.current) filedRef.current.value = "";
+    }
+  }
+  function exportVs1() {
+    if (!vs1) return;
+    downloadCSV(`gstr1-vs-books-${range.from}-to-${range.to}.csv`, [...GSTR1_VS_BOOKS_HEADERS], gstr1VsBooksCsv(vs1.result));
   }
 
   function exportOutput() {
@@ -515,7 +595,12 @@ export default function GstReportPage() {
       downloadCSV(`gstr1-${key}-${stamp}.csv`, [...GSTR1_HEADERS[key]], csv[key]);
       files++;
     }
-    if (files === 0) { toast.error("No invoices to export for GSTR-1 in this period."); return; }
+    if (files === 0) {
+      toast.error("No invoices to export for GSTR-1 in this period.", {
+        description: "Pick another date range above — GSTR-1 is built from the invoices issued in that range.",
+      });
+      return;
+    }
     const notes: string[] = [];
     if (secs.skipped.length) notes.push(`${secs.skipped.length} B2C document(s) skipped (${secs.skipped.slice(0, 3).join(", ")}) — add the customer's state, then re-export.`);
     if (secs.notesNettedIntoB2cs) notes.push(`${secs.notesNettedIntoB2cs} small unregistered note(s) netted into B2CS.`);
@@ -526,12 +611,17 @@ export default function GstReportPage() {
 
   function exportGstr1Json() {
     if (!data || !data.outputRows.length) {
-      toast.error("No invoices in this period to export JSON.");
+      toast.error("No invoices in this period to export JSON.", {
+        description: "Pick another date range above — the JSON is built from the invoices issued in that range.",
+      });
       return;
     }
     /* A return JSON with a placeholder GSTIN is a return for nobody — refuse, don't guess. */
     if (!data.sellerGstin) {
-      toast.error("Company GSTIN nahi mila — Settings → Company mein GSTIN bharo, phir JSON banao.");
+      toast.error("Your company GSTIN is missing.", {
+        description: "The return JSON needs your GSTIN. Add it in Settings → Company, then export again.",
+        action: { label: "Open Settings", onClick: () => router.push("/settings?tab=company" as Route) },
+      });
       return;
     }
     const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
@@ -666,34 +756,48 @@ export default function GstReportPage() {
           rowLabel="bill/expense"
         />
         <Card className="p-4 md:p-5 border-2 border-amber/30 bg-amber-soft/20">
-          <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-            <Term k="net_liability">Net liability</Term>
-          </div>
-          {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
-            <>
-              <div className={`font-serif text-2xl md:text-3xl ${data && data.netLiability >= 0 ? "text-rose" : "text-emerald"}`}>
-                {data ? rupee(data.netLiability) : "—"}
-              </div>
-              <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
-                {data && data.netLiability >= 0
-                  ? "Payable to government via GSTR-3B"
-                  : "Refundable / carry-forward input tax credit"}
-              </div>
-              {/* GST already paid for these return months (booked from the bank). Shown
-                  only when some was paid, so an unpaid month still reads as plain "payable". */}
-              {data && gstPaidInRange > 0 && (
-                <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
-                  <div className="flex justify-between text-ink-2">
-                    <span>Paid for these months</span><span>− {rupee(gstPaidInRange)}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold text-ink">
-                    <span>{data.netLiability - gstPaidInRange >= 0 ? "Still to pay" : "Paid more than due"}</span>
-                    <span>{rupee(Math.abs(data.netLiability - gstPaidInRange))}</span>
-                  </div>
+          {/* R-257: the big number is what is LEFT to pay (net − GST already paid for these
+              months) — the same figure the Overview "GST to pay" tile shows, so tile and
+              headline agree. With nothing paid it is simply the net liability. The net and
+              the payment stay visible below as the working. Same figures as before, only
+              which one is the headline changed. */}
+          {(() => {
+            const paid = data ? gstPaidInRange : 0;
+            const left = data ? data.netLiability - paid : 0;
+            return (
+              <>
+                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
+                  {left < 0
+                    ? (paid > 0 ? "Paid more than due" : "GST credit")
+                    : paid > 0 ? "GST still to pay" : <Term k="net_liability">Net liability</Term>}
                 </div>
-              )}
-            </>
-          )}
+                {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
+                  <>
+                    <div className={`font-serif text-2xl md:text-3xl ${data && left >= 0 ? "text-rose" : "text-emerald"}`}>
+                      {data ? rupee(Math.abs(left)) : "—"}
+                    </div>
+                    <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
+                      {data && left >= 0
+                        ? "Payable to government via GSTR-3B"
+                        : "Refundable / carry-forward input tax credit"}
+                    </div>
+                    {/* GST already paid for these return months (booked from the bank). Shown
+                        only when some was paid, so an unpaid month still reads as plain "payable". */}
+                    {data && paid > 0 && (
+                      <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
+                        <div className="flex justify-between text-ink-2">
+                          <span><Term k="net_liability">Net liability</Term></span><span>{rupee(data.netLiability)}</span>
+                        </div>
+                        <div className="flex justify-between text-ink-2">
+                          <span>Paid for these months</span><span>− {rupee(paid)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </Card>
       </div>
 
@@ -721,6 +825,67 @@ export default function GstReportPage() {
               </Button>
             </div>
           </div>
+        </Card>
+      )}
+
+      {/* R-343: GSTR-1 vs books — what to amend / add in GSTR-1A before GSTR-3B locks it */}
+      {data && (
+        <Card className="mb-6 p-4 md:p-5 border border-indigo/30 bg-indigo/5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">GSTR-1 vs books — {range.label}</p>
+              <p className="text-xs text-ink-2 mt-0.5 leading-relaxed max-w-3xl">
+                After filing GSTR-1, pick the GSTR-1 JSON you uploaded. Every invoice or note changed, added or removed in the
+                books since then is listed. Fix them in <b>GSTR-1A</b> on the portal <b>before filing GSTR-3B</b> — 3B sales figures
+                are auto-filled from GSTR-1/1A and locked. GSTR-1A is filled online only (no upload file). The file is read in
+                your browser and not saved.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <input ref={filedRef} type="file" accept=".json,application/json" className="hidden" aria-label="Filed GSTR-1 JSON" onChange={(e) => onPickFiledGstr1(e.target.files?.[0] ?? null)} />
+              <Button variant="default" size="sm" onClick={() => filedRef.current?.click()}><Icon name="file" size={14} className="mr-1.5" />Pick filed GSTR-1 JSON</Button>
+              {vs1 && (vs1.result.docs.length > 0 || vs1.result.b2cs.length > 0) && <Button variant="ghost" size="sm" icon="download" onClick={exportVs1}>CSV</Button>}
+            </div>
+          </div>
+          {vs1 && (() => {
+            const r = vs1.result;
+            const changed = r.docs.filter((d) => d.status === "changed");
+            const missing = r.docs.filter((d) => d.status === "missing_in_return");
+            const notInBooks = r.docs.filter((d) => d.status === "not_in_books");
+            const totalDiff = r.taxDiff.igst + r.taxDiff.cgst + r.taxDiff.sgst;
+            return (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Changed</div><div className="font-mono text-ink font-semibold">{changed.length}</div><div className="text-xs text-ink-3">{r.unchanged} same</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Missing in return</div><div className="font-mono text-ink font-semibold">{missing.length}</div><div className="text-xs text-ink-3">add in GSTR-1A</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Not in books</div><div className="font-mono text-ink font-semibold">{notInBooks.length}</div><div className="text-xs text-ink-3">check books</div></div>
+                  <div className="rounded-md bg-paper p-2.5"><div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Tax: books − filed</div><div className={`font-mono font-semibold ${totalDiff === 0 ? "text-emerald" : "text-rose"}`}>{rupee(totalDiff)}</div><div className="text-xs text-ink-3 truncate" title={vs1.fileName}>{vs1.fp ?? "?"} · {vs1.fileName}</div></div>
+                </div>
+                {r.docs.length > 0 && (
+                  <ul className="text-xs text-ink-2 space-y-1.5">
+                    {r.docs.slice(0, 30).map((d) => (
+                      <li key={`${d.status}|${d.table}|${d.num}`} className="rounded-md bg-paper px-2.5 py-1.5">
+                        <div className="flex justify-between gap-3">
+                          <span className="truncate"><b className="text-ink">{d.num}</b> · {d.table}{d.date ? ` · ${formatDate(d.date)}` : ""}{d.ctin ? ` · ${d.ctin}` : ""}</span>
+                          <span className="font-mono shrink-0">{d.taxDiff === 0 ? "tax same" : `tax ${d.taxDiff > 0 ? "+" : ""}${rupee(d.taxDiff)}`}</span>
+                        </div>
+                        {d.changes.length > 0 && <div className="text-ink-3">{d.changes.join(" · ")}</div>}
+                        <div className={d.gstinChanged ? "text-rose" : "text-indigo-ink"}>{d.action}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {r.docs.length > 30 && <p className="text-xs text-ink-3">+{r.docs.length - 30} more in the CSV.</p>}
+                {r.b2cs.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-ink mb-1">B2CS (small B2C) totals differ — amend these lines in GSTR-1A</p>
+                    <ul className="text-xs text-ink-2 space-y-0.5">{r.b2cs.map((l) => <li key={`${l.pos}|${l.rate}`} className="flex justify-between gap-3"><span>Place of supply {l.pos} · {l.rate}%</span><span className="font-mono">taxable {rupee(l.filed?.taxable ?? 0)} → {rupee(l.books?.taxable ?? 0)}</span></li>)}</ul>
+                  </div>
+                )}
+                {r.docs.length === 0 && r.b2cs.length === 0 && <p className="text-xs text-emerald">Books match the filed GSTR-1 — no GSTR-1A needed.</p>}
+              </div>
+            );
+          })()}
         </Card>
       )}
 
@@ -797,6 +962,14 @@ export default function GstReportPage() {
           />
         </Card>
       ) : (
+        <>
+        {data.lateCreditNotes > 0 && (
+          <div role="alert" className="mb-3 rounded-md bg-amber-soft/60 border border-amber/40 px-3 py-2 text-xs text-amber-ink leading-relaxed">
+            <b>{data.lateCreditNotes} late credit note{data.lateCreditNotes === 1 ? "" : "s"}</b> — issued after GST s.34&apos;s
+            limit for the invoice (30 Nov after its financial year, or the annual return date if earlier). They may not
+            reduce output GST; confirm with your CA before filing. Marked &ldquo;Late&rdquo; below.
+          </div>
+        )}
         <Card className="overflow-hidden mb-6">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -817,7 +990,12 @@ export default function GstReportPage() {
                   const s = docHeads(r);
                   return (
                   <tr key={r.invoiceId} className="hover:bg-paper-2/40">
-                    <td className="px-4 py-3 font-mono text-ink-2">{r.invoiceId}</td>
+                    <td className="px-4 py-3 font-mono text-ink-2">
+                      {r.invoiceId}
+                      {r.lateCreditNote && (
+                        <span title="Credit note issued after the GST s.34 time limit — confirm with your CA" className="ml-2 rounded bg-amber-soft/60 px-1.5 py-0.5 font-sans text-3xs font-semibold text-amber-ink">Late</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-ink-2">{formatDate(r.invoiceDate)}</td>
                     <td className="px-4 py-3 text-ink">{r.customerName}</td>
                     <td className="px-4 py-3 font-mono text-ink-3 text-xs">{r.customerGstin ?? "—"}</td>
@@ -854,6 +1032,7 @@ export default function GstReportPage() {
             </table>
           </div>
         </Card>
+        </>
       )}
 
       {/* GSTR-2B milaan — only what the supplier filed is credit (s.16(2)(aa)). */}

@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  pushTrail, isProblem, classifyToast, apiFailureWorthNoting, apiFailText, trailForPrompt,
+  pushTrail, isProblem, classifyToast, apiFailureWorthNoting, apiFailText, trailForPrompt, isInPageUrl,
   badTextFindings, findingsForPrompt, titleOverlap, looksLikeSameBug, TRAIL_MAX, type TrailEvent,
 } from "./test-trail";
 import { parseHelpAnswer, helpUserTurn, helpSystemPrompt, bugReportText } from "./app-help";
@@ -48,6 +48,23 @@ describe("which failed requests count", () => {
     expect(apiFailureWorthNoting("/_next/static/chunks/a.js", 404)).toBe(false);
     expect(apiFailureWorthNoting("/api/public/ux/events", 500)).toBe(false);
     expect(apiFailureWorthNoting("https://cdn.example.com/logo.png", 404)).toBe(false);
+  });
+  /* R-365, 7 Oct 2026: a tester's steps on /quotes/<id> showed "API FAILED: GET
+     application/octet-stream;base64,AGFzbQ… → network error" after Download PDF. That was the
+     PDF engine's layout wasm (yoga-layout) fetching its own inlined data: URL — nothing is
+     sent anywhere, and yoga falls back to decoding the bytes itself, so the PDF was made.
+     Recording it sent the tester (and AI Help) after a bug that was not there. */
+  it("never records data: or blob: URLs — they never leave the page", () => {
+    const wasm = "data:application/octet-stream;base64,AGFzbQEAAAAB";
+    expect(isInPageUrl(wasm)).toBe(true);
+    expect(isInPageUrl("blob:https://reselleros.anutech.in/6f1c")).toBe(true);
+    expect(isInPageUrl("  DATA:text/plain,x")).toBe(true);
+    expect(apiFailureWorthNoting(wasm, 500)).toBe(false);
+    expect(apiFailureWorthNoting("blob:https://x/1", 404)).toBe(false);
+    expect(isInPageUrl("/api/quotes")).toBe(false);
+    expect(isInPageUrl("https://api.anutech.in/rest/v1/quotes")).toBe(false);
+    /* a URL that merely CONTAINS "data:" is still a real request */
+    expect(isInPageUrl("/api/x?data:1")).toBe(false);
   });
   it("keeps the path only — no query string with ids or tokens", () => {
     expect(apiFailText("post", "https://api.anutech.in/rest/v1/quotes?select=*&apikey=SECRET", 500)).toBe("POST /rest/v1/quotes → 500");

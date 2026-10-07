@@ -10,8 +10,10 @@ const src = readFileSync("src/app/(marketing)/done/page.tsx", "utf8");
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("/done tells the customer only what is true", () => {
-  it("sends customers to client login, never the staff dashboard", () => {
-    expect(code).toMatch(/href="\/login"/);
+  it("sends customers to the hosting & domains customer panel, never the staff app", () => {
+    // R-233: /login is the ResellerOS sign-in; the customer panel is CLIENT_AREA_URL.
+    expect(code).toMatch(/href=\{CLIENT_AREA_URL as never\}[^>]*>Customer login \(hosting &amp; domains\)</);
+    expect(code).not.toMatch(/href="\/login"/);
     expect(code).not.toMatch(/href="\/dashboard"/);
   });
   it("makes none of the old promises", () => {

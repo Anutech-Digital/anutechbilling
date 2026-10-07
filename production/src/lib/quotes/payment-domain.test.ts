@@ -54,3 +54,21 @@ describe("a value that exists without meaning anything", () => {
     expect(paymentDomainDefault({ quoteDomain: null, customerDomain: null, leadDomain: "  " })).toBeUndefined();
   });
 });
+
+describe("R-379 (j): a domain already on a subscription", () => {
+  it("customer row has no domain, but their subscription does → prefilled (Q-FBB9-27-0011)", () => {
+    expect(paymentDomainDefault({
+      quoteDomain: null, customerDomain: null,
+      customerSubscriptionDomains: [null, "testsharmatraders.in"],
+    })).toBe("testsharmatraders.in");
+  });
+  it("this quote's own subscription (credit activation) beats the customer's general domain", () => {
+    expect(paymentDomainDefault({
+      customerDomain: "acme.com", quoteSubscriptionDomains: ["acme.in"],
+    })).toBe("acme.in");
+  });
+  it("the quote's own domain still wins, and the lead stays last", () => {
+    expect(paymentDomainDefault({ quoteDomain: "q.in", quoteSubscriptionDomains: ["s.in"] })).toBe("q.in");
+    expect(paymentDomainDefault({ leadDomain: "lead.in", customerSubscriptionDomains: ["  "] })).toBe("lead.in");
+  });
+});

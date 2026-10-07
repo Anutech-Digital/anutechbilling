@@ -33,6 +33,7 @@ import {
 import { useEmployees } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { istToday } from "@/lib/dates/ist";
 
 function todayISO() {
@@ -231,7 +232,7 @@ function ReceiptLink({ path }: { path: string }) {
     try {
       const url = await getReimbursementReceiptUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Couldn't open the receipt");
+      else toast.error("Couldn't open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
     } finally { setLoading(false); }
   }
   return (
@@ -267,7 +268,7 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
       if (receipt) {
         setUploading(true);
         try { receiptPath = await uploadReimbursementReceipt(receipt); }
-        catch (e) { toast.error((e as Error).message || "Receipt upload failed"); setUploading(false); return; }
+        catch (e) { toastError(e, { fallback: "Receipt upload failed", description: "Nothing was saved. Try a smaller photo or PDF, or save without the receipt and add it later." }); setUploading(false); return; }
         setUploading(false);
       }
       await add.mutateAsync({
@@ -353,11 +354,12 @@ function AddReimbursementDialog({ onClose }: { onClose: () => void }) {
             </FormField>
           </div>
           {/* Receipt / bill photo — proof of the spend. */}
-          <FormField label="Receipt / bill (optional)">
+          <FormField htmlFor="reimbursements-receipt" label="Receipt / bill (optional)">
             <label className="flex items-center gap-2 rounded-md border border-dashed border-hairline px-3 py-2 text-sm text-ink-2 cursor-pointer hover:border-hairline-strong">
               <Icon name="upload" size={14} className="text-ink-3" />
               <span className="truncate">{receipt ? receipt.name : "Attach a photo or PDF"}</span>
               <input
+                id="reimbursements-receipt"
                 type="file"
                 accept="image/*,application/pdf"
                 className="hidden"

@@ -23,6 +23,8 @@
  * `hostingplans` prices are disregarded.
  */
 
+import { SLA } from "../config";
+
 export interface LandingPlan {
   planId: string;
   name: string;
@@ -47,8 +49,8 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "20 GB Bandwidth",
       "Host 1 Website",
-      "24/7 Phone & Email Support",
-      "99.99% Uptime Guarantee",
+      "Phone, WhatsApp & Email Support",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Backup",
     ],
@@ -66,8 +68,8 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "30 GB Bandwidth",
       "Host Multiple Websites",
-      "24/7 Phone & Email Support",
-      "99.99% Uptime Guarantee",
+      "Phone, WhatsApp & Email Support",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Backup",
     ],
@@ -85,8 +87,8 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "40 GB Bandwidth",
       "Host Multiple Websites",
-      "24/7 Phone & Email Support",
-      "99.99% Uptime Guarantee",
+      "Phone, WhatsApp & Email Support",
+      "Uptime Monitored, Live Status Page",
       "Free Website Migration",
       "Priority Support",
       "Advanced Security Features",
@@ -106,7 +108,7 @@ export const HOSTING_FEATURES = [
   { icon: "lock",       title: "Free SSL Certificate",        body: "Secure your website with a free SSL certificate + HTTPS activation.", tint: "bg-green-50 text-green-500" },
   { icon: "refresh",    title: "Daily Backups",               body: "Automatic daily backups keep your data safe and restorable.", tint: "bg-sky-50 text-sky-500" },
   { icon: "rocket",     title: "Free Website Migration",      body: "We'll move your website to Anutech for FREE. No technical hassle.", tint: "bg-rose-50 text-rose-500" },
-  { icon: "headphones", title: "24×7 Expert Support",         body: "Real people, real support. Get help anytime via chat, ticket or call.", tint: "bg-orange-50 text-orange-500" },
+  { icon: "headphones", title: "Real People, Real Support",   body: "Help on call, WhatsApp or email, Mon–Sat 10:00–19:00 IST, from people who know your account.", tint: "bg-orange-50 text-orange-500" },
 ] as const;
 
 /** How a typical host compares, per row. */
@@ -116,8 +118,8 @@ export const HOSTING_COMPARISON: readonly { feature: string; typical: "yes" | "n
   { feature: "Free Website Migration",      typical: "partial" },
   { feature: "15-Day Free Trial",           typical: "no" },
   { feature: "Daily Backups",               typical: "yes" },
-  { feature: "99.99% Uptime Guarantee",     typical: "partial" },
-  { feature: "24×7 Expert Support",         typical: "no" },
+  { feature: "Live Uptime Status Page",     typical: "partial" },
+  { feature: "Support From Real People",     typical: "no" },
   { feature: "No Hidden Fees",              typical: "no" },
 ] as const;
 
@@ -131,7 +133,7 @@ export const HOSTING_STEPS = [
 export const HOSTING_FAQS = [
   { question: "How does the 15-Day Free Trial work?", answer: "Start your trial with full access to all hosting features for 15 days — no credit card required. If you love it, upgrade to a paid plan anytime. If not, simply let it expire." },
   { question: "Do I need a credit card to start the trial?", answer: "No. You can start your 15-day free trial without entering any payment details. You only pay when you decide to continue after the trial." },
-  { question: "Can I migrate my website to Anutech for free?", answer: "Yes! We offer free website migration on all plans. Our team moves your site over with no downtime and no technical hassle on your end." },
+  { question: "Can I migrate my website to Anutech for free?", answer: `Yes! We offer free website migration on all plans. Our team moves your site over — ${SLA.migration} — with no technical hassle on your end.` },
   { question: "What happens after the 15-Day Trial?", answer: "When the trial ends you can convert to any paid plan to keep your website live. Your first invoice is generated only at that point — that is when your card / UPI mandate is charged for the first time." },
   { question: "Do you offer a money-back guarantee?", answer: "Yes, we offer a 30-day money-back guarantee on all yearly hosting plans. Monthly plans and domain registrations are not covered by this guarantee." },
   { question: "Can I upgrade or downgrade my plan anytime?", answer: "Absolutely. You can change your plan at any time from your dashboard, and we prorate the difference automatically." },

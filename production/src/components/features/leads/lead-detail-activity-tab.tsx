@@ -2,6 +2,7 @@
 /** The drawer's Activity tab — note box, call log, and the merged timeline (S35, moved verbatim). */
 import * as React from "react";
 import { toast } from "sonner";
+import Link from "next/link";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import type { Lead } from "@/lib/supabase/database.types";
@@ -183,11 +184,17 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                 appear here once they happen.
               </div>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-0.5">
                 {timeline.entries.map((e) => {
                   const meta = timelineMeta(e);
-                  return (
-                    <li key={e.id} className="flex items-start gap-2.5">
+                  /* R-341 (7 Oct 2026, Pardeep): "ye clickable hone chahiye aur related
+                     document open kare click par". The WHOLE row is the link, not only the
+                     title (the deal feed's pattern) — on a phone a title-only link is a
+                     target the thumb misses. A row with no page of its own (call, note,
+                     email, WhatsApp) stays plain text: a link to nowhere useful is worse
+                     than no link, and the chevron is how the eye tells the two apart. */
+                  const body = (
+                    <>
                       <div className={cn(
                         "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-paper-2",
                         meta.tone,
@@ -222,6 +229,24 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                           {formatDate(e.at)} {fmtActTime(e.at)}
                         </div>
                       </div>
+                      {e.href && (
+                        <Icon name="chevron-right" size={14} className="mt-1 shrink-0 text-ink-4 transition-colors group-hover:text-amber-ink" />
+                      )}
+                    </>
+                  );
+                  const row = "-mx-1.5 flex items-start gap-2.5 rounded-md px-1.5 py-1";
+                  return (
+                    <li key={e.id}>
+                      {e.href ? (
+                        <Link
+                          href={e.href as never}
+                          className={cn(row, "group min-h-11 transition-colors hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber")}
+                        >
+                          {body}
+                        </Link>
+                      ) : (
+                        <div className={row}>{body}</div>
+                      )}
                     </li>
                   );
                 })}

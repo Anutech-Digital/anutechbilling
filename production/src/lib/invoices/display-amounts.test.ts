@@ -106,7 +106,8 @@ describe("an invoice that does have a quote", () => {
 });
 
 describe("/invoices no longer taxes the gross", () => {
-  const src = readFileSync("src/app/(app)/invoices/page.tsx", "utf8")
+  /* R-086: the invoice detail moved from a sheet in page.tsx to invoice-detail.tsx (its own page). */
+  const src = readFileSync("src/app/(app)/invoices/invoice-detail.tsx", "utf8")
     /* Comments stripped — including trailing ones — so the prose explaining the removed
        expression cannot satisfy a scan for it (L46). */
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -139,7 +140,7 @@ describe("a coupon invoice shows its discount (R-084)", () => {
     expect(a.total).toBe(637);
   });
   it("the invoice screen renders a Discount row in its line-items table", () => {
-    const src = readFileSync("src/app/(app)/invoices/page.tsx", "utf8");
+    const src = readFileSync("src/app/(app)/invoices/invoice-detail.tsx", "utf8");
     expect(src).toMatch(/discount > 0 && \(\s*<tfoot/);
     expect(src).toMatch(/Taxable value/);
   });

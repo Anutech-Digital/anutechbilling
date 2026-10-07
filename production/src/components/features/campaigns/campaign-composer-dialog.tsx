@@ -14,6 +14,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -73,11 +74,11 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
   /* Keep what was written here for next time (managed on /marketing/templates). */
   async function saveAsTemplate() {
     if (subject.trim().length < 2 || bodyHtml.trim().length < 10) {
-      toast.error("Pehle subject aur mail likho, phir template save karo.");
+      toast.error("Write the subject and the email first.", { description: "A template needs a subject and a body before it can be saved." });
       return;
     }
     const unknown = unknownVariables(subject, bodyHtml, bodyText);
-    if (unknown.length) { toast.error(`Ye variable bharenge nahi: ${unknown.map((u) => `{{${u}}}`).join(", ")}`); return; }
+    if (unknown.length) { toast.error(`These variables will not fill in: ${unknown.map((u) => `{{${u}}}`).join(", ")}`, { description: "Fix or remove them, then save the template." }); return; }
     const id = await saveTemplate.mutateAsync({
       name: name.trim() || subject.trim().slice(0, 80), category: offerEnabled ? "offer" : "custom",
       subject: subject.trim(), body_html: bodyHtml, body_text: bodyText.trim() || null, description: null,
@@ -171,7 +172,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
 
   async function runAi() {
     if (!aiPrompt.trim()) {
-      toast.error("Tell the AI what you want — e.g., 'Diwali offer for SMBs, 20% off Workspace Starter'");
+      toast.error("Tell the AI what you want first.", { description: "For example: 'Diwali offer for SMBs, 20% off Workspace Starter'." });
       return;
     }
     setAiRunning(true);
@@ -187,7 +188,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "AI generation failed");
+        toastError(json.error, { fallback: "Could not create the AI draft.", description: "Try again, or write the email yourself." });
         return;
       }
       setName(json.name);
@@ -205,7 +206,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           : "Stub draft created — add a Gemini key in Settings → Integrations for real AI",
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     } finally {
       setAiRunning(false);
     }
@@ -217,13 +218,13 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
 
   async function onSubmit() {
     if (!name.trim() || !subject.trim() || (!bodyText.trim() && !bodyHtml.trim())) {
-      toast.error("Name, subject and a body (text or HTML) are required");
+      toast.error("Name, subject and a body are required.", { description: "Fill them in, then send." });
       return;
     }
-    if (!hasPreset && stages.length === 0) { toast.error("Pick at least one stage"); return; }
-    if (recipientCount === 0) { toast.error(hasPreset ? "No selected contacts have a valid email" : "No leads match — adjust filter"); return; }
+    if (!hasPreset && stages.length === 0) { toast.error("Pick at least one stage.", { description: "The campaign goes to leads in the stages you pick." }); return; }
+    if (recipientCount === 0) { toast.error(hasPreset ? "No selected contacts have a valid email." : "No leads match.", { description: hasPreset ? "Pick contacts that have an email address." : "Change the stage or source filter." }); return; }
     if (offerEnabled && (!offerCode.trim() || !offerDiscount || !offerExpires)) {
-      toast.error("Offer code, discount % and expiry are required when offer is on");
+      toast.error("Offer code, discount % and expiry are required.", { description: "Fill them in, or turn the offer off." });
       return;
     }
 
@@ -251,7 +252,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not send");
+        toastError(json.error, { fallback: "Could not send the campaign." });
         return;
       }
       const modeNote = json.mode === "stub" ? " (stub mode)" : "";
@@ -262,7 +263,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
       );
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     } finally {
       setSubmitting(false);
     }
@@ -439,12 +440,14 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
 
           {/* Body mode toggle */}
           <div className="flex items-center justify-between">
-            <Label>Body</Label>
-            <div className="inline-flex gap-1 bg-paper-2 rounded-md p-0.5">
+            {/* Label points at the textarea being edited; in Preview there is none, so it names the iframe. */}
+            <Label htmlFor={bodyMode === "text" ? "campaign-composer-body-text" : bodyMode === "html" ? "campaign-composer-body-html" : "campaign-composer-body-preview"}>Body</Label>
+            <div role="group" aria-label="Body view" className="inline-flex gap-1 bg-paper-2 rounded-md p-0.5">
               {(["preview","html","text"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
+                  aria-pressed={bodyMode === m}
                   onClick={() => setBodyMode(m)}
                   className={cn(
                     "px-2.5 py-0.5 text-2xs font-medium rounded transition-colors",
@@ -461,6 +464,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
             previewHtml ? (
               <div className="border border-hairline rounded-md overflow-hidden bg-paper-2">
                 <iframe
+                  id="campaign-composer-body-preview"
                   srcDoc={previewHtml}
                   className="w-full h-[380px] bg-white"
                   sandbox=""
@@ -478,7 +482,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
 
           {bodyMode === "html" && (
-            <textarea aria-label="Email body (HTML source)"
+            <textarea id="campaign-composer-body-html" aria-label="Email body (HTML source)"
               rows={14}
               value={bodyHtml}
               onChange={(e) => setBodyHtml(e.target.value)}
@@ -488,7 +492,7 @@ export default function CampaignComposerDialog({ open, onOpenChange, recipients,
           )}
 
           {bodyMode === "text" && (
-            <textarea aria-label="Email body (plain text)"
+            <textarea id="campaign-composer-body-text" aria-label="Email body (plain text)"
               rows={10}
               value={bodyText}
               onChange={(e) => setBodyText(e.target.value)}

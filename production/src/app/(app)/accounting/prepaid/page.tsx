@@ -24,6 +24,7 @@ import { useVendors, ensureVendor, } from "@/lib/queries/vendors";
 import { uploadBillAttachment, getBillAttachmentUrl } from "@/lib/queries/vendor-bills";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   usePrepaidAdvances, useCreatePrepaidAdvance, useConsumePrepaidAdvance, useDeletePrepaidAdvance,
   useAdvanceExpenses, useConsumePrepaidFifo, useSetPrepaidAdvanceChannel,
@@ -126,8 +127,8 @@ function AdvanceCard({ r, onConsume, onDelete }: { r: PrepaidAdvance; onConsume:
     try {
       const url = await getBillAttachmentUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Bill link nahi bana — dobara try karo.");
-    } catch { toast.error("Bill khol nahi paaye."); }
+      else toast.error("Could not create the bill link.", { description: "The file is still saved. Try again in a moment — if it keeps failing, re-upload the bill." });
+    } catch (e) { toastError(e, { fallback: "Could not open the bill.", description: "The file is still saved. Refresh the page and try again." }); }
   }
 
   return (
@@ -181,7 +182,7 @@ function AdvanceCard({ r, onConsume, onDelete }: { r: PrepaidAdvance; onConsume:
           {exp.isLoading ? (
             <div className="p-3 space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
           ) : items.length === 0 ? (
-            <p className="p-3 text-[12px] text-ink-3">Abhi is advance se koi expense book nahi hua. &ldquo;Consume&rdquo; karke expense banao.</p>
+            <p className="p-3 text-[12px] text-ink-3">No expense booked from this advance yet. Use &ldquo;Consume&rdquo; to book one.</p>
           ) : (
             items.map((e) => (
               <div key={e.id} className="flex items-center justify-between gap-3 px-3 py-2">
@@ -224,7 +225,7 @@ function AdvanceChannel({ id, channel }: { id: string; channel: string | null })
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="none">Channel nahi chuna</SelectItem>
+        <SelectItem value="none">No channel</SelectItem>
         {AD_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
       </SelectContent>
     </Select>
@@ -318,7 +319,7 @@ function AddAdvanceDialog({ onClose }: { onClose: () => void }) {
               })()}
             </div>
             {vendorId || vMatch ? (
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} /> Existing vendor — isi se link hoga.</p>
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} /> Existing vendor — will be linked.</p>
             ) : isNewVendor ? (
               <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-ink"><Icon name="plus" size={12} /> Naya vendor &ldquo;{vName}&rdquo; — Save par Vendors master me add ho jayega.</p>
             ) : null}
@@ -335,15 +336,15 @@ function AddAdvanceDialog({ onClose }: { onClose: () => void }) {
             </FormField>
           </div>
           {isAd && (
-            <FormField label="Channel (kis marketing ke liye)" htmlFor="pa_channel">
+            <FormField label="Channel (which marketing)" htmlFor="pa_channel">
               <Select value={shownChannel || "none"} onValueChange={(v) => { setChannel(v === "none" ? "" : v); setChannelTouched(true); }}>
                 <SelectTrigger id="pa_channel"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Pata nahi / general</SelectItem>
+                  <SelectItem value="none">Not sure / general</SelectItem>
                   {AD_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <p className="mt-1 text-xs text-ink-3 leading-snug">Mahine ke invoice se jo kharcha banega, wo isi channel mein ginega (Marketing → Spend, ROAS &amp; CAC).</p>
+              <p className="mt-1 text-xs text-ink-3 leading-snug">Expense booked from the monthly invoice counts under this channel (Marketing → Spend, ROAS &amp; CAC).</p>
             </FormField>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -372,8 +373,8 @@ function AddAdvanceDialog({ onClose }: { onClose: () => void }) {
               </Select>
               <p className="text-xs text-ink-3 mt-1">
                 {method === "cash"
-                  ? "Cash-in-hand se diya — yahan wo petty-cash account chuno."
-                  : "Bank se gaya — Banking me isi account ki debit line se reconcile karo."}
+                  ? "Paid from cash in hand — pick the petty-cash account."
+                  : "Paid from bank — reconcile it with this account's debit line in Banking."}
               </p>
             </FormField>
           )}
@@ -425,15 +426,15 @@ function ConsumeDialog({ advance, onClose }: { advance: PrepaidAdvance; onClose:
         body: JSON.stringify({ fileBase64: base64, mimeType: f.type }),
       });
       const json = await resp.json();
-      if (!resp.ok) { setAiNote(json.error ?? "Bill padh nahi paaye — fields haath se bhar do."); return; }
+      if (!resp.ok) { setAiNote(json.error ?? "Could not read the bill — fill the fields by hand."); return; }
       const fx = json.fields as Record<string, string | number | null>;
       if (fx.total != null) setAmount(String(Math.round(Number(fx.total))));
       const g = Number(fx.cgst ?? 0) + Number(fx.sgst ?? 0) + Number(fx.igst ?? 0);
       if (g > 0) setGst(String(Math.round(g)));
       if (fx.bill_date) setDate(String(fx.bill_date));
-      setAiNote(`✨ AI ne "${f.name}" se bhar diya — amount/GST/date check karke Book karo.`);
+      setAiNote(`✨ AI filled this from "${f.name}" — check amount, GST and date, then Book.`);
     } catch {
-      setAiNote("Read fail — fields haath se bhar do (bill phir bhi attach ho jayega).");
+      setAiNote("Could not read the bill — fill the fields by hand (the bill is still attached).");
     } finally {
       setReading(false);
     }
@@ -445,7 +446,7 @@ function ConsumeDialog({ advance, onClose }: { advance: PrepaidAdvance; onClose:
     if (file) {
       setUploading(true);
       try { attachment = await uploadBillAttachment(file); }
-      catch { toast.error("Bill upload failed — expense still booked without it."); }
+      catch (e) { toastError(e, { fallback: "Bill upload failed.", description: "The expense is still booked without it. Open the advance later and attach the bill again." }); }
       finally { setUploading(false); }
     }
     await consume.mutateAsync({ advanceId: advance.id, amount: amt, gst: gstAmt, attachment, date, note: note.trim() || null });
@@ -469,7 +470,7 @@ function ConsumeDialog({ advance, onClose }: { advance: PrepaidAdvance; onClose:
             </FormField>
             <FormField label="of which GST (ITC)" htmlFor="cons_gst">
               <Input id="cons_gst" type="number" min={0} prefix="₹" value={gst} onChange={(e) => setGst(e.target.value)} error={gstTooMuch ? "GST > amount" : undefined} />
-              <p className="text-xs text-ink-3 mt-1">Bill ka input GST — claimable.</p>
+              <p className="text-xs text-ink-3 mt-1">Input GST on the bill — claimable.</p>
             </FormField>
           </div>
           <FormField label="Date" htmlFor="cons_date">
@@ -480,7 +481,7 @@ function ConsumeDialog({ advance, onClose }: { advance: PrepaidAdvance; onClose:
               onChange={(e) => onFile(e.target.files?.[0] ?? null)}
               className="block w-full text-[12px] text-ink-2 file:mr-3 file:rounded-md file:border-0 file:bg-paper-2 file:px-3 file:py-1.5 file:text-ink file:cursor-pointer disabled:opacity-50" />
             {reading ? (
-              <p className="text-xs text-amber-ink mt-1 inline-flex items-center gap-1"><Icon name="sparkles" size={12} /> AI bill padh raha hai — amount/GST/date bhar dega…</p>
+              <p className="text-xs text-amber-ink mt-1 inline-flex items-center gap-1"><Icon name="sparkles" size={12} /> AI is reading the bill — it will fill amount, GST and date…</p>
             ) : aiNote ? (
               <p className="text-xs text-emerald mt-1">{aiNote}</p>
             ) : (
@@ -622,8 +623,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
             <div className={`rounded-md border p-2.5 text-xs ${itc.eligible ? "border-hairline bg-paper-2/30 text-ink-2" : "border-amber/40 bg-amber-soft/20 text-amber-ink"}`}>
               {vendorRow?.gstin
                 ? <>Vendor <b>{vendorRow.name}</b> · GSTIN {vendorRow.gstin} → {interState ? <>inter-state: <b>IGST {rupee(gstAmt)}</b></> : <>same state: <b>CGST {rupee(heads!.cgst)} + SGST {rupee(heads!.sgst)}</b></>}.</>
-                : <>Vendor master mein <b>{vendor}</b> ka GSTIN nahi — GST head maan kar CGST/SGST likha jayega aur <b>ITC nahi milega</b> (lib/gst/itc.ts). Vendors page par GSTIN bharo, phir book karo.</>}
-              {!itc.eligible && itc.reason && vendorRow?.gstin ? <span className="block mt-0.5">ITC nahi: {itc.reason}</span> : null}
+                : <>No GSTIN for <b>{vendor}</b> in the vendor master — GST will be booked as CGST/SGST and <b>no ITC can be claimed</b>. Add the GSTIN on the Vendors page, then book.</>}
+              {!itc.eligible && itc.reason && vendorRow?.gstin ? <span className="block mt-0.5">No ITC: {itc.reason}</span> : null}
             </div>
           )}
 
@@ -644,8 +645,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
           </div>
           {tdsSection && tdsView && (
             <p className={`text-xs ${tdsView.applies ? (tdsView.noPan ? "text-rose" : "text-ink-2") : "text-emerald"}`}>
-              {tdsView.reason}{tdsView.applies && !tdsEdited ? ` ${rupee(tdsView.tds)} apne-aap bhara.` : ""}
-              {tdsView.applies ? " Paisa advance mein poora ja chuka hai — TDS challan se jama karo; vendor ko Form 16A do, wo credit/refund deta hai (Meta/Google TDS certificate lete hain)." : ""}
+              {tdsView.reason}{tdsView.applies && !tdsEdited ? ` ${rupee(tdsView.tds)} filled in.` : ""}
+              {tdsView.applies ? " The advance was paid in full — deposit the TDS by challan and give the vendor Form 16A; they credit or refund it (Meta and Google accept TDS certificates)." : ""}
             </p>
           )}
 

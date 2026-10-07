@@ -15,6 +15,7 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { looksLikeJunk } from "@/lib/leads/junk";
+import { leadMatchesSearch } from "@/lib/leads/lead-search";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { isHotLead } from "@/lib/leads/heat";
 import { staleDeals } from "@/lib/leads/velocity";
@@ -99,17 +100,10 @@ export function searchLeads<T extends LeadListRow>(workspaceLeads: readonly T[],
   list = smartView === "junk"
     ? list.filter((l) => l.is_junk || looksLikeJunk(l).suspect)
     : list.filter((l) => !l.is_junk);
-  // 1. Text search across company / contact name / email / phone / plan
+  // 1. Text search across company / contact name / email / phone / plan —
+  //    lib/leads/lead-search.ts (R-221: words may come from different fields; phone by digits).
   if (search.trim()) {
-    const s = search.toLowerCase();
-    list = list.filter(
-      (l) =>
-        l.company.toLowerCase().includes(s) ||
-        (l.contact_name?.toLowerCase().includes(s) ?? false) ||
-        (l.contact_email?.toLowerCase().includes(s) ?? false) ||
-        (l.contact_phone?.toLowerCase().includes(s) ?? false) ||
-        (l.plan?.toLowerCase().includes(s) ?? false)
-    );
+    list = list.filter((l) => leadMatchesSearch(l, search));
   }
   // 2. Stage filter (any-of). Empty array = no constraint.
   if (stageFilter.length > 0) {

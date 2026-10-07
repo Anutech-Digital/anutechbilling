@@ -37,7 +37,9 @@ describe("guarded routes call mayDo", () => {
   for (const [file, action] of ROUTES) {
     it(`${file} → ${action}`, () => {
       const src = readFileSync(join(process.cwd(), "src", file), "utf8");
-      expect(src).toContain(`mayDo(`);
+      /* R-217: a route on withRoute() passes the same list as `roles: ACTION_ROLES["x"]`. */
+      const viaWithRoute = src.includes(`roles: ACTION_ROLES["${action}"]`) && /export const POST = withRoute\(/.test(src);
+      expect(viaWithRoute || src.includes(`mayDo(`)).toBe(true);
       expect(src).toContain(`"${action}"`);
     });
   }

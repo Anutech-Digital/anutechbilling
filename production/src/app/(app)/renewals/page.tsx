@@ -40,7 +40,20 @@ import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenQuotes } from "@/lib/quotes/access";
 import { useQueryClient } from "@tanstack/react-query";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { toastError } from "@/lib/errors/toast-error";
+import { Input } from "@/components/ui/input";
+import {
+  bulkReminderTargets,
+  bulkReminderConfirm,
+  sendNowStep,
+  sendNowConfirm,
+  sentToastText,
+  matchesRenewalSearch,
+  readJsonSafe,
+} from "./reminders";
 
 // ─── Risk model ──────────────────────────────────────────────────────────────
 
@@ -153,6 +166,11 @@ function RenewalBucket({
   const [generating, setGenerating] = React.useState<string | null>(null);
   const qc = useQueryClient();
   const router = useRouter();
+  /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
+     home) — no "Open quote" link for them, and Generate stays on this page. */
+  const { data: me } = useCurrentUser();
+  const canQuotes = canOpenQuotes(me?.role);
+  const confirm = useConfirm();
 
   async function handleGenerateQuote(sub: Subscription) {
     setGenerating(sub.id);
@@ -161,9 +179,12 @@ function RenewalBucket({
         method:  "POST",
         headers: { "Content-Type": "application/json" },
       });
-      const json = await res.json();
+      /* R-239: an HTML 500 used to surface as "Failed: Unexpected token <". */
+      const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string };
       if (!res.ok) {
-        toast.error(json.error ?? "Could not generate renewal quote");
+        toastError(new Error(json.error ?? "Could not generate renewal quote"), {
+          action: { label: "Retry", onClick: () => void handleGenerateQuote(sub) },
+        });
         return;
       }
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
@@ -172,16 +193,23 @@ function RenewalBucket({
         ? `Opening existing renewal quote for ${sub.customer_name}`
         : `Renewal quote ${json.quoteId} created for ${sub.customer_name}`;
       toast.success(msg, { duration: 3500 });
-      // Navigate so the operator can edit before sending
-      router.push(`/quotes/${json.quoteId}` as never);
+      // Navigate so the operator can edit before sending (only roles that can open quotes)
+      if (canQuotes) router.push(`/quotes/${json.quoteId}` as never);
     } catch (err) {
-      toast.error(`Failed: ${(err as Error).message}`);
+      toastError(err, {
+        fallback: "Could not generate renewal quote",
+        action: { label: "Retry", onClick: () => void handleGenerateQuote(sub) },
+      });
     } finally {
       setGenerating(null);
     }
   }
 
+  /* R-239: an email to a customer is never one stray click — say who and which email. */
   async function handleSendNow(sub: Subscription) {
+    const step = sendNowStep(sub, graceDays);
+    const ok = await confirm({ ...sendNowConfirm(sub, step), confirmLabel: "Send email", icon: "mail" });
+    if (!ok) return;
     setSending(sub.id);
     try {
       const res = await fetch("/api/renewals/send-now", {
@@ -189,16 +217,21 @@ function RenewalBucket({
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ subscription_id: sub.id }),
       });
-      const json = await res.json();
+      const json = (await readJsonSafe(res)) as { error?: string; email_mode?: string; status?: string; step?: string };
       if (!res.ok) {
-        toast.error(json.error ?? "Send failed");
+        toastError(new Error(json.error ?? "Could not send the renewal email"), {
+          action: { label: "Retry", onClick: () => void handleSendNow(sub) },
+        });
         return;
       }
       const mode = json.email_mode === "stub" ? " (stub mode — no real email)" : "";
-      toast.success(`${json.status === "sent" ? "Sent" : "Logged"} ${json.step} to ${sub.customer_name}${mode}`);
+      toast.success(`${sentToastText(json, sub.customer_name)}${mode}`);
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
     } catch (err) {
-      toast.error(`Send failed: ${(err as Error).message}`);
+      toastError(err, {
+        fallback: "Could not send the renewal email",
+        action: { label: "Retry", onClick: () => void handleSendNow(sub) },
+      });
     } finally {
       setSending(null);
     }
@@ -292,7 +325,11 @@ function RenewalBucket({
 
                 {/* Bottom row: actions */}
                 <div className="flex items-center gap-1.5 pt-2 border-t border-hairline/60">
-                  {sub.renewal_quote_id ? (
+                  {sub.renewal_quote_id && !canQuotes ? (
+                    <span className="flex-1 truncate text-center font-mono text-2xs text-ink-3" title="Renewal quote ready — owner or sales sends it">
+                      {sub.renewal_quote_id}
+                    </span>
+                  ) : sub.renewal_quote_id ? (
                     <Button
                       asChild
                       variant="default"
@@ -499,7 +536,9 @@ function RenewalBucket({
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-start gap-1.5">
                             <div className="flex items-center gap-1.5">
-                              {sub.renewal_quote_id ? (
+                              {sub.renewal_quote_id && !canQuotes ? (
+                                <span className="text-2xs text-ink-3" title="Owner or sales sends it">Renewal quote ready</span>
+                              ) : sub.renewal_quote_id ? (
                                 <Button
                                   asChild
                                   variant="default"
@@ -577,6 +616,9 @@ export default function RenewalsPage() {
   const [bucketTab, setBucketTab] = useUrlChoice<string>("bucket", RENEWAL_BUCKETS, "urgent"); // R-118
   const [bulkSending, setBulkSending] = React.useState(false);
   const [kpiOpen, setKpiOpen] = React.useState(true);
+  const confirm = useConfirm();
+  /* R-239: customer / domain search across the buckets (KPIs stay whole-book). */
+  const [search, setSearch] = React.useState("");
   const graceDays = me?.tenantGracePeriodDays ?? 0;
   const today = new Date();
 
@@ -628,7 +670,9 @@ export default function RenewalsPage() {
             icon="refresh"
             title="No subscriptions to renew yet"
             body="Renewals show up here automatically once you have active subscriptions. A subscription is created when a customer pays for a recurring quote — so send a quote and record the payment to get started."
-            action={<Button variant="primary" icon="send" onClick={() => router.push("/quotes/new" as never)}>Create a quote</Button>}
+            action={canOpenQuotes(me?.role)
+              ? <Button variant="primary" icon="send" onClick={() => router.push("/quotes/new" as never)}>Create a quote</Button>
+              : undefined}
             secondary={<Button variant="default" icon="users" onClick={() => router.push("/customers" as never)}>View customers</Button>}
           />
         </Card>
@@ -668,6 +712,14 @@ export default function RenewalsPage() {
   const upcoming90   = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 90);
   const highRiskSubs = upcoming90.filter((r) => renewalRisk(r.sub).level === "high");
   const highRiskArr  = highRiskSubs.reduce((s, r) => s + r.sub.mrr * 12, 0);
+
+  /* R-239: the search narrows the bucket lists (and their tab counts) only. */
+  const shown = <T extends { sub: Subscription }>(rows: T[]): T[] =>
+    rows.filter((r) => matchesRenewalSearch(r.sub, search));
+  const urgentShown   = shown(urgent);
+  const upcomingShown = shown(upcoming);
+  const futureShown   = shown(future);
+  const riskShown     = shown(highRiskSubs);
 
   const activeSubs    = all.filter((s) => s.status === "active").length;
   const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
@@ -713,8 +765,13 @@ export default function RenewalsPage() {
   // subscription renewing within 30 days, then reports the true count (and
   // honestly flags stub email-mode). No fake "sent" toast.
   async function handleBulkReminder() {
-    const targets = enriched.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 30);
+    if (bulkSending) return;
+    /* R-239: renewed / suspended customers are never reminded, and nobody is emailed
+       until the operator has seen the count and the names. */
+    const targets = bulkReminderTargets(enriched);
     if (targets.length === 0) { toast.info("No renewals due in the next 30 days"); return; }
+    const ok = await confirm({ ...bulkReminderConfirm(targets), confirmLabel: `Email ${targets.length}`, icon: "mail" });
+    if (!ok) return;
     setBulkSending(true);
     let sent = 0, failed = 0, stub = false;
     for (const r of targets) {
@@ -724,7 +781,7 @@ export default function RenewalsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ subscription_id: r.sub.id }),
         });
-        const json = await res.json();
+        const json = await readJsonSafe(res);
         if (!res.ok) { failed++; continue; }
         sent++;
         if (json.email_mode === "stub") stub = true;
@@ -831,7 +888,7 @@ export default function RenewalsPage() {
             <div className="bg-paper-2/40 border border-hairline rounded-lg p-3">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Renewal forecast · next 6 months</p>
-                <p className="text-xs text-ink-3">Annual renewals {rupee(forecast.totalAmount, { compact: true })} ({forecast.totalCount}){forecast.flexCount > 0 ? <> · flex run-rate {rupee(forecast.flexMonthlyRunRate, { compact: true })}/mo ({forecast.flexCount}) — jod me nahi</> : null}</p>
+                <p className="text-xs text-ink-3">Annual renewals {rupee(forecast.totalAmount, { compact: true })} ({forecast.totalCount}){forecast.flexCount > 0 ? <> · flex run-rate {rupee(forecast.flexMonthlyRunRate, { compact: true })}/mo ({forecast.flexCount}) — not in total</> : null}</p>
               </div>
               <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {forecast.months.map((m) => (
@@ -848,7 +905,7 @@ export default function RenewalsPage() {
                   </div>
                 ))}
               </div>
-              <p className="mt-1.5 text-3xs text-ink-3">Andaza: renewal-mahine me mrr×12 (ex-GST) — churn/expansion nahi ginta.</p>
+              <p className="mt-1.5 text-3xs text-ink-3">Estimate: MRR × 12 in the renewal month (ex-GST); excludes churn and expansion.</p>
             </div>
 
             {/* Gemini AI next-best-actions */}
@@ -889,15 +946,23 @@ export default function RenewalsPage() {
       {/* ── Renewal buckets — tabbed (Urgent / Upcoming / Future) ── */}
       <Card flush>
         <div className="px-3 pt-3 sm:px-4">
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search customer or domain"
+            aria-label="Search renewals by customer or domain"
+            className="mb-2 w-full sm:max-w-xs"
+          />
           <TabBar
             value={bucketTab}
             onChange={setBucketTab}
             items={[
-              { id: "urgent",   label: "Urgent · ≤7d",      count: urgent.length   || undefined },
-              { id: "upcoming", label: "Upcoming · 30d",    count: upcoming.length || undefined },
-              { id: "future",   label: "Future · 31–90d",   count: future.length   || undefined },
+              { id: "urgent",   label: "Urgent · ≤7d",      count: urgentShown.length   || undefined },
+              { id: "upcoming", label: "Upcoming · 30d",    count: upcomingShown.length || undefined },
+              { id: "future",   label: "Future · 31–90d",   count: futureShown.length   || undefined },
               /* R-118: the High Risk ARR tile's own set — it had no list to open. */
-              { id: "risk",     label: "High risk · 90d",   count: highRiskSubs.length || undefined },
+              { id: "risk",     label: "High risk · 90d",   count: riskShown.length || undefined },
             ] satisfies TabBarItem[]}
           />
         </div>
@@ -905,25 +970,25 @@ export default function RenewalsPage() {
           <RenewalBucket embedded kind="rose"
             title="Urgent · Next 7 days"
             subtitle="Call within 24 hours — every day of delay risks revenue"
-            rows={urgent} graceDays={graceDays} />
+            rows={urgentShown} graceDays={graceDays} />
         )}
         {bucketTab === "upcoming" && (
           <RenewalBucket embedded kind="amber"
             title="Upcoming · Next 30 days"
             subtitle="Send personalised email + one follow-up call"
-            rows={upcoming} graceDays={graceDays} />
+            rows={upcomingShown} graceDays={graceDays} />
         )}
         {bucketTab === "future" && (
           <RenewalBucket embedded kind="emerald"
             title="Future · 31–90 days"
             subtitle="Drip campaign + value-prop content"
-            rows={future} graceDays={graceDays} />
+            rows={futureShown} graceDays={graceDays} />
         )}
         {bucketTab === "risk" && (
           <RenewalBucket embedded kind="rose"
             title="High risk · next 90 days"
             subtitle="Renewals the risk score marks high — talk to these customers first"
-            rows={highRiskSubs} graceDays={graceDays} />
+            rows={riskShown} graceDays={graceDays} />
         )}
       </Card>
 

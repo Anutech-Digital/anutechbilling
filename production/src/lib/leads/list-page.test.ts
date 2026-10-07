@@ -39,9 +39,9 @@ describe("toListLeadsFilters — one JSON per meaning", () => {
   it("drops every key that means 'no constraint'", () => {
     expect(toListLeadsFilters({ search: "  ", stages: [], priorities: [], junk: "exclude", open_only: false })).toEqual({});
   });
-  it("keeps search AS TYPED when it has content, and sorts the any-of lists", () => {
+  it("normalizes search (R-221: trimmed, lowercased) and sorts the any-of lists", () => {
     expect(toListLeadsFilters({ search: " Acme ", stages: ["quote", "new"], priorities: ["low", "high"] }))
-      .toEqual({ search: " Acme ", stages: ["new", "quote"], priorities: ["high", "low"] });
+      .toEqual({ search: "acme", stages: ["new", "quote"], priorities: ["high", "low"] });
   });
   it("an EMPTY owner_ids is a real filter (unowned only), not an omission", () => {
     expect(toListLeadsFilters({ owner_ids: [] })).toEqual({ owner_ids: [] });

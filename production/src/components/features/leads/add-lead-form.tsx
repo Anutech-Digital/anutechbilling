@@ -16,7 +16,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { revealSavedLead } from "@/components/features/leads/reveal-saved-lead";
 import type { Route } from "next";
 import { useForm } from "react-hook-form";
 import { FieldPill } from "@/components/ui/field-pill";
@@ -65,16 +66,13 @@ import { CustomerCombobox } from "@/components/features/customers/customer-combo
 import { useCustomers } from "@/lib/queries/customers";
 import type { Lead, LeadPriority } from "@/lib/supabase/database.types";
 import { formatIstDate, istToday } from "@/lib/dates/ist";
+import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
+import { STAGE_META } from "@/lib/leads/stage-meta";
+import { leadStatePatch, stateFromLeadGstin, stateLabel } from "@/lib/leads/lead-state";
+import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 
-const STAGES = [
-  { value: "new",     label: "New" },
-  { value: "contact", label: "Contacted" },
-  { value: "demo",    label: "Demo Done" },
-  { value: "trial",   label: "Trial Active" },
-  { value: "quote",   label: "Quote Sent" },
-  { value: "won",     label: "Won" },
-  { value: "lost",    label: "Lost" },
-] as const;
+/* R-249: the same funnel order and labels as the board (lib/leads/stage-meta). */
+const STAGES: { value: Lead["stage"]; label: string }[] = STAGE_META.map((s) => ({ value: s.id, label: s.label }));
 
 // Quote-first funnel. A lead lives in the Leads inbox (pre-quote) until a
 // quotation is sent; only then does it become a deal and unlock Demo/Trial/Won.
@@ -106,9 +104,11 @@ const PLANS = [
  * Plans not in this map (e.g. Custom) skip auto-calculation.
  */
 const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
-  "Google Workspace Business Starter":          136,
-  "Google Workspace Standard":         736,
-  "Google Workspace Plus":            1380,
+  /* R-205: GW list prices come from ONE place (lib/pricing/workspace.ts) — this map used
+     to carry its own ₹136 / ₹736, under cost. */
+  "Google Workspace Business Starter": WORKSPACE_LIST_PRICE_PM.starter,
+  "Google Workspace Standard":         WORKSPACE_LIST_PRICE_PM.standard,
+  "Google Workspace Plus":             WORKSPACE_LIST_PRICE_PM.plus,
   "Google Workspace Enterprise":      2000,
   "Microsoft 365 Business Basic":      145,
   "Microsoft 365 Business Standard":   735,
@@ -132,7 +132,7 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
  */
 const STEP_LABELS = ["Contact", "Enquiry", "Review"] as const;
 const STEP_FIELDS = [
-  ["company", "contact_name", "contact_email", "contact_phone", "gstin"],
+  ["company", "contact_name", "contact_email", "contact_phone", "gstin", "state_code"],
   ["enquiry_type", "plan", "seats", "value", "requirement", "project_timeline", "stage", "source", "priority",
    "subscription_type", "billing_cycle", "current_provider", "follow_up_date", "expected_close_date", "owner_id", "notes"],
 ] as const;
@@ -231,13 +231,15 @@ const schema = z.object({
   contact_email: z.string().email("Invalid email").optional().or(z.literal("")),
   contact_phone: z.string().optional(),
   gstin:         z.string().optional().or(z.literal("")),
+  /* R-376 (a): GST state code ("06"). Optional — a valid GSTIN fills it by itself. */
+  state_code:    z.string().optional().or(z.literal("")),
   enquiry_type:  z.enum(["subscription", "project"]),
   requirement:   z.string().optional().or(z.literal("")),
   project_timeline: z.string().optional().or(z.literal("")),
   plan:          z.string().optional().or(z.literal("")),
   seats:         optionalIntField(10000),
   value:         optionalIntField(100_000_000),
-  stage:         z.enum(["new", "contact", "demo", "trial", "quote", "won", "lost"]),
+  stage:         z.enum(["new", "contact", "quote", "demo", "trial", "won", "lost"]),
   source:        z.string(),
   priority:      z.enum(["low", "medium", "high"]),
   follow_up_date: z.string().optional().or(z.literal("")),
@@ -266,6 +268,7 @@ interface AddLeadFormProps {
 
 export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: AddLeadFormProps) {
   const router    = useRouter();
+  const pathname  = usePathname();
   const createLead = useCreateLead();
   /* An existing customer's new need — more seats, another product, a software project
      (migration 20260926250000). Picking the customer fills the contact fields from it and
@@ -324,6 +327,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
     setValue,
     watch,
     getValues,
+    getFieldState,
     trigger,
     setError,
     formState: { errors, isSubmitting, isDirty },
@@ -336,6 +340,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           contact_email:  editingLead.contact_email ?? "",
           contact_phone:  editingLead.contact_phone ?? "",
           gstin:          editingLead.gstin         ?? "",
+          state_code:     editingLead.state_code    ?? "",
           enquiry_type:   editingLead.enquiry_type  ?? "subscription",
           requirement:    editingLead.requirement   ?? "",
           project_timeline: editingLead.project_timeline ?? "",
@@ -415,6 +420,17 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
     const t = setTimeout(() => setDupKeys(dupCheckKeys({ company: wCompany, phone: wPhone, email: wEmail, gstin: wGstin })), 300);
     return () => clearTimeout(t);
   }, [wCompany, wPhone, wEmail, wGstin]);
+  /* R-376 (a): a valid GSTIN proves the state (its first two digits) — fill the State select
+     from it. Only when the GSTIN was typed/picked in this sitting, or no state is set yet: an
+     edit that merely opens a lead must not silently rewrite the state saved on it. */
+  const gstinStateCode = stateFromLeadGstin(wGstin);
+  React.useEffect(() => {
+    if (!gstinStateCode) return;
+    const current = getValues("state_code") ?? "";
+    if (current === gstinStateCode) return;
+    if (current && !getFieldState("gstin").isDirty) return;
+    setValue("state_code", gstinStateCode, { shouldDirty: true });
+  }, [gstinStateCode, getValues, getFieldState, setValue]);
   const { data: dupCandidates } = useLeadDuplicateCheck(dupKeys, editingLead?.id, open);
   const dupMatch = React.useMemo(() => pickDuplicate(dupCandidates, forCustomer), [dupCandidates, forCustomer]);
 
@@ -572,6 +588,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         contact_email:  editingLead.contact_email ?? "",
         contact_phone:  editingLead.contact_phone ?? "",
         gstin:          editingLead.gstin         ?? "",
+        state_code:     editingLead.state_code    ?? "",
         enquiry_type:   editingLead.enquiry_type  ?? "subscription",
         requirement:    editingLead.requirement   ?? "",
         project_timeline: editingLead.project_timeline ?? "",
@@ -667,6 +684,9 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         contact_email:  data.contact_email || null,
         contact_phone:  data.contact_phone || null,
         gstin:          data.gstin?.trim().toUpperCase() || null,
+        /* R-376 (a): the place of supply the quote builder prefills from. An edit writes it
+           only when the select moved (lib/leads/lead-state.ts). */
+        ...leadStatePatch(data.state_code, isEditing ? editingLead : null),
         enquiry_type:   data.enquiry_type,
         requirement:    requirementVal,
         project_timeline: project ? (data.project_timeline?.trim() || null) : null,
@@ -698,35 +718,26 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
            which is the exact failure it was added to prevent. Written once, at creation, from
            the session rather than from `data`: a creator the user can pick is not a creator. */
         await createLead.mutateAsync({ id, ...sharedPatch, created_by: me?.userId ?? null });
+        onOpenChange(false);
 
         // ─── Contextual toast (replaces the hook's generic "Lead created") ───
         // The split between Leads (raw) and Deals (qualified) confused users:
         // they'd save a lead with a plan picked, then can't find it on /leads.
-        // Solution: tell them WHICH page their lead landed on + 1-tap nav.
-        toast.dismiss();
         // Where it LANDS is decided by stage (Deals = past the quote gate), not by
         // plan/value — else we'd say "Deal" but the raw lead sits in the inbox.
+        /* R-208: the button opens THIS lead (not just the page), and on /leads its drawer
+           opens by itself — the list's "needs action" order buried a fresh lead under overdue ones. */
         const isDeal = (POST_QUOTE_STAGE_VALUES as readonly string[]).includes(data.stage);
-        const companyName  = data.company;
-        if (isDeal) {
-          toast.success(`${companyName} saved as Deal`, {
-            description: "In your Deal Pipeline",
-            duration: 6000,
-            action: {
-              label: "View deals",
-              onClick: () => router.push("/deals" as Route),
-            },
-          });
-        } else {
-          toast.success(`${companyName} added to your inbox`, {
-            description: "In Leads — send a quote to move it into the Deal Pipeline",
-            duration: 6000,
-            action: {
-              label: "View leads",
-              onClick: () => router.push("/leads" as Route),
-            },
-          });
-        }
+        const name = data.company?.trim() || data.contact_name?.trim() || "New lead";
+        revealSavedLead({
+          id,
+          title: isDeal ? `${name} saved as Deal` : `${name} added to your leads`,
+          description: isDeal ? "In your Deal Pipeline" : "Send a quote to move it into the Deal Pipeline",
+          isDeal,
+          pathname,
+          router,
+        });
+        return;
       }
       onOpenChange(false);
     } catch {
@@ -987,6 +998,27 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 Optional. Helps auto-fill legal name + address on conversion.
               </p>
             )}
+          </FormField>
+
+          {/* R-376 (a): State = place of supply. GST is CGST + SGST in the seller's own
+              state and IGST outside it, so the quote builder prefills from this. Same list
+              and codes as the quote builder's Place of supply. */}
+          <FormField label="State" htmlFor="state_code">
+            <select
+              id="state_code"
+              {...register("state_code")}
+              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+            >
+              <option value="">Select state (for GST)</option>
+              {GST_STATE_OPTIONS.map((s) => (
+                <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
+              ))}
+            </select>
+            <p className="text-xs text-ink-3">
+              {gstinStateCode && watch("state_code") === gstinStateCode
+                ? "Filled from the GSTIN."
+                : "Optional. Decides IGST or CGST + SGST on the quote."}
+            </p>
           </FormField>
 
           </Step>
@@ -1403,6 +1435,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 <Review label="Phone"       value={watch("contact_phone")} />
                 <Review label="GSTIN"       value={watch("gstin")} mono
                         note={gstinState(watch("gstin") ?? "")?.name} />
+                <Review label="State"       value={stateLabel(watch("state_code"))} />
                 <Review label="Enquiry"     value={ENQUIRY_TYPES.find((t) => t.value === enquiry)?.label} />
                 {isProject ? (
                   <>

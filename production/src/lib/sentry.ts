@@ -17,13 +17,15 @@
  * be deleted and replaced with the canonical instrumentation.ts approach.
  */
 import * as Sentry from "@sentry/nextjs";
+import { serverSentryTags } from "@/lib/sentry-env";
 
 const DSN = process.env.SENTRY_DSN;
 
 if (DSN && !Sentry.getClient()) {
   Sentry.init({
     dsn:              DSN,
-    environment:      process.env.NODE_ENV,
+    // R-333: local / staging / production from NEXT_PUBLIC_APP_ENV; release = BUILD_SHA.
+    ...serverSentryTags(),
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
     beforeSend(event) {
       // Strip credentials that may have leaked into request context.

@@ -69,12 +69,13 @@ describe("what each role sees", () => {
     expect(m.apps).toHaveLength(6);
   });
 
-  it("accountant: only the books, no sales or delivery rows", () => {
+  it("accountant: books + purchases + sales read-only, no pipeline, marketing or delivery rows (R-255)", () => {
     const m = buildSidebarApps("accountant");
     const ids = rowIds(m);
-    expect(ids).toEqual(expect.arrayContaining(["acc-overview", "ledger", "reports"]));
-    for (const id of ["leads", "deals", "quotes", "whatsapp", "support", "invoices", "team"]) expect(ids).not.toContain(id);
-    expect(m.flat).toBe(true);
+    expect(ids).toEqual(expect.arrayContaining(["acc-overview", "ledger", "reports", "vendors", "bills", "bill-payments", "expenses", "customers", "invoices", "payments"]));
+    for (const id of ["leads", "deals", "quotes", "whatsapp", "support", "team", "marketing-hub", "settings", "purchase-orders"]) expect(ids).not.toContain(id);
+    /* 16 rows since R-255 — past FLAT_MENU_MAX_ROWS, so the accountant gets the app switcher. */
+    expect(m.flat).toBe(false);
   });
 
   it("sales and sales_senior: their own pipeline, no money or books rows", () => {

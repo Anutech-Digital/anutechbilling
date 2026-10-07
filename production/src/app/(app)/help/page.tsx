@@ -44,6 +44,7 @@ export default function HelpPage() {
       {/* Search */}
       <div className="mb-6">
         <Input
+          aria-label="Search help topics"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           prefix={<Icon name="search" size={15} className="text-ink-3" />}

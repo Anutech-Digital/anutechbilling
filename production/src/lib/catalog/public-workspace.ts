@@ -20,16 +20,42 @@
  * no monthly tier, and the website must show "annual only" rather than invent a number.
  */
 
+import { floorWorkspaceRow } from "./workspace-floor";
+import { isPublicPriceHidden } from "./public-price-policy";
+
+/** R-076: the website reads Microsoft 365 and Zoho from the same endpoint as Google Workspace. */
+export type PublicSuiteVendor = "google" | "microsoft" | "zoho";
+const SUITE_VENDORS: readonly PublicSuiteVendor[] = ["google", "microsoft", "zoho"];
+
 export interface PublicWorkspaceItem {
   name: string;
   annualPerSeatMo: number;
   monthlyPerSeatMo: number | null;
+  /** Present when the row carried a suite vendor — the website matches editions by it. */
+  vendor?: PublicSuiteVendor;
+}
+
+/* R-076 (7 Oct 2026): only the suite products themselves reach the website — a Google row
+   must be "Google Workspace …", a Microsoft row "Microsoft 365 …", a Zoho row "Zoho …" —
+   so an add-on or another item under the same vendor never lands on a pricing page. */
+const SUITE_PREFIX: Readonly<Record<PublicSuiteVendor, RegExp>> = {
+  google: /^google workspace\b/i,
+  microsoft: /^microsoft 365\b/i,
+  zoho: /^zoho\b/i,
+};
+
+export function suiteRows<T extends { name: string | null; vendor: string | null }>(rows: readonly T[]): T[] {
+  return rows.filter((r) => {
+    const v = SUITE_VENDORS.find((x) => x === r.vendor);
+    return !!v && SUITE_PREFIX[v].test((r.name ?? "").trim());
+  });
 }
 
 interface CatalogRowLike {
   name: string | null;
   msrp: number | null;
   prices: unknown;
+  vendor?: string | null;
 }
 
 function monthlyMsrp(prices: unknown): number | null {
@@ -42,15 +68,26 @@ function monthlyMsrp(prices: unknown): number | null {
 
 export function publicWorkspaceCatalog(rows: readonly CatalogRowLike[]): PublicWorkspaceItem[] {
   const out: PublicWorkspaceItem[] = [];
-  for (const r of rows) {
+  for (const raw of rows) {
+    /* R-328: Business Plus is "Contact us for pricing" on the website (Google publishes no
+       Plus price either) — its row never leaves this endpoint, so no page can print it. */
+    if (isPublicPriceHidden(raw.name)) continue;
+    /* R-205: a GW Starter/Standard/Plus row priced under the list price is stale (the old
+       ₹136 seed) — lifted to the list price before it reaches the website. */
+    const r = floorWorkspaceRow(raw);
     /* A row with no name or no positive customer price is not publishable — skipped, not
        nulled, so the website never renders a card it cannot price. */
     if (!r.name?.trim()) continue;
     if (typeof r.msrp !== "number" || !Number.isFinite(r.msrp) || r.msrp <= 0) continue;
+    /* A flexible price at or below the annual one is a stale row too (R-205: Starter flex
+       ₹170 against ₹270 annual) — "annual only" rather than a wrong flexible price. */
+    const flex = monthlyMsrp(r.prices);
+    const vendor = SUITE_VENDORS.find((v) => v === raw.vendor);
     out.push({
       name: r.name.trim(),
       annualPerSeatMo: r.msrp,
-      monthlyPerSeatMo: monthlyMsrp(r.prices),
+      monthlyPerSeatMo: flex != null && flex > r.msrp ? flex : null,
+      ...(vendor ? { vendor } : {}),
     });
   }
   return out;

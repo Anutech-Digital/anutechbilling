@@ -216,3 +216,16 @@
     transform: translate(calc(-50% + var(--dlg-x, 0px)), calc(-50% + var(--dlg-y, 0px))) !important;
   }
 }
+
+/* R-267: iOS Safari zooms the whole page when a focused field's text is under 16px, and
+   every field here was text-sm (14px) — so on an iPhone each tap on a form zoomed in and the
+   person had to pinch back out. On phone widths every typed field is 16px. Unlayered and
+   `input:not(...)` (specificity 0,1,1) so it wins over `.text-sm`/`.text-xs` (0,1,0) on the
+   field itself; checkbox/radio have no text and are left alone. Desktop is unchanged. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

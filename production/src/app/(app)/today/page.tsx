@@ -27,6 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { useComplianceLog, toFiledMap, useTdsMonths } from "@/lib/queries/compliance";
 import { noTdsDeductedPredicate } from "@/lib/compliance/tds-not-applicable";
+import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useTodayDealItems } from "@/lib/queries/deals";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canSeeDeals } from "@/lib/deals/access";
@@ -38,7 +39,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import {
-  complianceTodayItems, rankTodayItems, kindMeta, URGENT_PRIORITY, type TodayItem,
+  complianceTodayItems, rankTodayItems, kindMeta, todayWhenLabel, URGENT_PRIORITY, type TodayItem,
 } from "@/lib/today/inbox";
 
 function useTodayInbox() {
@@ -55,19 +56,14 @@ function useTodayInbox() {
   });
 }
 
-/** "2d late", "due today", "in 3d", or the arrival time for queues with no deadline. */
+/** "2d late", "due today", "in 3d" (IST calendar days — R-241), or the arrival time for
+ *  queues with no deadline. */
 function whenLabel(item: TodayItem, now: number): string {
-  if (!item.due_at) return "";
-  const t = Date.parse(item.due_at);
-  if (Number.isNaN(t)) return "";
-  const days = Math.round((t - now) / 864e5);
+  const label = todayWhenLabel(item, now);
+  if (label !== null) return label;
   // Arrival-style kinds carry when it came in, not a deadline.
-  if (["enquiry", "whatsapp", "automation", "purchase_inbox", "join_request", "approval", "provisioning"].includes(item.kind)) {
-    return formatDate(item.due_at, "relative");
-  }
-  if (t < now) return days <= -1 ? `${-days}d late` : "late";
-  if (days === 0) return "due today";
-  return `in ${days}d`;
+  if (!item.due_at || Number.isNaN(Date.parse(item.due_at))) return "";
+  return formatDate(item.due_at, "relative");
 }
 
 function Row({ item, now }: { item: TodayItem; now: number }) {
@@ -115,14 +111,18 @@ export default function TodayPage() {
   /* R-181: no TDS deducted in a finished month → no "Deposit TDS" item for it. */
   const tdsToday = React.useMemo(() => new Date(), []);
   const tdsMonths = useTdsMonths(tdsToday);
+  /* R-325: business type + GST mode (R-262). Not loaded / not migrated → undefined → the
+     original Pvt Ltd, monthly-GST list, so a slow or failed read never hides a deadline. */
+  const profile = useComplianceProfile();
   const complianceItems = React.useMemo(
     () => (compliance.data
       ? complianceTodayItems(
           new Date(), toFiledMap(compliance.data),
           tdsMonths.data ? noTdsDeductedPredicate(tdsMonths.data, tdsToday) : undefined,
+          profile.data,
         )
       : []),
-    [compliance.data, tdsMonths.data, tdsToday],
+    [compliance.data, tdsMonths.data, tdsToday, profile.data],
   );
   const all = React.useMemo(
     () => rankTodayItems([...(inbox.data ?? []), ...complianceItems, ...deals.items]),
@@ -148,7 +148,7 @@ export default function TodayPage() {
           </p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Today</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Har queue ka kaam ek list mein — sabse zaroori sabse upar. Click karo, seedha us screen par.
+            Every queue's work in one list, most urgent first. Click a row to open that screen.
           </p>
         </div>
         <Button icon="refresh" variant="ghost" onClick={() => { inbox.refetch(); compliance.refetch(); deals.refetch(); }}>

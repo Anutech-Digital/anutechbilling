@@ -34,7 +34,7 @@ describe("kindReadiness — the screen says what the cron would do", () => {
   it("a name the app has never seen is not approved, and says to submit + sync", () => {
     const r = kindReadiness(base({ templates: [] }));
     expect(r.state).toBe("not_approved");
-    expect(r.text).toMatch(/app ke templates me nahi/);
+    expect(r.text).toMatch(/not in the app's templates/);
   });
 
   it("the language must match too — en approved does not approve hi", () => {
@@ -108,10 +108,10 @@ describe("mappingProblem — refused before save, with what to do", () => {
     expect(mappingProblem("x", "e", [], null)).toMatch(/Language/);
   });
   it("refuses a field the sender does not know", () => {
-    expect(mappingProblem("x", "en", ["first_name"], null)).toMatch(/field chuno/);
+    expect(mappingProblem("x", "en", ["first_name"], null)).toMatch(/Pick a field/);
   });
   it("refuses a slot count that does not match the known body", () => {
-    expect(mappingProblem("invoice_due_v1", "en", ["customer_name"], BODY_5)).toMatch(/5 jagah/);
+    expect(mappingProblem("invoice_due_v1", "en", ["customer_name"], BODY_5)).toMatch(/5 slots/);
   });
 });
 

@@ -15,7 +15,11 @@
 "use client";
 
 import * as React from "react";
-import { stateCodeFromName } from "@/lib/gst/gstin-state";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode } from "../setup/company-state";
+import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode } from "../setup/invoice-code-field";
+import { invoiceCodeProblem, normalizeInvoiceCode } from "../setup/invoice-code";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -27,9 +31,11 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
+import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
+import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
-import { isValidGstin, gstStateFromGstin, validateGstin, formatDate } from "@/lib/utils";
+import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { contactsCardState } from "@/lib/google/contacts-card-state";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
@@ -46,18 +52,13 @@ import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { isValidVpa } from "@/lib/payments/upi";
 import type { RazorpayReadiness } from "@/lib/payments/razorpay-readiness";
+import { resellerTierView } from "./reseller-tier-view";
+import { resolveSettingsTab, settingsTabHref } from "./settings-tab";
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 // Team roster moved to its own /team page. Settings only owns the
 // non-people configuration surfaces (company identity, integrations,
 // branding, notifications, security).
-
-// Placeholder integrations — these aren't wired yet, but show the
-// roadmap to Pardeep. Functional cards (Sandbox, WhatsApp) live as
-// their own components above the placeholder list.
-const INTEGRATIONS = [
-  { name: "Microsoft Partner",   sub: "Not configured",          status: "warn", icon: "shield"   },
-] as const;
 
 const TABS: TabBarItem[] = [
   { id: "company",       label: "Company"       },
@@ -76,16 +77,19 @@ const TABS: TabBarItem[] = [
 
 function Field({
   label,
+  htmlFor,
   children,
   className,
 }: {
   label: string;
+  /** R-303: the id of the control this label names (screen readers announce it). */
+  htmlFor?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={className}>
-      <label className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1 block text-xs font-medium text-ink-3">{label}</label>
       {children}
     </div>
   );
@@ -101,8 +105,9 @@ const companySchema = z.object({
     const r = validateGstin(v);
     if (!r.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: r.message });
   }),
-  state:      z.string().trim().max(40).optional(),
-  state_code: z.string().trim().regex(/^\d{0,2}$/, "1–2 digit code (e.g. 27)").optional(),
+  // R-250: state comes only from the GST state select — always a known 2-digit code.
+  state_code: z.string().trim()
+    .refine((v) => normalizeStateCode(v) !== null, "Choose your state"),
   email:      z.string().email("Invalid email").or(z.literal("")).optional(),
   phone:      z.string().trim().max(20).optional(),
   address:    z.string().trim().max(300).optional(),
@@ -135,7 +140,7 @@ const companySchema = z.object({
 });
 type CompanyForm = z.infer<typeof companySchema>;
 
-function CompanyTab() {
+function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { data: me, isLoading } = useCurrentUser();
   const updateTenant = useUpdateTenant();
   const isOwner = me?.role === "owner";
@@ -145,8 +150,7 @@ function CompanyTab() {
       name:         me?.tenantName        ?? "",
       contact_name: me?.tenantContactName ?? "",
       gstin:        me?.tenantGstin       ?? "",
-      state:        me?.tenantState       ?? "",
-      state_code:   me?.tenantStateCode   ?? "",
+      state_code:   initialStateCode(me?.tenantState, me?.tenantStateCode),
       email:        me?.tenantEmail       ?? "",
       phone:        me?.tenantPhone       ?? "",
       address:      me?.tenantAddress     ?? "",
@@ -176,6 +180,8 @@ function CompanyTab() {
     resolver: zodResolver(companySchema),
     defaultValues: defaults,
   });
+  /* R-252: tell the page, so a tab switch can ask before unmounting a half-filled form. */
+  React.useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
 
   // Refresh defaults once useCurrentUser settles
   React.useEffect(() => { reset(defaults); }, [defaults, reset]);
@@ -186,8 +192,7 @@ function CompanyTab() {
   const watchedGstin = watch("gstin");
   React.useEffect(() => {
     const { code, name } = gstStateFromGstin(watchedGstin ?? "");
-    if (code) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
-    if (name) setValue("state",      name, { shouldDirty: true, shouldValidate: true });
+    if (code && name) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
   }, [watchedGstin, setValue]);
 
   const onSubmit = (values: CompanyForm) => {
@@ -196,9 +201,13 @@ function CompanyTab() {
       name:         values.name.trim(),
       contact_name: values.contact_name?.trim() || null,
       gstin:        values.gstin?.trim()        || null,
-      state:        values.state?.trim()        || null,
-      // R-165: a typed state counts too (GSTIN verify was the only way in), else invoices refuse.
-      state_code:   values.state_code?.trim()   || stateCodeFromName(values.state) || null,
+      // R-250: name follows the chosen code, so state and state_code can never disagree.
+      ...(() => {
+        const code = normalizeStateCode(values.state_code);
+        return code
+          ? { state: GST_STATE_BY_CODE[code], state_code: code }
+          : { state: null, state_code: null };
+      })(),
       email:        values.email?.trim()        || me?.tenantEmail || "",  // keep existing if blanked — email is NOT NULL on tenants
       phone:        values.phone?.trim()        || null,
       address:      values.address?.trim()      || null,
@@ -238,16 +247,16 @@ function CompanyTab() {
             <p className="text-xs text-ink-3">Loading…</p>
           ) : (
             <fieldset disabled={!isOwner || isSubmitting} className="space-y-3 disabled:opacity-60">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Legal name *">
-                  <Input
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field htmlFor="settings-legal-name" label="Legal name *">
+                  <Input id="settings-legal-name"
                     placeholder="E.g., Sharma Cloud Solutions Pvt Ltd"
                     error={errors.name?.message}
                     {...register("name")}
                   />
                 </Field>
-                <Field label="Owner / contact name">
-                  <Input
+                <Field htmlFor="settings-owner-contact-name" label="Owner / contact name">
+                  <Input id="settings-owner-contact-name"
                     placeholder="E.g., Pardeep A"
                     error={errors.contact_name?.message}
                     {...register("contact_name")}
@@ -258,8 +267,8 @@ function CompanyTab() {
                   of this field, so we don't show a separate input for it;
                   RHF still tracks it via a hidden register (set by the
                   auto-fill useEffect higher up). */}
-              <Field label="GSTIN">
-                <Input
+              <Field htmlFor="settings-gstin" label="GSTIN">
+                <Input id="settings-gstin"
                   className="font-mono uppercase"
                   placeholder="e.g. 27AABCE1234D1Z9"
                   error={errors.gstin?.message}
@@ -291,25 +300,37 @@ function CompanyTab() {
                     if (v.legal_name)                  setValue("name",       v.legal_name,                  { shouldDirty: true, shouldValidate: true });
                     if (v.address)                     setValue("address",    v.address,                     { shouldDirty: true, shouldValidate: true });
                     if (v.principal_address?.pin_code) setValue("pin_code",   v.principal_address.pin_code,  { shouldDirty: true, shouldValidate: true });
-                    if (v.state_code)                  setValue("state_code", v.state_code,                  { shouldDirty: true, shouldValidate: true });
+                    const code = normalizeStateCode(v.state_code);
+                    if (code)                          setValue("state_code", code,                          { shouldDirty: true, shouldValidate: true });
                   }}
                 />
               </Field>
 
-              {/* Hidden state_code — derived from GSTIN, but RHF still
-                  manages it so the form submission carries the value. */}
-              <input type="hidden" {...register("state_code")} />
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Registered state">
-                  <Input
-                    placeholder="Auto-filled from GSTIN — usually no need to edit"
-                    error={errors.state?.message}
-                    {...register("state")}
-                  />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* R-250: same select as the setup wizard — the value is always a 2-digit
+                    GST state code, so a typo can no longer save state_code = null. */}
+                <Field htmlFor="settings-registered-state" label="Registered state">
+                  <select id="settings-registered-state"
+                    className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
+                    aria-invalid={!!errors.state_code}
+                    aria-describedby={errors.state_code ? "settings-registered-state-error" : undefined}
+                    {...register("state_code")}
+                  >
+                    <option value="" disabled>Choose your state</option>
+                    {GST_STATE_OPTIONS.map(({ code, name }) => (
+                      <option key={code} value={code}>
+                        {name} ({code})
+                      </option>
+                    ))}
+                  </select>
+                  {errors.state_code?.message && (
+                    <p id="settings-registered-state-error" className="mt-1 text-3xs text-rose">
+                      {errors.state_code.message}
+                    </p>
+                  )}
                 </Field>
-                <Field label="PIN code">
-                  <Input
+                <Field htmlFor="settings-pin-code" label="PIN code">
+                  <Input id="settings-pin-code"
                     className="font-mono"
                     placeholder="400051"
                     maxLength={6}
@@ -318,9 +339,9 @@ function CompanyTab() {
                   />
                 </Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Billing email">
-                  <Input
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field htmlFor="settings-billing-email" label="Billing email">
+                  <Input id="settings-billing-email"
                     type="email"
                     className="font-mono"
                     placeholder="e.g. billing@example.in"
@@ -328,8 +349,8 @@ function CompanyTab() {
                     {...register("email")}
                   />
                 </Field>
-                <Field label="Phone">
-                  <Input
+                <Field htmlFor="settings-phone" label="Phone">
+                  <Input id="settings-phone"
                     className="font-mono"
                     placeholder="e.g. +91 98765 43210"
                     error={errors.phone?.message}
@@ -337,11 +358,11 @@ function CompanyTab() {
                   />
                 </Field>
               </div>
-              <Field label="Currency">
-                <Input defaultValue="INR (₹)" readOnly title="Multi-currency support coming later" />
+              <Field htmlFor="settings-currency" label="Currency">
+                <Input id="settings-currency" defaultValue="INR (₹)" readOnly title="Multi-currency support coming later" />
               </Field>
-              <Field label="Renewal grace period (days)">
-                <Input
+              <Field htmlFor="settings-renewal-grace-period-days" label="Renewal grace period (days)">
+                <Input id="settings-renewal-grace-period-days"
                   type="number"
                   min={0}
                   max={30}
@@ -355,8 +376,8 @@ function CompanyTab() {
                   Buffer between renewal date and auto-suspend. 0 means service suspends the day after renewal if unpaid; up to 30 days extra.
                 </p>
               </Field>
-              <Field label="Address">
-                <textarea
+              <Field htmlFor="settings-address" label="Address">
+                <textarea id="settings-address"
                   placeholder="Building, street, city, state, PIN"
                   rows={3}
                   className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber resize-none"
@@ -369,8 +390,8 @@ function CompanyTab() {
 
               {/* LUT — for exporters shipping without IGST (CGST Rule 96A). */}
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-4">
-                <Field label="LUT number (exports — optional)">
-                  <Input
+                <Field htmlFor="settings-lut-number-exports-optional" label="LUT number (exports — optional)">
+                  <Input id="settings-lut-number-exports-optional"
                     placeholder="e.g. AD290425000000X — for zero-rated exports"
                     className="font-mono"
                     error={errors.lut_number?.message}
@@ -380,8 +401,8 @@ function CompanyTab() {
                     Have an LUT for exports? Store its ARN here — it lets you bill international clients at 0% GST (no IGST) legally and label those sales correctly for GSTR-1.
                   </p>
                 </Field>
-                <Field label="Valid up to">
-                  <Input type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
+                <Field htmlFor="settings-valid-up-to" label="Valid up to">
+                  <Input id="settings-valid-up-to" type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
                 </Field>
               </div>
 
@@ -389,8 +410,8 @@ function CompanyTab() {
                   any UPI app and needs no Razorpay, so it can be switched on
                   today. Blank simply means no QR is printed. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Your UPI ID (optional)">
-                  <Input
+                <Field htmlFor="settings-your-upi-id-optional" label="Your UPI ID (optional)">
+                  <Input id="settings-your-upi-id-optional"
                     placeholder="e.g. yourname@okhdfcbank"
                     className="font-mono"
                     error={errors.upi_vpa?.message}
@@ -403,8 +424,8 @@ function CompanyTab() {
                     payment here. Leave blank for no QR.
                   </p>
                 </Field>
-                <Field label="Name shown in the payer's UPI app">
-                  <Input
+                <Field htmlFor="settings-name-shown-in-the-payer-s-upi-app" label="Name shown in the payer's UPI app">
+                  <Input id="settings-name-shown-in-the-payer-s-upi-app"
                     placeholder="Defaults to your company name"
                     error={errors.upi_payee_name?.message}
                     {...register("upi_payee_name")}
@@ -425,22 +446,22 @@ function CompanyTab() {
                   Bank transfer details (optional)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Field label="Bank name">
-                    <Input
+                  <Field htmlFor="settings-bank-name" label="Bank name">
+                    <Input id="settings-bank-name"
                       placeholder="e.g. HDFC Bank"
                       error={errors.remit_bank_name?.message}
                       {...register("remit_bank_name")}
                     />
                   </Field>
-                  <Field label="Branch (optional)">
-                    <Input
+                  <Field htmlFor="settings-branch-optional" label="Branch (optional)">
+                    <Input id="settings-branch-optional"
                       placeholder="e.g. Nehru Place, New Delhi"
                       error={errors.remit_branch?.message}
                       {...register("remit_branch")}
                     />
                   </Field>
-                  <Field label="Account name (beneficiary)">
-                    <Input
+                  <Field htmlFor="settings-account-name-beneficiary" label="Account name (beneficiary)">
+                    <Input id="settings-account-name-beneficiary"
                       placeholder="Defaults to your company name"
                       error={errors.remit_account_name?.message}
                       {...register("remit_account_name")}
@@ -450,16 +471,16 @@ function CompanyTab() {
                       is what gets bounced.
                     </p>
                   </Field>
-                  <Field label="Account number">
-                    <Input
+                  <Field htmlFor="settings-account-number" label="Account number">
+                    <Input id="settings-account-number"
                       placeholder="e.g. 50200012345678"
                       className="font-mono"
                       error={errors.remit_account_number?.message}
                       {...register("remit_account_number")}
                     />
                   </Field>
-                  <Field label="IFSC">
-                    <Input
+                  <Field htmlFor="settings-ifsc" label="IFSC">
+                    <Input id="settings-ifsc"
                       placeholder="e.g. HDFC0001234"
                       className="font-mono uppercase"
                       error={errors.remit_ifsc?.message}
@@ -496,11 +517,90 @@ function CompanyTab() {
           )}
         </form>
       </Card>
+
+      <InvoiceNumberingCard isOwner={isOwner} />
+
+      {/* R-262: business type + GST filing → which filings the Compliance Calendar shows. */}
+      <ComplianceProfileCard isOwner={isOwner} />
+
+      {/* R-337: aggregate turnover → e-invoice (IRN) warnings on invoices. */}
+      <TurnoverCard isOwner={isOwner} />
     </div>
   );
 }
 
-// ─── Reseller hierarchy card (migration 0040) ────────────────────────────────
+// ─── Invoice numbering (R-259) ───────────────────────────────────────────────
+
+/**
+ * The owner's invoice code (tenants.doc_code) with a live preview of the next number.
+ * Its own Save, separate from the company form: it goes through
+ * /api/tenant/invoice-code, which checks no other business uses the code and refuses
+ * once the first GST number has been issued.
+ */
+function InvoiceNumberingCard({ isOwner }: { isOwner: boolean }) {
+  const { data: state, isError } = useInvoiceCode();
+  const save = useSaveInvoiceCode();
+  const [value, setValue] = React.useState("");
+  const [serverError, setServerError] = React.useState<string | null>(null);
+  const loaded = React.useRef(false);
+  React.useEffect(() => {
+    if (!state || loaded.current) return;
+    loaded.current = true;
+    setValue(state.saved ?? "");
+  }, [state]);
+
+  const code = normalizeInvoiceCode(value);
+  const dirty = !!state && !state.locked && code !== (state.saved ?? "");
+  const canSave = isOwner && dirty && !!code && !invoiceCodeProblem(code) && !save.isPending;
+
+  const onSave = () => {
+    setServerError(null);
+    save.mutate(code, {
+      onSuccess: (s) => { setValue(s.saved ?? ""); toast.success(`Invoice code set — next invoice ${s.preview}`); },
+      onError: (e) => setServerError((e as Error).message),
+    });
+  };
+
+  return (
+    <Card className="p-5 max-w-3xl">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-ink">Invoice numbering</p>
+        {state?.locked && <Badge kind="muted">Locked</Badge>}
+        {!isOwner && !state?.locked && <Badge kind="muted">Owner-only · view</Badge>}
+      </div>
+      {isError ? (
+        <p className="text-xs text-rose">Could not load invoice numbering. Refresh to try again.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+          <Field htmlFor="settings-invoice-code" label="Invoice code (2–4 letters)">
+            <InvoiceCodeField
+              id="settings-invoice-code"
+              value={value}
+              onChange={(v) => { setServerError(null); setValue(v); }}
+              state={state}
+              disabled={!isOwner || save.isPending}
+              serverError={serverError}
+            />
+          </Field>
+          {state && !state.locked && isOwner && (
+            <div className="flex items-center gap-2 sm:pt-5">
+              <Button type="button" size="sm" variant="primary" icon="check" loading={save.isPending} disabled={!canSave} onClick={onSave}>
+                Save code
+              </Button>
+              {dirty && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setServerError(null); setValue(state.saved ?? ""); }}>
+                  Discard
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── Reseller hierarchy card (migration 0040)────────────────────────────────
 
 /**
  * ResellerTierCard — surfaces this tenant's place in the parent-child
@@ -537,8 +637,10 @@ function ResellerTierCard() {
   if (!isOwner) return null;  // hide entirely for non-owners — admin-only surface
   if (isLoading) return null; // soft-fail: no shimmer needed for a 1-row read
 
-  const tier         = data?.tier ?? "reseller";
-  const isDistributor = tier === "distributor";
+  /* R-251: from the tenant's own row only. An independent signup (no parent, not a
+     distributor) has nothing to show here, so the card is hidden. */
+  const view = resellerTierView(data);
+  if (!view) return null;
 
   return (
     <Card className="p-5 max-w-3xl">
@@ -547,43 +649,18 @@ function ResellerTierCard() {
           <Icon name="layout" size={14} className="text-ink-3" />
           Reseller tier
         </p>
-        <Badge kind={isDistributor ? "success" : "muted"} dot>
-          {isDistributor ? "Distributor" : "Reseller"}
+        <Badge kind={view.isDistributor ? "success" : "muted"} dot>
+          {view.badge}
         </Badge>
       </div>
-
-      {/* Three cases:
-          1. Distributor (has or will have children) — Excel Tech
-          2. Reseller with parent — Anutech Digital
-          3. Reseller without parent — independent peer tenant (most signups) */}
-      {/* Merged Management Hierarchy Summary */}
-      <div className="mt-4 pt-3 border-t border-hairline space-y-2">
-        <div className="flex items-center justify-between text-xs font-bold text-ink">
-          <span className="flex items-center gap-1.5">
-            <Icon name="globe" size={14} className="text-primary" />
-            <span>Distributor &amp; Subsidiary Merged Management</span>
-          </span>
-          <Badge kind="success" size="sm">Active Mapping</Badge>
-        </div>
-        <div className="p-3 bg-paper-2/70 rounded-lg text-xs space-y-1.5 border border-hairline font-mono">
-          <div className="flex justify-between">
-            <span className="text-ink-3">Master Distributor:</span>
-            <span className="text-ink font-bold">Anutech Digital (anutech.in)</span>
+      <dl className="mt-3 pt-3 border-t border-hairline space-y-1.5 text-xs">
+        {view.rows.map((r) => (
+          <div key={r.label} className="flex flex-wrap justify-between gap-x-3">
+            <dt className="text-ink-3">{r.label}</dt>
+            <dd className="text-ink font-medium break-words">{r.value}</dd>
           </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Managed Subsidiary:</span>
-            <span className="text-primary font-bold">Excel Technologies (exceltechnologies.in)</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Legal Identities:</span>
-            <span className="text-emerald font-semibold">Separate GSTINs &amp; Tax Filings</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-ink-3">Business Operations:</span>
-            <span className="text-amber-ink font-semibold">Merged (TopBar Workspace Switcher Active)</span>
-          </div>
-        </div>
-      </div>
+        ))}
+      </dl>
     </Card>
   );
 }
@@ -838,7 +915,7 @@ function GoogleContactsIntegrationCard() {
     try {
       const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(body?.error ?? "Sync failed"); return; }
+      if (!res.ok) { toast.error(body?.error ?? "Sync failed.", { description: "Nothing was changed. Try again — if it keeps failing, disconnect and connect Google Contacts again." }); return; }
       toast.success(`Synced — ${body.pulled} in, ${body.pushed + body.created} out${body.deleted ? `, ${body.deleted} deleted` : ""}`);
       refetch();
     } finally { setBusy(false); }
@@ -848,7 +925,7 @@ function GoogleContactsIntegrationCard() {
     setBusy(true);
     try {
       const res = await fetch("/api/integrations/google-contacts", { method: "DELETE" });
-      if (!res.ok) { toast.error("Could not disconnect"); return; }
+      if (!res.ok) { toast.error("Could not disconnect.", { description: "Google Contacts is still connected. Refresh the page and try again." }); return; }
       toast.success("Google Contacts disconnected");
       refetch();
     } finally { setBusy(false); }
@@ -927,29 +1004,6 @@ function IntegrationsTab() {
         <WhatsAppIntegrationCard />
         <GoogleResellerIntegrationCard />
         <GoogleContactsIntegrationCard />
-        {INTEGRATIONS.map((it) => (
-          <div
-            key={it.name}
-            className="flex items-center justify-between rounded-lg border border-hairline p-3"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-paper-2 text-ink-3">
-                <Icon name={it.icon} size={16} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-ink">{it.name}</p>
-                <p className="text-xs text-ink-3">{it.sub}</p>
-              </div>
-            </div>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => toast.info(`Setting up ${it.name}`)}
-            >
-              Setup
-            </Button>
-          </div>
-        ))}
       </div>
     </Card>
     <ApiKeysCard />
@@ -969,7 +1023,7 @@ function BrandingTab() {
 
   const onPick = (f: File | null) => {
     if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { toast.error("Logo must be under 5 MB"); return; }
+    if (f.size > 5 * 1024 * 1024) { toast.error("Logo must be under 5 MB.", { description: "Pick a smaller file, or compress it (a PNG or JPG around 500 KB is plenty)." }); return; }
     setLogo.mutate(f);
   };
 
@@ -1018,8 +1072,37 @@ function BrandingTab() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/* useSearchParams() needs a Suspense boundary or Next refuses to prerender the page. */
 export default function SettingsPage() {
-  const [tab, setTab] = React.useState("company");
+  return (
+    <React.Suspense fallback={null}>
+      <SettingsPageInner />
+    </React.Suspense>
+  );
+}
+
+function SettingsPageInner() {
+  /* R-252: the tab is the URL's ?tab=, so deep links (Google callbacks, AI Help, inbox
+     chips) land on the tab they name and Back/Forward move between tabs. */
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const tab = resolveSettingsTab(params.get("tab"), TABS.map((t) => t.id));
+  const confirm = useConfirm();
+  const companyDirty = React.useRef(false);
+  const onCompanyDirty = React.useCallback((d: boolean) => { companyDirty.current = d; }, []);
+
+  const changeTab = async (next: string) => {
+    if (next === tab) return;
+    if (tab === "company" && companyDirty.current && !(await confirm({
+      title: "Discard unsaved changes?",
+      body: "Your company details have changes that are not saved. Switching tabs will lose them.",
+      confirmLabel: "Discard",
+      danger: true,
+    }))) return;
+    companyDirty.current = false;
+    router.replace(settingsTabHref(pathname, params.toString(), next) as never, { scroll: false });
+  };
 
   return (
     <div className="mx-auto max-w-[1240px] p-4 md:p-6 lg:p-8 pb-20">
@@ -1030,17 +1113,17 @@ export default function SettingsPage() {
         </p>
         <h1 className="font-serif text-3xl text-ink">Settings</h1>
         <p className="mt-1 text-sm text-ink-3">
-          Configure your reseller business · Team management lives at <span className="font-medium text-ink-2">/team</span>
+          Configure your reseller business · Team management lives on the <Link href="/team" className="font-medium text-ink-2 underline underline-offset-2 hover:text-amber-ink">Team page</Link>
         </p>
       </div>
 
       {/* ── Tabs ── */}
       <div className="mb-6">
-        <TabBar items={TABS} value={tab} onChange={setTab} />
+        <TabBar items={TABS} value={tab} onChange={(v) => { void changeTab(v); }} />
       </div>
 
       {/* ── Tab content ── */}
-      {tab === "company"       && <CompanyTab />}
+      {tab === "company"       && <CompanyTab onDirtyChange={onCompanyDirty} />}
       {tab === "integrations"  && <IntegrationsTab />}
       {tab === "branding"      && <BrandingTab />}
       {tab === "notifications" && <NotificationsCard />}

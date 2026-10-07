@@ -12,6 +12,18 @@ import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/**
+ * R-269: a 16px box is a miss for a thumb. On touch screens (pointer: coarse) an
+ * invisible 40x40 ::after, centred on the control, takes the tap; the visible box and
+ * the mouse layout do not change. `relative` places the pseudo element against the
+ * control. Shared with Switch.
+ */
+export const touchTargetClass =
+  "relative [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:left-1/2 " +
+  "[@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:h-10 " +
+  "[@media(pointer:coarse)]:after:w-10 [@media(pointer:coarse)]:after:-translate-x-1/2 " +
+  "[@media(pointer:coarse)]:after:-translate-y-1/2";
+
 const Checkbox = React.forwardRef<
   React.ElementRef<typeof CheckboxPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>
@@ -24,6 +36,7 @@ const Checkbox = React.forwardRef<
       "disabled:cursor-not-allowed disabled:opacity-50",
       "data-[state=checked]:bg-amber data-[state=checked]:border-amber data-[state=checked]:text-white",
       "transition-colors",
+      touchTargetClass,
       className
     )}
     {...props}

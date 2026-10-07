@@ -35,6 +35,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate, rupee } from "@/lib/utils";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useQuotes } from "@/lib/queries/quotes";
 import { useLead } from "@/lib/queries/leads";
 import { answeredState, answeredNote, quoteButtonLabel, answeredTone } from "@/lib/inbound/answered";
@@ -55,10 +57,14 @@ import { extractEntities, foundCount, type ExtractedEntities } from "@/lib/inbou
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { ReplyComposer } from "@/components/features/enquiries/reply-composer";
+import { FolderChips, AddLeadButton, SetUpEmailButton } from "./mobile-folders";
+import { inboxListView } from "@/lib/inbound/list-load-state";
 import { dialable } from "@/lib/leads/call-queue";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 
 /* ── Small presentational helpers ──────────────────────────────────────────── */
+
+const FOLDER_IDS: readonly MailFolder[] = MAIL_FOLDERS.map((f) => f.id);
 
 function senderLabel(e: InboundEmailRow): string {
   /* A reply WE sent has no from_email — it left from the tenant's connected account. The
@@ -178,6 +184,7 @@ export default function EnquiriesPage() {
   const {
     data: rows, isLoading, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage,
   } = useInboundEmailPages();
+  const listView = inboxListView({ isLoading, error, hasData: rows !== undefined });
   const olderMail = hasNextPage ? (
     <div className="px-3 py-2.5 text-center">
       <Button size="sm" variant="ghost" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
@@ -191,8 +198,10 @@ export default function EnquiriesPage() {
   const setState = useSetInboundState();
   const convert  = useConvertInboundToLead();
 
-  const [folder, setFolder]         = React.useState<MailFolder>("inbox");
-  const [query, setQuery]           = React.useState("");
+  /* R-286: folder and search live in the URL — open a lead/quote from an enquiry,
+     press Back, and the same folder and search are still there. */
+  const [folder, setFolder]         = useUrlChoice<MailFolder>("folder", FOLDER_IDS, "inbox");
+  const [query, setQuery]           = useUrlState("q");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [snoozeOpen, setSnoozeOpen] = React.useState(false);
   const [helpOpen,   setHelpOpen]   = React.useState(false);
@@ -484,21 +493,10 @@ export default function EnquiriesPage() {
           </ul>
         </nav>
 
-        {/* Mobile folder picker — the rail would eat the screen (CLAUDE.md §20). */}
-        <div className="md:hidden mb-2 w-full shrink-0">
-          <select
-            value={folder}
-            onChange={(e) => setFolder(e.target.value as MailFolder)}
-            aria-label="Mail folder"
-            className="w-full rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink"
-          >
-            {MAIL_FOLDERS.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.icon} {f.label}{counts[f.id] ? ` (${counts[f.id]})` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Phone folders (R-209): the rail would eat the screen (CLAUDE.md §20), so a row
+            of chips that scrolls inside itself. The old "Inbox ▾" <select> hid six of the
+            seven folders from anyone who never opened it. */}
+        <FolderChips folder={folder} counts={counts} unread={unread} onPick={setFolder} />
 
         {/* ── Pane 1: the list ──────────────────────────────────────────── */}
         <div className={cn(
@@ -518,11 +516,20 @@ export default function EnquiriesPage() {
               </Button>
             </div>
 
-            {isLoading ? (
+            {/* R-363: a failed 20s poll keeps the mail already on screen and says so here,
+                instead of replacing every folder with "Could not load". */}
+            {listView.refreshFailed && (
+              <div role="status" className="flex items-center justify-between gap-2 border-b border-hairline bg-amber-soft px-3 py-1.5 text-xs text-ink shrink-0">
+                <span>Could not refresh. Showing mail loaded earlier.</span>
+                <Button size="sm" variant="ghost" onClick={() => refetch()}>Try again</Button>
+              </div>
+            )}
+
+            {listView.view === "loading" ? (
               <div className="space-y-2 p-3">
                 {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
               </div>
-            ) : error ? (
+            ) : listView.view === "error" ? (
               <div className="p-4">
                 <EmptyState
                   icon="alert"
@@ -542,10 +549,10 @@ export default function EnquiriesPage() {
                   action={isEmptySearch(parsed)
                     ? (folder !== "inbox"
                         ? <Button size="sm" variant="ghost" onClick={() => setFolder("inbox")}>Go to Inbox</Button>
-                        : <Button size="sm" asChild><Link href={"/leads" as Route}>Add a lead manually</Link></Button>)
+                        : <AddLeadButton />)
                     : <Button size="sm" variant="ghost" onClick={() => setQuery("")}>Clear search</Button>}
                   secondary={isEmptySearch(parsed) && folder === "inbox"
-                    ? <Button size="sm" variant="ghost" asChild><Link href={"/settings?tab=integrations" as Route}>Set up email in Settings</Link></Button>
+                    ? <SetUpEmailButton />
                     : undefined}
                 />
                 {/* R-192 (6 Oct 2026, from Pardeep's cloud session — re-written here after review,
@@ -725,23 +732,21 @@ export default function EnquiriesPage() {
               {viewingBounce && (
                 <div className="border-b border-rose/50 bg-rose-soft/40 px-4 py-2.5">
                   <p className="text-[12px] leading-relaxed text-ink">
-                    <span className="font-semibold">Aapka bheja email wapas aa gaya.</span>{" "}
+                    <span className="font-semibold">Your email bounced.</span>{" "}
                     {bouncedTo ? (
-                      <>Wo <span className="font-mono font-semibold">{bouncedTo}</span> tak nahi pahuncha.</>
+                      <>It did not reach <span className="font-mono font-semibold">{bouncedTo}</span>.</>
                     ) : (
                       /* Same rule the extraction panel follows: say "not named" rather
                          than guess. A bounce body holds several addresses, and the wrong
                          one sends a rep to correct a record that is already right. */
-                      <>Kaunsa pata fail hua, wo is notice me likha nahi hai — neeche poora
-                        matn padhiye.</>
+                      <>The notice does not say which address failed — read the full text below.</>
                     )}{" "}
-                    Yaani us customer ne aapka quote dekha hi nahi, aur wo abhi bhi
-                    intezaar kar raha hai.
+                    The customer never saw your quote and is still waiting.
                   </p>
                   <p className="mt-1 text-[12px] leading-relaxed text-ink-2">
-                    <span className="font-semibold text-ink">Ab kya karein:</span> lead par
-                    sahi email pata bhariye, phir wahin se quote dobara bhejiye. Ye notice
-                    nipat jaye to <span className="font-semibold">✅ Mark done</span> dabaiye.
+                    <span className="font-semibold text-ink">Next:</span> fix the email address on
+                    the lead, then send the quote again from there. When this is handled,
+                    press <span className="font-semibold">✅ Mark done</span>.
                   </p>
                 </div>
               )}

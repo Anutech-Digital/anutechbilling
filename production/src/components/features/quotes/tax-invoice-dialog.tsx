@@ -245,6 +245,8 @@ export function TaxInvoiceDialog({
       tenantName, tenantGstin, tenantEmail, tenantPhone,
       tenantAddress, tenantState, placeOfSupply,
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
+      /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF. */
+      lutNumber: me?.tenantLutNumber ?? null,
     });
   }
 

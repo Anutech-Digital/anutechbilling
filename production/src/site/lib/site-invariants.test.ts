@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { RESELLEROS_URL, OS_SIGNUP, ENQUIRY_API } from "./config";
-import { TLDS, HOSTING_PLANS, LICENCE_EDITIONS } from "./data/catalog";
+import { TLDS, LICENCE_EDITIONS } from "./data/catalog";
+import { HOSTING_TIERS } from "./data/hosting-landing-v2";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Site ke apne niyam — jinke tootne se site jhooth bolne lagti.
@@ -67,8 +68,8 @@ describe("rate card ki shakal", () => {
   });
 
   it("hosting: yearly/mo hamesha monthly se sasta (−20% ka vaada)", () => {
-    for (const p of HOSTING_PLANS) {
-      expect(p.yearly, p.name).toBeLessThan(p.monthly);
+    for (const p of HOSTING_TIERS) { // R-224: the one hosting price source
+      expect(p.yearlyMo, p.name).toBeLessThan(p.monthly);
     }
   });
 

@@ -57,7 +57,7 @@ describe("buildDealHistory — ordering", () => {
 
   it("links quotes, invoices and payments to their records", () => {
     expect(h.events.find((e) => e.id === "quote:Q-1")!.href).toBe("/quotes/Q-1");
-    expect(h.events.find((e) => e.id === "invoice:INV-1")!.href).toBe("/invoices?open=INV-1");
+    expect(h.events.find((e) => e.id === "invoice:INV-1")!.href).toBe("/invoices/INV-1");
     expect(h.events.find((e) => e.id === "payment:p1")!.amount).toBe(20_000);
   });
 });

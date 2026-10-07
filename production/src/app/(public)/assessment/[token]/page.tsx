@@ -206,16 +206,16 @@ export default function TakeAssessmentPage() {
 
       {/* Who is taking */}
       <div className="mb-5 rounded-lg border border-hairline bg-paper-2/40 p-3">
-        <label className="block text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Aap kaun ho?</label>
+        <label htmlFor={data.employees.length > 0 ? "assess-emp" : "assess-name"} className="block text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Aap kaun ho?</label>
         {data.employees.length > 0 ? (
-          <select value={empId} onChange={(e) => setEmpId(e.target.value)}
+          <select id="assess-emp" value={empId} onChange={(e) => setEmpId(e.target.value)}
             className="w-full px-3 py-2 text-sm rounded-md border border-hairline bg-paper">
             <option value="">— apna naam chuno —</option>
             {data.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         ) : null}
         {!empId && (
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="ya apna naam likho"
+          <input id="assess-name" aria-label="Apna naam" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="ya apna naam likho"
             className="mt-2 w-full px-3 py-2 text-sm rounded-md border border-hairline bg-paper" />
         )}
       </div>

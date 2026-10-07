@@ -49,7 +49,7 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { lookupDomains, splitDomain } from "@/lib/domains/live-lookup";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
-import { COUPONS } from "@/site/lib/money";
+import { applyCartCoupon } from "./cart-coupon";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
 import { isTrialPlan, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { startHostingTrial } from "@/lib/hosting/start-trial";
@@ -118,13 +118,19 @@ const cartSchema = z.object({
       country: z.string().max(2).optional(),
     })
     .optional(),
-  /** The cart page's coupon. Applied from the SAME table the cart uses (site/lib/money). */
+  /** The cart page's coupon code. Priced from the server-only table the cart page asks
+   *  through POST /api/public/cart-coupon (lib/checkout/coupons, R-329). */
   coupon: z.string().max(40).optional(),
   simulate: z.boolean().optional(),
 });
 
 interface QuoteLine {
   id: string; name: string; qty: number; rate: number; cost: number;
+  /** The rate before a coupon, when a coupon came off this line's rate (R-225, cart-coupon.ts). */
+  list_rate?: number;
+  /** What the line's subscription renews at, when a coupon came off its first payment
+   *  (R-329). record_payment files the subscription's mrr from it. */
+  renewal_rate?: number;
   /** Domain lines only: the exact name paid for, so provisioning registers THAT name. */
   domain?: string;
   /** Domain lines only: whose name it is registered in (owner decision 22). */
@@ -437,6 +443,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const firstYearOf = new Map<QuoteLine, number>(); // domain line → its 1-year price (R-156)
     const domainPricing = await priceDomainLines(lines);
     const domainNames: string[] = [];
+    const domainLineSet: QuoteLine[] = []; // every domain:* line, priced by priceDomainLines
     /* Each hosting line with what was typed for it, in cart order (one domain per plan). */
     const hostingItems: { line: QuoteLine; typed: string | undefined }[] = [];
     for (const [idx, l] of lines.entries()) {
@@ -444,6 +451,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       if (dp) {
         if (!dp.ok) { unpriced.push(dp.reason); continue; }
         items.push(dp.line);
+        domainLineSet.push(dp.line); // R-225: a coupon never discounts it
         bundleEligible.push(dp.line);
         firstYearOf.set(dp.line, dp.firstYear);
         if (dp.line.domain) domainNames.push(dp.line.domain);
@@ -552,12 +560,11 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
        percent off the gross, before GST. Until 24 Sep 2026 the cart page applied
        ANUTECH10 / MIGRATE15 to the total it SHOWED while this route ignored them, so a
        customer who used a coupon was charged more than they had been shown. An unknown
-       code counts for nothing here, as it does on the cart page. */
-    const couponCode = (coupon ?? "").trim().toUpperCase();
-    const discountRate = Object.prototype.hasOwnProperty.call(COUPONS, couponCode) ? COUPONS[couponCode] : 0;
-    const gross = items.reduce((s, i) => s + i.qty * i.rate, 0);
-    // Whole rupees, like every other money column (CLAUDE.md §13).
-    const subtotal = Math.round(gross * (1 - discountRate));
+       code counts for nothing here, as it does on the cart page.
+       R-225 (7 Oct 2026): never on a domain line — see lib/checkout/cart-coupon.ts. */
+    const domainLines = new Set(domainLineSet);
+    const deal = applyCartCoupon(items, (l) => domainLines.has(l), coupon);
+    const { couponCode, gross, subtotal } = deal;
     const amount = Math.round(subtotal * 1.18);
     if (amount <= 0) return NextResponse.json({ error: "Nothing to pay for." }, { status: 400 });
 
@@ -626,7 +633,11 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const notes = [
       `DIRECT BUY (${panel ? "DMS panel" : "cart"}) · ${items.length} line(s) · ₹${amount.toLocaleString("en-IN")} incl 18% GST`,
       panel ? `Bought inside the DMS customer panel, DMS account ${panel.dmsUserId}` : null,
-      discountRate ? `Coupon ${couponCode}: ${Math.round(discountRate * 100)}% off ₹${gross.toLocaleString("en-IN")}` : null,
+      deal.applied
+        ? deal.discountPct
+          ? `Coupon ${couponCode}: ${deal.ratePct}% off ₹${gross.toLocaleString("en-IN")}`
+          : `Coupon ${couponCode}: ${deal.ratePct}% off non-domain lines, ₹${deal.discount.toLocaleString("en-IN")} off (domains at full price; renewals at list)`
+        : null,
       hasHosting
         ? hostingItems.length > 1
           ? `Hosting domains: ${hostingItems.map((h) => `${h.line.hostingDomain} (${h.line.hostingPlan})`).join(", ")}`
@@ -712,9 +723,9 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       plan: planLabel,
       seats: items.reduce((s, i) => s + i.qty, 0),
       line_items: items,
-      subtotal: gross,
+      subtotal: deal.quoteSubtotal,
       total_cost: 0,
-      discount_pct: Math.round(discountRate * 100),
+      discount_pct: deal.discountPct,
       tax_rate: 18,
       amount,
       status: "sent",

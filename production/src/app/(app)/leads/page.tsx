@@ -21,6 +21,8 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
+import { useUrlList } from "@/lib/hooks/use-url-list";
 import { LEAD_VIEWS } from "@/lib/navigation/drilldown";
 import { useTeamTree } from "@/lib/queries/team-tree";
 import { idsForMode, type TeamViewMode } from "@/lib/team/visibility";
@@ -64,6 +66,11 @@ import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs
 /* Page parts live in components/features/leads/ and the rules that pick rows in
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
 
+/* Brief mark on the row a deep link opened (R-208) — design tokens only, so it follows the theme. */
+const JUST_OPENED_ROW = ["ring-2", "ring-inset", "ring-primary", "bg-primary-soft"];
+
+const PRIORITY_IDS = ["low", "medium", "high"] as const;
+
 function LeadsPageInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -95,7 +102,9 @@ function LeadsPageInner() {
   const filterStages = filterStagesFor(isDealsPage);
 
 
-  const [search, setSearch] = React.useState("");
+  /* R-349: search + Filter live in the URL (?q=, ?stage=, ?priority=, ?owner=), so a refresh,
+     a shared link, or opening a deal and pressing Back keeps the filtered list. */
+  const [search, setSearch] = useUrlState("q");
   const [addOpen,         setAddOpen]         = React.useState(false);
   const [quickOpen,       setQuickOpen]       = React.useState(false);
   const [shareOpen,       setShareOpen]       = React.useState(false);
@@ -105,9 +114,10 @@ function LeadsPageInner() {
   const [csvImportOpen,    setCsvImportOpen]    = React.useState(false);
   // Filter state — multi-select stages + priorities + owner ("Kiska"). Empty array = no
   // filter (show all). Owner joined 29 Sep 2026, once leads had different owners.
-  const [stageFilter,    setStageFilter]    = React.useState<Lead["stage"][]>([]);
-  const [priorityFilter, setPriorityFilter] = React.useState<Array<"low"|"medium"|"high">>([]);
-  const [ownerFilter,    setOwnerFilter]    = React.useState<string[]>([]);
+  const filterStageIds = React.useMemo(() => filterStages.map((s) => s.id), [filterStages]);
+  const [stageFilter,    setStageFilter]    = useUrlList<Lead["stage"]>("stage", filterStageIds);
+  const [priorityFilter, setPriorityFilter] = useUrlList<(typeof PRIORITY_IDS)[number]>("priority", PRIORITY_IDS);
+  const [ownerFilter,    setOwnerFilter]    = useUrlList("owner");
   // Due-bucket filter driven by the insight band's KPI pills.
   //   today    → follow_up_date === today
   //   overdue  → follow_up_date < today
@@ -164,6 +174,12 @@ function LeadsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   const [selected, setSelected] = React.useState<Pick<Lead, "id"> | null>(null);
+  /* R-342: the open drawer is in the URL — ?lead=<id>, and its tab in ?ltab= (the sheet
+     owns that one). Opening a quote or task from the drawer and pressing Back used to land
+     on /leads with the drawer closed, because nothing on the history entry said which lead
+     was open. replaceState (useUrlState, R-272), so opening a lead adds no history entry. */
+  const [, setLeadInUrl] = useUrlState("lead");
+  const [, setLeadTabInUrl] = useUrlState("ltab");
 
   /* WHICH lead the drawer is on stays in `selected`; WHAT that lead currently says comes
      from the query. Two different questions, and conflating them is what let the drawer
@@ -221,7 +237,15 @@ function LeadsPageInner() {
   // ── Deep-link: open the drawer for the lead in ?lead=<id> ──
   // Runs once when that lead has been looked up and the URL param is present. S40: looked
   // up by id — the lead may be on page 40 of the list, which the page has not loaded.
-  const deepLinkHandledRef = React.useRef(false);
+  /* Which ?lead= id has been handled. An id, not a flag (R-342): ?lead= now STAYS in the
+     URL while the drawer is open, and a row click writes it too — so "handled" must mean
+     "this lead", or a row click would re-run the deep link (scroll + flash) on itself.
+     R-208: a SECOND deep link in the same visit (the next lead saved from Add lead / Quick
+     add) is a different id, so it is handled; closing re-arms it for the same id. */
+  const deepLinkHandledRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!focusLeadId) deepLinkHandledRef.current = null;
+  }, [focusLeadId]);
   /* On /deals a deal opens its own page (/deals/<id>, 30 Sep 2026), so an old-style
      /deals?lead=<id> link — the /today rows use it — goes there instead of the drawer. */
   const deepLinkToPage = isDealsPage && !!focusLeadId;
@@ -234,37 +258,50 @@ function LeadsPageInner() {
   }, [deepLinkToPage, focusLeadId, router]);
   React.useEffect(() => {
     if (deepLinkToPage) return;
-    if (deepLinkHandledRef.current) return;
-    if (!focusLeadId || !deepLink.isFetched) return;
+    if (!focusLeadId || deepLinkHandledRef.current === focusLeadId) return;
+    if (!deepLink.isFetched) return;
 
     const match = deepLink.data ?? null;
+    deepLinkHandledRef.current = focusLeadId;
     if (!match) {
-      deepLinkHandledRef.current = true;
       toast.error(`Lead ${focusLeadId} not found`);
+      setLeadInUrl("");
       return;
     }
-    deepLinkHandledRef.current = true;
     setSelected(match);
 
-    // Scroll the matching card into view so the user can see where it is in the pipeline
+    // Scroll the matching card into view so the user can see where it is in the pipeline,
+    // and mark it for a few seconds (R-208: a just-saved lead must be findable at a glance).
     setTimeout(() => {
-      document
-        .querySelector(`[data-lead-id="${match.id}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const row = document.querySelector<HTMLElement>(`[data-lead-id="${CSS.escape(match.id)}"]`);
+      if (!row) return;
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      row.classList.add(...JUST_OPENED_ROW);
+      setTimeout(() => row.classList.remove(...JUST_OPENED_ROW), 3000);
     }, 100);
 
-    // Clean the param from URL so refresh doesn't re-trigger. Use the CURRENT
-    // path (not a hardcoded /leads) so a ?lead= deep-link opened on /deals
-    // stays on /deals instead of bouncing the user to /leads.
-    router.replace(pathname as never);
-  }, [deepLinkToPage, focusLeadId, deepLink.isFetched, deepLink.data, router, pathname]);
+    /* ?lead= is NOT stripped any more (R-342): it is what makes Back and refresh reopen
+       this drawer. Closing the drawer clears it (closeLead). */
+  }, [deepLinkToPage, focusLeadId, deepLink.isFetched, deepLink.data, setLeadInUrl]);
 
   /* Opening a row / card / queue item: /leads keeps its quick drawer; /deals opens the
      deal's own page, where its whole history lives (30 Sep 2026). */
   const openLead = React.useCallback((l: Pick<Lead, "id">) => {
-    if (isDealsPage) router.push(`/deals/${encodeURIComponent(l.id)}` as never);
-    else setSelected(l);
-  }, [isDealsPage, router]);
+    if (isDealsPage) { router.push(`/deals/${encodeURIComponent(l.id)}` as never); return; }
+    deepLinkHandledRef.current = l.id;
+    setSelected(l);
+    setLeadInUrl(l.id);
+  }, [isDealsPage, router, setLeadInUrl]);
+
+  /* The real close — X, Esc, overlay, archive, delete. Clears the drawer from the URL.
+     Leaving the drawer for ANOTHER page must not call this (R-342): it would wipe ?lead from
+     the history entry Back returns to. The sheet pushes without closing for those. */
+  const closeLead = React.useCallback(() => {
+    deepLinkHandledRef.current = null;
+    setSelected(null);
+    setLeadInUrl("");
+    setLeadTabInUrl("");
+  }, [setLeadInUrl, setLeadTabInUrl]);
 
   // Quick "Send quote" from a list row — carries the lead's context into the
   // quote builder. Returning to /leads lands on the list (no auto-opened drawer).
@@ -487,14 +524,14 @@ function LeadsPageInner() {
   const selectFolder = React.useCallback((f: SalesFolder | "all") => {
     setFolder(f);
     setSmartView("everything");
-  }, []);
+  }, [setSmartView]);
   /* The Smart Views dropdown is the OTHER filter surface, and it used to stack on top of
      whatever chip was lit. Selecting from it now releases the folder, so exactly one of
      the two is ever in force. */
   const selectSmartView = React.useCallback((v: SmartView) => {
     setSmartView(v);
     setFolder("all");
-  }, []);
+  }, [setSmartView]);
 
   /** Open the merge dialog for a lead: cluster = the lead + everything it duplicates, read
    *  from the server when Merge is pressed (list_leads dup_of — the row's flag's own rule). */
@@ -544,54 +581,6 @@ function LeadsPageInner() {
         />
       )}
 
-      {/* Search + Views dropdown + Filter buttons.
-          The Views control used to be a chip strip in a flex-1 overflow-x-auto
-          box here. Eight chips in the space left over between the search box and
-          the buttons meant one visible chip and two scroll arrows. It is a
-          dropdown now, so the row no longer needs a scrolling middle section —
-          and the width it was hogging goes to the search box, which was the
-          other cramped control on this row. */}
-      {!isLoading && counts && (
-        <LeadsToolbar
-          pool={counts.pool}
-          leadMeMember={leadMeMember}
-          leadTeam={leadTeam}
-          leadTeamMode={leadTeamMode}
-          setLeadTeamMode={setLeadTeamMode}
-          search={search}
-          setSearch={setSearch}
-          viewCounts={counts.views}
-          everythingCount={everythingCountForPage(counts, isDealsPage)}
-          isDealsPage={isDealsPage}
-          currentUser={currentUser}
-          duplicateCountForTab={counts.views.duplicates}
-          junkCount={counts.workspace.junk}
-          junkSuspectCount={counts.workspace.suspects}
-          smartView={smartView}
-          selectSmartView={selectSmartView}
-          folderRows={folderRows}
-          folder={folder}
-          selectFolder={selectFolder}
-          effectiveView={effectiveView}
-          setView={setView}
-          isMobile={isMobile}
-          activeFilterCount={activeFilterCount}
-          filterStages={filterStages}
-          stageFilter={stageFilter}
-          setStageFilter={setStageFilter}
-          priorityFilter={priorityFilter}
-          setPriorityFilter={setPriorityFilter}
-          ownerFilter={ownerFilter}
-          setOwnerFilter={setOwnerFilter}
-          isSales={isSales}
-          kpiOpen={kpiOpen}
-          setKpiOpen={setKpiOpen}
-          setCsvImportOpen={setCsvImportOpen}
-          setCampaignOpen={setCampaignOpen}
-          setGoogleImportOpen={setGoogleImportOpen}
-          setShareOpen={setShareOpen}
-        />
-      )}
 
 
 
@@ -658,6 +647,73 @@ function LeadsPageInner() {
         </div>
       )}
 
+      {/* Loss analytics — owner-level "why are we losing?", in money. Deals tab
+          only: the raw-inquiry tab has no stage flow, so losses aren't its story.
+          The card handles its own empty state and hides nothing. */}
+      {!isLoading && !error && isDealsPage && (totalLeads ?? 0) > 0 && (
+        <div className="mb-3">
+          <LossReasonsCard leads={lostQ.data ?? []} />
+        </div>
+      )}
+
+      {/* R-277 (Pardeep, 6 Oct): the search + filter bar sits DIRECTLY above the list /
+          Kanban it filters. It used to sit above the hot card, the call queue and (on /deals)
+          the loss-reasons card, so after typing a search or picking a filter the result was
+          a scroll away. Sticky inside this scrolling column, so it stays at hand while the
+          list scrolls — phone too. Order is pinned by toolbar-above-list.test.ts. */}
+      {/* Search + Views dropdown + Filter buttons.
+          The Views control used to be a chip strip in a flex-1 overflow-x-auto
+          box here. Eight chips in the space left over between the search box and
+          the buttons meant one visible chip and two scroll arrows. It is a
+          dropdown now, so the row no longer needs a scrolling middle section —
+          and the width it was hogging goes to the search box, which was the
+          other cramped control on this row. */}
+      {!isLoading && counts && (
+        <div className="sticky top-0 z-10 -mx-1 px-1 pt-1.5 bg-paper/95 backdrop-blur-sm">
+          <LeadsToolbar
+            pool={counts.pool}
+            leadMeMember={leadMeMember}
+            leadTeam={leadTeam}
+            leadTeamMode={leadTeamMode}
+            setLeadTeamMode={setLeadTeamMode}
+            search={search}
+            setSearch={setSearch}
+            viewCounts={counts.views}
+            everythingCount={everythingCountForPage(counts, isDealsPage)}
+            isDealsPage={isDealsPage}
+            currentUser={currentUser}
+            duplicateCountForTab={counts.views.duplicates}
+            junkCount={counts.workspace.junk}
+            junkSuspectCount={counts.workspace.suspects}
+            smartView={smartView}
+            selectSmartView={selectSmartView}
+            folderRows={folderRows}
+            folder={folder}
+            selectFolder={selectFolder}
+            effectiveView={effectiveView}
+            setView={setView}
+            isMobile={isMobile}
+            activeFilterCount={activeFilterCount}
+            filterStages={filterStages}
+            stageFilter={stageFilter}
+            setStageFilter={setStageFilter}
+            priorityFilter={priorityFilter}
+            setPriorityFilter={setPriorityFilter}
+            ownerFilter={ownerFilter}
+            setOwnerFilter={setOwnerFilter}
+            isSales={isSales}
+            kpiOpen={kpiOpen}
+            setKpiOpen={setKpiOpen}
+            setCsvImportOpen={setCsvImportOpen}
+            setCampaignOpen={setCampaignOpen}
+            setGoogleImportOpen={setGoogleImportOpen}
+            setShareOpen={setShareOpen}
+          />
+        </div>
+      )}
+
+      {/* Below the toolbar: a filter or view with no rows shows its empty state right under
+          the controls that caused it (R-277). Renders nothing when there are rows. */}
       <LeadsStatusStates
         error={error}
         refetch={refetch}
@@ -671,15 +727,6 @@ function LeadsPageInner() {
         setCsvImportOpen={setCsvImportOpen}
         setSmartView={setSmartView}
       />
-
-      {/* Loss analytics — owner-level "why are we losing?", in money. Deals tab
-          only: the raw-inquiry tab has no stage flow, so losses aren't its story.
-          The card handles its own empty state and hides nothing. */}
-      {!isLoading && !error && isDealsPage && (totalLeads ?? 0) > 0 && (
-        <div className="mb-3">
-          <LossReasonsCard leads={lostQ.data ?? []} />
-        </div>
-      )}
 
       {/* Kanban — only shows on Deals tab (raw leads in the Leads tab have
           no meaningful stage flow, so we force list view there).
@@ -779,9 +826,9 @@ function LeadsPageInner() {
           on first open it appears once that one row has arrived. */}
       <LeadDetailSheet
         lead={selectedLive}
-        onClose={() => setSelected(null)}
+        onClose={closeLead}
         onEdit={(l) => {
-          setSelected(null);
+          closeLead();
           setEditingLead(l);
           setAddOpen(true);
         }}

@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Term } from "@/components/shared/term";
 import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
@@ -161,7 +162,7 @@ function previousRange(r: DateRange): DateRange {
 
 export default function PnLPage() {
   const [range, setRange] = React.useState<DateRange>(thisMonth());
-  const { data, isLoading } = usePnL(range);
+  const { data, isLoading, isError, refetch } = usePnL(range);
   const [drill, setDrill] = React.useState<PnLDrillKind | null>(null);
   const [drillExpenseCat, setDrillExpenseCat] = React.useState<string | null>(null);
   const [projectCostOpen, setProjectCostOpen] = React.useState(false);
@@ -279,6 +280,12 @@ export default function PnLPage() {
           </div>
         </div>
       </Card>
+
+      {/* R-270: a failed load says so. Before, every figure below simply vanished (or
+          kept the last range) with nothing telling the owner the numbers were missing. */}
+      {isError && (data
+        ? <LoadErrorBanner onRetry={() => { void refetch(); }} />
+        : <div className="mb-6"><LoadError what="Profit & Loss" onRetry={() => { void refetch(); }} /></div>)}
 
       {/* ── THE ANSWER FIRST ────────────────────────────────────────────────
           Revenue · cost of goods · expenses · net profit, before any chart. The page used
@@ -428,7 +435,7 @@ export default function PnLPage() {
               </div>
               {data.itcBlocked > 0 && (
                 <div className="flex justify-between items-baseline text-xs">
-                  <span className="text-ink-3">GST jo credit nahi bana (kaccha bill / bina GSTIN / s.17(5)) — kharche mein hi gina</span>
+                  <span className="text-ink-3">GST with no credit (no proper bill, no GSTIN, or s.17(5)), counted as expense</span>
                   <span className="font-mono text-ink-3">{rupee(data.itcBlocked)}</span>
                 </div>
               )}
@@ -460,8 +467,8 @@ export default function PnLPage() {
             {data.model.netProfit === null ? (
               netProfitView(data.model).kind === "loss-at-least" ? (
                 <li className="text-rose">
-                  Is period mein <b>kam se kam {rupee(netProfitView(data.model).value)} ka loss</b> hai —
-                  {data.model.projectCost > 0 ? " project cost aur kharche hi" : " sirf kharche hi"} revenue se zyada hain. Licence cost darj hone par loss aur badhega.
+                  This period shows <b>a loss of at least {rupee(netProfitView(data.model).value)}</b>:
+                  {data.model.projectCost > 0 ? " project cost and expenses alone" : " expenses alone"} are more than revenue. The loss will grow once licence cost is recorded.
                 </li>
               ) : (
                 <li className="text-amber-ink">
@@ -471,19 +478,19 @@ export default function PnLPage() {
               )
             ) : data.model.netProfit >= 0 ? (
               <li>
-                Aapne is period mein <b className="text-emerald">{rupee(data.model.netProfit)}</b> net
-                profit kamaya
+                You made <b className="text-emerald">{rupee(data.model.netProfit)}</b> net
+                profit this period
                 {data.model.revenue > 0 && ` — ${Math.round((data.model.netProfit / data.model.revenue) * 100)}% margin`}.
               </li>
             ) : (
               <li className="text-rose">
-                Is period mein <b>{rupee(Math.abs(data.model.netProfit))} ka loss</b> hai.{" "}
+                This period shows <b>a loss of {rupee(Math.abs(data.model.netProfit))}</b>.{" "}
                 {/* Name the cost this business actually has — a project-only period has no licence cost. */}
                 {data.model.projectCost > 0 && data.model.licenceCogs === 0
-                  ? <>Projects par salary ({rupee(data.model.projectCost)}) aur running costs ({rupee(data.model.expenses)}) milkar revenue se zyada hain.</>
+                  ? <>Salary on projects ({rupee(data.model.projectCost)}) and running costs ({rupee(data.model.expenses)}) together are more than revenue.</>
                   : data.model.projectCost > 0
-                    ? <>Licence cost, projects par salary aur running costs milkar revenue se zyada hain.</>
-                    : <>Licence cost ya running costs zyada hain.</>}
+                    ? <>Licence cost, salary on projects and running costs together are more than revenue.</>
+                    : <>Licence cost or running costs are too high.</>}
               </li>
             )}
             {data.model.grossMarginPct !== null && data.model.grossMarginPct < 20 && data.model.revenue > 0 && (
@@ -491,15 +498,15 @@ export default function PnLPage() {
             )}
             {data.projectCost.capped && (
               <li className="text-amber-ink">
-                Projects par allocate ki gayi salary ({rupee(data.projectCost.labourAllocated)}) is period mein book hui salary
-                ({rupee(data.projectCost.salaryPool)}) se zyada hai — isliye project cost utni hi li gayi hai jitni salary book hui.
-                Is period ki salary entries book karein.
+                Salary allocated to projects ({rupee(data.projectCost.labourAllocated)}) is more than the salary booked this period
+                ({rupee(data.projectCost.salaryPool)}), so project cost is capped at the salary booked.
+                Book this period&apos;s salary entries.
               </li>
             )}
             {data.projectCost.undated > 0 && (
               <li className="text-amber-ink">
-                {data.projectCost.undated} project labour allocation{data.projectCost.undated === 1 ? "" : "s"} ki koi date nahi hai
-                (na allocation par, na project par) — isliye wo kisi period mein nahi gini gayi. Project page par start date daalein.
+                {data.projectCost.undated} project labour allocation{data.projectCost.undated === 1 ? " has" : "s have"} no date
+                (neither on the allocation nor on the project), so they are not counted in any period. Add a start date on the project page.
               </li>
             )}
             {data.model.cogsBasis === "estimated" && (

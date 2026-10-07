@@ -11,6 +11,8 @@ import { createClient } from "@/lib/supabase/client";
 import { grossAmount, isQuoteAmountConsistent, taxableAfterDiscount } from "@/lib/quotes/amounts";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { lutMissingWarning } from "@/lib/gst/export-lut";
 
 // ============================================================
 // List
@@ -165,6 +167,8 @@ export function useQuotesAwaitingInvoice() {
 // ============================================================
 export function useGenerateInvoice() {
   const qc = useQueryClient();
+  /* R-334: the seller's LUT number, for the warn-not-block check after issue. */
+  const me = useCurrentUser();
 
   return useMutation({
     mutationFn: async (quoteId: string) => {
@@ -217,9 +221,13 @@ export function useGenerateInvoice() {
         invoiceId:     row.invoice_id,
         netPayable:    row.net_payable,
         totalAdvances: row.total_advances,
+        taxRate:       tax_rate,
       };
     },
-    onSuccess: ({ invoiceId, netPayable, totalAdvances }) => {
+    onSuccess: ({ invoiceId, netPayable, totalAdvances, taxRate }) => {
+      /* R-334: a zero-rated export issued with no LUT on file — warn, never block. */
+      const lutWarn = lutMissingWarning({ taxRate, lutNumber: me.data?.tenantLutNumber });
+      if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
@@ -250,6 +258,7 @@ export interface DirectInvoiceLine {
 
 export function useCreateDirectInvoice() {
   const qc = useQueryClient();
+  const me = useCurrentUser();
   return useMutation({
     mutationFn: async (input: { customerId: string; lines: DirectInvoiceLine[]; notes?: string | null; recurring?: boolean }) => {
       const supabase = createClient();
@@ -280,6 +289,9 @@ export function useCreateDirectInvoice() {
       toast.success(
         `Invoice ${res.invoice_id} raised · ₹${res.net_payable.toLocaleString("en-IN")} due${res.tax_rate === 0 ? " · export (zero-rated)" : ""}`,
       );
+      /* R-334: zero-rated export with no LUT on file — warn, never block. */
+      const lutWarn = lutMissingWarning({ taxRate: res.tax_rate, lutNumber: me.data?.tenantLutNumber });
+      if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
     },
     onError: (err) => toastError(err),
   });

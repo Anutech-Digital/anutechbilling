@@ -15,16 +15,13 @@
 
 import * as React from "react";
 import { cn, formatDate } from "@/lib/utils";
+import { formatIstTime } from "@/lib/dates/ist";
 import { Icon } from "@/components/ui/icon";
 import type { ThreadMessage, ThreadSummary } from "@/lib/leads/email-thread";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
 
-function fmtTime(at: string | null): string {
-  if (!at) return "";
-  const d = new Date(at);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-}
+/* R-275: India time, not the viewer device zone. */
+const fmtTime = (at: string | null): string => formatIstTime(at);
 
 export function EmailThreadPanel({
   thread,

@@ -85,6 +85,14 @@ jobs:
         run: |
           set -euo pipefail
           DB="supabase_db_$(sed -n 's/^project_id *= *"\([^"]*\)".*/\1/p' supabase/config.toml)"
+          # R-380 (7 Oct 2026): 20261002190000_storage_policies.sql does `set local role
+          # supabase_storage_admin` (storage.objects is owned by that role). On production /
+          # staging the migrator (postgres / resellersos_migration) is a member of it; in the
+          # local Supabase image `postgres` is not, so every run since 2 Oct died here with
+          # "permission denied to set role". Give the CI `postgres` the same membership —
+          # the migration itself is unchanged.
+          docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U supabase_admin -d postgres \
+            -c "grant supabase_storage_admin to postgres"
           for f in $(ls supabase/migrations/*.sql | sort); do
             echo "::group::$f"
             docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres < "$f"

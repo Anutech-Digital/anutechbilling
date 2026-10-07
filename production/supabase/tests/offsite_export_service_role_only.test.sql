@@ -69,6 +69,16 @@ begin
   perform set_config('request.jwt.claims', '', true);
 end $$;
 
+/* R-380: cases 1-2 (grant + body guard) run everywhere. Cases 3-4 need backup.snapshots,
+   which the baseline does not create (Cloud SQL gets it from cloudsql/06) — on a database
+   without it (local, CI) the file stops here as NOT APPLICABLE, like backup_per_tenant. */
+do $$
+begin
+  if to_regclass('backup.snapshots') is null then
+    raise exception 'NOT APPLICABLE HERE: backup.snapshots is database par nahi hai (baseline defect; Cloud SQL par cloudsql/06 se aata hai) - cases 1-2 passed';
+  end if;
+end $$;
+
 /* Case 3 ke liye apna data, kyunki pehle ye raat wale cron par nirbhar tha.
    Jis bhi database par sweep abhi chala na ho — naya restore, dev box, ya is file
    ka mahine baad ka pehla run — ye "ek saal me ek bhi snapshot nahi" par marta tha,

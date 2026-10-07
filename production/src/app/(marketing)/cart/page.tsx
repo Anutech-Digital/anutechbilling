@@ -9,7 +9,7 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, COUPONS, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
@@ -19,7 +19,8 @@ export default function CartPage() {
   const t = cart.totals;
   const hostingWarning = hostingLimitWarning(cart.lines);
   const code = cart.coupon.trim().toUpperCase();
-  const couponValid = code in COUPONS;
+  // R-329: checked on the server — the code table is not in this page's JavaScript.
+  const couponValid = cart.couponStatus === "valid";
 
   if (cart.lines.length === 0) {
     return (
@@ -86,18 +87,28 @@ export default function CartPage() {
 
         {/* Sticky, quote page ke estimate jaisa — lambi cart me total hamesha dikhe. */}
         <aside className="card" style={{ position: "sticky", top: 84 }}>
-          <label className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 8 }}>COUPON</label>
+          <label htmlFor="cart-coupon" className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 8 }}>COUPON</label>
           <input
+            id="cart-coupon"
             value={cart.coupon}
             onChange={(e) => cart.setCoupon(e.target.value)}
-            placeholder="ANUTECH10"
+            placeholder="Enter code"
             aria-label="Coupon code"
             style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "10px 12px", fontSize: 15, fontFamily: "var(--font-mono)", textTransform: "uppercase" }}
           />
-          <div className="meta" style={{ margin: "6px 0 16px", color: code && !couponValid ? "var(--danger)" : "var(--text-muted)" }}>
-            {code && !couponValid
-              ? "That code is not valid. Try ANUTECH10 or MIGRATE15."
-              : "Have a code? ANUTECH10 or MIGRATE15."}
+          {/* R-225: never name a code here — coupons are given out, not advertised. */}
+          <div className="meta" aria-live="polite" style={{ margin: "6px 0 16px", color: cart.couponStatus === "invalid" ? "var(--danger)" : "var(--text-muted)" }}>
+            {cart.couponStatus === "invalid"
+              ? "That code is not valid."
+              : cart.couponStatus === "checking"
+                ? "Checking the code…"
+                : cart.couponStatus === "error"
+                  ? "Could not check the code. It is checked again at payment."
+                  : couponValid && t.discount === 0
+                    ? "Coupons don't apply to domain names."
+                    : couponValid
+                      ? "Applied to your first payment. Renewals are at the regular price."
+                      : "Have a coupon code?"}
           </div>
 
           {t.discount > 0 && <Row label={`${code} — ${Math.round(t.discountRate * 100)}% off`} value={`−${rupee(t.discount)}`} color="var(--success)" />}

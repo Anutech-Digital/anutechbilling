@@ -51,7 +51,16 @@ function mask(s: string | null | undefined): string | null {
   return s ? maskSecret(s) : null;
 }
 
-async function resolveTenantAndOwnership() {
+/**
+ * R-256: reading the STATUS (configured? mode? readiness) is open to owner / manager / billing,
+ * the roles that see Settings > Integrations. A GET that was owner-only answered 403, the card
+ * read that as "Not configured / simulation" and offered a Setup that then failed on save,
+ * while the integration was live. Saving and clearing stay owner-only, and secret previews
+ * (masks, tokens) go only to the owner.
+ */
+const READ_ROLES = new Set(["owner", "manager", "billing"]);
+
+async function resolveTenant(access: "read" | "manage") {
   const supabase = createClient();
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return { error: "Not authenticated" as const };
@@ -61,8 +70,9 @@ async function resolveTenantAndOwnership() {
     .eq("id", authData.user.id)
     .single();
   if (error || !me) return { error: "User not linked to a tenant" as const };
-  if (me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
-  return { tenantId: me.tenant_id };
+  if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
+  if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
+  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner" };
 }
 
 function webhookUrlFor(tenantId: string, req: NextRequest): string {
@@ -78,7 +88,7 @@ function webhookUrlFor(tenantId: string, req: NextRequest): string {
 }
 
 export async function GET(req: NextRequest) {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
   const admin = createAdminClient();
@@ -107,15 +117,16 @@ export async function GET(req: NextRequest) {
     readiness,
     mode:                  razorpayMode(data?.razorpay_key_id),
     key_id:                data?.razorpay_key_id ?? null,
-    key_secret_mask:       mask(data?.razorpay_key_secret),
-    webhook_secret_mask:   mask(data?.razorpay_webhook_secret),
+    key_secret_mask:       r.isOwner ? mask(data?.razorpay_key_secret) : null,
+    webhook_secret_mask:   r.isOwner ? mask(data?.razorpay_webhook_secret) : null,
+    can_manage:            r.isOwner,
     webhook_url:           webhookUrlFor(r.tenantId, req),
     updated_at:            data?.updated_at ?? null,
   });
 }
 
 export async function POST(req: NextRequest) {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
   let body: unknown;
@@ -191,7 +202,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
   const admin = createAdminClient();

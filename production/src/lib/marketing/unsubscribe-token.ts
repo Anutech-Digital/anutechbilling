@@ -53,9 +53,9 @@ export function unsubscribeUrl(appUrl: string | null | undefined, tenantId: stri
 export function unsubscribeFooter(url: string, senderName: string): { text: string; html: string } {
   const safeName = senderName.replace(/[<>&"]/g, "");
   return {
-    text: `\n\n—\nYe mail ${safeName} ki taraf se aaya hai. Aage aise mail nahi chahiye? Unsubscribe: ${url}`,
+    text: `\n\n—\nYe mail ${safeName} ki taraf se aaya hai. Aage aise mail nahi chahiye? Unsubscribe: ${url}`, // customer-language
     html: `<hr style="border:none;border-top:1px solid #ddd;margin:24px 0 12px"/>`
-        + `<p style="font-size:12px;color:#777;margin:0">Ye mail ${safeName} ki taraf se aaya hai. `
-        + `Aage aise mail nahi chahiye? <a href="${url.replace(/"/g, "&quot;")}" style="color:#777">Unsubscribe</a></p>`,
+        + `<p style="font-size:12px;color:#777;margin:0">Ye mail ${safeName} ki taraf se aaya hai. ` // customer-language
+        + `Aage aise mail nahi chahiye? <a href="${url.replace(/"/g, "&quot;")}" style="color:#777">Unsubscribe</a></p>`, // customer-language
   };
 }

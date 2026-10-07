@@ -72,7 +72,7 @@ export default function DocumentsPage() {
         </div>
         <div className="flex gap-2 items-center">
           <div className="w-52 hidden sm:block">
-            <Input prefix={<Icon name="search" size={14} />} placeholder="Search documents…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input aria-label="Search documents" prefix={<Icon name="search" size={14} />} placeholder="Search documents…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <Button variant="primary" icon="upload" onClick={() => setUploadOpen(true)} className="hidden md:inline-flex">Upload</Button>
         </div>

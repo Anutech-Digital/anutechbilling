@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { BILL_STATUSES } from "@/lib/navigation/drilldown";
 
 import { Card } from "@/components/ui/card";
@@ -49,6 +50,8 @@ import { BillDetailDialog } from "@/components/features/accounting/bill-detail-d
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { istToday, fyBounds } from "@/lib/dates/ist";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
 
 /** Current financial year (Apr 1 → today), IST-safe, in YYYY-MM-DD. Defaulting
  *  to the FY (not just this month) so a freshly-added bill dated in an earlier
@@ -64,9 +67,14 @@ const STATUS_COLOR: Record<string, "rose" | "emerald" | "amber" | "slate"> = {
 };
 
 export default function VendorBillsPage() {
-  const [range, setRange]   = React.useState(thisFYRange());
+  /* R-287: date range + search live in the URL (useUrlState) like status already did, so
+     Back / reload / a shared link keeps the same filtered list. */
+  const fy = React.useMemo(() => thisFYRange(), []);
+  const [from, setFrom] = useUrlState("from", fy.from);
+  const [to, setTo]     = useUrlState("to", fy.to);
+  const range = React.useMemo(() => ({ from, to }), [from, to]);
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
-  const [statusFilter, setStatusFilter] = useUrlChoice<"" | "unpaid" | "paid" | "partial" | "owed">("status", BILL_STATUSES, "");
+  const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
   const [payBill, setPayBill] = React.useState<VendorBill | null>(null);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
@@ -80,9 +88,80 @@ export default function VendorBillsPage() {
   const del     = useDeleteVendorBill();
   const confirm = useConfirm();
 
-  const bills    = billsQ.data ?? [];
+  const bills    = React.useMemo(() => billsQ.data ?? [], [billsQ.data]);
   const isLoading = billsQ.isLoading;
   const totals   = totalsQ.data;
+
+  /* R-214: search runs here; sort, count and Load more come from DataTable. */
+  const [search, setSearch] = useUrlState("q");
+  const shownBills = React.useMemo(() => filterBills(bills, search), [bills, search]);
+  const viewState = React.useMemo(
+    () => ({ from: range.from, to: range.to, status: statusFilter, q: search.trim() }),
+    [range, statusFilter, search],
+  );
+  const deleteBill = React.useCallback(async (b: VendorBill) => {
+    if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id);
+  }, [confirm, del]);
+
+  const columns = React.useMemo<DataTableColumn<VendorBill>[]>(() => [
+    { id: "vendor", header: "Vendor", width: "30%", sortValue: BILL_SORT.vendor, cell: (b) => <VendorCell bill={b} /> },
+    {
+      id: "bill_no", header: "Bill #", width: "14%", sortValue: BILL_SORT.bill_no,
+      cell: (b) => <div className="font-mono text-xs text-ink-2 truncate" title={b.bill_no || undefined}>{b.bill_no || "—"}</div>,
+    },
+    { id: "date", header: "Date", width: "13%", sortValue: BILL_SORT.date, cell: (b) => <DateCell bill={b} /> },
+    { id: "amount", header: "Amount", width: "15%", align: "right", sortValue: BILL_SORT.amount, cell: (b) => <AmountCell bill={b} /> },
+    {
+      id: "status", header: "Status", width: "11%", sortValue: BILL_SORT.status,
+      cell: (b) => <Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge>,
+    },
+    {
+      id: "actions", header: <span className="sr-only">Actions</span>, width: "17%", align: "right",
+      cell: (b) => (
+        <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+          <BillActions bill={b} onPay={() => setPayBill(b)} onDelete={() => void deleteBill(b)} />
+        </div>
+      ),
+    },
+  ], [deleteBill]);
+
+  const toolbar = (
+    <>
+      <Input
+        type="search"
+        aria-label="Search bills"
+        placeholder="Vendor, bill #, GSTIN…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full sm:w-56"
+      />
+      <label htmlFor="bills-from" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">From</label>
+      <input id="bills-from"
+        type="date"
+        value={range.from}
+        onChange={(e) => setFrom(e.target.value)}
+        className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
+      />
+      <label htmlFor="bills-to" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">To</label>
+      <input id="bills-to"
+        type="date"
+        value={range.to}
+        onChange={(e) => setTo(e.target.value)}
+        className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
+      />
+      <select aria-label="Status filter"
+        value={statusFilter}
+        onChange={(e) => setStatusFilter(e.target.value as BillStatusFilter)}
+        className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
+      >
+        <option value="">All statuses</option>
+        <option value="owed">Owed (unpaid + partial)</option>
+        <option value="unpaid">Unpaid</option>
+        <option value="partial">Partial</option>
+        <option value="paid">Paid</option>
+      </select>
+    </>
+  );
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
@@ -122,41 +201,7 @@ export default function VendorBillsPage() {
         <KPI label="Input GST (claimable)" value={totals ? rupee(totals.inputGst) : "—"} tone="emerald" onClick={() => setStatusFilter("")} />
       </div>
 
-      {/* ── Filter strip ────────────────────────────────────────── */}
-      <Card className="mb-5 p-3 md:p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <label htmlFor="bills-from" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">From</label>
-          <input id="bills-from"
-            type="date"
-            value={range.from}
-            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
-          />
-          <label htmlFor="bills-to" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">To</label>
-          <input id="bills-to"
-            type="date"
-            value={range.to}
-            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
-          />
-          <select aria-label="Status filter"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-            className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper"
-          >
-            <option value="">All statuses</option>
-            <option value="owed">Owed (unpaid + partial)</option>
-            <option value="unpaid">Unpaid</option>
-            <option value="partial">Partial</option>
-            <option value="paid">Paid</option>
-          </select>
-          <div className="ml-auto text-xs text-ink-3">
-            Showing {bills.length} {bills.length === 1 ? "bill" : "bills"}
-          </div>
-        </div>
-      </Card>
-
-      {/* ── List ────────────────────────────────────────────────── */}
+      {/* ── List (R-214: shared DataTable — header sort, search, saved views, Load more) ── */}
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
@@ -165,155 +210,56 @@ export default function VendorBillsPage() {
         <Card className="py-2">
           <EmptyState
             icon="alert"
-            title="Bills load nahi ho paye"
-            body="Ye data load karne me dikkat aayi — aapke bills safe hain, bas dikh nahi rahe. Dobara try karo."
+            title="Couldn't load bills"
+            body="Your bills are safe — they just didn't load. Try again."
             action={<Button variant="primary" icon="refresh" onClick={() => billsQ.refetch()}>Try again</Button>}
           />
         </Card>
-      ) : bills.length === 0 ? (
-        <Card className="py-2">
-          <EmptyState
-            icon="receipt"
-            title="No bills in this range"
-            body="Add your Google CSP / Microsoft Partner / Zoho bills here so COGS and input GST show up on your P&L and GST reports."
-            action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add your first bill</Button>}
-          />
-        </Card>
       ) : (
-        <>
-          {/* Desktop table — 6 tidy columns that fit without horizontal scroll */}
-          <Card flush className="hidden md:block overflow-hidden">
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col className="w-[30%]" />
-                <col className="w-[14%]" />
-                <col className="w-[13%]" />
-                <col className="w-[15%]" />
-                <col className="w-[11%]" />
-                <col className="w-[17%]" />
-              </colgroup>
-              <thead className="bg-paper-2 border-b border-hairline-strong text-2xs uppercase tracking-wider text-ink-3 font-semibold">
-                <tr>
-                  <th className="text-left  px-4 py-2.5">Vendor</th>
-                  <th className="text-left  px-3 py-2.5">Bill #</th>
-                  <th className="text-left  px-3 py-2.5">Date</th>
-                  <th className="text-right px-3 py-2.5">Amount</th>
-                  <th className="text-left  px-3 py-2.5">Status</th>
-                  <th className="text-right px-2 py-2.5"><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline">
-                {bills.map((b) => {
-                  const gst = (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0);
-                  // GST head breakdown for ITC clarity (inter-state IGST vs intra CGST+SGST).
-                  const gstTitle = b.igst > 0
-                    ? `IGST ${rupee(b.igst)}`
-                    : (b.cgst > 0 || b.sgst > 0)
-                      ? `CGST ${rupee(b.cgst)} + SGST ${rupee(b.sgst)}`
-                      : "No GST";
-                  // Payment-due aging (unpaid only).
-                  const dueDays = b.due_date ? Math.ceil((new Date(`${b.due_date}T00:00:00`).getTime() - Date.now()) / 86400000) : null;
-                  const showAging = b.status !== "paid" && dueDays !== null && (dueDays < 0 || dueDays <= 15);
-                  return (
-                    <tr key={b.id} onClick={() => setDetailBill(b)} className="cursor-pointer border-b border-hairline last:border-0 hover:bg-paper-2/50 transition-colors">
-                      {/* Vendor — identity + category + items */}
-                      <td className="px-4 py-3 align-top">
-                        <div className="font-medium text-ink flex items-center gap-2 flex-wrap">
-                          <span className="truncate">{b.vendor_name}</span>
-                          {b.source_tenant_invoice_id && (
-                            <Badge color="indigo" title="Auto-imported from your distributor — created when they invoiced you">From distributor</Badge>
-                          )}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-2 flex-wrap text-xs text-ink-3">
-                          {b.vendor_gstin && <span className="font-mono">{b.vendor_gstin}</span>}
-                          {b.category && <Badge kind="muted" size="sm">{b.category}</Badge>}
-                          {(b.line_items?.length ?? 0) > 0 && (
-                            <span className="inline-flex items-center gap-1"><Icon name="file" size={11} />{b.line_items.length} item{b.line_items.length === 1 ? "" : "s"}</span>
-                          )}
-                        </div>
-                      </td>
-                      {/* Bill # */}
-                      <td className="px-3 py-3 font-mono text-xs text-ink-2 align-top truncate" title={b.bill_no || undefined}>{b.bill_no || "—"}</td>
-                      {/* Date + aging */}
-                      <td className="px-3 py-3 align-top whitespace-nowrap">
-                        <div className="text-ink-2">{formatDate(b.bill_date)}</div>
-                        {b.due_date && <div className="text-xs text-ink-3">due {formatDate(b.due_date)}</div>}
-                        {showAging && (
-                          <div className="mt-0.5">
-                            <Badge kind={dueDays! < 0 ? "danger" : dueDays! <= 7 ? "warning" : "muted"} dot>
-                              {dueDays! < 0 ? `Overdue ${Math.abs(dueDays!)}d` : dueDays === 0 ? "Due today" : `Due in ${dueDays}d`}
-                            </Badge>
-                          </div>
-                        )}
-                      </td>
-                      {/* Amount — total prominent, GST + foreign as sublines */}
-                      <td className="px-3 py-3 text-right align-top whitespace-nowrap">
-                        <div className="font-semibold text-ink font-mono tabular-nums">{rupee(b.total)}</div>
-                        {(() => { const fx = foreignAmount(b.currency, b.total, b.fx_rate); return fx ? <div className="text-xs font-normal text-ink-3 font-mono">{fx}</div> : null; })()}
-                        {gst > 0 && <div className="text-xs text-emerald cursor-help" title={gstTitle}>incl {rupee(gst)} GST</div>}
-                        {b.status !== "paid" && (b.total - (b.paid_amount ?? 0)) > 0 && (b.paid_amount ?? 0) > 0 && (
-                          <div className="text-xs text-rose tabular-nums">{rupee(b.total - (b.paid_amount ?? 0))} due</div>
-                        )}
-                      </td>
-                      {/* Status */}
-                      <td className="px-3 py-3 align-top"><Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge></td>
-                      {/* Actions */}
-                      <td className="px-2 py-3 text-right align-top" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end">
-                          <BillActions
-                            bill={b}
-                            onPay={() => setPayBill(b)}
-                            onDelete={async () => { if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
-
-          {/* Mobile card list */}
-          <ul className="md:hidden space-y-2.5">
-            {bills.map((b) => {
-              const gst = (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0);
-              return (
-                <li key={b.id}>
-                  <Card className="p-4 cursor-pointer" onClick={() => setDetailBill(b)}>
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <div className="font-medium text-ink leading-tight">
-                        {b.vendor_name}
-                        {(b.line_items?.length ?? 0) > 0 && <span className="ml-1 text-xs font-normal text-ink-3">· {b.line_items.length} items</span>}
-                      </div>
-                      <Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge>
-                    </div>
-                    <div className="text-xs text-ink-3 font-mono mb-2">
-                      {b.bill_no || "—"} · {formatDate(b.bill_date)}
-                    </div>
-                    <div className="text-xs text-ink-3 mb-2">{b.category}</div>
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <div className="font-serif text-xl text-ink leading-none">{rupee(b.total)}</div>
-                        {(() => { const fx = foreignAmount(b.currency, b.total, b.fx_rate); return fx ? <div className="text-xs text-ink-3 mt-1">{fx} @ ₹{b.fx_rate}/{b.currency}</div> : null; })()}
-                        {gst > 0 && (
-                          <div className="text-xs text-emerald mt-1">+{rupee(gst)} input GST</div>
-                        )}
-                      </div>
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <BillActions
-                          bill={b}
-                          onPay={() => setPayBill(b)}
-                          onDelete={async () => { if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}
-                        />
-                      </span>
-                    </div>
-                  </Card>
-                </li>
-              );
-            })}
-          </ul>
-        </>
+        <DataTable<VendorBill>
+          urlKey="sort"
+          rows={shownBills}
+          totalCount={bills.length}
+          noun="bill"
+          columns={columns}
+          getRowId={(b) => b.id}
+          onRowClick={(b) => setDetailBill(b)}
+          toolbar={toolbar}
+          views={{
+            storageKey: "vendor-bills",
+            current: viewState,
+            apply: (s) => {
+              const v = readBillsView(s, viewState);
+              setFrom(v.from);
+              setTo(v.to);
+              setStatusFilter(v.status);
+              setSearch(v.q);
+            },
+          }}
+          pageSize={50}
+          mobileCard={(b) => (
+            <BillCard bill={b} onOpen={() => setDetailBill(b)} onPay={() => setPayBill(b)} onDelete={() => void deleteBill(b)} />
+          )}
+          empty={
+            <Card className="py-2">
+              {bills.length > 0 ? (
+                <EmptyState
+                  icon="search"
+                  title="No bills match"
+                  body={`Nothing matches "${search.trim()}" in this range.`}
+                  action={<Button variant="default" onClick={() => setSearch("")}>Clear search</Button>}
+                />
+              ) : (
+                <EmptyState
+                  icon="receipt"
+                  title="No bills in this range"
+                  body="Add your Google CSP / Microsoft Partner / Zoho bills here so COGS and input GST show up on your P&L and GST reports."
+                  action={<Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add your first bill</Button>}
+                />
+              )}
+            </Card>
+          }
+        />
       )}
 
       {/* Mobile FAB */}
@@ -327,6 +273,103 @@ export default function VendorBillsPage() {
   );
 }
 
+
+// ─── Table cells (desktop) ──────────────────────────────────────────────────
+function billGst(b: VendorBill): number {
+  return (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0);
+}
+
+/** Vendor — identity + category + items. */
+function VendorCell({ bill: b }: { bill: VendorBill }) {
+  return (
+    <>
+      <div className="font-medium text-ink flex items-center gap-2 flex-wrap">
+        <span className="truncate">{b.vendor_name}</span>
+        {b.source_tenant_invoice_id && (
+          <Badge color="indigo" title="Auto-imported from your distributor — created when they invoiced you">From distributor</Badge>
+        )}
+      </div>
+      <div className="mt-0.5 flex items-center gap-2 flex-wrap text-xs text-ink-3">
+        {b.vendor_gstin && <span className="font-mono">{b.vendor_gstin}</span>}
+        {b.category && <Badge kind="muted" size="sm">{b.category}</Badge>}
+        {(b.line_items?.length ?? 0) > 0 && (
+          <span className="inline-flex items-center gap-1"><Icon name="file" size={11} />{b.line_items.length} item{b.line_items.length === 1 ? "" : "s"}</span>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Date + payment-due aging (unpaid only). */
+function DateCell({ bill: b }: { bill: VendorBill }) {
+  const dueDays = b.due_date ? Math.ceil((new Date(`${b.due_date}T00:00:00`).getTime() - Date.now()) / 86400000) : null;
+  const showAging = b.status !== "paid" && dueDays !== null && (dueDays < 0 || dueDays <= 15);
+  return (
+    <div className="whitespace-nowrap">
+      <div className="text-ink-2">{formatDate(b.bill_date)}</div>
+      {b.due_date && <div className="text-xs text-ink-3">due {formatDate(b.due_date)}</div>}
+      {showAging && dueDays !== null && (
+        <div className="mt-0.5">
+          <Badge kind={dueDays < 0 ? "danger" : dueDays <= 7 ? "warning" : "muted"} dot>
+            {dueDays < 0 ? `Overdue ${Math.abs(dueDays)}d` : dueDays === 0 ? "Due today" : `Due in ${dueDays}d`}
+          </Badge>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Amount — total prominent, GST + foreign + balance as sublines. */
+function AmountCell({ bill: b }: { bill: VendorBill }) {
+  const gst = billGst(b);
+  // GST head breakdown for ITC clarity (inter-state IGST vs intra CGST+SGST).
+  const gstTitle = b.igst > 0
+    ? `IGST ${rupee(b.igst)}`
+    : (b.cgst > 0 || b.sgst > 0)
+      ? `CGST ${rupee(b.cgst)} + SGST ${rupee(b.sgst)}`
+      : "No GST";
+  const fx = foreignAmount(b.currency, b.total, b.fx_rate);
+  const due = billOutstanding(b);
+  return (
+    <div className="whitespace-nowrap">
+      <div className="font-semibold text-ink font-mono tabular-nums">{rupee(b.total)}</div>
+      {fx && <div className="text-xs font-normal text-ink-3 font-mono">{fx}</div>}
+      {gst > 0 && <div className="text-xs text-emerald cursor-help" title={gstTitle}>incl {rupee(gst)} GST</div>}
+      {due > 0 && (b.paid_amount ?? 0) > 0 && <div className="text-xs text-rose tabular-nums">{rupee(due)} due</div>}
+    </div>
+  );
+}
+
+// ─── Phone / tablet card ────────────────────────────────────────────────────
+function BillCard({ bill: b, onOpen, onPay, onDelete }: { bill: VendorBill; onOpen: () => void; onPay: () => void; onDelete: () => void }) {
+  const gst = billGst(b);
+  const fx = foreignAmount(b.currency, b.total, b.fx_rate);
+  return (
+    <Card className="p-4 cursor-pointer" onClick={onOpen}>
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div className="font-medium text-ink leading-tight">
+          {b.vendor_name}
+          {(b.line_items?.length ?? 0) > 0 && <span className="ml-1 text-xs font-normal text-ink-3">· {b.line_items.length} items</span>}
+        </div>
+        <Badge color={STATUS_COLOR[b.status] ?? "slate"}>{b.status}</Badge>
+      </div>
+      <div className="text-xs text-ink-3 font-mono mb-2">
+        {b.bill_no || "—"} · {formatDate(b.bill_date)}
+      </div>
+      {b.category && <div className="text-xs text-ink-3 mb-2">{b.category}</div>}
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="font-serif text-xl text-ink leading-none">{rupee(b.total)}</div>
+          {fx && <div className="text-xs text-ink-3 mt-1">{fx} @ ₹{b.fx_rate}/{b.currency}</div>}
+          {gst > 0 && <div className="text-xs text-emerald mt-1">+{rupee(gst)} input GST</div>}
+        </div>
+        <span onClick={(e) => e.stopPropagation()}>
+          <BillActions bill={b} onPay={onPay} onDelete={onDelete} />
+        </span>
+      </div>
+    </Card>
+  );
+}
 
 // ─── Row actions — View bill (attachment) · Record payment · Delete ─────────
 function BillActions({ bill, onPay, onDelete }: { bill: VendorBill; onPay: () => void; onDelete: () => void }) {

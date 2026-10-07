@@ -15,9 +15,9 @@ describe("WhatsApp broadcast rules", () => {
 
   it("slots must run 1..n with one field each", () => {
     expect(paramCount("Hi {{1}} from {{2}}")).toBe(2);
-    expect(templateProblem("Hi {{1}} from {{3}}", ["first_name", "sender", "company"])).toMatch(/\{\{2\}\} gayab/);
-    expect(templateProblem("Hi {{1}}", [])).toMatch(/1 jagah/);
-    expect(templateProblem("Hi {{1}}", ["phone"])).toMatch(/koi field nahi/);
+    expect(templateProblem("Hi {{1}} from {{3}}", ["first_name", "sender", "company"])).toMatch(/\{\{2\}\} is missing/);
+    expect(templateProblem("Hi {{1}}", [])).toMatch(/1 slot,/);
+    expect(templateProblem("Hi {{1}}", ["phone"])).toMatch(/is not a field/);
     expect(templateProblem("Hello", [])).toBeNull();
     expect(isValidTemplateName("Festival Offer")).toBe(false);
   });

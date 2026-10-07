@@ -22,7 +22,7 @@ async function openReceipt(path: string) {
     const url = await getDocumentSignedUrl(path);
     window.open(url, "_blank", "noopener,noreferrer");
   } catch {
-    toast.error("Could not open the receipt");
+    toast.error("Could not open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
   }
 }
 
@@ -44,6 +44,8 @@ import { collectedInMonth } from "@/lib/company/summary";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -55,6 +57,8 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { canOpenQuotes } from "@/lib/quotes/access";
+import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -68,8 +72,11 @@ import { istMonth, toIstDate } from "@/lib/dates/ist";
 /* The postpaid countdown, shared with /subscriptions and the onboarding dialog. */
 import { paymentDueState, paymentDueChipLabel, todayIST } from "@/lib/subscriptions/payment-due";
 import { useConfirm, useAskText } from "@/components/providers/confirm-provider";
-import { usePagedRows, LoadMore, PAYMENTS_PAGE_SIZE } from "./load-more";
+import { PAYMENTS_PAGE_SIZE } from "./load-more";
 import { paymentMethodLabel } from "./method-label";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
+import { useRowOrder } from "./use-row-order";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -86,9 +93,8 @@ const METHOD_META: Record<string, { label: string; icon: string }> = {
   other:         { label: "Other",      icon: "info" },
 };
 
-// Table columns (left→right) + fluid percentage widths. A dedicated LINKED DOCS
+// Table column widths (fluid percentages, DataTable colgroup). A dedicated LINKED DOCS
 // column keeps the source quote / invoice / receipt out of the Status badge.
-const PAY_COL_ORDER = ["date", "customer", "amount", "method", "reference", "linked", "status", "action"];
 const PAY_COL_WIDTHS: Record<string, string> = {
   date: "10%", customer: "19%", amount: "12%", method: "13%", reference: "12%", linked: "16%", status: "10%", action: "8%",
 };
@@ -134,6 +140,12 @@ function PaymentsPageInner() {
   const { data: customers } = useCustomers();
   const { data: bankAccounts } = useBankAccounts();
   const { data: me } = useCurrentUser();
+  /* R-237: billing cannot open /quotes (middleware sends it to /invoices) — no quote links
+     for it, and Record payment opens the dialog here for everyone. */
+  const canQuotes = canOpenQuotes(me?.role);
+  /* R-255: the accountant reads payments; recording, reminders, refunds stay with the team. */
+  const canWrite = canWriteSales(me?.role);
+  const [payQuoteId, setPayQuoteId] = React.useState<string | null>(null);
   const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
 
@@ -169,8 +181,9 @@ function PaymentsPageInner() {
     return m;
   }, [customers]);
 
-  // Filter
-  const filtered = (payments ?? []).filter((p) => {
+  // Filter. Memoised: DataTable starts again at one page whenever `rows` is a new array
+  // (R-024), so a fresh array on every render would undo "Load more" (R-215).
+  const filtered = React.useMemo(() => (payments ?? []).filter((p) => {
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     if (customerFilter) {
@@ -191,30 +204,47 @@ function PaymentsPageInner() {
       p.method.toLowerCase().includes(s) ||
       (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
     );
-  });
+  }), [payments, tab, focus, customerFilter, quoteById, search]);
 
-  /* R-104: paint 50 at a time (R-024 rule). Tab counts, KPIs, "collected" and the CSV
-     export still use every payment in `filtered` / `payments`; only the lists are paged. */
-  const paged = usePagedRows(filtered, PAYMENTS_PAGE_SIZE, [tab, focus, customerFilter ?? "", search.trim()].join("|"));
+  /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
+     time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
+     still use every payment in `filtered` / `payments`; only the painting is paged. */
+  const paySort = React.useMemo(
+    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id)?.customerName),
+    [quoteById],
+  );
+  const payColumns: DataTableColumn<Payment>[] = [
+    { id: "date", header: "Date", width: PAY_COL_WIDTHS.date, sortValue: paySort.date },
+    { id: "customer", header: "Customer", width: PAY_COL_WIDTHS.customer, sortValue: paySort.customer },
+    { id: "amount", header: "Amount", width: PAY_COL_WIDTHS.amount, align: "right", sortValue: paySort.amount },
+    { id: "method", header: "Method", width: PAY_COL_WIDTHS.method, sortValue: paySort.method },
+    { id: "reference", header: "Reference", width: PAY_COL_WIDTHS.reference, sortValue: paySort.reference },
+    { id: "linked", header: "Linked docs", width: PAY_COL_WIDTHS.linked },
+    { id: "status", header: "Status", width: PAY_COL_WIDTHS.status, sortValue: paySort.status },
+    { id: "action", header: <span className="sr-only">Actions</span>, width: PAY_COL_WIDTHS.action, align: "right" },
+  ];
 
   /* j / k / Enter / o over the sales-payments table — opens the payment's quote,
      the same target a click uses. Enabled only while that table is on screen
      (it lives inside the subscription/all block, not the project view), so the
-     keys never open a row from a list the user isn't looking at. Keyed by id,
-     like /customers, so only that one table lights up. */
+     keys never open a row from a list the user isn't looking at. The order is read
+     from the painted rows (after a header sort / Load more), so the highlighted row
+     is the one Enter opens. */
+  const payTableRef = React.useRef<HTMLDivElement | null>(null);
+  const shownIds = useRowOrder(payTableRef, view !== "project" && !isLoading && !error && filtered.length > 0);
   const payKeys = useListKeys({
-    count: paged.shown.length,   // only the rows on screen (R-104)
+    count: shownIds.length,   // only the rows on screen (R-104)
     enabled: view !== "project",
     onOpen: (i) => {
-      const p = paged.shown[i];
-      if (p) router.push(`/quotes/${p.quote_id}` as never);
+      const p = filtered.find((x) => x.id === shownIds[i]);
+      if (p && canQuotes) router.push(`/quotes/${p.quote_id}` as never);
     },
   });
   const selectedRowRef = React.useRef<HTMLTableRowElement | null>(null);
   React.useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [payKeys.index]);
-  const payKbSelectedId = payKeys.index >= 0 ? paged.shown[payKeys.index]?.id ?? null : null;
+  const payKbSelectedId = payKeys.index >= 0 ? shownIds[payKeys.index] ?? null : null;
 
   const counts: Record<string, number> = { all: payments?.length ?? 0 };
   for (const p of payments ?? []) counts[p.status] = (counts[p.status] ?? 0) + 1;
@@ -299,6 +329,8 @@ function PaymentsPageInner() {
         </div>
       </div>
 
+      {!canWrite && <ViewOnlyNote what="record, edit or refund payments" />}
+
       {/* All / Subscription / Project payments toggle (mirrors the Invoices page) */}
       <TabBar
         className="overflow-y-hidden"
@@ -346,11 +378,12 @@ function PaymentsPageInner() {
                   {mtdProject > 0 && <p className="text-3xs text-ink-3 mt-0.5">incl. {rupee(mtdProject)} project receipts</p>}
                 </button>
                 {/* These two count QUOTES — they open the quotes they counted (lib/quotes/focus.ts). */}
-                <button type="button" onClick={() => router.push("/quotes?focus=partial" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+                {/* R-237: billing cannot open /quotes — the tile stays a number, not a dead link. */}
+                <button type="button" disabled={!canQuotes} onClick={() => router.push("/quotes?focus=partial" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left enabled:hover:border-amber/60 transition-all enabled:cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Partial Quotes</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{partialQuotes.length}</p>
                 </button>
-                <button type="button" onClick={() => router.push("/quotes?focus=to-invoice" as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
+                <button type="button" onClick={() => router.push((canQuotes ? "/quotes?focus=to-invoice" : "/invoices") as never)} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
                   <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Awaiting GST Invoice</p>
                   <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{rupee(awaitingInvoiceTotal, { compact: true })} <span className="text-xs text-ink-3 font-normal">({awaitingInvoiceQuotes.length})</span></p>
                 </button>
@@ -429,9 +462,9 @@ function PaymentsPageInner() {
                         <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot>{o.days_outstanding}d</Badge>
                         <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
                       </div>
-                      {o.quote_id && (
-                        <Button asChild size="sm" variant="primary" icon="rupee">
-                          <Link href={`/quotes/${o.quote_id}` as any}>Record payment</Link>
+                      {o.quote_id && canWrite && (
+                        <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayQuoteId(o.quote_id)}>
+                          Record payment
                         </Button>
                       )}
                     </div>
@@ -486,7 +519,8 @@ function PaymentsPageInner() {
                           writeOffSub.mutate({ id: o.subscription_id, reason });
                         }
                       }}
-                      recordPaymentHref={o.quote_id ? `/quotes/${o.quote_id}` : null}
+                      onRecordPayment={o.quote_id ? () => setPayQuoteId(o.quote_id) : null}
+                      readOnly={!canWrite}
                     />
                   ))}
                 </tbody>
@@ -504,7 +538,7 @@ function PaymentsPageInner() {
       {/* Action needed — the two "close the loop" worklists (collect balance +
           generate the paid-but-uninvoiced GST invoices) merged into ONE compact
           card so they don't push the payment table down as two stacked bands. */}
-      {!isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0) && (
+      {canWrite && !isLoading && (partialQuotes.length > 0 || awaitingInvoiceQuotes.length > 0) && (
         <GeminiCard title="Action needed to close the loop" compact>
           <ul className="space-y-2">
             {partialQuotes.length > 0 && (
@@ -512,9 +546,15 @@ function PaymentsPageInner() {
                 <span className="min-w-0">
                   <b>{partialQuotes.length} partial payment{partialQuotes.length === 1 ? "" : "s"}</b> — collect the remaining balance from the customer.
                 </span>
-                <Button asChild size="sm" variant="default" icon="external" className="shrink-0">
-                  <Link href={`/quotes/${partialQuotes[0].id}` as any}>Open</Link>
-                </Button>
+                {canQuotes ? (
+                  <Button asChild size="sm" variant="default" icon="external" className="shrink-0">
+                    <Link href={`/quotes/${partialQuotes[0].id}` as any}>Open</Link>
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="default" icon="rupee" className="shrink-0" onClick={() => setPayQuoteId(partialQuotes[0].id)}>
+                    Record payment
+                  </Button>
+                )}
               </li>
             )}
             {awaitingInvoiceQuotes.length > 0 && (
@@ -522,8 +562,9 @@ function PaymentsPageInner() {
                 <span className="min-w-0">
                   <b>{awaitingInvoiceQuotes.length} fully paid</b>, GST invoice not generated yet (₹{awaitingInvoiceTotal.toLocaleString("en-IN")} worth).
                 </span>
+                {/* Billing generates GST invoices on /invoices (the quote page is closed to it). */}
                 <Button asChild size="sm" variant="default" icon="receipt" className="shrink-0">
-                  <Link href={`/quotes/${awaitingInvoiceQuotes[0].id}` as any}>Generate</Link>
+                  <Link href={(canQuotes ? `/quotes/${awaitingInvoiceQuotes[0].id}` : "/invoices") as any}>Generate</Link>
                 </Button>
               </li>
             )}
@@ -567,9 +608,8 @@ function PaymentsPageInner() {
           <TabBar className="overflow-y-hidden" value={tab} onChange={(v) => { setFocus(""); setTab(v as typeof tab); }} items={tabsWithCounts} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
-              {paged.hidden > 0
-                ? <>Showing {paged.shown.length} of {filtered.length} payments</>
-                : <>Showing {filtered.length} of {payments.length} payments</>}
+              {/* How many are painted is the table's own "Showing x of y" (R-215). */}
+              {filtered.length} of {payments.length} payments
               {" · "}{rupee(totalCollected)} collected all-time
             </div>
             <div className="w-full sm:w-72">
@@ -620,7 +660,7 @@ function PaymentsPageInner() {
           body="Once you record a payment on any quote, it shows up here for reconciliation and invoicing."
           action={
             <Button asChild icon="external">
-              <Link href="/quotes">Go to Quotes</Link>
+              {canQuotes ? <Link href="/quotes">Go to Quotes</Link> : <Link href="/invoices">Go to Invoices</Link>}
             </Button>
           }
         />
@@ -637,16 +677,28 @@ function PaymentsPageInner() {
         />
       )}
 
-      {/* Adaptive card list — viewports < 1280px */}
+      {/* R-215: one shared DataTable — cards below 1280px, the table at xl; header sort;
+          "Load 50 more" (R-104) from its pageSize. Rows carry data-pay-row-id so the
+          keyboard knows the painted order. */}
       {!isLoading && !error && filtered.length > 0 && (
-        <ul className="xl:hidden space-y-2 mb-3">
-          {paged.shown.map((p) => {
+        <div ref={payTableRef}>
+          <DataTable
+            urlKey="sort"
+            rows={filtered}
+            columns={payColumns}
+            getRowId={(p) => p.id}
+            totalCount={payments?.length}
+            noun="payment"
+            cardsBelow="xl"
+            pageSize={PAYMENTS_PAGE_SIZE}
+            mobileCard={(p) => {
             const ctx = quoteById.get(p.quote_id);
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
-              <li key={p.id} className="bg-paper border border-hairline rounded-lg overflow-hidden">
-                <Link
-                  href={`/quotes/${p.quote_id}` as never}
+              <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
+                <MaybeQuoteLink
+                  quoteId={p.quote_id}
+                  enabled={canQuotes}
                   className="block p-3 active:bg-paper-2/50"
                 >
                   <div className="flex items-start justify-between gap-3 mb-1.5">
@@ -677,10 +729,10 @@ function PaymentsPageInner() {
                       {p.status}
                     </Badge>
                   </div>
-                </Link>
+                </MaybeQuoteLink>
                 {(p.status === "received" || p.receipt_file_path) && (
                 <div className="flex border-t border-hairline/60">
-                  {p.status === "received" && (
+                  {p.status === "received" && canWrite && (
                     <button
                       type="button"
                       onClick={() => setEditPayment(p)}
@@ -700,33 +752,10 @@ function PaymentsPageInner() {
                   )}
                 </div>
                 )}
-              </li>
+              </div>
             );
-          })}
-        </ul>
-      )}
-
-      {/* Desktop table — viewports >= 1280px */}
-      {!isLoading && !error && filtered.length > 0 && (
-        <Card flush className="hidden xl:block">
-          <table className="w-full table-fixed">
-            <colgroup>
-              {PAY_COL_ORDER.map((id) => <col key={id} style={{ width: PAY_COL_WIDTHS[id] }} />)}
-            </colgroup>
-            <thead className="bg-paper-2 border-b border-hairline-strong">
-              <tr>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Date</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Customer</th>
-                <th className="text-right px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Amount</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Method</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Reference</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Linked docs</th>
-                <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Status</th>
-                <th className="px-2 py-2.5 text-right"><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.shown.map((p) => {
+            }}
+            renderRow={(p) => {
                 const ctx = quoteById.get(p.quote_id);
                 const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
                 return (
@@ -742,14 +771,9 @@ function PaymentsPageInner() {
                     rowRef={p.id === payKbSelectedId ? selectedRowRef : undefined}
                   />
                 );
-              })}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {!isLoading && !error && (
-        <LoadMore hidden={paged.hidden} pageSize={PAYMENTS_PAGE_SIZE} noun="payments" onLoadMore={paged.loadMore} />
+            }}
+          />
+        </div>
       )}
 
       {/* Help */}
@@ -833,8 +857,13 @@ function PaymentsPageInner() {
       )}
 
       {/* Edit payment details (safe fields only — amount stays locked) */}
+      <RecordQuotePaymentDialog
+        quoteId={payQuoteId}
+        open={!!payQuoteId}
+        onOpenChange={(o) => { if (!o) setPayQuoteId(null); }}
+      />
       <EditPaymentDialog
-        open={!!editPayment}
+        open={!!editPayment && canWrite}
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
         payment={editPayment}
         customerName={
@@ -872,14 +901,18 @@ function OutstandingRowView({
   onSuspend,
   onResume,
   onWriteOff,
-  recordPaymentHref,
+  onRecordPayment,
+  readOnly = false,
 }: {
   o: OutstandingRow;
+  /** R-255: a view-only role (the accountant) sees the row with no action buttons. */
+  readOnly?: boolean;
   onReminder: () => void;
   onSuspend:  () => void;
   onResume:   () => void;
   onWriteOff: () => void;
-  recordPaymentHref: string | null;
+  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open). */
+  onRecordPayment: (() => void) | null;
 }) {
   const aging =
     o.days_outstanding <= 7   ? "fresh" :
@@ -914,10 +947,11 @@ function OutstandingRowView({
         {o.last_reminder_at ? formatDate(o.last_reminder_at) : <span className="italic">never</span>}
       </td>
       <td className="p-2 text-right">
+        {readOnly ? <span className="text-2xs text-ink-3">View only</span> : (
         <div className="flex justify-end gap-1 flex-wrap">
-          {recordPaymentHref && (
-            <Button asChild size="sm" variant="primary" icon="rupee">
-              <Link href={recordPaymentHref as any}>Pay</Link>
+          {onRecordPayment && (
+            <Button size="sm" variant="primary" icon="rupee" onClick={onRecordPayment}>
+              Pay
             </Button>
           )}
           <Button size="sm" icon="mail" onClick={onReminder}>
@@ -934,8 +968,28 @@ function OutstandingRowView({
             </Button>
           )}
         </div>
+        )}
       </td>
     </tr>
+  );
+}
+
+/** R-237: a quote link for roles that can open quotes, plain content for the rest (billing). */
+function MaybeQuoteLink({
+  quoteId,
+  enabled,
+  className,
+  children,
+}: {
+  quoteId: string;
+  enabled: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return enabled ? (
+    <Link href={`/quotes/${quoteId}` as never} className={className}>{children}</Link>
+  ) : (
+    <div className={className}>{children}</div>
   );
 }
 
@@ -968,14 +1022,21 @@ function PaymentRowView({
   const router = useRouter();
   const methodInfo = METHOD_META[p.method];
   const [receiptOpen, setReceiptOpen] = React.useState(false);
+  /* R-237: billing cannot open quotes — every quote link/row-click below is for the rest. */
+  const canQuotes = canOpenQuotes(me?.role);
+  const canWrite = canWriteSales(me?.role); // R-255
+  const openQuote = canQuotes
+    ? { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) }
+    : undefined;
+  const noQuoteHint = "The next step is on the quote — ask an owner or manager.";
   // When a delete is blocked (invoice issued / bank-reconciled / add-seats / etc.),
   // don't dead-end: show the reason AND a button to where the next step happens
   // (the quote, which lists the exact blocking records + how to clear them).
   const del = useDeletePayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: "Yahin se nahi hata sakte — quote khol ke aage ka step wahan se karo.",
-        action: { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) },
+        description: canQuotes ? "It can't be removed here — open the quote for the next step." : noQuoteHint,
+        action: openQuote,
       }),
   });
   const confirm = useConfirm();
@@ -987,8 +1048,8 @@ function PaymentRowView({
   const refund = useRefundPayment({
     onBlocked: (msg) =>
       toast.error(msg, {
-        description: "Ye rukavat quote/banking se hatati hai — wahin agla kadam hai.",
-        action: { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) },
+        description: canQuotes ? "This block is cleared on the quote or in Banking — the next step is there." : noQuoteHint,
+        action: openQuote,
       }),
   });
   const askText = useAskText();
@@ -1004,14 +1065,14 @@ function PaymentRowView({
     });
     if (reason === null) return;
     if (reason.length < 5) {
-      toast.error("Wajah kam se kam 5 akshar ki ho — voucher par chhapti hai.");
+      toast.error("Enter a reason of at least 5 characters", { description: "It is printed on the voucher." });
       return;
     }
     if (await confirm({
       title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
       body:
-        "Kitab me: payment 'refunded', RFV voucher banega, quote/subscription ka hisaab wapas khulega, " +
-        "aur is payment se bani credit band hogi.\n\nAsli paisa Razorpay/bank se aapko KHUD bhejna hoga — ye button gateway ko nahi chhoota.",
+        "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
+        "and any credit from this payment is closed.\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
       confirmLabel: "Book refund",
       danger: true,
     })) refund.mutate({ id: p.id, reason: reason.trim() });
@@ -1042,16 +1103,22 @@ function PaymentRowView({
   return (
     <tr
       ref={rowRef}
+      {...{ [PAY_ROW_ATTR]: p.id }}
       className={cn(
-        "group border-b border-hairline last:border-0 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset",
+        "group border-b border-hairline last:border-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-inset",
+        canQuotes && "cursor-pointer",
         selected ? "bg-amber-soft/60 ring-1 ring-inset ring-amber/40" : "hover:bg-paper-2/50",
       )}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open quote ${p.quote_id}`}
+      {...(canQuotes
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": `Open quote ${p.quote_id}`,
+            onClick: () => router.push(`/quotes/${p.quote_id}` as any),
+            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/quotes/${p.quote_id}` as any); } },
+          }
+        : {})}
       aria-selected={selected}
-      onClick={() => router.push(`/quotes/${p.quote_id}` as any)}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/quotes/${p.quote_id}` as any); } }}
     >
       <td className="px-3 py-2.5 text-xs text-ink-2 whitespace-nowrap align-top">{formatDate(p.received_at)}</td>
       <td className="px-3 py-2.5 text-sm font-medium align-top" onClick={(e) => e.stopPropagation()}>
@@ -1085,9 +1152,13 @@ function PaymentRowView({
           chips, so the Status column stays a clean single badge. */}
       <td className="px-3 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
         <div className="flex flex-col gap-1 items-start">
-          <Link href={`/quotes/${p.quote_id}` as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={p.quote_id}>
-            {p.quote_id}
-          </Link>
+          {canQuotes ? (
+            <Link href={`/quotes/${p.quote_id}` as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={p.quote_id}>
+              {p.quote_id}
+            </Link>
+          ) : (
+            <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink-2">{p.quote_id}</span>
+          )}
           {ctx?.invoiceId && (
             <Link href={`/invoices?open=${ctx.invoiceId}` as any} className="font-mono text-3xs text-indigo-ink hover:underline" title="Open GST invoice">{ctx.invoiceId}</Link>
           )}
@@ -1119,12 +1190,14 @@ function PaymentRowView({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[12rem]">
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
-                <Link href={`/quotes/${p.quote_id}` as any}>
-                  <Icon name="external" size={16} /> Open quote
-                </Link>
-              </DropdownMenuItem>
-              {p.status === "received" && (
+              {canQuotes && (
+                <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
+                  <Link href={`/quotes/${p.quote_id}` as any}>
+                    <Icon name="external" size={16} /> Open quote
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {p.status === "received" && canWrite && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
                   <Icon name="edit" size={16} /> Edit details
                 </DropdownMenuItem>
@@ -1139,6 +1212,7 @@ function PaymentRowView({
                   <Icon name="external" size={16} /> View attached receipt
                 </DropdownMenuItem>
               )}
+              {canWrite && (<>
               <DropdownMenuSeparator />
               {p.status === "received" && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleRefund}>
@@ -1148,6 +1222,7 @@ function PaymentRowView({
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleDelete}>
                 <Icon name="trash" size={16} /> Delete payment
               </DropdownMenuItem>
+              </>)}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

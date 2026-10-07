@@ -13,7 +13,11 @@ import { createAdminClient } from "@/lib/supabase/server";
 import type { Quote, QuoteLineItem, LineCommitment } from "@/lib/supabase/database.types";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteUpiAmount } from "./upi-amount";
+import { acceptedPayNow } from "./accepted-pay";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { signerNameDefault } from "./signer-default";
+import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -59,7 +63,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at")
+    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -122,7 +126,7 @@ export default async function QuoteAcceptPage(props: Props) {
   // calls happen on the visible phone number).
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("name, gstin, email, phone, address, upi_vpa, upi_payee_name")
+    .select("name, gstin, email, phone, address, upi_vpa, upi_payee_name, state_code")
     .eq("id", quote.tenant_id)
     .maybeSingle();
 
@@ -176,12 +180,57 @@ export default async function QuoteAcceptPage(props: Props) {
      `buildQuoteUpiQr` returns null for a non-₹ quote, a malformed VPA, or an
      already-invoiced quote (two documents asking for the same money is how a
      customer pays twice). Null simply means the block does not render. */
-  const upi = await buildQuoteUpiQr({
+  /* R-234: on a split-billed quote the QR asks for instalment 1 — the same figure the
+     Pay button charges — not the whole term. See ./upi-amount.ts. */
+  const upiAmount = quoteUpiAmount(quote, lineItems[0]?.commitment ?? null);
+  const upiQrImg = await buildQuoteUpiQr({
     vpa:        tenant?.upi_vpa,
     payeeName:  tenant?.upi_payee_name || tenant?.name,
     quoteId:    quote.id,
-    amountDue:  quoteAmountDue(quote),
+    amountDue:  upiAmount,
   });
+  const upi = upiQrImg ? { ...upiQrImg, amount: upiAmount } : null;
+
+  /* R-377: what the ACCEPTED screen offers to collect — the same figure the pay route
+     charges, and only when this tenant has a way to be paid. See ./accepted-pay.ts. */
+  const acceptedPay = acceptedPayNow({
+    quote,
+    firstCommitment: lineItems[0]?.commitment ?? null,
+    payOnline,
+    hasUpi: Boolean(upi),
+  });
+
+  /* R-376(b): the tax heads exactly as the quote preview / PDF print them — seller vs
+     buyer state through the shared place-of-supply helper (same call as the send route).
+     Only state codes and GSTINs are read; only the resulting boolean reaches the page.
+     R-376 (f): a quote raised on a LEAD (no customer yet) takes the lead's state — before,
+     it fell to the intra-state default and showed CGST + SGST to an out-of-state buyer.
+     R-376 (d): the contact person's NAME is read too, for the signer box — nothing else. */
+  const [{ data: buyer }, { data: lead }] = await Promise.all([
+    quote.customer_id
+      ? supabase
+          .from("customers")
+          .select("gstin, state_code, country, contact_name, contact_first_name, contact_last_name")
+          .eq("id", quote.customer_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    !quote.customer_id && quote.lead_id
+      ? supabase
+          .from("leads")
+          .select("gstin, state_code, country, contact_name")
+          .eq("id", quote.lead_id)
+          .eq("tenant_id", quote.tenant_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const { interState } = quotePlaceOfSupply({
+    customer: buyer, lead, quote, seller: { state_code: tenant?.state_code, gstin: tenant?.gstin },
+  });
+  const signerDefault = signerNameDefault({ customer: buyer, lead, company: quote.customer_name });
+
+  /* R-376(b): "Support: Free — Included" — the same builder the preview and the PDF use,
+     fed the raw lines (it needs item_id to spot a catalogue support row). */
+  const supportLine = includedSupportLine((quote.line_items ?? []) as QuoteLineItem[]);
 
   return (
     <QuoteAcceptView
@@ -195,6 +244,10 @@ export default async function QuoteAcceptPage(props: Props) {
       tenantPhone={tenant?.phone ?? null}
       tenantAddress={tenant?.address ?? null}
       upiQr={upi}
+      acceptedPay={acceptedPay}
+      interState={interState}
+      signerDefault={signerDefault}
+      supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}
     />
   );
 }

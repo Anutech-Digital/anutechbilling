@@ -23,6 +23,7 @@
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -87,7 +88,7 @@ export function LeadEmailComposer({
 
       if (r.stub) {
         /* Never a plain tick for mail that did not leave. */
-        toast.error("No email provider is configured, so nothing was sent. Open Settings → Email.");
+        toast.error("No email provider is configured, so nothing was sent.", { description: "Open Settings → Email and connect one, then send again." });
         return;
       }
       if (r.logged === false) {
@@ -98,7 +99,7 @@ export function LeadEmailComposer({
       }
       onOpenChange(false);
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e, { fallback: "Could not send the email.", description: "Nothing was sent. Your text is still here — try again." }),
   });
 
   const canSend = subject.trim().length > 0 && body.trim().length > 0 && !send.isPending;

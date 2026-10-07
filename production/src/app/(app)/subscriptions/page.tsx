@@ -9,12 +9,14 @@ import { SUBSCRIPTION_TABS } from "@/lib/navigation/drilldown";
 import { SUB_FOLDERS, folderOf, folderCounts } from "@/lib/subscriptions/folders";
 import { SUB_FOCI, SUB_FOCUS_LABEL, subInFocus, type SubFocus } from "@/lib/subscriptions/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
+import { hasNoPrice } from "@/lib/subscriptions/list-price-mrr";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { KeyHintBar, ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useSetSubscriptionDomain, useDeleteSubscription } from "@/lib/queries/subscriptions";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
+import { initialSubscriptionSearch, SUBSCRIPTION_SEARCH_EVENT } from "./palette-links";
 import { newestFirst } from "@/lib/sort/newest-first";
 import { subscriptionFacts } from "@/lib/subscriptions/facts";
 import { sortSubscriptions, defaultDirFor, type SubSort, type SubSortKey } from "@/lib/subscriptions/sort";
@@ -60,6 +62,7 @@ import { ImportGoogleSubsDialog } from "@/components/features/subscriptions/impo
 import { MarginAlertsCard } from "@/components/features/subscriptions/margin-alerts-card";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError, describeError } from "@/lib/errors/toast-error";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,6 +86,10 @@ import { useQuotes } from "@/lib/queries/quotes";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
+
+/* R-317: ?price=missing on the list (Reports links here). */
+const PRICE_FILTERS = ["", "missing"] as const;
+type PriceFilter = (typeof PRICE_FILTERS)[number];
 
 // Vendor pill — capitalised label + a stable colour per vendor (Google/Microsoft
 // blue, Zoho green) so the vendor reads at a glance.
@@ -223,11 +230,24 @@ export default function SubscriptionsPage() {
   const [tab, setTab] = useUrlChoice<string>("tab", SUBSCRIPTION_TABS, "all"); // R-118
   /* R-118: the money tiles' exact set (lib/subscriptions/focus.ts) — "" = none. */
   const [focus, setFocus] = useUrlChoice<SubFocus>("focus", SUB_FOCI, "");
+  /* R-317: ?price=missing — the active subscriptions with no price, linked from the
+     Reports MRR line. Open one to set its plan; until then it adds ₹0 to MRR. */
+  const [price, setPrice] = useUrlChoice<PriceFilter>("price", PRICE_FILTERS, "");
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
   const [vendor, setVendor] = React.useState("all");
   const [search, setSearch] = React.useState("");
-  const [extendSub,   setExtendSub]   = React.useState<Subscription | null>(null);
+  /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
+     Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = initialSubscriptionSearch(window.location.search);
+    if (q) setSearch(q);
+    const onPick = (e: Event) => setSearch(String((e as CustomEvent<string>).detail ?? ""));
+    window.addEventListener(SUBSCRIPTION_SEARCH_EVENT, onPick);
+    return () => window.removeEventListener(SUBSCRIPTION_SEARCH_EVENT, onPick);
+  }, []);
+  const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
   /** Null = the newest-first default. Set when a column header is clicked. */
   const [sort, setSort] = React.useState<SubSort | null>(null);
@@ -365,7 +385,7 @@ export default function SubscriptionsPage() {
          already safely recorded — only the document is missing, and the quote page can
          raise it. Never a bare "failed". */
       toast.error("Payment saved, but the GST invoice could not be raised", {
-        description: error.message,
+        description: `${describeError(error).message} Open the quote to raise it.`,
         action: { label: "Open quote", onClick: () => router.push(`/quotes/${quoteId}` as Route) },
       });
     } else {
@@ -420,6 +440,7 @@ export default function SubscriptionsPage() {
     if (tab === "trials") return false;  // trials handled in separate table below
     if (tab !== "all" && folderOf(s, todayISO) !== tab) return false;
     if (focus && !subInFocus(s, focus)) return false;   // the tile's own predicate
+    if (price === "missing" && !hasNoPrice(s)) return false;   // R-317
     if (vendor !== "all" && s.vendor !== vendor) return false;
     if (search.trim()) {
       const q = search.toLowerCase().trim();
@@ -903,7 +924,7 @@ export default function SubscriptionsPage() {
                       size="sm"
                       dot
                     >
-                      {dr === 0 ? "today" : dr === 1 ? "1d" : `${dr}d left`}
+                      {dr === 0 ? "today" : `${dr}d left`}
                     </Badge>
                     <Button size="sm" variant="primary" icon="check_circle">
                       Convert
@@ -921,6 +942,13 @@ export default function SubscriptionsPage() {
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
           {focus && (
             <FocusBanner label={SUB_FOCUS_LABEL[focus]} count={filtered.length} onClear={() => setFocus("")} />
+          )}
+          {price === "missing" && (
+            <FocusBanner
+              label="No price — active, ₹0 MRR (open one and set its plan)"
+              count={filtered.length}
+              onClear={() => setPrice("")}
+            />
           )}
           <TabBar className="overflow-y-hidden" value={tab} onChange={tabOn} items={tabs} />
           <div className="flex justify-between items-center gap-3 flex-wrap">
@@ -1518,7 +1546,7 @@ export default function SubscriptionsPage() {
                             size="sm"
                             dot
                           >
-                            {dr === 0 ? "today" : dr === 1 ? "1d" : `${dr}d left`}
+                            {dr === 0 ? "today" : `${dr}d left`}
                           </Badge>
                         </div>
                       </td>
@@ -1567,7 +1595,7 @@ export default function SubscriptionsPage() {
                       size="sm"
                       dot
                     >
-                      {dr === 0 ? "today" : dr === 1 ? "1d left" : `${dr}d left`}
+                      {dr === 0 ? "today" : `${dr}d left`}
                     </Badge>
                   </div>
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
@@ -1687,7 +1715,7 @@ export default function SubscriptionsPage() {
                     <p className="text-2xs leading-snug text-ink-2">
                       Google bills you for {sub.vendor_seats} seats. This customer is billed for {sub.seats}.
                       {leak.monthlyImpact == null
-                        ? " This plan has no catalogue cost, so the rupee amount is unknown — add it under Catalog & Products."
+                        ? " This plan has no catalogue cost, so the rupee amount is unknown — add it under Products."
                         : ` That is ${rupee(leak.monthlyImpact)}/month of margin going out.`}
                     </p>
                     <p className="text-2xs leading-snug text-ink-3 mt-1.5">
@@ -1944,14 +1972,14 @@ function DomainCell({ sub, compact = false }: { sub: Subscription; compact?: boo
   const submit = () => {
     const v = value.trim();
     if (!v) {
-      toast.error("Domain can't be blank");
+      toast.error("Domain can't be blank", { description: "Type the customer's domain, e.g. example.com." });
       return;
     }
     mut.mutate(
       { id: sub.id, domain: v },
       {
         onSuccess: () => { toast.success("Domain saved"); setEditing(false); },
-        onError:   (e) => { toast.error(e instanceof Error ? e.message : "Could not save"); },
+        onError:   (e) => { toastError(e, { fallback: "Could not save the domain" }); },
       },
     );
   };

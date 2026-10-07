@@ -20,7 +20,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/label";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
-import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { GST_STATE_BY_CODE, rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { GOOGLE_PLANS, newSubscriptionRow, nameFromDomain, type CheckRow, type CustomerLite } from "@/lib/reconcile/google-bill";
 
@@ -67,7 +67,8 @@ export async function createFromBill(tenantId: string, items: readonly BillItem[
   return { customers: toCreate.length, subscriptions: subs.length };
 }
 
-const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+/** Whole figures stay whole; a paise figure shows its 2 decimals. */
+const inr = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
 
 export function AddFromBillDialog({ row, customers, tenantId, onClose, onDone }: {
   row: CheckRow; customers: readonly CustomerLite[]; tenantId: string; onClose: () => void; onDone: () => void;

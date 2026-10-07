@@ -43,10 +43,12 @@ interface CustomersBulkBarProps {
   onDelete: () => void;
   onDeselectAll: () => void;
   busy?: boolean;
+  /** R-255: a view-only role (the accountant) gets Export and nothing that changes data. */
+  readOnly?: boolean;
 }
 
 export function CustomersBulkBar({
-  count, groups, onExport, onArchive, onReactivate, onSetGroup, onDelete, onDeselectAll, busy,
+  count, groups, onExport, onArchive, onReactivate, onSetGroup, onDelete, onDeselectAll, busy, readOnly = false,
 }: CustomersBulkBarProps) {
   return (
     <BulkActionBar count={count} noun="customer" onClear={onDeselectAll}>
@@ -54,6 +56,8 @@ export function CustomersBulkBar({
       <BulkBarButton icon="download" label="Export selected to CSV" onClick={onExport} disabled={busy}>
         Export
       </BulkBarButton>
+
+      {!readOnly && (<>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -100,6 +104,7 @@ export function CustomersBulkBar({
       <BulkBarConfirmButton icon="trash" onConfirm={onDelete}>
         Delete
       </BulkBarConfirmButton>
+      </>)}
     </BulkActionBar>
   );
 }

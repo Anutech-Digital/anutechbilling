@@ -68,14 +68,14 @@ export function HundredRupeeBar({ split, costLabel = "Vendor licences", costTo =
         {parts.map((p) => (
           <div
             key={p.key}
-            title={`${p.label} · ₹${p.value} of every ₹100`}
+            title={`${p.label} · ${rupee(p.value)} of every ₹100`}
             className={cn("flex items-center justify-center", p.cls)}
             style={{ width: `${(p.value / denom) * 100}%` }}
           >
             {/* The number goes IN the segment. A legend forces the eye to travel and
                 match colours, which is the work the chart was supposed to save. */}
             {p.value >= 8 && (
-              <span className="font-mono text-[12px] font-semibold text-ink tabular-nums">₹{p.value}</span>
+              <span className="font-mono text-[12px] font-semibold text-ink tabular-nums">{rupee(p.value)}</span>
             )}
           </div>
         ))}
@@ -85,7 +85,7 @@ export function HundredRupeeBar({ split, costLabel = "Vendor licences", costTo =
         {parts.map((p) => (
           <span key={p.key} className="flex items-center gap-1.5 text-xs text-ink-2">
             <span aria-hidden className={cn("h-2.5 w-2.5 rounded-sm", p.cls)} />
-            {p.label} <b className="font-mono tabular-nums text-ink">₹{p.value}</b>
+            {p.label} <b className="font-mono tabular-nums text-ink">{rupee(p.value)}</b>
           </span>
         ))}
       </div>
@@ -93,14 +93,14 @@ export function HundredRupeeBar({ split, costLabel = "Vendor licences", costTo =
       <p className="mt-2 text-[12px] leading-snug text-ink-2">
         {isLoss ? (
           <>
-            Of every <b>₹100</b> you invoice, <b className="text-rose">₹{licence + running} goes out</b> —
-            that is <b className="text-rose">₹{Math.abs(profit)} more than you take in</b>. The business is
+            Of every <b>₹100</b> you invoice, <b className="text-rose">{rupee(licence + running)} goes out</b> —
+            that is <b className="text-rose">{rupee(Math.abs(profit))} more than you take in</b>. The business is
             spending faster than it sells.
           </>
         ) : (
           <>
-            Of every <b>₹100</b> you invoice, <b>₹{licence}</b> goes to {costTo}, <b>₹{running}</b> to
-            running the business, and <b className="text-emerald">₹{profit} is yours</b>.
+            Of every <b>₹100</b> you invoice, <b>{rupee(licence)}</b> goes to {costTo}, <b>{rupee(running)}</b> to
+            running the business, and <b className="text-emerald">{rupee(profit)} is yours</b>.
           </>
         )}
       </p>

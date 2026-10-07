@@ -17,27 +17,23 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
+import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 
-const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+/* R-224: hosting rates carry paise (₹49.99) — print them exactly as /rates does, not rounded. */
+const inr = quoteInr;
 const P = "var(--primary)";
 
 export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const params = useSearchParams();
 
-  // Live rates (if the page supplied them) override the static edition prices.
-  const products = useMemo<QuoteProduct[]>(() => {
-    if (!editions?.length) return [...QUOTE_PRODUCTS];
-    const live = new Map(editions.map((e) => [e.name, e]));
-    return QUOTE_PRODUCTS.map((p) => {
-      const l = live.get(p.name);
-      return l ? { ...p, annual: l.annual ?? p.annual, monthly: l.monthly ?? p.monthly } : p;
-    });
-  }, [editions]);
+  // Live rates (if the page supplied them) override the static edition prices. An edition
+  // with no flexible tier comes back with monthly: null — annual only (R-224).
+  const products = useMemo<QuoteProduct[]>(() => withLiveEditions(QUOTE_PRODUCTS, editions), [editions]);
   const byName = useMemo(() => new Map(products.map((p) => [p.name, p])), [products]);
 
   const [lines, setLines] = useState<Record<string, number>>({ "GW Business Starter": 1 });
@@ -83,15 +79,20 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       if (v) setCat(v);
     }
     if (Object.keys(next).length) setLines(next);
-    if (t === "annual" || t === "monthly") setTerm(t);
+    /* A deep link asking for monthly on an annual-only edition stays annual (R-224). */
+    const edAnnualOnly = !!ed && byName.get(ed)?.monthly === null;
+    if (t === "annual" || (t === "monthly" && !edAnnualOnly)) setTerm(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const annual = term === "annual";
   const rateOf = (p: QuoteProduct): number => {
     if (p.domain && p.domainField) return QUOTE_TLDS.find((t) => t.tld === domainTld)?.[p.domainField] ?? 0;
-    return annual ? p.annual : p.monthly;
+    /* Annual-only lines never sit in a monthly basket (toggle + term guard below), so the
+       annual fallback is unreachable in practice — it only keeps the type a number. */
+    return quoteRate(p, term) ?? p.annual;
   };
+  const annualOnly = (p: QuoteProduct) => p.monthly === null;
   const amountOf = (p: QuoteProduct, qty: number): number => (p.cycle === "mo" ? rateOf(p) * qty * (annual ? 12 : 1) : rateOf(p) * qty);
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
@@ -100,13 +101,21 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const gst = payable - subtotal;
   const renewal = Math.round(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0) * 1.18);
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
-  const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly > p.annual);
+  const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
-    ? Math.round((1 - moLines.reduce((n, p) => n + p.annual * lines[p.name], 0) / moLines.reduce((n, p) => n + p.monthly * lines[p.name], 0)) * 100)
+    ? Math.round((1 - moLines.reduce((n, p) => n + p.annual * lines[p.name], 0) / moLines.reduce((n, p) => n + (p.monthly ?? p.annual) * lines[p.name], 0)) * 100)
     : 0;
+  // Selected lines with no flexible tier — while any is in the basket, Flexible monthly is off.
+  const annualOnlyPicked = selected.filter(annualOnly);
 
   const setQty = (nm: string, q: number) => setLines((L) => { const v = Math.max(0, Math.min(999, q)); const c = { ...L }; if (v === 0) delete c[nm]; else c[nm] = v; return c; });
-  const toggle = (nm: string) => setLines((L) => { const c = { ...L }; if (c[nm]) delete c[nm]; else c[nm] = 1; return c; });
+  const toggle = (nm: string) => setLines((L) => {
+    const c = { ...L };
+    if (c[nm]) delete c[nm];
+    else if (!annual && byName.get(nm)?.monthly === null) return L; // annual only — not on a monthly quote
+    else c[nm] = 1;
+    return c;
+  });
 
   // Products visible in the picker: category + search, but a selected line always shows.
   const q = query.trim().toLowerCase();
@@ -118,9 +127,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   });
   const catCount = (c: string) => products.filter((p) => p.vendor === c).length;
   const anyDomainSelected = selected.some((p) => p.domain);
+  /* R-328: Business Plus has no public price — on the quote, out of the total, priced by us. */
+  const onRequestPicked = selected.filter((p) => p.priceOnRequest);
+  const ON_REQUEST = "Price on request";
 
   const quoteText = () => {
-    const L = selected.map((p) => `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
+    const L = selected.map((p) => p.priceOnRequest
+      ? `• ${p.label} — ${lines[p.name]} ${p.per}${lines[p.name] === 1 ? "" : "s"} — price on request (sent with the formal quotation)`
+      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
     return [
       `Quotation ${quoteNo || "(draft)"} — Anutech Digital`,
       `For: ${company || "—"}${gstin ? " · GSTIN " + gstin : ""}`,
@@ -137,17 +151,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     ].join("\n");
   };
 
-  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && phone.replace(/\D/g, "").length >= 10 && selected.length > 0 && (gstin === "" || gstin.length === 15);
+  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && isIndianMobile(phone) && selected.length > 0 && (gstin === "" || gstin.length === 15);
 
   async function generate() {
     setTouched(true); setErr("");
     if (!valid) { setOpenSec(selected.length === 0 ? "plan" : "details"); setErr("Add at least one line, and a company, name, valid email and 10-digit phone — that's where the formal quotation goes."); return; }
-    // Quote number: AQ-YYYYMM-NNN from a local counter.
+    /* R-228: the quote's number is the APP's (draft quote number, else lead id) from
+       /api/enquiry — never a per-browser counter, which gave every new visitor AQ-…-001. */
     const now = new Date();
-    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    let n = 1;
-    try { const k = `anutech-quote-seq-${ym}`; n = (parseInt(window.localStorage.getItem(k) ?? "0", 10) || 0) + 1; window.localStorage.setItem(k, String(n)); } catch { /* private window */ }
-    const no = `AQ-${ym}-${String(n).padStart(3, "0")}`;
 
     setSubmitState("sending");
     try {
@@ -166,16 +177,16 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           edition: primary?.name, term,
         }),
       });
-      const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean };
+      const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !data.ok) throw new Error(data.error || "Our team did not receive it.");
       setTeamHasIt(true); setTeamErr(""); setAckSent(data.ackSent === true);
-      setQuoteNo(no); setQuoteAt(now); setSubmitState("done");
+      setQuoteNo(enquiryReference(data)); setQuoteAt(now); setSubmitState("done");
     } catch (e) {
       ts.reset();
       // The quote is still valid to hand off manually — shown, and marked NOT received.
       setTeamHasIt(false);
       setTeamErr(e instanceof Error ? e.message : "We could not reach our server.");
-      setQuoteNo(no); setQuoteAt(now); setSubmitState("done");
+      setQuoteNo(""); setQuoteAt(now); setSubmitState("done");
     }
   }
 
@@ -213,17 +224,25 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               {/* commitment toggle */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "8px 0 12px" }}>
                 <div style={{ display: "inline-flex", background: "var(--tint)", border: "1px solid var(--border)", borderRadius: 999, padding: 3 }}>
-                  {(["annual", "monthly"] as const).map((t) => (
-                    <button key={t} onClick={() => setTerm(t)} aria-pressed={term === t}
-                      style={{ cursor: "pointer", border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: term === t ? 600 : 500, background: term === t ? P : "transparent", color: term === t ? "#fff" : "var(--text-secondary)", fontFamily: "inherit", minHeight: 40 }}>
-                      {t === "annual" ? "Annual commitment" : "Flexible monthly"}
-                    </button>
-                  ))}
+                  {(["annual", "monthly"] as const).map((t) => {
+                    const off = t === "monthly" && annualOnlyPicked.length > 0;
+                    return (
+                      <button key={t} onClick={() => setTerm(t)} aria-pressed={term === t} disabled={off} aria-describedby={off ? "annual-only-note" : undefined}
+                        style={{ cursor: off ? "not-allowed" : "pointer", border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: term === t ? 600 : 500, background: term === t ? P : "transparent", color: term === t ? "#fff" : off ? "var(--text-muted)" : "var(--text-secondary)", fontFamily: "inherit", minHeight: 40 }}>
+                        {t === "annual" ? "Annual commitment" : "Flexible monthly"}
+                      </button>
+                    );
+                  })}
                 </div>
                 <span style={{ fontSize: 13, color: savePct > 0 ? "var(--success)" : "var(--text-muted)", fontWeight: 600 }}>
                   {savePct > 0 ? `Annual saves ${savePct}% on this basket` : "Commitment doesn't change domain or certificate rates"}
                 </span>
               </div>
+              {annualOnlyPicked.length > 0 && (
+                <p id="annual-only-note" className="meta" style={{ margin: "-4px 0 10px", fontSize: 13 }}>
+                  {annualOnlyPicked.map((p) => p.label).join(", ")} {annualOnlyPicked.length > 1 ? "are" : "is"} annual only. Remove {annualOnlyPicked.length > 1 ? "them" : "it"} for a monthly quote.
+                </p>
+              )}
               {/* rows */}
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {visible.length === 0 && (
@@ -231,17 +250,19 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                 )}
                 {visible.map((p) => {
                   const on = (lines[p.name] ?? 0) > 0;
+                  const locked = !on && !annual && annualOnly(p); // annual only, monthly quote
+                  const lockNoteId = `annual-only-${p.name.replace(/[^A-Za-z0-9_-]/g, "-")}`;
                   return (
                     <div key={p.name} style={{ borderTop: "1px solid var(--border-hairline)" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0" }}>
-                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`}
-                          style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: `1.5px solid ${on ? "var(--success)" : "var(--border-strong)"}`, background: on ? "var(--success)" : "#fff", color: "#fff", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>{on ? "✓" : ""}</button>
-                        <button onClick={() => toggle(p.name)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                        <button onClick={() => toggle(p.name)} role="checkbox" aria-checked={on} aria-label={`Select ${p.label}`} disabled={locked} aria-describedby={locked ? lockNoteId : undefined}
+                          style={{ width: 22, height: 22, flex: "none", borderRadius: 6, border: `1.5px solid ${on ? "var(--success)" : "var(--border-strong)"}`, background: on ? "var(--success)" : locked ? "var(--tint)" : "#fff", color: "#fff", cursor: locked ? "not-allowed" : "pointer", fontSize: 13, lineHeight: 1 }}>{on ? "✓" : ""}</button>
+                        <button onClick={() => toggle(p.name)} disabled={locked} aria-describedby={locked ? lockNoteId : undefined} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit", padding: 0 }}>
                           <span style={{ display: "block", fontSize: 14.5, fontWeight: 600, color: "var(--text)" }}>{p.label}</span>
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
-                        <span className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                          {rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
+                        <span id={locked ? lockNoteId : undefined} className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>
@@ -286,11 +307,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             <span aria-hidden style={{ color: P, fontSize: 18 }}>{openSec === "details" ? "▲" : "▼"}</span>
           </button>
           {openSec === "details" && (
-            <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <QField label="Company" value={company} set={setCompany} touched={touched} required />
-              <QField label="Your name" value={name} set={setName} touched={touched} required />
-              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" />
-              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" />
+            /* R-231: data-grid → one column on a phone (two 1fr columns left ~150px boxes). */
+            <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }} data-grid>
+              <QField label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
+              <QField label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
+              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
+              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
               <div>
                 <QField label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
                 {gstin.length > 0 && gstin.length !== 15 && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{gstin.length}/15 characters</span>}
@@ -315,9 +337,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 13.5 }}>
                 <span style={{ minWidth: 0 }}>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>×{lines[p.name]}</span></span>
-                <span className="mono" style={{ whiteSpace: "nowrap" }}>{inr(amountOf(p, lines[p.name]))}</span>
+                <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
+            {onRequestPicked.length > 0 && (
+              <p className="meta" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+                {onRequestPicked.map((p) => p.label).join(", ")}: price on request — not in the total below. We send it with your quotation, or <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`Hi Anutech — please send the price for ${onRequestPicked.map((p) => `${p.label} × ${lines[p.name]}`).join(", ")}.`)}`} target="_blank" rel="noopener">ask on WhatsApp</a>.
+              </p>
+            )}
             {selected.length > 0 && (
               <div style={{ marginTop: 10, fontSize: 13.5 }}>
                 <Row l="Subtotal" v={inr(subtotal)} />
@@ -363,14 +390,14 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           <div data-quote-doc>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
               <span style={{ fontSize: 16, fontWeight: 700 }}>{COMPANY.name}</span>
-              <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{quoteNo}</span>
+              <span className={quoteNo ? "mono" : undefined} style={{ fontSize: 12, color: "var(--text-muted)" }}>{referenceNote(quoteNo, { received: teamHasIt === true, ackSent })}</span>
             </div>
             <div className="meta" style={{ marginBottom: 12 }}>{quoteAt && fmt(quoteAt)} · valid till {validTill && fmt(validTill)} · {term === "annual" ? "annual commitment" : "flexible monthly"}</div>
             <div style={{ fontSize: 13, marginBottom: 10 }}><b>Quote for:</b> {company}{gstin ? ` · GSTIN ${gstin}` : ""}</div>
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 12.5 }}>
-                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {inr(rateOf(p))}/{p.per} · HSN {COMPANY.hsn}</span></span>
-                <span className="mono" style={{ whiteSpace: "nowrap" }}>{inr(amountOf(p, lines[p.name]))}</span>
+                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(rateOf(p))}/${p.per}`} · HSN {COMPANY.hsn}</span></span>
+                <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
             <div style={{ marginTop: 8, fontSize: 13 }}>
@@ -386,12 +413,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             </ul>
             {/* delivery */}
             <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-              <a href={`mailto:${encodeURIComponent(email)}?cc=${COMPANY.supportEmail}&subject=${encodeURIComponent(`Quotation ${quoteNo} — Anutech Digital`)}&body=${encodeURIComponent(quoteText())}`} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the quote</a>
+              <a href={`mailto:${encodeURIComponent(email)}?cc=${COMPANY.supportEmail}&subject=${encodeURIComponent(`Quotation${quoteNo ? ` ${quoteNo}` : ""} — Anutech Digital`)}&body=${encodeURIComponent(quoteText())}`} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the quote</a>
               <div style={{ display: "flex", gap: 8 }}>
                 <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(quoteText())}`} target="_blank" rel="noopener" onClick={() => setDelivered("wa")} className="btn btn-outline" style={{ flex: 1 }}>Send on WhatsApp</a>
                 <button onClick={() => window.print()} className="btn btn-outline" style={{ flex: 1 }}>Save as PDF</button>
               </div>
-              <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`I'd like to order at quote ${quoteNo}: ` + quoteText())}`} target="_blank" rel="noopener" className="btn btn-outline" style={{ width: "100%" }}>Order at this rate</a>
+              <a href={`${WHATSAPP_URL}?text=${encodeURIComponent(`I'd like to order at ${quoteNo ? `quote ${quoteNo}` : "this quote"}: ` + quoteText())}`} target="_blank" rel="noopener" className="btn btn-outline" style={{ width: "100%" }}>Order at this rate</a>
               <button onClick={() => { setSubmitState("idle"); setDelivered(""); }} style={{ background: "none", border: "none", color: P, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", fontSize: 13, paddingTop: 4 }}>Change something</button>
               {delivered && <p className="meta" style={{ textAlign: "center", color: "var(--success)" }}>{delivered === "email" ? "Opened your email app with the quote." : "Opened WhatsApp with the quote."}</p>}
             </div>
@@ -407,14 +434,24 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "var(--text-secondary)" }}><span>{l}</span><span className="mono">{v}</span></div>;
 }
 
-function QField({ label, value, set, touched, required, kind = "text", placeholder }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string }) {
-  const bad = touched && required && (kind === "email" ? !value.includes("@") : value.replace(kind === "tel" ? /\D/g : /\s/g, "").length < 2);
+/**
+ * R-231: a 10-digit Indian mobile (6–9 first), with or without +91 / 0 in front. The old
+ * rule only wanted 2 digits, so "12345" looked fine until the quote button refused it.
+ */
+export function isIndianMobile(v: string): boolean {
+  const d = v.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
+  return /^[6-9]\d{9}$/.test(d);
+}
+
+export function QField({ label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
+  const bad = touched && required && (kind === "email" ? !value.includes("@") : kind === "tel" ? !isIndianMobile(value) : value.replace(/\s/g, "").length < 2);
+  const msg = kind === "tel" && value.trim() ? "Enter a 10-digit mobile number." : label + " is needed here.";
   return (
     <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
       {label}
-      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder}
+      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
         style={{ width: "100%", marginTop: 4, minHeight: 44, border: `1.5px solid ${bad ? "var(--warning)" : "var(--border-strong)"}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, fontFamily: "inherit" }} />
-      {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{label} is needed here.</span>}
+      {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{msg}</span>}
     </label>
   );
 }

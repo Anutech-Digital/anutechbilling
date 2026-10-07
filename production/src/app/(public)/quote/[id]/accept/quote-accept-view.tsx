@@ -8,6 +8,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
@@ -18,6 +19,9 @@ import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
 import { quoteInstalments } from "@/lib/billing/instalments";
+import { whatsAppLink } from "@/lib/marketing/review-request";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
+import type { AcceptedPay } from "./accepted-pay";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -69,12 +73,22 @@ interface Props {
   tenantPhone?:  string | null;
   tenantAddress?: string | null;
   /** UPI QR built server-side (`qrcode` never reaches the customer's bundle). */
-  upiQr?: { dataUrl: string; vpa: string } | null;
+  upiQr?: { dataUrl: string; vpa: string; amount: number } | null;
+  /** R-377: "Pay now" on the accepted screen — built by ./accepted-pay.ts on the server.
+   *  Null = no payment method / nothing collectable → today's "will reach out" text. */
+  acceptedPay?: AcceptedPay | null;
+  /** R-376(b): inter-state → one IGST row; intra-state → CGST + SGST (quote preview rule). */
+  interState?: boolean;
+  /** R-376(b): "Support: Free — Included" from lib/pdf/quote-support-line. */
+  supportLine?: { text: string; detail: string } | null;
+  /** R-376(d): the contact PERSON to pre-fill "Your full name" (./signer-default.ts) —
+   *  falls back to the company name only when no person is known. */
+  signerDefault?: string | null;
 }
 
 export function QuoteAcceptView({
   quote, lineItems, token, payOnline = false, tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress,
-  upiQr = null,
+  upiQr = null, acceptedPay = null, interState = false, supportLine = null, signerDefault = null,
 }: Props) {
   const [accepting, setAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(quote.status === "accepted");
@@ -146,7 +160,7 @@ export function QuoteAcceptView({
     lines: Array<{ lineId: string; qty: number; included: boolean; rate: number; amount: number; bandLabel: string | null; rePriced: boolean }>;
   } | null>(null);
   const [pricing, setPricing] = React.useState(false);
-  const [signerName, setSignerName] = React.useState("");
+  const [signerName, setSignerName] = React.useState(signerDefault ?? quote.customer_name ?? "");
   /* Set when Confirm is pressed with no name, so the press says why (29 Sep 2026: a
      hover title was the only explanation, and a phone has no hover). */
   const [nameNudge, setNameNudge] = React.useState(false);
@@ -295,7 +309,21 @@ export function QuoteAcceptView({
 
   const handleRequestChanges = () => {
     if (!tenantEmail) {
-      toast.info("Reach out to the reseller via the email they sent you.");
+      /* No email on file — WhatsApp the reseller's phone, or call it, instead of a
+         toast that leads nowhere (R-234). */
+      const wa = whatsAppLink(
+        tenantPhone,
+        `Hi ${tenantName}, I'd like to discuss some changes on quote ${quote.id} (total ${fmtC(dTotal)}) before accepting.`,
+      );
+      if (wa) {
+        window.open(wa, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (tenantPhone) {
+        window.location.href = `tel:${tenantPhone}`;
+        return;
+      }
+      toast.info(`Reply to the message ${tenantName} sent you with this quote to request changes.`);
       return;
     }
     const subject = `Changes requested on quote ${quote.id}`;
@@ -348,6 +376,53 @@ export function QuoteAcceptView({
     }
   };
 
+  /** The UPI QR block — one render for the review screen and the accepted screen. */
+  const upiBox = (instalmentCount: number | null) => upiQr && (
+    <div className="rounded-lg border border-hairline bg-paper-2/40 p-4 text-left">
+      <p className="text-sm font-semibold text-ink">Pay by UPI</p>
+      <p className="mt-0.5 text-[12px] leading-snug text-ink-3">
+        Scan with GPay, PhonePe, Paytm or any UPI app — the amount is already filled in.
+      </p>
+      <div className="mt-3 flex items-center gap-4">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={upiQr.dataUrl}
+          alt={`UPI QR code to pay ${tenantName} ${fmtC(upiQr.amount)}`}
+          className="h-32 w-32 shrink-0 rounded border border-hairline bg-white"
+        />
+        <div className="min-w-0 text-[12px] leading-snug">
+          <p className="text-ink-3">UPI ID</p>
+          <p className="font-mono font-medium text-ink break-all">{upiQr.vpa}</p>
+          <p className="mt-2 text-ink-3">
+            {instalmentCount ? `Amount · instalment 1 of ${instalmentCount}` : "Amount"}
+          </p>
+          <p className="font-medium text-ink tabular-nums">{fmtC(upiQr.amount)}</p>
+        </div>
+      </div>
+      <Button
+        variant="default"
+        size="sm"
+        className="mt-3 w-full justify-center"
+        loading={notifying}
+        onClick={handleUpiPaid}
+      >
+        I&apos;ve sent the payment
+      </Button>
+      <p className="mt-1.5 text-2xs leading-snug text-ink-3">
+        This tells {tenantName} to check their account. It does not confirm the payment —
+        they will verify it and send your GST invoice.
+      </p>
+    </div>
+  );
+
+  /* R-377: offer payment on the accepted screen. Off when the customer changed the
+     shape in this visit — the server figure was built from the ORIGINAL quote and the
+     accept may have re-priced it; a reload re-reads the saved quote and brings it back.
+     The QR is offered only when it asks for exactly the Pay-now figure. */
+  const payCandidate   = !paid && acceptedPay && !liveConfig?.changed ? acceptedPay : null;
+  const upiAfterAccept = Boolean(payCandidate && upiQr && upiQr.amount === payCandidate.amount);
+  const payAfterAccept = payCandidate && (payOnline || upiAfterAccept) ? payCandidate : null;
+
   /* ──────────── Change requested ────────────
      A distinct screen from "accepted", because the customer must not walk away
      believing the deal is done. Nothing was accepted and nothing will be charged. */
@@ -387,11 +462,44 @@ export function QuoteAcceptView({
             {paid ? (
               <>Thank you! Your payment to <b className="text-ink">{tenantName}</b> is being confirmed.
               Your GST invoice will be issued and emailed to you shortly.</>
+            ) : payAfterAccept ? (
+              <><b className="text-ink">{tenantName}</b> has been notified. Pay now and your GST
+              invoice is issued as soon as the payment is confirmed.</>
             ) : (
               <><b className="text-ink">{tenantName}</b> has been notified and will reach out with
               payment instructions. Your GST invoice is issued once payment is received.</>
             )}
           </p>
+          {payAfterAccept && (
+            <div className="mt-6 space-y-3 print:hidden" data-testid="accepted-pay">
+              {payOnline && (
+                <>
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    icon="rupee"
+                    loading={paying}
+                    onClick={handlePayOnline}
+                    className="w-full justify-center"
+                  >
+                    {`Pay now · ${fmtC(payAfterAccept.amount)}`}
+                  </Button>
+                  <BusyPanel
+                    active={preparingPay}
+                    title="Preparing your secure payment"
+                    steps={["Checking the quote and its total", "Creating your payment order", "Opening the Razorpay payment window"]}
+                  />
+                </>
+              )}
+              {payAfterAccept.instalment && (
+                <p className="text-[12px] leading-snug text-ink-3">
+                  This is instalment 1 of {payAfterAccept.instalment.count}. The rest are invoiced one
+                  period at a time — you pay each from the invoice you receive.
+                </p>
+              )}
+              {upiAfterAccept && upiBox(payAfterAccept.instalment?.count ?? null)}
+            </div>
+          )}
           <div className="bg-paper-2 rounded-lg p-4 mt-6 text-sm text-left">
             <div className="flex justify-between mb-1.5">
               <span className="text-ink-3">Quote ID</span>
@@ -715,7 +823,14 @@ export function QuoteAcceptView({
                 <Row label={`Discount (${quote.discount_pct}%)`} value={`−${fmtInv(dDiscount)}`} accent />
               )}
               <Row label="Taxable" value={fmtInv(liveConfig ? liveConfig.subtotal : dTaxable)} />
-              <Row label={`GST (${quote.tax_rate}%)`} value={fmtInv(liveConfig ? liveConfig.total - liveConfig.subtotal : dTax)} />
+              {/* R-376(b): the heads the quote preview and PDF print — IGST on an
+                  inter-state supply, CGST + SGST (lib/gst/tax-split) within the state. */}
+              <TaxRows
+                taxRate={quote.tax_rate}
+                tax={liveConfig ? liveConfig.total - liveConfig.subtotal : dTax}
+                interState={interState}
+                fmt={fmtInv}
+              />
               <div className="border-t-2 border-ink pt-2 mt-2">
                 <div className="flex justify-between items-baseline">
                   <span className="text-2xs uppercase tracking-widest font-semibold">
@@ -754,6 +869,14 @@ export function QuoteAcceptView({
               </div>
             </div>
           </div>
+
+          {/* R-376(b): same included-support line as the preview and the PDF. */}
+          {supportLine && (
+            <div className="mb-6 pt-4 border-t border-hairline" data-testid="included-support">
+              <p className="text-sm text-ink-2">{supportLine.text}</p>
+              <p className="text-2xs text-ink-3">{supportLine.detail}</p>
+            </div>
+          )}
 
           {/* Notes */}
           {quote.notes && (
@@ -798,8 +921,8 @@ export function QuoteAcceptView({
                 is the question a customer asks with their card already out. */}
             {payOnline && !liveConfig?.changed && isFlex && (
               <p className="text-[12px] leading-snug text-ink-3">
-                Flex plan: har mahine ki apni invoice banti hai aur usi se bhugtan hota
-                hai — aaj sirf is mahine ka {fmtC(dTotal)} lagta hai.
+                Flex plan: each month has its own invoice and is paid from it — today
+                you pay only this month&apos;s {fmtC(dTotal)}.
               </p>
             )}
             {payOnline && !liveConfig?.changed && dueToday && (
@@ -827,41 +950,7 @@ export function QuoteAcceptView({
 
                 Hidden once the customer reconfigures, for the same reason pay-online
                 is: the QR carries the ORIGINAL amount. */}
-            {upiQr && !liveConfig?.changed && (
-              <div className="rounded-lg border border-hairline bg-paper-2/40 p-4">
-                <p className="text-sm font-semibold text-ink">Pay by UPI</p>
-                <p className="mt-0.5 text-[12px] leading-snug text-ink-3">
-                  Scan with GPay, PhonePe, Paytm or any UPI app — the amount is already filled in.
-                </p>
-                <div className="mt-3 flex items-center gap-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={upiQr.dataUrl}
-                    alt={`UPI QR code to pay ${tenantName} ${fmtC(dTotal)}`}
-                    className="h-32 w-32 shrink-0 rounded border border-hairline bg-white"
-                  />
-                  <div className="min-w-0 text-[12px] leading-snug">
-                    <p className="text-ink-3">UPI ID</p>
-                    <p className="font-mono font-medium text-ink break-all">{upiQr.vpa}</p>
-                    <p className="mt-2 text-ink-3">Amount</p>
-                    <p className="font-medium text-ink tabular-nums">{fmtC(dTotal)}</p>
-                  </div>
-                </div>
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="mt-3 w-full justify-center"
-                  loading={notifying}
-                  onClick={handleUpiPaid}
-                >
-                  I&apos;ve sent the payment
-                </Button>
-                <p className="mt-1.5 text-2xs leading-snug text-ink-3">
-                  This tells {tenantName} to check their account. It does not confirm the payment —
-                  they will verify it and send your GST invoice.
-                </p>
-              </div>
-            )}
+            {upiQr && !liveConfig?.changed && upiBox(dueToday ? dueToday.count : null)}
 
             <Button
               variant={payOnline && !liveConfig?.changed ? "default" : "primary"}
@@ -905,27 +994,19 @@ export function QuoteAcceptView({
         </div>
       </div>
 
-      {/* Accept with Purchase Order (PO) Dialog */}
-      {poOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => !accepting && setPoOpen(false)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="bg-paper w-full sm:max-w-md rounded-t-2xl sm:rounded-xl shadow-lg border border-hairline p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Accept with Purchase Order (PO) Dialog — R-023: on ui/dialog (Radix) so focus stays
+          inside, Esc closes and focus returns to the button; not closable mid-submit. */}
+      <Dialog open={poOpen} onOpenChange={(o) => { if (!o && !accepting) setPoOpen(false); }}>
+        <DialogContent hideClose resizable={false} aria-describedby="po-dialog-desc" className="gap-0 md:!w-[min(28rem,calc(100vw-2rem))]">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-full bg-indigo/10 text-indigo grid place-items-center shrink-0">
                 <Icon name="file" size={20} />
               </div>
               <div>
-                <h3 className="font-serif text-xl text-ink leading-tight">
+                <DialogTitle className="font-serif text-xl text-ink leading-tight">
                   Submit Purchase Order (PO)
-                </h3>
-                <p className="text-xs text-ink-3">Accept quote with PO details or request Proforma Invoice</p>
+                </DialogTitle>
+                <p id="po-dialog-desc" className="text-xs text-ink-3">Accept quote with PO details or request Proforma Invoice</p>
               </div>
             </div>
             <div className="space-y-3 mt-4">
@@ -980,30 +1061,20 @@ export function QuoteAcceptView({
                 Submit &amp; Accept
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Accept confirmation — styled dialog, not a browser confirm() */}
-      {confirmOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => !accepting && setConfirmOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="accept-confirm-title"
-        >
-          <div
-            className="bg-paper w-full sm:max-w-md rounded-t-2xl sm:rounded-xl shadow-lg border border-hairline p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* R-023: ui/dialog — focus trap, Esc, focus return; not closable mid-submit. */}
+      <Dialog open={confirmOpen} onOpenChange={(o) => { if (!o && !accepting) setConfirmOpen(false); }}>
+        <DialogContent hideClose resizable={false} aria-describedby={undefined} className="gap-0 md:!w-[min(28rem,calc(100vw-2rem))]">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-full bg-emerald/10 text-emerald grid place-items-center shrink-0">
                 <Icon name="check_circle" size={20} />
               </div>
-              <h3 id="accept-confirm-title" className="font-serif text-xl text-ink leading-tight">
+              <DialogTitle className="font-serif text-xl text-ink leading-tight">
                 Accept this quote?
-              </h3>
+              </DialogTitle>
             </div>
             <p className="text-sm text-ink-2 leading-relaxed">
               You&apos;re accepting quote <span className="font-mono text-ink">{quote.id}</span> for{" "}
@@ -1105,10 +1176,25 @@ export function QuoteAcceptView({
                 {liveConfig?.changed && !liveConfig.selfAcceptable ? "Send to reseller" : "Confirm & accept"}
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+/** GST rows: one IGST line inter-state, CGST + SGST halves intra-state (R-376b). */
+export function TaxRows({ taxRate, tax, interState, fmt }: {
+  taxRate: number; tax: number; interState: boolean; fmt: (v: number) => string;
+}) {
+  // Zero-rated (export under LUT) — no head to split; keep the plain row.
+  if (!taxRate) return <Row label={`GST (${taxRate}%)`} value={fmt(tax)} />;
+  if (interState) return <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />;
+  const intra = splitIntraStateTax(tax);
+  return (
+    <>
+      <Row label={`CGST (${taxRate / 2}%)`} value={fmt(intra.cgst)} />
+      <Row label={`SGST (${taxRate / 2}%)`} value={fmt(intra.sgst)} />
+    </>
   );
 }
 

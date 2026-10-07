@@ -10,7 +10,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { primaryContactsFor, type PrimaryContact } from "@/lib/contacts/primary";
 import {
   buildContactSearchIndex,
@@ -86,23 +88,35 @@ export function useAllContacts() {
     queryFn: async (): Promise<UnifiedContact[]> => {
       const supabase = createClient();
 
-      const [leadsRes, customersRes, vendorsRes, partnersRes, importedRes, employeesRes] = await Promise.all([
-        supabase
+      /* R-294: every source is paged past PostgREST's 1000-row cap (fetchAllRows, order
+         ending on the unique id). A failed source still reads as empty, as before — a role
+         that cannot see employees must not lose the whole contact book. */
+      const lenient = <T,>(p: Promise<T[]>): Promise<T[]> => p.catch(() => []);
+      const [leadsData, customersData, vendorsData, partnersData, importedData, employeesData] = await Promise.all([
+        lenient(fetchAllRows((from, to) => supabase
           .from("leads")
-          .select("id, company, contact_name, contact_email, contact_phone, stage, created_at, is_junk, contact_id"),
-        supabase
+          .select("id, company, contact_name, contact_email, contact_phone, stage, created_at, is_junk, contact_id")
+          .order("id", { ascending: true })
+          .range(from, to))),
+        lenient(fetchAllRows((from, to) => supabase
           .from("customers")
-          .select("id, name, contact_name, contact_title, contact_email, contact_phone, health, created_at"),
+          .select("id, name, contact_name, contact_title, contact_email, contact_phone, health, created_at")
+          .order("id", { ascending: true })
+          .range(from, to))),
         // Vendors = people/companies we BUY from — a real business relation, so
         // they belong in the contact book auto-classified as "Vendor".
-        supabase
+        lenient(fetchAllRows((from, to) => supabase
           .from("vendors")
-          .select("id, name, contact_name, contact_email, contact_phone, created_at"),
+          .select("id, name, contact_name, contact_email, contact_phone, created_at")
+          .order("id", { ascending: true })
+          .range(from, to))),
         // Referral partners = people who send us business (commission) → "Partner".
-        supabase
+        lenient(fetchAllRows((from, to) => supabase
           .from("referral_partners")
-          .select("id, name, email, phone, is_active, created_at"),
-        supabase
+          .select("id, name, email, phone, is_active, created_at")
+          .order("id", { ascending: true })
+          .range(from, to))),
+        lenient(fetchAllRows((from, to) => supabase
           .from("contacts")
           .select("id, full_name, email, phone, company, title, source, status, relationship, promoted_to_lead_id, created_at")
           // 'enquiry' contacts are durable identity anchors auto-created for leads
@@ -115,19 +129,16 @@ export function useAllContacts() {
           // via that lead row). If the lead was later deleted, promoted_to_lead_id
           // is SET NULL by the FK — then re-show the contact so a real person
           // never silently vanishes from the book after a lead delete.
-          .or("status.neq.promoted,promoted_to_lead_id.is.null"),
+          .or("status.neq.promoted,promoted_to_lead_id.is.null")
+          .order("id", { ascending: true })
+          .range(from, to))),
         // Employees are people too — they belong in the contact book (auto "Employee").
-        supabase
+        lenient(fetchAllRows((from, to) => supabase
           .from("employees")
-          .select("id, name, email, phone, designation, is_active, created_at"),
+          .select("id, name, email, phone, designation, is_active, created_at")
+          .order("id", { ascending: true })
+          .range(from, to))),
       ]);
-
-      const leadsData = leadsRes.data ?? [];
-      const customersData = customersRes.data ?? [];
-      const vendorsData = vendorsRes.data ?? [];
-      const partnersData = partnersRes.data ?? [];
-      const importedData = importedRes.data ?? [];
-      const employeesData = employeesRes.data ?? [];
 
       const fromLeads: UnifiedContact[] = leadsData
         /* R-135 (3 Oct 2026): a lead saved with only a company name ("demo", Won) was hidden
@@ -359,11 +370,12 @@ export function useCelebrations(daysAhead = 7) {
     queryKey: ["contacts", "celebrations", daysAhead],
     queryFn: async (): Promise<Celebration[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      const data = await fetchAllRows((from, to) => supabase
         .from("contacts")
         .select("id, full_name, phone, birthday, anniversary")
-        .or("birthday.not.is.null,anniversary.not.is.null");
-      if (error) throw error;
+        .or("birthday.not.is.null,anniversary.not.is.null")
+        .order("id", { ascending: true })
+        .range(from, to));
 
       // "Today" in IST (matches the rest of the app's day boundary).
       const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
@@ -520,7 +532,7 @@ export function useCreateContact() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -538,7 +550,7 @@ export function useUpdateContact() {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       qc.invalidateQueries({ queryKey: ["contact", id] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -556,7 +568,7 @@ export function useDeleteContact() {
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       toast.success("Contact deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -655,7 +667,7 @@ export function useSetPrimaryContact() {
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Primary contact updated");
     },
-    onError: (err) => toast.error((err as Error).message, {
+    onError: (err) => toastError(err, {
       description: "The primary contact was not changed. Try again, or reload the page.",
     }),
   });
@@ -702,7 +714,7 @@ export function useDeleteCustomerContact() {
         description: "They are still in your contacts, and on any other customer they serve.",
       });
     },
-    onError: (err) => toast.error((err as Error).message, {
+    onError: (err) => toastError(err, {
       description: "Every customer must keep at least one contact.",
     }),
   });

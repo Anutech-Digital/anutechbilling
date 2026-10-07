@@ -55,8 +55,8 @@ export default function PerformancePage() {
             leaving a control that silently does nothing. */}
         {scope === "month" && (
           <div>
-            <label className="block text-2xs text-ink-3 mb-1">Month</label>
-            <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
+            <label htmlFor="performance-month" className="block text-2xs text-ink-3 mb-1">Month</label>
+            <Input id="performance-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
           </div>
         )}
       </header>
@@ -67,10 +67,10 @@ export default function PerformancePage() {
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="block text-2xs text-ink-3 mb-1">
+            <label htmlFor="performance-bonus-pool" className="block text-2xs text-ink-3 mb-1">
               Bonus pool for {scope === "week" ? "this week" : "this month"} (₹)
             </label>
-            <Input type="number" min={0} value={pool} onChange={(e) => setPool(e.target.value)} placeholder="e.g. 50000" className="w-48" />
+            <Input id="performance-bonus-pool" type="number" min={0} value={pool} onChange={(e) => setPool(e.target.value)} placeholder="e.g. 50000" className="w-48" />
           </div>
           <p className="text-[12px] text-ink-3 flex-1 min-w-[200px]">
             Enter a pool and it splits by each person's score below — a fair, transparent starting point (you decide the final call).

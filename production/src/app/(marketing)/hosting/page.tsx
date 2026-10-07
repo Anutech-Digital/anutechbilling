@@ -28,7 +28,7 @@ const PAGE_URL = `${SITE_URL}/hosting`;
 export const metadata: Metadata = {
   title: "Web hosting on Google Cloud — 15-day free trial, no credit card | Anutech Digital",
   description:
-    "cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and 24×7 support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
+    "cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
   keywords: [
     "web hosting India", "cPanel hosting", "Google Cloud hosting", "free website migration",
     "WordPress hosting India", "GST invoice hosting", "15-day free trial hosting", "Anutech Digital",
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     siteName: "Anutech Digital",
     title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
     description:
-      "cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, 24×7 support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
+      "cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
   },
   twitter: {
     card: "summary_large_image",
@@ -71,7 +71,7 @@ function structuredData() {
     "@type": "Product",
     name: "Web hosting on Google Cloud",
     description:
-      "cPanel web hosting on Google Cloud with free SSL, automatic daily backups, free website migration and 24×7 support. Three plans: Starter, Standard and Plus.",
+      "cPanel web hosting on Google Cloud with free SSL, automatic daily backups, free website migration and real-person support. Three plans: Starter, Standard and Plus.",
     brand: { "@type": "Brand", name: "Anutech Digital" },
     category: "Web hosting",
     offers: {

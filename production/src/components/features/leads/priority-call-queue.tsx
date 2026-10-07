@@ -53,6 +53,7 @@ import { heatBadge } from "@/lib/leads/heat-score";
 import { OutcomeChips } from "./outcome-chips";
 import type { LeadOutcome } from "@/lib/leads/outcomes";
 import type { LeadListRow } from "@/lib/leads/list-page";
+import { leadTitle } from "@/lib/leads/display-name";
 
 /** Remembered per browser, not per user — it is a layout preference, not a setting. */
 const STORAGE_KEY = "ros_call_queue_open";
@@ -91,7 +92,7 @@ function QueueRow({
               onClick={() => onOpen(lead)}
               className="truncate text-sm font-semibold text-ink hover:underline"
             >
-              {cleanDisplayName(lead.company)}
+              {cleanDisplayName(leadTitle(lead).label)}
             </button>
             {/* Score AND band. The number is what makes two hot leads comparable. */}
             <Badge
@@ -104,7 +105,7 @@ function QueueRow({
             <Badge kind={late.kind} size="sm">{late.text}</Badge>
           </div>
           <p className="mt-0.5 truncate text-xs text-ink-3">
-            {lead.contact_name ? `${lead.contact_name} · ` : ""}
+            {lead.contact_name && leadTitle(lead).source !== "contact" ? `${lead.contact_name} · ` : ""}
             {lead.contact_phone}
             {lead.plan ? ` · ${lead.plan}` : ""}
             {lead.seats ? ` · ${lead.seats} seats` : ""}
@@ -118,7 +119,7 @@ function QueueRow({
           <a
             href={`tel:${num ?? ""}`}
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${lead.company} has no usable phone number`); return; }
+              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then call." }); return; }
               onLogCall(lead);
             }}
             className={cn(
@@ -133,7 +134,7 @@ function QueueRow({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${lead.company} has no usable phone number`); return; }
+              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then message on WhatsApp." }); return; }
               onLogWhatsApp(lead);
             }}
             title={waMsg}
@@ -281,7 +282,7 @@ export function PriorityCallQueue({
       {queue.dueWithoutPhone.length > 0 && (
         <p className="border-t border-hairline px-4 py-2.5 text-xs leading-relaxed text-ink-2">
           <b>{queue.dueWithoutPhone.length} due today with no phone number</b> —{" "}
-          {queue.dueWithoutPhone.slice(0, 3).map((l) => cleanDisplayName(l.company)).join(", ")}
+          {queue.dueWithoutPhone.slice(0, 3).map((l) => cleanDisplayName(leadTitle(l).label)).join(", ")}
           {queue.dueWithoutPhone.length > 3 ? ` +${queue.dueWithoutPhone.length - 3} more` : ""}.
           They cannot be called until someone adds one.{" "}
           {/* `as Route` because typedRoutes cannot know a query string is valid —

@@ -98,8 +98,15 @@ export function scan(raw, path = "") {
   // Every full-screen overlay outside the two primitives that trap focus. (A file-level
   // "imports ui/dialog" exemption hid /lead-gen's hand-rolled share sheet — it used Dialog
   // for a different modal on the same page.)
+  // R-289: an overlay that IS a Radix primitive's own Overlay/Content tag (e.g. the full-screen
+  // image viewer on @radix-ui/react-dialog) traps focus too — judged per tag, never per file.
   if (!/src\/components\/ui\/(dialog|sheet)\.tsx$/.test(path)) {
-    for (const m of src.matchAll(/fixed inset-0/g)) hits["modal-no-trap"].push(lineOf(src, m.index));
+    for (const m of src.matchAll(/fixed inset-0/g)) {
+      const open = src.lastIndexOf("<", m.index);
+      const onRadix = open >= 0 && /^<\w+Primitive\.(Overlay|Content)\b/.test(src.slice(open, open + 60))
+        && open + tagAt(src, open).length > m.index;
+      if (!onRadix) hits["modal-no-trap"].push(lineOf(src, m.index));
+    }
   }
 
   for (const m of src.matchAll(/(^|[^:\w-])text-ink-4\b/g)) hits["ink4-body"].push(lineOf(src, m.index + m[1].length));

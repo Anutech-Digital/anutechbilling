@@ -169,7 +169,7 @@ export function LeadListView({
       if (moved === 0) return;                      // dismissed, or nothing to do
       toast.success(`Moved ${moved} lead${moved === 1 ? "" : "s"} to ${STAGE_LABEL[stage]}`);
     } catch {
-      toast.error("Some leads failed to update");
+      toast.error("Some leads failed to update.", { description: "The rest moved. Refresh to see which stayed, then move them again." });
     }
     clearSelection();
   };
@@ -182,7 +182,7 @@ export function LeadListView({
       await Promise.all(ids.map((id) => deleteLead.mutateAsync(id)));
       toast.success(`Deleted ${ids.length} lead${ids.length === 1 ? "" : "s"}`);
     } catch {
-      toast.error("Some leads failed to delete");
+      toast.error("Some leads failed to delete.", { description: "The rest were deleted. Refresh to see which stayed, then try again." });
     }
     clearSelection();
   };

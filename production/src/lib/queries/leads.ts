@@ -88,12 +88,13 @@ export function useLeads() {
       // queries, so the retry returns exactly the same rows. All it did was make
       // "no leads yet" indistinguishable from "auth/tenant is broken". One of the
       // three UUIDs also belonged to Delfos Technologies, an unrelated tenant.
-      const { data, error } = await supabase
+      /* R-294: paged past the 1000-row cap; order ends on the unique id. */
+      return fetchAllRows((from, to) => supabase
         .from("leads")
         .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
     },
   });
 }
@@ -425,13 +426,14 @@ export function useDashboardLeads(enabled = true) {
           .eq("is_junk", false).gte("created_at", dayStart.toISOString()),
         open().lt("follow_up_date", today),
         /* Overdue first, then the coming week — the card shows five. */
-        supabase.from("leads").select("id, company, stage, follow_up_date")
+        /* R-279: contact fields so a lead with no company is named by its contact. */
+        supabase.from("leads").select("id, company, contact_name, contact_email, contact_phone, stage, follow_up_date")
           .eq("is_junk", false).not("stage", "in", "(won,lost)")
           .not("follow_up_date", "is", null).lte("follow_up_date", weekOut)
           .order("follow_up_date", { ascending: true }).order("id", { ascending: true })
           .limit(5),
         /* The activity feed shows six items across leads and quotes. */
-        supabase.from("leads").select("id, company, stage, plan, value, created_at")
+        supabase.from("leads").select("id, company, contact_name, contact_email, contact_phone, stage, plan, value, created_at")
           .eq("is_junk", false).gte("created_at", since24h)
           .order("created_at", { ascending: false }).limit(6),
       ]);

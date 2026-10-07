@@ -161,7 +161,13 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               `img-src 'self' data: blob: https:${supaImg}`,
               "font-src 'self' data: https://fonts.gstatic.com",
-              `connect-src 'self' ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net`,
+              /* data: (R-365, 7 Oct 2026): @react-pdf's layout engine, yoga-layout 3, inlines its
+                 wasm and loads it with fetch("data:application/octet-stream;base64,AGFzbQ…").
+                 Refused, yoga decoded the bytes itself and the PDF still came out, but every
+                 Download PDF logged a CSP violation and AI Help showed "API FAILED". A data:
+                 URL never leaves the browser, so this opens no way to send data out. script-src
+                 is untouched (wasm compiles under its existing 'unsafe-eval'). */
+              `connect-src 'self' data: ${supaConnect} https://api.razorpay.com https://lumberjack.razorpay.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net`,
               "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com https://td.doubleclick.net https://www.googletagmanager.com",
               "object-src 'none'",
               "base-uri 'self'",

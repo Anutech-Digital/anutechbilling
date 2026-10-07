@@ -109,12 +109,12 @@ describe("lead drawer — which tab a lead opens on", () => {
   it("opens on Email when there is a thread", () => {
     /* A live exchange with the customer IS what the lead is about. The merged Activity
        stream is history, and history is not what you open a live thread for. */
-    expect(code).toMatch(/if \(threadSummary\.total > 0\) \{[\s\S]{0,120}setDrawerTab\("email"\);/);
+    expect(code).toMatch(/if \(threadSummary\.total > 0\) \{[\s\S]{0,120}setAutoTab\("email"\);/); // R-342: auto-pick sets autoTab; a chosen tab is in ?ltab=
   });
 
   it("falls back to Activity, not to an empty Email tab", () => {
     /* A lead whose whole history is two calls and a quote has no thread to read. */
-    expect(code).toContain('setDrawerTab("activity");');
+    expect(code).toContain('setAutoTab("activity");');
   });
 
   it("re-runs when either count changes, not only when the lead does", () => {

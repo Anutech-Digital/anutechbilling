@@ -12,6 +12,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
 } from "@/components/ui/sheet";
@@ -21,6 +22,9 @@ import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { useIssueCreditNote } from "@/lib/queries/credit-notes";
 import { useIssueDebitNote } from "@/lib/queries/debit-notes";
+import { createClient } from "@/lib/supabase/client";
+import { istToday } from "@/lib/dates/ist";
+import { creditNoteDeadlineWarning } from "@/lib/gst/credit-note-deadline";
 import type { CreditNoteReasonCode, DebitNoteReasonCode } from "@/lib/supabase/database.types";
 
 const CREDIT_REASONS: { value: CreditNoteReasonCode; label: string }[] = [
@@ -50,12 +54,31 @@ interface Props {
   isExport?: boolean;
   /** 'credit' reduces the invoice, 'debit' raises it. Defaults to 'credit'. */
   mode?: "credit" | "debit";
+  /** Invoice date (YYYY-MM-DD) for the s.34 time-limit warning. Read from the DB when not passed. */
+  invoiceDate?: string | null;
+}
+
+/** R-335: the invoice's date — fetched only when the caller did not pass it and a credit dialog is open. */
+function useInvoiceDate(invoiceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["invoices", "date", invoiceId],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await createClient().from("invoices").select("invoice_date").eq("id", invoiceId).maybeSingle();
+      if (error) throw error;
+      return data?.invoice_date ?? null;
+    },
+  });
 }
 
 export function IssueCreditNoteDialog({
-  open, onOpenChange, invoiceId, customerName, netPayable, taxRate, interState, isExport, mode = "credit",
+  open, onOpenChange, invoiceId, customerName, netPayable, taxRate, interState, isExport, mode = "credit", invoiceDate,
 }: Props) {
   const isDebit = mode === "debit";
+  const { data: fetchedDate } = useInvoiceDate(invoiceId, open && !isDebit && invoiceDate === undefined);
+  // GST s.34(2): a CREDIT note is time-limited (a debit note is not). Warn only — never block; the CA confirms.
+  const lateWarning = isDebit ? null : creditNoteDeadlineWarning(invoiceDate ?? fetchedDate ?? null, istToday());
   const issueCredit = useIssueCreditNote();
   const issueDebit = useIssueDebitNote();
   const busy = isDebit ? issueDebit.isPending : issueCredit.isPending;
@@ -108,6 +131,11 @@ export function IssueCreditNoteDialog({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {lateWarning && (
+            <div role="alert" className="rounded-md bg-amber-soft/60 border border-amber/40 px-3 py-2 text-2xs text-amber-ink leading-relaxed">
+              <b>Past the GST credit note time limit.</b> {lateWarning}
+            </div>
+          )}
           <div className="rounded-md bg-paper-2/50 border border-hairline px-3 py-2 text-2xs text-ink-3">
             Amount still owed on this invoice: <b className="text-ink">{rupee(netPayable)}</b>
           </div>

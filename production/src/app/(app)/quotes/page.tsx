@@ -6,6 +6,7 @@
 import { istToday } from "@/lib/dates/ist";
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { QUOTE_TABS } from "@/lib/navigation/drilldown";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { useTeamTree } from "@/lib/queries/team-tree";
@@ -19,13 +20,16 @@ import { toast } from "sonner";
 import { QUOTE_FOCI, QUOTE_FOCUS_LABEL, quoteInFocus, focusValue, type QuoteFocus } from "@/lib/quotes/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { useQuotes, useDeleteQuote, quoteDeleteBlockReason } from "@/lib/queries/quotes";
+import { useQuoteLeadContacts } from "@/lib/queries/quote-lead-contacts";
+import { quoteMatchesSearch, quotePartyName } from "@/lib/quotes/quote-party-name";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { useProjectSales, useDeleteProjectSale, type ProjectSaleWithTotals } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { useLead } from "@/lib/queries/leads";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { quotesEmptyCopy } from "@/lib/quotes/empty-tab";
@@ -57,6 +61,11 @@ import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type { Quote } from "@/lib/supabase/database.types";
+/* R-105: same paging rule + "Load N more" control as Payments (R-104) and the shared DataTable. */
+import { usePagedRows, LoadMore } from "../payments/load-more";
+import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { COPY } from "@/lib/copy";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -116,9 +125,23 @@ function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { 
    here nothing could test them — which is how a quote holding ₹20,000 came to display
    "Out for review". */
 
+/** R-272: allowed values for the URL-held view and team mode (anything else → default). */
+const QUOTE_VIEWS = ["subscription", "project"] as const;
+const TEAM_MODES: readonly TeamViewMode[] = ["team", "mine"];
+
 export default function QuotesPage() {
   const router = useRouter();
   const { data: quotes, isLoading, error, refetch } = useQuotes();
+  /* R-278: a quote for a lead with no company was saved as "Prospect" and could not be
+     found by the lead's email or phone. The lead's contact is read alongside, so the row
+     shows a real name (old rows too, no data change) and search covers name/email/phone. */
+  const leadIdsOnQuotes = React.useMemo(
+    () => (quotes ?? []).map((q) => q.lead_id).filter((id): id is string => !!id),
+    [quotes],
+  );
+  const { data: leadContacts } = useQuoteLeadContacts(leadIdsOnQuotes);
+  const leadOf = (q: Quote) => (q.lead_id ? leadContacts?.get(q.lead_id) ?? null : null);
+  const partyOf = (q: Quote) => quotePartyName(q.customer_name, leadOf(q));
   /* ── Which quotes turned into a live subscription, and what is still owed ──
      Asked 11 Sep 2026: "I want to know which quote has an active subscription, and
      if I gave someone a grace period, show that too." Neither was visible here —
@@ -140,10 +163,12 @@ export default function QuotesPage() {
   const [focus, setFocus] = useUrlChoice<QuoteFocus>("focus", QUOTE_FOCI, "");
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: QuoteFocus) => { setTab("all"); setFocus(f); };
-  const [search, setSearch] = React.useState("");
+  /* R-272: search, view and team mode live in the URL like tab/focus, so opening a quote
+     and pressing Back returns to the same filtered list instead of every quote. */
+  const [search, setSearch] = useUrlState("q", "");
   // Clean split — Subscription is the default (most quotes live here); Project
   // is one tab away. No mixed "All" view, no empty default.
-  const [view, setView] = React.useState<"subscription" | "project">("subscription");
+  const [view, setView] = useUrlChoice<"subscription" | "project">("view", QUOTE_VIEWS, "subscription");
   const [projectQuoteOpen, setProjectQuoteOpen] = React.useState(false);
   const [editProject, setEditProject] = React.useState<ProjectSaleWithTotals | null>(null);
   const deleteProject = useDeleteProjectSale();
@@ -195,7 +220,7 @@ export default function QuotesPage() {
     () => team.find((u) => u.id === me?.userId) ?? null,
     [team, me?.userId],
   );
-  const [teamMode, setTeamMode] = React.useState<TeamViewMode>("team");
+  const [teamMode, setTeamMode] = useUrlChoice<TeamViewMode>("who", TEAM_MODES, "team"); // R-272
 
   const quotesByWorkspace = React.useMemo(() => {
     const rows = quotes ?? [];
@@ -297,23 +322,27 @@ export default function QuotesPage() {
       // Accepted tab excludes those that have already graduated to invoiced
       if (q.status !== "accepted" || q.payment_status === "invoiced") return false;
     } else if (tab !== "all" && q.status !== tab) return false;
-    if (!search.trim()) return true;
-    const s = search.toLowerCase();
-    return (
-      q.id.toLowerCase().includes(s) ||
-      q.customer_name.toLowerCase().includes(s) ||
-      (q.plan?.toLowerCase().includes(s) ?? false)
-    );
+    return quoteMatchesSearch(q, leadOf(q), search);
   });
 
   /* ── j / k / Enter over this table ────────────────────────────────────────
      `count` is the FILTERED length, so the selection is re-clamped whenever a tab or a
      search changes the list. Without that, Enter after a filter would open whichever row
      had slid into the old index — the wrong quote, confidently. See useListKeys. */
+  /* R-105: paint 50 at a time (R-024 rule). Tab counts, KPIs, the pipeline/renewal totals
+     and the CSV export still use every quote in `filtered` / `quotesByWorkspace`; only the
+     two lists are paged. A new tab, focus, search, team view or approvals filter starts
+     again at one page. */
+  const paged = usePagedRows(
+    filtered,
+    QUOTES_PAGE_SIZE,
+    quotesPagingKey({ tab, focus, search, teamMode, onlyMyApprovals }),
+  );
+
   const keys = useListKeys({
-    count: filtered.length,
+    count: paged.shown.length,   // only the rows on screen (R-105)
     onOpen: (i) => {
-      const q = filtered[i];
+      const q = paged.shown[i];
       if (q) router.push(`/quotes/${q.id}` as never);
     },
   });
@@ -356,11 +385,11 @@ export default function QuotesPage() {
         <div className="flex gap-2 flex-wrap">
           {view === "project" ? (
             <Button variant="primary" icon="plus" onClick={() => setProjectQuoteOpen(true)}>
-              New Quote
+              {COPY.newQuote}
             </Button>
           ) : (
             <Button asChild variant="primary" icon="plus">
-              <Link href={"/quotes/new" as any}>New Quote</Link>
+              <Link href={"/quotes/new" as any}>{COPY.newQuote}</Link>
             </Button>
           )}
         </div>
@@ -646,7 +675,9 @@ export default function QuotesPage() {
               <TabBar className="overflow-y-hidden" value={tab} onChange={tabOn} items={tabs} />
               <div className="flex justify-between items-center gap-3 flex-wrap">
                 <div className="text-xs text-ink-3">
-                  Showing {filtered.length} of {counts.all ?? 0} quote{counts.all === 1 ? "" : "s"}
+                  {paged.hidden > 0
+                    ? <>Showing {paged.shown.length} of {filtered.length} quotes</>
+                    : <>Showing {filtered.length} of {counts.all ?? 0} quote{counts.all === 1 ? "" : "s"}</>}
                   {/* Beside the count on purpose: the count is the thing the toggle
                       changes, and a filter whose effect is shown somewhere else on the
                       page reads as the list being wrong. */}
@@ -757,7 +788,7 @@ export default function QuotesPage() {
       {/* Adaptive card list — phones, tablets, and medium viewports (< 1280px) */}
       {!isLoading && !error && filtered.length > 0 && (
         <ul className="xl:hidden space-y-2 mb-3">
-          {filtered.map((q) => {
+          {paged.shown.map((q) => {
             const uStatus = unifiedStatus(q);
             const note = cashNote(q);
             const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
@@ -785,7 +816,7 @@ export default function QuotesPage() {
                         ) : null}
                       </div>
                       <p className="text-sm font-semibold text-ink mt-1 truncate">
-                        {cleanDisplayName(q.customer_name)}
+                        {cleanDisplayName(partyOf(q))}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
@@ -828,8 +859,13 @@ export default function QuotesPage() {
               </li>
             );
           })}
+          {paged.hidden > 0 && (
+            <li>
+              <LoadMore hidden={paged.hidden} pageSize={QUOTES_PAGE_SIZE} noun="quotes" onLoadMore={paged.loadMore} />
+            </li>
+          )}
           <li className="pt-2 text-center text-2xs text-ink-3">
-            Showing {filtered.length} of {counts.all ?? 0} · Total {rupee(filtered.reduce((s, q) => s + (q.amount ?? 0), 0), { compact: true })}
+            Showing {paged.hidden > 0 ? `${paged.shown.length} of ${filtered.length}` : `${filtered.length} of ${counts.all ?? 0}`} · Total {rupee(filtered.reduce((s, q) => s + (q.amount ?? 0), 0), { compact: true })}
           </li>
         </ul>
       )}
@@ -852,7 +888,7 @@ export default function QuotesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((q, rowIndex) => {
+                {paged.shown.map((q, rowIndex) => {
                   const margin = estimateMarginForQuote(q);
                   const uStatus = unifiedStatus(q);
                   const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
@@ -893,9 +929,9 @@ export default function QuotesPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2.5 align-top">
-                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(q.customer_name)}>{cleanDisplayName(q.customer_name)}</div>
-                        {phoneSuffixOf(q.customer_name) && (
-                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(q.customer_name)}</div>
+                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
+                        {phoneSuffixOf(partyOf(q)) && (
+                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(partyOf(q))}</div>
                         )}
                       </td>
                       {/* Plan — wraps to a second line rather than truncating with "…". */}
@@ -1016,7 +1052,7 @@ export default function QuotesPage() {
                                 icon="whatsapp"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1034,14 +1070,13 @@ export default function QuotesPage() {
                             const ps = q.payment_status;
                             if (ps === "invoiced") {
                               // Terminal — money flow complete, jump to the
-                              // actual invoice (auto-opens that dialog via
-                              // ?open=INV-XX deep link on /invoices)
+                              // actual invoice's own page (R-218: invoiceHref)
                               return (
                                 <Button asChild size="sm" icon="receipt">
                                   <Link
                                     href={
                                       q.invoice_id
-                                        ? (`/invoices?open=${q.invoice_id}` as any)
+                                        ? (invoiceHref(q.invoice_id) as any)
                                         : (`/quotes/${q.id}` as any)
                                     }
                                   >
@@ -1102,7 +1137,7 @@ export default function QuotesPage() {
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
                                 onClick={() => {
-                                  const msg = encodeURIComponent(`Namaste ${q.customer_name},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ₹${(q.amount ?? 0).toLocaleString("en-IN")}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
                                   window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
                                 }}
                               >
@@ -1139,7 +1174,11 @@ export default function QuotesPage() {
             <div className="flex items-center justify-between gap-3 flex-wrap border-t border-hairline px-4 py-3 bg-paper-2/30 text-xs text-ink-3">
               <div className="flex items-center gap-2">
                 <Icon name="check_circle" size={12} className="text-emerald" />
-                <span>End of list · Showing {filtered.length} of {counts.all ?? 0} quotes</span>
+                <span>
+                  {paged.hidden > 0
+                    ? <>Showing {paged.shown.length} of {filtered.length} quotes · {paged.hidden} more below</>
+                    : <>End of list · Showing {filtered.length} of {counts.all ?? 0} quotes</>}
+                </span>
               </div>
               <div className="flex items-center gap-3">
                 <span>
@@ -1169,6 +1208,8 @@ export default function QuotesPage() {
               </div>
             </div>
           </Card>
+
+          <LoadMore hidden={paged.hidden} pageSize={QUOTES_PAGE_SIZE} noun="quotes" onLoadMore={paged.loadMore} />
 
           {/* Help text — pushed to bottom via mt-auto when content is short */}
           <div className="flex items-center gap-1.5 text-xs text-ink-3 mt-3">
@@ -1236,7 +1277,15 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
   const validity = quote.expires_date
     ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
     : 30;
-  const interState = isInterStateSupply(customer?.state_code, currentUser?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: currentUser?.tenantGstin });
+  /* R-376 (f): customer → lead → typed prospect; names the state ("Haryana (06) · IGST"). */
+  const { data: lead } = useLead(!quote.customer_id ? (quote.lead_id ?? undefined) : undefined);
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    lead: lead ?? null,
+    quote,
+    seller: { state_code: currentUser?.tenantStateCode, gstin: currentUser?.tenantGstin },
+  });
+  const interState = pos.interState;
 
   return (
     <QuotePreviewDialog
@@ -1261,6 +1310,8 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       tax={tax}
       total={total}
       interState={interState}
+      placeOfSupply={pos.label}
+      isExport={pos.isExport}
       validityDays={validity}
       notes={quote.notes ?? ""}
       isProspect={!!quote.lead_id}

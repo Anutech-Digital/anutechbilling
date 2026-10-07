@@ -25,7 +25,10 @@ const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium " +
   "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber " +
   "focus-visible:ring-offset-2 focus-visible:ring-offset-paper " +
-  "disabled:pointer-events-none disabled:opacity-50 select-none",
+  "disabled:pointer-events-none disabled:opacity-50 select-none " +
+  // R-269: under a finger (pointer: coarse) no button is shorter than 40px. A mouse
+  // sees the exact sizes below; only touch screens get the taller target.
+  "[@media(pointer:coarse)]:min-h-10",
   {
     variants: {
       variant: {
@@ -46,13 +49,15 @@ const buttonVariants = cva(
           "bg-transparent text-ink border border-ink hover:bg-paper-2",
         // Link — for inline text actions
         link:
-          "bg-transparent text-amber underline-offset-4 hover:underline p-0 h-auto",
+          "bg-transparent text-amber underline-offset-4 hover:underline p-0 h-auto " +
+          // Inline text link sits in a sentence: it must not grow to 40px on touch.
+          "[@media(pointer:coarse)]:min-h-0",
       },
       size: {
         sm: "h-8 px-3 text-xs",
         md: "h-9 px-4 text-sm",
         lg: "h-11 px-6 text-base",
-        icon: "h-9 w-9 p-0",
+        icon: "h-9 w-9 p-0 [@media(pointer:coarse)]:min-w-10",
       },
     },
     defaultVariants: {
@@ -163,7 +168,8 @@ const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
       <Button
         ref={ref}
         variant="ghost"
-        className={cn("p-0", sizeClass, className)}
+        // R-269: square on touch too — the base gives min-h-10, this gives the width.
+        className={cn("p-0 [@media(pointer:coarse)]:min-w-10", sizeClass, className)}
         {...props}
       >
         <Icon name={icon} size={iconSize} />

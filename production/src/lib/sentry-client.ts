@@ -31,6 +31,7 @@
  * tool is not a place to accumulate a copy of the customer list.
  */
 import * as Sentry from "@sentry/nextjs";
+import { sentryEnvironment, sentryRelease } from "@/lib/sentry-env";
 
 /**
  * Idempotent, same as the server one: `getClient()` is undefined until an init runs, so a
@@ -55,14 +56,19 @@ import * as Sentry from "@sentry/nextjs";
  * instead of two, no rebuild when it changes, and no way for the build and the runtime to
  * disagree about whether monitoring is on.
  */
-export function initClientSentry(dsn: string | null | undefined): void {
+/* R-333: `release` is the build SHA. BUILD_SHA is a runtime-only env (deliberately not
+   NEXT_PUBLIC_), so the DSN route hands it over alongside the DSN. */
+export function initClientSentry(dsn: string | null | undefined, release?: string | null): void {
   const DSN = (dsn ?? "").trim();
   if (!DSN) return;
   if (Sentry.getClient()) return;
 
   Sentry.init({
     dsn: DSN,
-    environment: process.env.NODE_ENV,
+    /* R-333: staging and live were both "production" (NODE_ENV of any build). The literal
+       NEXT_PUBLIC_APP_ENV read is inlined at build: "local" / "staging" / "" -> production. */
+    environment: sentryEnvironment(process.env.NEXT_PUBLIC_APP_ENV, process.env.NODE_ENV),
+    release: sentryRelease(release),
     /* Lower than the server's 0.1. Browser traces are far noisier per user and this is a
        free-tier account; the reason to have this at all is exceptions, not performance. */
     tracesSampleRate: process.env.NODE_ENV === "production" ? 0.02 : 1.0,

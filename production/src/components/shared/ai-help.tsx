@@ -29,34 +29,51 @@ import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
+import { loadLastPageTestRun, lastTestedLine, summarizeRun, type PageTestRun } from "@/lib/ai/page-test-runs";
 import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
-import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
+import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
+import { CropOverlay, HELP_SELF, captureViewport, toShot, type Shot } from "@/components/shared/help-shot";
+import { HelpReportTab } from "@/components/shared/help-report-tab";
 
 /* Open/closed and "an error was caught" live outside the component (5 Oct 2026, Pardeep:
    "ai help button ko top me chhota sa icon laga do"). The big floating button covered page
    buttons (the Payment runs "Create" bar, list rows on phone); the trigger is now a small
    icon in the top bar, which needs to open the same panel and show the same red dot. */
-type HelpUi = { open: boolean; alert: string | null };
-let helpUi: HelpUi = { open: false, alert: null };
+/* R-383 (7 Oct 2026, Pardeep: "dono me farak kya, merge karke behtar"): the header's separate
+   "Report Bug" button is gone. This one Help button opens a panel with two tabs — "Ask" (the
+   AI chat, as before) and "Report a problem" (a plain form that always submits). Ctrl+Shift+B
+   opens the Report tab straight away. */
+export type HelpTab = "ask" | "report";
+type HelpUi = { open: boolean; alert: string | null; tab: HelpTab };
+let helpUi: HelpUi = { open: false, alert: null, tab: "ask" };
 const helpListeners = new Set<() => void>();
 const setHelpUi = (patch: Partial<HelpUi>) => { helpUi = { ...helpUi, ...patch }; helpListeners.forEach((l) => l()); };
 const subscribeHelpUi = (l: () => void) => { helpListeners.add(l); return () => { helpListeners.delete(l); }; };
-const SERVER_UI: HelpUi = { open: false, alert: null };
+const SERVER_UI: HelpUi = { open: false, alert: null, tab: "ask" };
 const useHelpUi = () => React.useSyncExternalStore(subscribeHelpUi, () => helpUi, () => SERVER_UI);
 
-/** The top-bar trigger: a small chat icon, with a red dot while an unseen error waits. */
+/** Open Help on the "Report a problem" tab (phone More menu, other callers). */
+export function openHelpReport() { setHelpUi({ open: true, tab: "report" }); }
+/** Ctrl+Shift+B: open on the Report tab; pressed again while that tab is showing, close. */
+export function toggleHelpReport() {
+  if (helpUi.open && helpUi.tab === "report") setHelpUi({ open: false });
+  else openHelpReport();
+}
+
+/** The top-bar trigger: the one Help button, with a red dot while an unseen error waits. */
 export function AiHelpButton() {
   const { open, alert } = useHelpUi();
   return (
     <div className="relative">
       <IconButton
         icon={alert ? "alert" : "message"}
-        aria-label={alert ? "AI Help — an error was caught, open to report it" : "AI Help — ask about this page or report a bug"}
-        title={alert ? `Error caught: ${alert}` : "AI Help"}
+        aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
+        title={alert ? `Error caught: ${alert}` : "Help — ask AI or report a problem (Ctrl+Shift+B to report)"}
         aria-pressed={open}
-        onClick={() => setHelpUi({ open: !open })}
+        data-topbar="help"
+        onClick={() => setHelpUi(open ? { open: false } : { open: true, tab: alert ? "report" : helpUi.tab })}
         className={alert ? "text-rose" : undefined}
       />
       {alert && <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose ring-2 ring-paper animate-pulse pointer-events-none" aria-hidden="true" />}
@@ -64,82 +81,93 @@ export function AiHelpButton() {
   );
 }
 
-/** R-189: one screenshot that goes with the next message (and is filed with the report). */
-interface Shot { dataUrl: string; mimeType: "image/jpeg"; base64: string }
+/* R-223 (tester, staging: "AI Help panel fixed width/height, bada karne ka option nahi"):
+   on a desktop the panel has two sizes ("Bigger" / "Smaller") and can be dragged larger or
+   smaller from its left edge, bottom edge or bottom-left corner (it is pinned top-right, so
+   those are the edges that move). The size is kept in this browser. On a phone the panel is
+   a full-screen sheet — no sizes there. */
+export interface PanelSize { w: number; h: number }
+export const PANEL_NORMAL: PanelSize = { w: 420, h: 600 };
+/* R-360: "Expand" = about double the width and the full height of the window; the clamp
+   below trims it to whatever the screen allows. */
+export const PANEL_LARGE: PanelSize = { w: PANEL_NORMAL.w * 2, h: 10_000 };
+export const PANEL_MIN: PanelSize = { w: 360, h: 360 };
+const PANEL_MAX_W = 900;
+/** Width never passes this share of the window (R-360: 360px .. min(900px, 90vw)). */
+const PANEL_MAX_VW = 0.9;
+/** md:top-16 (64px) above the panel + a 16px gap below it. */
+const PANEL_TOP_AND_GAP = 80;
+const PANEL_SIZE_KEY = "reselleros.aiHelp.size";
+/** One arrow-key press on the resize handle moves the edge this far. */
+export const PANEL_KEY_STEP = 40;
 
-/** Shrink to ≤1280px wide JPEG so a screenshot stays well under the route's 2 MB limit. */
-async function toShot(source: HTMLCanvasElement | Blob): Promise<Shot | null> {
-  let canvas: HTMLCanvasElement;
-  if (source instanceof HTMLCanvasElement) canvas = source;
-  else {
-    const bmp = await createImageBitmap(source);
-    canvas = document.createElement("canvas");
-    canvas.width = bmp.width; canvas.height = bmp.height;
-    canvas.getContext("2d")?.drawImage(bmp, 0, 0);
-  }
-  const scale = Math.min(1, 1280 / canvas.width);
-  const out = document.createElement("canvas");
-  out.width = Math.round(canvas.width * scale); out.height = Math.round(canvas.height * scale);
-  out.getContext("2d")?.drawImage(canvas, 0, 0, out.width, out.height);
-  for (const q of [0.72, 0.55, 0.4]) {
-    const dataUrl = out.toDataURL("image/jpeg", q);
-    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-    if (base64.length < 1_900_000) return { dataUrl, mimeType: "image/jpeg", base64 };
-  }
-  return null;
+/** Widest the panel may be in this window. */
+export const panelMaxWidth = (vp: { w: number }) => Math.max(PANEL_MIN.w, Math.floor(Math.min(PANEL_MAX_W, vp.w * PANEL_MAX_VW)));
+
+/** Keep a size inside the window: never below PANEL_MIN, never past min(900px, 90vw) / the screen bottom. */
+export function clampPanelSize(s: PanelSize, vp: { w: number; h: number }): PanelSize {
+  const maxW = panelMaxWidth(vp);
+  const maxH = Math.max(PANEL_MIN.h, vp.h - PANEL_TOP_AND_GAP);
+  const w = Number.isFinite(s.w) ? s.w : PANEL_NORMAL.w;
+  const h = Number.isFinite(s.h) ? s.h : PANEL_NORMAL.h;
+  return {
+    w: Math.round(Math.min(maxW, Math.max(PANEL_MIN.w, w))),
+    h: Math.round(Math.min(maxH, Math.max(PANEL_MIN.h, h))),
+  };
 }
 
+/** R-360: keyboard on the left-edge handle — ← widens, → narrows, Home = narrowest, End = widest. Null = not a resize key. */
+export function keyResize(s: PanelSize, key: string, vp: { w: number; h: number }): PanelSize | null {
+  const w = key === "ArrowLeft" ? s.w + PANEL_KEY_STEP
+    : key === "ArrowRight" ? s.w - PANEL_KEY_STEP
+    : key === "Home" ? PANEL_MIN.w
+    : key === "End" ? panelMaxWidth(vp)
+    : null;
+  return w === null ? null : clampPanelSize({ w, h: s.h }, vp);
+}
+
+export type ResizeEdge = "left" | "bottom" | "corner";
+
+/** New size after dragging an edge by (dx, dy) px. Pulling left widens; pulling down makes it taller. */
+export function dragResize(start: PanelSize, edge: ResizeEdge, dx: number, dy: number, vp: { w: number; h: number }): PanelSize {
+  return clampPanelSize({
+    w: edge === "bottom" ? start.w : start.w - dx,
+    h: edge === "left" ? start.h : start.h + dy,
+  }, vp);
+}
+
+/** "Bigger" shows while the panel is at (or near) the normal size; anything larger offers "Smaller". */
+export const isLargePanel = (s: PanelSize) => s.w > PANEL_NORMAL.w + 20 || s.h > PANEL_NORMAL.h + 20;
+
+function readPanelSize(): PanelSize | null {
+  try {
+    const raw = window.localStorage.getItem(PANEL_SIZE_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<PanelSize>;
+    return typeof v.w === "number" && typeof v.h === "number" && Number.isFinite(v.w) && Number.isFinite(v.h) ? { w: v.w, h: v.h } : null;
+  } catch { return null; }
+}
+function savePanelSize(s: PanelSize) {
+  try { window.localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(s)); } catch { /* private window — size just isn't remembered */ }
+}
+const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
+
 /**
- * R-189 (Pardeep, 6 Oct: "poora page na lekar kuch portion ka hi screen lena ho"): after the
- * capture, the picture opens full-screen; drag a box over the part you want, or keep it all.
- * Coordinates are mapped from the displayed image back to the canvas, so the crop is exact
- * at any zoom. Pointer events, so mouse and touch both work.
+ * R-352: "Last tested 7 Oct, 10:52 · 5 ✓ 1 ✗" at the top of AI Help, with the failed tests
+ * named — so the person sees what the browser run already covered before asking for more.
  */
-function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone: (c: HTMLCanvasElement) => void; onCancel: () => void }) {
-  const imgRef = React.useRef<HTMLImageElement>(null);
-  const [box, setBox] = React.useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const start = React.useRef<{ x: number; y: number } | null>(null);
-  const url = React.useMemo(() => src.toDataURL("image/png"), [src]);
-
-  const pos = (e: React.PointerEvent) => {
-    const r = imgRef.current!.getBoundingClientRect();
-    return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) };
-  };
-  const down = (e: React.PointerEvent) => { e.preventDefault(); (e.target as Element).setPointerCapture?.(e.pointerId); start.current = pos(e); setBox({ ...start.current, w: 0, h: 0 }); };
-  const move = (e: React.PointerEvent) => {
-    if (!start.current) return;
-    const p = pos(e);
-    setBox({ x: Math.min(p.x, start.current.x), y: Math.min(p.y, start.current.y), w: Math.abs(p.x - start.current.x), h: Math.abs(p.y - start.current.y) });
-  };
-  const up = () => { start.current = null; };
-
-  function applySelection() {
-    const img = imgRef.current;
-    if (!img || !box || box.w < 8 || box.h < 8) return;
-    const k = src.width / img.getBoundingClientRect().width;
-    const out = document.createElement("canvas");
-    out.width = Math.round(box.w * k); out.height = Math.round(box.h * k);
-    out.getContext("2d")?.drawImage(src, box.x * k, box.y * k, box.w * k, box.h * k, 0, 0, out.width, out.height);
-    onDone(out);
-  }
-
+export function LastTestedNote({ run }: { run: PageTestRun | null }) {
+  if (!run) return null;
+  const { failedTests } = summarizeRun(run);
   return (
-    <div data-ai-help className="fixed inset-0 z-[60] bg-black/70 flex flex-col items-center justify-center gap-3 p-3" role="dialog" aria-label="Choose part of the screenshot">
-      <p className="text-sm text-white text-center">Drag a box over the part you want — or keep the whole screen.</p>
-      <div className="relative max-w-full max-h-[75vh] touch-none select-none">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img ref={imgRef} src={url} alt="Screenshot to crop" draggable={false}
-          className="max-w-full max-h-[75vh] rounded-md cursor-crosshair"
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} />
-        {box && box.w > 0 && (
-          <div className="absolute border-2 border-amber bg-amber/10 pointer-events-none" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />
-        )}
-      </div>
-      <div className="flex gap-2 flex-wrap justify-center">
-        <Button size="sm" variant="primary" disabled={!box || box.w < 8 || box.h < 8} onClick={applySelection}>Use selection</Button>
-        <Button size="sm" variant="outline" className="bg-paper" onClick={() => onDone(src)}>Whole screen</Button>
-        <Button size="sm" variant="ghost" className="text-white" onClick={onCancel}>Cancel</Button>
-      </div>
+    <div data-testid="ai-help-last-tested" className="px-3 py-1.5 border-b border-hairline text-2xs text-ink-2">
+      <div className="font-semibold">{lastTestedLine(run)}</div>
+      {failedTests.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5 text-rose">
+          {failedTests.slice(0, 3).map((f, i) => <li key={i} className="break-words">✗ {f}</li>)}
+          {failedTests.length > 3 && <li>+{failedTests.length - 3} more</li>}
+        </ul>
+      )}
     </div>
   );
 }
@@ -153,6 +181,8 @@ interface ChatItem extends HelpMessage {
   checklist?: string[];
   /** R-189: fixes the AI offers — nothing runs until the person presses one */
   actions?: HelpAction[];
+  /** R-353: tap-to-ask next questions — shown only under the LAST answer */
+  followUps?: string[];
   similar?: { id: string; title: string }[];
   /** the trail as it was when this answer came back — filed with the report */
   recorded?: string | null;
@@ -160,7 +190,7 @@ interface ChatItem extends HelpMessage {
 
 const SEV_LABEL: Record<BugDraft["severity"], string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
 const TYPE_LABEL: Record<BugDraft["type"], string> = { bug: "Bug", feature: "Feature", ui_improvement: "UI improvement" };
-const SELF = "[data-ai-help]";
+const SELF = HELP_SELF;
 const CONTROL = "a,button,input,select,textarea,label,summary,[role=button],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=switch]";
 
 function controlLabel(el: Element): string {
@@ -219,7 +249,8 @@ function useTrail(pathname: string) {
         if (!url.includes("/api/ai/help") && apiFailureWorthNoting(url, res.status)) add("api_fail", apiFailText(method, url, res.status));
         return res;
       } catch (err) {
-        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help")) add("api_fail", apiFailText(method, url, 0));
+        /* R-365: a refused data:/blob: fetch (the PDF engine's inlined wasm) is not an API call. */
+        if (!(err instanceof DOMException && err.name === "AbortError") && !url.includes("/api/ai/help") && !isInPageUrl(url)) add("api_fail", apiFailText(method, url, 0));
         throw err;
       }
     };
@@ -266,9 +297,61 @@ export function AiHelp() {
   const { data: currentUser } = useCurrentUser();
   const submit = useSubmitFeedback();
   const { trail, unseen, clearUnseen } = useTrail(pathname);
-  const { open } = useHelpUi();
+  const { open, tab } = useHelpUi();
   const setOpen = React.useCallback((v: boolean) => setHelpUi({ open: v }), []);
   React.useEffect(() => { setHelpUi({ alert: unseen?.text ?? null }); }, [unseen]);
+  /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
+  const [size, setSize] = React.useState<PanelSize>(PANEL_NORMAL);
+  const [, setVpTick] = React.useState(0);
+  React.useEffect(() => { const saved = readPanelSize(); if (saved) setSize(saved); }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    const onResize = () => setVpTick((n) => n + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
+  const shownSize = clampPanelSize(size, viewport());
+  const large = isLargePanel(shownSize);
+  function toggleSize() {
+    /* Kept unclamped: "Expand" stays full height when the window later grows (clamped on show). */
+    const next = large ? PANEL_NORMAL : PANEL_LARGE;
+    setSize(next);
+    savePanelSize(next);
+  }
+  const drag = React.useRef<{ edge: ResizeEdge; x: number; y: number; start: PanelSize; last: PanelSize } | null>(null);
+  const startDrag = (edge: ResizeEdge) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    drag.current = { edge, x: e.clientX, y: e.clientY, start: shownSize, last: shownSize };
+  };
+  const moveDrag = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    d.last = dragResize(d.start, d.edge, e.clientX - d.x, e.clientY - d.y, viewport());
+    setSize(d.last);
+  };
+  const endDrag = () => {
+    if (!drag.current) return;
+    savePanelSize(drag.current.last);
+    drag.current = null;
+  };
+  const onResizeKey = (e: React.KeyboardEvent) => {
+    const next = keyResize(shownSize, e.key, viewport());
+    if (!next) return;
+    e.preventDefault();
+    setSize(next);
+    savePanelSize(next);
+  };
+  /* R-352: this page's last browser test run. Read with the person's login (owner/manager by
+     RLS); no table yet, no run or no access → nothing is shown. */
+  const [lastRun, setLastRun] = React.useState<PageTestRun | null>(null);
+  const tenantId = currentUser?.tenantId ?? null;
+  React.useEffect(() => {
+    if (!open || !tenantId) return;
+    let live = true;
+    void loadLastPageTestRun(createClient(), tenantId, pathname).then((r) => { if (live) setLastRun(r); });
+    return () => { live = false; setLastRun(null); };
+  }, [open, tenantId, pathname]);
   const [items, setItems] = React.useState<ChatItem[]>([]);
   const [text, setText] = React.useState("");
   const [busy, setBusy] = React.useState<false | HelpMode>(false);
@@ -301,7 +384,7 @@ export function AiHelp() {
   }, []);
   /* R-196: copy the "Test next" list as a prompt for a new Claude session to run in its browser. */
   async function copyTestRun(page: string, tests: string[]) {
-    const prompt = buildTestRunPrompt({ pagePath: page, tests });
+    const prompt = buildTestRunPrompt({ pagePath: page, tests, tenantId: currentUser?.tenantId ?? null });
     let ok = false;
     try { await navigator.clipboard.writeText(prompt); ok = true; } catch {
       try {
@@ -318,7 +401,7 @@ export function AiHelp() {
     setText(askAt.q);
     setAskAt(null);
     window.getSelection()?.removeAllRanges();
-    setOpen(true);
+    setHelpUi({ open: true, tab: "ask" });
     setTimeout(() => inputRef.current?.focus(), 80);
   }
   async function finishCrop(c: HTMLCanvasElement) {
@@ -332,19 +415,10 @@ export function AiHelp() {
   async function captureScreen() {
     if (capturing) return;
     setCapturing(true);
-    try {
-      const { default: html2canvas } = await import("html2canvas");
-      const canvas = await html2canvas(document.body, {
-        useCORS: true, allowTaint: true, scale: 1,
-        ignoreElements: (el) => el instanceof Element && !!el.closest?.(SELF),
-        width: window.innerWidth, height: window.innerHeight, x: window.scrollX, y: window.scrollY,
-      });
-      setCropSrc(canvas);
-    } catch {
-      toast.warning("Could not take a screenshot.", { description: "Paste one with Ctrl+V instead (Win+Shift+S takes one)." });
-    } finally {
-      setCapturing(false);
-    }
+    const canvas = await captureViewport();
+    setCapturing(false);
+    if (canvas) setCropSrc(canvas);
+    else toast.warning("Could not take a screenshot.", { description: "Paste one with Ctrl+V instead (Win+Shift+S takes one)." });
   }
 
   async function onPaste(e: React.ClipboardEvent) {
@@ -382,8 +456,8 @@ export function AiHelp() {
           ...(image ? { image: { mimeType: image.mimeType, base64: image.base64 } } : {}),
         }),
       });
-      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
-      let reply = j.reply || j.error || "Jawab nahi aaya — dobara try karein.";
+      const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; followUps?: string[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
+      let reply = j.reply || j.error || "No answer came back — please try again.";
       if (scan && scan.findings.length && j.ai !== true) reply += `\n\nAutomatic jaanch ne ${scan.findings.length} cheez(ein) pakdi:\n` + scan.findings.map((f) => `• ${f.detail}`).join("\n");
       setItems((s) => {
         /* The same bug drafted earlier in THIS chat (an error report, then a page scan that
@@ -392,24 +466,30 @@ export function AiHelp() {
           ? s.filter((x) => x.draft && looksLikeSameBug({ title: j.bugDraft!.title, pagePath: pathname }, { title: x.draft.title, page_path: x.page ?? null }))
               .map((x) => ({ id: x.filedId ?? "draft", title: x.draft!.title }))
           : [];
-        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
+        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], followUps: Array.isArray(j.followUps) ? j.followUps.filter((f): f is string => typeof f === "string" && f.trim() !== "").slice(0, 3) : [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
-      setItems((s) => [...s, { role: "assistant", text: "Connection nahi bana — dobara try karein. Bug ho to 'Report Bug' button bhi chalta hai." }]);
+      setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still send it from the Report a problem tab." }]);
     } finally {
       setBusy(false);
     }
   }
 
-  function send(e?: React.FormEvent) {
+  function send(e?: React.FormEvent, chip?: string) {
     e?.preventDefault();
-    const q = text.trim() || (shot ? "Is screenshot me kya galat hai?" : "");
+    const q = chip ?? (text.trim() || (shot ? "What is wrong in this screenshot?" : ""));
     if (!q || busy) return;
-    setText("");
+    /* R-353: a chip is sent exactly like a typed question; whatever is half-typed stays. */
+    if (!chip) setText("");
     const s = shot;
     setShot(null);
     void ask("chat", q, s);
   }
+
+  /* R-353: chips belong to the last answer only — any new message (typed, chip, scan, error)
+     makes them disappear, and they are hidden while an answer is on its way. */
+  const last = items[items.length - 1];
+  const followUps = !busy && last?.role === "assistant" ? last.followUps ?? [] : [];
 
   async function file(idx: number) {
     const it = items[idx];
@@ -431,9 +511,9 @@ export function AiHelp() {
         aiChatSummary: it.draft.chatSummary || null,
       });
       setItems((s) => s.map((x, i) => (i === idx ? { ...x, filedId: result.id } : x)));
-      toast.success("Report file ho gayi — aapke naam se", { description: `${AI_FILED_TAG}. Admin → Feedback mein dikhegi.` });
+      toast.success("Report filed in your name", { description: `${AI_FILED_TAG}. It appears in Admin → Feedback.` });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Report file nahi hui — dobara try karein.");
+      toast.error(err instanceof Error ? err.message : "Report was not filed — please try again.");
     } finally {
       setFiling(null);
     }
@@ -453,23 +533,56 @@ export function AiHelp() {
       {open && (
         <section
           role="dialog"
-          aria-label="AI Help"
-          className="fixed z-50 right-2 left-2 top-14 md:left-auto md:right-5 md:top-16 md:w-[420px] h-[min(600px,calc(100vh-7rem))] flex flex-col rounded-2xl border border-hairline bg-paper shadow-2xl overflow-hidden"
+          aria-label="Help"
+          data-size={large ? "large" : "normal"}
+          style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px` } as React.CSSProperties}
+          className="fixed z-50 inset-0 md:inset-auto md:right-5 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] flex flex-col md:rounded-2xl md:border border-hairline bg-paper shadow-2xl overflow-hidden"
         >
+          {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
+          {/* R-360: the left edge is also a keyboard control (Tab to it, ← / → / Home / End). */}
+          <div data-resize="left" role="separator" tabIndex={0} aria-orientation="vertical"
+            aria-label="Resize panel width — left arrow wider, right arrow narrower"
+            aria-valuemin={PANEL_MIN.w} aria-valuemax={panelMaxWidth(viewport())} aria-valuenow={shownSize.w}
+            onPointerDown={startDrag("left")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onKeyDown={onResizeKey}
+            className="hidden md:block absolute left-0 top-0 bottom-3 w-1.5 z-10 cursor-ew-resize touch-none hover:bg-amber/30 focus:outline-none focus-visible:bg-amber/60" />
+          <div aria-hidden="true" data-resize="bottom" onPointerDown={startDrag("bottom")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+            className="hidden md:block absolute bottom-0 left-3 right-0 h-1.5 z-10 cursor-ns-resize touch-none hover:bg-amber/30" />
+          <div aria-hidden="true" data-resize="corner" onPointerDown={startDrag("corner")} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+            className="hidden md:block absolute left-0 bottom-0 w-3 h-3 z-10 cursor-nesw-resize touch-none hover:bg-amber/40" />
           <header className="flex items-center gap-2 px-4 py-3 border-b border-hairline bg-paper-2/60">
             <Icon name="sparkles" size={16} className="text-amber-ink" />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-ink">AI Help</div>
+              <div className="text-sm font-semibold text-ink">Help</div>
               <div className="text-2xs text-ink-3 truncate">On this page: {pathname}</div>
             </div>
-            {items.length > 0 && (
+            {tab === "ask" && items.length > 0 && (
               <button type="button" className="text-2xs text-ink-3 hover:text-ink" onClick={() => { setItems([]); setChecks({}); setActed({}); }}>New chat</button>
             )}
+            <button type="button" className="hidden md:inline rounded px-1 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              aria-pressed={large}
+              aria-label={large ? "Collapse panel to normal size" : "Expand panel"}
+              title={large ? "Back to the normal size" : "Make the panel bigger — or drag its left or bottom edge"}
+              onClick={toggleSize}>{large ? "Smaller" : "Expand"}</button>
             <button type="button" aria-label="Close" className="p-1 text-ink-3 hover:text-ink" onClick={() => setOpen(false)}>
               <Icon name="x" size={16} />
             </button>
           </header>
 
+          {/* R-383: one Help panel, two tabs. Arrow keys move between them (WAI-ARIA tabs). */}
+          <div role="tablist" aria-label="Help" className="flex border-b border-hairline px-2"
+            onKeyDown={(e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); const next = tab === "ask" ? "report" : "ask"; setHelpUi({ tab: next }); document.getElementById(`help-tab-${next}`)?.focus(); } }}>
+            {(["ask", "report"] as const).map((t) => (
+              <button key={t} type="button" role="tab" id={`help-tab-${t}`} aria-selected={tab === t} aria-controls={`help-panel-${t}`} tabIndex={tab === t ? 0 : -1}
+                onClick={() => setHelpUi({ tab: t })}
+                className={`min-h-10 px-3 text-xs font-semibold border-b-2 -mb-px focus:outline-none focus-visible:ring-2 focus-visible:ring-amber ${tab === t ? "border-ink text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}>
+                {t === "ask" ? "Ask" : "Report a problem"}
+                {t === "report" && unseen && <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-rose align-middle" aria-label="error caught" />}
+              </button>
+            ))}
+          </div>
+
+          {tab === "ask" ? (
+          <div role="tabpanel" id="help-panel-ask" aria-labelledby="help-tab-ask" className="flex-1 min-h-0 flex flex-col">
           {unseen && (
             <div className="px-3 py-2 border-b border-hairline bg-red-50 text-red-900 text-xs flex items-start gap-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
@@ -487,14 +600,15 @@ export function AiHelp() {
               Check this page
             </Button>
           </div>
+          <LastTestedNote run={lastRun} />
 
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {items.length === 0 && (
               <div className="text-sm text-ink-2 space-y-2 p-1">
-                <p><b>Check this page</b> dabaiye: main screen jaanch kar bataunga kya galat hai, aur aage kya test karna hai.</p>
-                <p>Main aapke clicks aur errors khud yaad rakhta hoon. Bug mile to bas likhiye "ye galat hai" — steps main likh dunga. Error aate hi upar wala AI Help icon laal ho jaayega.</p>
-                <p>📷 dabaiye ya <b>Ctrl+V</b> se screenshot daaliye — main screen dekh kar bataunga.</p>
-                <p className="text-ink-3 text-xs">Report tabhi jaati hai jab aap draft dekh kar <b>File</b> dabate hain — aapke naam se.</p>
+                <p>Press <b>Check this page</b>: I check the screen and tell you what is wrong and what to test next.</p>
+                <p>I remember your clicks and errors. Found a bug? Just write "this is wrong" — I will write the steps. The AI Help icon turns red when an error happens.</p>
+                <p>Press 📷 or paste a screenshot with <b>Ctrl+V</b> — I will look at the screen and answer.</p>
+                <p className="text-ink-3 text-xs">A report is sent only when you review the draft and press <b>File</b> — in your name.</p>
               </div>
             )}
             {items.map((m, i) => (
@@ -559,8 +673,8 @@ export function AiHelp() {
                       <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Bug report — draft</div>
                       <div className="font-semibold">{m.draft.title}</div>
                       <div className="text-2xs text-ink-3">{TYPE_LABEL[m.draft.type]} · {SEV_LABEL[m.draft.severity]} · {m.page ?? pathname}</div>
-                      <div className="text-xs"><b>Kya hua:</b> {m.draft.actual}</div>
-                      {m.draft.expected && <div className="text-xs"><b>Kya hona chahiye:</b> {m.draft.expected}</div>}
+                      <div className="text-xs"><b>What happened:</b> {m.draft.actual}</div>
+                      {m.draft.expected && <div className="text-xs"><b>Expected:</b> {m.draft.expected}</div>}
                       {m.draft.steps.length > 0 && (
                         <ol className="text-xs list-decimal pl-4 space-y-0.5">{m.draft.steps.map((s, j) => <li key={j}>{s}</li>)}</ol>
                       )}
@@ -571,7 +685,7 @@ export function AiHelp() {
                           <b>Already reported?</b> Same as: {m.similar.map((x) => `“${x.title}”`).join(", ")}. File only if this is different.
                         </div>
                       )}
-                      <div className="text-2xs text-ink-3">{AI_FILED_TAG} · aapke naam se: {currentUser?.fullName ?? "—"}</div>
+                      <div className="text-2xs text-ink-3">{AI_FILED_TAG} · filed by: {currentUser?.fullName ?? "—"}</div>
                       {m.filedId ? (
                         <div className="text-xs font-semibold text-emerald">✓ File ho gayi — Admin → Feedback</div>
                       ) : (
@@ -586,6 +700,17 @@ export function AiHelp() {
             <div ref={endRef} />
           </div>
 
+          {followUps.length > 0 && (
+            <div data-testid="ai-help-followups" role="group" aria-label="Suggested next questions" className="border-t border-hairline px-2 pt-2 flex flex-wrap gap-1.5">
+              {followUps.map((f) => (
+                <button key={f} type="button" onClick={() => send(undefined, f)}
+                  aria-label={`Ask: ${f}`}
+                  className="min-h-10 max-w-full rounded-full border border-hairline bg-paper-2 px-3 py-1.5 text-left text-xs text-ink hover:bg-amber-soft hover:border-amber focus:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                  {f}
+                </button>
+              ))}
+            </div>
+          )}
           {shot && (
             <div className="border-t border-hairline px-2 pt-2 flex items-center gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -603,7 +728,7 @@ export function AiHelp() {
               onClick={() => void captureScreen()}
               disabled={capturing || !!busy}
             />
-            <label htmlFor="ai-help-input" className="sr-only">Aapka sawaal</label>
+            <label htmlFor="ai-help-input" className="sr-only">Your question</label>
             <textarea
               id="ai-help-input"
               ref={inputRef}
@@ -613,11 +738,17 @@ export function AiHelp() {
               onPaste={(e) => void onPaste(e)}
               rows={2}
               maxLength={1500}
-              placeholder="Jaise: Invoice par GST galat kyun aa raha hai?"
+              placeholder="e.g. Why is the GST wrong on this invoice?"
               className="flex-1 resize-none rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
             />
             <Button type="submit" size="sm" variant="primary" loading={busy === "chat"} disabled={(!text.trim() && !shot) || !!busy}>Send</Button>
           </form>
+          </div>
+          ) : (
+            <div role="tabpanel" id="help-panel-report" aria-labelledby="help-tab-report" className="flex-1 min-h-0 flex flex-col">
+              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={unseen?.text ?? null} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
+            </div>
+          )}
         </section>
       )}
     </div>

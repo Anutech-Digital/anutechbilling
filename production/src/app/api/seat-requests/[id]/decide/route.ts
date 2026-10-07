@@ -24,8 +24,9 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
+import { createAdminClient } from "@/lib/supabase/server";
+import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
+import { withRoute, dbFail } from "@/lib/api/with-route";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
 import { assessRequest } from "@/lib/subscriptions/seat-request";
 import { localDateISO } from "@/lib/leads/outcomes";
@@ -33,38 +34,28 @@ import { localDateISO } from "@/lib/leads/outcomes";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const DECISION_MSG = "decision must be 'approved' or 'rejected'";
 const bodySchema = z.object({
-  decision: z.enum(["approved", "rejected"]),
+  decision: z.enum(["approved", "rejected"], { message: DECISION_MSG }),
   note: z.string().trim().max(1000).optional(),
 });
 
-export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  const userClient = createClient();
-  const { data: authData } = await userClient.auth.getUser();
-  if (!authData?.user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me } = await userClient
-    .from("users").select("tenant_id, role").eq("id", authData.user.id).single();
-  if (!me?.tenant_id) return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
-  /* S19: signed in + same tenant is not enough for this one. */
-  if (!mayDo((me as { role?: string | null }).role, "seats.change")) {
-    return NextResponse.json({ error: forbiddenMessage("seats.change") }, { status: 403 });
-  }
-
-  let raw: unknown;
-  try { raw = await req.json(); } catch { raw = {}; }
-  const parsed = bodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "decision must be 'approved' or 'rejected'" }, { status: 400 });
-  }
-
+/* R-217 (R-051): withRoute() does sign-in, tenant, the role gate (ACTION_ROLES
+   "seats.change" = owner/manager/billing) and the zod body in one place. */
+export const POST = withRoute(
+  {
+    route: "api/seat-requests/decide",
+    input: bodySchema,
+    roles: ACTION_ROLES["seats.change"],
+    roleHint: forbiddenMessage("seats.change"),
+  },
+  async ({ input, params, user, tenantId }) => {
   const supabase = createAdminClient();
 
   const { data: request, error: reqErr } = await supabase
     .from("seat_requests").select("*").eq("id", params.id).single();
   if (reqErr || !request) return NextResponse.json({ error: "request not found" }, { status: 404 });
-  if (request.tenant_id !== me.tenant_id) {
+  if (request.tenant_id !== tenantId) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (request.status !== "pending") {
@@ -72,18 +63,18 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
 
   // ── Rejection: a status change and a note the customer will read. ─────────
-  if (parsed.data.decision === "rejected") {
+  if (input.decision === "rejected") {
     const { error } = await supabase
       .from("seat_requests")
       .update({
         status: "rejected",
-        decided_by: authData.user.id,
+        decided_by: user.id,
         decided_at: new Date().toISOString(),
-        decision_note: parsed.data.note ?? null,
+        decision_note: input.note ?? null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", params.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    dbFail(error, "Faisla save nahi hua — thodi der baad dobara try kariye.");
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
@@ -131,9 +122,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     .update({
       status: "approved",
       quote_id: result.quoteId,
-      decided_by: authData.user.id,
+      decided_by: user.id,
       decided_at: new Date().toISOString(),
-      decision_note: parsed.data.note ?? null,
+      decision_note: input.note ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", params.id);
@@ -160,4 +151,5 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     newMrr: result.newMrr,
     proRataDays: result.proRataDays,
   });
-}
+  },
+);

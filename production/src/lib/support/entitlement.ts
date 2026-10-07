@@ -93,7 +93,7 @@ export function coverageFor(
     return {
       state: "unknown",
       reason: `${unclassified.map((s) => s.planName).join(", ")} does not say which product it covers.`,
-      nextStep: "Set the covered product on that plan in Catalog & Products, then this will answer properly.",
+      nextStep: "Set the covered product on that plan in Products, then this will answer properly.",
     };
   }
 

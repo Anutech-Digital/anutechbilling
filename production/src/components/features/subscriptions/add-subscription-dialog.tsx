@@ -12,6 +12,7 @@ import * as React from "react";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
+import { describeError } from "@/lib/errors/toast-error";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -622,11 +623,11 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
     const cleanDomain = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").trim();
 
     if (!cleanCustomerName) {
-      toast.error("Customer name is required");
+      toast.error("Customer name is required.", { description: "Enter the company name as it should appear on the invoice." });
       return;
     }
     if (!cleanDomain) {
-      toast.error("Primary Customer Domain is required (e.g. acme.com)");
+      toast.error("Primary customer domain is required.", { description: "Enter the domain the seats are for, e.g. acme.com." });
       return;
     }
     /* ── A new customer must arrive WITH a complete person ─────────────────────
@@ -703,7 +704,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
       return;
     }
     if (seats <= 0) {
-      toast.error("Seats must be at least 1");
+      toast.error("Seats must be at least 1.", { description: "Enter how many users this subscription covers." });
       return;
     }
 
@@ -1045,8 +1046,13 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
          session. Read the shape Supabase actually returns, and show its code.  */
       const e = err as { message?: string; details?: string; hint?: string; code?: string } | null;
       const detail = e?.message || e?.details || (err instanceof Error ? err.message : "");
-      toast.error(detail || "Failed creating subscription", {
-        description: [e?.code && `code ${e.code}`, e?.hint].filter(Boolean).join(" · ") || undefined,
+      /* R-311: describeError translates raw database plumbing (constraint names, RLS)
+         into a sentence; a guard's own message still passes through unchanged. The
+         code + hint stay on the second line so support can still find the cause. */
+      const { message: shown, description: why } = describeError({ message: detail }, "Could not create the subscription.");
+      const tech = [e?.code && `code ${e.code}`, e?.hint].filter(Boolean).join(" · ");
+      toast.error(shown, {
+        description: [why, tech].filter(Boolean).join(" · ") || "Nothing was saved. Fix the details above and submit again.",
       });
       console.error("[add-subscription] failed:", err);
     } finally {
@@ -1293,7 +1299,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
                 <p className="mt-1 text-2xs leading-snug text-ink-3">
                   Your catalogue is empty. Add products in{" "}
                   <a href="/items" className="font-semibold text-primary hover:underline">
-                    Catalog &amp; Products
+                    Products
                   </a>{" "}
                   to get prices and margin checks, or use a custom product name.
                 </p>

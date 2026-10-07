@@ -46,8 +46,15 @@ export type HelpAction =
   | { kind: "set_customer_state"; label: string; customerId: string; stateCode: string }
   | { kind: "set_company_state"; label: string; stateCode: string };
 
-/** checklist (R-162): what to try next on this screen, from the page scan. */
-export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[]; actions: HelpAction[] }
+/**
+ * checklist (R-162): what to try next on this screen, from the page scan.
+ * followUps (R-353): 0–3 next questions the person can tap instead of typing — part of the
+ * same JSON answer, never a second AI call.
+ */
+export interface HelpAnswer { reply: string; bugDraft: BugDraft | null; checklist: string[]; actions: HelpAction[]; followUps: string[] }
+
+export const FOLLOW_UP_MAX = 3;
+export const FOLLOW_UP_MAX_CHARS = 70;
 
 /**
  * Why AI Help was asked (R-162). "chat" = the person typed; "scan" = they pressed "Check this
@@ -65,12 +72,12 @@ const SEVERITIES: readonly FeedbackSeverity[] = ["low", "medium", "high", "criti
 /** What the app is, in a few lines, so answers are about THIS app and not a generic CRM. */
 const APP_FACTS = [
   "ResellerOS is Anutech Digital's own business app (Indian reseller of Google Workspace, Microsoft 365, Zoho, domains, hosting; also builds custom software).",
-  "Main areas: Today/Dashboard; Sales & Pipeline (leads, deals Kanban, enquiries, tasks, quotes); Customers; Billing (invoices with GST, payments, renewals, subscriptions, online orders); Catalog (products, subscription catalogue, packages); Accounting (books, bank, advances, expenses); Employees & Team (staff, attendance, payroll, Academy for apprentices); Marketing Hub (campaigns, ads landing pages); Projects (custom software); Settings and Integrations (Razorpay, Gemini, email).",
+  "Main areas: Today/Dashboard; Sales & Pipeline (leads, deals Kanban, enquiries, tasks, quotes); Customers; Billing (invoices with GST, payments, renewals, subscriptions, online orders); Products (subscriptions and one-time products as two tabs, packages); Accounting (books, bank, advances, expenses); Employees & Users (staff, attendance, payroll, Academy for apprentices); Marketing Hub (campaigns, ads landing pages); Projects (custom software); Settings and Integrations (Razorpay, Gemini, email).",
   "Money rules: amounts in ₹, GST 18% (CGST+SGST inside the state, IGST outside), quotes become invoices on payment, renewals raise quotes before the renewal date.",
-  "There is a 'Report Bug' button in the top bar (Ctrl+Shift+B). Reports go to Admin → Feedback, where an AI triages them.",
+  "The top bar has one Help button with two tabs: 'Ask' (this AI chat) and 'Report a problem' (a plain report form; Ctrl+Shift+B opens it). Reports go to Admin → Feedback, where an AI triages them.",
 ];
 
-export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null }): string {
+export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null; testHistory?: string | null }): string {
   const mode = ctx.mode ?? "chat";
   return [
     "You are AI Help inside ResellerOS. The person is testing the app and may be confused or may have found a bug.",
@@ -94,8 +101,14 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
           : "MODE chat: answer the person. checklist may stay empty.",
     "You may get WORKSPACE FACTS: this company's own setup (company GST state, GSTIN set or not, address, bank/UPI) and customers missing a GST state. Use them to find the REAL cause before guessing — e.g. a GST/IGST question: check the company state and the customer's state first. Quote the fact you used.",
     "actions (R-189): up to 3 buttons the person can press to fix it right here. Allowed kinds ONLY: {\"kind\":\"open\",\"label\",\"href\"} to open an app page (href starts with /, e.g. /settings?tab=company, /customers/<id>/edit, /invoices); {\"kind\":\"set_customer_state\",\"label\",\"customerId\",\"stateCode\"} only for a customer listed in WORKSPACE FACTS as missing a state AND only when the person told you or the facts show which state it is (never guess a state); {\"kind\":\"set_company_state\",\"label\",\"stateCode\"} only when the facts say the company state is missing and you know it (e.g. from the company GSTIN code). stateCode = 2-digit GST code. label = what the button does, short (e.g. 'Set Acme's state to Delhi (07)'). Anything else (money, invoices, emails, deleting) — explain the steps instead; never offer it as an action. Empty list when there is nothing to fix.",
+    `followUps (R-353): 0-${FOLLOW_UP_MAX} short next questions the person is likely to ask now, written AS the person (first person, in their language — Hinglish reply means Hinglish followUps), each at most ${FOLLOW_UP_MAX_CHARS} characters, tied to this page and your reply, useful for their work — never generic like 'aur batao'. If your reply itself asks them to choose (e.g. 'Inme se kaunsa pehle?'), the followUps ARE those options as answers (e.g. 'Quick Add bar pehle', 'Bulk reschedule pehle'). Empty list when nothing obvious follows (e.g. right after a bugDraft).`,
     "Do not say the report is filed — the person files it with a button after reading your draft. Say: 'Draft taiyaar hai — neeche dekh kar File karein.'",
-    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
+    /* R-352: the page's last browser test run, so "Check this page" does not hand back tests
+       that already passed. Absent when there is no run (or the table is not set up yet). */
+    ...(ctx.testHistory
+      ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${ctx.testHistory}`]
+      : []),
+    'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "followUps": string[], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
   ].join("\n");
 }
 
@@ -158,6 +171,33 @@ export function parseHelpActions(raw: unknown, allowedCustomerIds: ReadonlySet<s
   return out;
 }
 
+/**
+ * R-353: the tap-to-ask chips. Strings only, whitespace collapsed, no markdown, never longer
+ * than FOLLOW_UP_MAX_CHARS (cut at a word, with "…"), no duplicates, at most FOLLOW_UP_MAX.
+ * An answer without the field (older model output) simply has none.
+ */
+export function parseFollowUps(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    let t = v.replace(/\*\*|`/g, "").replace(/^#{1,6}\s+/, "").replace(/\s+/g, " ").trim();
+    if (!t) continue;
+    if (t.length > FOLLOW_UP_MAX_CHARS) {
+      const cut = t.slice(0, FOLLOW_UP_MAX_CHARS - 1);
+      const sp = cut.lastIndexOf(" ");
+      t = (sp > FOLLOW_UP_MAX_CHARS / 2 ? cut.slice(0, sp) : cut).replace(/[\s,.;:-]+$/, "") + "…";
+    }
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= FOLLOW_UP_MAX) break;
+  }
+  return out;
+}
+
 export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<string>): HelpAnswer | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -167,10 +207,11 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
   const checklist = Array.isArray(o.checklist) ? o.checklist.map((c) => str(c, 200)).filter(Boolean).slice(0, 8) : [];
   const d = o.bugDraft as Record<string, unknown> | null | undefined;
   const actions = parseHelpActions(o.actions, allowedCustomerIds);
-  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist, actions };
+  const followUps = parseFollowUps(o.followUps);
+  if (!d || typeof d !== "object") return { reply, bugDraft: null, checklist, actions, followUps };
   const title = str(d.title, 160);
   const actual = str(d.actual, 1200);
-  if (!title || !actual) return { reply, bugDraft: null, checklist, actions };
+  if (!title || !actual) return { reply, bugDraft: null, checklist, actions, followUps };
   const type = TYPES.includes(d.type as FeedbackType) ? (d.type as FeedbackType) : "bug";
   const severity = SEVERITIES.includes(d.severity as FeedbackSeverity) ? (d.severity as FeedbackSeverity) : "medium";
   const steps = Array.isArray(d.steps) ? d.steps.map((s) => str(s, 300)).filter(Boolean).slice(0, 12) : [];
@@ -178,6 +219,7 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
     reply,
     checklist,
     actions,
+    followUps,
     bugDraft: { title, type, severity, actual, expected: str(d.expected, 1200), steps, chatSummary: str(d.chatSummary, 600) },
   };
 }
@@ -199,8 +241,12 @@ export function askAboutSelection(raw: string | null | undefined): string | null
  * Claude Code session, which runs each test in its own browser on the LOCAL app (test data)
  * and writes the result on the work board. Pure, so the rules are tested.
  */
-export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[] }): string {
+export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[]; tenantId?: string | null }): string {
   const tests = input.tests.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
+  const tenantId = input.tenantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.tenantId)
+    ? input.tenantId
+    : "<tenant uuid of Pardeep's workspace in the local DB>";
+  const page = input.pagePath.split(/[?#]/)[0].replace(/"/g, "");
   return [
     `Is page ke tests browser me chalao aur nateeja do. (Ye prompt ek NAYE Claude Code session me chalana hai.)`,
     "",
@@ -216,6 +262,10 @@ export function buildTestRunPrompt(input: { pagePath: string; tests: readonly st
     "Har test ke liye: browser pane me dikha kar chalao, screenshot lo, aur ✓ (chala) / ✗ (nahi chala, kya hua) likho. Koi test samajh na aaye to ✗ nahi — 'chala nahi paya, kyun' likho.",
     "✗ wale test: har ek ke liye board par card banao (title me page + kya toota, kadam, screenshot ka varnan). Fix tabhi karo jab owner kahe.",
     "NATEEJA BOARD PAR: 'Kaam ki list' (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par ek card 'Test run: <page>' status done — har test ka ✓/✗ ek line me. Samay date -u se.",
+    "NATEEJA APP ME (R-352, board ke baad): AI Help ko yaad rahe ki kya chal chuka — warna 'Check this page' wahi tests dobara deta hai. LOCAL app par bhejo:",
+    `  a) scratchpad me results.json likho: {"tenantId":"${tenantId}","page":"${page}","buildSha":"<git -C production rev-parse --short HEAD>","runBy":"AI browser test","results":[{"test":"<test, upar ki list se hubahu>","result":"pass|fail|skipped","note":"<chhota: ✗/skipped kyun>","card":"<✗ ka board card R-xxx, ho to>"}]} — har test ki ek entry.`,
+    "  b) curl -s -X POST -H \"Authorization: Bearer $(grep '^AGENT_QUEUE_TOKEN=' production/.env.local | cut -d= -f2-)\" -H 'content-type: application/json' --data @<results.json ka poora path> http://localhost:3001/api/agent/page-test-runs",
+    "  Token KABHI print/echo/log mat karo, kisi file me mat likho, chat me mat dikhao. 200 = ho gaya. 503 'migration pending' = table abhi nahi lagi — board card par likh do aur aage badho. 401/400/404 = board card par wajah likho.",
     "SESSION ARCHIVE: board par likhne ke baad ye session archive karo (mcp__ccd_session_mgmt__archive_session, session_id \"self\") — SIRF agar ye session ISI prompt se shuru hua. Pehle se koi aur baatcheet ho to archive MAT karo.",
   ].join("\n");
 }

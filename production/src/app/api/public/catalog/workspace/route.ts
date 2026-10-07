@@ -16,7 +16,8 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { publicWorkspaceCatalog } from "@/lib/catalog/public-workspace";
+/* R-076: Microsoft 365 and Zoho rows come through too (suiteRows keeps only the suites). */
+import { publicWorkspaceCatalog, suiteRows } from "@/lib/catalog/public-workspace";
 
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
@@ -27,12 +28,11 @@ export async function GET() {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("items")
-    .select("name, msrp, prices")
+    .select("name, msrp, prices, vendor")
     .eq("tenant_id", BUY_PAGE_TENANT_ID)
-    .eq("vendor", "google")
+    .in("vendor", ["google", "microsoft", "zoho"])
     .eq("kind", "main")
     .eq("is_active", true)
-    .ilike("name", "Google Workspace%")
     .order("msrp", { ascending: true });
 
   if (error) {
@@ -44,7 +44,7 @@ export async function GET() {
   }
 
   return NextResponse.json(
-    { items: publicWorkspaceCatalog(data ?? []) },
+    { items: publicWorkspaceCatalog(suiteRows(data ?? [])) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

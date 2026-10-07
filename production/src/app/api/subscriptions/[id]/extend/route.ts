@@ -22,8 +22,9 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
+import { createAdminClient } from "@/lib/supabase/server";
+import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
+import { withRoute } from "@/lib/api/with-route";
 import { createExtensionQuote } from "@/lib/renewals/create-extension-quote";
 
 export const dynamic = "force-dynamic";
@@ -33,38 +34,17 @@ const bodySchema = z.object({
   years: z.coerce.number().int().min(1).max(5),
 });
 
-export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  // 1. Authn
-  const userClient = createClient();
-  const { data: authData } = await userClient.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const { data: me, error: meErr } = await userClient
-    .from("users")
-    .select("tenant_id, role")
-    .eq("id", authData.user.id)
-    .single();
-  if (meErr || !me) {
-    return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
-  }
-  /* S19: signed in + same tenant is not enough for this one. */
-  if (!mayDo((me as { role?: string | null }).role, "seats.change")) {
-    return NextResponse.json({ error: forbiddenMessage("seats.change") }, { status: 403 });
-  }
-
-  // 2. Parse body
-  let body: unknown;
-  try { body = await req.json(); } catch { body = {}; }
-  const parsed = bodySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid body: " + parsed.error.issues.map((i) => i.message).join(", ") },
-      { status: 400 },
-    );
-  }
-  const { years } = parsed.data;
+/* R-217 (R-051): withRoute() does sign-in, tenant, the role gate (ACTION_ROLES
+   "seats.change" = owner/manager/billing) and the zod body in one place. */
+export const POST = withRoute(
+  {
+    route: "api/subscriptions/extend",
+    input: bodySchema,
+    roles: ACTION_ROLES["seats.change"],
+    roleHint: forbiddenMessage("seats.change"),
+  },
+  async ({ input, params, tenantId }) => {
+  const { years } = input;
 
   // 3. Load subscription + tenant scope
   const supabase = createAdminClient();
@@ -79,7 +59,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   if (subErr || !sub) {
     return NextResponse.json({ error: "subscription not found" }, { status: 404 });
   }
-  if (sub.tenant_id !== me.tenant_id) {
+  if (sub.tenant_id !== tenantId) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (sub.status !== "active") {
@@ -119,10 +99,11 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json({ error: result.message, code: result.code }, { status });
   }
 
-  return NextResponse.json({
+  return {
     quoteId:        result.quoteId,
     amount:         result.amount,
     years:          result.years,
     subscriptionId: sub.id,
-  });
-}
+  };
+  },
+);

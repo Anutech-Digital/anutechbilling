@@ -130,8 +130,8 @@ export default function PersonalExpensesPage() {
 
   const handleSave = async () => {
     const amount = parseRupees(form.amount);
-    if (amount === null) { toast.error("Amount 0 se zyada ek number hona chahiye — comma ya ₹ nahi."); return; }
-    if (!form.occurred_on) { toast.error("Date chuno."); return; }
+    if (amount === null) { toast.error("Enter an amount above 0.", { description: "Numbers only — no commas or ₹ sign, e.g. 1250." }); return; }
+    if (!form.occurred_on) { toast.error("Pick a date.", { description: "Choose the day this expense happened, then save." }); return; }
 
     try {
       await save.mutateAsync({
@@ -289,9 +289,9 @@ export default function PersonalExpensesPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
+                <label htmlFor="ve-type" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Type</label>
                 <Select value={form.kind} onValueChange={(v) => setForm((f) => ({ ...f, kind: v as TxKind }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="ve-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {(Object.keys(KIND_LABEL) as TxKind[]).map((k) => (
                       <SelectItem key={k} value={k}>{KIND_LABEL[k]}</SelectItem>
@@ -300,8 +300,8 @@ export default function PersonalExpensesPage() {
                 </Select>
               </div>
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Amount (₹)</label>
-                <Input
+                <label htmlFor="ve-amount" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Amount (₹)</label>
+                <Input id="ve-amount"
                   value={form.amount}
                   onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
                   placeholder="50000"
@@ -312,20 +312,20 @@ export default function PersonalExpensesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Date</label>
-                <Input
+                <label htmlFor="ve-date" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Date</label>
+                <Input id="ve-date"
                   type="date"
                   value={form.occurred_on}
                   onChange={(e) => setForm((f) => ({ ...f, occurred_on: e.target.value }))}
                 />
               </div>
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Account</label>
+                <label htmlFor="ve-account" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Account</label>
                 <Select
                   value={form.account_id || "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, account_id: v === "none" ? "" : v }))}
                 >
-                  <SelectTrigger><SelectValue placeholder="Cash" /></SelectTrigger>
+                  <SelectTrigger id="ve-account"><SelectValue placeholder="Cash" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Cash / koi nahi</SelectItem>
                     {accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>)}
@@ -336,12 +336,12 @@ export default function PersonalExpensesPage() {
 
             {!isIncome && (
               <div>
-                <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis cheez par</label>
+                <label htmlFor="ve-category" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Kis cheez par</label>
                 <Select
                   value={form.category || "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, category: v === "none" ? "" : v }))}
                 >
-                  <SelectTrigger><SelectValue placeholder="Chuno" /></SelectTrigger>
+                  <SelectTrigger id="ve-category"><SelectValue placeholder="Chuno" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Nahi bataya</SelectItem>
                     {PERSONAL_EXPENSE_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -351,8 +351,8 @@ export default function PersonalExpensesPage() {
             )}
 
             <div>
-              <label className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
-              <Input
+              <label htmlFor="ve-note" className="block text-2xs uppercase tracking-wide text-ink-4 mb-1">Note</label>
+              <Input id="ve-note"
                 value={form.note}
                 onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
                 placeholder="optional"

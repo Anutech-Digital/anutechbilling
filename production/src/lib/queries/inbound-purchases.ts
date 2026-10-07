@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { InboundPurchaseRow } from "@/lib/supabase/database.types";
 
@@ -109,7 +110,7 @@ export function useImportPurchase() {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       toast.success("Added to expenses (draft) — review it in Expenses");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -127,6 +128,6 @@ export function useIgnorePurchase() {
       qc.invalidateQueries({ queryKey: ["inbound_purchases"] });
       toast.success("Ignored");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

@@ -10,6 +10,8 @@
  *     (this browser only — localStorage, see lib/table/data-table.ts)
  *   - a phone/tablet card list below the breakpoint, the table above it
  *   - "Showing x of y" + the page's own filter controls in one toolbar row
+ *   - with `urlKey`, the sort lives in the address bar (?sort=amount.desc), so opening a row
+ *     and pressing Back returns to the same order (R-297; filters went there in R-272)
  *
  * Filtering stays with the page (each list filters differently); the page passes the
  * filtered rows and, for Views, its filter state + how to apply one.
@@ -29,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAskText } from "@/components/providers/confirm-provider";
 import { cn } from "@/lib/utils";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import {
   sortRows, nextSort, toggleAllIds, toggleId, loadViews, saveView, deleteView, isViewActive, pagedCount,
   type SortState, type SortValue, type SavedView, type ViewStorage,
@@ -92,6 +95,26 @@ interface DataTableProps<T> {
   pageSize?: number;
   /** A row that must be on screen (a deep link like ?open=INV-…) — the page grows to it. */
   revealId?: string | null;
+  /**
+   * R-297: URL param that holds the sort (e.g. "sort" → ?sort=amount.desc), so Back keeps it.
+   * Omit and the sort stays in memory only, as before. Two tables on one page need two keys.
+   */
+  urlKey?: string;
+}
+
+/** { id: "amount", dir: "desc" } → "amount.desc"; no sort → "". */
+export function encodeSort(sort: SortState | null): string {
+  return sort ? `${sort.id}.${sort.dir}` : "";
+}
+
+/** Anything that is not "<sortable column>.<asc|desc>" is null — a hand-edited URL cannot break the list. */
+export function decodeSort(raw: string, sortableIds: readonly string[]): SortState | null {
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const id = raw.slice(0, dot);
+  const dir = raw.slice(dot + 1);
+  if ((dir !== "asc" && dir !== "desc") || !sortableIds.includes(id)) return null;
+  return { id, dir };
 }
 
 const SHOW_TABLE = { md: "hidden md:block", lg: "hidden lg:block", xl: "hidden xl:block" } as const;
@@ -103,9 +126,9 @@ function browserStorage(): ViewStorage | null {
 
 export function DataTable<T>({
   rows, columns, getRowId, totalCount, noun, selected, onSelectedChange, toolbar, views,
-  defaultSort = null, cardsBelow = "md", mobileCard, renderRow, onRowClick, empty, pageSize, revealId,
+  defaultSort = null, cardsBelow = "md", mobileCard, renderRow, onRowClick, empty, pageSize, revealId, urlKey,
 }: DataTableProps<T>) {
-  const [sort, setSort] = React.useState<SortState | null>(defaultSort);
+  const [sort, setSort] = useTableSort(urlKey, defaultSort, columns);
   const selectable = !!selected && !!onSelectedChange;
 
   const sorted = React.useMemo(() => {
@@ -269,6 +292,31 @@ export function DataTable<T>({
       )}
     </div>
   );
+}
+
+/**
+ * Sort state: in memory, or in the URL when `urlKey` is given. Hooks always run in the same
+ * order; the URL setter is simply never called without a key. The decoded sort is memoised on
+ * strings (not on `columns`/`defaultSort`, which pages often pass as fresh objects) so the
+ * paging effect does not reset "Load more" on every render.
+ */
+function useTableSort<T>(
+  urlKey: string | undefined,
+  defaultSort: SortState | null,
+  columns: DataTableColumn<T>[],
+): [SortState | null, (next: SortState | null) => void] {
+  const [localSort, setLocalSort] = React.useState<SortState | null>(defaultSort);
+  const fallback = encodeSort(defaultSort);
+  const [raw, setRaw] = useUrlState(urlKey ?? "", fallback);
+  const sortableKey = columns.filter((c) => c.sortValue).map((c) => c.id).join("\n");
+
+  const urlSort = React.useMemo(() => {
+    const ids = sortableKey ? sortableKey.split("\n") : [];
+    return decodeSort(raw, ids) ?? decodeSort(fallback, ids);
+  }, [raw, fallback, sortableKey]);
+
+  const setUrlSort = React.useCallback((next: SortState | null) => setRaw(encodeSort(next)), [setRaw]);
+  return urlKey ? [urlSort, setUrlSort] : [localSort, setLocalSort];
 }
 
 function ViewsMenu({ views, sort, setSort }: {

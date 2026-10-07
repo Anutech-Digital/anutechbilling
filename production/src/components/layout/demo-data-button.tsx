@@ -40,10 +40,12 @@ export function DemoDataButton() {
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={busy}
-        className="shrink-0 inline-flex items-center gap-1 rounded border border-amber/60 text-ink text-3xs font-semibold px-2 py-0.5 hover:bg-amber/10 disabled:opacity-60"
+        className="shrink-0 inline-flex items-center gap-1 rounded border border-amber/60 text-ink text-3xs font-semibold px-1.5 sm:px-2 py-0.5 hover:bg-amber/10 disabled:opacity-60"
         aria-label="Demo data for testing"
       >
-        <Icon name="plus" size={11} /> Demo data
+        <Icon name="plus" size={11} />
+        {/* R-203: icon only on a phone — the topbar has no room for the label there. */}
+        <span className="hidden sm:inline">Demo data</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Test data (staging / local only)</DropdownMenuLabel>

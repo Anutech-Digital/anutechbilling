@@ -13,6 +13,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -81,13 +82,23 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   async function handleCsv(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { toast.error("File too large (>8 MB)."); return; }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("File too large (over 8 MB).", {
+        description: "Keep only the domain and seats columns, or split the file into smaller parts.",
+      });
+      return;
+    }
     setCsvName(file.name);
     try {
       let text = await file.text();
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length === 0) { toast.error("The file is empty."); return; }
+      if (lines.length === 0) {
+        toast.error("The file is empty.", {
+          description: "Check you picked the right file, or type the domains under Type domains.",
+        });
+        return;
+      }
 
       const first = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
       const findDom  = (hs: string[]) => hs.findIndex((h) => h.includes("domain") || h === "website" || h === "url");
@@ -113,7 +124,12 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
         return { domain: c[iDom] ?? "", seats: n > 0 ? n : 1 };
       });
       const clean = dedupeDomains(rows);
-      if (clean.length === 0) { toast.error("No domains found in the file."); return; }
+      if (clean.length === 0) {
+        toast.error("No domains found in the file.", {
+          description: "Put one domain per row in the first column (e.g. example.com), seats in the second.",
+        });
+        return;
+      }
 
       // Load into the editable list so seats are always VISIBLE and correctable —
       // never a silent 1-per-domain default that surprises the user later.
@@ -125,7 +141,10 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
         toast.success(`Loaded ${clean.length} domains from ${file.name} — review the seats below.`);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, {
+        fallback: "Couldn't read the file.",
+        description: "Save it as CSV (comma separated) from Excel or Google Sheets and upload it again.",
+      });
     }
   }
 
@@ -140,9 +159,24 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   const lineNet = rate * totalSeats; // ex-GST annual; GST added at quote level
 
   function handleAdd() {
-    if (!item) { toast.error("Pick a plan first."); return; }
-    if (rate <= 0) { toast.error("Enter a rate per seat."); return; }
-    if (domains.length === 0 || totalSeats <= 0) { toast.error("Add domains with seats first."); return; }
+    if (!item) {
+      toast.error("Pick a plan first.", {
+        description: "Choose the plan in the Plan box at the top — it sets the rate per seat.",
+      });
+      return;
+    }
+    if (rate <= 0) {
+      toast.error("Enter a rate per seat.", {
+        description: "Type the yearly price per seat in the Rate box, before GST.",
+      });
+      return;
+    }
+    if (domains.length === 0 || totalSeats <= 0) {
+      toast.error("Add domains with seats first.", {
+        description: "Type at least one domain with 1 or more seats, or upload a CSV.",
+      });
+      return;
+    }
     const line = buildBulkLine(
       { id: crypto.randomUUID(), item_id: item.id, name: item.name, cost: Math.round((item.prices?.annual?.wholesale ?? item.wholesale) * 12) },
       rate,

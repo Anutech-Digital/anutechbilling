@@ -39,16 +39,16 @@ function addDays(iso: string, n: number): string { return addDaysISO(iso, n); }
 const num = (n: number) => n.toLocaleString("en-IN");
 
 const MSG: Record<string, { ok: boolean; text: string }> = {
-  connected: { ok: true, text: "Jud gaya — pehla sync ho gaya." },
-  connected_scopelost: { ok: false, text: "Jud gaya, par Google consent par koi purani permission untick reh gayi — Settings › Integrations dekho." },
-  connected_syncfailed: { ok: false, text: "Account jud gaya par pehla sync fail hua — neeche wajah likhi hai." },
-  denied: { ok: false, text: "Permission deny ho gayi." },
-  noscope: { ok: false, text: "Google Ads wala checkbox tick nahi tha — dobara Connect karo." },
-  nodevtoken: { ok: false, text: "Google jud gaya, par GOOGLE_ADS_DEVELOPER_TOKEN env mein nahi hai — accounts nahi padh sakte." },
-  noaccounts: { ok: false, text: "Is login ke paas koi ad account nahi hai — jis email se ads chalte hain usi se connect karo." },
-  badstate: { ok: false, text: "Login flow expire ho gaya — dobara Connect karo." },
-  notconfigured: { ok: false, text: "App keys env mein nahi hain." },
-  error: { ok: false, text: "Connect nahi ho paya — dobara try karo." },
+  connected: { ok: true, text: "Connected — first sync done." },
+  connected_scopelost: { ok: false, text: "Connected, but an earlier permission was left unticked on the Google consent screen — check Settings › Integrations." },
+  connected_syncfailed: { ok: false, text: "Account connected, but the first sync failed — the reason is shown below." },
+  denied: { ok: false, text: "Permission was denied." },
+  noscope: { ok: false, text: "The Google Ads checkbox was not ticked — connect again." },
+  nodevtoken: { ok: false, text: "Google connected, but GOOGLE_ADS_DEVELOPER_TOKEN is not set — accounts cannot be read." },
+  noaccounts: { ok: false, text: "This login has no ad account — connect with the email that runs your ads." },
+  badstate: { ok: false, text: "The sign-in expired — connect again." },
+  notconfigured: { ok: false, text: "App keys are not set." },
+  error: { ok: false, text: "Could not connect — try again." },
 };
 
 export default function AdPlatformsPage() {
@@ -107,8 +107,8 @@ export default function AdPlatformsPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Ad accounts (live)</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-            Google Ads aur Facebook / Instagram ka kharcha campaign-wise, roz raat platform se. Books (Spend page) bill ka sach hain,
-            ye platform ka — dono yahan aamne-saamne. ROAS &amp; CAC books se hi chalta hai.
+            Google Ads and Facebook / Instagram spend by campaign, pulled from the platforms every night. The books (Spend page) are the
+            billed truth, this is the platform's view — both side by side here. ROAS &amp; CAC uses the books.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -135,7 +135,7 @@ export default function AdPlatformsPage() {
       {anyConnected && (
         <>
           {foreign.length > 0 && (
-            <p className="text-xs text-amber-ink">{foreign.map((a) => `${a.name} (${a.currency})`).join(", ")} INR mein nahi hai — neeche ke numbers account ki currency mein hain.</p>
+            <p className="text-xs text-amber-ink">{foreign.map((a) => `${a.name} (${a.currency})`).join(", ")} not in INR — the numbers below are in the account's currency.</p>
           )}
 
           {/* This month's pace */}
@@ -144,14 +144,14 @@ export default function AdPlatformsPage() {
               <Card key={p} className="p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-ink">{PLATFORM_LABEL[p]} · {pc.month}</p>
-                  {pc.verdict === "over" && <Badge kind="danger" size="sm">Budget se upar ja raha</Badge>}
+                  {pc.verdict === "over" && <Badge kind="danger" size="sm">Over budget</Badge>}
                   {pc.verdict === "on_track" && <Badge kind="success" size="sm">On track</Badge>}
-                  {pc.verdict === "under" && <Badge kind="info" size="sm">Budget se kaafi neeche</Badge>}
-                  {pc.verdict === "no_budget" && <Link href={"/marketing" as Route} className="text-xs underline text-ink-3">Budget set karo →</Link>}
+                  {pc.verdict === "under" && <Badge kind="info" size="sm">Well under budget</Badge>}
+                  {pc.verdict === "no_budget" && <Link href={"/marketing" as Route} className="text-xs underline text-ink-3">Set a budget →</Link>}
                 </div>
                 <div className="mt-2 flex items-baseline gap-3 flex-wrap">
                   <span className="font-serif text-3xl text-ink tabular-nums">{rupee(pc.spent)}</span>
-                  <span className="text-xs text-ink-3">{pc.daysGone}/{pc.daysInMonth} din · {rupee(pc.dailyRate)}/din · mahine ka andaaza <b className="text-ink-2">{rupee(pc.projected)}</b>{pc.budget ? ` of ${rupee(pc.budget)} (${pc.projectedPct}%)` : ""}</span>
+                  <span className="text-xs text-ink-3">{pc.daysGone}/{pc.daysInMonth} days · {rupee(pc.dailyRate)}/day · month estimate <b className="text-ink-2">{rupee(pc.projected)}</b>{pc.budget ? ` of ${rupee(pc.budget)} (${pc.projectedPct}%)` : ""}</span>
                 </div>
                 {pc.budget && (
                   <div className="mt-2 h-2 rounded bg-paper-2 overflow-hidden">
@@ -167,11 +167,11 @@ export default function AdPlatformsPage() {
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div>
                 <p className="text-sm font-semibold text-ink">Spend &amp; results</p>
-                <p className="text-xs text-ink-3">{formatDate(from)} – {formatDate(today)} vs pichhle {range} din</p>
+                <p className="text-xs text-ink-3">{formatDate(from)} – {formatDate(today)} vs previous {range} days</p>
               </div>
               <div className="flex gap-2 flex-wrap">
                 <TabBar value={pf} onChange={(v) => setPf(v as PlatformFilter)} items={[{ id: "all", label: "Dono" }, { id: "google-ads", label: "Google" }, { id: "meta-ads", label: "Meta" }]} />
-                <TabBar value={String(range)} onChange={(v) => setRange(Number(v) as Range)} items={[{ id: "7", label: "7 din" }, { id: "30", label: "30 din" }, { id: "90", label: "90 din" }]} />
+                <TabBar value={String(range)} onChange={(v) => setRange(Number(v) as Range)} items={[{ id: "7", label: "7 days" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" }]} />
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -202,11 +202,11 @@ export default function AdPlatformsPage() {
           {/* Campaigns */}
           <Card className="p-0 overflow-hidden">
             <div className="p-4 pb-2">
-              <p className="text-sm font-semibold text-ink">Campaigns · pichhle {range} din</p>
-              <p className="text-xs text-ink-3">Leads = app mein aaye leads jinka utm_campaign campaign ke naam se milta hai (Tracking links se). Conversions = platform ka apna number.</p>
+              <p className="text-sm font-semibold text-ink">Campaigns · last {range} days</p>
+              <p className="text-xs text-ink-3">Leads = leads in the app whose utm_campaign matches the campaign name (from Tracking links). Conversions = the platform's own number.</p>
             </div>
             {campaigns.length === 0 ? (
-              <div className="p-4"><EmptyState icon="target" title="Is range mein koi spend nahi" body="Sync ke baad campaigns yahan aayenge." /></div>
+              <div className="p-4"><EmptyState icon="target" title="No spend in this range" body="Campaigns appear here after a sync." /></div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -237,17 +237,17 @@ export default function AdPlatformsPage() {
 
           {/* Platform vs books */}
           <Card className="p-4">
-            <p className="text-sm font-semibold text-ink">Platform vs books · mahine-wise</p>
-            <p className="text-xs text-ink-3 mb-3">Platform = consume hua; books = Expenses mein channel-tagged marketing kharcha (GST samet). Farq ki wajah saath mein.</p>
+            <p className="text-sm font-semibold text-ink">Platform vs books · by month</p>
+            <p className="text-xs text-ink-3 mb-3">Platform = amount consumed; books = channel-tagged marketing expenses (incl. GST). The reason for any difference is shown alongside.</p>
             <div className="grid gap-4 lg:grid-cols-2">
               {(["google-ads", "meta-ads"] as const).map((p) => {
                 const rec = reconcileMonths(allRows.filter((r) => r.platform === p), booked.data?.[PLATFORM_CHANNEL[p]] ?? new Map(), p).slice(0, 6);
                 return (
                   <div key={p}>
                     <p className="text-xs font-semibold text-ink-2 mb-1">{PLATFORM_LABEL[p]}</p>
-                    {rec.length === 0 ? <p className="text-xs text-ink-3">Kuch nahi</p> : (
+                    {rec.length === 0 ? <p className="text-xs text-ink-3">Nothing yet</p> : (
                       <table className="w-full text-xs">
-                        <thead><tr className="text-left text-3xs uppercase tracking-wider text-ink-3"><th className="py-1">Month</th><th className="py-1 text-right">Platform</th><th className="py-1 text-right">Books</th><th className="py-1 text-right">Farq</th><th className="py-1 pl-2">Wajah</th></tr></thead>
+                        <thead><tr className="text-left text-3xs uppercase tracking-wider text-ink-3"><th className="py-1">Month</th><th className="py-1 text-right">Platform</th><th className="py-1 text-right">Books</th><th className="py-1 text-right">Difference</th><th className="py-1 pl-2">Reason</th></tr></thead>
                         <tbody>
                           {rec.map((r) => (
                             <tr key={r.month} className="border-t border-hairline">
@@ -265,7 +265,7 @@ export default function AdPlatformsPage() {
                 );
               })}
             </div>
-            <p className="text-xs text-ink-3 mt-3"><Link href={"/marketing/spend" as Route} className="underline">Spend page</Link> par expense book / tag karo · <Link href={"/accounting/prepaid" as Route} className="underline">Prepaid</Link> par Facebook advance se consume karo.</p>
+            <p className="text-xs text-ink-3 mt-3"><Link href={"/marketing/spend" as Route} className="underline">Spend page</Link>: book or tag expenses · <Link href={"/accounting/prepaid" as Route} className="underline">Prepaid</Link>: draw down the Facebook advance.</p>
           </Card>
 
           {(runs.data?.length ?? 0) > 0 && (
@@ -314,8 +314,8 @@ function PlatformCard({ platform, status, accounts, onToggle }: { platform: AdPl
   const expiry = !isG ? status?.meta.tokenExpiresAt : null;
   const expiringSoon = expiry ? Date.parse(expiry) - Date.now() < 7 * 86_400_000 : false;
   const setupNote = isG
-    ? (!configured ? "Google OAuth keys env mein nahi hain." : !status?.google.devToken ? "GOOGLE_ADS_DEVELOPER_TOKEN env mein nahi hai (Ads manager account → API Center)." : null)
-    : (!configured ? "META_APP_ID / META_APP_SECRET env mein nahi hain (Meta app with Marketing API, ads_read)." : null);
+    ? (!configured ? "Google OAuth keys are not set." : !status?.google.devToken ? "GOOGLE_ADS_DEVELOPER_TOKEN is not set (Ads manager account → API Center)." : null)
+    : (!configured ? "META_APP_ID / META_APP_SECRET are not set (Meta app with Marketing API, ads_read)." : null);
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
@@ -323,9 +323,9 @@ function PlatformCard({ platform, status, accounts, onToggle }: { platform: AdPl
           <p className="text-sm font-semibold text-ink inline-flex items-center gap-2">
             {PLATFORM_LABEL[platform]}
             {connected ? <Badge kind="success" size="sm">Connected</Badge> : configured ? <Badge kind="warning" size="sm">Connect</Badge> : <Badge kind="muted" size="sm">Setup</Badge>}
-            {expiringSoon && <Badge kind="danger" size="sm">Token {formatDate(expiry!)} ko expire</Badge>}
+            {expiringSoon && <Badge kind="danger" size="sm">Token expires {formatDate(expiry!)}</Badge>}
           </p>
-          <p className="text-xs text-ink-3 mt-0.5">{setupNote ?? (isG && status?.google.email ? status.google.email : connected ? `${accounts.length} account` : "Jis login se ads chalte hain, usi se connect karo.")}</p>
+          <p className="text-xs text-ink-3 mt-0.5">{setupNote ?? (isG && status?.google.email ? status.google.email : connected ? `${accounts.length} account` : "Connect with the login that runs your ads.")}</p>
           {isG && status?.google.lastError && <p className="text-xs text-rose-ink mt-1">{status.google.lastError}</p>}
         </div>
         {configured && (!isG || status?.google.devToken) ? (

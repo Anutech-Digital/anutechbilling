@@ -20,8 +20,8 @@ export interface Destination { path: string; label: string }
    /quote/… were listed first and removed the same day: they are views of a quote already
    sent, they create no lead, and a link to them would lose the source entirely. */
 export const DESTINATIONS: readonly Destination[] = [
-  { path: "/enquiry",        label: "Enquiry form (sab ke liye, custom software bhi)" },
-  { path: "/buy/workspace",  label: "Google Workspace kharidne ka page" },
+  { path: "/enquiry",        label: "Enquiry form (all products, incl. custom software)" },
+  { path: "/buy/workspace",  label: "Google Workspace buy page" },
 ];
 
 /** utm_medium the channel implies: an ad is cpc, a listing is referral, a post is social. */

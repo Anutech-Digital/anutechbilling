@@ -29,8 +29,9 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
+import { fetchAllRows, errorMessage, type PageQuery } from "@/lib/ops/fetch-all";
 import { buildComplianceRows } from "@/lib/compliance/obligations";
+import { isMissingColumnError, profileFromRow, type PgErrorLike } from "@/lib/compliance/profile-row";
 import { dueReminders, renderReminder, type PlannedReminder } from "@/lib/compliance/reminders";
 import { noTdsDeductedPredicate, tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
@@ -42,6 +43,9 @@ export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
+
+/** business_type / gst_filing are newer than database.types.ts — absent before the migration. */
+interface TenantRow { id: string; name: string; business_type?: unknown; gst_filing?: unknown; lut_number?: unknown }
 
 interface Sent { tenant: string; obligation: string; period: string; daysBefore: number; to: string; status: string }
 
@@ -98,10 +102,21 @@ async function handle(req: Request) {
   /* WC-scale: every list read here is paged (lib/ops/fetch-all.ts). The reminder log is the
      one that mattered: it grows by obligations × periods × rungs × recipients, and a tenant
      past 1000 rows had its OLDEST sends cut off the read — which looked like "not sent yet". */
-  let tenants: { id: string; name: string }[];
+  /* R-325: each tenant's business type + GST mode (R-262) decides WHICH obligations it is
+     reminded about — a proprietor gets no AOC-4 / MGT-7 mail, a QRMP filer no monthly
+     GSTR-3B. Before the columns exist (migration 20261007030000 not applied) the read falls
+     back to id + name and every tenant gets the original Pvt Ltd / monthly-GST list. */
+  let tenants: TenantRow[];
   try {
-    tenants = await fetchAllRows((from, to) => supabase
-      .from("tenants").select("id, name").order("id", { ascending: true }).range(from, to));
+    try {
+      tenants = await fetchAllRows<TenantRow>((from, to) => supabase
+        .from("tenants").select("id, name, business_type, gst_filing, lut_number")
+        .order("id", { ascending: true }).range(from, to) as unknown as PageQuery<TenantRow>);
+    } catch (e) {
+      if (!isMissingColumnError(e as PgErrorLike)) throw e;
+      tenants = await fetchAllRows((from, to) => supabase
+        .from("tenants").select("id, name, lut_number").order("id", { ascending: true }).range(from, to));
+    }
   } catch (e) {
     return NextResponse.json({ error: `tenants fetch failed: ${errorMessage(e)}` }, { status: 500 });
   }
@@ -176,7 +191,7 @@ async function handle(req: Request) {
         ? undefined
         : noTdsDeductedPredicate(tdsMonthsFrom(tdsSal.data, tdsExp.data), today);
 
-      const rows = buildComplianceRows(today, filed, undefined, notApplicable);
+      const rows = buildComplianceRows(today, filed, undefined, notApplicable, profileFromRow(tenant, null));
       // A rung counts as done for the tenant only once EVERY recipient has it —
       // otherwise adding a CA halfway through a window would never reach them.
       const plans: PlannedReminder[] = dueReminders(rows, (o, p, d) =>

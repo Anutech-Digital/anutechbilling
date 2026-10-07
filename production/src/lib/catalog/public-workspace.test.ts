@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { publicWorkspaceCatalog } from "./public-workspace";
+import { publicWorkspaceCatalog, suiteRows } from "./public-workspace";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    PUBLIC endpoint se WHOLESALE bahar na jaye — yahi is file ka ek kaam hai.
@@ -82,5 +82,34 @@ describe("shakal — website jo padhti hai", () => {
       { name: "GW Y", msrp: 0, prices: null },
       { name: "GW Z", msrp: null, prices: null },
     ])).toEqual([]);
+  });
+});
+
+describe("R-076 — M365 aur Zoho bhi isi endpoint se", () => {
+  it("vendor tag output me jata hai (google/microsoft/zoho), aur kuch nahi", () => {
+    const out = publicWorkspaceCatalog([
+      { name: "Microsoft 365 Business Basic", msrp: 151, prices: { monthly: { msrp: 181, wholesale: 140 } }, vendor: "microsoft" },
+      { name: "Zoho Workplace Standard", msrp: 93, prices: null, vendor: "zoho" },
+      { name: "Something", msrp: 10, prices: null, vendor: "acme" },
+    ]);
+    expect(out[0]).toEqual({ name: "Microsoft 365 Business Basic", annualPerSeatMo: 151, monthlyPerSeatMo: 181, vendor: "microsoft" });
+    expect(out[1].vendor).toBe("zoho");
+    expect(out[2].vendor).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain("140");
+  });
+
+  it("suiteRows sirf suite products rakhta hai — add-on ya doosra item nahi", () => {
+    const rows = [
+      { name: "Google Workspace Business Starter", vendor: "google" },
+      { name: "Gemini add-on", vendor: "google" },
+      { name: "Microsoft 365 Business Basic", vendor: "microsoft" },
+      { name: "Exchange Online Plan 1", vendor: "microsoft" },
+      { name: "Zoho Workplace Standard", vendor: "zoho" },
+      { name: "Microsoft 365 Business Basic", vendor: "other" },
+      { name: null, vendor: "zoho" },
+    ];
+    expect(suiteRows(rows).map((r) => r.name)).toEqual([
+      "Google Workspace Business Starter", "Microsoft 365 Business Basic", "Zoho Workplace Standard",
+    ]);
   });
 });

@@ -34,10 +34,11 @@ import { TRUST } from "@/site/lib/data/copy";
 import { editionDelta } from "@/site/lib/edition-delta";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { HOSTING_FROM_MO } from "@/site/lib/data/hosting-landing-v2";
-import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
+import { WHATSAPP_URL, COMPANY, SLA } from "@/site/lib/config";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { MAIL_OPTIONS } from "@/site/lib/data/copy";
 import { MAIL_RATES } from "@/site/lib/data/catalog";
+import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 
 /* Design tokens — the handoff's exact palette. */
 export const C = {
@@ -103,6 +104,9 @@ function featuresFor(v: Vendor, i: number): string[] {
   return out;
 }
 
+/** R-347: migration timing from SLA.migration (was "overnight"). */
+const MIGRATION_CELL = `✓ ₹0, done by us, ${SLA.migration}`;
+
 /** Cross-vendor comparison — the handoff's own copy (GW vs M365 vs Zoho). Cells
  *  lead with a marker: ✓ included · ✕ not included · ₹ costs extra. Bill-per-user
  *  is computed live from the entry edition of each suite. */
@@ -111,10 +115,10 @@ const CROSS_ROWS: readonly { label: string; gw: string; ms: string; zoho: string
   { label: "Mail on your own domain", gw: "✓ Gmail", ms: "✓ Outlook", zoho: "✓ Zoho Mail" },
   { label: "Desktop Word / Excel", gw: "✕ Browser and mobile only", ms: "✓ From Business Standard (₹770)", zoho: "✕ Browser and mobile" },
   { label: "Meetings", gw: "Meet: 100 · 150 on Standard · 500 on Plus", ms: "Teams: meetings and webinars", zoho: "Zoho Meeting: fine for a small team" },
-  { label: "Compliance / audit tools", gw: "✓ Vault, in Business Plus (₹1,380)", ms: "₹ Purchased separately", zoho: "✕ Not in this plan" },
+  { label: "Compliance / audit tools", gw: "✓ Vault, in Business Plus (price on request)", ms: "₹ Purchased separately", zoho: "✕ Not in this plan" },
   { label: "User limit", gw: "Up to 300; Enterprise after that", ms: "Up to 300 on Business plans", zoho: "No practical limit" },
   { label: "Where the data sits", gw: "Google, India region pricing", ms: "Microsoft's regions", zoho: "Zoho's Indian datacentre" },
-  { label: "Migration and support", gw: "✓ ₹0, overnight, done by us", ms: "✓ ₹0, overnight, done by us", zoho: "✓ ₹0, overnight, done by us" },
+  { label: "Migration and support", gw: MIGRATION_CELL, ms: MIGRATION_CELL, zoho: MIGRATION_CELL },
 ];
 
 /** "The rest of the catalogue" — the handoff's four cards, wired to the app's
@@ -293,7 +297,7 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
           </div>
 
           {/* edition trio */}
-          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : `repeat(${Math.min(vendorEditions.length, 3)}, minmax(0,1fr))`, gap: 16, alignItems: "stretch" }}>
+          <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : `repeat(${Math.min(vendorEditions.length + (vendor.key === "gw" ? 1 : 0), 3)}, minmax(0,1fr))`, gap: 16, alignItems: "stretch" }}>
             {vendorEditions.map((e, i) => {
               const rate = rateOf(e);
               const pop = e.name === vendor.popular;
@@ -360,6 +364,36 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
                 </div>
               );
             })}
+            {/* R-328 (7 Oct 2026): Business Plus has no published price — like Google's own page.
+                Same card shape, "Contact us for pricing", quote + WhatsApp; never Buy now. */}
+            {vendor.key === "gw" && (() => {
+              const plusDelta = editionDelta(featuresFor(vendor, 1), featuresFor(vendor, 2));
+              const quoteHref = `/quote?ed=${encodeURIComponent(PLUS_EDITION)}&seats=${seats}&term=${annual ? "annual" : "monthly"}`;
+              return (
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", padding: 20, border: `1px solid ${C.border}`, borderRadius: 12, background: C.surf, boxShadow: SH_CARD }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>{LABEL[PLUS_EDITION]}</div>
+                  <p style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, margin: "4px 0 14px", minHeight: 36 }}>{DESC[PLUS_EDITION]}</p>
+                  <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: C.ink, lineHeight: 1.2 }}>{CONTACT_FOR_PRICING}</div>
+                  <div style={{ fontSize: 12, color: C.sec, marginTop: 4 }}>We send the price for {seats} user{seats > 1 ? "s" : ""} {SLA.quote}</div>
+                  <Link href={quoteHref as never} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: "#fff", border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
+                    Get a quote
+                  </Link>
+                  <a href={WA(`Hi Anutech — please send the Google Workspace Business Plus price for ${seats} user${seats > 1 ? "s" : ""} (${annual ? "annual" : "monthly"}).`)} target="_blank" rel="noopener" style={{ fontSize: 12.5, fontWeight: 600, color: C.green, textAlign: "center", margin: "8px 0 0", textDecoration: "none" }}>
+                    Ask on WhatsApp
+                  </a>
+                  <div style={{ height: 1, background: C.hair, margin: "16px 0 12px" }} />
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.ink, marginBottom: 8 }}>Everything in {LABEL["GW Business Standard"]}, plus:</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                    {plusDelta.slice(0, 5).map((f) => (
+                      <span key={f} style={{ display: "flex", gap: 9, fontSize: 12.5, lineHeight: 1.4, color: C.ink2 }}>
+                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" stroke={C.blue} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
+                        <span>{f}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </section>

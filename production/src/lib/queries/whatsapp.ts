@@ -14,6 +14,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Json, WhatsAppMessageRow } from "@/lib/supabase/database.types";
 import { flattenPages } from "@/lib/queries/keyset";
@@ -135,6 +136,6 @@ export function useSendWhatsApp() {
       toast.success("WhatsApp message sent");
       qc.invalidateQueries({ queryKey: ["whatsapp"] });
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

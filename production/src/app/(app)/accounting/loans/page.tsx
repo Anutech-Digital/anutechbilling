@@ -388,7 +388,7 @@ function ReceiptLink({ path }: { path: string }) {
     try {
       const url = await getClaimReceiptUrl(path);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else toast.error("Couldn't open the receipt");
+      else toast.error("Couldn't open the receipt", { description: "The file may have been removed. Refresh the page and try again." });
     } finally { setLoading(false); }
   }
   return <Button variant="ghost" size="sm" icon="eye" loading={loading} onClick={open}>Receipt</Button>;
@@ -493,7 +493,7 @@ function ClaimLinkDialog({ onClose }: { onClose: () => void }) {
 
   async function copy() {
     try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-    catch { toast.error("Couldn't copy"); }
+    catch { toast.error("Couldn't copy the link", { description: "Select the link and copy it by hand." }); }
   }
   const waHref = `https://wa.me/?text=${encodeURIComponent(`Log your expenses from your advance here: ${link}`)}`;
 
@@ -800,8 +800,8 @@ function DisburseDialog({ onClose, initialKind }: { onClose: () => void; initial
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-ink-2 mb-1.5">What are you giving?</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <p id="loans-kind-label" className="block text-xs font-medium text-ink-2 mb-1.5">What are you giving?</p>
+            <div role="group" aria-labelledby="loans-kind-label" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {([
                 { k: "loan", label: "Loan", desc: "Repaid back" },
                 { k: "salary_advance", label: "Salary advance", desc: "Recovered from pay" },

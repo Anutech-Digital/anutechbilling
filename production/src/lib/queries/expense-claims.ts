@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type ExpenseClaimRow = Database["public"]["Tables"]["expense_claims"]["Row"];
@@ -62,7 +63,7 @@ export function useApproveClaim() {
       if (error) throw error;
     },
     onSuccess: () => { invalidate(qc); toast.success("Claim approved — advance adjusted"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -78,7 +79,7 @@ export function useRejectClaim() {
       if (error) throw error;
     },
     onSuccess: () => { invalidate(qc); toast.success("Claim rejected"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -99,7 +100,7 @@ export function useEditClaim() {
       if (error) throw error;
     },
     onSuccess: () => { invalidate(qc); toast.success("Claim updated"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -112,7 +113,7 @@ export function useDeleteClaim() {
       if (error) throw error;
     },
     onSuccess: () => { invalidate(qc); toast.success("Claim deleted"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

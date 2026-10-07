@@ -11,6 +11,7 @@ import type { useConfirm } from "@/components/providers/confirm-provider";
 import type { useChangeLeadStage } from "@/lib/leads/use-change-stage";
 import type { Lead } from "@/lib/supabase/database.types";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
+import { leadTitle } from "@/lib/leads/display-name";
 
 export interface LeadDetailHeaderProps {
   lead: Lead;
@@ -24,7 +25,7 @@ export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClo
   return (
   <SheetHeader className="!p-5 flex flex-row items-start justify-between gap-3 border-b border-hairline">
     <div className="min-w-0 flex-1">
-      <SheetTitle className="text-xl">{lead.company}</SheetTitle>
+      <SheetTitle className="text-xl" title={leadTitle(lead).hint ?? undefined}>{leadTitle(lead).label}</SheetTitle>
       <SheetDescription className="text-xs mt-1">
         {lead.id} · <b className="text-ink">{stageLabel}</b>
       </SheetDescription>
@@ -57,14 +58,14 @@ export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClo
             const ok = await confirm({
               title: `Change stage to ${STAGE_LABEL[next]}?`,
               body:
-                `${lead.company} is at ${STAGE_LABEL[lead.stage]}.\n\n` +
+                `${leadTitle(lead).label} is at ${STAGE_LABEL[lead.stage]}.\n\n` +
                 "Stages normally update on their own — after a call, demo, trial or quote. " +
                 "A manual change may not match what actually happened.",
               confirmLabel: "Change stage",
             });
             if (ok) await changeStage(lead, next);
           }}
-          aria-label={`Stage for ${lead.company}`}
+          aria-label={`Stage for ${leadTitle(lead).label}`}
           className="text-2xs bg-transparent px-1 py-0.5 rounded border border-hairline hover:border-hairline-strong cursor-pointer focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
         >
           {(Object.keys(STAGE_LABEL) as Lead["stage"][]).map((s) => (

@@ -27,7 +27,7 @@ describe("PIPELINES", () => {
 
 describe("stage flow differs by motion", () => {
   it("new logo runs the full funnel", () => {
-    expect(stagesFor("new_logo")).toEqual(["new", "contact", "demo", "trial", "quote", "won", "lost"]);
+    expect(stagesFor("new_logo")).toEqual(["new", "contact", "quote", "demo", "trial", "won", "lost"]);
   });
 
   it("migration drops demo — they already use the product", () => {

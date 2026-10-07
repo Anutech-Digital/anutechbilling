@@ -19,6 +19,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -30,6 +31,8 @@ import {
 } from "@/components/ui/select";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
 import {
   useBalanceSheetAuto,
   useBalanceSheetItems,
@@ -42,10 +45,11 @@ import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
 import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
 import { istToday } from "@/lib/dates/ist";
+import { fmtBS } from "./format";
 
 export default function BalanceSheetPage() {
-  const { data: auto, isLoading: autoLoading } = useBalanceSheetAuto();
-  const { data: items, isLoading: itemsLoading } = useBalanceSheetItems();
+  const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
+  const { data: items, isLoading: itemsLoading, isError: itemsFailed, refetch: refetchItems } = useBalanceSheetItems();
   const del = useDeleteBalanceSheetItem();
   const confirm = useConfirm();
   /* D16 (27 Sep 2026): the unexplained difference is almost always the owner's money that
@@ -73,6 +77,8 @@ export default function BalanceSheetPage() {
   const today = istToday();
 
   const loading = autoLoading || itemsLoading;
+  /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
+  const failed = autoFailed || itemsFailed;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -162,19 +168,19 @@ export default function BalanceSheetPage() {
 
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
-      {!loading && (
+      {!loading && !failed && (
         <div className="grid grid-cols-3 gap-3 mb-4">
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{rupee(totalAssets, { compact: true })}</div>
+            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalAssets, { compact: true })}</div>
           </Card>
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total liabilities</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{rupee(totalLiab, { compact: true })}</div>
+            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalLiab, { compact: true })}</div>
           </Card>
           <Card className="p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Net worth</div>
-            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{rupee(netWorth, { compact: true })}</div>
+            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
           </Card>
         </div>
       )}
@@ -195,7 +201,7 @@ export default function BalanceSheetPage() {
       {/* Financial-health / solvency indicator — prominent rose banner when net
           worth is negative, subtle green strip when solvent. Shows the key
           liquidity + leverage ratios with plain-English tooltips. */}
-      {!loading && auto && (
+      {!loading && !failed && auto && (
         <Card className={`mb-6 p-4 ${netWorth < 0 ? "border-rose/40 bg-rose/5" : "border-emerald/30 bg-emerald-soft/20"}`}>
           <div className="flex items-start gap-3">
             <Icon name={netWorth < 0 ? "alert" : "check_circle"} size={18} className={`mt-0.5 shrink-0 ${netWorth < 0 ? "text-rose" : "text-emerald"}`} />
@@ -229,6 +235,8 @@ export default function BalanceSheetPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {[1, 2].map((i) => <Skeleton key={i} className="h-96 rounded-lg" />)}
         </div>
+      ) : failed ? (
+        <LoadError what="Balance sheet" onRetry={() => { void refetchAuto(); void refetchItems(); }} />
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -378,11 +386,11 @@ export default function BalanceSheetPage() {
             <div className="flex items-center gap-2">
               <Icon name="check_circle" size={18} className="text-emerald" />
               <span className="text-sm text-ink-2">
-                Balanced: <b>Assets {rupee(totalAssets)}</b> = <b>Liabilities + Equity {rupee(totalLiab + netWorth)}</b>
+                Balanced: <b>Assets {fmtBS(totalAssets)}</b> = <b>Liabilities + Equity {fmtBS(totalLiab + netWorth)}</b>
               </span>
             </div>
             <span className={`font-serif text-2xl ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
-              Net worth {rupee(netWorth)}
+              Net worth {fmtBS(netWorth)}
             </span>
           </Card>
         </>
@@ -403,10 +411,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Indian accounting notation — negatives in parentheses + red, e.g. (₹2,86,708).
-function fmtBS(amount: number): string {
-  return amount < 0 ? `(${rupee(Math.abs(amount))})` : rupee(amount);
-}
 
 /** One solvency ratio chip inside the Financial-health banner. */
 function Ratio({ label, value, good, tip }: { label: string; value: string; good: boolean; tip: string }) {
@@ -442,8 +446,11 @@ function BSLine({
   onEdit?: () => void; onDelete?: () => void; onInfo?: () => void;
 }) {
   const router = useRouter();
-  const clickable = !!href;
-  const go = () => { if (href) router.push(href as never); };
+  /* R-255: a line links to its source page only when this role may open it — the guard used to
+     send the accountant to the P&L, silently, from a link it could not follow. */
+  const role = useCurrentUser().data?.role;
+  const clickable = !!href && canOpenRoute(role, href);
+  const go = () => { if (href && clickable) router.push(href as never); };
   return (
     <div
       className={`flex items-start justify-between gap-3 py-1.5 group rounded-md ${clickable ? "cursor-pointer hover:bg-paper-2/50 -mx-2 px-2" : ""}`}

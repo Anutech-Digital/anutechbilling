@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
    eslint all pass it. See CLAUDE.md §25.2. */
 import type { Route } from "next";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { useAllContacts, contactKind, type ContactKind } from "@/lib/queries/contacts";
 import ImportContactsDialog from "@/components/features/contacts/import-contacts-dialog";
@@ -25,8 +26,10 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 
 
 // Contacts are grouped by their unified "kind" (see contactKind): leads +
@@ -61,8 +64,9 @@ export default function ContactsPage() {
   const qc = useQueryClient();
   const { data: contacts, isLoading, error, refetch } = useAllContacts();
 
-  const [tab, setTab]       = React.useState("all");
-  const [search, setSearch] = React.useState("");
+  /* R-286: tab and search live in the URL — open a contact, press Back, same list. */
+  const [tab, setTab]       = useUrlState("tab", "all");
+  const [search, setSearch] = useUrlState("q");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = React.useState(false);
   const [addOpen, setAddOpen] = React.useState(false);
@@ -81,7 +85,7 @@ export default function ContactsPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not promote");
+        toastError(json.error, { fallback: "Could not turn this contact into a lead.", description: "Refresh the page and try again." });
         return;
       }
       toast.success(`Promoted → lead ${json.leadId}`);
@@ -89,7 +93,7 @@ export default function ContactsPage() {
       qc.invalidateQueries({ queryKey: ["leads"] });
       router.push(`/leads?lead=${json.leadId}` as never);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     }
   }
 
@@ -100,26 +104,26 @@ export default function ContactsPage() {
     try {
       const st = await fetch("/api/integrations/google-contacts").then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (!st?.configured) {
-        toast.error("Google Contacts abhi set up nahi — Settings → Integrations me keys chahiye");
+        toast.error("Google Contacts is not set up yet.", { description: "Opening Settings → Integrations — add the Google keys there." });
         router.push("/settings?tab=integrations" as never);
         return;
       }
       if (!st?.connected) {
-        toast.info("Pehle Google Contacts connect karo — Settings khol raha hoon");
+        toast.info("Connect Google Contacts first — opening Settings.");
         router.push("/settings?tab=integrations" as never);
         return;
       }
       const res = await fetch("/api/integrations/google-contacts/sync", { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(j?.error ?? "Sync failed");
+        toastError(j?.error, { fallback: "Google Contacts sync failed.", description: "Try again in a minute. If it keeps failing, reconnect Google in Settings → Integrations." });
         return;
       }
-      toast.success(`Google se sync ho gaya — ${j.pulled} aaye, ${j.pushed + j.created} bheje${j.deleted ? `, ${j.deleted} hataye` : ""}`);
+      toast.success(`Synced with Google — ${j.pulled} in, ${j.pushed + j.created} out${j.deleted ? `, ${j.deleted} removed` : ""}`);
       qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       refetch();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, { fallback: "Could not reach the server.", description: "Check your connection and try again." });
     } finally {
       setSyncing(false);
     }
@@ -206,7 +210,7 @@ export default function ContactsPage() {
   const startCampaign = (channel: "email" | "whatsapp") => {
     const chosen = (contacts ?? []).filter((c) => selected.has(c.id));
     if (chosen.length === 0) {
-      toast.error("Select at least one contact");
+      toast.error("Select at least one contact.", { description: "Tick the contacts you want to message." });
       return;
     }
 
@@ -215,7 +219,7 @@ export default function ContactsPage() {
         .filter((c) => c.email?.trim())
         .map((c) => ({ email: c.email!.trim(), name: c.name ?? undefined, company: c.company || undefined }));
       if (recips.length === 0) {
-        toast.error("None of the selected contacts have an email");
+        toast.error("None of the selected contacts have an email.", { description: "Add an email to them, or pick other contacts." });
         return;
       }
       setComposerRecipients(recips);
@@ -229,12 +233,12 @@ export default function ContactsPage() {
       .map((c) => (c.phone ?? "").replace(/\D/g, ""))
       .filter((p) => p.length >= 10);
     if (phones.length === 0) {
-      toast.error("None of the selected contacts have a phone number");
+      toast.error("None of the selected contacts have a phone number.", { description: "Add a 10-digit mobile number to them, or pick other contacts." });
       return;
     }
     navigator.clipboard?.writeText(phones.join("\n")).then(
       () => toast.success(`${phones.length} number${phones.length > 1 ? "s" : ""} copied — paste into a WhatsApp broadcast list`),
-      () => toast.error("Clipboard blocked — couldn't copy the numbers"),
+      () => toast.error("Could not copy the numbers.", { description: "The browser blocked the clipboard. Allow clipboard access for this site and try again." }),
     );
   };
 
@@ -309,6 +313,7 @@ export default function ContactsPage() {
             </div>
             <div className="w-72">
               <Input
+                aria-label="Search contacts"
                 prefix={<Icon name="search" size={14} />}
                 placeholder="Name, email, phone, company…"
                 value={search}
@@ -572,33 +577,16 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Floating campaign bar — alternative when GeminiCard not visible */}
-      {selected.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink text-paper rounded-full pl-4 pr-2 py-2 shadow-lg flex items-center gap-3 z-40">
-          <span className="text-sm">
-            <b>{selected.size}</b> selected
-          </span>
-          <button
-            onClick={() => startCampaign("email")}
-            className="text-xs px-3 py-1 rounded-full bg-paper/10 hover:bg-paper/20 transition-colors flex items-center gap-1"
-          >
-            <Icon name="mail" size={12} /> Email
-          </button>
-          <button
-            onClick={() => startCampaign("whatsapp")}
-            className="text-xs px-3 py-1 rounded-full bg-amber text-paper hover:bg-amber/90 transition-colors flex items-center gap-1"
-          >
-            <Icon name="whatsapp" size={12} /> WhatsApp blast
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="text-xs px-2 py-1 rounded-full opacity-70 hover:opacity-100"
-            aria-label="Clear selection"
-          >
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-      )}
+      {/* Selection bar — the shared BulkActionBar (R-268), so it clears the phone bottom
+          nav and stays inside 375px like every other list's bar. */}
+      <BulkActionBar count={selected.size} noun="contact" onClear={() => setSelected(new Set())}>
+        <BulkBarButton icon="mail" onClick={() => startCampaign("email")}>
+          Email
+        </BulkBarButton>
+        <BulkBarButton icon="whatsapp" onClick={() => startCampaign("whatsapp")}>
+          WhatsApp blast
+        </BulkBarButton>
+      </BulkActionBar>
     </div>
   );
 }

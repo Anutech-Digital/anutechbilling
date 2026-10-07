@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -95,7 +96,7 @@ export default function TeamPage() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "invites"] }); toast.success("Invite removed"); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't remove invite"),
+    onError: (e) => toastError(e, { fallback: "Couldn't remove the invite." }),
   });
 
   const updateMember = useMutation({
@@ -105,7 +106,7 @@ export default function TeamPage() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "members"] }); toast.success("Member updated"); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't update member"),
+    onError: (e) => toastError(e, { fallback: "Couldn't update this member." }),
   });
 
   const owners = members.filter((m) => m.role === "owner").length;
@@ -205,6 +206,7 @@ export default function TeamPage() {
                   <td className="p-3">
                     {isOwner && m.id !== me?.userId ? (
                       <select
+                        aria-label={`Role for ${m.full_name ?? m.email}`}
                         value={m.role}
                         onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                         className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
@@ -322,6 +324,7 @@ export default function TeamPage() {
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 {isOwner && m.id !== me?.userId ? (
                   <select
+                    aria-label={`Role for ${m.full_name ?? m.email}`}
                     value={m.role}
                     onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                     className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
@@ -439,7 +442,10 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
 
   async function submit() {
     const clean = email.trim().toLowerCase();
-    if (!clean.includes("@") || clean.length < 5) { toast.error("Enter a valid email."); return; }
+    if (!clean.includes("@") || clean.length < 5) {
+      toast.error("Enter a valid email.", { description: "Use the full address they sign in with, like name@company.com." });
+      return;
+    }
     setSaving(true);
     try {
       // Server route: creates the invite AND emails the invitee (best-effort).
@@ -450,7 +456,7 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(json.error ?? "Invite failed");
+        toastError(json.error, { fallback: "Couldn't send the invite." });
         return;
       }
       // Reflect whether the notification email actually went out.
@@ -466,7 +472,7 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       onInvited();
       onOpenChange(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Invite failed");
+      toastError(e, { fallback: "Couldn't send the invite." });
     } finally {
       setSaving(false);
     }

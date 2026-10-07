@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { PO_TABS } from "@/lib/navigation/drilldown";
 import { usePurchaseOrders, usePurchaseOrderSummaries, type PurchaseOrderSummary } from "@/lib/queries/purchase-orders";
 import { useSubscriptions }  from "@/lib/queries/subscriptions";
@@ -51,8 +52,9 @@ export default function PurchaseOrdersPage() {
     return map;
   }, [summaries]);
   const [tab,    setTab]    = useUrlChoice<string>("tab", PO_TABS, "open"); // R-118
-  const [vendor, setVendor] = React.useState("all");
-  const [search, setSearch] = React.useState("");
+  /* R-272: in the URL, so opening a PO and pressing Back keeps the vendor + search. */
+  const [vendor, setVendor] = useUrlState("vendor", "all");
+  const [search, setSearch] = useUrlState("q", "");
   const [selected, setSelected] = React.useState<PurchaseOrderRow | null>(null);
 
   const filtered = (pos ?? []).filter((p) => {

@@ -118,7 +118,7 @@ describe("PUT — template per kind", () => {
     state.data.whatsapp_templates = { body: "Hi {{1}} {{2}}" };
     const res = await PUT(req("PUT", good));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/2 jagah.*5 field/);
+    expect((await res.json()).error).toMatch(/2 slots.*5 fields/);
     expect(op("whatsapp_reminder_templates", "upsert")).toBeUndefined();
   });
 

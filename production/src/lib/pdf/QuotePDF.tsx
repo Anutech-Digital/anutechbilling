@@ -29,6 +29,7 @@ import { pdfRupee } from "./pdf-money";
 import { pdfText } from "./pdf-text";
 import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
@@ -36,8 +37,10 @@ import {
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invoice-divisor";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
+import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
+import { udyamPdfLine } from "@/lib/compliance/udyam";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -57,6 +60,8 @@ export interface QuotePDFProps {
   // Tenant (supplier)
   tenantName:     string;
   tenantGstin?:   string | null;
+  /** R-368. tenants.udyam_number — "MSME Udyam: UDYAM-…" under the GSTIN when set. */
+  udyamNumber?:   string | null;
   tenantEmail?:   string | null;
   tenantPhone?:   string | null;
   tenantAddress?: string | null;
@@ -102,6 +107,12 @@ export interface QuotePDFProps {
   billingCycle?: BillingCycle;
   notes?:        string;
   termsConditions?: string | null;
+  /**
+   * R-367. The default free support line ("Support: Free — Included"), from
+   * includedSupportLine() — the builder the preview dialog uses too. `undefined` →
+   * derived here from `lineItems` (callers that build props by hand); `null` → none.
+   */
+  includedSupport?: IncludedSupportLine | null;
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
@@ -399,7 +410,7 @@ const s = StyleSheet.create({
 
 export function QuotePDF(props: QuotePDFProps) {
   const {
-    tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo,
+    tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantLogo, udyamNumber = null,
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
@@ -407,6 +418,9 @@ export function QuotePDF(props: QuotePDFProps) {
     isPaid = false,
     upiQrDataUrl, upiVpa,
   } = props;
+  const includedSupport = props.includedSupport !== undefined
+    ? props.includedSupport
+    : includedSupportLine(lineItems);
 
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
   /* The monogram was never a placeholder waiting to be replaced — it is the fallback, and it
@@ -475,6 +489,14 @@ export function QuotePDF(props: QuotePDFProps) {
   const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount)                  : taxable;
   const dTax      = isForeign ? dRound(dTaxable * (taxRate / 100))             : tax;
   const dTotal    = isForeign ? dRound(dTaxable + dTax)                        : total;
+  /* R-212: CGST/SGST from lib/gst/tax-split — the split the preview and the email print.
+     A foreign quote's tax is in cents, so it is split as a whole number of cents: the helper
+     keeps a whole-unit tax in whole-unit heads (right for ₹, where every quote tax is whole
+     rupees), which would print $7.00 as $4.00 + $3.00. Integer cents also avoid the float
+     trap of the old `dRound(dTax / 2)` ($9.95 / 2 → $4.97, the odd cent going to SGST). */
+  const intra = isForeign
+    ? (({ cgst, sgst }) => ({ cgst: cgst / 100, sgst: sgst / 100 }))(splitIntraStateTax(Math.round(dTax * 100)))
+    : splitIntraStateTax(dTax);
 
   return (
     <Document
@@ -494,6 +516,9 @@ export function QuotePDF(props: QuotePDFProps) {
               <Text style={s.brandName}>{pdfText(tenantName)}</Text>
               {tenantGstin && (
                 <Text style={s.brandMeta}>GSTIN: {tenantGstin}</Text>
+              )}
+              {udyamPdfLine(udyamNumber) && (
+                <Text style={s.brandMeta}>{udyamPdfLine(udyamNumber)}</Text>
               )}
               {tenantAddress && (
                 <Text style={s.brandMeta}>{pdfText(tenantAddress)}</Text>
@@ -673,11 +698,11 @@ export function QuotePDF(props: QuotePDFProps) {
                 <>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>CGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(dRound(dTax / 2))}</Text>
+                    <Text style={s.totalValue}>{fmtInv(intra.cgst)}</Text>
                   </View>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>SGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(dRound(dTax - dRound(dTax / 2)))}</Text>
+                    <Text style={s.totalValue}>{fmtInv(intra.sgst)}</Text>
                   </View>
                 </>
               )}
@@ -733,6 +758,14 @@ export function QuotePDF(props: QuotePDFProps) {
                 )}
               </View>
             </View>
+          </View>
+        )}
+
+        {/* ── R-367: default free support, included ───────────────── */}
+        {includedSupport && (
+          <View style={s.notesBox}>
+            <Text style={s.notesText}>{pdfText(includedSupport.text)}</Text>
+            <Text style={[s.notesText, { marginTop: 2, color: COLORS.ink3 }]}>{pdfText(includedSupport.detail)}</Text>
           </View>
         )}
 

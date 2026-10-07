@@ -30,7 +30,8 @@
  * from a green tick. Marking it done would claim work happened that nobody did.
  */
 
-export type LifecycleStage = "draft" | "sent" | "signed" | "paid" | "provisioned" | "invoiced";
+/** "trial" is only ever inserted by lib/trials/start-from-quote.ts withTrialStep (R-282). */
+export type LifecycleStage = "draft" | "sent" | "signed" | "trial" | "paid" | "provisioned" | "invoiced";
 export type StageState = "done" | "current" | "todo" | "skipped";
 
 export interface LifecycleStep {
@@ -58,7 +59,7 @@ export interface LifecycleInput {
 }
 
 const LABELS: Record<LifecycleStage, string> = {
-  draft: "Draft", sent: "Sent", signed: "Signed",
+  draft: "Draft", sent: "Sent", signed: "Signed", trial: "Trial",
   paid: "Paid", provisioned: "Provisioned", invoiced: "Invoiced",
 };
 

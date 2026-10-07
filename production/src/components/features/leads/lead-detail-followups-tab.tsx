@@ -4,6 +4,7 @@ import * as React from "react";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { IST_TZ } from "@/lib/dates/ist";
 import type { useTasksForLead, useCompleteTask, useSnoozeTask, useDeleteTask } from "@/lib/queries/tasks";
 
 type TaskRow = NonNullable<ReturnType<typeof useTasksForLead>["data"]>[number];
@@ -68,7 +69,7 @@ export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, complet
                           isOverdue ? "text-rose font-medium" : "text-ink-3",
                         )}>
                           {isOverdue ? "Overdue · " : ""}
-                          {due.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          {due.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: IST_TZ })}
                           {t.snooze_count > 0 && ` · snoozed ${t.snooze_count}×`}
                         </p>
                         {t.notes && (
@@ -106,7 +107,7 @@ export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, complet
                         <li key={t.id} className="line-through opacity-70">
                           {t.title} ·{" "}
                           {t.completed_at &&
-                            new Date(t.completed_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                            new Date(t.completed_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: IST_TZ })}
                         </li>
                       ))}
                     </ul>

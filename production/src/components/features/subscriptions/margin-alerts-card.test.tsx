@@ -89,7 +89,7 @@ describe("MarginAlertsView — an unpriceable row", () => {
 
   it("points at the catalog, where the missing price is actually entered", () => {
     render(<MarginAlertsView alerts={[unpriced]} />);
-    const links = screen.getAllByRole("link", { name: /Catalog & Products/i });
+    const links = screen.getAllByRole("link", { name: /^Products$/i });
     expect(links.length).toBeGreaterThan(0);
     expect(links.every((l) => l.getAttribute("href") === "/items")).toBe(true);
   });

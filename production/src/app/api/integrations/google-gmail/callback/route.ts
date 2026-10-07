@@ -18,6 +18,9 @@ import {
 } from "@/lib/google/oauth";
 import { canSendWithScopes } from "@/lib/email/provider";
 import { scopesLost, scopeLossMessage } from "@/lib/google/scope-union";
+import {
+  outcomeFromGoogleError, outcomeFromExchangeError, type GmailConnectOutcome,
+} from "@/lib/google/gmail-connect-result";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +31,9 @@ export async function GET(request: NextRequest) {
 
   const err  = url.searchParams.get("error");
   const code = url.searchParams.get("code");
-  if (err)   return NextResponse.redirect(`${settings}&gmail=denied`);
+  /* R-160: Google's own code is kept. `admin_policy_enforced` (the tenant's Workspace admin
+     blocks the app) used to read as "denied", which tells the user to just press Allow. */
+  if (err)   return NextResponse.redirect(`${settings}&gmail=${outcomeFromGoogleError(err)}`);
   if (!code) return NextResponse.redirect(`${settings}&gmail=error`);
 
   const cookieState = request.cookies.get("g_gmail_oauth_state")?.value;
@@ -43,8 +48,19 @@ export async function GET(request: NextRequest) {
   const creds = googleOAuthCreds();
   if (!creds) return NextResponse.redirect(`${settings}&gmail=notconfigured`);
 
+  /* R-160: exchange failures are classified from Google's body (redirect_uri_mismatch,
+     invalid_client, invalid_grant) — each needs a different person to act, and all of them
+     used to arrive on screen as the same silent `gmail=error`. */
+  let tokens: Awaited<ReturnType<typeof exchangeCode>>;
   try {
-    const tokens = await exchangeCode(code, gmailRedirectUri(origin), creds);
+    tokens = await exchangeCode(code, gmailRedirectUri(origin), creds);
+  } catch (e) {
+    const outcome = outcomeFromExchangeError(e);
+    console.error(`[google-gmail/callback] token exchange failed (${outcome}):`, e);
+    return NextResponse.redirect(`${settings}&gmail=${outcome}`);
+  }
+
+  try {
 
     // Refuse before storing anything. A half-granted connection that LOOKS
     // connected is worse than no connection: the tenant would switch their
@@ -59,7 +75,7 @@ export async function GET(request: NextRequest) {
 
     const { data: me } = await supabase
       .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
-    if (!me?.tenant_id) return NextResponse.redirect(`${settings}&gmail=error`);
+    if (!me?.tenant_id) return NextResponse.redirect(`${settings}&gmail=notenant`);
 
     const admin = createAdminClient();
     const expiry = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString();
@@ -102,13 +118,13 @@ export async function GET(request: NextRequest) {
 
     /* Gmail jud gaya, par doosra integration toot gaya — to "connected" kehkar bhej dena
        aadha sach hoga. Settings page ko farak bata dete hain. */
-    const res = NextResponse.redirect(
-      `${settings}&gmail=${lossNote ? "connected_scopelost" : "connected"}`,
-    );
+    const outcome: GmailConnectOutcome = lossNote ? "connected_scopelost" : "connected";
+    const res = NextResponse.redirect(`${settings}&gmail=${outcome}`);
     res.cookies.delete("g_gmail_oauth_state");
     return res;
   } catch (e) {
-    console.error("[google-gmail/callback] failed:", e);
-    return NextResponse.redirect(`${settings}&gmail=error`);
+    /* Google already said yes here; what failed is our side (userinfo or the DB write). */
+    console.error("[google-gmail/callback] save failed:", e);
+    return NextResponse.redirect(`${settings}&gmail=save_failed`);
   }
 }

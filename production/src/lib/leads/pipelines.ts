@@ -32,7 +32,7 @@ export const PIPELINES: readonly PipelineDef[] = [
     id: "new_logo",
     label: "New Logo",
     hint: "Winning a customer who is not ours yet — the full funnel, demo included.",
-    stages: ["new", "contact", "demo", "trial", "quote", "won", "lost"],
+    stages: ["new", "contact", "quote", "demo", "trial", "won", "lost"],
   },
   {
     id: "migration",
@@ -40,7 +40,7 @@ export const PIPELINES: readonly PipelineDef[] = [
     hint: "Moving a customer off another reseller or vendor. They already use the product, so the work is the switch, not the demo.",
     /* No `demo`: they are already using the thing. A trial matters here because the
        migration itself is what has to be proven. */
-    stages: ["new", "contact", "trial", "quote", "won", "lost"],
+    stages: ["new", "contact", "quote", "trial", "won", "lost"],
   },
   {
     id: "renewal",

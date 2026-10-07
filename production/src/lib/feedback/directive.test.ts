@@ -221,3 +221,18 @@ describe("buildDirective — where the work goes", () => {
     expect(d).toMatch(/never push to that repo \(it is public\)/);
   });
 });
+
+describe("buildDirective — report id (7 Oct: a pasted directive still links back)", () => {
+  const base = { reportedType: "bug" as const, reportedSeverity: "high" as const, body: "Download PDF fails on quotes", title: "PDF", pagePath: "/quotes/Q-1" };
+
+  it("prints the report id with the feedbackId instruction", () => {
+    const d = buildDirective({ triage: triageFeedback(base), ...base, reportId: "c89f8536-2e80-471c-bf82-e1d6d14324d5" });
+    expect(d).toContain("- **Report id:** `c89f8536-2e80-471c-bf82-e1d6d14324d5`");
+    expect(d).toContain("as `feedbackId`");
+  });
+
+  it("says nothing about an id when there is none", () => {
+    const d = buildDirective({ triage: triageFeedback(base), ...base });
+    expect(d).not.toContain("Report id");
+  });
+});

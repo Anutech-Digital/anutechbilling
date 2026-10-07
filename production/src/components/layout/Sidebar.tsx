@@ -160,8 +160,8 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           me?.tenantLogoUrl ? (collapsed ? "w-10 h-10 bg-transparent" : "w-14 h-14 bg-transparent") : "w-9 h-9 bg-ink text-paper",
         )}>
           {me?.tenantLogoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
             <button type="button" onClick={() => setLogoOpen(true)} title="View logo" aria-label="View company logo" className="h-full w-full rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+              {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331: this disable sat one line too high) */}
               <img src={me.tenantLogoUrl} alt={me.tenantName ?? "Logo"} className="h-full w-full object-contain" />
             </button>
           ) : (
@@ -203,8 +203,10 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       </div>
 
       {/* Nav scroll area — rows filtered by the current user's role, then shown one
-          app at a time (R-088, lib/nav-apps.ts). */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+          app at a time (R-088, lib/nav-apps.ts). overflow-x-hidden (R-180): overflow-y-auto alone
+          makes the browser compute overflow-x as auto too, so one long label drew a left-right
+          scrollbar under the menu. Labels truncate with a title tooltip instead. */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5">
         {/* Mobile-only quick-grid — surface My Expenses & top tools at the top of the "More" drawer */}
         <div className="md:hidden">
           <div className="px-3 py-1 text-3xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">Quick Actions</div>

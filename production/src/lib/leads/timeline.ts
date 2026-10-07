@@ -31,14 +31,26 @@ export interface TimelineEntry {
   amount?: number | null;
   /** Sub-type, e.g. the activity kind or the quote status — for the icon. */
   variant?: string | null;
+  /** R-341: where clicking the row goes — the record itself. null = the event has no page of
+   *  its own (a call, a note, a stage change live only in this stream), so the row is not a link. */
+  href: string | null;
 }
+
+/** R-341: same shape as the deal timeline's quoteHref (src/lib/deals/timeline.ts). */
+export const quoteHref = (id: string) => `/quotes/${encodeURIComponent(id)}`;
+
+/** R-341: the tasks page opens this task's dialog from `?task=<id>`; tab=all so the task sits
+ *  in the list behind the dialog whatever its due date or status. */
+export const taskHref = (id: string) => `/tasks?tab=all&task=${encodeURIComponent(id)}`;
 
 /** Sources as the drawer already has them. Deliberately loose — this is a merge, not a fetch. */
 export interface TimelineSources {
   activities?: ReadonlyArray<{ id: string; kind: string; detail?: string | null; created_at?: string | null }>;
   quotes?: ReadonlyArray<{ id: string; status?: string | null; amount?: number | null; created_at?: string | null; created_date?: string | null }>;
   tasks?: ReadonlyArray<{ id: string; title: string; kind?: string | null; status?: string | null; due_at?: string | null; created_at?: string | null }>;
-  payments?: ReadonlyArray<{ id: string; amount?: number | null; method?: string | null; created_at?: string | null; paid_at?: string | null }>;
+  /** quote_id: a lead's payment is recorded against its quote, and the quote page is where the
+   *  payment and its receipt live — so that is where the row goes. */
+  payments?: ReadonlyArray<{ id: string; amount?: number | null; method?: string | null; created_at?: string | null; paid_at?: string | null; quote_id?: string | null }>;
 }
 
 export interface Timeline {
@@ -94,6 +106,9 @@ export function buildTimeline(src: TimelineSources): Timeline {
       id: `activity:${a.id}`, kind: "activity", at,
       title: ACTIVITY_TITLE[a.kind] ?? a.kind,
       detail: a.detail ?? null, variant: a.kind,
+      /* An email/WhatsApp/call/note activity is stored only as this row — no page shows it
+         better than the stream itself, so it is not a link. */
+      href: null,
     });
   }
 
@@ -104,6 +119,7 @@ export function buildTimeline(src: TimelineSources): Timeline {
       id: `quote:${q.id}`, kind: "quote", at,
       title: QUOTE_TITLE[q.status ?? ""] ?? "Quote",
       detail: q.id, amount: q.amount ?? null, variant: q.status ?? null,
+      href: quoteHref(q.id),
     });
   }
 
@@ -118,6 +134,7 @@ export function buildTimeline(src: TimelineSources): Timeline {
       title: t.status === "done" ? `Task done — ${t.title}` : `Task — ${t.title}`,
       detail: t.due_at ? `Due ${t.due_at.slice(0, 10)}` : null,
       variant: t.status ?? null,
+      href: taskHref(t.id),
     });
   }
 
@@ -128,6 +145,7 @@ export function buildTimeline(src: TimelineSources): Timeline {
       id: `payment:${p.id}`, kind: "payment", at,
       title: "Payment received",
       detail: p.method ?? null, amount: p.amount ?? null, variant: p.method ?? null,
+      href: p.quote_id ? quoteHref(p.quote_id) : null,
     });
   }
 

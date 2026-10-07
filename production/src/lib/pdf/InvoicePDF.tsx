@@ -27,6 +27,8 @@ import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { exportEndorsement } from "@/lib/gst/export-lut";
+import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type {
   Invoice,
@@ -75,6 +77,14 @@ export interface InvoicePDFProps {
   tenantPhone?:  string | null;
   tenantAddress?: string | null;
   tenantState?:   string | null;
+  /**
+   * R-334. tenants.lut_number — the ARN of the seller's Letter of Undertaking. Printed
+   * with the Rule 46 export endorsement on a zero-rated export invoice; absent → the
+   * endorsement prints without an ARN line rather than inventing one.
+   */
+  lutNumber?:     string | null;
+  /** R-368. tenants.udyam_number — "MSME Udyam: UDYAM-…" under the supplier GSTIN when set. */
+  udyamNumber?:   string | null;
   /**
    * The company logo as a resolved `data:image/...` URI, from `logoDataUri()`.
    *
@@ -398,6 +408,15 @@ const s = StyleSheet.create({
   upiTitle: { fontSize: 10, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginBottom: 2 },
   upiSub:   { fontSize: 8, color: COLORS.ink3, lineHeight: 1.4 },
   upiVpa:   { fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginTop: 2, marginBottom: 2 },
+  /* R-334: Rule 46 export endorsement, under the totals. */
+  exportBlock: {
+    marginTop:       10,
+    padding:         8,
+    borderWidth:     1,
+    borderColor:     COLORS.hairline,
+  },
+  exportText: { fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.ink },
+  exportArn:  { fontSize: 9, color: COLORS.ink2, marginTop: 3 },
   reverseCharge: {
     fontSize:      9,
     color:         COLORS.ink2,
@@ -415,6 +434,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
     currency, exchangeRate, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
+    lutNumber = null, udyamNumber = null,
     upiQrDataUrl, upiVpa, payMethods = null,
   } = props;
 
@@ -439,6 +459,9 @@ export function InvoicePDF(props: InvoicePDFProps) {
 
   // Export supply (recipient outside India) → zero-rated under LUT, no GST.
   const isExport = isExportSupply(customerCountry);
+  /* R-334: CGST Rule 46 — a zero-rated export (no IGST) carries the LUT endorsement + ARN.
+     Words only: the tax figures above are untouched. */
+  const endorsement = exportEndorsement({ isExport, tax, lutNumber });
   const isForeign = isForeignCurrency(currency);
   const rate = exchangeRate ?? 1;
   // Foreign-currency (export) invoices are shown in the CLIENT's currency (USD…)
@@ -479,6 +502,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
             <Text style={s.partyLabel}>From (Supplier)</Text>
             <Text style={s.partyName}>{pdfText(tenantName)}</Text>
             {tenantGstin   && <Text style={s.partyGstin}>GSTIN: {tenantGstin}</Text>}
+            {udyamPdfLine(udyamNumber) && <Text style={s.partyMeta}>{udyamPdfLine(udyamNumber)}</Text>}
             {tenantAddress && <Text style={s.partyMeta}>{pdfText(tenantAddress)}</Text>}
             {tenantState   && <Text style={s.partyMeta}>State: {tenantState}</Text>}
             {tenantEmail   && <Text style={[s.partyMeta, { fontFamily: "Courier" }]}>{tenantEmail}</Text>}
@@ -622,6 +646,15 @@ export function InvoicePDF(props: InvoicePDFProps) {
             )}
           </View>
         </View>
+
+        {endorsement && (
+          <View style={s.exportBlock}>
+            <Text style={s.exportText}>{endorsement.text}</Text>
+            {endorsement.lutArn && (
+              <Text style={s.exportArn}>LUT ARN: {pdfText(endorsement.lutArn)}</Text>
+            )}
+          </View>
+        )}
 
         {/* ── Advance adjustment (CGST Sec 31 + Rule 53) ──────── */}
         {advances.length > 0 && (

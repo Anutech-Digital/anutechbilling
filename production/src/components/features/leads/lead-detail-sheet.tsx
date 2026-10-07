@@ -43,6 +43,12 @@ import { LeadEmailTab } from "@/components/features/leads/lead-detail-email-tab"
 import { LeadFollowupsTab } from "@/components/features/leads/lead-detail-followups-tab";
 import { LeadDetailFooter } from "@/components/features/leads/lead-detail-footer";
 import { LeadDetailHeader } from "@/components/features/leads/lead-detail-header";
+import { leadTitle } from "@/lib/leads/display-name";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+
+type DrawerTab = "email" | "details" | "followups" | "activity";
+/* "auto" = no tab chosen yet: the drawer picks one from what the lead has (below). */
+const LTAB_CHOICES = ["email", "activity", "followups", "details", "auto"] as const;
 
 const AddTaskDialog = dynamic(() => import("@/components/features/tasks/add-task-dialog").then((m) => m.AddTaskDialog), { ssr: false });
 const LeadEmailComposer = dynamic(() => import("@/components/features/leads/lead-email-composer").then((m) => m.LeadEmailComposer), { ssr: false });
@@ -114,7 +120,22 @@ export function LeadDetailSheet({
      Yaani sabse aam kaam ek chhupe hue extra click ke peeche tha. Details ek form hai —
      lead banane ke baad usme jaana kabhi-kabhi hi padta hai, aur uske ahem number
      (plan, seats, value) waise bhi header aur table row me dikhte hain. */
-  const [drawerTab, setDrawerTab] = React.useState<"email" | "details" | "followups" | "activity">("activity");
+  /* R-342: a tab the operator CHOSE is in the URL (?ltab=), so opening a quote from the
+     Activity tab and pressing Back lands on Activity again. Until one is chosen the tab is
+     the auto-pick below, which is not written to the URL — it is recomputed on return. */
+  const [urlTab, setUrlTab] = useUrlChoice<DrawerTab | "auto">("ltab", LTAB_CHOICES, "auto");
+  const [autoTab, setAutoTab] = React.useState<DrawerTab>("activity");
+  const drawerTab: DrawerTab = urlTab === "auto" ? autoTab : urlTab;
+  const setDrawerTab = React.useCallback((t: DrawerTab) => setUrlTab(t), [setUrlTab]);
+  /* A different lead (or a closed drawer) starts over on the auto-pick. Only when a lead WAS
+     open: on first load the lead is still null while ?ltab= is being read, and resetting
+     then would throw away the tab Back is meant to restore. */
+  const tabForLead = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const id = lead?.id ?? null;
+    if (tabForLead.current !== null && tabForLead.current !== id) setUrlTab("auto");
+    tabForLead.current = id;
+  }, [lead?.id, setUrlTab]);
   /* `convoView` lived here until 23 Aug 2026 — the segmented Everything/Email control
      inside the old merged Conversation tab. Email is a tab now, so the state went with the
      control: two ways to be on the email view would have drifted apart, and the tab is the
@@ -163,12 +184,12 @@ export function LeadDetailSheet({
        a quote still lands on Activity rather than on an empty Email tab. */
     if (threadSummary.total > 0) {
       autoPickedFor.current = id;
-      setDrawerTab("email");
+      setAutoTab("email");
       return;
     }
     if (activities.length === 0) return;           // still loading, or nothing to show
     autoPickedFor.current = id;
-    setDrawerTab("activity");
+    setAutoTab("activity");
   }, [lead?.id, activities.length, threadSummary.total]);
 
   // Drag-to-resize the drawer (desktop only): the left edge is a grab handle;
@@ -259,7 +280,7 @@ export function LeadDetailSheet({
       return;
     }
     const confirmed = await confirm({
-      title: `Permanently delete lead "${lead.company}"?`,
+      title: `Permanently delete lead "${leadTitle(lead).label}"?`,
       body: "This cannot be undone.",
       confirmLabel: "Delete",
       danger: true,
@@ -273,8 +294,11 @@ export function LeadDetailSheet({
   const handleSendQuote = () => {
     /* Project lead → the project quotation (or the one it already has). See goSendQuote. */
     if (lead.enquiry_type === "project") {
+      /* Another page: push without closing, so Back reopens this drawer (R-342). The
+         project quotation sheet is on THIS page, so that one closes the drawer first. */
+      if (lead.project_id) { router.push(`/projects/${lead.project_id}` as never); return; }
       onClose();
-      router.push((lead.project_id ? `/projects/${lead.project_id}` : `${drawerPath}?projectQuote=${lead.id}`) as never);
+      router.push(`${drawerPath}?projectQuote=${lead.id}` as never);
       return;
     }
     // Pass lead context to QuoteBuilder via URL params
@@ -286,8 +310,9 @@ export function LeadDetailSheet({
     if (lead.contact_name)    params.set("contact", lead.contact_name);
     if (lead.contact_email)   params.set("email", lead.contact_email);
     if (lead.contact_phone)   params.set("phone", lead.contact_phone);
-    onClose();
-    router.push(`/quotes/new?${params.toString()}` as any);
+    /* No onClose() before leaving for another page (R-342) — it clears ?lead from the
+       history entry, and Back would land on a closed drawer. The page unmounts anyway. */
+    router.push(`/quotes/new?${params.toString()}` as never);
   };
 
   // If lead already has a quote, default the primary CTA to "Revise & resend"
@@ -303,8 +328,7 @@ export function LeadDetailSheet({
     if (lead.contact_name)  params.set("contact", lead.contact_name);
     if (lead.contact_email) params.set("email",   lead.contact_email);
     if (lead.contact_phone) params.set("phone",   lead.contact_phone);
-    onClose();
-    router.push(`/quotes/new?${params.toString()}` as any);
+    router.push(`/quotes/new?${params.toString()}` as never);
   };
 
   /* Opens the in-app composer instead of Gmail.
@@ -327,7 +351,7 @@ export function LeadDetailSheet({
 
   const handleArchive = () => {
     void changeStage(lead, "lost");
-    toast.success(`${lead.company} archived`);
+    toast.success(`${leadTitle(lead).label} archived`);
     onClose();
   };
 
@@ -351,7 +375,7 @@ export function LeadDetailSheet({
   const runNextAction = (a: NextAction) => {
     const t = a.target;
     if (t.kind === "stage") { void changeStage(lead, t.stage); return; }
-    if (t.kind === "go") { onClose(); router.push(t.href as never); return; }
+    if (t.kind === "go") { router.push(t.href as never); return; }
     if (t.kind === "send_quote") { handleSendQuote(); return; }
     if (t.kind === "email") { handleEmail(); return; }
     window.location.href = `tel:${t.phone}`;
@@ -490,7 +514,7 @@ export function LeadDetailSheet({
             <div className="space-y-1.5">
               <QuoteActionBar
                 quote={latestQuoteForAction}
-                onOpenFullQuote={() => { onClose(); router.push(`/quotes/${latestQuoteForAction.id}` as any); }}
+                onOpenFullQuote={() => router.push(`/quotes/${latestQuoteForAction.id}` as never)}
               />
               {(() => {
                 const q = latestQuoteForAction;
@@ -588,7 +612,7 @@ export function LeadDetailSheet({
                 type="button"
                 onClick={() => {
                   void changeStage(lead, "contact");
-                  toast.success(`${lead.company} → Contacted`);
+                  toast.success(`${leadTitle(lead).label} → Contacted`);
                 }}
                 className="min-h-11 w-full shrink-0 rounded-md border border-hairline-strong bg-paper px-3 text-xs font-semibold text-ink-2 transition-colors hover:bg-paper-2 sm:w-auto"
               >
@@ -674,7 +698,6 @@ export function LeadDetailSheet({
         <LeadDetailFooter
           lead={lead}
           onEdit={onEdit}
-          onClose={onClose}
           handleArchive={handleArchive}
           handleDelete={handleDelete}
           deletePending={deleteLead.isPending}
@@ -693,7 +716,7 @@ export function LeadDetailSheet({
       <AddTaskDialog
         open={addTaskOpen}
         onOpenChange={setAddTaskOpen}
-        linkLabel={lead.company}
+        linkLabel={leadTitle(lead).label}
         linkTo={{ lead_id: lead.id }}
       />
 
@@ -727,7 +750,7 @@ export function LeadDetailSheet({
             `\n\nLet me know if you'd like to schedule a quick call or get a tailored quote.\n\n` +
             `— ${currentUser?.tenantName ?? "your team"}`
           }
-          title={`WhatsApp · ${lead.company}`}
+          title={`WhatsApp · ${leadTitle(lead).label}`}
           related={{ leadId: lead.id }}
         />
       )}

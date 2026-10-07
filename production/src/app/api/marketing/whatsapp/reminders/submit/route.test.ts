@@ -137,7 +137,7 @@ describe("duplicate and failures", () => {
     expect(res.status).toBe(200);
     const j = JSON.parse(text);
     expect(j.submitted).toBe(0);
-    expect(j.results.every((r: { ok: boolean; error: string }) => !r.ok && /Meta ne template nahi liya/.test(r.error))).toBe(true);
+    expect(j.results.every((r: { ok: boolean; error: string }) => !r.ok && /Meta rejected the template/.test(r.error))).toBe(true);
     tokenNowhere(text);
   });
 

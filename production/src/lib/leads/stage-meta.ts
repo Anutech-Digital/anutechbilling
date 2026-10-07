@@ -13,15 +13,25 @@ export interface StageMeta {
   dot: string;
 }
 
-/** Stage config (matches prototype LEAD_STAGES). Lost is an outcome, not a column. */
+/**
+ * Stage config, in FUNNEL order. Lost is an outcome, not a column.
+ *
+ * R-249 (6 Oct 2026): the Kanban ran quote → demo → trial while the dashboard, the insight
+ * band, the add-lead form and this table ran demo → trial → quote — the same deal moved
+ * "backwards" between screens. The order is quote-first (a lead becomes a deal when a
+ * quote goes out; demo and trial follow), and this is the one list every screen imports.
+ */
 export const LEAD_STAGES: StageMeta[] = [
   { id: "new",     label: "New",          dot: "bg-slate" },
   { id: "contact", label: "Contacted",    dot: "bg-amber" },
+  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo" },
   { id: "demo",    label: "Demo Done",    dot: "bg-indigo" },
   { id: "trial",   label: "Trial Active", dot: "bg-rose" },
-  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo" },
   { id: "won",     label: "Won",          dot: "bg-emerald" },
 ];
+
+/** The working stage ids in funnel order (no Lost). */
+export const LEAD_STAGE_IDS: Lead["stage"][] = LEAD_STAGES.map((s) => s.id);
 
 /**
  * Kanban columns — EVERY stage the page can show, in funnel order.

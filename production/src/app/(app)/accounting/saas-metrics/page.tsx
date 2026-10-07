@@ -45,6 +45,7 @@ import { downloadCSV } from "@/lib/csv";
 import { printReport, reportFilename } from "@/lib/reports/print";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toIstDate } from "@/lib/dates/ist";
 
 // ────────────────────────────────────────────────────────────────
@@ -242,12 +243,15 @@ function useSaasMetrics() {
     queryKey: ["accounting", "saas-metrics"],
     queryFn: async (): Promise<MetricsData> => {
       const supabase = createClient();
-      const { data: subs, error } = await supabase
+      /* R-265: every subscription, paged — a bare select stops at 1000 and MRR/ARR/churn
+         would silently count only the first 1000. */
+      const subs = await fetchAllRows((a, b) => supabase
         .from("subscriptions")
-        .select("id, customer_id, customer_name, plan, vendor, seats, mrr, start_date, renewal_date, status, updated_at");
-      if (error) throw error;
+        .select("id, customer_id, customer_name, plan, vendor, seats, mrr, start_date, renewal_date, status, updated_at")
+        .order("id")
+        .range(a, b));
 
-      const all: SubRow[] = (subs ?? []) as SubRow[];
+      const all: SubRow[] = subs as SubRow[];
       const active = all.filter((s) => s.status === "active");
 
       const mrr = active.reduce((s, x) => s + (x.mrr ?? 0), 0);

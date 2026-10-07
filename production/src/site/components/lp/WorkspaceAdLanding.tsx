@@ -29,6 +29,7 @@ import { pickAdParams, withAdParams, rememberLanding } from "@/site/lib/ad-attri
 import { reportLeadConversion } from "@/site/lib/google-ads";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS } from "@/site/lib/workspace-offer";
 import { LP_PLANS, compareRows, type LpPlan } from "@/site/lib/lp-plans";
+import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 
 /** The one line per plan card that storage and Meet size do not already say. */
 const PLAN_HIGHLIGHT: Record<LpPlan["key"], string> = {
@@ -166,6 +167,7 @@ export function WorkspaceAdLanding({
 
       <header className="gw-top">
         <div className="gw-wrap gw-nav">
+          {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
           <a href="#top" aria-label="ANUTECH Digital"><img src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" className="gw-logo" width={210} height={70} /></a>
           <nav className="gw-links" aria-label="On this page">
             <a href="#features">Features</a>{allPlans && <a href="#plans">Plans</a>}<a href="#offer">Price</a><a href="#compare">Compare</a><a href="#faq">FAQ</a>
@@ -233,6 +235,7 @@ export function WorkspaceAdLanding({
                 </div>
               </aside>
               )}
+              {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
               <img className="gw-photo" src="/lp/gw-hero.jpg" alt="A business owner working on Google Workspace" width={400} height={458} fetchPriority="high" decoding="async" />
               <div className="gw-float">Grow your business with Google<small>Secure · Collaborative · Productive</small></div>
             </div>
@@ -251,6 +254,7 @@ export function WorkspaceAdLanding({
             {APPS.map((a) => (
               <li key={a.name}>
                 {a.icon
+                  // eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331)
                   ? <img src={a.icon} alt="" width={44} height={44} />
                   : <span className="gw-tile" style={{ background: a.tile!.bg }} aria-hidden>{a.tile!.label}</span>}
                 <b>{a.name}</b><span>{a.what}</span>
@@ -287,7 +291,10 @@ export function WorkspaceAdLanding({
             <div className="gw-price">{inr(annualPerSeatMo!)}<small> per user / month</small></div>
             <div className="gw-year">{inr(yearly)} per user / year · + 18% GST (input credit milta hai)</div>
             </>) : (
-            <div className="gw-price gw-price-talk">Let&apos;s talk<small> — quote in a day</small></div>
+            /* R-328: Business Plus has no published price (Google shows none either). */
+            plan.key === "plus"
+              ? <div className="gw-price gw-price-talk">{CONTACT_FOR_PRICING}<small> — quote in a day</small></div>
+              : <div className="gw-price gw-price-talk">Let&apos;s talk<small> — quote in a day</small></div>
             )}
             {hasOffer && (
             <div className="gw-offer-box">
@@ -343,7 +350,7 @@ export function WorkspaceAdLanding({
                 <div className="gw-plan-price">
                   {annual != null && annual > 0 ? <>{inr(annual)}<small>/user/mahina</small></> : <>Quote<small> — ek din mein</small></>}
                 </div>
-                <small className="gw-plan-year">{annual != null && annual > 0 ? `saalana plan · + GST` : "300+ users ke liye"}</small>
+                <small className="gw-plan-year">{annual != null && annual > 0 ? `saalana plan · + GST` : p.key === "plus" ? CONTACT_FOR_PRICING : "300+ users ke liye"}</small>
                 <ul className="gw-plan-facts">
                   <li>{p.storage}</li>
                   <li>{p.meetPeople}</li>

@@ -29,6 +29,14 @@ export interface DomainSources {
   customerDomain?: string | null;
   /** `leads.domain` — the earliest guess, from before they were a customer. */
   leadDomain?: string | null;
+  /**
+   * R-379 (j): domains on subscriptions that already exist — THIS quote's first (e.g. the
+   * one "Activate now, pay later" created), then the customer's other subscriptions.
+   * Live 7 Oct (Q-FBB9-27-0011): the customer row had no domain, but its subscription
+   * carried the domain, and Record payment still opened the required Domain field empty.
+   */
+  quoteSubscriptionDomains?: readonly (string | null | undefined)[];
+  customerSubscriptionDomains?: readonly (string | null | undefined)[];
 }
 
 /**
@@ -42,7 +50,15 @@ export interface DomainSources {
  * `string | null | undefined` without the caller re-normalising it.
  */
 export function paymentDomainDefault(sources: DomainSources): string | undefined {
-  for (const candidate of [sources.quoteDomain, sources.customerDomain, sources.leadDomain]) {
+  /* Order: the quote, the subscription this quote already made, the customer, the
+     customer's other subscriptions, and the lead last. */
+  for (const candidate of [
+    sources.quoteDomain,
+    ...(sources.quoteSubscriptionDomains ?? []),
+    sources.customerDomain,
+    ...(sources.customerSubscriptionDomains ?? []),
+    sources.leadDomain,
+  ]) {
     const trimmed = candidate?.trim();
     if (trimmed) return trimmed;
   }

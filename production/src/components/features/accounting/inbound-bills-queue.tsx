@@ -26,6 +26,7 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -93,7 +94,10 @@ export function InboundBillsQueue() {
       if (error) throw error;
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
-    onError: (e: Error) => toast.error(`Bill saved, but linking it failed: ${e.message}`),
+    onError: (e: Error) => toastError(e, {
+      fallback: "Bill saved, but this email is still in the queue.",
+      description: "The bill is saved. Press Dismiss on this email so it is not entered twice.",
+    }),
   });
 
   /** Not a bill. Recorded as dismissed, never deleted — the mail still happened. */
@@ -107,16 +111,19 @@ export function InboundBillsQueue() {
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Moved out of the queue"); void qc.invalidateQueries({ queryKey: KEY }); },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toastError(e, {
+      fallback: "Could not move this email out of the queue.",
+      description: "Nothing was deleted. Refresh the page and press Dismiss again.",
+    }),
   });
 
   async function openAttachment(path: string | null) {
-    if (!path) { toast.error("The original file was not stored for this one."); return; }
+    if (!path) { toast.error("The original file was not stored for this one.", { description: "Open the email in your inbox to see the attachment." }); return; }
     const supabase = createClient();
     // The bucket is private, so a short-lived signed URL — never a public link
     // to a vendor invoice.
     const { data: signed, error } = await supabase.storage.from("documents").createSignedUrl(path, 300);
-    if (error || !signed?.signedUrl) { toast.error("Could not open the file."); return; }
+    if (error || !signed?.signedUrl) { toast.error("Could not open the file.", { description: "The download link could not be made. Refresh the page and try again." }); return; }
     window.open(signed.signedUrl, "_blank", "noopener,noreferrer");
   }
 

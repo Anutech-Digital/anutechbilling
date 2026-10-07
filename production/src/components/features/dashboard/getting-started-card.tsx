@@ -35,6 +35,8 @@ import type { Route } from "next";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { isValidGstin } from "@/lib/utils";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "./route-access";
 
 interface Step {
   id:    string;
@@ -70,9 +72,11 @@ export function GettingStartedCard({
   gstin?:       string | null;
 }) {
   const gstDone = isValidGstin((gstin ?? "").trim());
+  const { data: me } = useCurrentUser();
+  const role = me?.role ?? null;
   if (!ready) return null;
 
-  const steps: Step[] = [
+  const allSteps: Step[] = [
     { id: "org",      label: "Add your organisation",              hint: "Legal name, address and state — these print on every document.", href: "/setup",     cta: "Set up",       done: setupDone },
     { id: "gst",      label: "Add your GSTIN",                     hint: "Without it an invoice cannot be a valid tax invoice.",           href: "/setup",     cta: "Add GSTIN",    done: gstDone },
     { id: "customer", label: "Add your first customer",            hint: "Or import from CSV — takes a minute.",                           href: "/customers", cta: "Add customer", done: hasCustomer },
@@ -80,6 +84,15 @@ export function GettingStartedCard({
     { id: "quote",    label: "Create your first quote",            hint: "Pick from your catalog, send on WhatsApp/email.",                href: "/quotes/new", cta: "New quote",   done: hasQuote },
     { id: "sale",     label: "Record your first payment",          hint: "When a customer pays, the sale + invoice happen here.",          href: "/quotes",    cta: "View quotes",  done: hasSale },
   ];
+  /* R-253: billing cannot open /quotes or /items, so those buttons threw them back to
+     /invoices. Their payment step goes to Payments Received (Record payment works there for
+     every role); a step on a page the role cannot open is someone else's job and is left out. */
+  const steps: Step[] = allSteps
+    .map((s) => (s.id === "sale" && !canOpenRoute(role, s.href) && canOpenRoute(role, "/payments")
+      ? { ...s, href: "/payments", cta: "Record payment", hint: "When a customer pays, record it here. The invoice follows." }
+      : s))
+    .filter((s) => canOpenRoute(role, s.href));
+  if (steps.length === 0) return null;
 
   const doneCount = steps.filter((s) => s.done).length;
   // Once everything is done, the card retires itself — no clutter for an active user.

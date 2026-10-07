@@ -1,11 +1,9 @@
 /**
  * R-104 — the Payments list paints 50 at a time, the R-024 way (shared DataTable).
  *
- * Payments is not on the shared DataTable yet (R-090), so its two lists (cards below xl,
- * table at xl) take the same rule from here: filters, search, tab counts, KPIs and the CSV
- * export still run over EVERY payment; only the painting is paged. A new filter starts
- * again at one page. Same `pagedCount` and the same "Load N more" control as DataTable,
- * so the two screens behave alike.
+ * R-215 (6 Oct): the Payments list is now on the shared DataTable, which pages with the
+ * same `pagedCount` and the same "Load N more" control (pageSize = PAYMENTS_PAGE_SIZE).
+ * usePagedRows / LoadMore stay as the tested reference for that rule.
  */
 "use client";
 

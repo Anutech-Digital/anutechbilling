@@ -17,13 +17,13 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { GroupFormDialog } from "@/components/features/customers/group-form-dialog";
 import { useCustomerGroup, useDeleteCustomerGroup } from "@/lib/queries/customer-groups";
-import { useCustomers } from "@/lib/queries/customers";
-import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { useGroupMembers, useMembersMrr } from "../group-queries";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
 import { rupee } from "@/lib/utils";
 
@@ -32,20 +32,27 @@ export default function CustomerGroupDetailPage() {
   const id = params?.id;
   const router = useRouter();
 
-  const { data: group, isLoading: groupLoading } = useCustomerGroup(id);
-  const { data: customers } = useCustomers();
-  const { data: subs } = useSubscriptions();
-  const { data: outstanding } = useOutstandingReceivables();
+  const groupQ = useCustomerGroup(id);
+  const { data: group, isLoading: groupLoading } = groupQ;
+  /* R-222: this group's companies and their active MRR only — it used to read every
+     customer and every subscription in the workspace to show these few rows. */
+  const membersQ = useGroupMembers(id);
+  const outstandingQ = useOutstandingReceivables();
+  const { data: memberRows } = membersQ;
+  const { data: outstanding } = outstandingQ;
 
   const [editOpen, setEditOpen] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const del = useDeleteCustomerGroup();
 
   // Members of this group + their money rollups.
-  const members = React.useMemo(
-    () => (customers ?? []).filter((c) => c.group_id === id),
-    [customers, id],
-  );
+  const members = React.useMemo(() => memberRows ?? [], [memberRows]);
+  const memberIds = React.useMemo(() => (memberRows ? memberRows.map((c) => c.id) : undefined), [memberRows]);
+  const mrrQ = useMembersMrr(memberIds);
+  const { data: mrrByCustomer = new Map<string, number>() } = mrrQ;
+  /* Companies, MRR and outstanding each come from their own query — if one failed the
+     rollups below read ₹0 / "0 companies", so warn above them. */
+  const partialFail = membersQ.isError || outstandingQ.isError || mrrQ.isError;
 
   const outstandingByCustomer = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -56,15 +63,6 @@ export default function CustomerGroupDetailPage() {
     return map;
   }, [outstanding]);
 
-  const mrrByCustomer = React.useMemo(() => {
-    const map = new Map<string, number>();
-    for (const s of subs ?? []) {
-      if (!s.customer_id || s.status !== "active") continue;
-      map.set(s.customer_id, (map.get(s.customer_id) ?? 0) + s.mrr);
-    }
-    return map;
-  }, [subs]);
-
   const totalOutstanding = members.reduce((sum, c) => sum + (outstandingByCustomer.get(c.id) ?? 0), 0);
   const totalMRR = members.reduce((sum, c) => sum + (mrrByCustomer.get(c.id) ?? 0), 0);
 
@@ -74,6 +72,15 @@ export default function CustomerGroupDetailPage() {
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  // A failed fetch is not "group not found".
+  if (groupQ.isError) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto">
+        <LoadError what="This parent account" onRetry={() => void groupQ.refetch()} />
       </div>
     );
   }
@@ -115,6 +122,10 @@ export default function CustomerGroupDetailPage() {
           <Button icon="trash" variant="ghost" className="!text-rose hover:!bg-rose/10" onClick={() => setConfirmDelete(true)}>Delete</Button>
         </div>
       </div>
+
+      {partialFail && (
+        <LoadErrorBanner onRetry={() => { void membersQ.refetch(); void outstandingQ.refetch(); void mrrQ.refetch(); }} />
+      )}
 
       {/* Rollup KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">

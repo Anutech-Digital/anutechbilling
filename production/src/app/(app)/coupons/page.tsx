@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -80,7 +81,10 @@ export default function CouponsPage() {
       await toggle.mutateAsync({ code: c.code, is_active: !c.is_active });
       toast.success(`${c.code} ${!c.is_active ? "activated" : "deactivated"}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not toggle");
+      toastError(err, {
+        fallback: `Could not ${c.is_active ? "deactivate" : "activate"} ${c.code}.`,
+        description: "The coupon keeps its old state. Refresh and try again.",
+      });
     }
   }
 
@@ -97,14 +101,17 @@ export default function CouponsPage() {
       await del.mutateAsync(c.code);
       toast.success(`${c.code} deleted`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not delete");
+      toastError(err, {
+        fallback: `Could not delete ${c.code}.`,
+        description: "The coupon is still there. If it has been used, switch it off instead.",
+      });
     }
   }
 
   function copyToClipboard(code: string) {
     navigator.clipboard?.writeText(code).then(
       () => toast.success(`Copied ${code}`),
-      () => toast.error("Could not copy — your browser blocked clipboard access"),
+      () => toast.error("Could not copy", { description: `Your browser blocked the clipboard. Select ${code} and copy it by hand.` }),
     );
   }
 
@@ -244,6 +251,7 @@ export default function CouponsPage() {
                           variant="ghost"
                           size="sm"
                           icon="trash"
+                          aria-label={`Delete coupon ${c.code}`}
                           onClick={() => onDelete(c)}
                           disabled={del.isPending}
                           className="text-rose hover:text-rose"
@@ -302,6 +310,7 @@ export default function CouponsPage() {
                         variant="ghost"
                         size="sm"
                         icon="trash"
+                        aria-label={`Delete coupon ${c.code}`}
                         onClick={() => onDelete(c)}
                         disabled={del.isPending}
                         className="text-rose hover:text-rose ml-auto"

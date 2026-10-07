@@ -30,12 +30,12 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
         const from = addDays(today, -((count ? AD_REFRESH_DAYS : AD_BACKFILL_DAYS) - 1));
         let rows: AdSpendRow[] = [];
         if (acc.platform === "google-ads") {
-          if (!acc.connected_user_id) throw new Error("Google Ads account bina connected user ke — Reconnect karo.");
+          if (!acc.connected_user_id) throw new Error("Google Ads account has no connected user — reconnect it.");
           const token = await getFreshGoogleAdsAccessToken(admin, acc.connected_user_id);
           rows = await fetchCampaignSpend(token, acc.account_id, acc.login_customer_id, from, today, acc.id);
         } else {
-          if (!acc.access_token) throw new Error("Meta token nahi hai — Reconnect karo.");
-          if (acc.token_expires_at && Date.parse(acc.token_expires_at) < Date.now()) throw new Error("Meta token expire ho gaya (60 din) — Reconnect karo.");
+          if (!acc.access_token) throw new Error("Meta token missing — reconnect it.");
+          if (acc.token_expires_at && Date.parse(acc.token_expires_at) < Date.now()) throw new Error("Meta token expired (60 days) — reconnect it.");
           rows = await fetchMetaCampaignSpend(acc.access_token, acc.account_id.startsWith("act_") ? acc.account_id : `act_${acc.account_id}`, from, today, acc.id);
         }
         // Days the platform now reports as zero must not keep yesterday's number.

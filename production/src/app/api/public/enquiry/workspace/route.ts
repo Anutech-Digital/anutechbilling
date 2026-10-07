@@ -52,6 +52,7 @@ import {
   buildWorkspaceFlexLines,
   TIER_DISPLAY_NAME,
 } from "@/lib/pricing/workspace";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
    (single tenant); resolve per-tenant once we go multi-tenant." That TODO came due
@@ -124,7 +125,10 @@ export async function POST(request: NextRequest) {
     const tenantId = BUY_PAGE_TENANT_ID;
 
     // ── Price from the catalog (single source of truth, shared with checkout)
-    const catalogRow = await fetchWorkspaceCatalogPrice(admin, tenantId, tierId);
+    /* R-205: a stale GW row under the list price (the old ₹136 / ₹736 seed) is lifted to the
+       list price, so "Get a quote" never drafts a loss-making quote. */
+    const fetchedRow = await fetchWorkspaceCatalogPrice(admin, tenantId, tierId);
+    const catalogRow = fetchedRow ? floorWorkspaceRow(fetchedRow) : null;
     const lines      = buildWorkspaceLines(catalogRow, tierId, seats);
     const tierName   = TIER_DISPLAY_NAME[tierId];
 

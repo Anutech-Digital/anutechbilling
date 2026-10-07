@@ -298,3 +298,126 @@ describe("breadcrumbs — one sidebar section, one name", () => {
     expect(missing, "These nav pages have no breadcrumb: " + missing.join(", ")).toEqual([]);
   });
 });
+
+describe("canWriteMoney (R-254: billing sees Payroll and Banking read-only)", () => {
+  it("matches the database write rule: owner, manager, accountant only", async () => {
+    const { MONEY_WRITE_ROLES, canWriteMoney } = await import("./nav");
+    expect([...MONEY_WRITE_ROLES].sort()).toEqual(["accountant", "manager", "owner"]);
+    for (const r of ["owner", "manager", "accountant"]) expect(canWriteMoney(r)).toBe(true);
+    for (const r of ["billing", "sales", "sales_senior", "support", "delivery", "partner_agent"]) {
+      expect(canWriteMoney(r), r).toBe(false);
+    }
+  });
+
+  it("keeps the buttons while the role is still loading (the database is still the guard)", async () => {
+    const { canWriteMoney } = await import("./nav");
+    expect(canWriteMoney(null)).toBe(true);
+    expect(canWriteMoney(undefined)).toBe(true);
+  });
+
+  it("billing still has Payroll, Salary Register and Banking in the menu", () => {
+    const hrefs = allowedRoutesForRole("billing");
+    for (const h of ["/accounting/payroll", "/accounting/salary-register", "/accounting/banking"]) {
+      expect(hrefs, h).toContain(h);
+    }
+  });
+
+  it("the database write rule in role hardening names the same roles", () => {
+    const sql = fs.readFileSync(path.join(__dirname, "../../supabase/migrations/20260930175000_role_hardening.sql"), "utf8");
+    expect(sql).toContain("current_user_has_role(''owner'', ''manager'', ''accountant'')");
+  });
+
+  it("every write button on Payroll, Employees and Banking is behind canWriteMoney", () => {
+    const root = path.join(__dirname, "../app/(app)/accounting");
+    const screens = fs.readFileSync(path.join(root, "payroll/screens.tsx"), "utf8");
+    for (const label of ["Pay salary", "Record statutory payment", "Give salary advance", "Add employee", "Delete employee"]) {
+      expect(screens, label).toContain(label);
+    }
+    expect(screens).toMatch(/\{canWrite && <Button[^\n]*Record statutory payment/);
+    expect(screens).toMatch(/!canWrite \?\s*\(\s*<Badge[^>]*>Not paid<\/Badge>\s*\)\s*:\s*e\.monthly_gross > 0 \?\s*\(\s*<Button[^\n]*Pay salary/);
+    expect(screens).toContain('<ViewOnlyNote what="pay salaries" />');
+    const banking = fs.readFileSync(path.join(root, "banking/page.tsx"), "utf8");
+    expect(banking).toMatch(/\{canWrite && \(\s*<Button variant="primary" icon="plus" onClick=\{\(\) => setAddOpen\(true\)\}>\s*Add account/);
+    const detail = fs.readFileSync(path.join(root, "banking/[id]/page.tsx"), "utf8");
+    expect(detail).toContain("{canWrite && <div");
+    expect(detail).toContain("onReconcile={canWrite ?");
+  });
+});
+
+describe("R-255: the accountant / CA menu (manager's call, 7 Oct 2026)", () => {
+  it("Purchases in full: Vendors, Bills, Payments Made, Expenses and their children", async () => {
+    const { isRouteAllowed } = await import("./nav");
+    const menu = new Set(flattenNav(filterNavForRole(APP_NAV, "accountant")).map((e) => e.item.href));
+    for (const h of ["/accounting/vendors", "/accounting/bills", "/accounting/google-bill-check", "/accounting/bill-payments",
+      "/accounting/payment-runs", "/accounting/expenses", "/accounting/prepaid", "/accounting/advances", "/accounting/reimbursements"]) {
+      expect(menu.has(h), `${h} missing from the accountant's menu`).toBe(true);
+      expect(isRouteAllowed("accountant", h), h).toBe(true);
+    }
+  });
+
+  it("Sales read-only: Customers, Invoices, Payments Received open; Add customer and Quotes do not", async () => {
+    const { isRouteAllowed, canWriteSales } = await import("./nav");
+    for (const h of ["/customers", "/customers/abc", "/invoices", "/invoices/INV-1", "/payments"]) {
+      expect(isRouteAllowed("accountant", h), h).toBe(true);
+    }
+    for (const h of ["/customers/new", "/quotes", "/quotes/new"]) expect(isRouteAllowed("accountant", h), h).toBe(false);
+    expect(canWriteSales("accountant")).toBe(false);
+    for (const r of ["owner", "manager", "billing", null, undefined]) expect(canWriteSales(r), String(r)).toBe(true);
+  });
+
+  it("no Leads, Deals, Marketing or Settings", async () => {
+    const { isRouteAllowed } = await import("./nav");
+    for (const h of ["/leads", "/deals", "/enquiries", "/marketing", "/campaigns", "/settings", "/purchase-orders"]) {
+      expect(isRouteAllowed("accountant", h), h).toBe(false);
+    }
+  });
+
+  it("canOpenRoute: every link on Balance Sheet, Profitability and TDS opens for the accountant", async () => {
+    const { canOpenRoute } = await import("./nav");
+    const root = path.join(__dirname, "../app/(app)/accounting");
+    const hrefs = new Set<string>();
+    for (const f of ["balance-sheet/page.tsx", "profitability/page.tsx", "tds-receivable/page.tsx"]) {
+      const src = fs.readFileSync(path.join(root, f), "utf8");
+      for (const m of src.matchAll(/href=\{?[`"](\/[^`"$?]+)/g)) hrefs.add(m[1]);
+    }
+    expect(hrefs.has("/invoices")).toBe(true);
+    expect(hrefs.has("/customers/")).toBe(true);
+    const blocked = [...hrefs].filter((h) => !canOpenRoute("accountant", h.endsWith("/") ? h + "x" : h));
+    expect(blocked, `links that would bounce the accountant: ${blocked.join(", ")}`).toEqual([]);
+  });
+
+  it("canOpenRoute hides a link the role cannot open, ignores ?query, and shows while loading", async () => {
+    const { canOpenRoute } = await import("./nav");
+    expect(canOpenRoute("support", "/invoices")).toBe(false);
+    expect(canOpenRoute("billing", "/accounting/balance-sheet")).toBe(false);
+    expect(canOpenRoute("accountant", "/accounting/tds-receivable?status=pending_cert")).toBe(true);
+    expect(canOpenRoute(undefined, "/anything")).toBe(true);
+  });
+
+  it("report pages gate their links through canOpenRoute", () => {
+    const root = path.join(__dirname, "../app/(app)/accounting");
+    const bs = fs.readFileSync(path.join(root, "balance-sheet/page.tsx"), "utf8");
+    expect(bs).toContain("const clickable = !!href && canOpenRoute(role, href);");
+    const prof = fs.readFileSync(path.join(root, "profitability/page.tsx"), "utf8");
+    expect(prof.match(/r\.customerId && canOpenCustomer \?/g)?.length).toBe(2);
+    const tds = fs.readFileSync(path.join(root, "tds-receivable/page.tsx"), "utf8");
+    expect(tds).toContain("canOpenPayments");
+  });
+
+  it("Sales pages hide their write buttons behind canWriteSales", () => {
+    const app = path.join(__dirname, "../app/(app)");
+    const inv = fs.readFileSync(path.join(app, "invoices/page.tsx"), "utf8");
+    expect(inv).toContain('{!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}');
+    expect(inv).toContain('const moneyDue = canWrite && (due === "pending" || due === "overdue");');
+    const det = fs.readFileSync(path.join(app, "invoices/invoice-detail.tsx"), "utf8");
+    expect(det).toContain('const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");');
+    const pay = fs.readFileSync(path.join(app, "payments/page.tsx"), "utf8");
+    expect(pay).toContain('{!canWrite && <ViewOnlyNote what="record, edit or refund payments" />}');
+    expect(pay).toContain("open={!!editPayment && canWrite}");
+    const cust = fs.readFileSync(path.join(app, "customers/page.tsx"), "utf8");
+    expect(cust).toContain('{!canWrite && <ViewOnlyNote what="add, import or edit customers" />}');
+    expect(cust).toContain("readOnly={!canWrite}");
+    const prof = fs.readFileSync(path.join(__dirname, "../components/features/customers/customer-profile.tsx"), "utf8");
+    expect(prof).toContain('{!canWrite && <ViewOnlyNote what="edit, invoice or archive customers" />}');
+  });
+});

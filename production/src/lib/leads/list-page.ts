@@ -17,6 +17,7 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import type { SalesFolder } from "@/lib/leads/folders";
 import { UNASSIGNED } from "@/lib/leads/list-selectors";
+import { leadMatchesSearch, normalizeLeadSearch } from "@/lib/leads/lead-search";
 
 /**
  * The columns list_leads() returns — must equal the LATEST migration's select list (checked
@@ -91,12 +92,13 @@ export interface LeadListFilters {
  * Build `p_filters` from page state, dropping every key that would mean "no constraint", so
  * two equivalent states give the same JSON — and therefore the same query key.
  *
- * `search` is sent AS TYPED when it has any non-blank character (the page matches untrimmed
- * text too), and omitted when it is blank.
+ * `search` is sent NORMALIZED (lead-search.ts: lowercased, trimmed, one space between words —
+ * R-221) and omitted when it is blank, so " Acme " and "acme" are one query key.
  */
 export function toListLeadsFilters(input: LeadListFilters): LeadListFilters {
   const out: LeadListFilters = {};
-  if (input.search !== undefined && input.search.trim() !== "") out.search = input.search;
+  const search = input.search === undefined ? "" : normalizeLeadSearch(input.search);
+  if (search !== "") out.search = search;
   if (input.stages && input.stages.length > 0) out.stages = [...input.stages].sort();
   if (input.priorities && input.priorities.length > 0) out.priorities = [...input.priorities].sort();
   if (input.junk && input.junk !== "exclude") out.junk = input.junk;
@@ -120,16 +122,8 @@ export function matchesListLeadsFilters(l: LeadListRow, f: LeadListFilters): boo
   const junk = f.junk ?? "exclude";
   if (junk === "exclude" && l.is_junk) return false;
   if (junk === "only" && !l.is_junk) return false;
-  if (f.search !== undefined && f.search.trim() !== "") {
-    const s = f.search.toLowerCase();
-    const hit =
-      l.company.toLowerCase().includes(s) ||
-      (l.contact_name?.toLowerCase().includes(s) ?? false) ||
-      (l.contact_email?.toLowerCase().includes(s) ?? false) ||
-      (l.contact_phone?.toLowerCase().includes(s) ?? false) ||
-      (l.plan?.toLowerCase().includes(s) ?? false);
-    if (!hit) return false;
-  }
+  /* public.lead_search_hit() — migration 20261007000000_lead_search_tokens.sql (R-221). */
+  if (f.search !== undefined && !leadMatchesSearch(l, f.search)) return false;
   if (f.stages && f.stages.length > 0 && !f.stages.includes(l.stage)) return false;
   if (f.priorities && f.priorities.length > 0 && !f.priorities.includes(l.priority as "low" | "medium" | "high")) return false;
   if (f.owner_ids && l.owner_id && !f.owner_ids.includes(l.owner_id)) return false;

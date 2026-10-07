@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
+import { toastError } from "@/lib/errors/toast-error";
+import { readAllRows, type ExistingCustomerRow } from "./import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { cn } from "@/lib/utils";
 
@@ -73,15 +75,20 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
     }
     (async () => {
       const supabase = createClient();
-      const [{ data: custs }, { data: cdoms }] = await Promise.all([
-        supabase.from("customers").select("id, name, customer_number"),
-        supabase.from("customer_domains").select("domain"),
-      ]);
-      const byNumber = new Map<string, { id: string; name: string }>();
-      for (const c of custs ?? []) if (c.customer_number) byNumber.set(String(c.customer_number).trim().toLowerCase(), { id: c.id, name: c.name });
-      const mapped = new Set<string>();
-      for (const cd of cdoms ?? []) mapped.add(normDomain(cd.domain));
-      lookups.current = { byNumber, mapped };
+      try {
+        // R-295: every row, not the first 1000 — else a domain past #1000 links twice.
+        const [custs, cdoms] = await Promise.all([
+          readAllRows<ExistingCustomerRow>(supabase, "customers", "id, name, customer_number"),
+          readAllRows<{ domain: string }>(supabase, "customer_domains", "id, domain"),
+        ]);
+        const byNumber = new Map<string, { id: string; name: string }>();
+        for (const c of custs) if (c.customer_number) byNumber.set(String(c.customer_number).trim().toLowerCase(), { id: c.id, name: c.name });
+        const mapped = new Set<string>();
+        for (const cd of cdoms) mapped.add(normDomain(cd.domain));
+        lookups.current = { byNumber, mapped };
+      } catch (e) {
+        toastError(e, { description: "Existing customers and domains didn't load, so duplicates can't be checked. Close and reopen." });
+      }
     })();
   }, [open]);
 
@@ -90,18 +97,38 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { toast.error("File too large (>8 MB)."); return; }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("File too large (over 8 MB).", {
+        description: "Export only the Customer Number and Domain columns, or split the file into smaller parts.",
+      });
+      return;
+    }
     setFileName(file.name);
     try {
       let text = await file.text();
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length < 2) { toast.error("CSV needs a header + data rows."); return; }
+      if (lines.length < 2) {
+        toast.error("This CSV has no data rows.", {
+          description: "The first row must be the column names and the rows below it the domains. Check you picked the right file.",
+        });
+        return;
+      }
       const header = parseLine(lines[0]).map((h) => h.trim().toLowerCase());
       const iNum = header.findIndex((h) => h.includes("customer number") || h === "customer_number" || h === "customer no");
       const iDom = header.findIndex((h) => h.includes("domain") || h === "website");
-      if (iNum === -1) { toast.error("Couldn't find a 'Customer Number' column."); return; }
-      if (iDom === -1) { toast.error("Couldn't find a 'Domain' column."); return; }
+      if (iNum === -1) {
+        toast.error("Couldn't find a 'Customer Number' column.", {
+          description: "Rename the column in the first row to 'Customer Number' and upload the file again.",
+        });
+        return;
+      }
+      if (iDom === -1) {
+        toast.error("Couldn't find a 'Domain' column.", {
+          description: "Rename the column in the first row to 'Domain' and upload the file again.",
+        });
+        return;
+      }
 
       const { byNumber, mapped } = lookups.current;
       const seen = new Set<string>();
@@ -125,7 +152,10 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
       parsed.sort((a, b) => order[a.status] - order[b.status]);
       setRows(parsed);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, {
+        fallback: "Couldn't read the file.",
+        description: "Save it as CSV (comma separated) from Excel or Google Sheets and upload it again.",
+      });
     }
   }
 
@@ -141,7 +171,12 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
   async function handleApply() {
     if (!rows || !me) return;
     const toAdd = counts.new;
-    if (toAdd.length === 0) { toast.error("No new domain links to add."); return; }
+    if (toAdd.length === 0) {
+      toast.error("No new domain links to add.", {
+        description: "Every domain in the file is already mapped or has no matching customer. Import those customers first.",
+      });
+      return;
+    }
     setSaving(true);
     try {
       const supabase = createClient();
@@ -157,7 +192,10 @@ export function ImportDomainsDialog({ open, onOpenChange, onComplete }: Props) {
       onComplete?.();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't save");
+      toastError(err, {
+        fallback: "Couldn't save the domain links.",
+        description: "Some links may already be saved. Upload the same file again — saved ones show as already mapped and only the rest are added.",
+      });
     } finally {
       setSaving(false);
     }
