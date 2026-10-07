@@ -14,6 +14,7 @@
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
+import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
@@ -818,8 +819,20 @@ export function QuoteBuilder() {
       ? (roundTotal ? formatForeign(Math.round(annualDisp), currency ?? "USD", 0) : formatForeign(annualDisp, currency ?? "USD"))
       : rupee(annualDisp);
 
+  /* R-381: one quote = one billing term. A monthly flex line beside an annual line added
+     a month to a year in the subtotal. Refuse the mix wherever a line enters or changes
+     term; the database refuses it too (20261007160000_quote_one_billing_term.sql). */
+  const refuseMixedTerm = (next: ReadonlyArray<QuoteLineItem>): boolean => {
+    if (!isMixedTerm(next)) return false;
+    toast.error(ONE_TERM_MESSAGE, {
+      description: "Monthly flex is billed per month, the other lines per year — one quote can't total both.",
+    });
+    return true;
+  };
+
   // Line item handlers
   const addLine = (line: QuoteLineItem) => {
+    if (refuseMixedTerm([...lineItems, line])) return;
     // Freeze the LIST price at add time (= the rate we start from). Lowering the
     // rate later surfaces the gap as the customer's discount. (see totals)
     const withList: QuoteLineItem = { ...line, list_rate: line.list_rate ?? line.rate, start_date: line.start_date ?? todayISO };
@@ -835,6 +848,7 @@ export function QuoteBuilder() {
   };
   /** Add several lines at once (solution package), reusing the merge rule per line. */
   const addLines = (incoming: QuoteLineItem[]) => {
+    if (refuseMixedTerm([...lineItems, ...incoming])) return;
     setLineItems((current) =>
       incoming.reduce((acc, line) => {
         const withList: QuoteLineItem = { ...line, list_rate: line.list_rate ?? line.rate, start_date: line.start_date ?? todayISO };
@@ -901,6 +915,7 @@ export function QuoteBuilder() {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
   const updateCommitment = (id: string, commitment: LineCommitment) => {
+    if (refuseMixedTerm(lineItems.map((l) => (l.id === id ? { ...l, commitment } : l)))) return;
     setLineItems((s) =>
       s.map((l) => {
         if (l.id !== id) return l;
@@ -996,6 +1011,8 @@ export function QuoteBuilder() {
       });
       return;
     }
+    // R-381: an older mixed draft opened for editing can't be saved as it is.
+    if (refuseMixedTerm(lineItems)) return;
     /* GST guard (2 Oct 2026). With no place of supply the quote assumes CGST+SGST; a
        draft may wait for the state, a quote that goes to the customer may not. Only for a
        lead or typed prospect, where the state field is on this screen; an existing

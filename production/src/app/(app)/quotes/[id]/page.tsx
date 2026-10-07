@@ -18,7 +18,7 @@ import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { quoteMoneyActions } from "@/lib/quotes/money-stage";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -293,8 +293,16 @@ export default function QuoteDetailPage() {
   // Records that keep this quote un-deletable (must be voided/refunded first).
   const receivedPayments = (paymentHistory ?? []).filter((p) => p.status === "received");
 
-  // Inter-state? Compare customer state code vs tenant (seller) state code.
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin });
+  /* Place of supply — customer → lead → typed prospect (R-376 f / R-381), named with its
+     state ("Haryana (06) · IGST"). Comparing the customer alone left a lead quote with no
+     state, so a Haryana lead of a Delhi seller previewed and downloaded as intra-state. */
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    lead: quote?.customer_id ? null : (lead ?? null),
+    quote: quote ?? null,
+    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
+  });
+  const interState = pos.interState;
 
   // Delete — blocked for quotes with a recorded payment (cascade would wipe the
   // ledger). On success, navigate back to the list since this record is gone.
@@ -576,6 +584,8 @@ export default function QuoteDetailPage() {
       tax,
       total,
       interState,
+      placeOfSupply: pos.label,
+      isExport:      pos.isExport,
       notes:         quote.notes ?? "",
       /* R-034. Same rule as the server builder — a paid quote downloads as a record of
          the order, not as an offer with a validity window and Net-7 terms on it. */
@@ -1560,6 +1570,8 @@ export default function QuoteDetailPage() {
         tax={tax}
         total={total}
         interState={interState}
+        placeOfSupply={pos.label}
+        isExport={pos.isExport}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
@@ -1663,6 +1675,8 @@ export default function QuoteDetailPage() {
               tax,
               total,
               interState,
+              placeOfSupply: pos.label,
+              isExport:      pos.isExport,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
             });
