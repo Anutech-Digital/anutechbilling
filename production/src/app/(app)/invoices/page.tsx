@@ -1198,6 +1198,7 @@ function InvoiceRow({
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
+          invoiceDate={inv.invoice_date}
         />
         <IssueCreditNoteDialog
           open={dnOpen}
@@ -1216,7 +1217,7 @@ function InvoiceRow({
       <tr className="bg-paper-2/30 border-b border-hairline">
         <td colSpan={8} className="px-5 py-3 space-y-3">
           <InvoicePaymentsAccordion inv={inv} />
-          <InvoiceNotesList invoiceId={inv.id} />
+          <InvoiceNotesList invoiceId={inv.id} invoiceDate={inv.invoice_date} />
         </td>
       </tr>
     )}

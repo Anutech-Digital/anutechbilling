@@ -32,6 +32,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCreditNotesByInvoice } from "@/lib/queries/credit-notes";
 import { useDebitNotesByInvoice } from "@/lib/queries/debit-notes";
+import { isCreditNoteLate, creditNoteDeadline } from "@/lib/gst/credit-note-deadline";
 import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialog";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
@@ -358,7 +359,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
             {/* 🔽 Collapsible Panel 4: Internal Notes */}
             <Card className="p-4">
               <p className="text-xs font-semibold text-ink mb-2">Internal Notes & History</p>
-              <InvoiceNotesList invoiceId={invoice.id} />
+              <InvoiceNotesList invoiceId={invoice.id} invoiceDate={invoice.invoice_date} />
             </Card>
           </div>
         </div>
@@ -419,13 +420,15 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
 }
 
 /** Credit / debit notes issued against this invoice — shown in the expand so a
- *  note (which quietly lowered/raised the balance) is auditable. */
-export function InvoiceNotesList({ invoiceId }: { invoiceId: string }) {
+ *  note (which quietly lowered/raised the balance) is auditable.
+ *  R-344: a CREDIT note dated after its invoice's GST s.34(2) limit (30 Nov after the FY)
+ *  carries a "Late" tag — display only, no tax figure changes (a debit note has no limit). */
+export function InvoiceNotesList({ invoiceId, invoiceDate }: { invoiceId: string; invoiceDate?: string | null }) {
   const { data: creditNotes } = useCreditNotesByInvoice(invoiceId);
   const { data: debitNotes } = useDebitNotesByInvoice(invoiceId);
   const notes = [
-    ...(creditNotes ?? []).map((n) => ({ ...n, kind: "credit" as const, date: n.credit_date })),
-    ...(debitNotes ?? []).map((n) => ({ ...n, kind: "debit" as const, date: n.debit_date })),
+    ...(creditNotes ?? []).map((n) => ({ ...n, kind: "credit" as const, date: n.credit_date, late: isCreditNoteLate(invoiceDate, n.credit_date) })),
+    ...(debitNotes ?? []).map((n) => ({ ...n, kind: "debit" as const, date: n.debit_date, late: false })),
   ].sort((a, b) => b.date.localeCompare(a.date));
   if (notes.length === 0) return null;
 
@@ -441,6 +444,14 @@ export function InvoiceNotesList({ invoiceId }: { invoiceId: string }) {
               <span className={`text-3xs font-semibold uppercase px-1.5 py-0.5 rounded ${n.kind === "credit" ? "bg-rose/10 text-rose" : "bg-indigo-soft text-indigo-ink"}`}>
                 {n.kind === "credit" ? "Credit" : "Debit"} note
               </span>
+              {n.late && invoiceDate && (
+                <span
+                  className="text-3xs font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-soft text-amber-ink"
+                  title={`Issued after the GST s.34 limit for this invoice (${formatDate(creditNoteDeadline(invoiceDate))}). It may not reduce output GST — confirm with your CA.`}
+                >
+                  Late
+                </span>
+              )}
               <span className="font-mono text-2xs text-ink truncate">{n.id}</span>
               <span className="text-2xs text-ink-3 capitalize">· {n.reason_code.replace(/_/g, " ")}</span>
             </span>
