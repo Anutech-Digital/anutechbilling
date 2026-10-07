@@ -34,7 +34,8 @@ import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { gstAllToDateHref } from "./gst/range";
+import { gstAllToDateHref, gstDefaultRange, gstRangeHref } from "./gst/range";
+import { useGstCashToPay } from "./gst/report";
 import { receivableRows } from "./receivables";
 import { LoadErrorBanner } from "@/components/shared/load-error";
 import { cn, rupee } from "@/lib/utils";
@@ -95,11 +96,25 @@ export default function AccountingOverviewPage() {
     (a) => a.account_type === "cash" && (a.current_balance ?? a.opening_balance) < 0,
   );
 
+  /* R-394: the GST tile is the GST page headline — cash left after input credit is set off
+     (s.49(5) / Rule 88A, lib/gst/gstr3b.ts setOffItc), less GST already paid — for the
+     page's default range (last month on the 1st–20th, this month after). Same loader and
+     same pure helper (gst/report.ts → gst/cash-to-pay.ts gstCashHeadline); the old
+     cumulative output − input (gstPayable) disagreed with the page. */
+  const gstRange = React.useMemo(() => gstDefaultRange(), []);
+  const gstQ = useGstCashToPay(gstRange);
+  const gstHl = gstQ.headline;
+  const gstTileHref = gstRangeHref(gstRange);
+  const gstTileHint = !gstHl ? gstRange.label
+    : gstHl.state === "credit" ? `${gstRange.label} · credit carried forward`
+    : gstHl.carryForward > 0 && gstHl.state !== "overpaid" ? `${gstRange.label} · ${rupee(gstHl.carryForward)} credit carried fwd`
+    : `${gstRange.label} · after input credit`;
+
   const a = autoQ.data;
   const loading = autoQ.isLoading;
   /* R-270: the hero tiles and the money inbox read ₹0 when their query fails. Several
      queries feed this page, so a banner above says the figures are incomplete. */
-  const moneyQueries = [autoQ, invoicesQ, creditsQ, billsQ];
+  const moneyQueries = [autoQ, invoicesQ, creditsQ, billsQ, gstQ];
   const someFailed = moneyQueries.some((q) => q.isError);
 
   /* R-179: mila hua paisa jo abhi kisi bank line se match nahi hua bhi "haath me" hai —
@@ -111,12 +126,10 @@ export default function AccountingOverviewPage() {
     ? a.payables + a.salaryPayable + a.salaryDuesPayable + a.reimbursementsPayable +
       a.creditCardPayable + a.emiLoansPayable + a.businessLoansPayable
     : 0;
-  const gstDue = a?.gstPayable ?? 0;
   /* R-257: every tile opens something whose headline is the tile's number.
-     • GST: gstPayable is CUMULATIVE (all returns to date, net of GST paid — migration
-       20261006140000), not "this FY" as the old label said, and plain /accounting/gst
-       opened on the current month. The link now opens the page on "All to date", where
-       the headline ("GST still to pay" / "Net liability") is the same figure.
+     • GST folder (the tile follows the GST page headline since R-394, above): gstPayable
+       is CUMULATIVE (all returns to date, net of GST paid — migration 20261006140000), so
+       the folder opens the page on "All to date".
      • Owed to you / You owe: no single page carries these sums (Aging is invoices only;
        Expenses is not loans or salary), so the tile opens its own breakdown — headline =
        tile total, one line per part, each linking to the page that holds it (same lines
@@ -168,10 +181,9 @@ export default function AccountingOverviewPage() {
           hint="Invoices, projects, TDS, staff loans" breakdown={owedLines} />
         <HeroKpi label="You owe" value={youOwe} tone={youOwe > 0 ? "rose" : "ink"} loading={loading}
           hint={salaryHidden ? "Bills, loans, cards · salary not shown for your role" : "Bills, salary, dues, loans, cards"} breakdown={oweLines} />
-        {/* Shown unsigned, like the GST page headline: a negative net is a credit, and the
-            label says so rather than a minus sign. */}
-        <HeroKpi label={gstDue < 0 ? "GST credit" : "GST to pay"} value={Math.abs(gstDue)} tone={gstDue > 0 ? "rose" : "emerald"} loading={loading}
-          hint="All returns to date, after GST paid" href={gstHref} />
+        {/* R-394: label, number and tone are the GST page headline's, for the same range. */}
+        <HeroKpi label={gstHl?.label ?? "GST cash to pay"} value={gstHl?.amount ?? 0} tone={gstHl && gstHl.left > 0 ? "rose" : "emerald"} loading={gstQ.isLoading}
+          hint={gstTileHint} href={gstTileHref} />
       </div>
 
       <BooksLockCard />

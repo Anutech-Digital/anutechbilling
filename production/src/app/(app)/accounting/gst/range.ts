@@ -37,10 +37,9 @@ export function gstAllToDate(now: Date = new Date()): GstPeriod {
   return { from: GST_START, to: istToday(now), label: "All to date" };
 }
 
-/** Overview tile link: the GST page opened on exactly the tile's span. */
+/** The GST page opened on "All to date" (the cumulative span the Balance Sheet GST line covers). */
 export function gstAllToDateHref(now: Date = new Date()): string {
-  const r = gstAllToDate(now);
-  return `/accounting/gst?from=${r.from}&to=${r.to}`;
+  return gstRangeHref(gstAllToDate(now));
 }
 
 /**
@@ -56,4 +55,13 @@ export function gstRangeFromParams(
   if (!from || !to || !ISO_DATE.test(from) || !ISO_DATE.test(to) || from > to) return gstDefaultRange(now);
   const named = [gstAllToDate(now), gstThisFy(now), gstThisMonth(now), gstLastMonth(now)].find((r) => r.from === from && r.to === to);
   return named ?? { from, to, label: `${from} to ${to}` };
+}
+
+/**
+ * R-394: a link that opens the GST page on exactly `r`. The Overview "GST cash to pay" tile
+ * uses it with `gstDefaultRange()` — the span its number covers — so a click across the
+ * day-20 switch, or at midnight, still lands on the month the tile showed.
+ */
+export function gstRangeHref(r: Pick<GstPeriod, "from" | "to">): string {
+  return `/accounting/gst?from=${r.from}&to=${r.to}`;
 }
