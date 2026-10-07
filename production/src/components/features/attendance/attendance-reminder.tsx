@@ -86,7 +86,7 @@ export function AttendanceReminder() {
   /**
    * The dismissed / snoozed state, mirrored into React.
    *
-   * localStorage is the durable copy — it has to survive a reload, or "Aaj nahi" would
+   * localStorage is the durable copy — it has to survive a reload, or "Not today" would
    * mean "until you press F5". But React cannot observe it, so it is read into state and
    * both are written together. An earlier version kept a bump counter in the dependency
    * array instead; that works, and it also makes the dependency a lie, which is exactly
@@ -174,29 +174,29 @@ export function AttendanceReminder() {
             <Icon name={isCheckIn ? "clock" : "logout"} size={22} className={isCheckIn ? "text-indigo-ink" : "text-amber-ink"} />
           </div>
           <DialogTitle className="text-center text-xl font-serif">
-            {isCheckIn ? "Attendance mark karna reh gaya" : "Check out karna reh gaya"}
+            {isCheckIn ? "You haven't checked in yet" : "You haven't checked out yet"}
           </DialogTitle>
           <DialogDescription className="text-center text-sm">
             {isCheckIn
-              ? "Aaj ka check-in abhi tak nahi hua. Ek tap me ho jayega."
-              : "Aap subah check-in kar chuke ho, par check-out abhi baaki hai. Bina check-out ke din adhoora count hota hai."}
+              ? "No check-in recorded today. It takes one tap."
+              : "You checked in this morning but haven't checked out. Without a check-out, the day counts as incomplete."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-2 pt-1">
           <Button variant="primary" onClick={handleGo} className="w-full font-bold">
-            {isCheckIn ? "Attendance page kholo" : "Check out karo"}
+            {isCheckIn ? "Open attendance" : "Check out"}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleSnooze} className="flex-1">
-              {SNOOZE_MIN} min baad
+              Remind me in {SNOOZE_MIN} min
             </Button>
             <Button variant="ghost" onClick={handleDismiss} className="flex-1">
-              Aaj nahi
+              Not today
             </Button>
           </div>
           <p className="text-xs text-ink-3 text-center pt-1">
-            Ye reminder /attendance/me par band ya time change kar sakte ho.
+            Turn this reminder off or change its time on My attendance (/attendance/me).
           </p>
         </div>
       </DialogContent>

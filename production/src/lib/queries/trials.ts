@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Lead } from "@/lib/supabase/database.types";
+import { trialDaysLeft } from "@/lib/trials/days-left";
 
 export type TrialBucket = "in_flight" | "expiring_soon" | "expired_unconverted" | "converted";
 
@@ -23,7 +24,12 @@ export interface TrialWithBucket extends Lead {
   days_past_expiry: number | null;
 }
 
-function bucketize(lead: Lead, today: Date): TrialWithBucket {
+/**
+ * Exported for tests. Days are IST calendar days via trialDaysLeft (R-319) — the same count
+ * the quote page shows. It used to round raw milliseconds, so one trial read "14 days left" on
+ * the quote and "15d left" here.
+ */
+export function bucketize(lead: Lead, today: Date): TrialWithBucket {
   let bucket: TrialBucket = "in_flight";
   let daysRemaining: number | null = null;
   let daysPast:      number | null = null;
@@ -31,8 +37,7 @@ function bucketize(lead: Lead, today: Date): TrialWithBucket {
   if (lead.trial_converted_at) {
     bucket = "converted";
   } else if (lead.trial_expires_at) {
-    const expiresAt = new Date(lead.trial_expires_at);
-    const diff = Math.round((expiresAt.getTime() - today.getTime()) / 86400000);
+    const diff = trialDaysLeft(lead.trial_expires_at, today);
     if (diff < 0) {
       bucket = "expired_unconverted";
       daysPast = Math.abs(diff);

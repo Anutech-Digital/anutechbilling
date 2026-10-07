@@ -924,7 +924,7 @@ export default function SubscriptionsPage() {
                       size="sm"
                       dot
                     >
-                      {dr === 0 ? "today" : dr === 1 ? "1d" : `${dr}d left`}
+                      {dr === 0 ? "today" : `${dr}d left`}
                     </Badge>
                     <Button size="sm" variant="primary" icon="check_circle">
                       Convert
@@ -1546,7 +1546,7 @@ export default function SubscriptionsPage() {
                             size="sm"
                             dot
                           >
-                            {dr === 0 ? "today" : dr === 1 ? "1d" : `${dr}d left`}
+                            {dr === 0 ? "today" : `${dr}d left`}
                           </Badge>
                         </div>
                       </td>
@@ -1595,7 +1595,7 @@ export default function SubscriptionsPage() {
                       size="sm"
                       dot
                     >
-                      {dr === 0 ? "today" : dr === 1 ? "1d left" : `${dr}d left`}
+                      {dr === 0 ? "today" : `${dr}d left`}
                     </Badge>
                   </div>
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">

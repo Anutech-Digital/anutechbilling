@@ -82,7 +82,7 @@ describe("AttendanceReminder", () => {
   it("asks for a check-in during the day when none has happened", () => {
     atIst("2026-08-19T04:30:00Z"); // 10:00 IST
     render(<AttendanceReminder />);
-    expect(screen.getByText(/Attendance mark karna reh gaya/)).toBeDefined();
+    expect(screen.getByText(/You haven.t checked in yet/)).toBeDefined();
   });
 
   it("renders nothing before the check-in window opens", () => {
@@ -97,7 +97,7 @@ describe("AttendanceReminder", () => {
     today.data = { linked: true, check_in: "2026-08-19T04:00:00Z", check_out: null };
     atIst("2026-08-19T13:00:00Z"); // 18:30 IST
     render(<AttendanceReminder />);
-    expect(screen.getByText(/Check out karna reh gaya/)).toBeDefined();
+    expect(screen.getByText(/You haven.t checked out yet/)).toBeDefined();
   });
 
   it("renders nothing once both punches exist", () => {
@@ -127,7 +127,7 @@ describe("AttendanceReminder", () => {
     // attendance from home.
     atIst("2026-08-19T04:30:00Z");
     render(<AttendanceReminder />);
-    fireEvent.click(screen.getByText(/Attendance page kholo/));
+    fireEvent.click(screen.getByText(/Open attendance/));
     expect(push).toHaveBeenCalledWith("/attendance/me");
   });
 
@@ -136,14 +136,14 @@ describe("AttendanceReminder", () => {
     // it loses the exact punch it exists to catch.
     atIst("2026-08-19T04:30:00Z");
     render(<AttendanceReminder />);
-    fireEvent.click(screen.getByText(/Attendance page kholo/));
+    fireEvent.click(screen.getByText(/Open attendance/));
     expect(window.localStorage.getItem(dismissKey("user-1", "check_in"))).toBeNull();
   });
 
   it("remembers a dismissal for the rest of that IST day", () => {
     atIst("2026-08-19T04:30:00Z");
     const view = render(<AttendanceReminder />);
-    fireEvent.click(screen.getByText(/Aaj nahi/));
+    fireEvent.click(screen.getByText(/Not today/));
     expect(window.localStorage.getItem(dismissKey("user-1", "check_in"))).toBe("2026-08-19");
     expect(view.queryByRole("dialog")).toBeNull();
   });
@@ -152,7 +152,7 @@ describe("AttendanceReminder", () => {
     window.localStorage.setItem(dismissKey("user-1", "check_in"), "2026-08-19");
     atIst("2026-08-20T04:30:00Z"); // next morning, 10:00 IST
     render(<AttendanceReminder />);
-    expect(screen.getByText(/Attendance mark karna reh gaya/)).toBeDefined();
+    expect(screen.getByText(/You haven.t checked in yet/)).toBeDefined();
   });
 
   it("renders nothing while the preferences are still loading", () => {
@@ -201,5 +201,22 @@ describe("a day the company is closed", () => {
     workingDay.data = { working: true, reason: null };
     render(<AttendanceReminder />);
     expect(screen.queryByText(/check.?in/i)).not.toBeNull();
+  });
+
+  /* R-319: the popup came up in Hinglish on the Subscriptions page. In-app copy is plain
+     English (chat stays Hinglish). These words were in the old copy; none may come back. */
+  const HINGLISH = /\b(karna|reh gaya|kholo|karo|aaj|nahi|baad|baaki|abhi|ho jayega|band|kar sakte|adhoora|aap)\b/i;
+
+  it.each([
+    ["check-in", null, "2026-08-19T04:30:00Z"],
+    ["check-out", "2026-08-19T04:00:00Z", "2026-08-19T13:00:00Z"],
+  ])("shows the %s popup in plain English", (_label, checkIn, at) => {
+    workingDay.data = { working: true, reason: null };
+    today.data = { linked: true, check_in: checkIn, check_out: null };
+    atIst(at);
+    render(<AttendanceReminder />);
+    const text = screen.getByRole("dialog").textContent ?? "";
+    expect(text.length).toBeGreaterThan(20);
+    expect(text).not.toMatch(HINGLISH);
   });
 });

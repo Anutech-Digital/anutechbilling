@@ -21,7 +21,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LifecycleStep } from "@/lib/quotes/lifecycle";
-import { addDaysISO, daysBetweenISO, istDayStartUtc, toIstDate } from "@/lib/dates/ist";
+import { addDaysISO, istDayStartUtc, toIstDate } from "@/lib/dates/ist";
+import { trialDaysLeft } from "./days-left";
 
 export const QUOTE_TRIAL_DAYS = 14;
 /** Google's own cap on a Workspace trial. Above this is a warning — never a silent clamp. */
@@ -184,8 +185,8 @@ export function quoteTrialState(lead: TrialLeadFacts, now: Date = new Date()): Q
   if (!lead.trial_started_at) return null;
   const endDate = lead.trial_expires_at ? toIstDate(lead.trial_expires_at) : null;
   if (lead.trial_converted_at) return { kind: "converted", endDate };
-  if (!endDate) return null;
-  const diff = daysBetweenISO(toIstDate(now), endDate);
+  if (!endDate || !lead.trial_expires_at) return null;
+  const diff = trialDaysLeft(lead.trial_expires_at, now);
   if (diff < 0 || lead.trial_expired_at) return { kind: "ended", endDate, daysPast: Math.max(0, -diff) };
   return { kind: "running", endDate, daysLeft: diff };
 }
