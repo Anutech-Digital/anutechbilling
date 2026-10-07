@@ -25,7 +25,8 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
-import { pdfRupee } from "./pdf-money";
+import { pdfRupee, pdfSafeMoney } from "./pdf-money";
+import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
@@ -103,6 +104,9 @@ export interface QuotePDFProps {
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
   currency?:     string | null;
   exchangeRate?: number | null;
+  /** R-045: where exchangeRate came from (fbil | er-api | frankfurter | manual) and its date. */
+  fxSource?:     string | null;
+  fxDate?:       string | null;
   /** Quote-level invoice frequency (migration 0161); falls back to legacy per-line commitment. */
   billingCycle?: BillingCycle;
   notes?:        string;
@@ -414,7 +418,7 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, placeOfSupply, isExport = false, currency, exchangeRate, billingCycle, notes, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, notes, termsConditions, isRenewal,
     isPaid = false,
     upiQrDataUrl, upiVpa,
   } = props;
@@ -752,7 +756,8 @@ export function QuotePDF(props: QuotePDFProps) {
                 )}
                 {isForeign && (
                   <View style={s.perInvoiceRow}>
-                    <Text>INR equivalent (for GST) @ Rs {exchangeRate}/{currency}</Text>
+                    {/* R-045: which rate (FBIL/RBI reference, indicative or the supplier's) and its date. */}
+                    <Text>{pdfSafeMoney(fxEquivalentLine({ currency: currency ?? "", rate: fxRate, source: fxSource, date: fxDate }))}</Text>
                     <Text>{pdfRupee(total)}</Text>
                   </View>
                 )}

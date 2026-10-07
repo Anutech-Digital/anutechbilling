@@ -59,6 +59,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
 import { COUNTRIES } from "@/lib/gst/countries";
 import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/currency";
+import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
 import { headlinePrice } from "@/lib/catalog/headline-price";
@@ -370,7 +371,10 @@ export function QuoteBuilder() {
   // hand-types a stale rate. `fxInfo` shows provenance (as-of date); `fxAuto`
   // marks the current rate as auto-fetched (an edit clears it → "manual").
   const [fxLoading, setFxLoading] = React.useState(false);
-  const [fxInfo, setFxInfo] = React.useState<{ asOf: string | null } | null>(null);
+  /* R-045 slice 3: provenance of the CURRENT rate — saved on the quote as fx_source / fx_date
+     and copied onto the invoice at issue. source: fbil (RBI reference) | er-api / frankfurter
+     (indicative) | manual (typed) | null (an older quote that never recorded it). */
+  const [fxInfo, setFxInfo] = React.useState<FxStamp | null>(null);
   const [fxAuto, setFxAuto] = React.useState(false);
   const fetchLatestFx = React.useCallback(async (cur: string) => {
     const c = (cur ?? "").toUpperCase();
@@ -387,9 +391,9 @@ export function QuoteBuilder() {
         return;
       }
       setExchangeRate(data.rate);
-      setFxInfo({ asOf: data.asOf ?? null });
+      setFxInfo({ asOf: data.asOf ?? null, source: data.source ?? null, kind: data.kind ?? null, label: data.label ?? null });
       setFxAuto(true);
-      toast.success(`Latest rate: ₹${data.rate}/${c}`);
+      toast.success(`Latest rate: ₹${data.rate}/${c}`, data.label ? { description: data.label } : undefined);
     } catch {
       toast.error("Couldn't reach the rates service.", {
         description: "Check your internet, or type the exchange rate in the rate box yourself.",
@@ -684,6 +688,8 @@ export function QuoteBuilder() {
     if (sourceQuote.currency)             setCurrency(sourceQuote.currency);
     if (sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0) {
       setExchangeRate(sourceQuote.exchange_rate);
+      /* R-045: keep where that rate came from — an untouched Save must not relabel it. */
+      setFxInfo(fxStampFromQuote(sourceQuote));
     }
     if (sourceQuote.prospect_state_code)  setProspectStateCode(sourceQuote.prospect_state_code);
     if (sourceQuote.prospect_country)     setProspectCountry(sourceQuote.prospect_country);
@@ -1131,6 +1137,9 @@ export function QuoteBuilder() {
         amount:        total,              // canonical ₹ (books stay INR)
         currency:      currency,
         exchange_rate: isForeign ? exchangeRate : 1,
+        // R-045: where the rate came from + its date; generate_invoice's trigger copies both onto the invoice.
+        fx_source:     isForeign ? (fxInfo?.source ?? null) : null,
+        fx_date:       isForeign ? (fxInfo?.asOf ?? null) : null,
         billing_cycle: effectiveCycle,   // quote-level invoice frequency (0161)
         // Invoice payment terms → generate_invoice stamps the due date (0163).
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
@@ -1693,7 +1702,12 @@ export function QuoteBuilder() {
                         type="text"
                         inputMode="decimal"
                         value={String(exchangeRate)}
-                        onChange={(e) => { setExchangeRate(parseFloat(e.target.value) || 1); setFxAuto(false); }}
+                        onChange={(e) => {
+                          setExchangeRate(parseFloat(e.target.value) || 1);
+                          setFxAuto(false);
+                          // R-045: a typed rate is the owner's own — saved as source "manual", dated today.
+                          setFxInfo(manualFxStamp(istToday()));
+                        }}
                         disabled={!isForeign}
                         placeholder="₹ / unit"
                       />
@@ -1745,8 +1759,14 @@ export function QuoteBuilder() {
                 ) : isForeign && fxAuto ? (
                   <p className="text-2xs text-emerald">
                     ✓ Latest rate: <b>₹{exchangeRate}/{currency}</b>
-                    {fxInfo?.asOf ? ` · as of ${fxInfo.asOf}` : ""} (auto — you can edit to override).
+                    {fxInfo?.asOf ? ` · as of ${fxInfo.asOf}` : ""}
+                    {fxInfo?.label ? ` · ${fxInfo.label}` : ""} (auto — you can edit to override).
                     Books are recorded in ₹ (GST).
+                    {fxInfo?.kind === "indicative" && (
+                      <span className="block text-amber-ink">
+                        ⚠ Indicative rate, not the RBI reference rate. For GST use the RBI/FBIL reference rate (or the CBIC customs rate) for the invoice date — type it in the rate box if it differs.
+                      </span>
+                    )}
                   </p>
                 ) : isForeign ? (
                   <p className="text-2xs text-indigo-ink">

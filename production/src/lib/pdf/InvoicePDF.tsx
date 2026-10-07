@@ -19,7 +19,8 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
-import { pdfRupee } from "./pdf-money";
+import { pdfRupee, pdfSafeMoney } from "./pdf-money";
+import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { invoicePaidInFull, lineDomainNote } from "./invoice-display";
 import { isRenderableLogo } from "./logo";
@@ -68,6 +69,9 @@ export interface InvoicePDFProps {
   customerCountry?: string | null;   // foreign → export (zero-rated under LUT)
   currency?:        string | null;   // billing currency (books stay ₹)
   exchangeRate?:    number | null;   // INR per unit of currency
+  /** R-045: where exchangeRate came from (fbil | er-api | frankfurter | manual) and its date. */
+  fxSource?:        string | null;
+  fxDate?:          string | null;
   termsConditions?: string | null;   // document-level T&C (migration 0162)
 
   // Tenant (supplier)
@@ -432,7 +436,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
     invoice, lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState = false,
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
-    currency, exchangeRate, termsConditions,
+    currency, exchangeRate, fxSource = null, fxDate = null, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
     lutNumber = null, udyamNumber = null,
     upiQrDataUrl, upiVpa, payMethods = null,
@@ -638,11 +642,30 @@ export function InvoicePDF(props: InvoicePDFProps) {
               <Text style={s.grandValue}>{money(total)}</Text>
             </View>
             {isForeign && (
-              /* Books stay ₹ — print the INR equivalent for GST / GSTR-1 filing. */
-              <View style={s.totalRow}>
-                <Text style={s.totalLabel}>INR equivalent (for GST) @ Rs {exchangeRate}/{currency}</Text>
-                <Text style={s.totalValue}>{pdfRupee(total)}</Text>
-              </View>
+              /* Books stay ₹ — print the INR equivalent for GST / GSTR-1 filing.
+                 R-045: say WHICH rate (FBIL/RBI reference, indicative, or the supplier's own)
+                 and its date, and give the taxable value and GST in ₹ — GST is always in ₹. */
+              <>
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>
+                    {pdfSafeMoney(fxEquivalentLine({ currency: currency ?? "", rate, source: fxSource, date: fxDate }))}
+                  </Text>
+                </View>
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>Taxable value (INR)</Text>
+                  <Text style={s.totalValue}>{pdfRupee(taxable)}</Text>
+                </View>
+                {tax > 0 && (
+                  <View style={s.totalRow}>
+                    <Text style={s.totalLabel}>GST (INR)</Text>
+                    <Text style={s.totalValue}>{pdfRupee(tax)}</Text>
+                  </View>
+                )}
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>Invoice total (INR, for GST)</Text>
+                  <Text style={s.totalValue}>{pdfRupee(total)}</Text>
+                </View>
+              </>
             )}
           </View>
         </View>

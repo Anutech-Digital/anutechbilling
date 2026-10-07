@@ -20,6 +20,22 @@ import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 
+/**
+ * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
+ * 20261007251000 carries its own (snapshot at issue — the quote can be edited later, the
+ * issued invoice cannot); an older invoice falls back to its quote exactly as before, with
+ * no source/date because nothing recorded them at the time.
+ */
+export function invoiceFx(
+  invoice: Pick<Invoice, "currency" | "fx_rate" | "fx_source" | "fx_date">,
+  quote: { currency?: string | null; exchange_rate?: number | null } | null,
+): { currency: string | null; exchangeRate: number | null; fxSource: string | null; fxDate: string | null } {
+  if (invoice.currency && invoice.fx_rate != null && invoice.fx_rate > 0) {
+    return { currency: invoice.currency, exchangeRate: invoice.fx_rate, fxSource: invoice.fx_source ?? null, fxDate: invoice.fx_date ?? null };
+  }
+  return { currency: quote?.currency ?? null, exchangeRate: quote?.exchange_rate ?? null, fxSource: null, fxDate: null };
+}
+
 /** Supplier fields needed on both PDFs (from the tenants row). */
 export interface TenantPdfInfo {
   name:        string;
@@ -195,10 +211,9 @@ export function buildInvoicePdfProps(args: {
     udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
-    // Foreign-currency display (books stay ₹). Carried on the backing quote — an
-    // export client's PDF then shows the USD (etc.) equivalent, not just ₹.
-    currency:      quote?.currency ?? null,
-    exchangeRate:  quote?.exchange_rate ?? null,
+    // Foreign-currency display (books stay ₹). R-045: the rate frozen on the invoice at
+    // issue (+ its source and date); older invoices fall back to the backing quote.
+    ...invoiceFx(invoice, quote),
     termsConditions: quote?.terms_conditions ?? null,
     /* R-038. Derived once, here, so the footer sentence and the bank block cannot
        disagree — and so "Razorpay" appears only when Razorpay actually exists. */
@@ -280,6 +295,8 @@ export function buildQuotePdfProps(args: {
     placeOfSupply: pos.label,
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
+    fxSource:      quote.fx_source ?? null,
+    fxDate:        quote.fx_date ?? null,
     billingCycle:  quote.billing_cycle,
     notes:         quote.notes ?? undefined,
     termsConditions: quote.terms_conditions ?? null,
