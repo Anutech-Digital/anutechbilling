@@ -1,3 +1,5 @@
+-- deploy-key: compliance
+-- deploy-peek: (exists(select 1 from pg_constraint where conname='tenants_business_type_check') and exists(select 1 from pg_constraint where conname='tenants_gst_filing_check'))
 -- R-262: business type + GST filing mode on the tenant, so the Compliance Calendar
 -- stops treating every business as a Pvt Ltd filing GST monthly.
 --

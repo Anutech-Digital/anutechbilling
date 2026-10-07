@@ -64,7 +64,9 @@ import { canonicalSource, sourceOptions } from "@/lib/leads/lead-sources";
 import { autoDealValue, dealFormErrors, needsDealDetails, type DealFormField } from "@/lib/leads/deal-rules";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { useCustomers } from "@/lib/queries/customers";
-import type { Lead, LeadPriority } from "@/lib/supabase/database.types";
+import type { Item, Lead, LeadPriority } from "@/lib/supabase/database.types";
+import { useItems } from "@/lib/queries/items";
+import { planPricePerSeat, type PlanPrice } from "@/lib/catalog/plan-price";
 import { formatIstDate, istToday } from "@/lib/dates/ist";
 import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
 import { STAGE_META } from "@/lib/leads/stage-meta";
@@ -137,9 +139,10 @@ const STEP_FIELDS = [
    "subscription_type", "billing_cycle", "current_provider", "follow_up_date", "expected_close_date", "owner_id", "notes"],
 ] as const;
 
-/** The list price per seat per month for a plan, or undefined (Custom / Mixed, unknown). */
-function listPricePerSeat(plan: string): number | undefined {
-  return PLAN_PRICE_PER_SEAT_PM[plan];
+/** R-387: the plan's price is the tenant catalogue's (lib/catalog/plan-price) — the map above is only
+    the labelled fallback for plans the catalogue does not sell. Inside the form use `priceFor`. */
+function planPrice(plan: string, items: readonly Item[] | undefined): PlanPrice | undefined {
+  return planPricePerSeat(plan, items, PLAN_PRICE_PER_SEAT_PM);
 }
 
 /* ── Two kinds of enquiry ─────────────────────────────────────────────────────
@@ -268,6 +271,13 @@ interface AddLeadFormProps {
 
 export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: AddLeadFormProps) {
   const router    = useRouter();
+  /* R-387: plan prices come from this tenant's catalogue — the same rows and arithmetic a quote
+     uses — so Add lead and Quote → Add item cannot show one product at two prices. The ref lets
+     the open-time reset read the latest rows without re-running when they arrive. */
+  const { data: catalogItems } = useItems();
+  const catalogRef = React.useRef<Item[] | undefined>(undefined);
+  React.useEffect(() => { catalogRef.current = catalogItems; }, [catalogItems]);
+  const listPricePerSeat = (p: string): number | undefined => planPrice(p, catalogItems)?.perSeatPm;
   const pathname  = usePathname();
   const createLead = useCreateLead();
   /* An existing customer's new need — more seats, another product, a software project
@@ -614,7 +624,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
       {
         const s = editingLead.seats ?? 0;
         const implied = editingLead.value && s > 0 ? Math.round(editingLead.value / s / 12) : undefined;
-        const p = implied ?? listPricePerSeat(editingLead.plan ?? "");
+        const p = implied ?? planPrice(editingLead.plan ?? "", catalogRef.current)?.perSeatPm;
         setPriceText(p ? commitMoney(String(p)) : "");
       }
       setPriority((editingLead.priority as LeadPriority) ?? "medium");
@@ -1166,11 +1176,24 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 onChange={(e) => { armAutoCalc(); setPriceText(liveMoney(e.target.value)); }}
                 onBlur={() => setPriceText((t) => commitMoney(t))}
               />
-              {listPricePerSeat(plan) !== undefined && pricePerSeat !== listPricePerSeat(plan) && (
-                <p className="mt-1 text-xs text-ink-3">
-                  List price ₹{listPricePerSeat(plan)!.toLocaleString("en-IN")}
-                </p>
-              )}
+              {(() => {
+                /* R-387: say where the starting price came from. A plan this tenant does not
+                   sell in its catalogue gets the app's list price — labelled, never passed off
+                   as the catalogue's (a quote from the catalogue would not have it). */
+                const pp = planPrice(plan, catalogItems);
+                if (!pp) return null;
+                const amount = `₹${pp.perSeatPm.toLocaleString("en-IN")}`;
+                if (pp.source === "list") {
+                  return (
+                    <p className="mt-1 text-xs text-amber-ink" data-testid="plan-price-source">
+                      List price {amount} — not in your catalogue
+                    </p>
+                  );
+                }
+                return pricePerSeat !== pp.perSeatPm ? (
+                  <p className="mt-1 text-xs text-ink-3" data-testid="plan-price-source">Catalogue price {amount}</p>
+                ) : null;
+              })()}
             </FormField>
           </div>
           {/* "(whole rupees)" said in the label, not left to be discovered. This app

@@ -1,3 +1,5 @@
+-- deploy-key: salarybill
+-- deploy-peek: exists(select 1 from pg_policies where schemaname='public' and tablename='salary_payments' and policyname='salary_payments_select_money_roles' and qual like '%billing%')
 -- R-254 (7 Oct 2026): billing may READ salary_payments, so the Payroll screen shows the real
 -- Paid / Partial / Awaiting-reconcile status instead of an empty column.
 --

@@ -1,3 +1,5 @@
+-- deploy-key: credann
+-- deploy-peek: (exists (select 1 from information_schema.columns where table_schema='public' and table_name='quotes' and column_name='credit_annual_override_reason') and exists (select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='udyam_number'))
 -- R-368 (7 Oct 2026): pay-later customers who do not pay — the parts that need the database.
 --
 -- Pardeep's decisions (7 Oct):

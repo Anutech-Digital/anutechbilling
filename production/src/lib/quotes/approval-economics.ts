@@ -9,6 +9,7 @@
  */
 import type { Quote, QuoteLineItem } from "@/lib/supabase/database.types";
 import type { QuoteEconomics, ApprovalRecord } from "./approval";
+import { lineCostUnknown } from "./line-cost";
 
 export function lineEconomics(lines: readonly QuoteLineItem[]): QuoteEconomics {
   let subtotal = 0;
@@ -24,7 +25,9 @@ export function lineEconomics(lines: readonly QuoteLineItem[]): QuoteEconomics {
        report every legacy quote as a 100% discount. */
     listTotal += l.qty * (l.list_rate ?? l.rate);
     totalCost += l.qty * l.cost;
-    if (l.cost <= 0 && l.rate > 0) costUnknown = true;
+    /* R-388: one rule (lib/quotes/line-cost.ts) — our own support plan at ₹0 is a KNOWN
+       cost, not "no vendor cost"; a vendor line at ₹0 is still unknown. */
+    if (lineCostUnknown(l)) costUnknown = true;
   }
 
   return { subtotal, listTotal, totalCost, costUnknown };

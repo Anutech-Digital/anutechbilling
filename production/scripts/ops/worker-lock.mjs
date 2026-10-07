@@ -29,14 +29,16 @@
  * another worker pushed in the same minute). Waits for the push turn, then fetch + rebase +
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
- * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 3 = MAX_WORKERS (4) already
+ * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = MAX_WORKERS (4) already
  * running. Either way: stop, do not work around it.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
 
@@ -172,12 +174,49 @@ function tscWithTurn(card) {
   });
 }
 
+/**
+ * R-385: the repo-scan / ratchet suites (scripts/ops/push-guard-suites.mjs) on the REBASED code.
+ * 7 Oct: two pushes broke CI with tests outside the worker's own area. Returns the failed files
+ * ([] = green). Runs inside the heavy turn so it never overlaps another worker's tsc.
+ * vitest is started as `node node_modules/vitest/vitest.mjs` — no shell, so "(app)" paths stay intact.
+ */
+export function runGuardSuites(card) {
+  return withTurn("heavy", card, "guard tests chala raha hai", async () => {
+    const root = process.cwd();
+    const missing = PUSH_GUARD_SUITES.filter((f) => !fs.existsSync(path.join(root, f)));
+    const files = PUSH_GUARD_SUITES.filter((f) => !missing.includes(f));
+    if (missing.length) console.log(`(guard list me ${missing.length} file nahi mili, chhodi: ${missing.join(", ")})`);
+    const out = path.join(os.tmpdir(), `push-guard-${card}-${Date.now()}.json`);
+    const t0 = Date.now();
+    let crashed = null;
+    try {
+      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`, ...files],
+        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+    } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
+    const ms = Date.now() - t0;
+    let failed = [];
+    try { failed = failedSuites(JSON.parse(fs.readFileSync(out, "utf8")), root); } catch {}
+    fs.rmSync(out, { force: true });
+    if (crashed && !failed.length) failed = [`(vitest fail, koi file naam nahi mila)\n${crashed}`];
+    console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
+    if (ms > PUSH_GUARD_BUDGET_MS) console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
+    return failed;
+  });
+}
+
 async function pushWithTurn(card) {
   await withTurn("push", card, "push kar raha hai", async () => {
     sh("git fetch -q anutech");
     try { sh("git rebase -q anutech/manager-pardeep"); }
     catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
     if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
+    const failed = await runGuardSuites(card);
+    if (failed.length) {
+      console.error("✗ Guard test fail — push NAHI hua (repo-scan/ratchet test, shayad tumhare area ke bahar ka):");
+      for (const f of failed) console.error(`   ${f}`);
+      console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      process.exit(5);
+    }
     const branch = sh("git branch --show-current").trim();
     sh(`git push -q anutech ${branch}:manager-pardeep`);
     console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);

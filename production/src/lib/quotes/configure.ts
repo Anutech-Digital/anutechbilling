@@ -30,6 +30,7 @@
  */
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 import { slabPricing } from "./volume-tiers";
+import { lineCostUnknown } from "./line-cost";
 import { requiredApproval, type QuoteEconomics, type ApprovalRequirement } from "./approval";
 
 /** What the customer sends back: per line, how many seats and whether it is included. */
@@ -149,7 +150,8 @@ export function configureQuote(
     subtotal,
     listTotal: live.reduce((s, c) => s + c.qty * (c.line.list_rate ?? c.rate), 0),
     totalCost: live.reduce((s, c) => s + c.qty * c.cost, 0),
-    costUnknown: live.some((c) => c.cost <= 0 && c.rate > 0),
+    /* R-388: shared rule — the support plan at ₹0 is a known cost. */
+    costUnknown: live.some((c) => lineCostUnknown({ cost: c.cost, rate: c.rate, item_id: c.line.item_id })),
   };
 
   const approval = requiredApproval(economics);

@@ -1,3 +1,5 @@
+-- deploy-key: fbclaim
+-- deploy-peek: (exists (select 1 from information_schema.columns where table_schema='public' and table_name='feedback' and column_name='agent_card') and exists (select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='feedback_auto_send'))
 -- ============================================================================
 -- R-357 (7 Oct 2026): bug report -> AI fix, fully automatic.
 --

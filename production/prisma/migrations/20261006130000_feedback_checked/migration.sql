@@ -1,3 +1,5 @@
+-- deploy-key: checked
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema='public' and table_name='feedback' and column_name='checked_at')
 -- ============================================================================
 -- R-188 (6 Oct 2026): "Did I already check this fixed report in a browser?"
 --

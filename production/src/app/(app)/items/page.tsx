@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { catalogCostCoverage } from "@/lib/catalog/cost-coverage";
+import { workspaceListPriceGap, type ListPriceGap } from "@/lib/catalog/workspace-floor";
 import { headlinePrice, isOwnService } from "@/lib/catalog/headline-price";
 import {
   DropdownMenu,
@@ -181,6 +182,11 @@ export default function ItemsPage() {
      separately — an average over the rows we actually know is a real number; an
      average that quietly includes invented ones is not. */
   const { priced, unpriced, avgMarginPct: avgMargin } = catalogCostCoverage(active);
+  /* R-387: a Google Workspace row stored under the list price. Quotes, the lead form and the
+     website already use the list price (the R-205 floor), so this page was the one place still
+     showing ₹736 for a product every quote prices at ₹1,080. Named, with both numbers, so the
+     owner fixes the row — the app never rewrites a stored price itself. */
+  const listGaps = active.map((i) => workspaceListPriceGap(i)).filter((g): g is ListPriceGap => g !== null);
   const totalMrr =
     active.length > 0
       ? Math.round(active.reduce((s, i) => s + (i.msrp - i.wholesale), 0) / active.length)
@@ -297,6 +303,27 @@ export default function ItemsPage() {
             {" — "}shown as ₹0 below. Their margin cannot be calculated, so the app cannot warn
             you when one is sold below cost, and they are left out of the average above.
             Edit each one and enter what your vendor charges you.
+          </p>
+        </div>
+      )}
+
+      {/* R-387 — catalogue price under the Google Workspace list price. */}
+      {!isLoading && listGaps.length > 0 && (
+        <div className="rounded-xl border border-amber/40 bg-amber-soft/40 p-4" role="status" data-testid="list-price-gap">
+          <p className="text-sm font-semibold text-amber-ink flex items-center gap-1.5">
+            <Icon name="alert" size={15} />
+            {listGaps.length} {listGaps.length === 1 ? "price is" : "prices are"} below the list price
+          </p>
+          <ul className="mt-1 text-xs text-ink-2 leading-relaxed list-disc pl-5">
+            {listGaps.map((g) => (
+              <li key={g.itemId}>
+                {g.name}: catalogue {rupee(g.catalogPm)}/seat/mo, list {rupee(g.listPm)}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-ink-2 leading-relaxed">
+            Quotes, leads and the website use the list price. Edit these rows so this page shows
+            what customers are charged.
           </p>
         </div>
       )}

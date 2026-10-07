@@ -1,3 +1,5 @@
+-- deploy-key: renewrate
+-- deploy-peek: exists(select 1 from pg_proc where proname='record_payment' and pronamespace='public'::regnamespace and prosrc like '%renewal_rate%')
 -- R-329 (7 Oct 2026): a cart coupon is for the FIRST payment only; the subscription renews
 -- at list price.
 --

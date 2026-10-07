@@ -1,3 +1,5 @@
+-- deploy-key: oneterm
+-- deploy-peek: exists(select 1 from pg_trigger where tgname='trg_quotes_one_billing_term')
 -- 20261007160000_quote_one_billing_term.sql
 --
 -- R-381 (money bug, 7 Oct 2026). A quote with one flex-monthly line and one annual line

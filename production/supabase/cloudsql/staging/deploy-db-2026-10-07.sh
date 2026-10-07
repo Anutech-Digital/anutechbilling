@@ -15,10 +15,10 @@
 #   6. PEEK again; prints "DB READY" only if every marker is true.
 # It does NOT deploy the app. When this says "DB READY", tell Claude — the code push follows.
 #
-# ADDING A MIGRATION (e.g. R-346): append ONE line to MIGS below, in file order:
-#   "<key>|<file name>|<db user>|<SQL boolean that is true once the file is in>"
-# Keys: short, unique, letters/digits only. The same line must go into the live script
-# (cloudsql/live/deploy-db-2026-10-07.sh) too.
+# ADDING A MIGRATION (R-385): do NOT hand-edit MIGS. Give the migration a header line
+#   -- deploy-peek: <SQL boolean that is true once the file is in>   (+ optional -- deploy-key: <key>)
+# then from production/: node scripts/ops/gen-deploy-db.mjs --date 2026-10-07
+# It rewrites MIGS here AND in cloudsql/live/deploy-db-2026-10-07.sh, nothing else.
 set -euo pipefail
 P=resellsubsos-prod
 I=resellersos-staging-db
