@@ -56,6 +56,7 @@ MIGS=(
   "auditactor|20261007240000_audit_actor_admin_writes.sql|resellersos_migration|exists(select 1 from pg_proc where proname='audit_service_actor' and pronamespace='public'::regnamespace)"
   "termsgrant|20261007250000_quote_terms_fn_grant.sql|resellersos_migration|has_function_privilege('authenticated', 'public.quote_line_terms_mixed(jsonb)', 'execute')"
   "invfx|20261007251000_invoice_fx_rate.sql|resellersos_migration|(exists(select 1 from pg_trigger where tgname='trg_invoice_fx_snapshot') and exists(select 1 from pg_trigger where tgname='trg_invoice_fx_freeze') and exists(select 1 from information_schema.columns where table_schema='public' and table_name='quotes' and column_name='fx_source'))"
+  "trghelpers|20261007260000_trigger_helper_grants.sql|resellersos_migration|has_function_privilege('authenticated', 'public.ad_channel_guess(text)', 'execute') and has_function_privilege('authenticated', 'public.referral_code_slug(text)', 'execute')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
