@@ -98,6 +98,41 @@ export function whatsappDisplay(e164: string = WHATSAPP_NUMBER): string {
   return `+${e164.slice(0, 2)} ${e164.slice(2, 7)} ${e164.slice(7)}`;
 }
 
+/**
+ * Service promises — the ONE place the website states a time (R-229, 7 Oct 2026).
+ * The site used to say "call within 30 minutes (9am–7pm)", "WhatsApp within 4 hours",
+ * "Live in 24 hours" and "same day" on different pages. Pardeep asked for realistic
+ * promises; the manager fixed these values. Every page reads them from here. Never write
+ * 24x7 or a guaranteed time anywhere — sla.test.ts greps the public site for that.
+ */
+const SLA_SHORT = {
+  firstReply: "4 working hours",
+  workspaceLive: "1 working day",
+  hostingLive: "4 working hours",
+  domainRegistered: "2 working hours",
+  sslLive: "1 working day",
+} as const;
+
+export const SLA = {
+  hours: "Mon–Sat, 10:00–19:00 IST",
+  /** Bare durations for short labels ("Live in 1 working day"). */
+  short: SLA_SHORT,
+  /** First reply by call or WhatsApp. */
+  firstReply: `within ${SLA_SHORT.firstReply}`,
+  workspaceLive: `within ${SLA_SHORT.workspaceLive} of payment and DNS verification`,
+  hostingLive: `within ${SLA_SHORT.hostingLive} of payment`,
+  domainRegistered: `within ${SLA_SHORT.domainRegistered} of payment`,
+  domainDelay: "If the registry is slow, we tell you by email.",
+  sslLive: `within ${SLA_SHORT.sslLive} of the domain pointing to us`,
+} as const;
+
+/** Three lines shown on checkout and the done page under "After you pay". */
+export const AFTER_YOU_PAY: readonly string[] = [
+  `We call or WhatsApp you ${SLA.firstReply} (${SLA.hours}).`,
+  `Hosting is live ${SLA.hostingLive}. A domain is registered ${SLA.domainRegistered}. ${SLA.domainDelay}`,
+  `Google Workspace is live ${SLA.workspaceLive}. SSL is active ${SLA.sslLive}.`,
+];
+
 export const COMPANY = {
   name: "Anutech Digital Pvt Ltd",
   short: "Anutech Digital",
@@ -107,5 +142,5 @@ export const COMPANY = {
   founder: "Pardeep Sharma",
   supportEmail: "support@anutech.in",
   partnerLine: "Google Premier Partner, since 2014",
-  hours: "Mon–Sat, 10:00–19:00 IST",
+  hours: SLA.hours,
 } as const;

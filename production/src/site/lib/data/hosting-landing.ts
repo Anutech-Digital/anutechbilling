@@ -47,7 +47,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "20 GB Bandwidth",
       "Host 1 Website",
-      "24/7 Phone & Email Support",
+      "Phone, WhatsApp & Email Support",
       "99.99% Uptime Guarantee",
       "Free Website Migration",
       "Backup",
@@ -66,7 +66,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "30 GB Bandwidth",
       "Host Multiple Websites",
-      "24/7 Phone & Email Support",
+      "Phone, WhatsApp & Email Support",
       "99.99% Uptime Guarantee",
       "Free Website Migration",
       "Backup",
@@ -85,7 +85,7 @@ export const LANDING_PLANS: readonly LandingPlan[] = [
       "Unlimited Free SSL",
       "40 GB Bandwidth",
       "Host Multiple Websites",
-      "24/7 Phone & Email Support",
+      "Phone, WhatsApp & Email Support",
       "99.99% Uptime Guarantee",
       "Free Website Migration",
       "Priority Support",
@@ -106,7 +106,7 @@ export const HOSTING_FEATURES = [
   { icon: "lock",       title: "Free SSL Certificate",        body: "Secure your website with a free SSL certificate + HTTPS activation.", tint: "bg-green-50 text-green-500" },
   { icon: "refresh",    title: "Daily Backups",               body: "Automatic daily backups keep your data safe and restorable.", tint: "bg-sky-50 text-sky-500" },
   { icon: "rocket",     title: "Free Website Migration",      body: "We'll move your website to Anutech for FREE. No technical hassle.", tint: "bg-rose-50 text-rose-500" },
-  { icon: "headphones", title: "24×7 Expert Support",         body: "Real people, real support. Get help anytime via chat, ticket or call.", tint: "bg-orange-50 text-orange-500" },
+  { icon: "headphones", title: "Real People, Real Support",   body: "Help on call, WhatsApp or email, Mon–Sat 10:00–19:00 IST, from people who know your account.", tint: "bg-orange-50 text-orange-500" },
 ] as const;
 
 /** How a typical host compares, per row. */
@@ -117,7 +117,7 @@ export const HOSTING_COMPARISON: readonly { feature: string; typical: "yes" | "n
   { feature: "15-Day Free Trial",           typical: "no" },
   { feature: "Daily Backups",               typical: "yes" },
   { feature: "99.99% Uptime Guarantee",     typical: "partial" },
-  { feature: "24×7 Expert Support",         typical: "no" },
+  { feature: "Support From Real People",     typical: "no" },
   { feature: "No Hidden Fees",              typical: "no" },
 ] as const;
 

@@ -37,7 +37,7 @@ import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
-import { COMPANY, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -584,9 +584,9 @@ interface TimelineStep { time: string; title: string; body: string; }
 const POST_PURCHASE_TIMELINE: TimelineStep[] = [
   { time: "0 min",  title: "You pay via Razorpay",         body: "UPI, NEFT, card, net-banking — your choice."                                       },
   { time: "Right away", title: "GST invoice in your inbox", body: "The order confirmation email carries your GST tax invoice."                       },
-  { time: "Same day", title: "Onboarding call",            body: "We call or WhatsApp to confirm domain, MX records, and migration source."           },
-  { time: "Same day", title: "Domain verified",            body: "DNS configured, admin console handed over with your owner credentials."           },
-  { time: "24 hours", title: "Team emails live",           body: "Custom @yourcompany.com working. Old mail still migrating in background."         },
+  { time: SLA.short.firstReply, title: "Onboarding call",     body: `We call or WhatsApp ${SLA.firstReply} to confirm domain, MX records, and migration source.` },
+  { time: "Your DNS step", title: "Domain verified",       body: "You add the DNS record we send; we verify it and hand over the admin console."     },
+  { time: SLA.short.workspaceLive, title: "Team emails live", body: `Custom @yourcompany.com working ${SLA.workspaceLive}. Old mail keeps migrating in the background.` },
 ];
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1855,8 +1855,8 @@ export function BuyWorkspaceClient({
           />
           <HowItWorksStep
             number={3}
-            title="Live in 24 hours"
-            body="DNS verification, MX records, mailbox provisioning, and migration from your old provider — all hands-on by us."
+            title={`Live in ${SLA.short.workspaceLive}`}
+            body={`Live ${SLA.workspaceLive}. MX records, mailbox setup and migration from your old provider — all hands-on by us.`}
           />
         </div>
       </section>
@@ -2412,7 +2412,7 @@ function TrialDialog({
       toast.error(json.error ?? "Could not start trial. Please try again.");
       return;
     }
-    toast.success("Trial requested! Pardeep will WhatsApp you within 4 hours.");
+    toast.success(`Trial requested! Pardeep will WhatsApp you ${SLA.firstReply}.`);
     onClose();
   }
 
@@ -2451,9 +2451,9 @@ function TrialDialog({
 
           {/* Trial promise band */}
           <div className="mb-5 p-3 rounded-lg bg-emerald-soft/40 border border-emerald/20 text-xs text-ink-2 leading-relaxed">
-            <b className="text-ink">Within 4 hours:</b> Pardeep WhatsApps you to verify
+            <b className="text-ink">First call:</b> Pardeep WhatsApps you {SLA.firstReply} to verify
             domain. <br />
-            <b className="text-ink">Within 24 hours:</b> Your team is on Workspace.
+            <b className="text-ink">Live:</b> Your team is on Workspace {SLA.workspaceLive}.
             <br />
             <b className="text-ink">Day 12:</b> We check in re: convert / extend / cancel.
           </div>
@@ -2547,7 +2547,7 @@ function EnquiryDialog({
       toast.error(json.error ?? "Could not submit enquiry. Please try again.");
       return;
     }
-    toast.success("Got it! We'll call you within 30 minutes.");
+    toast.success(`Got it! We'll call you ${SLA.firstReply}.`);
     onClose();
   }
 
@@ -2637,7 +2637,7 @@ function EnquiryDialog({
             </Button>
 
             <p className="text-2xs text-ink-3 text-center leading-relaxed">
-              We'll call within 30 minutes (Mon–Sat, 9am–7pm IST). No spam.
+              We'll call {SLA.firstReply} ({SLA.hours}). No spam.
             </p>
           </form>
         </div>

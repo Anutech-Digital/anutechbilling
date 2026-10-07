@@ -20,6 +20,7 @@
 import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
 import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
+import { SLA } from "../config";
 import type { MergedEdition } from "../live-catalog";
 
 export interface QuoteProduct {
@@ -85,7 +86,7 @@ const hosting: QuoteProduct[] = HOSTING_TIERS.map((h) => ({
 }));
 
 const ssl: QuoteProduct[] = [
-  { name: "SSL Positive", label: "Positive SSL — DV", vendor: "SSL & security", tags: "ssl certificate https dv secure padlock", note: "Single domain · issued same day.", annual: 899, monthly: 899, per: "certificate", cycle: "yr" },
+  { name: "SSL Positive", label: "Positive SSL — DV", vendor: "SSL & security", tags: "ssl certificate https dv secure padlock", note: `Single domain · active ${SLA.sslLive}.`, annual: 899, monthly: 899, per: "certificate", cycle: "yr" },
   { name: "SSL Wildcard", label: "Wildcard SSL — DV", vendor: "SSL & security", tags: "ssl certificate https wildcard subdomains secure", note: "Unlimited subdomains on one domain.", annual: 4499, monthly: 4499, per: "certificate", cycle: "yr" },
 ];
 

@@ -35,6 +35,7 @@ import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, type DomainResult } from "@/site/lib/domain-search";
 import { TLDS, type Tld } from "@/site/lib/data/catalog";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
+import { SLA } from "@/site/lib/config";
 import {
   MAILBOX_YR,
   ANCHOR_TIER,
@@ -523,7 +524,7 @@ export function DomainLanding() {
         <div style={{ border: `1.5px solid ${C.accent}`, background: C.accSurf2, borderRadius: 18, padding: mob ? "26px 22px" : "34px 36px", display: "grid", gridTemplateColumns: mid ? "1fr" : "1.3fr 0.7fr", gap: mid ? 20 : 32, alignItems: "center" }}>
           <div>
             <h2 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: mob ? 28 : 38, color: C.ink, margin: 0 }}>Name, hosting and mailbox — one invoice, one afternoon.</h2>
-            <p style={{ fontSize: 15.5, color: C.accentDark, lineHeight: 1.6, margin: "10px 0 0" }}>Search the name, pick a plan, and our team wires the DNS and mailbox the same day. Nothing is charged until you review the cart.</p>
+            <p style={{ fontSize: 15.5, color: C.accentDark, lineHeight: 1.6, margin: "10px 0 0" }}>Search the name, pick a plan, and our team wires the DNS and mailbox for you — the domain is registered {SLA.domainRegistered}. Nothing is charged until you review the cart.</p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: mid ? "flex-start" : "flex-end" }}>
             <a href="/cart" style={{ background: C.accent, color: "#fff", borderRadius: 10, padding: "15px 24px", fontSize: 15.5, fontWeight: 600, textDecoration: "none" }}>Review my cart</a>
@@ -592,7 +593,7 @@ function ResultBlock(p: {
             <span style={{ fontSize: 13, color: C.accentDark }}>for the name</span>
           </div>
           <p style={{ fontSize: 13, color: C.accentDark, margin: "8px 0 0", lineHeight: 1.5 }}>
-            + {tier.name} hosting at {inr(yearly ? tier.yearlyMo : tier.monthly)}/mo · {bundleFree ? "mailbox included free, DNS wired the same day" : "renews at the same price"}
+            + {tier.name} hosting at {inr(yearly ? tier.yearlyMo : tier.monthly)}/mo · {bundleFree ? "mailbox included free, DNS wired for you" : "renews at the same price"}
           </p>
           {!bundleFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>You&apos;re on monthly billing — the free domain and free mailbox need a yearly plan.</p>}
         </button>

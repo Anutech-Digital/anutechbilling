@@ -23,6 +23,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
 import { CLIENT_AREA_URL, COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
+import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 
 type Tone = "success" | "warn";
 interface Step { title: string; body: ReactNode; done?: boolean }
@@ -236,6 +237,7 @@ export default function DonePage() {
         ) : (
           <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>Your order number is in the confirmation email.</div>
         )}
+        <AfterYouPay style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }} />
         <HelpBlock subject={orderNo ? `My order ${orderNo}` : "My order"} />
       </>}
       actions={<>

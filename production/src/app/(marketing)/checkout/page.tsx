@@ -33,6 +33,7 @@ import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } f
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
+import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 
@@ -712,6 +713,7 @@ export default function CheckoutPage() {
             <div className="meta" style={{ marginTop: 10 }}>
               GST invoice with GSTIN issued on every order — it reaches your inbox with the receipt.
             </div>
+            <AfterYouPay style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-hairline)" }} />
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-hairline)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12.5, color: "var(--text-muted)" }}>
               <span aria-hidden>🔒</span>
               <span>Payments secured &amp; powered by</span>
