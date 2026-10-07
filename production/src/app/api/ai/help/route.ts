@@ -23,6 +23,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { maskPII } from "@/lib/ux/signals";
 import { pagePurpose } from "@/lib/ai/page-purpose";
 import { helpFacts } from "@/lib/ai/help-facts";
+import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES } from "@/lib/ai/app-help";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
@@ -96,11 +97,19 @@ export async function POST(request: NextRequest) {
      reports, which are about what just broke. */
   const facts = me?.tenant_id && mode !== "error" ? await helpFacts(supabase, me.tenant_id).catch(() => null) : null;
 
+  /* R-352: the page's last browser test run (owner/manager, RLS) so "Check this page" does
+     not hand back tests that already passed. No table yet / no run / no access → null, and
+     the prompt is what it was before. */
+  const lastRun = me?.tenant_id && (mode === "scan" || mode === "chat")
+    ? await loadLastPageTestRun(supabase, me.tenant_id, pagePath ?? null)
+    : null;
+  const testHistory = testHistoryForPrompt(lastRun, process.env.BUILD_SHA?.trim() || "dev");
+
   let failure = "";
   const raw = await geminiJson<unknown>({
     apiKey: gemini.apiKey,
     model: gemini.model,
-    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath) }),
+    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory }),
     user: helpUserTurn(messages, {
       trail: trail.length ? trailForPrompt(trail) : null,
       findings: mode === "scan" ? findingsForPrompt(findings) : null,

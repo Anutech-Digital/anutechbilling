@@ -30,6 +30,7 @@ import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
+import { loadLastPageTestRun, lastTestedLine, summarizeRun, type PageTestRun } from "@/lib/ai/page-test-runs";
 import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
 import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
@@ -204,6 +205,26 @@ function CropOverlay({ src, onDone, onCancel }: { src: HTMLCanvasElement; onDone
   );
 }
 
+/**
+ * R-352: "Last tested 7 Oct, 10:52 · 5 ✓ 1 ✗" at the top of AI Help, with the failed tests
+ * named — so the person sees what the browser run already covered before asking for more.
+ */
+export function LastTestedNote({ run }: { run: PageTestRun | null }) {
+  if (!run) return null;
+  const { failedTests } = summarizeRun(run);
+  return (
+    <div data-testid="ai-help-last-tested" className="px-3 py-1.5 border-b border-hairline text-2xs text-ink-2">
+      <div className="font-semibold">{lastTestedLine(run)}</div>
+      {failedTests.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5 text-rose">
+          {failedTests.slice(0, 3).map((f, i) => <li key={i} className="break-words">✗ {f}</li>)}
+          {failedTests.length > 3 && <li>+{failedTests.length - 3} more</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface ChatItem extends HelpMessage {
   /** R-189: screenshot sent with this message */
   image?: string;
@@ -363,6 +384,16 @@ export function AiHelp() {
     savePanelSize(drag.current.last);
     drag.current = null;
   };
+  /* R-352: this page's last browser test run. Read with the person's login (owner/manager by
+     RLS); no table yet, no run or no access → nothing is shown. */
+  const [lastRun, setLastRun] = React.useState<PageTestRun | null>(null);
+  const tenantId = currentUser?.tenantId ?? null;
+  React.useEffect(() => {
+    if (!open || !tenantId) return;
+    let live = true;
+    void loadLastPageTestRun(createClient(), tenantId, pathname).then((r) => { if (live) setLastRun(r); });
+    return () => { live = false; setLastRun(null); };
+  }, [open, tenantId, pathname]);
   const [items, setItems] = React.useState<ChatItem[]>([]);
   const [text, setText] = React.useState("");
   const [busy, setBusy] = React.useState<false | HelpMode>(false);
@@ -395,7 +426,7 @@ export function AiHelp() {
   }, []);
   /* R-196: copy the "Test next" list as a prompt for a new Claude session to run in its browser. */
   async function copyTestRun(page: string, tests: string[]) {
-    const prompt = buildTestRunPrompt({ pagePath: page, tests });
+    const prompt = buildTestRunPrompt({ pagePath: page, tests, tenantId: currentUser?.tenantId ?? null });
     let ok = false;
     try { await navigator.clipboard.writeText(prompt); ok = true; } catch {
       try {
@@ -593,6 +624,7 @@ export function AiHelp() {
               Check this page
             </Button>
           </div>
+          <LastTestedNote run={lastRun} />
 
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {items.length === 0 && (

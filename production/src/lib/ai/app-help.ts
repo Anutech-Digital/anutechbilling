@@ -70,7 +70,7 @@ const APP_FACTS = [
   "There is a 'Report Bug' button in the top bar (Ctrl+Shift+B). Reports go to Admin → Feedback, where an AI triages them.",
 ];
 
-export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null }): string {
+export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null; testHistory?: string | null }): string {
   const mode = ctx.mode ?? "chat";
   return [
     "You are AI Help inside ResellerOS. The person is testing the app and may be confused or may have found a bug.",
@@ -95,6 +95,11 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
     "You may get WORKSPACE FACTS: this company's own setup (company GST state, GSTIN set or not, address, bank/UPI) and customers missing a GST state. Use them to find the REAL cause before guessing — e.g. a GST/IGST question: check the company state and the customer's state first. Quote the fact you used.",
     "actions (R-189): up to 3 buttons the person can press to fix it right here. Allowed kinds ONLY: {\"kind\":\"open\",\"label\",\"href\"} to open an app page (href starts with /, e.g. /settings?tab=company, /customers/<id>/edit, /invoices); {\"kind\":\"set_customer_state\",\"label\",\"customerId\",\"stateCode\"} only for a customer listed in WORKSPACE FACTS as missing a state AND only when the person told you or the facts show which state it is (never guess a state); {\"kind\":\"set_company_state\",\"label\",\"stateCode\"} only when the facts say the company state is missing and you know it (e.g. from the company GSTIN code). stateCode = 2-digit GST code. label = what the button does, short (e.g. 'Set Acme's state to Delhi (07)'). Anything else (money, invoices, emails, deleting) — explain the steps instead; never offer it as an action. Empty list when there is nothing to fix.",
     "Do not say the report is filed — the person files it with a button after reading your draft. Say: 'Draft taiyaar hai — neeche dekh kar File karein.'",
+    /* R-352: the page's last browser test run, so "Check this page" does not hand back tests
+       that already passed. Absent when there is no run (or the table is not set up yet). */
+    ...(ctx.testHistory
+      ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${ctx.testHistory}`]
+      : []),
     'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
   ].join("\n");
 }
@@ -199,8 +204,12 @@ export function askAboutSelection(raw: string | null | undefined): string | null
  * Claude Code session, which runs each test in its own browser on the LOCAL app (test data)
  * and writes the result on the work board. Pure, so the rules are tested.
  */
-export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[] }): string {
+export function buildTestRunPrompt(input: { pagePath: string; tests: readonly string[]; tenantId?: string | null }): string {
   const tests = input.tests.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
+  const tenantId = input.tenantId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.tenantId)
+    ? input.tenantId
+    : "<tenant uuid of Pardeep's workspace in the local DB>";
+  const page = input.pagePath.split(/[?#]/)[0].replace(/"/g, "");
   return [
     `Is page ke tests browser me chalao aur nateeja do. (Ye prompt ek NAYE Claude Code session me chalana hai.)`,
     "",
@@ -216,6 +225,10 @@ export function buildTestRunPrompt(input: { pagePath: string; tests: readonly st
     "Har test ke liye: browser pane me dikha kar chalao, screenshot lo, aur ✓ (chala) / ✗ (nahi chala, kya hua) likho. Koi test samajh na aaye to ✗ nahi — 'chala nahi paya, kyun' likho.",
     "✗ wale test: har ek ke liye board par card banao (title me page + kya toota, kadam, screenshot ka varnan). Fix tabhi karo jab owner kahe.",
     "NATEEJA BOARD PAR: 'Kaam ki list' (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection cards) par ek card 'Test run: <page>' status done — har test ka ✓/✗ ek line me. Samay date -u se.",
+    "NATEEJA APP ME (R-352, board ke baad): AI Help ko yaad rahe ki kya chal chuka — warna 'Check this page' wahi tests dobara deta hai. LOCAL app par bhejo:",
+    `  a) scratchpad me results.json likho: {"tenantId":"${tenantId}","page":"${page}","buildSha":"<git -C production rev-parse --short HEAD>","runBy":"AI browser test","results":[{"test":"<test, upar ki list se hubahu>","result":"pass|fail|skipped","note":"<chhota: ✗/skipped kyun>","card":"<✗ ka board card R-xxx, ho to>"}]} — har test ki ek entry.`,
+    "  b) curl -s -X POST -H \"Authorization: Bearer $(grep '^AGENT_QUEUE_TOKEN=' production/.env.local | cut -d= -f2-)\" -H 'content-type: application/json' --data @<results.json ka poora path> http://localhost:3001/api/agent/page-test-runs",
+    "  Token KABHI print/echo/log mat karo, kisi file me mat likho, chat me mat dikhao. 200 = ho gaya. 503 'migration pending' = table abhi nahi lagi — board card par likh do aur aage badho. 401/400/404 = board card par wajah likho.",
     "SESSION ARCHIVE: board par likhne ke baad ye session archive karo (mcp__ccd_session_mgmt__archive_session, session_id \"self\") — SIRF agar ye session ISI prompt se shuru hua. Pehle se koi aur baatcheet ho to archive MAT karo.",
   ].join("\n");
 }
