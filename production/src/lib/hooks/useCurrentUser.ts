@@ -8,12 +8,16 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 import { isPlatformAdmin } from "@/lib/platform";
+import { mustChangePassword } from "@/lib/auth/must-change-password";
 
 export interface CurrentUserInfo {
   userId:        string;
   authEmail:     string;
   /** ResellerOS founder (cross-tenant signups panel). Server re-checks too. */
   isPlatformAdmin: boolean;
+  /** R-391: an owner set a temporary password; the member must choose their own first.
+   *  Optional so existing fixtures stay valid; absent = false. */
+  mustChangePassword?: boolean;
   fullName:      string | null;
   initials:      string | null;
   color:         string | null;
@@ -171,6 +175,7 @@ export function useCurrentUser() {
         userId:          me.id,
         authEmail:       authData.user.email ?? "",
         isPlatformAdmin: isPlatformAdmin(authData.user.email),
+        mustChangePassword: mustChangePassword(authData.user),
         fullName:        me.full_name,
         initials:        me.initials,
         color:           me.color,

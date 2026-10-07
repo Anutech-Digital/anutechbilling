@@ -17,6 +17,7 @@ import { AiHelp } from "@/components/shared/ai-help";
 import { AttendanceReminder } from "@/components/features/attendance/attendance-reminder";
 import { ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
+import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -75,6 +76,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* The ? cheat sheet. Rendered from the same registry the handlers read, so it cannot
           list a shortcut nobody implemented — or omit one that works. */}
       <ShortcutsSheet open={helpOpen} onOpenChange={setHelpOpen} />
+
+      {/* R-391: owner-set temporary password → /change-password first. Renders nothing. */}
+      <MustChangePasswordGate />
     </div>
   );
 }

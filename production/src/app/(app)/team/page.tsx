@@ -20,6 +20,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SendResetLinkButton } from "@/components/features/team/send-reset-link-button";
+import { SetTempPasswordButton } from "@/components/features/team/set-temp-password-button";
+import { canSetTempPassword } from "@/lib/auth/temp-password";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
@@ -259,14 +261,19 @@ export default function TeamPage() {
                     </td>
                   )}
                   <td className="p-3"><Badge kind={m.is_active === false ? "muted" : "success"} dot>{m.is_active === false ? "Inactive" : "Active"}</Badge></td>
-                  {/* Owner-side recovery. resetPasswordForEmail is a PUBLIC Supabase call, so
-                      this grants no privilege the owner did not already have — it saves a trip
-                      to the Supabase dashboard, which the app never told anybody about. The
-                      owner still never learns or sets the password: the link goes to the
-                      teammate's own mailbox. */}
+                  {/* Owner-side recovery. "Send reset link" is a PUBLIC Supabase call and grants
+                      nothing new. "Set temporary password" (R-391) does let the owner know a
+                      password for a moment, so it is offered only where the server allows it
+                      (not another owner, not yourself), and the member must pick their own at
+                      the next sign-in. The server re-checks all of it. */}
                   {isOwner && (
                     <td className="p-3">
-                      <SendResetLinkButton email={m.email} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SendResetLinkButton email={m.email} />
+                        {canSetTempPassword(m, me?.userId) && (
+                          <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -366,6 +373,14 @@ export default function TeamPage() {
                     ))}
                   </select>
                 </label>
+              )}
+              {isOwner && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <SendResetLinkButton email={m.email} />
+                  {canSetTempPassword(m, me?.userId) && (
+                    <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                  )}
+                </div>
               )}
             </Card>
           </li>
