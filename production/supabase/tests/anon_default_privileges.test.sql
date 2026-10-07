@@ -27,7 +27,13 @@ begin
     raise exception 'FAIL 1: anon can EXECUTE a freshly created definer function';
   end if;
   -- 5
-  if not has_function_privilege('authenticated', 'public.__t_definer_probe()', 'EXECUTE') then
+  -- R-401: only where the DB hands authenticated a default at all. CI's Cloud SQL emulation
+  -- (sql-tests.yml) revokes every function default, as staging/live have none.
+  if exists (select 1 from pg_default_acl d
+              where d.defaclrole = 'postgres'::regrole and d.defaclobjtype = 'f'
+                and d.defaclnamespace = 'public'::regnamespace
+                and d.defaclacl::text like '%authenticated=X%')
+     and not has_function_privilege('authenticated', 'public.__t_definer_probe()', 'EXECUTE') then
     raise exception 'FAIL 5: authenticated lost its default EXECUTE';
   end if;
   -- 2

@@ -30,7 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { cn } from "@/lib/utils";
 import {
-  crmKeySchema, pullSummary, istDateTime, KEY_SOURCE_TEXT, PULL_SCHEDULE_TEXT,
+  crmKeySchema, pullSummary, istDateTime, saveKeyFailure, KEY_SOURCE_TEXT, PULL_SCHEDULE_TEXT, PLAINTEXT_KEY_NOTE,
   type CrmKeyInput, type IndiamartKeyStatus, type PullTone,
 } from "@/lib/leads/indiamart-key";
 import {
@@ -117,9 +117,7 @@ function StatusCard({ s }: { s: IndiamartKeyStatus }) {
             )}
           </div>
           {s.configured && !s.encrypted && (
-            <p className="mt-2 text-xs text-amber-ink max-w-xl">
-              SECRETS_MASTER_KEY is not set on the server, so the key is stored without encryption. Ask an admin to set it, then save the key again.
-            </p>
+            <p className="mt-2 text-xs text-amber-ink max-w-xl">{PLAINTEXT_KEY_NOTE}</p>
           )}
         </div>
       </div>
@@ -164,6 +162,11 @@ function KeyForm({ s }: { s: IndiamartKeyStatus }) {
   const confirm = useConfirm();
   const form = useForm<CrmKeyInput>({ resolver: zodResolver(crmKeySchema), defaultValues: { crm_key: "" } });
   const fieldError = form.formState.errors.crm_key?.message;
+  /* R-399: the vault refused (503, no SECRETS_MASTER_KEY) — keep its next step on screen after
+     the toast fades; pasting the key again cannot help until an admin sets the key. */
+  const vaultMissing = save.error instanceof IndiamartApiError
+    ? saveKeyFailure(save.error.status, save.error.message)
+    : null;
 
   const onSubmit = form.handleSubmit(async ({ crm_key }) => {
     try {
@@ -211,6 +214,12 @@ function KeyForm({ s }: { s: IndiamartKeyStatus }) {
             {...form.register("crm_key")}
           />
         </FormField>
+        {vaultMissing?.vaultMissing && (
+          <div className="rounded-lg border border-rose/30 bg-rose-soft/30 px-3 py-2.5" role="alert">
+            <p className="text-sm font-medium text-ink">{vaultMissing.title}</p>
+            <p className="text-xs text-ink-2 mt-0.5 break-words">{vaultMissing.description}</p>
+          </div>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <Button type="submit" variant="primary" icon="check" loading={save.isPending} disabled={remove.isPending}>
             {save.isPending ? "Saving…" : s.configured ? "Save new key" : "Save key"}

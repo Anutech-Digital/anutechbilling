@@ -24,7 +24,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +49,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   }
 
   // ── 2. Load subscription + verify tenant scope ──────────────────
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(authData.user.id);
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     .select(

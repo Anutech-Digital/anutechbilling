@@ -53,6 +53,8 @@ import { createClient } from "@/lib/supabase/client";
 import { rupee } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { istToday } from "@/lib/dates/ist";
+import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
+import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
 
 const schema = z.object({
   amount:       z.coerce.number().int().min(1, "Amount received required"),
@@ -442,58 +444,71 @@ export function RecordPaymentDialog({
             p_reference: data.reference,
             p_notes:     notes,
           });
+      /* Put redeemed advance credit back. Credit is redeemed BEFORE record_payment, so
+         when nothing is recorded — the RPC failed, or (R-374) the reference was already
+         recorded — the customer must not silently lose it. */
+      const restoreAppliedCredit = async (why: string) => {
+        if (appliedCredit <= 0 || !customerId) return;
+        try {
+          const { data: authC } = await supabase.auth.getUser();
+          const meC = authC?.user
+            ? (await supabase.from("users").select("tenant_id").eq("id", authC.user.id).maybeSingle()).data
+            : null;
+          if (meC) {
+            await supabase.from("customer_credits").insert({
+              tenant_id:       meC.tenant_id,
+              customer_id:     customerId,
+              amount:          appliedCredit,
+              source:          "overpayment",
+              source_quote_id: quoteId,
+              note:            `Restored — ${why} after ₹${appliedCredit} credit was applied to quote ${quoteId}`,
+              status:          "open",
+            });
+          }
+        } catch (compErr) {
+          console.error("[record-payment] credit compensation failed — advance credit may be lost, restore manually:", compErr);
+        }
+      };
+
       if (error) {
         // Compensation: record_payment failed AFTER advance credit was redeemed
         // above → put the credit back so the customer never silently loses it.
         // (The proper long-term fix is folding redemption into record_payment's
         // transaction; this saga keeps it safe without touching the money RPC.)
-        if (appliedCredit > 0 && customerId) {
-          try {
-            const { data: authC } = await supabase.auth.getUser();
-            const meC = authC?.user
-              ? (await supabase.from("users").select("tenant_id").eq("id", authC.user.id).maybeSingle()).data
-              : null;
-            if (meC) {
-              await supabase.from("customer_credits").insert({
-                tenant_id:       meC.tenant_id,
-                customer_id:     customerId,
-                amount:          appliedCredit,
-                source:          "overpayment",
-                source_quote_id: quoteId,
-                note:            `Restored — payment failed after ₹${appliedCredit} credit was applied to quote ${quoteId}`,
-                status:          "open",
-              });
-            }
-          } catch (compErr) {
-            console.error("[record-payment] credit compensation failed — advance credit may be lost, restore manually:", compErr);
-          }
-        }
+        await restoreAppliedCredit("payment failed");
         throw error;
       }
       if (!r) throw new Error("record_payment returned no result");
 
       // Idempotent replay (same reference re-submitted / RQ retry): the payment
-      // already exists and record_payment did NOT insert a new row. Skip the
-      // best-effort TDS + overpayment-credit inserts below so they don't
-      // double-fire (which would duplicate a customer credit or a TDS row).
-      const isReplay = Boolean(r.already_recorded || r.idempotent_replay);
+      // already exists and record_payment did NOT insert a new row.
+      const isReplay = isReplayResult(r);
+
+      /* R-374: on a replay NOTHING after this point may run. The payment_id is the EARLIER
+         payment's row — patching its date/bank account, stamping a domain, moving an
+         invoice's paid_date or attaching a receipt would all rewrite that payment with this
+         form's values, and the old "Payment recorded" toast hid that the new amount was
+         never saved (a cheque number reused for a second instalment). Give back any credit
+         redeemed for this submit, read what IS recorded, and stop. */
+      if (isReplay) {
+        await restoreAppliedCredit("payment reference already recorded");
+        const { data: prior } = r.payment_id
+          ? await supabase.from("payments").select("amount, received_at").eq("id", r.payment_id).maybeSingle()
+          : { data: null };
+        return {
+          isReplay: true as const,
+          replayOf: prior ? { amount: prior.amount, receivedAt: prior.received_at } : null,
+        };
+      }
 
       // ── 2b. Tag date + bank account that received this money ──────
-      if (r.payment_id) {
-        const patchData: { received_at?: string; bank_account_id?: string } = {};
-        if (data.receivedDate) {
-          patchData.received_at = new Date(data.receivedDate).toISOString();
-        }
-        if (bankAccountId) {
-          patchData.bank_account_id = bankAccountId;
-        }
-        if (Object.keys(patchData).length > 0) {
-          const { error: bankErr } = await supabase
-            .from("payments")
-            .update(patchData as any)
-            .eq("id", r.payment_id);
-          if (bankErr) console.error("[record-payment] date/bank tag failed (payment still recorded):", bankErr);
-        }
+      const tagPatch = paymentTagPatch({ isReplay, receivedDate: data.receivedDate, bankAccountId });
+      if (r.payment_id && tagPatch) {
+        const { error: bankErr } = await supabase
+          .from("payments")
+          .update(tagPatch as any)
+          .eq("id", r.payment_id);
+        if (bankErr) console.error("[record-payment] date/bank tag failed (payment still recorded):", bankErr);
       }
 
       /* R-015. `record_payment` stamps `invoices.paid_date` with the day it SETTLED,
@@ -544,14 +559,27 @@ export function RecordPaymentDialog({
       // already set (never overwrite). Non-money metadata — a failure only logs;
       // the domain can still be added later on the Subscriptions page. Matches 0
       // rows harmlessly for one-off / direct-invoice quotes (no subscription).
+      /* R-389 (F8): ONE row, chosen by pickDomainStampTarget. Updating every null-domain
+         subscription of the quote gave two rows the same domain, the unique index
+         (tenant, quote, lower(domain)) refused it, and NOTHING was stamped — a Workspace +
+         Support quote (Q-FBB9-27-0013) kept domain NULL through two payments. */
       const domainVal = data.domain?.trim();
       if (domainVal) {
-        const { error: domErr } = await supabase
+        const { data: quoteSubs, error: subsErr } = await supabase
           .from("subscriptions")
-          .update({ domain: domainVal })
+          .select("id, vendor, domain")
           .eq("quote_id", quoteId)
-          .is("domain", null);
-        if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
+          .order("created_at", { ascending: true });
+        if (subsErr) console.error("[record-payment] could not read the quote's subscriptions for the domain:", subsErr);
+        const targetId = subsErr ? null : pickDomainStampTarget(quoteSubs ?? [], domainVal);
+        if (targetId) {
+          const { error: domErr } = await supabase
+            .from("subscriptions")
+            .update({ domain: domainVal })
+            .eq("id", targetId)
+            .is("domain", null);
+          if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
+        }
       }
 
       // ── 3. TDS receivable — now committed ATOMICALLY inside
@@ -586,6 +614,7 @@ export function RecordPaymentDialog({
 
       // Re-shape into the camelCase keys the onSuccess handler already consumes
       return {
+        isReplay:               false as const,
         overpaidCredit:         creditRecorded,
         newPaymentId:           r.payment_id,
         totalReceived:          r.total_received,
@@ -608,7 +637,6 @@ export function RecordPaymentDialog({
         // R-248 — for the one result toast's buttons + lines.
         receiptVoucherNo:       r.receipt_voucher_no ?? null,
         receiptUploadFailed,
-        isReplay,
       };
     },
     onSuccess: async (res) => {
@@ -626,6 +654,18 @@ export function RecordPaymentDialog({
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       qc.invalidateQueries({ queryKey: ["customer_credits"] });
+
+      /* R-374: the reference was already recorded — nothing new was saved. Say so, and keep
+         the sheet open so the operator can enter the new payment's own reference. */
+      if (res.isReplay) {
+        const rt = replayToast(res.replayOf);
+        toast.warning(rt.title, {
+          description: rt.lines.join("\n"),
+          duration: 12000,
+          classNames: { description: "whitespace-pre-line" },
+        });
+        return;
+      }
 
       /* ── ONE result toast (R-248) ──────────────────────────────────────────
          This used to fire a headline toast and then 1–4 more on staggered setTimeouts
@@ -680,7 +720,7 @@ export function RecordPaymentDialog({
         offered: invoiceOffer.offer,
         isFullyPaid: res.isFullyPaid,
         hasExistingInvoice: Boolean(res.hasExistingInvoice),
-        isReplay: res.isReplay,
+        isReplay: false,
       })) {
         try {
           issuedInvoiceId = (await generateInvoice.mutateAsync(quoteId)).invoiceId;

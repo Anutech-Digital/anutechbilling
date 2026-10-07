@@ -157,6 +157,8 @@ export interface AddSeatsInput {
    * default here would let the next caller reintroduce that silently.
    */
   taxRatePct:         number;
+  /** R-389 (F9): "IGST 18%" / "CGST 9% + SGST 9%" for the quote note; falls back to "GST <rate>%". */
+  taxLabel?:          string;
   /**
    * Length of the WHOLE current term in days — 365, 366 in a leap year, 730 for a
    * two-year deal. Also required, for the same reason: this was hardcoded to 365
@@ -308,7 +310,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     extension_months: 0,
     // factorPpm is an integer (547945 = 54.7945%), so the note records the exact
     // fraction charged instead of a rounded float that cannot be reconciled.
-    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). GST ${input.taxRatePct}%.`,
+    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };

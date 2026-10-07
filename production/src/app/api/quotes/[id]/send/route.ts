@@ -22,7 +22,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { renderQuotePDF } from "@/lib/pdf";
@@ -72,7 +72,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   let body: SendBody = {};
   try { body = await req.json(); } catch { /* empty body is OK */ }
 
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(authData.user.id);
 
   /* ── 3. Load quote (scoped to tenant) ─────────────────────────────
      `lead_id` was added to this select on 24 Aug 2026 and its absence is part of why

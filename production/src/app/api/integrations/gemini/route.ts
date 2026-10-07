@@ -12,8 +12,8 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { maskSecret } from "@/lib/crypto/vault";
 
 export const dynamic = "force-dynamic";
@@ -53,14 +53,19 @@ async function resolveTenant(access: "read" | "manage") {
   if (error || !me) return { error: "User not linked to a tenant" as const };
   if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
   if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
-  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner" };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 export async function GET() {
   const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("gemini_api_key, gemini_model, updated_at")
@@ -103,20 +108,16 @@ export async function POST(req: NextRequest) {
   if (parsed.data.model)   patch.gemini_model   = parsed.data.model.trim();
 
   // Seal the API key before it is stored. gemini_model is configuration, not a
-  // credential, and is left readable.
-  const sealed = sealTenantSecrets(patch);
+  // credential, and is left readable. No master key = refuse (503 + next step),
+  // never store the key in the clear (R-051).
+  const sealed = trySealTenantSecrets(patch);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .upsert(sealed.row, { onConflict: "tenant_id" });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  if (sealed.storedInClear.length > 0) {
-    // Never silent: an operator must not believe a key is encrypted when it is not.
-    console.warn(
-      `[integrations/gemini] stored in PLAINTEXT (${sealed.storedInClear.join(", ")}) — SECRETS_MASTER_KEY is not configured`,
-    );
-  }
 
   return NextResponse.json({ ok: true });
 }
@@ -125,7 +126,7 @@ export async function DELETE() {
   const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({ gemini_api_key: null, gemini_model: null })

@@ -2,7 +2,7 @@
  * Employee advances — /api/my-advances.
  *
  * ─── WHY THIS ROUTE EXISTS ──────────────────────────────────────────────────
- * It uses `createAdminClient()`, which means **RLS is off**. The `expenses` table
+ * It uses `createAdminClientFor(authData.user.id)`, which means **RLS is off**. The `expenses` table
  * does not grant read to the individual-contributor roles (sales, sales_senior,
  * support, delivery), so an employee could not see their own advance at all.
  *
@@ -20,7 +20,7 @@
  * on the advance; see the module header.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { isOwnAdvance, visibleAdvances } from "@/lib/expenses/advance-visibility";
 
@@ -71,7 +71,7 @@ export async function GET(_request: NextRequest) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    const admin = createAdminClient();
+    const admin = createAdminClientFor(authData.user.id);
 
     const { data: profile, error: profErr } = await admin
       .from("users")
@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const admin = createAdminClient();
+    const admin = createAdminClientFor(authData.user.id);
 
     const { data: profile, error: profErr } = await admin
       .from("users")

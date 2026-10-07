@@ -32,6 +32,9 @@ import { Badge } from "@/components/ui/badge";
 import { rupee, formatDate } from "@/lib/utils";
 import { newIdempotencyKey } from "@/lib/ops/idempotency-key";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { useCustomer } from "@/lib/queries/customers";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 
 interface Props {
   sub:          Subscription;
@@ -89,7 +92,18 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     : 0;
   const proRataPerSeat   = Math.round(annualPerSeat * factor);
   const subtotal         = proRataPerSeat * additionalSeats;
-  const gstAmt           = Math.round(subtotal * 0.18);
+  /* R-389 (F9): name the head the invoice will use — "IGST 18%" for an inter-state customer,
+     "CGST 9% + SGST 9%" within the state — and zero-rate an export, the same rule the server
+     applies (lib/subscriptions/apply-seat-increase.ts resolveSeatTax). */
+  const { data: customer } = useCustomer(sub.customer_id ?? undefined);
+  const { data: me } = useCurrentUser();
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
+  });
+  const taxRatePct       = pos.isExport ? 0 : 18;
+  const taxLabel         = gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport });
+  const gstAmt           = Math.round((subtotal * taxRatePct) / 100);
   const totalIncl        = subtotal + gstAmt;
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = Math.round((annualPerSeat * newSeats) / 12);
@@ -209,7 +223,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                 <span className="tabular-nums text-ink-2">{rupee(subtotal)}</span>
               </div>
               <div className="flex justify-between mb-1">
-                <span className="text-ink-3">GST 18%</span>
+                <span className="text-ink-3">{taxLabel}</span>
                 <span className="tabular-nums text-ink-2">{rupee(gstAmt)}</span>
               </div>
               <div className="flex justify-between pt-2 border-t border-hairline">

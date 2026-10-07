@@ -239,7 +239,8 @@ export async function POST(request: NextRequest) {
      ho (leadCreated) — warna reply imandaar agle-kadam se badal di jati
      hai. suggestQuote/lead-nikaasi waise hi rehte hain. */
   if (!leadCreated && promisesDelivery(guarded.reply)) {
-    guarded = { ...guarded, reply: honestNoDeliveryReply() };
+    /* R-235: visitor ke aakhri sandesh ki bhasha me (default English). */
+    guarded = { ...guarded, reply: honestNoDeliveryReply(messages[messages.length - 1]?.text ?? "") };
   }
 
   const guardTripped = guarded.reply === fallbackReply().reply;

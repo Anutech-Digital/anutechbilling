@@ -15,7 +15,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 export interface NotifyInput {
   tenantId: string;
-  kind: "payment.received" | "quote.accepted" | "lead.created" | "ticket.created";
+  kind: "payment.received" | "payment.refunded" | "quote.accepted" | "lead.created" | "ticket.created";
   title: string;
   body?: string;
   href?: string;

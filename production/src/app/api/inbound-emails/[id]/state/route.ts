@@ -16,7 +16,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,7 +79,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
 
   /* Scoped by tenant as well as id. The admin client bypasses RLS, so the id on its
      own would address any row in the table. */

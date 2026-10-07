@@ -120,6 +120,33 @@ describe("buildInvoicePdfProps", () => {
     expect(p.total).toBe(118000);
     expect(p.interState).toBe(true);  // persisted head wins
   });
+
+  /* R-375 (audit finding 9): the quote is live, the issued invoice is frozen. */
+  it("quote edited after issue → the invoice prints its OWN persisted figures, not the live quote", () => {
+    const issued = { id: "INV-3", amount: 38232, customer_name: "Acme", tenant_id: "t1",
+      taxable_value: 32400, tax_amount: 5832, tax_rate: 18,
+      line_items: [{ description: "Workspace x 10", quantity: 10, unit_price: 3240 }] } as unknown as Invoice;
+    const repriced = { subtotal: 40000, discount_pct: 0, tax_rate: 18, amount: 47200,
+      line_items: [{ description: "Workspace x 12", quantity: 12, unit_price: 3333 }] } as unknown as Quote;
+    const p = buildInvoicePdfProps({ invoice: issued, quote: repriced, customer: null, tenant });
+    expect(p.total).toBe(38232);
+    expect(p.taxable).toBe(32400);
+    expect(p.tax).toBe(5832);
+    expect(p.subtotal).toBe(32400);
+    expect(p.discount).toBe(0);
+    expect(p.lineItems).toEqual(issued.line_items);
+  });
+
+  it("quote still matches the persisted figures → keeps the quote's subtotal + discount display", () => {
+    const issued = { id: "INV-4", amount: 132840, customer_name: "Acme", tenant_id: "t1",
+      taxable_value: 90000, tax_amount: 16200, tax_rate: 18 } as unknown as Invoice;
+    const discounted = { subtotal: 100000, discount_pct: 10, tax_rate: 18, amount: 132840, line_items: [] } as unknown as Quote;
+    const p = buildInvoicePdfProps({ invoice: issued, quote: discounted, customer: null, tenant });
+    expect(p.subtotal).toBe(100000);
+    expect(p.discount).toBe(10000);
+    expect(p.taxable).toBe(90000);
+    expect(p.total).toBe(132840);
+  });
 });
 
 describe("buildQuotePdfProps", () => {

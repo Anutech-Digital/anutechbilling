@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   me: { tenant_id: "T1", role: "sales" } as { tenant_id: string; role: string } | null,
   rows: {} as Record<string, unknown>,
   reads: [] as string[],
+  actors: [] as string[], // R-051: who createAdminClientFor() was opened for
   writes: [] as Array<{ table: string; op: string; data: unknown }>,
 }));
 const mail = vi.hoisted(() => ({ send: vi.fn() }));
@@ -31,7 +32,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "u1@example.invalid" } } }) },
     from: (t: string) => chain(t, true),
   }),
-  createAdminClient: () => ({
+  createAdminClientFor: (actor: string) => (db.actors.push(actor), {
     from: (t: string) => { db.reads.push(t); return chain(t, false); },
     rpc: async () => ({ data: "CMP-0001", error: null }),
   }),
@@ -60,6 +61,7 @@ beforeEach(() => {
   db.me = { tenant_id: "T1", role: "sales" };
   db.rows = { tenants: { name: "Anutech", email: "hi@example.invalid", phone: null } };
   db.reads = [];
+  db.actors = [];
   db.writes = [];
   mail.send.mockReset();
   mail.send.mockResolvedValue({ status: "stubbed", providerId: "stub-1" });
@@ -81,6 +83,7 @@ describe("campaigns send — role gate (R-217)", () => {
     db.me = { tenant_id: "T1", role };
     const res = await call(body);
     expect(res.status).toBe(200);
+    expect(db.actors).toEqual(["U1"]); // R-051: audit log gets the signed-in caller
     expect(await res.json()).toMatchObject({ ok: true, campaignId: "CMP-0001", recipientsCount: 1, sentCount: 1, failedCount: 0, mode: "stub" });
     expect(mail.send).toHaveBeenCalledTimes(1);
     expect(db.writes.find((w) => w.table === "campaigns" && w.op === "insert")?.data).toMatchObject({ tenant_id: "T1", created_by: "U1" });

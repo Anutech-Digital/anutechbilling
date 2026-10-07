@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   sub: null as Row | null,
   apply: null as unknown as (...args: unknown[]) => unknown,
   role: "billing" as string,
+  actors: [] as string[], // R-051: who createAdminClientFor() was opened for
 }));
 
 vi.mock("@/lib/subscriptions/apply-seat-increase", () => ({
@@ -94,7 +95,10 @@ vi.mock("@/lib/supabase/server", () => {
     auth: { getUser: async () => ({ data: { user: { id: "U1" } }, error: null }) },
     from: (table: string) => makeChain(table),
   });
-  return { createClient: client, createAdminClient: client };
+  return {
+    createClient: client,
+    createAdminClientFor: (actor: string) => { state.actors.push(actor); return client(); },
+  };
 });
 
 import { POST } from "./route";
@@ -119,6 +123,7 @@ beforeEach(() => {
   state.claims = [];
   state.seq = 0;
   state.role = "billing";
+  state.actors = [];
   state.sub = { id: "S1", tenant_id: "T1", status: "active", renewal_date: "2027-04-01", seats: 10, mrr: 6200 };
   state.apply = vi.fn(async () => okResult);
 });
@@ -133,6 +138,7 @@ describe("a double POST adds the seats once", () => {
     expect(state.apply).toHaveBeenCalledTimes(1);
 
     expect(first.status).toBe(200);
+    expect(state.actors[0]).toBe("U1"); // R-051: audit log gets the signed-in caller
     expect(second.status).toBe(200);
     const a = await first.json();
     const b = await second.json();

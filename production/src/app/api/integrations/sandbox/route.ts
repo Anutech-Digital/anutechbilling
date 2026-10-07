@@ -11,7 +11,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -52,14 +52,19 @@ async function resolveTenant(access: "read" | "manage") {
   if (error || !me) return { error: "User not linked to a tenant" as const };
   if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
   if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
-  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner" };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 export async function GET() {
   const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("sandbox_api_key, sandbox_api_secret, sandbox_api_base, updated_at")
@@ -93,7 +98,7 @@ export async function POST(req: NextRequest) {
   }
   const { api_key, api_secret, api_base } = parsed.data;
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   // Upsert so first-time and edit both work.
   const { error } = await admin
     .from("tenant_secrets")
@@ -113,7 +118,7 @@ export async function DELETE() {
   const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({

@@ -12,7 +12,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { errorResponse, RouteError } from "@/lib/api/with-route";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     .replace(/\/+$/, "")
     .trim();
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
 
   const leadId    = "L-" + Date.now().toString(36).toUpperCase();
   const planLabel = `google-workspace-${tierId}`;

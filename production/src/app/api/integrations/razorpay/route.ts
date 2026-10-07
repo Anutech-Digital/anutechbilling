@@ -13,9 +13,9 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { razorpayReadiness, razorpayMode } from "@/lib/payments/razorpay-readiness";
-import { sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { buildSecretPatch } from "@/lib/integrations/secret-field";
 import { maskSecret } from "@/lib/crypto/vault";
 
@@ -72,7 +72,12 @@ async function resolveTenant(access: "read" | "manage") {
   if (error || !me) return { error: "User not linked to a tenant" as const };
   if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
   if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
-  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner" };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 function webhookUrlFor(tenantId: string, req: NextRequest): string {
@@ -91,7 +96,7 @@ export async function GET(req: NextRequest) {
   const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("razorpay_mode, razorpay_key_id, razorpay_key_secret, razorpay_webhook_secret, updated_at")
@@ -142,7 +147,7 @@ export async function POST(req: NextRequest) {
   // Mode is inferred from the key_id prefix — single source of truth.
   const mode = v.key_id.startsWith("rzp_live_") ? "live" : "test";
 
-  const admin = createAdminClient();
+  const admin = r.admin;
 
   // What is already stored decides whether a blank box is "keep" or "missing".
   const { data: current } = await admin
@@ -171,8 +176,10 @@ export async function POST(req: NextRequest) {
 
   // Seal only the fields actually being written. An untouched field is ABSENT
   // from the patch, so the upsert leaves its stored value alone — that absence is
-  // the whole fix.
-  const sealed = sealTenantSecrets(patch);
+  // the whole fix. No master key = refuse (503 + next step), never store the
+  // secret in the clear (R-051).
+  const sealed = trySealTenantSecrets(patch);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
 
   const { error } = await admin
     .from("tenant_secrets")
@@ -185,16 +192,11 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
-  // Say so when a secret had to be stored in the clear. Silence here would let
-  // an operator believe their credentials are encrypted when they are not.
-  if (sealed.storedInClear.length > 0) {
-    console.warn(
-      `[integrations/razorpay] stored in PLAINTEXT (${sealed.storedInClear.join(", ")}) — SECRETS_MASTER_KEY is not configured`,
-    );
-  }
   return NextResponse.json({
     ok: true, mode,
-    encrypted: sealed.storedInClear.length === 0,
+    // Always true now — an unencrypted save is refused above. Kept so the
+    // response shape the settings screen reads does not change.
+    encrypted: true,
     // So the UI can say "webhook secret left unchanged" instead of implying it
     // was rewritten.
     unchanged,
@@ -205,7 +207,7 @@ export async function DELETE() {
   const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({

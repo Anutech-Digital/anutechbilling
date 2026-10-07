@@ -168,9 +168,14 @@ function quoteHref(e: InboundEmailRow, ent: ExtractedEntities | null): string {
      honest move is to set nothing. */
   if (ent?.product.value)   p.set("plan", ent.product.value.name);
   if (ent?.seats.value)     p.set("seats", String(ent.seats.value));
-  if (ent?.name.value)      p.set("contact", ent.name.value);
-  if (ent?.email.value ?? e.from_email) p.set("email", (ent?.email.value ?? e.from_email)!);
-  if (ent?.phone.value)     p.set("phone", ent.phone.value);
+  /* R-389 (F5): with a lead the builder loads contact / email / phone from it — keep the
+     customer's email and phone out of the URL (history, logs). Only an enquiry with no
+     lead still carries them, as there is nowhere else to read them from. */
+  if (!e.lead_id) {
+    if (ent?.name.value)      p.set("contact", ent.name.value);
+    if (ent?.email.value ?? e.from_email) p.set("email", (ent?.email.value ?? e.from_email)!);
+    if (ent?.phone.value)     p.set("phone", ent.phone.value);
+  }
   const qs = p.toString();
   return qs ? `/quotes/new?${qs}` : "/quotes/new";
 }

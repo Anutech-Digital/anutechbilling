@@ -28,6 +28,7 @@ import { z } from "zod";
 import { createClient as createSessionClient, createAdminClient } from "@/lib/supabase/server";
 import { createBareClient } from "@/lib/supabase/bare";
 import { checkPasswordChange } from "@/lib/auth/password-rules";
+import { MUST_CHANGE_PASSWORD_KEY, mustChangePassword } from "@/lib/auth/must-change-password";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -81,8 +82,15 @@ export async function POST(req: Request) {
   }
 
   const admin = createAdminClient();
+  /* R-391: an owner-set temporary password carries app_metadata.must_change_password, which
+     sends the member to /change-password until they pick their own. Choosing one here is
+     exactly that, so the flag is cleared in the same write — null removes the key on GoTrue
+     and reads as "not set" on R-161's Auth.js store. Only when set, so an ordinary change
+     does not touch app_metadata at all. */
+  const forced = mustChangePassword(user);
   const { error: upErr } = await admin.auth.admin.updateUserById(user.id, {
     password: parsed.newPassword,
+    ...(forced ? { app_metadata: { [MUST_CHANGE_PASSWORD_KEY]: null } } : {}),
   });
   if (upErr) {
     return NextResponse.json({ error: upErr.message }, { status: 500 });

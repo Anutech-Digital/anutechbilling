@@ -11,8 +11,9 @@ const db = vi.hoisted(() => ({
   writes: 0,
   rows: [] as Array<Record<string, unknown>>,
   error: null as null | { message: string },
-  /** R-357: the first read fails on an unknown column (claim migration not applied yet). */
-  missingColumnOnce: false,
+  /** R-357/R-397: the first N reads fail on an unknown column (migration not applied yet). */
+  missingColumns: 0,
+  orders: [] as string[],
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -22,11 +23,11 @@ vi.mock("@/lib/supabase/server", () => ({
       const q = {
         select(cols: string) { db.select = cols; return q; },
         eq(col: string, v: unknown) { db.filters.push([col, v]); return q; },
-        order() { return q; },
+        order(col: string) { db.orders.push(col); return q; },
         limit() {
-          if (db.missingColumnOnce) {
-            db.missingColumnOnce = false;
-            return Promise.resolve({ data: null, error: { code: "42703", message: "column feedback.agent_claimed_at does not exist" } });
+          if (db.missingColumns > 0) {
+            db.missingColumns--;
+            return Promise.resolve({ data: null, error: { code: "42703", message: "column feedback.urgent_at does not exist" } });
           }
           return Promise.resolve({ data: db.error ? null : db.rows, error: db.error });
         },
@@ -45,7 +46,7 @@ const call = (token?: string) =>
 const ENV = { ...process.env };
 
 beforeEach(() => {
-  db.select = ""; db.filters = []; db.writes = 0; db.error = null; db.missingColumnOnce = false;
+  db.select = ""; db.filters = []; db.writes = 0; db.error = null; db.missingColumns = 0; db.orders = [];
   db.rows = [{ id: "f1", title: "Add browser automation to AI Help", directive: "Do X", reported_severity: "low" }];
   process.env.AGENT_QUEUE_TOKEN = "q-token";
 });
@@ -92,7 +93,7 @@ describe("GET /api/agent/feedback-queue", () => {
   });
 
   it("R-357: before the claim migration it falls back to the plain read", async () => {
-    db.missingColumnOnce = true;
+    db.missingColumns = 2;
     const r = await call("q-token");
     expect(r.status).toBe(200);
     expect((await r.json()).items).toEqual(db.rows);
@@ -103,5 +104,37 @@ describe("GET /api/agent/feedback-queue", () => {
     db.error = { message: "boom" };
     const r = await call("q-token");
     expect(r.status).toBe(500);
+  });
+
+  it("R-397: urgent reports come first (earliest marked first), with urgent: true", async () => {
+    db.rows = [
+      { id: "f1", title: "old", agent_claimed_at: null, urgent_at: null },
+      { id: "f2", title: "later urgent", agent_claimed_at: null, urgent_at: "2026-10-07T09:00:00Z" },
+      { id: "f3", title: "newer", agent_claimed_at: null, urgent_at: null },
+      { id: "f4", title: "first urgent", agent_claimed_at: null, urgent_at: "2026-10-07T08:00:00Z" },
+      { id: "f5", title: "claimed urgent", agent_claimed_at: "2026-10-07T08:30:00Z", urgent_at: "2026-10-07T07:00:00Z" },
+    ];
+    const body = await (await call("q-token")).json();
+    expect(body.items).toEqual([
+      { id: "f4", title: "first urgent", urgent: true },
+      { id: "f2", title: "later urgent", urgent: true },
+      { id: "f1", title: "old" },
+      { id: "f3", title: "newer" },
+    ]);
+    expect(db.select).toContain("urgent_at");
+    expect(db.orders).toEqual(["urgent_at", "dispatched_at"]);
+  });
+
+  it("R-397: before the urgent migration it falls back to the R-357 read — order unchanged", async () => {
+    db.missingColumns = 1;
+    db.rows = [
+      { id: "f1", title: "A", agent_claimed_at: null },
+      { id: "f2", title: "B", agent_claimed_at: null },
+    ];
+    const r = await call("q-token");
+    expect(r.status).toBe(200);
+    expect((await r.json()).items).toEqual([{ id: "f1", title: "A" }, { id: "f2", title: "B" }]);
+    expect(db.select).toContain("agent_claimed_at");
+    expect(db.select).not.toContain("urgent_at");
   });
 });

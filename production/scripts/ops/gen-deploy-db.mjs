@@ -131,17 +131,27 @@ export function scriptPath(supabaseDir, env, date) {
  */
 export function generate({ supabaseDir, date, since, fromScript }) {
   const migDir = path.join(supabaseDir, "migrations");
+  /* The staging branch (R-161) moves applied migrations to prisma/migrations/<name>/migration.sql.
+     Find a listed file in either place, or the staging build's gate fails on "files that do not exist". */
+  const prismaDir = path.join(supabaseDir, "..", "prisma", "migrations");
+  const where = new Map(fs.readdirSync(migDir).map((f) => [f, path.join(migDir, f)]));
+  if (fs.existsSync(prismaDir)) {
+    for (const d of fs.readdirSync(prismaDir)) {
+      const sql = path.join(prismaDir, d, "migration.sql");
+      if (!where.has(`${d}.sql`) && fs.existsSync(sql)) where.set(`${d}.sql`, sql);
+    }
+  }
   const scripts = Object.fromEntries(ENVS.map((env) => {
     const file = scriptPath(supabaseDir, env, date);
     if (!fs.existsSync(file)) throw new Error(`Missing ${path.relative(supabaseDir, file)} — copy the previous day's ${env} script to this date first.`);
     return [env, { file, before: fs.readFileSync(file, "utf8") }];
   }));
   const listedFrom = fromScript ? fs.readFileSync(fromScript, "utf8") : scripts.staging.before;
-  const files = selectFiles(fs.readdirSync(migDir), { since, listed: since ? null : filesInScript(listedFrom, fromScript ?? "staging script") });
+  const files = selectFiles([...where.keys()], { since, listed: since ? null : filesInScript(listedFrom, fromScript ?? "staging script") });
   const errors = [];
   const entries = [];
   for (const f of files) {
-    try { entries.push(parseDeployHeaders(fs.readFileSync(path.join(migDir, f), "utf8"), f)); }
+    try { entries.push(parseDeployHeaders(fs.readFileSync(where.get(f), "utf8"), f)); }
     catch (e) { errors.push(e.message); }
   }
   if (errors.length) throw new Error(errors.join("\n"));

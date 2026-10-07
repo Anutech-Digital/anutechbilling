@@ -5,6 +5,9 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
+
 const db = vi.hoisted(() => ({
   user: { id: "u1" } as null | { id: string },
   me: { tenant_id: "t1", role: "owner" } as null | Record<string, unknown>,
@@ -32,7 +35,7 @@ vi.mock("@/lib/supabase/server", () => {
   let pendingUpdate = false;
   return {
     createClient: () => ({ auth: { getUser: async () => ({ data: { user: db.user } }) }, from: builder }),
-    createAdminClient: () => ({ from: builder }),
+    createAdminClientFor: (actor: string) => (actors.push(actor), { from: builder }),
   };
 });
 
@@ -47,6 +50,7 @@ const post = (body: unknown) =>
   }) as unknown as NextRequest);
 
 beforeEach(() => {
+  actors.length = 0;
   db.user = { id: "u1" };
   db.me = { tenant_id: "t1", role: "owner" };
   db.tenant = { id: "t1" };
@@ -73,6 +77,7 @@ describe("/api/feedback/auto-send", () => {
   it("owner saves only the switch", async () => {
     const r = await post({ on: false });
     expect(r.status).toBe(200);
+    expect(actors).toContain("u1"); // R-051: audit log names the signed-in owner
     expect(Object.keys(db.updates[0]).sort()).toEqual(["feedback_auto_send", "updated_at"]);
     expect(db.updates[0].feedback_auto_send).toBe(false);
   });

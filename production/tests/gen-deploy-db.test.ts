@@ -60,10 +60,19 @@ describe("gen-deploy-db file choice + rewrite", () => {
   });
 });
 
+/* Copy both migration homes: supabase/migrations, and prisma/migrations where the staging
+   branch (R-161) keeps applied ones — so these tests pass on either branch. */
+function copyMigrations(tmpSupabase: string) {
+  fs.cpSync(path.join(supabaseDir, "migrations"), path.join(tmpSupabase, "migrations"), { recursive: true });
+  const prisma = path.join(supabaseDir, "..", "prisma", "migrations");
+  if (fs.existsSync(prisma)) fs.cpSync(prisma, path.join(tmpSupabase, "..", "prisma", "migrations"), { recursive: true });
+}
 describe("today's deploy scripts (7 Oct 2026)", () => {
   it("regenerating is a no-op — the headers carry exactly the peeks the scripts had", () => {
     const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
-    expect(res.files).toHaveLength(17);
+    /* The count grows every time a migration lands — pin "no drift", not a number. */
+    expect(res.files.length).toBeGreaterThanOrEqual(17);
+    expect(res.files).toEqual(res.files.slice().sort());
     for (const env of ENVS) expect(res.scripts[env].after).toBe(res.scripts[env].before);
     const since: Gen = generate({ supabaseDir, date: "2026-10-07", since: "20261006130000" });
     expect(since.files).toEqual(res.files);
@@ -76,23 +85,44 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
     expect(res.scripts.live.after).not.toContain("current_user_id()/g");
   });
 
-  it("a new migration with a header is appended to BOTH scripts; one without fails", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-"));
+  it("finds a listed migration the staging branch moved to prisma/migrations (R-161 layout)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-prisma-"));
     try {
-      fs.cpSync(path.join(supabaseDir, "migrations"), path.join(tmp, "migrations"), { recursive: true });
+      const tmp = path.join(root, "supabase");
+      copyMigrations(tmp);
       for (const env of ENVS) {
         fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
         fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
       }
-      fs.writeFileSync(path.join(tmp, "migrations", "20261007235900_new_thing.sql"), "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n");
+      const moved = "20261006130000_feedback_checked";
+      if (fs.existsSync(path.join(tmp, "migrations", `${moved}.sql`))) {
+        fs.mkdirSync(path.join(root, "prisma", "migrations", moved), { recursive: true });
+        fs.renameSync(path.join(tmp, "migrations", `${moved}.sql`), path.join(root, "prisma", "migrations", moved, "migration.sql"));
+      }
+      const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
+      expect(res.files).toContain(`${moved}.sql`);
+      for (const env of ENVS) expect(res.scripts[env].after).toBe(res.scripts[env].before);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("a new migration with a header is appended to BOTH scripts; one without fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-"));
+    const tmp = path.join(root, "supabase");
+    try {
+      copyMigrations(tmp);
+      for (const env of ENVS) {
+        fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
+        fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
+      }
+      fs.writeFileSync(path.join(tmp, "migrations", "20261007999900_new_thing.sql"), "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n");
       const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
       for (const env of ENVS) {
         const before = res.scripts[env].before.split("\n");
         const added = res.scripts[env].after.split("\n").filter((l) => !before.includes(l));
-        expect(added).toEqual([`  "newthing|20261007235900_new_thing.sql|resellersos_migration|to_regclass('public.new_thing') is not null"`]);
+        expect(added).toEqual([`  "newthing|20261007999900_new_thing.sql|resellersos_migration|to_regclass('public.new_thing') is not null"`]);
       }
-      fs.writeFileSync(path.join(tmp, "migrations", "20261007235959_no_header.sql"), "-- forgot\nselect 1;\n");
-      expect(() => generate({ supabaseDir: tmp, date: "2026-10-07" })).toThrow(/20261007235959_no_header\.sql: no "-- deploy-peek:/);
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+      fs.writeFileSync(path.join(tmp, "migrations", "20261007999959_no_header.sql"), "-- forgot\nselect 1;\n");
+      expect(() => generate({ supabaseDir: tmp, date: "2026-10-07" })).toThrow(/20261007999959_no_header\.sql: no "-- deploy-peek:/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });

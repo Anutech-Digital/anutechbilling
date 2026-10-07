@@ -36,11 +36,14 @@ const TIER_EDITION: Record<string, string> = {
 
 const GREETING: Msg = {
   role: "assistant",
-  /* Pehla practical sawaal greeting me hi — discovery wahi se shuru hoti hai. */
-  text: "Namaste! Main Anutech ka AI sales assistant hoon — daam hamare live catalogue se aate hain. Bataiye, kitne logo ke liye business email chahiye?",
+  /* Pehla practical sawaal greeting me hi — discovery wahi se shuru hoti hai.
+     R-235 (7 Oct): site English hai, to greeting/error/chips/placeholder English; agent
+     visitor ki bhasha mirror karta hai (Hindi/Hinglish me likhe to wahi) — public-sales-chat.ts. */
+  text: "Hello! I'm Anutech's AI sales assistant — prices come from our live catalogue. How many people need business email?",
 };
 
-const STORE_KEY = "anutech.agentchat.v1";
+/* v2 (R-235): purane tab me padi Hinglish greeting wali chat wapas na aaye. */
+const STORE_KEY = "anutech.agentchat.v2";
 
 interface Stored { msgs: Msg[]; leadCaptured: boolean }
 
@@ -118,7 +121,7 @@ export function AgentChat() {
       setFailed(true);
       setMsgs((cur) => [
         ...cur,
-        { role: "assistant", text: "Abhi jawab nahi de paya — WhatsApp par ek insaan working hours me jawab deta hai, ya Get a quote page se turant priced estimate le lijiye." },
+        { role: "assistant", text: "I couldn't answer just now — a person replies on WhatsApp during working hours, or use the Get a quote page for an instant priced estimate." },
       ]);
     } finally {
       setBusy(false);
@@ -205,8 +208,8 @@ export function AgentChat() {
                     style={{ marginTop: 6, display: "inline-block", padding: "6px 10px", borderRadius: 999, background: "#EEF7F0", color: "var(--success)", border: "1px solid var(--success)" }}
                   >
                     {m.leadCreated.quoteId
-                      ? `DETAILS MILE — QUOTATION ${m.leadCreated.quoteId} BAN GAYI`
-                      : "DETAILS MILE — HUMARI TEAM SAMPARK KAREGI"}
+                      ? `DETAILS RECEIVED — QUOTATION ${m.leadCreated.quoteId} CREATED`
+                      : "DETAILS RECEIVED — OUR TEAM WILL BE IN TOUCH"}
                   </div>
                 )}
                 {m.suggestQuote && TIER_EDITION[m.suggestQuote.tier] && (
@@ -246,7 +249,7 @@ export function AgentChat() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="e.g. 20 logo ke liye Workspace ka daam?"
+              placeholder="e.g. Workspace price for 20 users?"
               aria-label="Message the AI sales agent"
               style={{ flex: 1, border: "1px solid var(--border-strong)", borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", minWidth: 0 }}
             />

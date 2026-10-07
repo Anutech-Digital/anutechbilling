@@ -50,6 +50,13 @@ export interface ChannelLeadInput {
   stage: string | null | undefined;
   /** Deal value in rupees. */
   value: number | null | undefined;
+  /**
+   * R-375: a payment is recorded against this lead (lib/payments/won-paid.ts). accept_quote sets
+   * stage 'won' on acceptance, before any money — so a won lead's value is won REVENUE (and
+   * feeds ROAS) only when this is true. Absent / false = accepted, not paid: still a won deal
+   * for the win rate, but ₹0 of won value.
+   */
+  paid?: boolean;
 }
 
 export interface ChannelSpendInput {
@@ -152,7 +159,7 @@ export function channelReport(
     const b = buckets.get(key) ?? { leads: 0, won: 0, lost: 0, wonValue: 0 };
     b.leads++;
     const stage = normalise(l.stage);
-    if (stage === "won") { b.won++; b.wonValue += Math.max(0, num(l.value)); }
+    if (stage === "won") { b.won++; if (l.paid === true) b.wonValue += Math.max(0, num(l.value)); }
     else if (stage === "lost") { b.lost++; }
     buckets.set(key, b);
   }

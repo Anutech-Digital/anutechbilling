@@ -39,6 +39,13 @@ vi.mock("@/lib/supabase/server", () => {
         filters.push((r) => String(r[c] ?? "").toLowerCase().includes(needle));
         return q;
       },
+      /* R-045: the refund-id claim is an optimistic update — "is null" or "array equals {a,b}". */
+      is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return q; },
+      filter: (c: string, op: string, lit: string) => {
+        if (op !== "eq") throw new Error("mock: only the eq filter is modelled");
+        filters.push((r) => Array.isArray(r[c]) && `{${(r[c] as unknown[]).join(",")}}` === lit);
+        return q;
+      },
       limit: (n: number) => { lim = n; return q; },
       maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
       single: async () => {
@@ -51,8 +58,10 @@ vi.mock("@/lib/supabase/server", () => {
         return { data: null, error: null };
       },
       then: (ok: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => {
-        if (pendingUpdate) { for (const r of rows()) Object.assign(r, pendingUpdate); }
-        return Promise.resolve({ data: rows(), error: null }).then(ok, bad);
+        /* An update answers with the rows it MATCHED before the write (as RETURNING does). */
+        const matched = rows();
+        if (pendingUpdate) { for (const r of matched) Object.assign(r, pendingUpdate); }
+        return Promise.resolve({ data: pendingUpdate ? matched : rows(), error: null }).then(ok, bad);
       },
     };
     return q;
@@ -79,11 +88,14 @@ vi.mock("@/lib/email/owner-alert.server", () => ({
 vi.mock("@/lib/ai/autonomy.server", () => ({ loadAutonomyPolicy: async () => ({ modes: {} }) }));
 const queueProvisioning = vi.hoisted(() => vi.fn(async () => "queued"));
 vi.mock("@/lib/provisioning/provisioning.server", () => ({ queueProvisioning }));
+const bookGatewayFeeExpense = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => "booked"));
+vi.mock("@/lib/razorpay/fee-expense.server", () => ({ bookGatewayFeeExpense }));
 vi.mock("@/lib/pdf/pdf-token", () => ({
   pdfDownloadUrl: (base: string, kind: string, id: string) => `${base}/api/pdf/${kind}/${id}?sig=test`,
 }));
 
 import { POST } from "./route";
+import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const SECRET = "whsec_aitest";
@@ -115,7 +127,7 @@ function seed() {
       if (db.tables.payments.some((r) => r.quote_id === q.id && r.reference === args.p_reference && r.status === "received")) {
         return { data: { payment_id: "p1", already_recorded: true, idempotent_replay: true }, error: null };
       }
-      db.tables.payments.push({ tenant_id: q.tenant_id, quote_id: q.id, reference: args.p_reference, status: "received", amount: args.p_amount });
+      db.tables.payments.push({ id: `p-${String(args.p_reference)}`, tenant_id: q.tenant_id, quote_id: q.id, reference: args.p_reference, status: "received", amount: args.p_amount });
       q.payment_status = "received";
       return { data: { payment_id: "p1" }, error: null };
     }
@@ -338,5 +350,135 @@ describe("R-033 — each provisioning row carries its own share of the payment",
     const rows = queueProvisioning.mock.calls.map((c) => (c as unknown as [{ domain: string; amountPaid: number }])[0]);
     const byDomain = Object.fromEntries(rows.map((r) => [r.domain, r.amountPaid]));
     expect(byDomain).toEqual({ "a.in": 708, "b.in": 472 });
+  });
+});
+
+/* ── R-045: what Razorpay kept, and refunds ──────────────────────────────── */
+
+const capturedWithFee = (event = "payment.captured") => {
+  const e = captured(event);
+  Object.assign(e.payload.payment.entity, { fee: 2786, tax: 425 }); // ₹27.86 incl. ₹4.25 GST
+  return e;
+};
+
+const refundEvt = (refundId = "rfnd_AITEST1", amountPaise = 118000, payId = "pay_AITEST1") => ({
+  event: "refund.processed",
+  created_at: 2,
+  payload: {
+    refund: { entity: { id: refundId, payment_id: payId, amount: amountPaise, currency: "INR", status: "processed" } },
+    payment: { entity: { id: payId, order_id: "order_AITEST1", amount: 118000, currency: "INR", status: "refunded", method: "card" } },
+  },
+});
+
+const payRow = () => db.tables.payments.find((r) => r.reference === "pay_AITEST1")!;
+const leadNotes = () => db.tables.lead_activities.map((r) => String(r.detail));
+const refundNotices = () => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0]).filter((n) => n.kind === "payment.refunded");
+
+describe("R-045 — Razorpay's fee is kept on the payment", () => {
+  it("payment.captured stores fee + GST on fee in whole rupees; the gross amount is unchanged", async () => {
+    const res = await POST(signed(capturedWithFee()));
+    expect(res.status).toBe(200);
+    expect(payRow().amount).toBe(1180);
+    expect(payRow().gateway_fee).toBe(28);
+    expect(payRow().gateway_fee_gst).toBe(4);
+  });
+
+  it("an order.paid that arrived first without a fee is filled in by the later payment.captured", async () => {
+    await POST(signed(captured("order.paid")));
+    expect(payRow().gateway_fee).toBeUndefined();
+    const again = await POST(signed(capturedWithFee()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(payRow().gateway_fee).toBe(28);
+    expect(rpcNames().filter((n) => n === "record_payment")).toHaveLength(1);
+  });
+
+  it("slice 2: the fee is booked as an expense for THIS payment, in THIS tenant", async () => {
+    bookGatewayFeeExpense.mockClear();
+    await POST(signed(capturedWithFee()));
+    expect(bookGatewayFeeExpense).toHaveBeenCalledTimes(1);
+    const [, tenant, paymentId] = bookGatewayFeeExpense.mock.calls[0];
+    expect(tenant).toBe(TENANT);
+    expect(paymentId).toBe(payRow().id);
+  });
+
+  it("slice 2: a booking failure never fails the webhook (the payment is committed)", async () => {
+    bookGatewayFeeExpense.mockClear();
+    bookGatewayFeeExpense.mockResolvedValueOnce("error");
+    const res = await POST(signed(capturedWithFee()));
+    expect(res.status).toBe(200);
+    expect(payRow().gateway_fee).toBe(28);
+  });
+
+  it("slice 2: no fee in the event → nothing to book", async () => {
+    bookGatewayFeeExpense.mockClear();
+    await POST(signed(captured()));
+    expect(bookGatewayFeeExpense).not.toHaveBeenCalled();
+  });
+
+  it("no fee in the event: nothing guessed", async () => {
+    await POST(signed(captured()));
+    expect(payRow().gateway_fee).toBeUndefined();
+  });
+});
+
+describe("R-045 — refund.processed leaves an instruction, once, and books nothing", () => {
+  beforeEach(() => vi.mocked(notifyTenantOwners).mockClear());
+
+  it("invoiced quote: note says credit note first; payment status untouched; no RPC", async () => {
+    await POST(signed(captured()));
+    const rpcsBefore = db.rpcCalls.length;
+    const res = await POST(signed(refundEvt()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.refund).toBe("rfnd_AITEST1");
+    expect(body.partial).toBe(false);
+    expect(body.nextStep).toContain("credit note");
+    expect(body.nextStep).toContain("INV-AITEST-0001");
+    expect(payRow().status).toBe("received");
+    expect(payRow().gateway_refund_ids).toEqual(["rfnd_AITEST1"]);
+    expect(db.rpcCalls.length).toBe(rpcsBefore);
+    expect(leadNotes().some((n) => n.includes("rfnd_AITEST1") && n.includes("credit note"))).toBe(true);
+    expect(refundNotices()).toHaveLength(1);
+    expect(refundNotices()[0]).toMatchObject({ tenantId: TENANT, href: `/quotes/${QUOTE}` });
+  });
+
+  it("the same refund delivered twice writes one note and one notification", async () => {
+    await POST(signed(captured()));
+    await POST(signed(refundEvt()));
+    const notes = leadNotes().length;
+    const again = await POST(signed(refundEvt()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(leadNotes().length).toBe(notes);
+    expect(refundNotices()).toHaveLength(1);
+  });
+
+  it("a second, different partial refund on the same payment is noted too", async () => {
+    await POST(signed(captured()));
+    const a = await (await POST(signed(refundEvt("rfnd_AITESTA", 50000)))).json();
+    const b = await (await POST(signed(refundEvt("rfnd_AITESTB", 20000)))).json();
+    expect(a.partial).toBe(true);
+    expect(a.amount).toBe(500);
+    expect(b.amount).toBe(200);
+    expect(payRow().gateway_refund_ids).toEqual(["rfnd_AITESTA", "rfnd_AITESTB"]);
+  });
+
+  it("a refund for a payment the app never recorded is acknowledged and ignored", async () => {
+    const res = await POST(signed(refundEvt("rfnd_AITESTX", 1000, "pay_UNKNOWN")));
+    expect(res.status).toBe(200);
+    expect((await res.json()).ignored).toMatch(/unknown payment/);
+    expect(vi.mocked(notifyTenantOwners)).not.toHaveBeenCalled();
+  });
+
+  it("another tenant's secret cannot act on this tenant's payment", async () => {
+    await POST(signed(captured()));
+    const OTHER = "22222222-2222-4222-8222-222222222222";
+    db.tables.tenant_secrets.push({ tenant_id: OTHER, razorpay_webhook_secret: "whsec_other", razorpay_key_id: "rzp_test_o" });
+    const res = await POST(signed(refundEvt(), { secret: "whsec_other", tenant: OTHER }));
+    expect(res.status).toBe(403);
+    expect(payRow().gateway_refund_ids).toBeUndefined();
+  });
+
+  it("a bad signature is still refused", async () => {
+    expect((await POST(signed(refundEvt(), { secret: "whsec_wrong" }))).status).toBe(401);
   });
 });

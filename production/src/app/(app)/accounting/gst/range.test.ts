@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GST_START, gstAllToDate, gstAllToDateHref, gstDefaultRange, gstRangeFromParams, gstThisFy } from "./range";
+import { GST_START, gstAllToDate, gstAllToDateHref, gstDefaultRange, gstRangeFromParams, gstRangeHref, gstThisFy } from "./range";
 
 /* IST instants: 6 Oct 2026 10:00 IST = 04:30Z. */
 const oct6 = new Date("2026-10-06T04:30:00Z");
@@ -27,6 +27,12 @@ describe("R-257 GST page range", () => {
   it("the Overview tile link covers everything since GST began up to today (the tile's cumulative span)", () => {
     expect(gstAllToDate(oct6)).toEqual({ from: GST_START, to: "2026-10-06", label: "All to date" });
     expect(gstAllToDateHref(oct6)).toBe("/accounting/gst?from=2017-07-01&to=2026-10-06");
+  });
+
+  it("R-394: the Overview GST tile links to exactly the range its number covers", () => {
+    const r = gstDefaultRange(oct6);
+    expect(gstRangeHref(r)).toBe(`/accounting/gst?from=${r.from}&to=${r.to}`);
+    expect(gstRangeFromParams(r.from, r.to, oct6)).toEqual(r);
   });
 
   it("reads ?from=&to= and keeps the named label so the chip lights up", () => {

@@ -15,6 +15,7 @@ import {
 import {
   hasContactsScope, scopesLost, scopeLossMessage, CONTACTS_SCOPE_MISSING_MESSAGE,
 } from "@/lib/google/scope-union";
+import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,6 +43,8 @@ export async function GET(request: NextRequest) {
 
   const creds = googleOAuthCreds();
   if (!creds) return NextResponse.redirect(`${settings}&google=notconfigured`);
+  // R-051: the refresh token is stored encrypted or not at all.
+  if (refuseConnectWithoutVault("google-contacts/callback")) return NextResponse.redirect(`${settings}&google=notconfigured`);
 
   try {
     const tokens = await exchangeCode(code, contactsRedirectUri(origin), creds);
@@ -84,7 +87,8 @@ export async function GET(request: NextRequest) {
       token_expiry: expiry,
       scopes: tokens.scope ?? null,
       last_error: note,
-      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+      // Encrypted at rest (R-051); opened only by refreshAccessToken, server-side.
+      ...(tokens.refresh_token ? { refresh_token: sealRefreshToken(tokens.refresh_token) } : {}),
     };
 
     const { error } = await admin.from("user_google_tokens").upsert(patch, { onConflict: "user_id" });

@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { TrialsExpiringCard } from "@/components/features/trials/trials-expiring-card";
 import { GettingStartedCard } from "@/components/features/dashboard/getting-started-card";
+import { useSetupFacts } from "@/lib/onboarding/use-setup-facts";
 import { MoneyHealthCard } from "@/components/features/dashboard/money-health-card";
 import { AiPerformanceCard } from "@/components/features/dashboard/ai-performance-card";
 import { PriorityActionHub } from "@/components/features/dashboard/priority-action-hub";
@@ -113,6 +114,7 @@ export default function DashboardPage() {
   const { data: tasksToday }    = useTasks("today");
   const { data: tasksOverdue }  = useTasks("overdue");
   const { data: currentUser }   = useCurrentUser();
+  const setupFacts              = useSetupFacts();
   /* Getting-started ke "Load your price list" kadam ke liye — khali catalogue
      naye tenant ka pehla deadend tha (audit B2). */
   const { data: catalogItems, isSuccess: catalogLoaded }  = useItems();
@@ -635,16 +637,14 @@ export default function DashboardPage() {
       {/* First-run onboarding — guides a new reseller to their first quote, then
           retires itself once they're set up (all steps derived from real data). */}
       <GettingStartedCard
-        setupDone={Boolean(currentUser?.tenantSetupCompletedAt)}
+        /* S31: company, GSTIN, invoice numbering, bank/UPI, email, team — read from the
+           same sources the settings screens save to (lib/onboarding/use-setup-facts.ts). */
+        setup={setupFacts}
         hasCustomer={(customers?.length ?? 0) > 0}
         hasCatalog={(catalogItems?.length ?? 0) > 0}
         hasQuote={(quotes?.length ?? 0) > 0}
         hasSale={(subscriptions?.length ?? 0) > 0}
         workspaceName={currentUser?.tenantName ?? ""}
-        /* The GSTIN itself, not a boolean derived here. The card validates it (format AND
-           checksum) so there is one rule, in one place — a `hasGstin` computed at this call
-           site would be a second, looser definition of "GST is set up". */
-        gstin={currentUser?.tenantGstin ?? null}
         ready={Boolean(currentUser) && catalogLoaded && customersQ.isSuccess && quotesQ.isSuccess && subscriptionsQ.isSuccess}
       />
 

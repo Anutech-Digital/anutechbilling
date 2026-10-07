@@ -14,7 +14,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -57,7 +57,12 @@ async function resolveTenant(access: "read" | "manage") {
   if (error || !me) return { error: "User not linked to a tenant" as const };
   if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
   if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
-  return { tenantId: me.tenant_id as string, isOwner: me.role === "owner" };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 /** Webhook URL Pardeep will paste into the Meta dashboard. Bound to the
@@ -71,7 +76,7 @@ export async function GET(req: NextRequest) {
   const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("whatsapp_provider, whatsapp_phone_number_id, whatsapp_access_token, whatsapp_business_account_id, whatsapp_app_secret, whatsapp_verify_token, updated_at")
@@ -109,7 +114,7 @@ export async function POST(req: NextRequest) {
   }
   const v = parsed.data;
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .upsert({
@@ -131,7 +136,7 @@ export async function DELETE() {
   const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({

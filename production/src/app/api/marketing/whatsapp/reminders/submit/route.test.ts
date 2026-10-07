@@ -8,6 +8,9 @@
  * fetch is mocked — the real Meta API is never called.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import type { NextRequest } from "next/server";
 
 type Call = { table: string; op: string; args: unknown[] };
@@ -35,7 +38,7 @@ vi.mock("@/lib/supabase/server", () => {
       auth: { getUser: async () => ({ data: { user: { id: "U1", email: "o@example.invalid" } } }) },
       from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: "T1", role: state.role }, error: null }) }) }) }),
     }),
-    createAdminClient: () => ({ from: (t: string) => builder(t) }),
+    createAdminClientFor: (actor: string) => (actors.push(actor), { from: (t: string) => builder(t) }),
   };
 });
 vi.mock("@/lib/whatsapp/client", () => ({ resolveWhatsAppCreds: async () => state.creds }));
@@ -56,6 +59,7 @@ let logs: ReturnType<typeof vi.spyOn>[];
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 
 beforeEach(() => {
+  actors.length = 0;
   state.role = "owner";
   state.calls = [];
   state.data = {};
@@ -76,6 +80,7 @@ describe("success", () => {
     const res = await POST(req());
     const text = await res.text();
     expect(res.status).toBe(200);
+    expect(actors).toContain("U1"); // R-051: audit log names the signed-in caller
     const j = JSON.parse(text);
     expect(j.submitted).toBe(6);
     expect(j.results).toHaveLength(6);

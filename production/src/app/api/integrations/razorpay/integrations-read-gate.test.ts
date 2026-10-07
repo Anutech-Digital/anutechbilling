@@ -6,6 +6,9 @@
  * "Not configured / simulation" while Razorpay, Gemini and WhatsApp were live.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import { NextRequest } from "next/server";
 
 const db = vi.hoisted(() => ({
@@ -31,7 +34,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1" } } }) },
     from: (t: string) => chain(t, true),
   }),
-  createAdminClient: () => ({ from: (t: string) => chain(t, false) }),
+  createAdminClientFor: (actor: string) => (actors.push(actor), { from: (t: string) => chain(t, false) }),
 }));
 
 import * as razorpay from "./route";
@@ -79,6 +82,7 @@ const WRITES = {
 };
 
 beforeEach(() => {
+  actors.length = 0;
   db.me = { tenant_id: "T1", role: "manager" };
   db.secrets = { ...FAKE };
   db.writes = [];
@@ -91,6 +95,7 @@ describe("R-256 integration status is readable by owner, manager, billing", () =
         db.me = { tenant_id: "T1", role };
         const res = await get();
         expect(res.status).toBe(200);
+        expect(actors).toEqual(["U1"]); // R-051: service role opened for the verified caller
         const json = await res.json();
         expect(json.ok).toBe(true);
         expect(json.configured).toBe(true);

@@ -90,6 +90,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/buy/workspace", file: "src/app/(public)/buy/workspace/page.tsx" },
   { route: "/buy/workspace/thanks", file: "src/app/(public)/buy/workspace/thanks/page.tsx" },
   { route: "/campaigns", file: "src/app/(app)/campaigns/page.tsx" },
+  { route: "/change-password", file: "src/app/(auth)/change-password/page.tsx" },
   { route: "/compliance", file: "src/app/(app)/compliance/page.tsx" },
   { route: "/compliance/gst", file: "src/app/(app)/compliance/gst/page.tsx" },
   { route: "/compliance/income-tax", file: "src/app/(app)/compliance/income-tax/page.tsx" },

@@ -21,7 +21,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { isValidGstin }      from "@/lib/utils";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 
@@ -293,7 +293,7 @@ export async function POST(req: NextRequest) {
   if (!authData?.user) {
     return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
   }
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
   const { data: me } = await supabase
     .from("users").select("tenant_id").eq("id", authData.user.id).single();
 
@@ -345,7 +345,7 @@ export async function POST(req: NextRequest) {
   if (save) {
     try {
       if (me?.tenant_id) {
-        const admin = createAdminClient();
+        const admin = createAdminClientFor(authData.user.id);
         if (customer_id) {
           const { data: customer } = await admin
             .from("customers")

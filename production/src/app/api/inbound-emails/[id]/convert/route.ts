@@ -5,7 +5,7 @@
  * Found 30 Aug 2026, alongside the same hole in the list route next door. This handler
  * took an id straight off the URL and handed it to a service_role RPC:
  *
- *     const admin = createAdminClient();
+ *     const admin = createAdminClientFor(user.id);
  *     await admin.rpc("convert_inbound_email_to_lead", { p_id: params.id });
  *
  * No session was required and no tenant was checked. `/api` is not in the middleware's
@@ -21,7 +21,7 @@
  * own proves the row exists, which is not the same as proving it is yours.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export async function POST(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -40,7 +40,7 @@ export async function POST(_request: NextRequest, props: { params: Promise<{ id:
     );
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
 
   /* Does this enquiry belong to the caller's tenant? A 404 for both "no such row" and
      "not yours" on purpose — telling a stranger which ids exist is its own answer. */

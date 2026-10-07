@@ -7,6 +7,10 @@
  *     month" (≤ 31 days) and the reports' 90-day window. A lost deal whose lost_at predates
  *     its last stage change is still in, since stage_changed_at ≥ lost_at.
  * Junk is excluded, as on every pipeline figure. Read under the caller's RLS.
+ *
+ * R-375: each WON row also gets `paid` — whether a payment is recorded against it (a part/
+ * fully-paid quote or a project receipt, lib/payments/won-paid.ts). accept_quote marks a lead
+ * won before any money arrives, so the won ₹ figures sum only rows with paid = true.
  */
 "use client";
 
@@ -17,8 +21,9 @@ import { fetchAllRows, fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
 import { istToday, addDaysISO, istDayStartUtc } from "@/lib/dates/ist";
 import { OPEN_DEAL_STAGES, type DealRow } from "@/lib/deals/pipeline-summary";
 import { latestFollowUps, dealTodayItems } from "@/lib/today/deals";
+import { fetchPaidLeadIds } from "@/lib/payments/won-paid";
 
-const DEAL_COLUMNS = "id, company, stage, value, expected_close_date, stage_changed_at, created_at, owner_id, lost_at";
+const DEAL_COLUMNS = "id, company, stage, value, expected_close_date, stage_changed_at, created_at, owner_id, lost_at, project_id";
 export const CLOSED_LOOKBACK_DAYS = 100;
 
 export function useDealRows(enabled = true) {
@@ -43,7 +48,13 @@ export function useDealRows(enabled = true) {
           .order("id", { ascending: true })
           .range(from, to)),
       ]);
-      return [...open, ...closed] as DealRow[];
+      const won = closed.filter((d) => d.stage === "won");
+      const paidIds = await fetchPaidLeadIds(supabase, won);
+      /* project_id rides along (it is how a project deal's receipts are found); harmless extra. */
+      return [
+        ...open,
+        ...closed.map((d) => (d.stage === "won" ? { ...d, paid: paidIds.has(d.id) } : d)),
+      ] as DealRow[];
     },
   });
 }

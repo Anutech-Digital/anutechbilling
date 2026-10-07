@@ -9,6 +9,12 @@
  *   - `order.paid`        — Razorpay considers the order complete
  *   - `payment.failed`    — note on the lead + a retry link to the SAME quote (R-079);
  *                           never a new charge
+ *   - `refund.processed`  — R-045: a note on the lead + an owner notification saying what to
+ *                           book (credit note first if invoiced). Once per refund id. Never
+ *                           refunds, credit-notes or changes a payment's status by itself.
+ *
+ * R-045: on a capture we also keep Razorpay's fee + GST on the fee (whole rupees) on the
+ * payment row, so cash settled = amount − gateway_fee and the bank line can be matched.
  *
  * For each successful capture, we:
  *   1. Verify the HMAC signature using RAZORPAY_WEBHOOK_SECRET (must be set!)
@@ -47,6 +53,8 @@ import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { gatewayFeeFromPayment, parseRefund, refundAdvice } from "@/lib/razorpay/gateway-money";
+import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
 
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
@@ -89,6 +97,9 @@ interface RazorpayPayment {
   email?:     string;
   contact?:   string;
   notes?:     Record<string, string>;
+  /** R-045: Razorpay's fee INCLUDING GST on it, and the GST part — paise, on captured payments. */
+  fee?:       number | null;
+  tax?:       number | null;
   /** payment.failed only — Razorpay's own words for why. */
   error_code?:        string | null;
   error_description?: string | null;
@@ -107,6 +118,8 @@ interface RazorpayWebhookBody {
   payload:  {
     payment?: { entity: RazorpayPayment };
     order?:   { entity: RazorpayOrder };
+    /** refund.* only — read through parseRefund, never trusted as typed. */
+    refund?:  { entity: unknown };
   };
   created_at: number;
 }
@@ -295,6 +308,11 @@ export async function POST(request: NextRequest) {
     return handlePaymentFailed(admin, body, tenantParam, new URL(request.url).origin, mayActOn);
   }
 
+  /* R-045: the money already went back to the buyer at Razorpay — tell the desk what to book. */
+  if (event === "refund.processed") {
+    return handleRefundProcessed(admin, body, tenantParam, mayActOn);
+  }
+
   // Only act on payment-success events — ignore authorized / etc.
   if (event !== "payment.captured" && event !== "order.paid") {
     return NextResponse.json({ received: true, ignored: event });
@@ -358,6 +376,9 @@ export async function POST(request: NextRequest) {
       .limit(1);
     if (seen && seen.length) {
       console.log("[webhooks/razorpay] payment already recorded:", ref, "on", receipt);
+      /* An order.paid that landed first may have carried no fee; the payment.captured that
+         follows does. Writing the same numbers twice is harmless. */
+      if (payment?.id) await recordGatewayFee(admin, quote.tenant_id, quote.id, payment.id, payment);
       return NextResponse.json({ received: true, alreadyProcessed: true });
     }
   }
@@ -424,6 +445,9 @@ export async function POST(request: NextRequest) {
     console.log("[webhooks/razorpay] concurrent duplicate stopped at record_payment:", paymentRef, "on", receipt);
     return NextResponse.json({ received: true, alreadyProcessed: true });
   }
+
+  /* R-045: what Razorpay kept. Best-effort — the payment is committed either way. */
+  if (payment?.id) await recordGatewayFee(admin, quote.tenant_id, quote.id, paymentRef, payment);
 
   /* ── THE GST TAX INVOICE (R-079) ─────────────────────────────────────────
      Through generate_invoice — the desk's own issuing path — right after the payment is
@@ -970,4 +994,162 @@ async function handleMandateEvent(
 
   console.info(`[webhooks/razorpay] mandate ${mandate.id}: ${mandate.status} → ${next} (${event})`);
   return NextResponse.json({ received: true, mandate: mandate.id, status: next });
+}
+
+/**
+ * R-045: keep what Razorpay KEPT on this payment — its fee and the GST on that fee, whole
+ * rupees — on the payment row the capture just recorded. Cash settled = amount − gateway_fee,
+ * which is the number the bank line shows.
+ *
+ * Best-effort by design: the payment is already committed, and a fee that cannot be written
+ * (or that Razorpay did not send) stays NULL = "unknown", never a guessed zero.
+ */
+async function recordGatewayFee(
+  admin: ReturnType<typeof createAdminClient>,
+  tenantId: string,
+  quoteId: string,
+  reference: string,
+  payment: RazorpayPayment,
+): Promise<void> {
+  const fee = gatewayFeeFromPayment(payment);
+  if (!fee) return;
+  const { data: rows, error } = await admin
+    .from("payments")
+    .update({ gateway_fee: fee.fee, gateway_fee_gst: fee.gst })
+    .eq("tenant_id", tenantId)
+    .eq("quote_id", quoteId)
+    .eq("reference", reference)
+    .select("id");
+  if (error) {
+    logDbError("webhooks/razorpay:gateway_fee", error);
+    return;
+  }
+  console.log(`[webhooks/razorpay] ${reference}: Razorpay fee ₹${fee.fee} (GST ₹${fee.gst}), settles ₹${fee.net}`);
+  /* R-045 slice 2: book the fee as a Bank Charges expense (its GST as input), once per
+     payment — the expense id is derived from the payment id, so a retry or the later
+     payment.captured lands on the same row and writes nothing. Best-effort: a miss is
+     picked up by "Book Razorpay fees" on the Payments page. */
+  for (const r of (rows ?? []) as { id: string }[]) {
+    const booked = await bookGatewayFeeExpense(admin, tenantId, r.id);
+    if (booked === "error") console.error(`[webhooks/razorpay] ${reference}: fee expense not booked — use Book Razorpay fees on /payments`);
+  }
+}
+
+/**
+ * R-045: `refund.processed` — Razorpay has ALREADY sent money back to the buyer.
+ *
+ * What this does: finds the payment the refund belongs to (by Razorpay payment id, which
+ * the capture stored as payments.reference), checks the tenant, records the refund id on
+ * the payment (once — the idempotency fact), then writes a note on the lead and notifies
+ * the owners with the exact next step (refundAdvice).
+ *
+ * What it deliberately does NOT do: flip the payment to refunded, touch the quote, or issue
+ * a credit note. A tax invoice needs a credit note first (refund_payment refuses otherwise),
+ * and a partial refund needs a human to decide which lines — so the machine writes the
+ * instruction and a human books it.
+ *
+ * Idempotency: the refund id is appended with an optimistic check on the array as read, so
+ * two deliveries of the same refund racing each other write one note. The loser re-reads;
+ * if its id is now there it answers alreadyProcessed, otherwise 500 so Razorpay retries.
+ */
+async function handleRefundProcessed(
+  admin: ReturnType<typeof createAdminClient>,
+  body: RazorpayWebhookBody,
+  tenantParam: string | null,
+  mayActOn: (tenantId: string) => Promise<boolean>,
+): Promise<NextResponse> {
+  const refund = parseRefund(body.payload.refund?.entity);
+  if (!refund) {
+    return NextResponse.json({ received: true, ignored: "refund.processed (no usable refund)" });
+  }
+
+  type PayRow = {
+    id: string; tenant_id: string; quote_id: string; amount: number; status: string;
+    gateway_refund_ids: string[] | null;
+  };
+  const cols = "id, tenant_id, quote_id, amount, status, gateway_refund_ids";
+  const { data: rows } = await admin.from("payments").select(cols).eq("reference", refund.payment_id).limit(5);
+  const candidates = (rows ?? []) as PayRow[];
+  if (candidates.length === 0) {
+    console.warn(`[webhooks/razorpay] refund.processed ${refund.id}: no payment recorded for ${refund.payment_id}`);
+    return NextResponse.json({ received: true, ignored: "refund.processed (unknown payment)" });
+  }
+  let pay: PayRow | null = null;
+  for (const r of candidates) {
+    if (await mayActOn(r.tenant_id)) { pay = r; break; }
+  }
+  if (!pay) {
+    console.error("[webhooks/razorpay] refund.processed tenant mismatch", { tenantParam, payment: refund.payment_id });
+    return NextResponse.json({ error: "Tenant mismatch" }, { status: 403 });
+  }
+
+  const seen = pay.gateway_refund_ids ?? [];
+  if (seen.includes(refund.id)) {
+    return NextResponse.json({ received: true, alreadyProcessed: true });
+  }
+
+  /* Claim the refund id — only the delivery whose update matches the array AS READ wins. */
+  const base = admin
+    .from("payments")
+    .update({ gateway_refund_ids: [...seen, refund.id] })
+    .eq("id", pay.id);
+  const guarded = pay.gateway_refund_ids == null
+    ? base.is("gateway_refund_ids", null)
+    : base.filter("gateway_refund_ids", "eq", `{${seen.join(",")}}`);
+  const { data: claimed, error: claimErr } = await guarded.select("id");
+  if (claimErr) {
+    logDbError("webhooks/razorpay:refund_claim", claimErr);
+    return NextResponse.json({ error: safeDbMessage(claimErr, "Refund processing failed") }, { status: 500 });
+  }
+  if (!claimed || claimed.length === 0) {
+    const { data: again } = await admin.from("payments").select("gateway_refund_ids").eq("id", pay.id).maybeSingle();
+    const now = ((again as { gateway_refund_ids?: string[] | null } | null)?.gateway_refund_ids) ?? [];
+    if (now.includes(refund.id)) return NextResponse.json({ received: true, alreadyProcessed: true });
+    console.error(`[webhooks/razorpay] refund.processed ${refund.id}: lost a concurrent update on ${pay.id}; asking Razorpay to retry`);
+    return NextResponse.json({ error: "Busy, retry" }, { status: 500 });
+  }
+
+  const { data: q } = await admin
+    .from("quotes")
+    .select("id, lead_id, invoice_id")
+    .eq("id", pay.quote_id)
+    .eq("tenant_id", pay.tenant_id)
+    .maybeSingle();
+  const quote = q as { id: string; lead_id: string | null; invoice_id: string | null } | null;
+
+  const advice = refundAdvice(refund, {
+    quoteId: pay.quote_id,
+    paymentAmount: pay.amount,
+    paymentStatus: pay.status,
+    invoiceNumber: quote?.invoice_id ?? null,
+  });
+
+  if (quote?.lead_id) {
+    const { error: noteErr } = await admin.from("lead_activities").insert({
+      tenant_id: pay.tenant_id,
+      lead_id: quote.lead_id,
+      kind: "note",
+      detail: advice.note,
+    });
+    if (noteErr) console.error(`[webhooks/razorpay] refund.processed ${refund.id}: lead note not written — ${noteErr.message}`);
+  }
+
+  await notifyTenantOwners({
+    tenantId: pay.tenant_id,
+    kind: "payment.refunded",
+    title: `Razorpay refund ${rupee(advice.amount)} on ${pay.quote_id} — book it`,
+    body: advice.note,
+    href: `/quotes/${pay.quote_id}`,
+    entityId: pay.quote_id,
+  });
+
+  console.warn(`[webhooks/razorpay] refund.processed ${refund.id} on ${pay.quote_id}: ₹${advice.amount}${advice.partial ? " (partial)" : ""}`);
+  return NextResponse.json({
+    received: true,
+    refund: refund.id,
+    quoteId: pay.quote_id,
+    amount: advice.amount,
+    partial: advice.partial,
+    nextStep: advice.nextStep,
+  });
 }

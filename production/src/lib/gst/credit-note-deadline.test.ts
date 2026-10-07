@@ -47,7 +47,9 @@ describe("R-335 credit note s.34 deadline", () => {
   });
 
   it("the GST report counts late credit notes", () => {
-    const src = readFileSync(join(process.cwd(), "src/app/(app)/accounting/gst/page.tsx"), "utf8");
+    /* R-394: the report loader moved from page.tsx to gst/report.ts (shared with the Overview tile). */
+    const src = ["page.tsx", "report.ts"]
+      .map((f) => readFileSync(join(process.cwd(), "src/app/(app)/accounting/gst", f), "utf8")).join("\n");
     expect(src).toMatch(/isCreditNoteLate\(/);
     expect(src).toMatch(/lateCreditNotes/);
   });

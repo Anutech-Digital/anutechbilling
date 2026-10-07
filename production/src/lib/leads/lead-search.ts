@@ -18,7 +18,12 @@
  *
  * The SQL twin is public.lead_search_hit() (migration 20261007000000_lead_search_tokens.sql);
  * lead-search-sql.test.ts holds the two to the same constants.
+ *
+ * R-392 (7 Oct 2026): the lead's SOURCE (saved key, key with spaces, label — so "google ads"
+ * finds a `google-ads` lead) and the ASSIGNED person's name are searched too. SQL twin:
+ * public.lead_search_hit()'s 8-argument form in 20261007190000_lead_source_filter_search.sql.
  */
+import { sourceSearchText } from "@/lib/leads/lead-sources";
 
 /** The fields the box searches. */
 export interface LeadSearchFields {
@@ -27,6 +32,8 @@ export interface LeadSearchFields {
   contact_email: string | null;
   contact_phone: string | null;
   plan: string | null;
+  /** R-392: where the lead came from (lead-sources.ts key, or an older free-text value). */
+  source?: string | null;
 }
 
 /** Fewer digits than this is ordinary text ("2024"), not a phone number. */
@@ -48,13 +55,19 @@ export function phoneSearchDigits(normalized: string): string | null {
   return digits;
 }
 
-/** Does this lead match the search box? A blank box matches every lead. */
-export function leadMatchesSearch(l: LeadSearchFields, search: string): boolean {
+/**
+ * Does this lead match the search box? A blank box matches every lead.
+ *
+ * @param ownerName the ASSIGNED person's name (users.full_name for `owner_id`) — R-392. The
+ *   row does not carry it, so the caller looks it up; null/undefined = nothing to search.
+ */
+export function leadMatchesSearch(l: LeadSearchFields, search: string, ownerName?: string | null): boolean {
   const q = normalizeLeadSearch(search);
   if (q === "") return true;
   const digits = phoneSearchDigits(q);
   if (digits !== null && (l.contact_phone ?? "").replace(/[^0-9]/g, "").includes(digits)) return true;
-  const fields = [l.company, l.contact_name, l.contact_email, l.contact_phone, l.plan]
+  const fields = [l.company, l.contact_name, l.contact_email, l.contact_phone, l.plan,
+    sourceSearchText(l.source), ownerName]
     .map((v) => (v ?? "").toLowerCase());
   return q.split(" ").every((word) => fields.some((f) => f.includes(word)));
 }

@@ -13,7 +13,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
-import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { createAdminClientFor, createClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     return NextResponse.json({ error: "Add the apprentice's email first." }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(auth.user.id);
 
   // An email that is a staff login anywhere can never become an apprentice login.
   const { data: staff } = await admin.from("users").select("id").eq("email", email).maybeSingle();

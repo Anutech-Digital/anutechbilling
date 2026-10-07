@@ -54,6 +54,7 @@ import { isValidVpa } from "@/lib/payments/upi";
 import type { RazorpayReadiness } from "@/lib/payments/razorpay-readiness";
 import { resellerTierView } from "./reseller-tier-view";
 import { resolveSettingsTab, settingsTabHref } from "./settings-tab";
+import { useScrollToHash } from "@/lib/onboarding/use-scroll-to-hash";
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 // Team roster moved to its own /team page. Settings only owns the
@@ -408,8 +409,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
               {/* UPI — prints a scan-to-pay QR on every invoice PDF. Works with
                   any UPI app and needs no Razorpay, so it can be switched on
-                  today. Blank simply means no QR is printed. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  today. Blank simply means no QR is printed.
+                  id: the Dashboard setup checklist links here (S31, lib/onboarding/setup-links). */}
+              <div id="payment-details" className="grid grid-cols-1 sm:grid-cols-2 gap-4 scroll-mt-20">
                 <Field htmlFor="settings-your-upi-id-optional" label="Your UPI ID (optional)">
                   <Input id="settings-your-upi-id-optional"
                     placeholder="e.g. yourname@okhdfcbank"
@@ -562,7 +564,8 @@ function InvoiceNumberingCard({ isOwner }: { isOwner: boolean }) {
   };
 
   return (
-    <Card className="p-5 max-w-3xl">
+    /* id: the setup checklist and the "Could not allocate a number" toast link here (S31). */
+    <Card id="invoice-numbering" className="p-5 max-w-3xl scroll-mt-20">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-semibold text-ink">Invoice numbering</p>
         {state?.locked && <Badge kind="muted">Locked</Badge>}
@@ -992,7 +995,8 @@ function GoogleContactsIntegrationCard() {
 function IntegrationsTab() {
   return (
     <>
-    <div className="mb-4">
+    {/* id: the Dashboard setup checklist links here (S31). */}
+    <div id="email-sending" className="mb-4 scroll-mt-20">
       <EmailSendingCard />
     </div>
     <Card className="p-5">
@@ -1088,6 +1092,8 @@ function SettingsPageInner() {
   const pathname = usePathname();
   const params = useSearchParams();
   const tab = resolveSettingsTab(params.get("tab"), TABS.map((t) => t.id));
+  /* S31: #invoice-numbering / #payment-details / #email-sending from the setup checklist. */
+  useScrollToHash(tab);
   const confirm = useConfirm();
   const companyDirty = React.useRef(false);
   const onCompanyDirty = React.useCallback((d: boolean) => { companyDirty.current = d; }, []);

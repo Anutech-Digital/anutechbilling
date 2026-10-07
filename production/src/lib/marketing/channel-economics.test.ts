@@ -11,7 +11,7 @@ import {
  */
 function leadsFor(source: string, total: number, won: number, wonValueEach: number): ChannelLeadInput[] {
   const out: ChannelLeadInput[] = [];
-  for (let i = 0; i < won; i++) out.push({ source, stage: "won", value: wonValueEach });
+  for (let i = 0; i < won; i++) out.push({ source, stage: "won", value: wonValueEach, paid: true });
   for (let i = won; i < total; i++) out.push({ source, stage: "lost", value: 0 });
   return out;
 }
@@ -104,7 +104,7 @@ describe("data entry is not a marketing channel", () => {
   });
 
   it("treats a null or blank source as unattributed, not as a channel named ''", () => {
-    const r = channelReport([{ source: null, stage: "won", value: 100 }, { source: "  ", stage: "lost", value: 0 }]);
+    const r = channelReport([{ source: null, stage: "won", value: 100, paid: true }, { source: "  ", stage: "lost", value: 0 }]);
     expect(r.channels).toEqual([]);
     expect(r.unattributed.length).toBeGreaterThan(0);
   });
@@ -233,8 +233,8 @@ describe("robustness", () => {
   it("never produces NaN in any numeric field", () => {
     const r = channelReport(
       [
-        { source: "a", stage: "won",  value: NaN },
-        { source: "a", stage: "won",  value: null },
+        { source: "a", stage: "won",  value: NaN, paid: true },
+        { source: "a", stage: "won",  value: null, paid: true },
         { source: "b", stage: null,   value: undefined },
         { source: undefined, stage: "lost", value: -5000 },
       ],
@@ -252,7 +252,7 @@ describe("robustness", () => {
   });
 
   it("never counts a negative deal value as won revenue", () => {
-    const r = channelReport([{ source: "a", stage: "won", value: -100_000 }]);
+    const r = channelReport([{ source: "a", stage: "won", value: -100_000, paid: true }]);
     expect(r.channels[0].wonValue).toBe(0);
   });
 
@@ -331,5 +331,21 @@ describe("recommendationFor — advice that moves money", () => {
       expect(r.label.length).toBeGreaterThan(0);
       expect(r.reason.length).toBeGreaterThan(0);
     }
+  });
+});
+
+/* R-375 (audit finding 8): accept_quote sets stage 'won' on ACCEPTANCE, before any payment. */
+describe("won revenue needs a recorded payment", () => {
+  it("an accepted-but-unpaid won lead is a won deal but adds ₹0 of won value (and ROAS)", () => {
+    const r = channelReport([
+      { source: "google-ads", stage: "won", value: 100_000, paid: true },
+      { source: "google-ads", stage: "won", value: 900_000, paid: false },
+      { source: "google-ads", stage: "won", value: 500_000 },             // unknown = not paid
+    ], [{ channel: "google-ads", rupees: 50_000 }]);
+    const c = r.channels[0];
+    expect(c.won).toBe(3);
+    expect(c.wonValue).toBe(100_000);
+    expect(c.roas).toBe(2);
+    expect(r.totals.wonValue).toBe(100_000);
   });
 });

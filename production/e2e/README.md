@@ -103,6 +103,23 @@ PLAYWRIGHT_BASE_URL=http://localhost:3014 CRON_SECRET=local-dev-cron-secret \
   npx playwright test e2e/w0 e2e/w1 --project=chromium --workers=1
 ```
 
+### In CI — `.github/workflows/e2e-logged-in.yml` (R-058)
+
+Runs on every push to the team branches and nightly at 08:00 IST, against **staging**
+(`https://resellersos-staging-njvk4nxhdq-as.a.run.app`) unless repo variable `E2E_BASE_URL`
+says otherwise. The first step, `e2e/fixtures/ci-preflight.mjs`, decides:
+
+| Preflight | When | Result |
+|---|---|---|
+| refuse | base URL or `E2E_SUPABASE_URL` is production (deny list in `e2e-roles.mjs`) | red |
+| skip | none of the secrets below is set | job stops there, notice + summary list the names; not red |
+| fail | some set, some missing | red, lists the missing names |
+| ok | all set | seed + `e2e/w0 e2e/w1 suite-health` run |
+
+Secrets (Settings → Secrets and variables → Actions): `E2E_SUPABASE_URL`, `E2E_SUPABASE_ANON_KEY`,
+`E2E_SUPABASE_SERVICE_ROLE_KEY`, `E2E_OWNER_PASSWORD`, `E2E_MANAGER_PASSWORD`, `E2E_SALES_PASSWORD`,
+`E2E_ACCOUNTANT_PASSWORD`; optional `E2E_CRON_SECRET`.
+
 ---
 
 ## Test data — seeding

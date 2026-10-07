@@ -20,7 +20,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { localDateISO } from "@/lib/leads/outcomes";
 import {
   supportTier, tierFromPlanName, liveCallAllowance, type SupportTierId,
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Which customer is this call for?" }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
 
   /* The customer must be this tenant's. The admin client bypasses RLS, so the id
      alone would address anybody's customer. */

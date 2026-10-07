@@ -9,6 +9,7 @@
 "use client";
 
 import * as React from "react";
+import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 import { GstStateSelect, EXPORT_STATE } from "@/components/shared/gst-state-select";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
@@ -552,11 +553,13 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
     if (numErr || !minted) {
       /* §24: say what failed and what to do, rather than falling back to a random id.
          A fallback here would quietly reintroduce the collision this replaced. */
-      throw new Error(
+      /* S31: tagged so the catch below adds a one-click "Set up numbering" button instead
+         of a sentence that says "under Settings" and nothing more. */
+      throw Object.assign(new Error(
         numErr?.message
-          ? `Could not allocate a quote number: ${numErr.message}. Try again — if it keeps failing, your document series needs setting up under Settings.`
-          : "Could not allocate a quote number. Try again — if it keeps failing, your document series needs setting up under Settings.",
-      );
+          ? `Could not allocate a quote number: ${numErr.message}.`
+          : "Could not allocate a quote number.",
+      ), { fix: "numbering" as const });
     }
     return minted as unknown as string;
   };
@@ -1051,8 +1054,14 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
          code + hint stay on the second line so support can still find the cause. */
       const { message: shown, description: why } = describeError({ message: detail }, "Could not create the subscription.");
       const tech = [e?.code && `code ${e.code}`, e?.hint].filter(Boolean).join(" · ");
+      const numbering = (err as { fix?: string } | null)?.fix === "numbering";
       toast.error(shown, {
-        description: [why, tech].filter(Boolean).join(" · ") || "Nothing was saved. Fix the details above and submit again.",
+        description: numbering
+          ? NUMBERING_FIX.description
+          : [why, tech].filter(Boolean).join(" · ") || "Nothing was saved. Fix the details above and submit again.",
+        action: numbering
+          ? { label: NUMBERING_FIX.label, onClick: () => window.location.assign(NUMBERING_FIX.href) }
+          : undefined,
       });
       console.error("[add-subscription] failed:", err);
     } finally {

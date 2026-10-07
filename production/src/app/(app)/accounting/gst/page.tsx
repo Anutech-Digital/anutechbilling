@@ -6,8 +6,10 @@
  *                         customers via invoices
  *   Input GST (purchases): amount of CGST + SGST + IGST paid to vendors
  *                         via vendor_bills + expenses
- *   Net liability        : Output − Input. Positive = payable. Negative =
- *                         refundable / carry-forward credit.
+ *   Cash to pay          : output tax left after input credit is set off in
+ *                         the s.49(5) / Rule 88A order (IGST credit first, never
+ *                         CGST↔SGST), plus reverse charge — R-258, lib/gst/gstr3b.ts.
+ *                         Unused credit is carried forward per head.
  *
  * Two CSV export buttons let Pardeep hand his CA a ready-to-import file
  * for GSTR-1 / GSTR-3B filing on the IRP portal. (Real IRN generation
@@ -18,7 +20,6 @@
 import * as React from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -26,21 +27,15 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
-import { expenseGstHeads } from "@/lib/accounting/gst-heads";
-import { splitItc, itcEligibility, type ItcSplit } from "@/lib/gst/itc";
-import { gstPaidForPeriods } from "@/lib/accounting/tax-payments";
-import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { rupee, formatDate } from "@/lib/utils";
-import { buildGstr1, buildAdvances, docHeads, docHsnLines, gstr1Csv, gstr1Json, gstr3bClass, isExportDoc, GSTR1_HEADERS, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
-import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
-import { computeGstr3b, gstr3bRows, type Heads } from "@/lib/gst/gstr3b";
+import { buildGstr1, buildAdvances, docHeads, gstr1Csv, gstr1Json, isExportDoc, GSTR1_HEADERS } from "@/lib/gst/gstr1";
+import { gstr3bRows } from "@/lib/gst/gstr3b";
 import { parseGstr2b, reconcile2b, type Reconciliation } from "@/lib/gst/gstr2b";
-import { createClient } from "@/lib/supabase/client";
 import { Term } from "@/components/shared/term";
-import { toIstDate } from "@/lib/dates/ist";
-import { isCreditNoteLate } from "@/lib/gst/credit-note-deadline";
-import { gstLastMonth, gstThisMonth, gstThisQuarter, istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
+import { gstLastMonth, gstThisMonth, gstThisQuarter, type GstPeriod } from "@/lib/gst/periods";
 import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
+import { useGstReport, useGstPaidInRange } from "./report";
+import { gstCashHeadline, gstr3bFromReport, toGstr1Doc } from "./cash-to-pay";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
@@ -54,381 +49,8 @@ const thisMonth = () => gstThisMonth();
 const lastMonth = () => gstLastMonth();
 const thisQuarter = () => gstThisQuarter();
 
-// ────────────────────────────────────────────────────────────────
-// GST aggregation hook
-// ────────────────────────────────────────────────────────────────
-
-interface OutputRow {
-  invoiceId:    string;
-  invoiceDate:  string;
-  customerName: string;
-  customerGstin: string | null;
-  customerStateCode: string | null;  // buyer's GST state code (place of supply)
-  customerState:     string | null;
-  /** Customer's country — outside India with no GSTIN = export (GSTR-1 EXP, 3B 3.1(b)). */
-  customerCountry:   string | null;
-  amount:       number;        // GST-inclusive
-  taxableValue: number;        // persisted (migration 0116), else reverse-derived
-  gst:          number;        // total GST (persisted, else reverse-derived)
-  taxRate:      number;        // GST rate %
-  interState:   boolean;       // true → IGST; false → CGST + SGST
-  docType:      "invoice" | "credit_note" | "debit_note";  // credit/debit notes net the output tax
-  /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
-  lateCreditNote?: boolean;
-  /** Per-line HSN/SAC share of the taxable value (catalogue item's `hsn`). See lib/gst/gstr1.ts. */
-  lines?:       { hsn: string; description?: string; taxable: number }[];
-}
-interface InputRow {
-  source:       "bill" | "expense";
-  id:           string;
-  date:         string;
-  vendor:       string;
-  vendorGstin:  string | null;
-  taxableValue: number;        // pre-GST
-  gst:          number;        // CGST + SGST + IGST or gst_paid
-  igst:         number;        // ITC head split. Bill se naapa hua, ya (jab bill par na ho) maana hua — `assumed` batata hai kaun sa.
-  /** `true` = ye batwara BILL se nahi aaya, maana gaya hai. Dekho lib/accounting/gst-heads.ts */
-  assumed?:     boolean;
-  /** Maana gaya ho to kyun — hover/worksheet me dikhane ke liye. */
-  assumption?:  string | null;
-  cgst:         number;
-  sgst:         number;
-  category:     string;
-  /** Bill / invoice number as entered — the key GSTR-2B matching uses (lib/gst/gstr2b.ts). */
-  billNo:       string | null;
-}
-interface GstReport {
-  outputRows:    OutputRow[];
-  inputRows:     InputRow[];
-  outputTotal:   number;
-  outputGST:     number;
-  inputTotal:    number;
-  inputGST:      number;
-  netLiability:  number;
-  /** Expense GST that is NOT credit (kaccha bill, no vendor GSTIN, s.17(5)) — lib/gst/itc.ts. Not in inputRows. */
-  blockedItc:    ItcSplit;
-  /** The s.17(5) part of that, by head — reported gross in 3B 4(A)(5) and reversed in 4(B)(1). */
-  blocked17Heads: Heads[];
-  /** Imported services under reverse charge this period (expenses.rcm) — 3B 3.1(d) / 4(A)(3). */
-  rcmRows:       { id: string; vendor: string; date: string; amount: number; tax: number }[];
-  sellerStateCode: string | null;   // your own state — place of supply for intra-state B2C
-  sellerState:     string | null;
-  /** Company GSTIN from Settings — the Portal JSON is refused without it. */
-  sellerGstin:     string | null;
-  /** Receipt-voucher advances relevant to GSTR-1 Table 11A / 11B (lib/gst/gstr1.ts buildAdvances). */
-  advances:        Advance[];
-  /** R-335: credit notes in this period issued after their invoice's s.34 time limit. */
-  lateCreditNotes: number;
-}
-
-function useGstReport(range: DateRange) {
-  return useQuery({
-    queryKey: ["accounting", "gst", range],
-    queryFn: async (): Promise<GstReport> => {
-      const supabase = createClient();
-
-      // ── Output: invoices issued in the period ─────────────────────
-      const { data: invoices, error: invErr } = await supabase
-        .from("invoices")
-        .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
-        .gte("invoice_date", range.from)
-        .lte("invoice_date", range.to)
-        .in("status", ["pending", "paid", "overdue"]);
-      if (invErr) throw invErr;
-
-      // Credit / debit notes issued in the period — they NET the output tax (a
-      // credit note reduces it, a debit note increases it), so GSTR-1/3B is right.
-      const [{ data: creditNotes }, { data: debitNotes }] = await Promise.all([
-        supabase.from("credit_notes")
-          .select("id, invoice_id, credit_date, customer_name, customer_id, amount, taxable_value, tax_amount, tax_rate, inter_state")
-          .gte("credit_date", range.from).lte("credit_date", range.to),
-        supabase.from("debit_notes")
-          .select("id, invoice_id, debit_date, customer_name, customer_id, amount, taxable_value, tax_amount, tax_rate, inter_state")
-          .gte("debit_date", range.from).lte("debit_date", range.to),
-      ]);
-
-      /* ── Advances received in the period (GSTR-1 Table 11A) ─────────────────
-         Every quote payment gets a receipt voucher; it is an advance until the quote's
-         invoice is issued. received_at is a timestamp, so the period is the IST day range. */
-      const { data: pays } = await supabase
-        .from("payments")
-        .select("id, receipt_voucher_no, amount, received_at, quote_id, customer_id")
-        .eq("status", "received")
-        .gte("received_at", istRangeUtc(range.from, range.to).fromUtc)
-        .lt("received_at", istRangeUtc(range.from, range.to).toUtcExclusive);
-      const payQuoteIds = Array.from(new Set((pays ?? []).map((p) => p.quote_id).filter((x): x is string => !!x)));
-      const quoteById = new Map<string, { invoiceId: string | null; rate: number | null; customerId: string | null }>();
-      const invDateById = new Map<string, string>();
-      if (payQuoteIds.length) {
-        const { data: qs } = await supabase.from("quotes").select("id, invoice_id, tax_rate, customer_id").in("id", payQuoteIds);
-        for (const q of qs ?? []) quoteById.set(q.id, { invoiceId: q.invoice_id ?? null, rate: q.tax_rate ?? null, customerId: q.customer_id ?? null });
-        const invIds = Array.from(new Set((qs ?? []).map((q) => q.invoice_id).filter((x): x is string => !!x)));
-        if (invIds.length) {
-          const { data: qInv } = await supabase.from("invoices").select("id, invoice_date").in("id", invIds);
-          for (const iv of qInv ?? []) invDateById.set(iv.id, iv.invoice_date);
-        }
-      }
-
-      // Pull GSTIN / state / country from customers table (invoices + notes + advances)
-      const customerIds = Array.from(new Set([
-        ...(invoices ?? []).map((i) => i.customer_id),
-        ...(creditNotes ?? []).map((n) => n.customer_id),
-        ...(debitNotes ?? []).map((n) => n.customer_id),
-        ...(pays ?? []).map((p) => p.customer_id ?? (p.quote_id ? quoteById.get(p.quote_id)?.customerId : null)),
-      ].filter((x): x is string => !!x)));
-      const custById = new Map<string, { gstin: string | null; stateCode: string | null; state: string | null; country: string | null }>();
-      if (customerIds.length > 0) {
-        const { data: customers } = await supabase
-          .from("customers")
-          .select("id, gstin, state_code, state, country")
-          .in("id", customerIds);
-        for (const c of customers ?? []) custById.set(c.id, { gstin: c.gstin ?? null, stateCode: c.state_code ?? null, state: c.state ?? null, country: c.country ?? null });
-      }
-      const custOf = (id: string | null | undefined) => (id ? custById.get(id) : undefined);
-      /* R-043: an invoice's buyer as frozen at issue; a credit/debit note takes the
-         buyer of the invoice it amends (filled below for parents outside the period). */
-      type Snap = Parameters<typeof frozenParty>[0];
-      const snapByInvoice = new Map<string, Snap>();
-      for (const i of invoices ?? []) snapByInvoice.set(i.id, i);
-      const partyOf = (inv: Snap, live: ReturnType<typeof custOf>) => frozenParty(inv, live);
-      const noteParty = (invoiceId: string | null | undefined, live: ReturnType<typeof custOf>) =>
-        frozenParty(invoiceId ? snapByInvoice.get(invoiceId) : null, live);
-
-      // Seller's own state (place of supply for intra-state B2C). RLS scopes to own tenant.
-      const { data: tenantRow } = await supabase
-        .from("tenants").select("state_code, state, gstin").limit(1).maybeSingle();
-      const sellerStateCode = tenantRow?.state_code ?? null;
-      const sellerState = tenantRow?.state ?? null;
-      const sellerGstin = tenantRow?.gstin?.trim() || null;
-
-      /* Per-line SAC for the HSN table (27 Sep 2026; R-067 1 Oct 2026). A line's OWN `hsn`
-         wins (a project milestone line carries project_sales.sac_code, 998314); else the
-         catalogue item's `hsn`; else the SaaS SAC — the same order the invoice printed.
-         A note has no lines, so it is split like the invoice it amends (lineHsn/docHsnLines). */
-      const linesOf = (raw: unknown): HsnSourceLine[] => (Array.isArray(raw) ? raw as HsnSourceLine[] : []);
-      const linesByInvoice = new Map<string, HsnSourceLine[]>();
-      for (const i of invoices ?? []) linesByInvoice.set(i.id, linesOf(i.line_items));
-      // R-335: parent invoice dates, for the s.34 credit-note time limit.
-      const invoiceDateById = new Map<string, string | null>();
-      for (const i of invoices ?? []) invoiceDateById.set(i.id, i.invoice_date);
-      const noteParentIds = Array.from(new Set([...(creditNotes ?? []), ...(debitNotes ?? [])]
-        .map((n) => n.invoice_id).filter((x): x is string => !!x && !linesByInvoice.has(x))));
-      if (noteParentIds.length) {
-        const { data: parents } = await supabase.from("invoices")
-          .select("id, invoice_date, line_items, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
-          .in("id", noteParentIds);
-        for (const iv of parents ?? []) { linesByInvoice.set(iv.id, linesOf(iv.line_items)); snapByInvoice.set(iv.id, iv); invoiceDateById.set(iv.id, iv.invoice_date); }
-      }
-      const itemIds = Array.from(new Set(Array.from(linesByInvoice.values()).flatMap((ls) => ls.map((l) => l.item_id)).filter((x): x is string => !!x)));
-      const hsnByItem = new Map<string, string | null>();
-      if (itemIds.length) {
-        const { data: items } = await supabase.from("items").select("id, hsn").in("id", itemIds);
-        for (const it of items ?? []) hsnByItem.set(it.id, it.hsn ?? null);
-      }
-
-      const outputRows: OutputRow[] = (invoices ?? []).map((i) => {
-        const amount       = i.amount ?? 0;
-        const taxRate      = i.tax_rate ?? 18;
-        // Prefer the breakdown persisted at issue time (migration 0116); fall
-        // back to reverse-deriving at the row's rate for any legacy invoice.
-        const taxableValue = i.taxable_value ?? Math.round(amount * 100 / (100 + taxRate));
-        const gst          = i.tax_amount ?? (amount - taxableValue);
-        const c = custOf(i.customer_id);
-        /* R-043: the buyer as on the day of issue, frozen on the invoice — a later customer
-           edit must not move a filed invoice between B2B / B2CL / B2CS. */
-        const p = partyOf(i, c);
-        return {
-          invoiceId:     i.id,
-          invoiceDate:   i.invoice_date,
-          customerName:  i.customer_name ?? "—",
-          customerGstin: p.gstin,
-          customerStateCode: p.stateCode,
-          customerState:     p.state,
-          customerCountry:   p.country,
-          amount,
-          taxableValue,
-          gst,
-          taxRate,
-          interState:    i.inter_state ?? false,
-          docType:       "invoice",
-          lines:         docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem),
-        };
-      });
-
-      // Notes as SIGNED output rows — credit note negative, debit note positive.
-      const noteLines = (taxable: number, invoiceId: string | null | undefined) =>
-        docHsnLines(taxable, invoiceId ? linesByInvoice.get(invoiceId) : null, hsnByItem);
-      for (const n of creditNotes ?? []) {
-        const c = noteParty(n.invoice_id, custOf(n.customer_id));
-        outputRows.push({
-          invoiceId: n.id, invoiceDate: n.credit_date, customerName: n.customer_name ?? "—",
-          customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
-          amount: -(n.amount ?? 0), taxableValue: -(n.taxable_value ?? 0), gst: -(n.tax_amount ?? 0),
-          taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "credit_note",
-          lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
-          lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
-        });
-      }
-      for (const n of debitNotes ?? []) {
-        const c = noteParty(n.invoice_id, custOf(n.customer_id));
-        outputRows.push({
-          invoiceId: n.id, invoiceDate: n.debit_date, customerName: n.customer_name ?? "—",
-          customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
-          amount: n.amount ?? 0, taxableValue: n.taxable_value ?? 0, gst: n.tax_amount ?? 0,
-          taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "debit_note",
-          lines: noteLines(n.taxable_value ?? 0, n.invoice_id),
-        });
-      }
-      outputRows.sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate));
-
-      /* Advances for 11A (received this period, from payments) and 11B (received earlier,
-         adjusted on an invoice dated this period, from the invoice's frozen
-         adjusted_advances snapshot). buildAdvances decides which table each lands in. */
-      const advances: Advance[] = [];
-      for (const p of pays ?? []) {
-        const q = p.quote_id ? quoteById.get(p.quote_id) : undefined;
-        const c = custOf(p.customer_id ?? q?.customerId);
-        advances.push({
-          paymentId: p.id, voucherNo: p.receipt_voucher_no ?? null,
-          receivedDate: toIstDate(p.received_at),
-          adjustedOn: q?.invoiceId ? invDateById.get(q.invoiceId) ?? null : null,
-          gross: p.amount ?? 0, rate: q?.rate ?? 18,
-          interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin }),
-          customerGstin: c?.gstin ?? null, customerStateCode: c?.stateCode ?? null, customerState: c?.state ?? null, customerCountry: c?.country ?? null,
-        });
-      }
-      for (const i of invoices ?? []) {
-        const c = partyOf(i, custOf(i.customer_id));
-        for (const a of Array.isArray(i.adjusted_advances) ? i.adjusted_advances : []) {
-          if (!a?.received_at) continue;
-          const receivedDate = toIstDate(a.received_at);
-          if (receivedDate >= range.from) continue;   // same-period advance: already neither 11A nor 11B
-          advances.push({
-            paymentId: a.payment_id, voucherNo: a.voucher_no ?? null, receivedDate, adjustedOn: i.invoice_date,
-            gross: a.amount ?? 0, rate: i.tax_rate ?? 18, interState: i.inter_state ?? false,
-            customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
-          });
-        }
-      }
-
-      // ── Input: vendor bills + GST-paying expenses ─────────────────
-      const { data: bills } = await supabase
-        .from("vendor_bills")
-        .select("id, bill_date, vendor_name, vendor_gstin, subtotal, cgst, sgst, igst, total, category, bill_no")
-        .gte("bill_date", range.from)
-        .lte("bill_date", range.to);
-
-      /* Vendor bill me igst/cgst/sgst apne khaane me hote hain, isliye ye NAAPE hue hain. */
-      const inputRowsBills: InputRow[] = (bills ?? []).map((b) => ({
-        assumed: false,
-        source:       "bill",
-        id:           b.id,
-        billNo:       b.bill_no ?? null,
-        date:         b.bill_date,
-        vendor:       b.vendor_name,
-        vendorGstin:  b.vendor_gstin ?? null,
-        taxableValue: b.subtotal ?? 0,
-        gst:          (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0),
-        igst:         b.igst ?? 0,
-        cgst:         b.cgst ?? 0,
-        sgst:         b.sgst ?? 0,
-        category:     b.category ?? "",
-      }));
-
-      const { data: expenses } = await supabase
-        .from("expenses")
-        .select("id, expense_date, vendor_name, vendor_id, bill_type, amount, gst_paid, igst, cgst, sgst, category, bill_no")
-        .gte("expense_date", range.from)
-        .lte("expense_date", range.to)
-        .gt("gst_paid", 0);
-
-      /* Reverse charge (migration 20260927220000): the buyer's own IGST on imported services. */
-      const { data: rcmExp } = await supabase
-        .from("expenses")
-        .select("id, expense_date, vendor_name, amount, rcm_tax")
-        .gte("expense_date", range.from).lte("expense_date", range.to).eq("rcm", true);
-      const rcmRows = (rcmExp ?? []).map((e) => ({ id: e.id, vendor: e.vendor_name ?? "—", date: e.expense_date, amount: e.amount ?? 0, tax: e.rcm_tax ?? 0 }));
-
-      /* ── Sirf wahi GST credit hai jo credit ho SAKTA hai (27 Sep 2026) ─────────
-         Pehle har `gst_paid > 0` kharcha ITC mein jaata tha — kaccha bill, bina GSTIN wala
-         vendor, staff ka khana sab. GSTR-2B mein wo kabhi nahi milte, aur 17(5) wale claim
-         hi nahi ho sakte. Ab lib/gst/itc.ts tay karta hai; jo credit nahi bana wo
-         `blockedItc` mein wajah ke saath dikhta hai. */
-      const { data: vendorRows } = await supabase.from("vendors").select("id, gstin");
-      const vendorGstinOf = new Map((vendorRows ?? []).map((v) => [v.id, v.gstin ?? null]));
-      const withGstin = (expenses ?? []).map((e) => ({ ...e, vendorGstin: e.vendor_id ? vendorGstinOf.get(e.vendor_id) ?? null : null }));
-      const blockedItc = splitItc(withGstin);
-      const claimable = withGstin.filter((e) => itcEligibility(e).eligible);
-      /* s.17(5) blocked rows keep their heads: 3B wants them in 4(A)(5) and again in 4(B)(1). */
-      const blocked17Heads: Heads[] = withGstin
-        .filter((e) => (itcEligibility(e).reason ?? "").includes("17(5)"))
-        .map((e) => { const h = expenseGstHeads(e); return { igst: h.igst, cgst: h.cgst, sgst: h.sgst }; });
-
-      /* ── Ab MAANA nahi jata jab NAAPA hua maujood ho (29 Aug 2026) ──────────
-         Yahan pehle har kharche par ye chalta tha:
-
-             igst: 0,  cgst: Math.round(g / 2),  sgst: g - cgst
-
-         Yaani har GST aadha-aadha CGST/SGST maan liya jata tha aur IGST hamesha shunya.
-         Purana comment kehta tha ki ye "worksheet me flag" hoga — screen par dhoondha,
-         koi flag nahi tha. Padhne wale ko kabhi pata nahi chalta tha ki ye aankda naapa
-         hua hai ya maana hua.
-
-         Aur wo maan-na aksar galat hi tha. Us din ka asli bill: Amazon ka seller UP me
-         (GSTIN 09…), delivery Delhi (07…), Tax Type **IGST ₹274.42** — jise app CGST ₹137
-         + SGST ₹137 bata rahi thi. GSTR-3B ke Table 4(A)(5) me wo alag column hai, aur
-         GSTR-2B se mel nahi khata.
-
-         Ab batwara `expenses` me hi rakha jata hai (migration 20260829180000), aur faisla
-         `expenseGstHeads` karta hai — jahan bill se aaya ho wahan wahi, jahan na ho wahan
-         maan kar bhi SAAF likh kar. */
-      const inputRowsExpenses: InputRow[] = claimable.map((e) => {
-        const g = e.gst_paid ?? 0;
-        const h = expenseGstHeads(e);
-        return {
-          source:       "expense" as const,
-          id:           e.id,
-          billNo:       e.bill_no ?? null,
-          date:         e.expense_date,
-          vendor:       e.vendor_name ?? "—",
-          vendorGstin:  e.vendorGstin,
-          taxableValue: (e.amount ?? 0) - g,
-          gst:          g,
-          igst:         h.igst,
-          cgst:         h.cgst,
-          sgst:         h.sgst,
-          assumed:      !h.measured,
-          assumption:   h.assumption,
-          category:     e.category ?? "Expense",
-        };
-      });
-
-      const inputRows = [...inputRowsBills, ...inputRowsExpenses].sort(
-        (a, b) => b.date.localeCompare(a.date),
-      );
-
-      // ── Totals ─────────────────────────────────────────────────────
-      const outputTotal  = outputRows.reduce((s, r) => s + r.taxableValue, 0);
-      const outputGST    = outputRows.reduce((s, r) => s + r.gst, 0);
-      const inputTotal   = inputRows.reduce((s, r) => s + r.taxableValue, 0);
-      const inputGST     = inputRows.reduce((s, r) => s + r.gst, 0);
-      const netLiability = outputGST - inputGST;
-
-      const lateCreditNotes = outputRows.filter((r) => r.lateCreditNote).length;
-
-      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, netLiability, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
-    },
-  });
-}
-
-// GSTR-1 sections (B2B / B2CL / B2CS / CDNR / CDNUR / HSN) — lib/gst/gstr1.ts.
-// Notes are signed rows here, so the page totals net; the builder puts them in
-// their own tables with positive values, the way the portal wants them.
-const toGstr1Doc = (r: OutputRow) => ({
-  id: r.invoiceId, date: r.invoiceDate, docType: r.docType, customerName: r.customerName,
-  customerGstin: r.customerGstin, customerStateCode: r.customerStateCode, customerState: r.customerState, customerCountry: r.customerCountry,
-  amount: r.amount, taxableValue: r.taxableValue, gst: r.gst, taxRate: r.taxRate, interState: r.interState, lines: r.lines,
-});
+// GST report rows + the cash-to-pay headline: ./report.ts (loader) and ./cash-to-pay.ts
+// (pure) — R-394, shared with the Accounting Overview tile so both show one number.
 
 // GSTR-3B worksheet — lib/gst/gstr3b.ts (RCM, s.17(5) reversal, cash per head).
 
@@ -463,7 +85,7 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
 // ────────────────────────────────────────────────────────────────
 
 /* R-257: "This FY" and "All to date" join the month/quarter chips — "All to date" is the
-   span the Accounting Overview "GST to pay" tile covers, so the tile lands on a lit chip. */
+   span the Accounting Overview GST folder covers (R-394: the tile opens the default range). */
 const QUICK_RANGES = [thisMonth, lastMonth, thisQuarter, () => gstThisFy(), () => gstAllToDate()];
 
 /* useSearchParams needs a Suspense boundary or the build refuses to prerender the page
@@ -483,8 +105,7 @@ function GstReportInner() {
      otherwise last month on the 1st–20th (the return being filed), this month after. */
   const [range, setRange] = React.useState<DateRange>(() => gstRangeFromParams(search.get("from"), search.get("to")));
   const { data, isLoading } = useGstReport(range);
-  const { data: taxPayments } = useTaxPayments();
-  const gstPaidInRange = gstPaidForPeriods(taxPayments ?? [], range.from.slice(0, 7), range.to.slice(0, 7));
+  const { paid: gstPaidInRange } = useGstPaidInRange(range);
 
   /* ── GSTR-2B milaan (27 Sep 2026) ────────────────────────────────────────
      The portal's JSON is read in the browser and matched against this period's ITC rows;
@@ -645,26 +266,7 @@ function GstReportInner() {
     toast.success(`GSTR-1 JSON downloaded (${parts}). Upload on gst.gov.in → Returns → GSTR-1 → Import JSON, then check every table before filing.${warn}`);
   }
 
-  const g3b = data ? (() => {
-    const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
-    const adv = buildAdvances(data.advances, range, seller);
-    return computeGstr3b({
-    output: [
-      ...data.outputRows.map((r) => {
-        const d = toGstr1Doc(r);
-        const c = gstr3bClass(d, seller);
-        return { taxableValue: r.taxableValue, heads: docHeads(d), zeroRated: c.zeroRated, unregInterPos: c.unregInterPos };
-      }),
-      /* Tax on advances: 11A adds to 3.1(a), 11B takes it back out. */
-      ...adv.at.map((a) => ({ taxableValue: a.advance, heads: a.heads })),
-      ...adv.atadj.map((a) => ({ taxableValue: -a.advance, heads: { igst: -a.heads.igst, cgst: -a.heads.cgst, sgst: -a.heads.sgst } })),
-    ],
-    itc: data.inputRows.map((r) => ({ igst: r.igst, cgst: r.cgst, sgst: r.sgst })),
-    blocked17: data.blocked17Heads,
-    notIn2b: data.blockedItc.blocked - data.blocked17Heads.reduce((s, h) => s + h.igst + h.cgst + h.sgst, 0),
-    rcm: data.rcmRows,
-    });
-  })() : null;
+  const g3b = data ? gstr3bFromReport(data, range) : null;
 
   function exportGstr3b() {
     if (!g3b) return;
@@ -694,7 +296,7 @@ function GstReportInner() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Accounting</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight">GST Reports</h1>
         <p className="text-sm text-ink-3 mt-1">
-          Output GST (collected from customers) − Input GST (paid to vendors) = Net liability.
+          Output GST (collected from customers), less Input GST credit (paid to vendors) set off head by head = cash to pay.
           Hand the CSV exports to your CA for GSTR-1 / GSTR-3B filing.
         </p>
       </div>
@@ -756,42 +358,55 @@ function GstReportInner() {
           rowLabel="bill/expense"
         />
         <Card className="p-4 md:p-5 border-2 border-amber/30 bg-amber-soft/20">
-          {/* R-257: the big number is what is LEFT to pay (net − GST already paid for these
-              months) — the same figure the Overview "GST to pay" tile shows, so tile and
-              headline agree. With nothing paid it is simply the net liability. The net and
-              the payment stay visible below as the working. Same figures as before, only
-              which one is the headline changed. */}
+          {/* R-258: the big number is CASH — output tax left after input credit is set off in
+              the statutory order (s.49(5) / Rule 88A: IGST credit first, never CGST↔SGST;
+              lib/gst/gstr3b.ts setOffItc), plus reverse-charge tax, less GST already paid for
+              these months (R-257). The old "output − input" ignored both rules. Per-head
+              working (credit used, cash, carried forward) sits below. */}
           {(() => {
-            const paid = data ? gstPaidInRange : 0;
-            const left = data ? data.netLiability - paid : 0;
+            /* R-394: label, number and hint from ./cash-to-pay gstCashHeadline — the
+               Accounting Overview tile prints the same object for the default range. */
+            const hl = gstCashHeadline(g3b, data ? gstPaidInRange : 0);
+            const { paid, cash, left } = hl;
+            const so = g3b?.setOff;
+            const carry = hl.carryForward;
+            const heads = [["IGST", "igst"], ["CGST", "cgst"], ["SGST", "sgst"]] as const;
             return (
               <>
                 <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-                  {left < 0
-                    ? (paid > 0 ? "Paid more than due" : "GST credit")
-                    : paid > 0 ? "GST still to pay" : <Term k="net_liability">Net liability</Term>}
+                  {hl.label}
                 </div>
                 {isLoading ? <Skeleton className="h-8 w-32 mt-2" /> : (
                   <>
-                    <div className={`font-serif text-2xl md:text-3xl ${data && left >= 0 ? "text-rose" : "text-emerald"}`}>
-                      {data ? rupee(Math.abs(left)) : "—"}
+                    <div className={`font-serif text-2xl md:text-3xl ${data && left > 0 ? "text-rose" : "text-emerald"}`}>
+                      {data ? rupee(hl.amount) : "—"}
                     </div>
                     <div className="text-xs text-ink-3 mt-1.5 leading-relaxed">
-                      {data && left >= 0
-                        ? "Payable to government via GSTR-3B"
-                        : "Refundable / carry-forward input tax credit"}
+                      {!data ? "" : hl.hint}
                     </div>
-                    {/* GST already paid for these return months (booked from the bank). Shown
-                        only when some was paid, so an unpaid month still reads as plain "payable". */}
                     {data && paid > 0 && (
                       <div className="mt-2 pt-2 border-t border-amber/20 text-xs space-y-0.5 tabular-nums">
-                        <div className="flex justify-between text-ink-2">
-                          <span><Term k="net_liability">Net liability</Term></span><span>{rupee(data.netLiability)}</span>
-                        </div>
-                        <div className="flex justify-between text-ink-2">
-                          <span>Paid for these months</span><span>− {rupee(paid)}</span>
-                        </div>
+                        <div className="flex justify-between text-ink-2"><span>Cash after credit</span><span>{rupee(cash)}</span></div>
+                        <div className="flex justify-between text-ink-2"><span>Paid for these months</span><span>− {rupee(paid)}</span></div>
                       </div>
+                    )}
+                    {so && (so.liability.igst + so.liability.cgst + so.liability.sgst + carry) > 0 && (
+                      <table className="w-full mt-2 pt-2 border-t border-amber/20 text-xs tabular-nums" aria-label="GST set-off by head">
+                        <thead className="text-3xs uppercase tracking-wider text-ink-3">
+                          <tr><th className="text-left font-semibold py-0.5">Head</th><th className="text-right font-semibold">Output</th><th className="text-right font-semibold">Credit used</th><th className="text-right font-semibold">Cash</th><th className="text-right font-semibold">Carried fwd</th></tr>
+                        </thead>
+                        <tbody className="text-ink-2">
+                          {heads.map(([label, k]) => (
+                            <tr key={k}>
+                              <td className="py-0.5">{label}</td>
+                              <td className="text-right">{rupee(so.liability[k] + (k === "igst" ? g3b.rcmTax : 0))}</td>
+                              <td className="text-right">{rupee(so.paidByCredit[k])}</td>
+                              <td className="text-right">{rupee(g3b.pay[k])}</td>
+                              <td className="text-right">{rupee(so.carryForward[k])}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                   </>
                 )}
@@ -919,7 +534,7 @@ function GstReportInner() {
               <tbody className="divide-y divide-hairline font-mono">
                 {gstr3bRows(g3b).map((r) => {
                   const box = String(r[0]);
-                  const isNet = box === "Net", isRev = box === "4(B)(1)", isInfo = box === "—", isItc = box.startsWith("4(") && !isRev;
+                  const isNet = box === "Net", isRev = box === "4(B)(1)", isInfo = box === "—", isItc = (box.startsWith("4(") && !isRev) || box === "C/F";
                   const cell = (v: string | number) => (v === "" ? "—" : typeof v === "number" ? rupee(v) : v);
                   const tone = isNet ? "font-semibold text-rose" : isRev ? "text-amber-ink" : isItc ? "text-emerald" : isInfo ? "text-ink-3" : "text-ink";
                   return (
@@ -937,9 +552,10 @@ function GstReportInner() {
             </table>
           </div>
           <p className="text-xs text-ink-3 mt-2 leading-relaxed">
-            Net = output − ITC per head (floored at 0). The portal also lets IGST credit set off CGST/SGST,
-            so your actual cash payable can be lower. Expense ITC is assumed intra-state (CGST+SGST) — adjust
-            if any expense was inter-state / import (IGST). Add reverse-charge, interest or late fee separately.
+            6.1 = credit set off in the legal order: IGST credit pays IGST first, then CGST/SGST; CGST credit pays
+            CGST, then IGST; SGST credit pays SGST, then IGST. CGST and SGST credit never pay each other. Net = cash
+            left to pay (reverse charge always in cash); unused credit is carried forward. Where a bill had no
+            IGST/CGST split, the vendor GSTIN state decides (other state = IGST). Interest and late fee are extra.
           </p>
         </Card>
       )}
@@ -1134,7 +750,7 @@ function GstReportInner() {
                 </p>
                 <p className="text-xs text-ink-2">
                   In par bill ka IGST/CGST batwara nahi mila, isliye intra-state maan kar aadha-aadha
-                  baanta gaya hai. <strong>GSTR-3B me IGST aur CGST/SGST alag column hain</strong> —
+                  baanta gaya hai (vendor ka GSTIN doosre rajya ka ho to poora IGST maana gaya). <strong>GSTR-3B me IGST aur CGST/SGST alag column hain</strong> —
                   agar inme koi doosre rajya ka bill hai (jaise Amazon), to uska credit galat khaane
                   me chala jayega aur GSTR-2B se mel nahi khayega. Neeche table me aisi row par{" "}
                   <span className="font-semibold">maana hua</span> likha hai.

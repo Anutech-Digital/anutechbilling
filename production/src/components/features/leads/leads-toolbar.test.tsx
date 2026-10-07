@@ -8,19 +8,43 @@
 // is exactly what it was.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import type { ReactNode } from "react";
 
 const toastInfo = vi.fn();
 vi.mock("sonner", () => ({ toast: { info: (...a: unknown[]) => toastInfo(...a), success: vi.fn() } }));
-vi.mock("@/lib/queries/team", () => ({ useTeamMembers: () => ({ data: [] }) }));
+const members = vi.fn((): Array<{ id: string; full_name: string; email: string }> => []);
+vi.mock("@/lib/queries/team", () => ({ useTeamMembers: () => ({ data: members() }) }));
 vi.mock("@/lib/queries/leads", () => ({ fetchLeadsForExport: vi.fn() }));
 vi.mock("@/components/shared/team-view-toggle", () => ({ TeamViewToggle: () => null }));
 vi.mock("@/components/features/leads/leads-smart-views", () => ({ LeadsSmartViews: () => null }));
+/* Every menu rendered open — R-392's tests read the Filter menu's contents. */
+vi.mock("@/components/ui/dropdown-menu", () => {
+  type P = { children?: ReactNode };
+  const Pass = ({ children }: P) => <>{children}</>;
+  return {
+    DropdownMenu: Pass,
+    DropdownMenuTrigger: Pass,
+    DropdownMenuContent: ({ children }: P) => <div role="menu">{children}</div>,
+    DropdownMenuLabel: ({ children }: P) => <div>{children}</div>,
+    DropdownMenuSeparator: () => <hr />,
+    DropdownMenuItem: ({ children, onSelect }: P & { onSelect?: () => void }) => (
+      <div role="menuitem" onClick={() => onSelect?.()}>{children}</div>
+    ),
+    DropdownMenuCheckboxItem: ({ children, checked, onCheckedChange }: P & {
+      checked?: boolean; onCheckedChange?: (c: boolean) => void;
+    }) => (
+      <div role="menuitemcheckbox" aria-checked={!!checked} onClick={() => onCheckedChange?.(!checked)}>{children}</div>
+    ),
+  };
+});
 
 import { LeadsToolbar, type LeadsToolbarProps } from "./leads-toolbar";
 
 afterEach(() => {
   cleanup();
   toastInfo.mockReset();
+  members.mockReset();
+  members.mockReturnValue([]);
 });
 
 function props(over: Partial<LeadsToolbarProps> = {}): LeadsToolbarProps {
@@ -54,6 +78,8 @@ function props(over: Partial<LeadsToolbarProps> = {}): LeadsToolbarProps {
     setPriorityFilter: noop,
     ownerFilter: [],
     setOwnerFilter: noop,
+    sourceFilter: [],
+    setSourceFilter: noop,
     isSales: false,
     kpiOpen: false,
     setKpiOpen: noop,
@@ -88,5 +114,55 @@ describe("R-056: the Kanban toggle on a phone", () => {
     fireEvent.click(btn);
     expect(setView).toHaveBeenCalledWith("kanban");
     expect(toastInfo).not.toHaveBeenCalled();
+  });
+});
+
+/* R-392 (Abhishek, 7 Oct): no Source filter on /leads, and the person filter said "Owner"
+   while the lead calls it "assigned". The dropdown is mocked open (above), so the menu
+   contents are on screen without driving Radix's pointer events in jsdom. */
+function openFilter() { /* menus render open under the mock */ }
+
+describe("R-392: Filter → Source and Assigned to", () => {
+  it("lists only the sources the workspace's leads carry, labelled, with counts", () => {
+    render(<LeadsToolbar {...props({
+      pool: { total: 5, unassigned: 0, high_priority: 0, by_owner: {}, by_source: { "google-ads": 3, "meta-ads": 2 } },
+    })} />);
+    openFilter();
+    expect(screen.getByText("Source")).toBeTruthy();
+    expect(screen.getByRole("menuitemcheckbox", { name: /Google Ads\s*3/ })).toBeTruthy();
+    expect(screen.getByRole("menuitemcheckbox", { name: /Facebook \/ Instagram Ads\s*2/ })).toBeTruthy();
+    expect(screen.queryByRole("menuitemcheckbox", { name: /LinkedIn Ads/ })).toBeNull();
+  });
+
+  it("ticking a source adds its key to the filter", () => {
+    const setSourceFilter = vi.fn();
+    render(<LeadsToolbar {...props({
+      pool: { total: 3, unassigned: 0, high_priority: 0, by_owner: {}, by_source: { "google-ads": 3 } },
+      setSourceFilter,
+    })} />);
+    openFilter();
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Google Ads/ }));
+    expect(setSourceFilter).toHaveBeenCalledTimes(1);
+    const update = setSourceFilter.mock.calls[0][0] as (prev: string[]) => string[];
+    expect(update([])).toEqual(["google-ads"]);
+  });
+
+  it("no Source section when no lead has a source (older server: no by_source)", () => {
+    render(<LeadsToolbar {...props()} />);
+    openFilter();
+    expect(screen.queryByText("Source")).toBeNull();
+  });
+
+  it("the person filter is headed 'Assigned to', not 'Owner'", () => {
+    members.mockReturnValue([
+      { id: "u1", full_name: "Asha", email: "a@x.in" },
+      { id: "u2", full_name: "Ravi", email: "r@x.in" },
+    ]);
+    render(<LeadsToolbar {...props({
+      pool: { total: 3, unassigned: 1, high_priority: 0, by_owner: { u1: 1, u2: 1 } },
+    })} />);
+    openFilter();
+    expect(screen.getByText("Assigned to")).toBeTruthy();
+    expect(screen.queryByText("Owner")).toBeNull();
   });
 });

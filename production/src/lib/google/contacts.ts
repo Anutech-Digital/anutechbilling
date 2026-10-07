@@ -24,6 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, ContactChannel } from "@/lib/supabase/database.types";
 import { googleOAuthCreds, refreshAccessToken } from "@/lib/google/oauth";
+import { resealIfPlain } from "@/lib/google/token-vault";
 import { hasContactsScope, CONTACTS_SCOPE_MISSING_MESSAGE } from "@/lib/google/scope-union";
 
 type Admin = SupabaseClient<Database>;
@@ -140,7 +141,8 @@ export async function getFreshAccessToken(admin: Admin, userId: string): Promise
   if (!creds) throw new Error("Google OAuth not configured");
   const r = await refreshAccessToken(tok.refresh_token, creds);
   const expiry = new Date(Date.now() + (r.expires_in ?? 3600) * 1000).toISOString();
-  await admin.from("user_google_tokens").update({ access_token: r.access_token, token_expiry: expiry }).eq("user_id", userId);
+  // A legacy plaintext refresh token is sealed on this write (R-051).
+  await admin.from("user_google_tokens").update({ access_token: r.access_token, token_expiry: expiry, ...resealIfPlain(tok.refresh_token) }).eq("user_id", userId);
   return r.access_token;
 }
 

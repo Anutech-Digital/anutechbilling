@@ -9,6 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { googleOAuthCreds, originFromRequest, gbpRedirectUri, exchangeCode, fetchGoogleEmail } from "@/lib/google/oauth";
+import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
 import { scopesLost, scopeLossMessage, hasGbpScope } from "@/lib/google/scope-union";
 import { syncTenantGbp } from "@/lib/google/gbp-api";
 
@@ -37,6 +38,8 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.redirect(`${origin}/login`);
   const creds = googleOAuthCreds();
   if (!creds) return done("notconfigured");
+  // R-051: the refresh token is stored encrypted or not at all.
+  if (refuseConnectWithoutVault("google-business/callback")) return done("notconfigured");
 
   try {
     const tokens = await exchangeCode(code, gbpRedirectUri(origin), creds);
@@ -56,7 +59,8 @@ export async function GET(request: NextRequest) {
       token_expiry: new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString(),
       scopes: tokens.scope ?? null, last_error: lossNote,
       // refresh_token only arrives on first consent — never overwrite a stored one with nothing.
-      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+      // Encrypted at rest (R-051); opened only by refreshAccessToken, server-side.
+      ...(tokens.refresh_token ? { refresh_token: sealRefreshToken(tokens.refresh_token) } : {}),
     }, { onConflict: "user_id" });
     if (error) throw error;
 

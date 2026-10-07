@@ -87,8 +87,10 @@ export const MONEY_FOLDERS: readonly MoneyFolderMeta[] = [
   {
     id: "gst", label: "GST & Tax", icon: "🏛️", noun: "returns",
     direction: "government",
-    action: "Output tax collected, less input credit. File before the 20th.",
-    emptyHint: "Nothing payable this financial year — output tax is covered by input credit.",
+    /* R-399: the same figure as the Overview tile and the GST page headline — cash left
+       after input credit is set off (Rule 88A), less GST paid, for the return period. */
+    action: "Cash left after input credit is set off. Pay it with GSTR-3B by the 20th.",
+    emptyHint: "Nothing to pay in cash for this return period — input credit covers the output tax.",
     href: "/accounting/gst",
   },
 ] as const;
@@ -113,10 +115,32 @@ export interface MoneyInboxInput {
   /** Bills and expenses not yet paid. */
   billsDue: { amountDue: number; daysOverdue: number }[];
   /**
-   * Net GST for the year: output tax minus input credit. May be NEGATIVE, which means
-   * credit in hand rather than a debt — see `gstFolderState`.
+   * R-399: the GST page headline's signed `net` (gst/cash-to-pay.ts gstCashHeadline) for the
+   * return period the Overview tile shows — cash left after input credit is set off, less GST
+   * already paid. It used to be the cumulative output − input (gstPayable, "All to date"), a
+   * different number from the tile above it. May be NEGATIVE: credit carried forward, or GST
+   * paid beyond the cash due — see `gstFolderState`.
    */
   gstNet: number;
+  /** How the headline reads the period (its `state`). Only "overpaid" changes the wording. */
+  gstState?: GstFolderHeadlineState;
+  /** The return period the figure covers, e.g. "Sep 2026" — named in the reason. */
+  gstPeriod?: string;
+}
+
+/** Mirrors GstCashState (app/(app)/accounting/gst/cash-to-pay.ts) without importing app code into lib. */
+export type GstFolderHeadlineState = "to_pay" | "still_to_pay" | "credit" | "overpaid" | "nil";
+
+/**
+ * R-399: the GST folder's inputs from the GST page headline (gstCashHeadline) and its range —
+ * the ONLY way the Overview feeds the folder, so the folder cannot drift back to a different
+ * figure from the tile. No headline yet (loading / no data) reads as nothing to pay.
+ */
+export function gstInboxFields(
+  headline: { net: number; state: GstFolderHeadlineState } | null | undefined,
+  periodLabel: string,
+): Pick<MoneyInboxInput, "gstNet" | "gstState" | "gstPeriod"> {
+  return { gstNet: headline?.net ?? 0, gstState: headline?.state, gstPeriod: periodLabel };
 }
 
 /** Anything past its date at all is urgent. There is no grace worth inventing here. */
@@ -135,18 +159,28 @@ function sum(ns: number[]): number {
  * Input credit exceeding output tax is a perfectly normal month for a reseller — they
  * bought wholesale licences and have not yet billed them all on. Printing "₹-8,000
  * payable" or, worse, "₹8,000 payable" would either confuse or invert the fact.
+ *
+ * R-399: `gstNet` is the GST page headline's `net` for one return period, so the folder,
+ * the Overview tile and the GST page print one number. A negative figure is either unused
+ * credit carried forward or GST paid beyond the cash due; `state` tells them apart.
  */
-export function gstFolderState(gstNet: number): MoneyFolderState {
+export function gstFolderState(
+  gstNet: number,
+  opts: { state?: GstFolderHeadlineState; period?: string } = {},
+): MoneyFolderState {
   const payable = gstNet > 0;
+  const forPeriod = opts.period ? ` for ${opts.period}` : "";
   return {
     id: "gst",
     count: payable ? 1 : 0,
     amount: Math.abs(gstNet),
     urgent: payable,
     urgentReason: payable
-      ? "Net GST is payable this year — due by the 20th of next month."
+      ? `GST cash to pay${forPeriod}, after input credit is set off — due by the 20th of next month.`
       : gstNet < 0
-        ? "Input credit exceeds output tax, so nothing is payable — the balance carries forward."
+        ? opts.state === "overpaid"
+          ? `GST paid${forPeriod} is more than the cash due — the excess stays in your cash ledger.`
+          : "Input credit exceeds output tax, so nothing is payable — the balance carries forward."
         : null,
   };
 }
@@ -186,7 +220,7 @@ export function moneyInboxState(input: MoneyInboxInput): Record<MoneyFolderId, M
         ? `${overdueBills.length} are past their due date — a vendor suspension costs you the customer, not just the licence.`
         : null,
     },
-    gst: gstFolderState(input.gstNet),
+    gst: gstFolderState(input.gstNet, { state: input.gstState, period: input.gstPeriod }),
   };
 }
 

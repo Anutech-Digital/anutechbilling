@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import crypto from "node:crypto";
 import { decryptTenantSecrets, sealTenantSecrets, SECRET_COLUMNS } from "./tenant-secrets";
-import { encryptSecret, isEncrypted } from "./vault";
+import { encryptSecret, isEncrypted, VaultNotConfiguredError } from "./vault";
 
 const KEY = crypto.randomBytes(32).toString("base64");
 let original: string | undefined;
@@ -44,10 +44,9 @@ describe("decryptTenantSecrets", () => {
 
 describe("sealTenantSecrets", () => {
   it("encrypts credential fields and leaves config alone", () => {
-    const { row, storedInClear } = sealTenantSecrets({
+    const { row } = sealTenantSecrets({
       razorpay_key_id: "rzp_test_abc", razorpay_key_secret: "s3cret", razorpay_mode: "test",
     });
-    expect(storedInClear).toEqual([]);
     expect(row.razorpay_key_id).toBe("rzp_test_abc");
     expect(row.razorpay_mode).toBe("test");
     expect(isEncrypted(row.razorpay_key_secret as string)).toBe(true);
@@ -60,17 +59,31 @@ describe("sealTenantSecrets", () => {
     expect(row.razorpay_key_secret).toBe(already);
   });
 
-  it("REPORTS fields it had to store in the clear", () => {
-    // Storing a secret unencrypted must never look identical to sealing it.
+  it("REFUSES to seal without a master key instead of storing in the clear (R-051)", () => {
     delete process.env.SECRETS_MASTER_KEY;
-    const { row, storedInClear } = sealTenantSecrets({ razorpay_key_secret: "s3cret", razorpay_mode: "test" });
-    expect(storedInClear).toEqual(["razorpay_key_secret"]);
-    expect(row.razorpay_key_secret).toBe("s3cret");
+    expect(() => sealTenantSecrets({ razorpay_key_secret: "s3cret", razorpay_mode: "test" }))
+      .toThrow(VaultNotConfiguredError);
+    // The error names the fix, never the value.
+    let msg = "";
+    try { sealTenantSecrets({ gemini_api_key: "AQ.secret" }); } catch (e) { msg = (e as Error).message; }
+    expect(msg).toMatch(/SECRETS_MASTER_KEY[\s\S]*NOT saved[\s\S]*Next step/);
+    expect(msg).not.toContain("AQ.secret");
+  });
+
+  it("refuses a too-short key the same way", () => {
+    process.env.SECRETS_MASTER_KEY = Buffer.alloc(16, 1).toString("base64");
+    expect(() => sealTenantSecrets({ gemini_api_key: "AQ.x" })).toThrow(VaultNotConfiguredError);
+  });
+
+  it("needs no key when the patch carries no credential to seal", () => {
+    // Changing gemini_model alone must still work on a keyless server.
+    delete process.env.SECRETS_MASTER_KEY;
+    expect(sealTenantSecrets({ tenant_id: "t1", gemini_model: "gemini-2.5-flash" }).row)
+      .toEqual({ tenant_id: "t1", gemini_model: "gemini-2.5-flash" });
   });
 
   it("skips empty values", () => {
-    const { row, storedInClear } = sealTenantSecrets({ razorpay_key_secret: "", gemini_api_key: null });
-    expect(storedInClear).toEqual([]);
+    const { row } = sealTenantSecrets({ razorpay_key_secret: "", gemini_api_key: null });
     expect(row).toEqual({ razorpay_key_secret: "", gemini_api_key: null });
   });
 

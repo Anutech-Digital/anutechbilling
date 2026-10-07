@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   me: { tenant_id: "T1", role: "sales" } as { tenant_id: string; role: string } | null,
   rows: {} as Record<string, unknown>,
   reads: [] as string[],
+  actors: [] as string[], // R-051: who createAdminClientFor() was opened for
 }));
 const quote = vi.hoisted(() => ({ create: vi.fn() }));
 
@@ -27,7 +28,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "u1@example.invalid" } } }) },
     from: (t: string) => chain(t, true),
   }),
-  createAdminClient: () => ({
+  createAdminClientFor: (actor: string) => (db.actors.push(actor), {
     from: (t: string) => { db.reads.push(t); return chain(t, false); },
   }),
 }));
@@ -56,6 +57,7 @@ beforeEach(() => {
     tenants: { grace_period_days: 7 },
   };
   db.reads = [];
+  db.actors = [];
   quote.create.mockReset();
   quote.create.mockResolvedValue({ ok: true, quoteId: "Q-1", amount: 14400, years: 1 });
 });
@@ -76,6 +78,7 @@ describe("subscriptions extend — role gate (R-217)", () => {
     db.me = { tenant_id: "T1", role };
     const res = await call({ years: 1 });
     expect(res.status).toBe(200);
+    expect(db.actors).toEqual(["U1"]); // R-051: audit log gets the signed-in caller
     expect(await res.json()).toEqual({ ok: true, quoteId: "Q-1", amount: 14400, years: 1, subscriptionId: "S1" });
     expect(quote.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "T1", subscriptionId: "S1", years: 1 }));
   });

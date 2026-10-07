@@ -25,6 +25,7 @@ import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useUrlList } from "@/lib/hooks/use-url-list";
 import { LEAD_VIEWS } from "@/lib/navigation/drilldown";
 import { useTeamTree } from "@/lib/queries/team-tree";
+import { useTeamMembers } from "@/lib/queries/team";
 import { idsForMode, type TeamViewMode } from "@/lib/team/visibility";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
@@ -62,6 +63,7 @@ import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board
 import { LeadsNoResults, LeadsStatusStates } from "@/components/features/leads/leads-empty-states";
 import { LeadsHeaderBar } from "@/components/features/leads/leads-header-bar";
 import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs";
+import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 /* Page parts live in components/features/leads/ and the rules that pick rows in
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
@@ -118,6 +120,15 @@ function LeadsPageInner() {
   const [stageFilter,    setStageFilter]    = useUrlList<Lead["stage"]>("stage", filterStageIds);
   const [priorityFilter, setPriorityFilter] = useUrlList<(typeof PRIORITY_IDS)[number]>("priority", PRIORITY_IDS);
   const [ownerFilter,    setOwnerFilter]    = useUrlList("owner");
+  /* R-392: Source (canonical keys, lead-sources.ts) — ?source=google-ads. */
+  const [sourceFilter,   setSourceFilter]   = useUrlList("source");
+  /* R-392: the board searches by the assigned person's name too (the list does it on the
+     server) — id → name from the same team list the Filter menu reads. */
+  const { data: teamMembers } = useTeamMembers();
+  const ownerNames = React.useMemo(
+    () => new Map((teamMembers ?? []).filter((m) => m.full_name).map((m) => [m.id, m.full_name as string])),
+    [teamMembers],
+  );
   // Due-bucket filter driven by the insight band's KPI pills.
   //   today    → follow_up_date === today
   //   overdue  → follow_up_date < today
@@ -312,15 +323,9 @@ function LeadsPageInner() {
       router.push((lead.project_id ? `/projects/${lead.project_id}` : `${pathname}?projectQuote=${lead.id}`) as never);
       return;
     }
-    const params = new URLSearchParams();
-    params.set("leadId",  lead.id);
-    params.set("company", lead.company);
-    if (lead.plan)          params.set("plan",  lead.plan);
-    if (lead.seats != null) params.set("seats", String(lead.seats));
-    if (lead.contact_name)  params.set("contact", lead.contact_name);
-    if (lead.contact_email) params.set("email", lead.contact_email);
-    if (lead.contact_phone) params.set("phone", lead.contact_phone);
-    router.push(`/quotes/new?${params.toString()}` as never);
+    /* R-389 (F5): lead id + plan/seats only — the builder loads company and contact from
+       the lead, so the customer's email and phone never go into the URL. */
+    router.push(leadQuoteHref(lead) as never);
   }, [router, pathname]);
 
   // ── Leads vs Deals split ────────────────────────────────────────────────
@@ -415,12 +420,13 @@ function LeadsPageInner() {
     stages: stageFilter,
     priorities: priorityFilter,
     owners: ownerFilter,
+    sources: sourceFilter,
     smart_view: smartView,
     folder: folderForView(folder, smartView),
     /* The default "wait" order (lib/leads/waiting.ts) is worked out by the server, so the
        lead that has waited longest is on page 1 even if it arrived months ago. */
     sort: sortBy === "wait" ? "wait" : "created",
-  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, smartView, folder, sortBy, isDealsPage]);
+  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, sourceFilter, smartView, folder, sortBy, isDealsPage]);
 
   const countsQ = useLeadCounts(listFilters);
   const counts  = countsQ.data;
@@ -466,7 +472,7 @@ function LeadsPageInner() {
     const workspace = teamIds === null ? rows : inWorkspace(rows, teamIds);
     const dup = computeDuplicates(workspace);
     const searched = searchLeads(workspace, {
-      search, stageFilter, priorityFilter, ownerFilter, smartView, currentUser, dupFlagged: dup.flagged, now: new Date(),
+      search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, dupFlagged: dup.flagged, now: new Date(),
     });
     /* ── THE BOARD MUST CONTAIN ITS OWN LAST COLUMN ───────────────────────────
        The list cut is open-only when no folder is picked, and the board's stages end at
@@ -475,14 +481,14 @@ function LeadsPageInner() {
        lead; picking a folder hands control back to the list cut (list-selectors#boardCut). */
     const cutFolder = folderForView(folder, smartView);
     return boardCut(searched, listCut(searched, cutFolder, smartView, folderToday), cutFolder, smartView);
-  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, smartView, currentUser, folder, folderToday]);
+  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, folder, folderToday]);
 
   /** The rows the current view is showing — what `filtered` was. */
   const shownRows = isList ? listRows : boardLeads;
   /** How many rows the view holds in total (the list only loads a page of them). */
   const shownCount = isList ? (counts?.list.matching ?? listRows.length) : boardLeads.length;
 
-  const activeFilterCount = stageFilter.length + priorityFilter.length + ownerFilter.length;
+  const activeFilterCount = stageFilter.length + priorityFilter.length + ownerFilter.length + sourceFilter.length;
 
   /* ── The folder chips are the filter ──────────────────────────────────────
      "Inbox" and "Qualified Deals" used to switch between the two halves of the old
@@ -701,6 +707,8 @@ function LeadsPageInner() {
             setPriorityFilter={setPriorityFilter}
             ownerFilter={ownerFilter}
             setOwnerFilter={setOwnerFilter}
+            sourceFilter={sourceFilter}
+            setSourceFilter={setSourceFilter}
             isSales={isSales}
             kpiOpen={kpiOpen}
             setKpiOpen={setKpiOpen}

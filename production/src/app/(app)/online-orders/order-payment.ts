@@ -16,6 +16,7 @@
  * KPIs, Payment + GST Invoice steps, Invoice row, next action — reads `orderPaymentView`.
  */
 import { invoiceByLead } from "./invoice-links";
+import { quotePaymentState, type PaymentState } from "@/lib/payments/won-paid";
 
 export interface QuotePaymentRow {
   lead_id: string | null;
@@ -24,16 +25,15 @@ export interface QuotePaymentRow {
   created_at: string | null;
 }
 
-export type PaymentState = "paid" | "partial" | "none";
+/* R-375: the paid / part-paid rule now lives in lib/payments/won-paid.ts, shared with the
+   Deals and marketing "won ₹" figures so both pages say the same thing about the same quote. */
+export type { PaymentState };
 
 export interface OrderPayment {
   state: PaymentState;
   /** The GST invoice of the order's newest invoiced quote, or null. */
   invoiceId: string | null;
 }
-
-/** quote.payment_status values that mean the full amount was recorded. */
-const FULLY_PAID = new Set(["received", "invoiced"]);
 
 /**
  * lead id → what was actually recorded against its quotes. A lead with several quotes is paid
@@ -46,8 +46,7 @@ export function paymentByLead(rows: readonly QuotePaymentRow[]): Map<string, Ord
   for (const r of rows) {
     const leadId = r.lead_id?.trim();
     if (!leadId) continue;
-    const status = (r.payment_status ?? "").trim();
-    const here: PaymentState = FULLY_PAID.has(status) ? "paid" : status === "partial" ? "partial" : "none";
+    const here: PaymentState = quotePaymentState(r.payment_status);
     const seen = out.get(leadId)?.state ?? "none";
     const state: PaymentState = seen === "paid" || here === "paid" ? "paid" : seen === "partial" || here === "partial" ? "partial" : "none";
     out.set(leadId, { state, invoiceId: invoices.get(leadId) ?? null });

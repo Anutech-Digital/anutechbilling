@@ -20,6 +20,22 @@ import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 
+/**
+ * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
+ * 20261007251000 carries its own (snapshot at issue — the quote can be edited later, the
+ * issued invoice cannot); an older invoice falls back to its quote exactly as before, with
+ * no source/date because nothing recorded them at the time.
+ */
+export function invoiceFx(
+  invoice: Pick<Invoice, "currency" | "fx_rate" | "fx_source" | "fx_date">,
+  quote: { currency?: string | null; exchange_rate?: number | null } | null,
+): { currency: string | null; exchangeRate: number | null; fxSource: string | null; fxDate: string | null } {
+  if (invoice.currency && invoice.fx_rate != null && invoice.fx_rate > 0) {
+    return { currency: invoice.currency, exchangeRate: invoice.fx_rate, fxSource: invoice.fx_source ?? null, fxDate: invoice.fx_date ?? null };
+  }
+  return { currency: quote?.currency ?? null, exchangeRate: quote?.exchange_rate ?? null, fxSource: null, fxDate: null };
+}
+
 /** Supplier fields needed on both PDFs (from the tenants row). */
 export interface TenantPdfInfo {
   name:        string;
@@ -121,9 +137,21 @@ export function buildInvoicePdfProps(args: {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
   // invoice → use the breakdown persisted on the invoice itself (migration 0116).
-  const a: Amounts = quote ? quoteAmounts(quote) : invoiceAmounts(invoice);
-  const total    = quote?.amount   ?? invoice.amount;
-  const subtotal = quote?.subtotal ?? a.subtotal;
+  //
+  // R-375 (audit finding 9): an ISSUED invoice's figures are frozen on the invoice row
+  // (amount / taxable_value / tax_amount). The quote is live — it can be edited, re-priced
+  // or re-accepted after the invoice was issued — so a reprint built from it could print a
+  // different GST invoice from the one in the books. When the invoice carries its own
+  // figures and the quote no longer agrees with them, the invoice's own figures (and lines)
+  // win; the quote is used for its subtotal/discount display only while it still matches.
+  const persisted = invoice.taxable_value != null && invoice.tax_amount != null;
+  const q         = quote ? quoteAmounts(quote) : null;
+  const useQuote  = q !== null && (!persisted || (
+    q.taxable === invoice.taxable_value && q.tax === invoice.tax_amount && q.total === invoice.amount
+  ));
+  const a: Amounts = useQuote && q ? q : invoiceAmounts(invoice);
+  const total    = useQuote ? (quote?.amount ?? invoice.amount) : invoice.amount;
+  const subtotal = useQuote ? (quote?.subtotal ?? a.subtotal) : a.subtotal;
   // GST head: the value persisted at issue time wins; else derive from states,
   // falling back to each party's GSTIN when a state code is missing.
   //
@@ -145,7 +173,9 @@ export function buildInvoicePdfProps(args: {
        quote would print ₹28,320 — and an invoice with no description, HSN or
        quantity does not satisfy CGST Rule 46. This also fills in the project
        milestone invoices that used to print "No line items recorded". */
-    lineItems:   quote?.line_items ?? invoice.line_items ?? [],
+    lineItems:   useQuote
+      ? (quote?.line_items ?? invoice.line_items ?? [])
+      : (invoice.line_items ?? quote?.line_items ?? []),
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,
@@ -181,10 +211,9 @@ export function buildInvoicePdfProps(args: {
     udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
-    // Foreign-currency display (books stay ₹). Carried on the backing quote — an
-    // export client's PDF then shows the USD (etc.) equivalent, not just ₹.
-    currency:      quote?.currency ?? null,
-    exchangeRate:  quote?.exchange_rate ?? null,
+    // Foreign-currency display (books stay ₹). R-045: the rate frozen on the invoice at
+    // issue (+ its source and date); older invoices fall back to the backing quote.
+    ...invoiceFx(invoice, quote),
     termsConditions: quote?.terms_conditions ?? null,
     /* R-038. Derived once, here, so the footer sentence and the bank block cannot
        disagree — and so "Razorpay" appears only when Razorpay actually exists. */
@@ -266,6 +295,8 @@ export function buildQuotePdfProps(args: {
     placeOfSupply: pos.label,
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
+    fxSource:      quote.fx_source ?? null,
+    fxDate:        quote.fx_date ?? null,
     billingCycle:  quote.billing_cycle,
     notes:         quote.notes ?? undefined,
     termsConditions: quote.terms_conditions ?? null,

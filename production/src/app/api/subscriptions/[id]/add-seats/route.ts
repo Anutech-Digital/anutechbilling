@@ -32,7 +32,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
 
@@ -93,7 +93,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     );
   }
 
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(authData.user.id); // R-051: audit log names the caller
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     // Shared column list, so both seat-adding routes select the same set. start_date

@@ -61,3 +61,20 @@ export function quotePlaceOfSupply(a: {
     label: placeOfSupplyLabel({ posCode, interState, isExport, country: buyer?.country }),
   };
 }
+
+/**
+ * R-389 (F9) — the tax head named the way the invoice will split it.
+ *
+ * The Add-seats dialog and its pro-rata quote said "GST 18%" for an inter-state customer,
+ * where the invoice charges IGST 18%; an intra-state one is CGST 9% + SGST 9%.
+ *
+ * @example gstHeadLabel({ ratePct: 18, interState: true })  // "IGST 18%"
+ * @example gstHeadLabel({ ratePct: 18, interState: false }) // "CGST 9% + SGST 9%"
+ */
+export function gstHeadLabel(a: { ratePct: number; interState: boolean; isExport?: boolean }): string {
+  if (a.isExport) return "GST 0% (export)";
+  if (a.ratePct <= 0) return "GST 0%";
+  if (a.interState) return `IGST ${a.ratePct}%`;
+  const half = a.ratePct / 2;
+  return `CGST ${half}% + SGST ${half}%`;
+}

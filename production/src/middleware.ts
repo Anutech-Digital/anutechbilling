@@ -12,6 +12,7 @@ import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
+import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 
 // Routes that require authentication (the entire app shell).
 // Keep this in sync with APP_NAV in src/lib/nav.ts — any new section's
@@ -189,6 +190,30 @@ export async function middleware(request: NextRequest) {
     url.search = "";
     url.pathname = "/mfa";
     if (target) url.searchParams.set("next", target);
+    return NextResponse.redirect(url);
+  }
+
+  /* R-391: the forced password-change screen needs a session (it re-checks the current,
+     temporary password), so a signed-out visit goes to login and comes back. */
+  if (!isAuthed && pathname === CHANGE_PASSWORD_PATH) {
+    const url = request.nextUrl.clone();
+    url.search = "";
+    url.pathname = "/login";
+    url.searchParams.set("next", CHANGE_PASSWORD_PATH);
+    return NextResponse.redirect(url);
+  }
+
+  /* R-391: an owner set a temporary password for this account (app_metadata flag, written
+     only with the service role). Every app page goes to /change-password until the member
+     picks their own — after that the owner no longer knows it. After the MFA step, before the
+     role guard. On R-161's Auth.js session the middleware user carries no app_metadata, so
+     this reads false there and the client gate in (app)/layout.tsx redirects instead. */
+  if (isAuthed && (isProtected || isAuthPage) && mustChangePassword(user)) {
+    const url = request.nextUrl.clone();
+    const next = isProtected ? safeNextPath(pathname + request.nextUrl.search, "") : "";
+    url.search = "";
+    url.pathname = CHANGE_PASSWORD_PATH;
+    if (next) url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   }
 

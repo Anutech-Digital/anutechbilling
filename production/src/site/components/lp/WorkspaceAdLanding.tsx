@@ -18,26 +18,29 @@
  *   • BUY NOW opens the same form while online Workspace checkout is paused (Pardeep,
  *     4 Oct 2026, until all prices are in the catalogue). Flip BUY_ONLINE to send it to
  *     checkout.
- * Copy is a prop so the 3–4 ad variants reuse this component. The plan is a prop too
- * (lib/lp-plans.ts): one page per Workspace plan, the Starter offer only on Starter.
+ * The plan is a prop (lib/lp-plans.ts): one page per Workspace plan, the Starter offer only
+ * on Starter. Hero copy is an optional prop so ad variants can bring their own.
+ *
+ * LANGUAGE (R-396, 7 Oct 2026): every visible word comes from lp-copy.ts in English or
+ * Hinglish. English by default; the page (server) reads `?lang=hi` and passes `lang`, so an
+ * ad linking to the Hinglish page renders Hinglish with no flash. The "English | Hinglish"
+ * toggle in the header switches it and remembers the choice (localStorage, try/catch).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { WHATSAPP_NUMBER, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { pickAdParams, withAdParams, rememberLanding } from "@/site/lib/ad-attribution";
 import { reportLeadConversion } from "@/site/lib/google-ads";
 import { FIRST_YEAR_PER_USER, OFFER_MIN_USERS } from "@/site/lib/workspace-offer";
-import { LP_PLANS, compareRows, type LpPlan } from "@/site/lib/lp-plans";
+import { LP_PLANS, type LpPlan } from "@/site/lib/lp-plans";
 import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
+import {
+  LP_DEFAULT_LANG, LP_LANG_STORE, LP_TEXT, parseLpLang,
+  type LpDict, type LpLang, type Rich, type WorkspaceAdCopy,
+} from "./lp-copy";
 
-/** The one line per plan card that storage and Meet size do not already say. */
-const PLAN_HIGHLIGHT: Record<LpPlan["key"], string> = {
-  starter: "Professional email on your domain",
-  standard: "Gemini AI + meeting recordings",
-  plus: "Vault: mail retention & eDiscovery",
-  enterprise: "Enterprise security, no user limit",
-};
+export type { WorkspaceAdCopy, LpLang } from "./lp-copy";
 
 /** One row of the category page's plan grid: the plan and its live yearly ₹/user/month. */
 export interface LpPlanPrice { plan: LpPlan; annual: number | null }
@@ -45,53 +48,23 @@ export interface LpPlanPrice { plan: LpPlan; annual: number | null }
 /** Online checkout for Workspace — off until every edition's price is confirmed (see header). */
 const BUY_ONLINE = false;
 
-export interface WorkspaceAdCopy {
-  eyebrow: string;
-  h1Rest: string;
-  h2: string;
-  sub: string;
-}
-export const DEFAULT_COPY: WorkspaceAdCopy = {
-  eyebrow: "Authorised Google Workspace Reseller",
-  h1Rest: "Workspace for Your Business",
-  h2: "Business ko banaye Smart, Secure & Professional!",
-  sub: "Gmail, Drive, Meet, Docs aur bahut kuch — sab ek hi platform par. Work smarter, collaborate better, grow faster.",
-};
-
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const PHONE_SHOWN = WHATSAPP_NUMBER.replace(/^91/, "");
 const waLink = (text: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+const RichText = ({ r }: { r: Rich }) => <>{r[0]}<b>{r[1]}</b>{r[2]}</>;
 
-const APPS: { name: string; what: string; icon?: string; tile?: { bg: string; label: string } }[] = [
-  { name: "Gmail", what: "Business Email", icon: "/ic-gmail.png" },
-  { name: "Drive", what: "Cloud Storage", icon: "/ic-drive.png" },
-  { name: "Meet", what: "Video Meetings", icon: "/ic-meet.png" },
-  { name: "Docs", what: "Create & Collaborate", tile: { bg: "#4285F4", label: "D" } },
-  { name: "Sheets", what: "Work Together", tile: { bg: "#34A853", label: "S" } },
-  { name: "Slides", what: "Present Ideas", tile: { bg: "#F9AB00", label: "P" } },
-  { name: "Calendar", what: "Stay Organised", icon: "/ic-calendar.png" },
+const APPS: { name: string; icon?: string; tile?: { bg: string; label: string } }[] = [
+  { name: "Gmail", icon: "/ic-gmail.png" },
+  { name: "Drive", icon: "/ic-drive.png" },
+  { name: "Meet", icon: "/ic-meet.png" },
+  { name: "Docs", tile: { bg: "#4285F4", label: "D" } },
+  { name: "Sheets", tile: { bg: "#34A853", label: "S" } },
+  { name: "Slides", tile: { bg: "#F9AB00", label: "P" } },
+  { name: "Calendar", icon: "/ic-calendar.png" },
 ];
-const WHY: [string, string][] = [
-  ["GST invoice in INR", "Har order par GST invoice — business input credit le sakta hai."],
-  ["Setup done for you", "Domain verify, MX records, users — hamari team karti hai."],
-  ["Free migration", "Purana mail, folders, contacts aur calendar — hum shift karte hain, kuch nahi chhootta."],
-  ["Local support", `Hindi / English mein, phone aur WhatsApp par — ${COMPANY.hours}.`],
-];
-function faqFor(plan: LpPlan): [string, string][] {
-  const trialAnswer = plan.offer
-    ? "Trial ke baad aap tay karte hain. Jaari rakhna hai to saalana plan lijiye — naya account aur 30+ users ho to pehle saal ₹1,650/user (Google approval ke saath; doosre saal se list price); nahi to kuch nahi katega — koi card nahi maanga jaata."
-    : "Trial ke baad aap tay karte hain. Jaari rakhna hai to saalana ya monthly plan lijiye; nahi to kuch nahi katega — koi card nahi maanga jaata.";
-  return [
-  ["Mere paas domain nahi hai — kya hoga?", "Koi baat nahi. Hum aapka domain bhi register kar dete hain aur usi par Google Workspace chalu karte hain — ek hi jagah se."],
-  ["Purana email (cPanel, Zoho, Outlook) ka kya hoga?", "Free migration: purane mail, folders, contacts aur calendar hum Google Workspace mein shift karte hain. Aapke paas kuch nahi chhootta."],
-  ["14 din ke trial ke baad kya hota hai?", trialAnswer],
-  ["GST invoice milega?", "Haan, har order par GST invoice milta hai, aur business us par input tax credit le sakta hai."],
-  [`${plan.name} kitne users tak?`, `${plan.usersLimit}. Users kabhi bhi badha sakte hain, aur zaroorat par plan upgrade bhi.`],
-  ];
-}
 
 export function WorkspaceAdLanding({
-  annualPerSeatMo, plan = LP_PLANS.starter, copy, allPlans,
+  annualPerSeatMo, plan = LP_PLANS.starter, copy, allPlans, lang: initialLang = LP_DEFAULT_LANG,
 }: {
   /** The plan's ₹ per user per month on the yearly plan (live catalogue); null = talk to us. */
   annualPerSeatMo: number | null;
@@ -99,8 +72,13 @@ export function WorkspaceAdLanding({
   copy?: WorkspaceAdCopy;
   /** Category page only: every plan, shown as a grid under the price card. */
   allPlans?: readonly LpPlanPrice[];
+  /** From the page's `?lang=` (server side) so the first paint is already in that language. */
+  lang?: LpLang;
 }) {
-  const text = copy ?? plan.copy ?? DEFAULT_COPY;
+  const [lang, setLang] = useState<LpLang>(initialLang);
+  const t = LP_TEXT[lang];
+  const planText = t.plans[plan.key];
+  const text = copy ?? (plan.category ? t.categoryHero : planText.hero);
   const priced = annualPerSeatMo != null && annualPerSeatMo > 0;
   const hasOffer = plan.offer && priced;
   const [ad, setAd] = useState<URLSearchParams>(new URLSearchParams());
@@ -110,6 +88,28 @@ export function WorkspaceAdLanding({
   const [modalPlan, setModalPlan] = useState<LpPlan | null>(null);
   const [users, setUsers] = useState(1);
   const [exitOffer, setExitOffer] = useState(false);
+
+  /* Language: the URL's ?lang= wins (the server already rendered it); otherwise the visitor's
+     last choice on this device. Storage can throw (private mode, blocked site data). */
+  useEffect(() => {
+    const fromUrl = parseLpLang(new URLSearchParams(window.location.search).get("lang"));
+    if (fromUrl) { setLang(fromUrl); return; }
+    let saved: LpLang | null = null;
+    try { saved = parseLpLang(window.localStorage.getItem(LP_LANG_STORE)); } catch { saved = null; }
+    if (saved) setLang(saved);
+  }, []);
+  const chooseLang = useCallback((next: LpLang) => {
+    setLang(next);
+    try { window.localStorage.setItem(LP_LANG_STORE, next); } catch { /* private mode */ }
+    /* A ?lang= in the address would undo the choice on reload — keep it in step. */
+    try {
+      const u = new URL(window.location.href);
+      if (u.searchParams.has("lang")) {
+        u.searchParams.set("lang", next === "hinglish" ? "hi" : "en");
+        window.history.replaceState(window.history.state, "", u.toString());
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   /* Desktop only: the pointer leaving through the top of the window is the classic "about to
      close the tab" signal. Shown once per visit, never on phones, never over an open form. */
@@ -124,8 +124,8 @@ export function WorkspaceAdLanding({
       try { sessionStorage.setItem("anutech.lp.exit.v1", "1"); } catch { /* ignore */ }
       setExitOffer(true);
     };
-    const t = setTimeout(() => document.addEventListener("mouseout", onOut), 8000);   // not on a quick bounce
-    return () => { clearTimeout(t); document.removeEventListener("mouseout", onOut); };
+    const tm = setTimeout(() => document.addEventListener("mouseout", onOut), 8000);   // not on a quick bounce
+    return () => { clearTimeout(tm); document.removeEventListener("mouseout", onOut); };
   }, []);
   useEffect(() => {
     if (!exitOffer) return;
@@ -149,32 +149,38 @@ export function WorkspaceAdLanding({
   const offPct = Math.round((1 - offerYear / yearly) * 100);
   const offerOn = hasOffer && users >= OFFER_MIN_USERS;
   const perUserYear = offerOn ? offerYear : yearly;
-  const wa = waLink(`Hello ANUTECH, mujhe Google Workspace ${plan.name} chahiye.`);
+  const wa = waLink(t.wa.want(plan.name));
 
   /** Enterprise has no list price, so no checkout: the button asks for a quote instead. */
   const buyOnline = BUY_ONLINE && priced && !!plan.edition;
-  const buyLabel = priced ? "Buy Now" : "Get Quote";
+  const buyLabel = priced ? t.btn.buyNow : t.btn.getQuote;
   const BuyButton = ({ className = "" }: { className?: string }) =>
     buyOnline
-      ? <a className={`gw-btn gw-buy ${className}`} href={checkoutHref}>Buy Now <span aria-hidden>→</span></a>
+      ? <a className={`gw-btn gw-buy ${className}`} href={checkoutHref}>{t.btn.buyNow} <span aria-hidden>→</span></a>
       : <button type="button" className={`gw-btn gw-buy ${className}`} onClick={() => setModal("buy")}>{buyLabel} <span aria-hidden>→</span></button>;
   const TrialButton = ({ className = "" }: { className?: string }) =>
-    <button type="button" className={`gw-btn gw-trial ${className}`} onClick={() => setModal("trial")}>Start 14-Day Free Trial <span aria-hidden>→</span></button>;
+    <button type="button" className={`gw-btn gw-trial ${className}`} onClick={() => setModal("trial")}>{t.btn.startTrial} <span aria-hidden>→</span></button>;
+  const compare = t.compare.rows(plan.storage, plan.meetPeople);
+  const faqs = t.faq.items({ plan: plan.name, usersLimit: planText.usersLimit, offer: plan.offer, offerPrice: inr(FIRST_YEAR_PER_USER) });
 
   return (
-    <div className="gw">
+    <div className="gw" lang={t.htmlLang} data-lang={lang}>
       <style>{CSS}</style>
 
       <header className="gw-top">
         <div className="gw-wrap gw-nav">
           {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
           <a href="#top" aria-label="ANUTECH Digital"><img src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" className="gw-logo" width={210} height={70} /></a>
-          <nav className="gw-links" aria-label="On this page">
-            <a href="#features">Features</a>{allPlans && <a href="#plans">Plans</a>}<a href="#offer">Price</a><a href="#compare">Compare</a><a href="#faq">FAQ</a>
+          <nav className="gw-links" aria-label={t.nav.onThisPage}>
+            <a href="#features">{t.nav.features}</a>{allPlans && <a href="#plans">{t.nav.plans}</a>}<a href="#offer">{t.nav.price}</a><a href="#compare">{t.nav.compare}</a><a href="#faq">{t.nav.faq}</a>
           </nav>
           <div className="gw-nav-actions">
-            {WHATSAPP_READY && <a className="gw-mini" href={wa} target="_blank" rel="noopener">WhatsApp</a>}
-            <a className="gw-mini gw-mini-primary" href="#offer">{hasOffer ? "View Offer" : "See Price"}</a>
+            <div className="gw-lang" role="group" aria-label={t.langToggleLabel}>
+              <button type="button" lang="en" aria-pressed={lang === "en"} onClick={() => chooseLang("en")}>English</button>
+              <button type="button" lang="hi-Latn" aria-pressed={lang === "hinglish"} onClick={() => chooseLang("hinglish")}>Hinglish</button>
+            </div>
+            {WHATSAPP_READY && <a className="gw-mini gw-mini-wa" href={wa} target="_blank" rel="noopener">{t.btn.whatsapp}</a>}
+            <a className="gw-mini gw-mini-primary" href="#offer">{hasOffer ? t.nav.viewOffer : t.nav.seePrice}</a>
           </div>
         </div>
       </header>
@@ -190,141 +196,142 @@ export function WorkspaceAdLanding({
               <div className="gw-buttons">
                 <BuyButton />
                 <TrialButton />
-                {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">WhatsApp {PHONE_SHOWN}</a>}
+                {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">{t.btn.whatsapp} {PHONE_SHOWN}</a>}
               </div>
               <ul className="gw-ticks">
-                <li>Trial mein koi card nahi</li>
-                <li>Setup + migration free</li>
-                <li>GST invoice</li>
+                {t.hero.ticks.map((x) => <li key={x}>{x}</li>)}
               </ul>
               <p className="gw-note">
                 {hasOffer
-                  ? <>{OFFER_MIN_USERS}+ users: pehle saal sirf <b>{inr(offerMo)}/user/mahina</b> (saalana plan)</>
-                  : priced ? <>{plan.name}: <b>{inr(annualPerSeatMo!)}/user/mahina</b> (saalana plan)</> : <>{plan.name}: daam aapki zaroorat ke hisaab se</>}
+                  ? <RichText r={t.hero.noteOffer(OFFER_MIN_USERS, inr(offerMo))} />
+                  : priced ? <RichText r={t.hero.notePrice(plan.name, inr(annualPerSeatMo!))} /> : <>{t.hero.noteQuote(plan.name)}</>}
                 {" "}· {COMPANY.partnerLine}
               </p>
-              <CallbackForm landing={landing} plan={plan} />
+              <CallbackForm t={t} landing={landing} plan={plan} />
             </div>
             <div className="gw-visual">
               {hasOffer ? (
-              <aside className="gw-promo" aria-label="Special offer">
-                <span className="gw-promo-tag">{OFFER_MIN_USERS}+ users · naya account</span>
+              <aside className="gw-promo" aria-label={t.promo.offerAria}>
+                <span className="gw-promo-tag">{t.promo.tagOffer(OFFER_MIN_USERS)}</span>
                 <div className="gw-promo-main">
-                  <div className="gw-promo-zero" aria-hidden><b>{offPct}%</b><small>off</small></div>
+                  <div className="gw-promo-zero" aria-hidden><b>{offPct}%</b><small>{t.promo.off}</small></div>
                   <div>
-                    <p className="gw-promo-h">Pehle saal <s>{inr(yearly)}</s> {inr(offerYear)}<span className="gw-promo-unit">/user</span></p>
-                    <p className="gw-promo-s">Saath mein <b>FREE setup + email migration</b> — domain, users aur purana mail, sab hamari team karti hai.</p>
+                    <p className="gw-promo-h">{t.promo.firstYear} <s>{inr(yearly)}</s> {inr(offerYear)}<span className="gw-promo-unit">{t.promo.perUser}</span></p>
+                    <p className="gw-promo-s"><RichText r={t.promo.offerBody} /></p>
                   </div>
                 </div>
                 <div className="gw-promo-foot">
-                  <button type="button" className="gw-promo-btn" onClick={() => { setUsers((n) => Math.max(n, OFFER_MIN_USERS)); setModal("buy"); }}>Offer lo <span aria-hidden>→</span></button>
+                  <button type="button" className="gw-promo-btn" onClick={() => { setUsers((n) => Math.max(n, OFFER_MIN_USERS)); setModal("buy"); }}>{t.promo.offerBtn} <span aria-hidden>→</span></button>
                 </div>
               </aside>
               ) : (
-              <aside className="gw-promo" aria-label="What you get">
+              <aside className="gw-promo" aria-label={t.promo.plainAria}>
                 <span className="gw-promo-tag">{plan.name}</span>
                 <div className="gw-promo-main">
-                  <div className="gw-promo-zero" aria-hidden><b>₹0</b><small>setup</small></div>
+                  <div className="gw-promo-zero" aria-hidden><b>₹0</b><small>{t.promo.setup}</small></div>
                   <div>
-                    <p className="gw-promo-h">FREE setup + email migration</p>
-                    <p className="gw-promo-s">Domain, users aur purana mail — hamari team karti hai. Saath mein <b>14 din free trial</b>, koi card nahi.</p>
+                    <p className="gw-promo-h">{t.promo.plainHead}</p>
+                    <p className="gw-promo-s"><RichText r={t.promo.plainBody} /></p>
                   </div>
                 </div>
                 <div className="gw-promo-foot">
-                  <button type="button" className="gw-promo-btn" onClick={() => setModal(priced ? "buy" : "trial")}>{priced ? "Abhi shuru karein" : "Quote lein"} <span aria-hidden>→</span></button>
+                  <button type="button" className="gw-promo-btn" onClick={() => setModal(priced ? "buy" : "trial")}>{priced ? t.promo.startNow : t.promo.getQuote} <span aria-hidden>→</span></button>
                 </div>
               </aside>
               )}
               {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
-              <img className="gw-photo" src="/lp/gw-hero.jpg" alt="A business owner working on Google Workspace" width={400} height={458} fetchPriority="high" decoding="async" />
-              <div className="gw-float">Grow your business with Google<small>Secure · Collaborative · Productive</small></div>
+              <img className="gw-photo" src="/lp/gw-hero.jpg" alt={t.hero.photoAlt} width={400} height={458} fetchPriority="high" decoding="async" />
+              <div className="gw-float">{t.hero.float}<small>{t.hero.floatSmall}</small></div>
             </div>
           </div>
         </section>
 
-        <div className="gw-strip" aria-label="Why customers pick ANUTECH">
+        <div className="gw-strip" aria-label={t.strip.aria}>
           <div className="gw-wrap gw-strip-row">
-            <span>✓ 14-day free trial</span><span>✓ Free setup &amp; migration</span><span>✓ GST invoice</span>
-            <span>✓ {COMPANY.partnerLine}</span><span>✓ Hindi / English support</span>
+            <span>✓ {t.strip.trial}</span><span>✓ {t.strip.setup}</span><span>✓ {t.strip.gst}</span>
+            <span>✓ {COMPANY.partnerLine}</span><span>✓ {t.strip.support}</span>
           </div>
         </div>
 
         <section className="gw-wrap gw-apps-sec" id="features">
-          <ul className="gw-apps" aria-label="Google Workspace apps">
-            {APPS.map((a) => (
+          <ul className="gw-apps" aria-label={t.apps.aria}>
+            {APPS.map((a, i) => (
               <li key={a.name}>
                 {a.icon
                   // eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331)
                   ? <img src={a.icon} alt="" width={44} height={44} />
                   : <span className="gw-tile" style={{ background: a.tile!.bg }} aria-hidden>{a.tile!.label}</span>}
-                <b>{a.name}</b><span>{a.what}</span>
+                <b>{a.name}</b><span>{t.apps.what[i]}</span>
               </li>
             ))}
           </ul>
         </section>
 
         <section className="gw-wrap gw-sec">
-          <div className="gw-kicker">Kaise shuru hota hai</div>
-          <h3 className="gw-h3">3 kadam — aur aapki team professional email par</h3>
+          <div className="gw-kicker">{t.steps.kicker}</div>
+          <h3 className="gw-h3">{t.steps.h3}</h3>
           <ol className="gw-steps">
-            <li><span>1</span><b>Form ya WhatsApp</b><small>Naam aur number dijiye — 1 minute.</small></li>
-            <li><span>2</span><b>Hamari call</b><small>Users, domain aur plan tay karte hain — {COMPANY.hours}.</small></li>
-            <li><span>3</span><b>Setup hum karte hain</b><small>Domain, users, purana mail — sab shift. Aapki team kaam shuru karti hai.</small></li>
+            {t.steps.items(COMPANY.hours).map(([b, s], i) => (
+              <li key={b}><span>{i + 1}</span><b>{b}</b><small>{s}</small></li>
+            ))}
           </ol>
         </section>
 
         <section className="gw-wrap gw-offer" id="offer">
           <div className="gw-card gw-benefits">
-            <div className="gw-kicker">Why Google Workspace?</div>
-            <h3 className="gw-h3">Everything your business needs, in one place.</h3>
-            <p className="gw-copy">Email, files, meetings aur roz ka kaam — ek simple, secure jagah par.</p>
+            <div className="gw-kicker">{t.benefits.kicker}</div>
+            <h3 className="gw-h3">{t.benefits.h3}</h3>
+            <p className="gw-copy">{t.benefits.copy}</p>
             <ul className="gw-blist">
-              {plan.benefits.map(([t, l]) => (
-                <li key={t}><span className="gw-check" aria-hidden>✓</span><span><b>{t}</b><small>{l}</small></span></li>
+              {planText.benefits.map(([b, l]) => (
+                <li key={b}><span className="gw-check" aria-hidden>✓</span><span><b>{b}</b><small>{l}</small></span></li>
               ))}
             </ul>
           </div>
 
-          <aside className="gw-card gw-pricing" aria-label="Price">
+          <aside className="gw-card gw-pricing" aria-label={t.price.aria}>
             <div className="gw-tag">{plan.name}</div>
             {priced ? (<>
-            <div className="gw-price">{inr(annualPerSeatMo!)}<small> per user / month</small></div>
-            <div className="gw-year">{inr(yearly)} per user / year · + 18% GST (input credit milta hai)</div>
+            <div className="gw-price">{inr(annualPerSeatMo!)}<small>{t.price.perUserMonth}</small></div>
+            <div className="gw-year">{t.price.perYear(inr(yearly))}</div>
             </>) : (
             /* R-328: Business Plus has no published price (Google shows none either). */
             plan.key === "plus"
-              ? <div className="gw-price gw-price-talk">{CONTACT_FOR_PRICING}<small> — quote in a day</small></div>
-              : <div className="gw-price gw-price-talk">Let&apos;s talk<small> — quote in a day</small></div>
+              ? <div className="gw-price gw-price-talk">{CONTACT_FOR_PRICING}<small>{t.price.quoteInADay}</small></div>
+              : <div className="gw-price gw-price-talk">{t.price.letsTalk}<small>{t.price.quoteInADay}</small></div>
             )}
-            {hasOffer && (
+            {hasOffer && (() => {
+              const [pre, list, offer, post] = t.price.offerYear(inr(yearly), inr(offerYear), inr(offerMo));
+              return (
             <div className="gw-offer-box">
-              <div className="gw-offer-line"><span className="gw-off-badge">{offPct}% OFF</span> {OFFER_MIN_USERS}+ users · naya account</div>
-              <div className="gw-year">Pehle saal <s>{inr(yearly)}</s> <b>{inr(offerYear)}</b>/user ({inr(offerMo)}/mahina)</div>
-              <div className="gw-renew">Google approval ke saath (aam taur par mil jaati hai) · doosre saal se {inr(yearly)}/user</div>
+              <div className="gw-offer-line"><span className="gw-off-badge">{t.price.offBadge(offPct)}</span> {t.price.offerLine(OFFER_MIN_USERS)}</div>
+              <div className="gw-year">{pre}<s>{list}</s> <b>{offer}</b>{post}</div>
+              <div className="gw-renew">{t.price.renew(inr(yearly))}</div>
             </div>
-            )}
+              );
+            })()}
             <ul className="gw-incl">
-              {plan.includes.map((l) => <li key={l}>{l}</li>)}
-              <li>GST invoice · {COMPANY.partnerLine}</li>
+              {planText.includes.map((l) => <li key={l}>{l}</li>)}
+              <li>{t.price.gstLine} · {COMPANY.partnerLine}</li>
             </ul>
             {priced && (
             <div className="gw-calc">
-              <label htmlFor="gw-users">Kitne users?</label>
+              <label htmlFor="gw-users">{t.price.usersQ}</label>
               <div className="gw-calc-row">
-                <button type="button" aria-label="One user fewer" onClick={() => setUsers((n) => Math.max(1, n - 1))}>−</button>
+                <button type="button" aria-label={t.price.fewer} onClick={() => setUsers((n) => Math.max(1, n - 1))}>−</button>
                 <input id="gw-users" type="number" min={1} max={300} value={users}
                   onChange={(e) => setUsers(Math.max(1, Math.min(300, Number(e.target.value) || 1)))} />
-                <button type="button" aria-label="One user more" onClick={() => setUsers((n) => Math.min(300, n + 1))}>+</button>
+                <button type="button" aria-label={t.price.more} onClick={() => setUsers((n) => Math.min(300, n + 1))}>+</button>
               </div>
               <dl className="gw-calc-out">
-                <div><dt>Pehla saal</dt><dd>{inr(perUserYear * users)}</dd></div>
-                <div><dt>Pehla saal + 18% GST</dt><dd><b>{inr(Math.round(perUserYear * users * 1.18))}</b></dd></div>
-                {offerOn && <div className="gw-calc-save"><dt>Aapki bachat ({offPct}% OFF)</dt><dd>{inr((yearly - offerYear) * users)}</dd></div>}
-                <div><dt>Doosre saal se</dt><dd>{inr(yearly * users)}/saal + GST</dd></div>
+                <div><dt>{t.price.firstYear}</dt><dd>{inr(perUserYear * users)}</dd></div>
+                <div><dt>{t.price.firstYearGst}</dt><dd><b>{inr(Math.round(perUserYear * users * 1.18))}</b></dd></div>
+                {offerOn && <div className="gw-calc-save"><dt>{t.price.saving(offPct)}</dt><dd>{inr((yearly - offerYear) * users)}</dd></div>}
+                <div><dt>{t.price.fromSecond}</dt><dd>{inr(yearly * users)}{t.price.perYearGst}</dd></div>
               </dl>
               {hasOffer && !offerOn && (
                 <button type="button" className="gw-calc-nudge" onClick={() => setUsers(OFFER_MIN_USERS)}>
-                  {OFFER_MIN_USERS} users par pehle saal {offPct}% OFF — {OFFER_MIN_USERS} karke dekhein
+                  {t.price.nudge(OFFER_MIN_USERS, offPct)}
                 </button>
               )}
             </div>
@@ -332,50 +339,50 @@ export function WorkspaceAdLanding({
             <div className="gw-price-actions">
               <BuyButton className="gw-full" />
               <TrialButton className="gw-full" />
-              {WHATSAPP_READY && <a className="gw-btn gw-wa gw-full" href={waLink(`Hello ANUTECH, mujhe Google Workspace ${plan.name} kharidna hai.`)} target="_blank" rel="noopener">Call / WhatsApp {PHONE_SHOWN}</a>}
+              {WHATSAPP_READY && <a className="gw-btn gw-wa gw-full" href={waLink(t.wa.buy(plan.name))} target="_blank" rel="noopener">{t.btn.callWhatsapp} {PHONE_SHOWN}</a>}
             </div>
-            <p className="gw-secure">Easy setup · Expert support · Local support in India</p>
+            <p className="gw-secure">{t.price.secure}</p>
           </aside>
         </section>
 
         {allPlans && (
         <section className="gw-wrap gw-sec" id="plans">
-          <div className="gw-kicker">Saare plans</div>
-          <h3 className="gw-h3">Apne business ke hisaab se plan chunein</h3>
+          <div className="gw-kicker">{t.grid.kicker}</div>
+          <h3 className="gw-h3">{t.grid.h3}</h3>
           <ul className="gw-plans">
             {allPlans.map(({ plan: p, annual }) => (
               <li key={p.key} className={`gw-plan${p.offer ? " gw-plan-hot" : ""}`}>
-                {p.offer && <span className="gw-plan-flag">{OFFER_MIN_USERS}+ users: pehla saal {inr(FIRST_YEAR_PER_USER)}/user</span>}
+                {p.offer && <span className="gw-plan-flag">{t.grid.flag(OFFER_MIN_USERS, inr(FIRST_YEAR_PER_USER))}</span>}
                 <b className="gw-plan-name">{p.name}</b>
                 <div className="gw-plan-price">
-                  {annual != null && annual > 0 ? <>{inr(annual)}<small>/user/mahina</small></> : <>Quote<small> — ek din mein</small></>}
+                  {annual != null && annual > 0 ? <>{inr(annual)}<small>{t.grid.perMonth}</small></> : <>{t.grid.quote}<small>{t.grid.quoteSub}</small></>}
                 </div>
-                <small className="gw-plan-year">{annual != null && annual > 0 ? `saalana plan · + GST` : p.key === "plus" ? CONTACT_FOR_PRICING : "300+ users ke liye"}</small>
+                <small className="gw-plan-year">{annual != null && annual > 0 ? t.grid.yearlyGst : p.key === "plus" ? CONTACT_FOR_PRICING : t.grid.over300}</small>
                 <ul className="gw-plan-facts">
                   <li>{p.storage}</li>
                   <li>{p.meetPeople}</li>
-                  <li>{PLAN_HIGHLIGHT[p.key]}</li>
+                  <li>{t.plans[p.key].highlight}</li>
                 </ul>
                 <button type="button" className="gw-btn gw-buy gw-full" onClick={() => { setModalPlan(p); setModal("buy"); }}>
-                  {annual != null && annual > 0 ? "Ye plan lein" : "Quote lein"}
+                  {annual != null && annual > 0 ? t.grid.choose : t.grid.getQuote}
                 </button>
-                <a className="gw-plan-more" href={withAdParams(p.path, ad)}>{p.name} ke baare mein →</a>
+                <a className="gw-plan-more" href={withAdParams(p.path, ad)}>{t.grid.more(p.name)}</a>
               </li>
             ))}
           </ul>
-          <p className="gw-copy gw-plans-note">Pakka nahi kaunsa? Call-back maangiye — 5 minute mein sahi plan bata denge.</p>
+          <p className="gw-copy gw-plans-note">{t.grid.note}</p>
         </section>
         )}
 
         <section className="gw-wrap gw-sec" id="compare">
-          <div className="gw-kicker">Free Gmail vs Google Workspace</div>
-          <h3 className="gw-h3">Business ke liye free Gmail kaafi kyun nahi</h3>
+          <div className="gw-kicker">{t.compare.kicker}</div>
+          <h3 className="gw-h3">{t.compare.h3}</h3>
           <div className="gw-table-wrap">
             <table className="gw-table">
-              <thead><tr><th scope="col"><span className="gw-sr">Feature</span></th><th scope="col">Free Gmail</th><th scope="col">Google Workspace</th></tr></thead>
+              <thead><tr><th scope="col"><span className="gw-sr">{t.compare.feature}</span></th><th scope="col">{t.compare.freeGmail}</th><th scope="col">{t.compare.workspace}</th></tr></thead>
               <tbody>
-                {compareRows(plan).map(([k, a, b]) => (
-                  <tr key={k}><th scope="row">{k}</th><td data-label="Free Gmail">{a}</td><td data-label="Google Workspace"><span className="gw-yes" aria-hidden>✓</span> {b}</td></tr>
+                {compare.map(([k, a, b]) => (
+                  <tr key={k}><th scope="row">{k}</th><td data-label={t.compare.freeGmail}>{a}</td><td data-label={t.compare.workspace}><span className="gw-yes" aria-hidden>✓</span> {b}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -383,20 +390,20 @@ export function WorkspaceAdLanding({
         </section>
 
         <section className="gw-wrap gw-sec">
-          <div className="gw-kicker">Why buy from ANUTECH?</div>
-          <h3 className="gw-h3">Google ka product, ANUTECH ka saath</h3>
+          <div className="gw-kicker">{t.why.kicker}</div>
+          <h3 className="gw-h3">{t.why.h3}</h3>
           <div className="gw-why">
-            {WHY.map(([t, l]) => (
-              <div key={t} className="gw-card gw-why-card"><b>{t}</b><p>{l}</p></div>
+            {t.why.items(COMPANY.hours).map(([b, l]) => (
+              <div key={b} className="gw-card gw-why-card"><b>{b}</b><p>{l}</p></div>
             ))}
           </div>
         </section>
 
         <section className="gw-wrap gw-sec" id="faq">
-          <div className="gw-kicker">FAQ</div>
-          <h3 className="gw-h3">Aksar puchhe jaane wale sawal</h3>
+          <div className="gw-kicker">{t.faq.kicker}</div>
+          <h3 className="gw-h3">{t.faq.h3}</h3>
           <div className="gw-faq">
-            {faqFor(plan).map(([q, a]) => (
+            {faqs.map(([q, a]) => (
               <details key={q} className="gw-card"><summary>{q}</summary><p>{a}</p></details>
             ))}
           </div>
@@ -405,14 +412,14 @@ export function WorkspaceAdLanding({
         <section className="gw-wrap gw-final">
           <div className="gw-cta">
             <div className="gw-cta-copy">
-              <h3 className="gw-h3">Ready to move your business to Google Workspace?</h3>
-              <p>14 din free trial, free setup aur migration — naam aur number dijiye, hum aaj hi call karte hain.</p>
+              <h3 className="gw-h3">{t.cta.h3}</h3>
+              <p>{t.cta.p}</p>
               <div className="gw-cta-actions">
                 <TrialButton />
-                {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">WhatsApp {PHONE_SHOWN}</a>}
+                {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">{t.btn.whatsapp} {PHONE_SHOWN}</a>}
               </div>
             </div>
-            <div className="gw-cta-form"><CallbackForm landing={landing} plan={plan} /></div>
+            <div className="gw-cta-form"><CallbackForm t={t} landing={landing} plan={plan} /></div>
           </div>
         </section>
       </main>
@@ -420,43 +427,44 @@ export function WorkspaceAdLanding({
       <footer className="gw-foot">
         <div className="gw-wrap gw-foot-row">
           <b>ANUTECH DIGITAL PVT LTD</b>
-          <span>Google Workspace solutions{WHATSAPP_READY ? ` · Call / WhatsApp: ${PHONE_SHOWN}` : ""} · {COMPANY.supportEmail}</span>
+          <span>{t.foot.line}{WHATSAPP_READY ? ` · ${t.foot.callWa}: ${PHONE_SHOWN}` : ""} · {COMPANY.supportEmail}</span>
         </div>
       </footer>
 
       {exitOffer && !modal && (
         <div className="gw-modal" role="dialog" aria-modal="true" aria-labelledby="gw-exit-title" onClick={(e) => { if (e.target === e.currentTarget) setExitOffer(false); }}>
           <div className="gw-modal-card">
-            <button type="button" className="gw-close" aria-label="Close" onClick={() => setExitOffer(false)}>×</button>
-            <div className="gw-kicker">Jaane se pehle</div>
-            <h3 id="gw-exit-title" className="gw-h3">Ek free call — koi commitment nahi</h3>
-            <p className="gw-copy">Naam aur number dijiye. Hum batayenge aapke business ke liye kaunsa plan sahi hai, aur setup kaise hoga.</p>
-            <CallbackForm landing={landing} plan={plan} compact />
+            <button type="button" className="gw-close" aria-label={t.btn.close} onClick={() => setExitOffer(false)}>×</button>
+            <div className="gw-kicker">{t.exit.kicker}</div>
+            <h3 id="gw-exit-title" className="gw-h3">{t.exit.h3}</h3>
+            <p className="gw-copy">{t.exit.p}</p>
+            <CallbackForm t={t} landing={landing} plan={plan} compact />
           </div>
         </div>
       )}
 
-      <div className="gw-sticky" aria-label="Quick actions">
+      <div className="gw-sticky" aria-label={t.sticky.aria}>
         <button type="button" className="gw-btn gw-buy" onClick={() => { if (buyOnline) window.location.href = checkoutHref; else setModal("buy"); }}>{buyLabel}</button>
-        <button type="button" className="gw-btn gw-trial" onClick={() => setModal("trial")}>Free Trial</button>
-        {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">WhatsApp</a>}
+        <button type="button" className="gw-btn gw-trial" onClick={() => setModal("trial")}>{t.btn.freeTrial}</button>
+        {WHATSAPP_READY && <a className="gw-btn gw-wa" href={wa} target="_blank" rel="noopener">{t.btn.whatsapp}</a>}
       </div>
 
-      {modal && <EnquiryModal kind={modal} landing={landing} plan={modalPlan ?? plan} defaultUsers={users} onClose={() => { setModal(null); setModalPlan(null); }} />}
+      {modal && <EnquiryModal t={t} kind={modal} landing={landing} plan={modalPlan ?? plan} defaultUsers={users} onClose={() => { setModal(null); setModalPlan(null); }} />}
     </div>
   );
 }
 
 /** Two fields — name + mobile — straight into the pipeline (api/public/callback). */
-function CallbackForm({ landing, plan, compact = false }: { landing: string; plan: LpPlan; compact?: boolean }) {
+function CallbackForm({ t, landing, plan, compact = false }: { t: LpDict; landing: string; plan: LpPlan; compact?: boolean }) {
   const ts = useTurnstile();
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
+  const c = t.callback;
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ts.ready) { setErr("Ek second — spam check chal raha hai"); setState("error"); return; }
+    if (!ts.ready) { setErr(c.spamCheck); setState("error"); return; }
     const f = new FormData(e.currentTarget);
     const fullName = String(f.get("fullName") ?? "").trim();
     const phone = String(f.get("phone") ?? "").trim();
@@ -469,33 +477,33 @@ function CallbackForm({ landing, plan, compact = false }: { landing: string; pla
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(typeof j?.error === "string" ? j.error : "Request nahi gayi");
+        throw new Error(typeof j?.error === "string" ? j.error : c.failed);
       }
       setName(fullName); setState("done");
       void reportLeadConversion();
     } catch (x) {
-      setErr(x instanceof Error ? x.message : "Request nahi gayi"); setState("error");
+      setErr(x instanceof Error ? x.message : c.failed); setState("error");
     }
   }
 
   if (state === "done") {
     return (
       <div className={`gw-cb gw-cb-done${compact ? " gw-cb-compact" : ""}`} role="status">
-        <b>Shukriya{name ? `, ${name.split(" ")[0]}` : ""}! Hum jald call karenge.</b>
-        <span>{COMPANY.hours}{WHATSAPP_READY ? " · abhi baat karni ho to WhatsApp karein" : ""}</span>
-        {WHATSAPP_READY && <a className="gw-btn gw-wa" href={waLink(`Hello ANUTECH, I am ${name}. Mujhe Google Workspace${plan.category ? "" : ` ${plan.name}`} ke liye call chahiye.`)} target="_blank" rel="noopener">WhatsApp {PHONE_SHOWN}</a>}
+        <b>{c.thanks(name.split(" ")[0] ?? "")}</b>
+        <span>{COMPANY.hours}{WHATSAPP_READY ? c.waNow : ""}</span>
+        {WHATSAPP_READY && <a className="gw-btn gw-wa" href={waLink(t.wa.callback(name, plan.category ? "" : plan.name))} target="_blank" rel="noopener">{t.btn.whatsapp} {PHONE_SHOWN}</a>}
       </div>
     );
   }
   return (
-    <form className={`gw-cb${compact ? " gw-cb-compact" : ""}`} onSubmit={submit} aria-label="Request a call back">
-      {!compact && <b className="gw-cb-title">Ya hum aapko call karein — free</b>}
+    <form className={`gw-cb${compact ? " gw-cb-compact" : ""}`} onSubmit={submit} aria-label={c.aria}>
+      {!compact && <b className="gw-cb-title">{c.title}</b>}
       <div className="gw-cb-row">
-        <label className="gw-sr" htmlFor={compact ? "cb-name-x" : "cb-name"}>Your name</label>
-        <input id={compact ? "cb-name-x" : "cb-name"} name="fullName" required minLength={2} placeholder="Aapka naam" autoComplete="name" />
-        <label className="gw-sr" htmlFor={compact ? "cb-phone-x" : "cb-phone"}>Mobile number</label>
-        <input id={compact ? "cb-phone-x" : "cb-phone"} name="phone" type="tel" required minLength={10} inputMode="tel" placeholder="Mobile number" autoComplete="tel" />
-        <button type="submit" className="gw-btn gw-trial" disabled={state === "sending"}>{state === "sending" ? "…" : "Call me back"}</button>
+        <label className="gw-sr" htmlFor={compact ? "cb-name-x" : "cb-name"}>{c.name}</label>
+        <input id={compact ? "cb-name-x" : "cb-name"} name="fullName" required minLength={2} placeholder={c.namePlaceholder} autoComplete="name" />
+        <label className="gw-sr" htmlFor={compact ? "cb-phone-x" : "cb-phone"}>{c.mobile}</label>
+        <input id={compact ? "cb-phone-x" : "cb-phone"} name="phone" type="tel" required minLength={10} inputMode="tel" placeholder={c.mobile} autoComplete="tel" />
+        <button type="submit" className="gw-btn gw-trial" disabled={state === "sending"}>{state === "sending" ? "…" : c.send}</button>
       </div>
       {ts.widget}
       {state === "error" && <p className="gw-err" role="alert">{err}</p>}
@@ -503,13 +511,14 @@ function CallbackForm({ landing, plan, compact = false }: { landing: string; pla
   );
 }
 
-function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "buy" | "trial"; landing: string; plan: LpPlan; defaultUsers: number; onClose: () => void }) {
+function EnquiryModal({ t, kind, landing, plan, defaultUsers, onClose }: { t: LpDict; kind: "buy" | "trial"; landing: string; plan: LpPlan; defaultUsers: number; onClose: () => void }) {
   const ts = useTurnstile();
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [err, setErr] = useState("");
   const [sent, setSent] = useState<{ name: string; users: number } | null>(null);
   const first = useRef<HTMLInputElement>(null);
   const card = useRef<HTMLDivElement>(null);
+  const q = t.enquiry;
 
   useEffect(() => {
     first.current?.focus();
@@ -529,7 +538,7 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ts.ready) { setErr("Ek second — spam check chal raha hai"); setState("error"); return; }
+    if (!ts.ready) { setErr(q.spamCheck); setState("error"); return; }
     const f = new FormData(e.currentTarget);
     const users = Math.max(1, Math.min(300, Number(f.get("users")) || 1));
     const body = {
@@ -540,6 +549,7 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
       seats: users,
       tierId: plan.key,
       billing: "annual",
+      /* Internal note for the sales team (not shown to the visitor) — stays English. */
       message: kind === "buy" ? `Google Ads landing page: wants to BUY ${plan.name}` : `Google Ads landing page: 14-day free trial request (${plan.name})`,
       /* R-157: a trial is a trial (no priced quote is emailed), and a 30+ Starter enquiry on an
          offer page is the first-year offer, which needs Google approval before it is quoted. */
@@ -555,46 +565,46 @@ function EnquiryModal({ kind, landing, plan, defaultUsers, onClose }: { kind: "b
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(typeof j?.error === "string" ? j.error : "Request nahi gayi");
+        throw new Error(typeof j?.error === "string" ? j.error : q.failed);
       }
       setSent({ name: body.fullName, users }); setState("done");
       void reportLeadConversion();   // no-op until GOOGLE_ADS_SEND_TO is set
     } catch (x) {
-      setErr(x instanceof Error ? x.message : "Request nahi gayi"); setState("error");
+      setErr(x instanceof Error ? x.message : q.failed); setState("error");
     }
   }
 
   return (
     <div className="gw-modal" role="dialog" aria-modal="true" aria-labelledby="gw-modal-title" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="gw-modal-card" ref={card}>
-        <button type="button" className="gw-close" aria-label="Close" onClick={onClose}>×</button>
+        <button type="button" className="gw-close" aria-label={t.btn.close} onClick={onClose}>×</button>
         {state === "done" && sent ? (
           <div role="status">
-            <div className="gw-kicker">Request mil gayi</div>
-            <h3 id="gw-modal-title" className="gw-h3">Shukriya, {sent.name.split(" ")[0]}!</h3>
-            <p className="gw-copy">Hamari team {COMPANY.hours} ke beech aapko call karegi. Email par confirmation bhi aa raha hai.</p>
+            <div className="gw-kicker">{q.doneKicker}</div>
+            <h3 id="gw-modal-title" className="gw-h3">{q.doneH(sent.name.split(" ")[0] ?? "")}</h3>
+            <p className="gw-copy">{q.doneP(COMPANY.hours)}</p>
             {WHATSAPP_READY && (
               <a className="gw-btn gw-wa gw-full" target="_blank" rel="noopener"
-                href={waLink(`Hello ANUTECH, I am ${sent.name}. I want Google Workspace for ${sent.users} users.`)}>
-                Abhi WhatsApp par baat karein
+                href={waLink(t.wa.enquiry(sent.name, sent.users))}>
+                {q.doneWa}
               </a>
             )}
           </div>
         ) : (
           <>
-            <div className="gw-kicker">{kind === "buy" ? `Google Workspace ${plan.name}` : "14-day free trial"}</div>
-            <h3 id="gw-modal-title" className="gw-h3">{kind === "buy" ? "Apni details dijiye" : "Free trial shuru karein"}</h3>
-            <p className="gw-copy">{kind === "buy" ? "Hamari team aaj hi call karke aapke domain par setup karegi." : "Koi card nahi chahiye. Hum aapke domain par trial chalu karenge."}</p>
+            <div className="gw-kicker">{kind === "buy" ? `Google Workspace ${plan.name}` : q.trialKicker}</div>
+            <h3 id="gw-modal-title" className="gw-h3">{kind === "buy" ? q.buyH : q.trialH}</h3>
+            <p className="gw-copy">{kind === "buy" ? q.buyP : q.trialP}</p>
             <form className="gw-form" onSubmit={submit}>
-              <label>Name<input ref={first} name="fullName" required minLength={2} autoComplete="name" /></label>
-              <label>Company name<input name="companyName" required minLength={2} autoComplete="organization" /></label>
-              <label>Email<input name="email" type="email" required autoComplete="email" /></label>
-              <label>Mobile number<input name="phone" type="tel" required minLength={10} inputMode="tel" autoComplete="tel" /></label>
-              <label>Number of users<input name="users" type="number" min={1} max={300} defaultValue={defaultUsers} /></label>
+              <label>{q.name}<input ref={first} name="fullName" required minLength={2} autoComplete="name" /></label>
+              <label>{q.company}<input name="companyName" required minLength={2} autoComplete="organization" /></label>
+              <label>{q.email}<input name="email" type="email" required autoComplete="email" /></label>
+              <label>{q.mobile}<input name="phone" type="tel" required minLength={10} inputMode="tel" autoComplete="tel" /></label>
+              <label>{q.users}<input name="users" type="number" min={1} max={300} defaultValue={defaultUsers} /></label>
               {ts.widget}
-              {state === "error" && <p className="gw-err" role="alert">{err} — dobara try karein.</p>}
+              {state === "error" && <p className="gw-err" role="alert">{err}{q.tryAgain}</p>}
               <button type="submit" className="gw-btn gw-trial gw-full" disabled={state === "sending"}>
-                {state === "sending" ? "Bhej rahe hain…" : "Submit enquiry →"}
+                {state === "sending" ? q.sending : q.submit}
               </button>
             </form>
           </>
@@ -614,7 +624,11 @@ const CSS = `
 .gw-top{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
 .gw-nav{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .gw-logo{width:190px;height:auto;display:block}
-.gw-nav-actions{display:flex;gap:8px}
+.gw-nav-actions{display:flex;gap:8px;align-items:center}
+.gw-lang{display:inline-flex;border:1px solid #c9d3e3;border-radius:999px;padding:2px;background:#fff}
+.gw .gw-lang button{border:0;background:transparent;border-radius:999px;padding:0 10px;min-height:36px;font:inherit;font-size:13px;font-weight:700;color:#475467;cursor:pointer}
+.gw .gw-lang button[aria-pressed="true"]{background:#e8f0fe;color:#0b57d0}
+.gw .gw-lang button:focus-visible{outline:3px solid #0b57d0;outline-offset:1px}
 .gw-links{display:flex;gap:22px;font-size:14px;font-weight:700;color:#475467;margin-left:auto;margin-right:12px}
 .gw-links a{color:inherit;text-decoration:none}.gw-links a:hover{color:var(--blue)}
 .gw-links a:focus-visible{outline:3px solid #0b57d0;outline-offset:3px;border-radius:4px}
@@ -785,6 +799,8 @@ const CSS = `
   .gw-wrap{width:calc(100% - 24px)}
   .gw-logo{width:140px}
   .gw .gw-mini{padding:8px 11px;font-size:12px}
+  .gw .gw-mini-wa{display:none}
+  .gw .gw-lang button{padding:0 8px;font-size:12px}
   .gw-hero{padding:28px 0 14px}
   .gw-buttons,.gw-cta-actions{display:grid;width:100%}
   .gw .gw-btn{width:100%}
@@ -813,5 +829,6 @@ const CSS = `
   .gw-foot{padding-bottom:84px}
   .gw-cta{padding:26px;border-radius:24px}
 }
+@media(max-width:420px){.gw-logo{width:108px}.gw .gw-lang button{padding:0 6px}.gw-nav{gap:8px}}
 @media(prefers-reduced-motion:reduce){.gw .gw-btn{transition:none}.gw .gw-btn:hover{transform:none}}
 `;
