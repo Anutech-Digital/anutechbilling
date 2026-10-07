@@ -28,6 +28,8 @@ import { useCustomers } from "@/lib/queries/customers";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
 import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
+import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode, type InvoiceCodeState } from "./invoice-code-field";
+import { invoiceCodeProblem, normalizeInvoiceCode, suggestInvoiceCode } from "./invoice-code";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { useItems, useLoadDefaultCatalog } from "@/lib/queries/items";
@@ -58,6 +60,8 @@ interface WizardData {
   state:         string;
   address:       string;
   pinCode:       string;
+  /** R-259: invoice code (tenants.doc_code), "" = keep what prints today. */
+  invoiceCode:   string;
   contactName:   string;
   contactEmail:  string;
   razorpayKey:   string;
@@ -94,9 +98,13 @@ function Field({
 function StepCompany({
   data,
   update,
+  codeState,
+  codeError,
 }: {
   data: WizardData;
   update: (k: keyof WizardData, v: string | boolean) => void;
+  codeState: InvoiceCodeState | undefined;
+  codeError: string | null;
 }) {
   // Pull cached verification from the tenant — re-running the wizard
   // shouldn't lose the green checkmark someone earned earlier.
@@ -199,6 +207,15 @@ function StepCompany({
             placeholder="Office address"
             value={data.address}
             onChange={(e) => update("address", e.target.value)}
+          />
+        </Field>
+        <Field htmlFor="setup-invoice-code" label="Invoice code (2–4 letters)" className="col-span-2">
+          <InvoiceCodeField
+            id="setup-invoice-code"
+            value={data.invoiceCode}
+            onChange={(v) => update("invoiceCode", v)}
+            state={codeState}
+            serverError={codeError}
           />
         </Field>
         <Field htmlFor="setup-owner-contact-name" label="Owner / Contact name">
@@ -616,6 +633,7 @@ export default function SetupPage() {
     state:             "", // R-250: no default state
     address:           "",
     pinCode:           "",
+    invoiceCode:       "",
     contactName:       "",
     contactEmail:      "",
     razorpayKey:       "",
@@ -641,8 +659,26 @@ export default function SetupPage() {
     }));
   }, [me]);
 
-  const update = (k: keyof WizardData, v: string | boolean) =>
+  const update = (k: keyof WizardData, v: string | boolean) => {
+    if (k === "invoiceCode") setCodeError(null);
     setData((d) => ({ ...d, [k]: v }));
+  };
+
+  // R-259: invoice code — prefill the saved one, else a suggestion from the company name.
+  const { data: codeState } = useInvoiceCode();
+  const saveInvoiceCode = useSaveInvoiceCode();
+  const [codeError, setCodeError] = React.useState<string | null>(null);
+  const codePrefilled = React.useRef(false);
+  React.useEffect(() => {
+    if (!codeState || codePrefilled.current) return;
+    if (!codeState.saved && !me) return; // wait for the company name to suggest from
+    codePrefilled.current = true;
+    if (codeState.locked) return;
+    setData((d) => d.invoiceCode ? d : {
+      ...d,
+      invoiceCode: codeState.saved ?? suggestInvoiceCode(me?.tenantName || d.companyName),
+    });
+  }, [codeState, me]);
 
   // Save Step 1 (Company) to the tenants table before advancing past it.
   // Other steps (Razorpay / CSP / Import) are still UI walkthroughs;
@@ -658,6 +694,19 @@ export default function SetupPage() {
     if (!companyState) {
       toast.error("Choose your state", { description: "It decides IGST vs CGST + SGST on every invoice." });
       return;
+    }
+    // R-259: save the invoice code first — if another business has it, stay on this step.
+    const code = normalizeInvoiceCode(data.invoiceCode);
+    if (code && codeState && !codeState.locked && code !== codeState.saved) {
+      const problem = invoiceCodeProblem(code);
+      if (problem) { setCodeError(problem); return; }
+      try {
+        await saveInvoiceCode.mutateAsync(code);
+      } catch (e) {
+        setCodeError((e as Error).message);
+        toast.error("Invoice code not saved", { description: (e as Error).message });
+        return;
+      }
     }
     try {
       await updateTenant.mutateAsync({
@@ -797,7 +846,7 @@ export default function SetupPage() {
 
         {/* ── Step content ── */}
         <Card className="p-6">
-          {step === 0 && <StepCompany  data={data} update={update} />}
+          {step === 0 && <StepCompany  data={data} update={update} codeState={codeState} codeError={codeError} />}
           {step === 1 && <StepImport   data={data} update={update} />}
           {step === 2 && <StepRazorpay />}
           {step === 3 && <StepCsp />}
@@ -824,10 +873,10 @@ export default function SetupPage() {
               <Button
                 variant="primary"
                 onClick={next}
-                loading={step === 0 && updateTenant.isPending}
-                disabled={step === 0 && (updateTenant.isPending || !companyStateReady)}
+                loading={step === 0 && (updateTenant.isPending || saveInvoiceCode.isPending)}
+                disabled={step === 0 && ((updateTenant.isPending || saveInvoiceCode.isPending) || !companyStateReady)}
               >
-                {step === 0 && updateTenant.isPending
+                {step === 0 && (updateTenant.isPending || saveInvoiceCode.isPending)
                   ? "Saving…"
                   : step === 3 ? "Finish setup" : "Continue"}
                 <Icon name="arrow_right" size={14} />

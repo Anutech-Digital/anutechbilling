@@ -18,6 +18,8 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode } from "../setup/company-state";
+import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode } from "../setup/invoice-code-field";
+import { invoiceCodeProblem, normalizeInvoiceCode } from "../setup/invoice-code";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -513,11 +515,84 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
           )}
         </form>
       </Card>
+
+      <InvoiceNumberingCard isOwner={isOwner} />
     </div>
   );
 }
 
-// ─── Reseller hierarchy card (migration 0040) ────────────────────────────────
+// ─── Invoice numbering (R-259) ───────────────────────────────────────────────
+
+/**
+ * The owner's invoice code (tenants.doc_code) with a live preview of the next number.
+ * Its own Save, separate from the company form: it goes through
+ * /api/tenant/invoice-code, which checks no other business uses the code and refuses
+ * once the first GST number has been issued.
+ */
+function InvoiceNumberingCard({ isOwner }: { isOwner: boolean }) {
+  const { data: state, isError } = useInvoiceCode();
+  const save = useSaveInvoiceCode();
+  const [value, setValue] = React.useState("");
+  const [serverError, setServerError] = React.useState<string | null>(null);
+  const loaded = React.useRef(false);
+  React.useEffect(() => {
+    if (!state || loaded.current) return;
+    loaded.current = true;
+    setValue(state.saved ?? "");
+  }, [state]);
+
+  const code = normalizeInvoiceCode(value);
+  const dirty = !!state && !state.locked && code !== (state.saved ?? "");
+  const canSave = isOwner && dirty && !!code && !invoiceCodeProblem(code) && !save.isPending;
+
+  const onSave = () => {
+    setServerError(null);
+    save.mutate(code, {
+      onSuccess: (s) => { setValue(s.saved ?? ""); toast.success(`Invoice code set — next invoice ${s.preview}`); },
+      onError: (e) => setServerError((e as Error).message),
+    });
+  };
+
+  return (
+    <Card className="p-5 max-w-3xl">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-ink">Invoice numbering</p>
+        {state?.locked && <Badge kind="muted">Locked</Badge>}
+        {!isOwner && !state?.locked && <Badge kind="muted">Owner-only · view</Badge>}
+      </div>
+      {isError ? (
+        <p className="text-xs text-rose">Could not load invoice numbering. Refresh to try again.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+          <Field htmlFor="settings-invoice-code" label="Invoice code (2–4 letters)">
+            <InvoiceCodeField
+              id="settings-invoice-code"
+              value={value}
+              onChange={(v) => { setServerError(null); setValue(v); }}
+              state={state}
+              disabled={!isOwner || save.isPending}
+              serverError={serverError}
+            />
+          </Field>
+          {state && !state.locked && isOwner && (
+            <div className="flex items-center gap-2 sm:pt-5">
+              <Button type="button" size="sm" variant="primary" icon="check" loading={save.isPending} disabled={!canSave} onClick={onSave}>
+                Save code
+              </Button>
+              {dirty && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setServerError(null); setValue(state.saved ?? ""); }}>
+                  Discard
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── Reseller hierarchy card (migration 0040)────────────────────────────────
 
 /**
  * ResellerTierCard — surfaces this tenant's place in the parent-child
