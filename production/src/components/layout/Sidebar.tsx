@@ -160,8 +160,8 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           me?.tenantLogoUrl ? (collapsed ? "w-10 h-10 bg-transparent" : "w-14 h-14 bg-transparent") : "w-9 h-9 bg-ink text-paper",
         )}>
           {me?.tenantLogoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
             <button type="button" onClick={() => setLogoOpen(true)} title="View logo" aria-label="View company logo" className="h-full w-full rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+              {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331: this disable sat one line too high) */}
               <img src={me.tenantLogoUrl} alt={me.tenantName ?? "Logo"} className="h-full w-full object-contain" />
             </button>
           ) : (

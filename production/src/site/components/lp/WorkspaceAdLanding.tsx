@@ -167,6 +167,7 @@ export function WorkspaceAdLanding({
 
       <header className="gw-top">
         <div className="gw-wrap gw-nav">
+          {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
           <a href="#top" aria-label="ANUTECH Digital"><img src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" className="gw-logo" width={210} height={70} /></a>
           <nav className="gw-links" aria-label="On this page">
             <a href="#features">Features</a>{allPlans && <a href="#plans">Plans</a>}<a href="#offer">Price</a><a href="#compare">Compare</a><a href="#faq">FAQ</a>
@@ -234,6 +235,7 @@ export function WorkspaceAdLanding({
                 </div>
               </aside>
               )}
+              {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
               <img className="gw-photo" src="/lp/gw-hero.jpg" alt="A business owner working on Google Workspace" width={400} height={458} fetchPriority="high" decoding="async" />
               <div className="gw-float">Grow your business with Google<small>Secure · Collaborative · Productive</small></div>
             </div>
@@ -252,6 +254,7 @@ export function WorkspaceAdLanding({
             {APPS.map((a) => (
               <li key={a.name}>
                 {a.icon
+                  // eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331)
                   ? <img src={a.icon} alt="" width={44} height={44} />
                   : <span className="gw-tile" style={{ background: a.tile!.bg }} aria-hidden>{a.tile!.label}</span>}
                 <b>{a.name}</b><span>{a.what}</span>

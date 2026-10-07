@@ -121,6 +121,7 @@ export function WorkspaceWordmark({ size = "1em" }: { size?: string }) {
 
 /** The app row above the title, like Google’s own page: Gmail, Calendar, Drive, Docs, Meet, Gemini. */
 export function WorkspaceAppIcons() {
+  // eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331)
   const img = (src: string, alt: string) => <img src={src} alt={alt} width={28} height={28} style={{ width: 28, height: 28, objectFit: "contain" }} />;
   return (
     <div className="wp-icons" style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }} aria-label="Gmail, Calendar, Drive, Docs, Meet and Gemini">

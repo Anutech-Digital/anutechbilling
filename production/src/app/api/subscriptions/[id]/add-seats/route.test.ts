@@ -16,11 +16,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+type Row = Record<string, unknown>;
+type Result = { data: unknown; error: { code?: string; message: string } | null };
+
 const state = vi.hoisted(() => ({
-  claims: [] as Record<string, any>[],
+  claims: [] as Row[],
   seq: 0,
-  sub: null as Record<string, any> | null,
-  apply: null as any,
+  sub: null as Row | null,
+  apply: null as unknown as (...args: unknown[]) => unknown,
   role: "billing" as string,
 }));
 
@@ -31,10 +34,10 @@ vi.mock("@/lib/subscriptions/apply-seat-increase", () => ({
 
 vi.mock("@/lib/supabase/server", () => {
   const makeChain = (table: string) => {
-    const ctx: { op: string; payload: any; filters: Record<string, any> } =
-      { op: "select", payload: null, filters: {} };
+    const ctx: { op: string; payload: Row; filters: Row } =
+      { op: "select", payload: {}, filters: {} };
 
-    const run = async () => {
+    const run = async (): Promise<Result> => {
       if (table === "subscriptions") {
         return { data: state.sub, error: state.sub ? null : { message: "not found" } };
       }
@@ -68,15 +71,21 @@ vi.mock("@/lib/supabase/server", () => {
       return { data: null, error: null };
     };
 
-    const chain: any = {
+    type Chain = {
+      select: () => Chain; insert: (p: Row) => Chain; update: (p: Row) => Chain;
+      delete: () => Chain; eq: (col: string, val: unknown) => Chain;
+      single: () => Promise<Result>; maybeSingle: () => Promise<Result>;
+      then: (ok: (r: Result) => unknown, err?: (e: unknown) => unknown) => Promise<unknown>;
+    };
+    const chain: Chain = {
       select: () => chain,
-      insert: (p: any) => { ctx.op = "insert"; ctx.payload = p; return chain; },
-      update: (p: any) => { ctx.op = "update"; ctx.payload = p; return chain; },
+      insert: (p: Row) => { ctx.op = "insert"; ctx.payload = p; return chain; },
+      update: (p: Row) => { ctx.op = "update"; ctx.payload = p; return chain; },
       delete: () => { ctx.op = "delete"; return chain; },
       eq: (col: string, val: unknown) => { ctx.filters[col] = val; return chain; },
       single: () => run(),
       maybeSingle: () => run(),
-      then: (ok: any, err: any) => run().then(ok, err),
+      then: (ok, err) => run().then(ok, err),
     };
     return chain;
   };

@@ -753,8 +753,8 @@ function PlatformFeedbackList({
               <div className="mt-2 flex flex-wrap gap-2">
                 {r.screenshots.map((sh) =>
                   sh.url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
                     <a key={sh.id} href={sh.url} target="_blank" rel="noopener noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331: this disable sat one line too high) */}
                       <img src={sh.url} alt={sh.fileName} className="h-20 rounded border border-hairline" />
                     </a>
                   ) : (

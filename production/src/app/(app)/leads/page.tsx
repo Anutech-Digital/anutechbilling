@@ -499,14 +499,14 @@ function LeadsPageInner() {
   const selectFolder = React.useCallback((f: SalesFolder | "all") => {
     setFolder(f);
     setSmartView("everything");
-  }, []);
+  }, [setSmartView]);
   /* The Smart Views dropdown is the OTHER filter surface, and it used to stack on top of
      whatever chip was lit. Selecting from it now releases the folder, so exactly one of
      the two is ever in force. */
   const selectSmartView = React.useCallback((v: SmartView) => {
     setSmartView(v);
     setFolder("all");
-  }, []);
+  }, [setSmartView]);
 
   /** Open the merge dialog for a lead: cluster = the lead + everything it duplicates, read
    *  from the server when Merge is pressed (list_leads dup_of — the row's flag's own rule). */

@@ -148,6 +148,7 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
           {cards.map((c) => (
             <Link key={c.name} href={c.href as never} className="hc-card">
               <span className="hc-card-img">
+                {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331) */}
                 {c.img ? <img src={c.img} alt="" loading="lazy" /> : <CatScene kind={c.icon} />}
               </span>
               <b className="hc-card-name">{c.name}</b>
