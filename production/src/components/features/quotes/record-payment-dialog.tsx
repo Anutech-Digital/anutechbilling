@@ -20,6 +20,12 @@ import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { paymentToast, cashReference, type PaymentToastAction } from "@/lib/payments/record-payment-toast";
+import {
+  invoiceNowOffer,
+  shouldIssueAfterPayment,
+  withIssuedInvoice,
+  type BuyerPlace,
+} from "@/lib/payments/record-payment-invoice";
 
 import {
   Sheet,
@@ -247,6 +253,59 @@ export function RecordPaymentDialog({
   const newRunningTotal      = alreadyReceived + settledAgainstQuote;
   const willBePartial        = newRunningTotal < expectedAmount && newRunningTotal > 0;
   const willBeOverpaid       = newRunningTotal > expectedAmount;
+
+  /* ── R-378: "Issue GST invoice now" ─────────────────────────────────────────
+     The online path invoices the moment money lands (online-invoice.server.ts); the desk
+     path left the owner to press Generate GST Invoice afterwards. The quote's billing cycle
+     and the buyer's place of supply are read once when the sheet opens — rules in
+     lib/payments/record-payment-invoice.ts (unit-tested). */
+  const [invoiceFacts, setInvoiceFacts] = React.useState<{
+    billingCycle: string | null;
+    buyer: BuyerPlace | null;
+  } | null>(null);
+  React.useEffect(() => {
+    if (!open || invoiceId) { setInvoiceFacts(null); return; }
+    let live = true;
+    (async () => {
+      const supabase = createClient();
+      const { data: q } = await supabase
+        .from("quotes")
+        .select("billing_cycle, customer_id, lead_id, prospect_state_code, prospect_country")
+        .eq("id", quoteId)
+        .maybeSingle();
+      if (!q) return;
+      let buyer: BuyerPlace | null = null;
+      if (q.customer_id) {
+        const { data: c } = await supabase
+          .from("customers").select("state_code, gstin, country").eq("id", q.customer_id).maybeSingle();
+        buyer = c ?? null;
+      } else if (q.lead_id) {
+        // record_payment copies the lead's state + GSTIN onto the customer it creates.
+        const { data: l } = await supabase
+          .from("leads").select("state_code, gstin").eq("id", q.lead_id).maybeSingle();
+        buyer = l ?? null;
+      } else {
+        buyer = { state_code: q.prospect_state_code, country: q.prospect_country };
+      }
+      if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer });
+    })();
+    return () => { live = false; };
+  }, [open, quoteId, invoiceId]);
+
+  const invoiceOffer = invoiceFacts
+    ? invoiceNowOffer({
+        invoiceId,
+        billingCycle: invoiceFacts.billingCycle,
+        buyer: invoiceFacts.buyer,
+        completesQuote: newRunningTotal >= expectedAmount,
+      })
+    : { offer: false, defaultOn: false, hint: null };
+  const [issueInvoice, setIssueInvoice] = React.useState(false);
+  const [issueTouched, setIssueTouched] = React.useState(false);
+  React.useEffect(() => {
+    if (!issueTouched) setIssueInvoice(invoiceOffer.defaultOn);
+  }, [invoiceOffer.defaultOn, issueTouched]);
+  React.useEffect(() => { if (!open) setIssueTouched(false); }, [open]);
 
   React.useEffect(() => {
     if (!open) {
@@ -538,6 +597,7 @@ export function RecordPaymentDialog({
         // R-248 — for the one result toast's buttons + lines.
         receiptVoucherNo:       r.receipt_voucher_no ?? null,
         receiptUploadFailed,
+        isReplay,
       };
     },
     onSuccess: async (res) => {
@@ -589,7 +649,26 @@ export function RecordPaymentDialog({
         }
       }
 
-      const t = paymentToast({
+      /* R-378: issue the GST invoice now, through the SAME useGenerateInvoice the quote
+         page's button uses (consistency pre-flight + generate_invoice). Only when the payment
+         really completed the quote. A refusal is shown by the hook with generate_invoice's own
+         reason, and the quote keeps its Generate GST Invoice button — nothing is lost. */
+      let issuedInvoiceId: string | null = null;
+      if (shouldIssueAfterPayment({
+        ticked: issueInvoice,
+        offered: invoiceOffer.offer,
+        isFullyPaid: res.isFullyPaid,
+        hasExistingInvoice: Boolean(res.hasExistingInvoice),
+        isReplay: res.isReplay,
+      })) {
+        try {
+          issuedInvoiceId = (await generateInvoice.mutateAsync(quoteId)).invoiceId;
+        } catch {
+          /* useGenerateInvoice already toasted the reason. */
+        }
+      }
+
+      const toastBase = paymentToast({
         outstanding:          res.outstanding,
         isFullyPaid:          res.isFullyPaid,
         convertedNow:         res.convertedNow,
@@ -609,6 +688,9 @@ export function RecordPaymentDialog({
         subscriptionNote,
         receiptUploadFailed:  res.receiptUploadFailed,
       });
+      const t = issuedInvoiceId
+        ? withIssuedInvoice(toastBase, issuedInvoiceId, `${invoiceHref(issuedInvoiceId)}?pdf=1`)
+        : toastBase;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
@@ -1143,10 +1225,33 @@ export function RecordPaymentDialog({
                   </>
                 ) : (
                   <>
-                    Quote will be marked <b>fully paid</b>. You can then generate the GST invoice from the quote detail page.
+                    Quote will be marked <b>fully paid</b>.{" "}
+                    {invoiceOffer.offer && issueInvoice
+                      ? "The GST invoice is issued right after the payment is saved."
+                      : "You can then generate the GST invoice from the quote detail page."}
                   </>
                 )}
               </span>
+            </div>
+          )}
+
+          {/* R-378: issue the GST invoice with the payment, as the online checkout does. */}
+          {invoiceOffer.offer && (
+            <div className="rounded-md border border-hairline px-3 py-2.5 bg-paper-2/30">
+              <label className="flex items-start gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={issueInvoice}
+                  onChange={(e) => { setIssueInvoice(e.target.checked); setIssueTouched(true); }}
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-ink">Issue GST invoice now</div>
+                  <div className="text-2xs text-ink-3 mt-0.5">
+                    {invoiceOffer.hint ?? "Raised as soon as the payment is saved, with this payment adjusted as an advance."}
+                  </div>
+                </div>
+              </label>
             </div>
           )}
 
