@@ -243,7 +243,7 @@ export default function DonePage() {
         <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }}>
           <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Customer Portal</div>
           <div style={{ fontSize: 14, lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
-            Manage your hosting, domains and invoices there. First time? Use the &ldquo;set your password&rdquo; link in the email with your login details.
+            Manage your hosting, domains and invoices there. First time? Sign in with the one-time password in the &ldquo;Your Customer Portal is ready&rdquo; email, then choose your own.
           </div>
           <a href={CLIENT_AREA_URL} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>Log in to the Customer Portal</a>
         </div>

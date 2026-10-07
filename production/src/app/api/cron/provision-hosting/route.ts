@@ -9,7 +9,7 @@
  * control-panel password — an account DMS never knew about, which the customer
  * could not see or manage in their panel, and a password sitting in an inbox.
  * Now DMS creates the account, the Hosting row and (if needed) the customer's
- * DMS account with a "set your password" email; the customer reaches cPanel
+ * DMS account with a one-time password email (choose-your-own at first sign-in, 7 Oct 2026); the customer reaches cPanel
  * from the panel by SSO. See DMS lib/integrations/engine-handlers-provision.ts.
  *
  * (The hosting TRIAL confirm route still creates its account directly — a

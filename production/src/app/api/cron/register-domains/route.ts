@@ -103,7 +103,7 @@ async function tellCustomer(tenantId: string, to: string, firstName: string, dom
     (panel
       ? `You can manage it — nameservers, DNS records, renewal — in your customer panel: ${panel}
 ` +
-        `If this is your first time there, use the "set your password" email we sent you to sign in.
+        `If this is your first time there, sign in with the one-time password from the "Your Customer Portal is ready" email, then choose your own.
 
 `
       : `Reply to this email if you need anything changed on it.

@@ -22,7 +22,7 @@ export const TRIAL_STATUSES: Record<string, TrialStatus> = {
   already: {
     ok: true, portal: true,
     title: "Your trial is already active.",
-    body: "Your hosting is set up. Log in to the Customer Portal to manage it — first time there? Use the \"set your password\" link we emailed you.",
+    body: "Your hosting is set up. Log in to the Customer Portal to manage it — first time there? Sign in with the one-time password we emailed you, then choose your own.",
   },
   pending: {
     ok: true,

@@ -10,7 +10,7 @@
  *
  * Once the DMS engine has created the account (provisioned / already), the main
  * button is the Customer Portal login (1 Oct 2026, Pawan): the hosting lives in
- * the customer's DMS account, and DMS emails them a "set your password" link for
+ * the customer's DMS account, and DMS emails them a one-time password (was a "set your password" link) for
  * it. While a person still has to set it up (pending / error) the page says so
  * plainly and does not promise a login that does not exist yet.
  *

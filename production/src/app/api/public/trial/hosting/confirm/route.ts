@@ -12,7 +12,7 @@
  * Until this date the trial created the account on DirectAdmin FROM THIS APP, the
  * last path that did. It now goes through the engine like paid hosting, so DMS is
  * the only DirectAdmin writer and the trial lands in the customer's DMS account,
- * where they manage it. DMS emails them a "set your password" link for that panel.
+ * where they manage it. DMS emails them a one-time password for that panel (7 Oct 2026; was a "set your password" link).
  *
  * ─── The live-provisioning gate ─────────────────────────────────────────────
  * Creating a real account is irreversible, so it fires ONLY when HOSTING_TRIAL_LIVE=1
