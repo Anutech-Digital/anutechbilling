@@ -22,7 +22,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute } from "@/lib/api/with-route";
 import { createExtensionQuote } from "@/lib/renewals/create-extension-quote";
@@ -43,11 +43,11 @@ export const POST = withRoute(
     roles: ACTION_ROLES["seats.change"],
     roleHint: forbiddenMessage("seats.change"),
   },
-  async ({ input, params, tenantId }) => {
+  async ({ input, params, user, tenantId }) => {
   const { years } = input;
 
   // 3. Load subscription + tenant scope
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(user.id); // R-051: audit log names the caller
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     .select(

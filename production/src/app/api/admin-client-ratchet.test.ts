@@ -46,7 +46,7 @@ function code(src: string): string {
 
 const rel = (f: string) => path.relative(API, f).split(path.sep).join("/").replace(/\/route\.ts$/, "");
 
-const USES_SERVICE_ROLE = /createAdminClient\s*\(|SUPABASE_SERVICE_ROLE_KEY/;
+const USES_SERVICE_ROLE = /createAdminClient(For)?\s*\(|SUPABASE_SERVICE_ROLE_KEY/;
 
 const SECRET_EVIDENCE = new RegExp([
   "CRON_SECRET", "AGENT_QUEUE_TOKEN", "authenticateApiKey", "checkPanelKey",
@@ -104,6 +104,19 @@ const ROLE_GATED = [
   "leads/indiamart",
 ];
 
+/**
+ * R-051 part 3: money routes write with createAdminClientFor(<verified user id>), so the
+ * audit trigger (log_row_change / record_contract_amendment) records WHO did it — a plain
+ * createAdminClient() reaches Postgres with no user and left no activity_log row at all.
+ * The list only grows; a listed route that goes back to the plain client fails.
+ */
+const ACTOR_AUDITED = [
+  "seat-requests/[id]/decide",
+  "subscriptions/[id]/add-seats",
+  "subscriptions/[id]/extend",
+  "campaigns/send",
+];
+
 type Kind = "secret" | "platform" | "user" | "self" | "public" | "FINDING";
 
 function classify(route: string, src: string): Kind {
@@ -153,6 +166,15 @@ describe("service-role API routes prove their caller (R-051 ratchet)", () => {
       return !fs.existsSync(f) || !ROLE_GATE.test(code(fs.readFileSync(f, "utf8")));
     });
     expect(missing).toEqual([]);
+  });
+
+  it("money routes pass the acting user to the admin client (audit log has a real actor)", () => {
+    const plain = ACTOR_AUDITED.filter((r) => {
+      const f = path.join(API, r, "route.ts");
+      const src = fs.existsSync(f) ? code(fs.readFileSync(f, "utf8")) : "";
+      return !/createAdminClientFor\s*\(\s*(user|authData\.user)\.id\s*\)/.test(src) || /createAdminClient\s*\(/.test(src);
+    });
+    expect(plain, "use createAdminClientFor(user.id) — the verified caller, never a body field").toEqual([]);
   });
 
   it("the classifier catches an unguarded route and ignores guards that are only in comments", () => {

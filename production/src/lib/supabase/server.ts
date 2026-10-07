@@ -18,6 +18,7 @@ import "@/lib/sentry";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "./database.types";
+import { actorHeaders } from "./admin-actor";
 
 /* Next 15: cookies() returns a Promise. createClient() stays SYNCHRONOUS (≈390 call sites
    use `const supabase = createClient()`), and the await moves into the cookie callbacks —
@@ -56,6 +57,21 @@ export function createClient() {
  * NEVER call from Server Components used in normal request flow.
  */
 export function createAdminClient() {
+  return adminClient({});
+}
+
+/**
+ * R-051: the admin client for a write made ON BEHALF OF a signed-in user. Same as
+ * createAdminClient(), plus the `x-actor-id` header, so the audit trigger (log_row_change,
+ * record_contract_amendment) records that user instead of nobody. Pass only an id the route
+ * has already verified (withRoute's `user.id` / auth.getUser()). An invalid id sends no
+ * header (= plain createAdminClient()).
+ */
+export function createAdminClientFor(actorUserId: string) {
+  return adminClient(actorHeaders(actorUserId));
+}
+
+function adminClient(headers: Record<string, string>) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
   }
@@ -76,6 +92,7 @@ export function createAdminClient() {
       // or an out-of-date payment/subscription status on /api/v1). Admin
       // queries must always hit the DB — never cache them.
       global: {
+        headers,
         fetch: (input: RequestInfo | URL, init?: RequestInit) =>
           fetch(input, { ...init, cache: "no-store" }),
       },

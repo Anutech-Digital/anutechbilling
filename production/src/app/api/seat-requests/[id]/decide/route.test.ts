@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   me: { tenant_id: "T1", role: "sales" } as { tenant_id: string; role: string } | null,
   rows: {} as Record<string, unknown>,
   reads: [] as string[],
+  actors: [] as string[], // R-051: who createAdminClientFor() was opened for
   writes: [] as Array<{ table: string; op: string; data: unknown }>,
 }));
 
@@ -30,7 +31,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "u1@example.invalid" } } }) },
     from: (t: string) => chain(t, true),
   }),
-  createAdminClient: () => ({
+  createAdminClientFor: (actor: string) => (db.actors.push(actor), {
     from: (t: string) => { db.reads.push(t); return chain(t, false); },
   }),
 }));
@@ -53,6 +54,7 @@ beforeEach(() => {
   db.me = { tenant_id: "T1", role: "sales" };
   db.rows = { seat_requests: { id: "SR1", tenant_id: "T1", status: "pending", subscription_id: "S1" } };
   db.reads = [];
+  db.actors = [];
   db.writes = [];
 });
 
@@ -72,6 +74,7 @@ describe("seat-requests decide — role gate (R-217)", () => {
     db.me = { tenant_id: "T1", role };
     const res = await call({ decision: "rejected", note: "not now" });
     expect(res.status).toBe(200);
+    expect(db.actors).toEqual(["U1"]); // R-051: audit log gets the signed-in caller
     expect((await res.json()).status).toBe("rejected");
     expect(db.writes).toHaveLength(1);
     expect(db.writes[0]).toMatchObject({ table: "seat_requests", op: "update", data: { status: "rejected", decided_by: "U1", decision_note: "not now" } });

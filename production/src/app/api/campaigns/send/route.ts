@@ -23,7 +23,7 @@
 import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
@@ -79,7 +79,7 @@ export const POST = withRoute(
   const me = { tenant_id: tenantId };
 
   const { name, subject, body: bodyTemplate, body_html: htmlTemplate, audience, offer, recipients: explicitRecipients } = input;
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id); // R-051: audit log names the caller
 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

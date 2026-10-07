@@ -24,7 +24,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
@@ -50,7 +50,7 @@ export const POST = withRoute(
     roleHint: forbiddenMessage("seats.change"),
   },
   async ({ input, params, user, tenantId }) => {
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(user.id); // R-051: audit log names the caller
 
   const { data: request, error: reqErr } = await supabase
     .from("seat_requests").select("*").eq("id", params.id).single();
