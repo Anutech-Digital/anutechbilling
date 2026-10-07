@@ -298,3 +298,48 @@ describe("breadcrumbs — one sidebar section, one name", () => {
     expect(missing, "These nav pages have no breadcrumb: " + missing.join(", ")).toEqual([]);
   });
 });
+
+describe("canWriteMoney (R-254: billing sees Payroll and Banking read-only)", () => {
+  it("matches the database write rule: owner, manager, accountant only", async () => {
+    const { MONEY_WRITE_ROLES, canWriteMoney } = await import("./nav");
+    expect([...MONEY_WRITE_ROLES].sort()).toEqual(["accountant", "manager", "owner"]);
+    for (const r of ["owner", "manager", "accountant"]) expect(canWriteMoney(r)).toBe(true);
+    for (const r of ["billing", "sales", "sales_senior", "support", "delivery", "partner_agent"]) {
+      expect(canWriteMoney(r), r).toBe(false);
+    }
+  });
+
+  it("keeps the buttons while the role is still loading (the database is still the guard)", async () => {
+    const { canWriteMoney } = await import("./nav");
+    expect(canWriteMoney(null)).toBe(true);
+    expect(canWriteMoney(undefined)).toBe(true);
+  });
+
+  it("billing still has Payroll, Salary Register and Banking in the menu", () => {
+    const hrefs = allowedRoutesForRole("billing");
+    for (const h of ["/accounting/payroll", "/accounting/salary-register", "/accounting/banking"]) {
+      expect(hrefs, h).toContain(h);
+    }
+  });
+
+  it("the database write rule in role hardening names the same roles", () => {
+    const sql = fs.readFileSync(path.join(__dirname, "../../supabase/migrations/20260930175000_role_hardening.sql"), "utf8");
+    expect(sql).toContain("current_user_has_role(''owner'', ''manager'', ''accountant'')");
+  });
+
+  it("every write button on Payroll, Employees and Banking is behind canWriteMoney", () => {
+    const root = path.join(__dirname, "../app/(app)/accounting");
+    const screens = fs.readFileSync(path.join(root, "payroll/screens.tsx"), "utf8");
+    for (const label of ["Pay salary", "Record statutory payment", "Give salary advance", "Add employee", "Delete employee"]) {
+      expect(screens, label).toContain(label);
+    }
+    expect(screens).toMatch(/\{canWrite && <Button[^\n]*Record statutory payment/);
+    expect(screens).toMatch(/!canWrite \?\s*\(\s*<Badge[^>]*>Not paid<\/Badge>\s*\)\s*:\s*e\.monthly_gross > 0 \?\s*\(\s*<Button[^\n]*Pay salary/);
+    expect(screens).toContain('<ViewOnlyNote what="pay salaries" />');
+    const banking = fs.readFileSync(path.join(root, "banking/page.tsx"), "utf8");
+    expect(banking).toMatch(/\{canWrite && \(\s*<Button variant="primary" icon="plus" onClick=\{\(\) => setAddOpen\(true\)\}>\s*Add account/);
+    const detail = fs.readFileSync(path.join(root, "banking/[id]/page.tsx"), "utf8");
+    expect(detail).toContain("{canWrite && <div");
+    expect(detail).toContain("onReconcile={canWrite ?");
+  });
+});

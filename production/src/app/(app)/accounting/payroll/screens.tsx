@@ -35,6 +35,8 @@ import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteMoney } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
 import { periodLabel } from "@/lib/payroll/period-label";
 import { toast } from "sonner";
@@ -132,10 +134,12 @@ export function HrPageShell({ title, sub, children }: { title: string; sub: stri
 
 export function PayrollScreen() {
   const dues = useStatutoryDues();
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
   const [payDuesOpen, setPayDuesOpen] = React.useState(false);
 
   return (
     <HrPageShell title="Payroll" sub="Run monthly payroll — salary posts as an expense; only net pay leaves your bank.">
+      {!canWrite && <ViewOnlyNote what="pay salaries" />}
       {/* Statutory dues banner */}
       {(dues.data?.payable ?? 0) > 0 && (
         <Card className="mb-5 p-3 md:p-4 border-amber/40 bg-amber-soft/30">
@@ -150,14 +154,14 @@ export function PayrollScreen() {
                 <span className="block text-xs text-ink-3 mt-0.5">Kuch challans &ldquo;Mixed&rdquo; book hue hain, isliye TDS/PF/ESI alag-alag nahi dikh sakte.</span>
               )}
             </div>
-            <Button variant="outline" size="sm" onClick={() => setPayDuesOpen(true)}>Record statutory payment</Button>
+            {canWrite && <Button variant="outline" size="sm" onClick={() => setPayDuesOpen(true)}>Record statutory payment</Button>}
           </div>
         </Card>
       )}
 
       <PayrollTab />
 
-      {payDuesOpen && <PayDuesDialog payable={dues.data?.payable ?? 0} onClose={() => setPayDuesOpen(false)} />}
+      {payDuesOpen && canWrite && <PayDuesDialog payable={dues.data?.payable ?? 0} onClose={() => setPayDuesOpen(false)} />}
     </HrPageShell>
   );
 }
@@ -168,6 +172,7 @@ export function EmployeesTab() {
   const leaveQ = useLeaveEntries();
   const del = useDeleteEmployee();
   const confirm = useConfirm();
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
   const [edit, setEdit] = React.useState<Employee | null | "new">(null);
   const [viewEmp, setViewEmp] = React.useState<Employee | null>(null);
   const [offerEmp, setOfferEmp] = React.useState<Employee | null>(null);
@@ -193,13 +198,17 @@ export function EmployeesTab() {
 
   return (
     <>
-      <div className="flex justify-end mb-3">
-        <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>
-      </div>
+      {canWrite ? (
+        <div className="flex justify-end mb-3">
+          <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>
+        </div>
+      ) : (
+        <ViewOnlyNote what="add or edit employees" />
+      )}
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
       ) : rows.length === 0 ? (
-        <Card className="py-2"><EmptyState icon="users" title="No employees yet" body="Add the people you pay a salary to." action={<Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>} /></Card>
+        <Card className="py-2"><EmptyState icon="users" title="No employees yet" body="Add the people you pay a salary to." action={canWrite ? <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button> : undefined} /></Card>
       ) : (
         <>
           {/* Desktop table */}
@@ -259,7 +268,7 @@ export function EmployeesTab() {
                       </td>
                       <td className="px-4 py-3"><Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                        <EmployeeRowMenu e={e} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                        <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
                       </td>
                     </tr>
                   );
@@ -306,7 +315,7 @@ export function EmployeesTab() {
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
                       <Badge kind={e.is_active ? "success" : "muted"} dot>{e.is_active ? "Active" : "Inactive"}</Badge>
-                      <EmployeeRowMenu e={e} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
+                      <EmployeeRowMenu e={e} canWrite={canWrite} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} />
                     </div>
                   </Card>
                 </li>
@@ -315,22 +324,23 @@ export function EmployeesTab() {
           </ul>
         </>
       )}
-      <FAB icon="plus" label="Add employee" onClick={() => setEdit("new")} ariaLabel="Add employee" />
+      {canWrite && <FAB icon="plus" label="Add employee" onClick={() => setEdit("new")} ariaLabel="Add employee" />}
       {edit !== null && <EmployeeDialog employee={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
         onOpenChange={(o) => { if (!o) setViewEmp(null); }}
-        onEdit={() => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } }}
+        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } } : undefined}
       />
     </>
   );
 }
 
 /** Row overflow menu — one clean "…" control replacing crowded inline buttons. */
-function EmployeeRowMenu({ e, onView, onOffer, onEdit, onDelete }: {
+function EmployeeRowMenu({ e, canWrite, onView, onOffer, onEdit, onDelete }: {
   e: Employee;
+  canWrite: boolean;
   onView: (e: Employee) => void;
   onOffer: (e: Employee) => void;
   onEdit: (e: Employee) => void;
@@ -354,13 +364,17 @@ function EmployeeRowMenu({ e, onView, onOffer, onEdit, onDelete }: {
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onOffer(e)}>
           <Icon name="file" size={15} /> Generate offer letter
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onEdit(e)}>
-          <Icon name="edit" size={15} /> Edit profile &amp; salary
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => onDelete(e)}>
-          <Icon name="trash" size={15} /> Delete employee
-        </DropdownMenuItem>
+        {canWrite && (
+          <>
+            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => onEdit(e)}>
+              <Icon name="edit" size={15} /> Edit profile &amp; salary
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => onDelete(e)}>
+              <Icon name="trash" size={15} /> Delete employee
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -902,6 +916,7 @@ export function PayrollTab() {
   const empQ = useEmployees();
   const payQ = useSalaryPayments(period);
   const meQ = useCurrentUser();
+  const canWrite = canWriteMoney(meQ.data?.role);
   const accountsQ = useBankAccounts();
   const [payFor, setPayFor] = React.useState<Employee | null>(null);
   const [editFor, setEditFor] = React.useState<Employee | null>(null);
@@ -1014,13 +1029,15 @@ export function PayrollTab() {
           <label htmlFor="payroll-month" className="text-xs text-ink-3 font-semibold uppercase tracking-wide">Month</label>
           <input id="payroll-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
             className="px-3 py-1.5 text-sm rounded-md border border-hairline bg-paper" />
-          <Button
-            variant="outline" size="sm" icon="rupee" className="ml-auto"
-            title="Give an advance against salary — tracked as owed back and auto-recovered from a future payslip"
-            onClick={() => router.push("/accounting/loans?give=salary_advance" as never)}
-          >
-            Give salary advance
-          </Button>
+          {canWrite && (
+            <Button
+              variant="outline" size="sm" icon="rupee" className="ml-auto"
+              title="Give an advance against salary — tracked as owed back and auto-recovered from a future payslip"
+              onClick={() => router.push("/accounting/loans?give=salary_advance" as never)}
+            >
+              Give salary advance
+            </Button>
+          )}
         </div>
       </Card>
 
@@ -1115,7 +1132,7 @@ export function PayrollTab() {
                                 <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
                               )}
                               <PayrollRowMenu
-                                e={e} p={p} me={meQ.data ?? null}
+                                e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
                                 onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)}
                                 onReconcile={() => reconcileSalary(p)}
@@ -1123,13 +1140,15 @@ export function PayrollTab() {
                             </>
                           ) : (
                             <>
-                              {e.monthly_gross > 0 ? (
+                              {!canWrite ? (
+                                <Badge kind="muted" dot title="No salary booked for this month yet">Not paid</Badge>
+                              ) : e.monthly_gross > 0 ? (
                                 <Button variant="primary" size="sm" onClick={() => setPayFor(e)}>Pay salary</Button>
                               ) : (
                                 <Button variant="primary" size="sm" onClick={() => setEditFor(e)} title="Set this employee's monthly salary, then run payroll.">Set salary</Button>
                               )}
                               <PayrollRowMenu
-                                e={e} me={meQ.data ?? null} paidVia={null}
+                                e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
                                 onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
                               />
                             </>
@@ -1189,7 +1208,7 @@ export function PayrollTab() {
                             <Badge kind="warning" dot title="Payroll run — awaiting the bank debit to be reconciled">Awaiting reconcile</Badge>
                           )}
                           <PayrollRowMenu
-                            e={e} p={p} me={meQ.data ?? null}
+                            e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
                             onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)}
                             onReconcile={() => reconcileSalary(p)}
@@ -1197,13 +1216,15 @@ export function PayrollTab() {
                         </>
                       ) : (
                         <div className="flex items-center gap-2">
-                          {e.monthly_gross > 0 ? (
+                          {!canWrite ? (
+                            <Badge kind="muted" dot title="No salary booked for this month yet">Not paid</Badge>
+                          ) : e.monthly_gross > 0 ? (
                             <Button variant="primary" size="sm" onClick={() => setPayFor(e)}>Pay salary</Button>
                           ) : (
                             <Button variant="primary" size="sm" onClick={() => setEditFor(e)} title="Set this employee's monthly salary, then run payroll.">Set salary</Button>
                           )}
                           <PayrollRowMenu
-                            e={e} me={meQ.data ?? null} paidVia={null}
+                            e={e} canWrite={canWrite} me={meQ.data ?? null} paidVia={null}
                             onYear={() => setCalendarFor(e)} onEdit={() => {}} onUndo={() => {}}
                           />
                         </div>
@@ -1216,9 +1237,9 @@ export function PayrollTab() {
           </ul>
         </>
       )}
-      {payFor && <PaySalaryDialog employee={payFor} period={period} onClose={() => setPayFor(null)} />}
+      {payFor && canWrite && <PaySalaryDialog employee={payFor} period={period} onClose={() => setPayFor(null)} />}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
-      {editFor && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
+      {editFor && canWrite && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
       {attendanceEmp && <AttendanceRegisterDialog employee={attendanceEmp} initialPeriod={period} onClose={() => setAttendanceEmp(null)} />}
       {calendarFor && (
         <EmployeePayrollYearDialog
@@ -1390,8 +1411,8 @@ async function generatePayslip(employee: Employee, payment: SalaryPayment, me: C
 
 /** One "…" menu per payroll row — full-year payroll, payslip, edit/undo (or a
  *  reconciled lock). `p` undefined → row not yet run. */
-function PayrollRowMenu({ e, p, me, paidVia, onYear, onEdit, onUndo, onReconcile }: {
-  e: Employee; p?: SalaryPayment; me: CurrentUserInfo | null; paidVia: string | null;
+function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, onReconcile }: {
+  e: Employee; p?: SalaryPayment; canWrite: boolean; me: CurrentUserInfo | null; paidVia: string | null;
   onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
 }) {
   return (
@@ -1411,7 +1432,7 @@ function PayrollRowMenu({ e, p, me, paidVia, onYear, onEdit, onUndo, onReconcile
             <Icon name="download" size={15} /> Download payslip
           </DropdownMenuItem>
         )}
-        {p && p.paid_amount === 0 && (
+        {canWrite && p && p.paid_amount === 0 && (
           <>
             <DropdownMenuSeparator />
             {/* Salary is booked but the bank debit isn't matched yet — jump to

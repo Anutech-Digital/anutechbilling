@@ -294,7 +294,22 @@ const OMB: UserRole[] = ["owner", "manager", "billing"];
 /** Who may read salaries (RLS on salary_payments since 20260930175000) — and so who gets a
  *  Balance Sheet whose salary lines are real. */
 export const SALARY_ROLES: UserRole[] = ["owner", "manager", "accountant"];
-/** Payroll Overview + Salary Register: the roles that had them, plus the accountant (R-061). */
+/** Who may WRITE salary_payments, employees, bank_accounts and bank_transactions — the
+ *  database rule since role hardening (migration 20260930175000, `v_money`). R-254 (7 Oct 2026):
+ *  billing SEES Payroll and Banking (Pardeep's call) but every write button is hidden from
+ *  anyone outside this list, because the database refuses the save. Keep the two in step. */
+export const MONEY_WRITE_ROLES: UserRole[] = ["owner", "manager", "accountant"];
+
+/** True when the signed-in role can save money records (salary, employee, bank). An unknown
+ *  role (still loading) counts as allowed so owners never see the buttons flicker away;
+ *  the database is still the guard. */
+export function canWriteMoney(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return (MONEY_WRITE_ROLES as string[]).includes(role);
+}
+
+/** Payroll Overview + Salary Register: the roles that had them, plus the accountant (R-061).
+ *  Billing is read-only here (R-254): see MONEY_WRITE_ROLES. */
 const PAYROLL_ROLES: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Books: the accountant / CA reads every one of these. */
 const BOOKS: UserRole[] = ["owner", "manager", "billing", "accountant"];

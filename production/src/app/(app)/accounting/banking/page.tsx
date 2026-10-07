@@ -31,10 +31,15 @@ import { rupee } from "@/lib/utils";
 import { AddBankAccountForm } from "@/components/features/banking/add-bank-account-form";
 import { DeleteBankAccountDialog } from "@/components/features/banking/delete-bank-account-dialog";
 import { TransferDialog } from "@/components/features/banking/transfer-dialog";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteMoney } from "@/lib/nav";
 
 export default function BankingPage() {
   const router = useRouter();
   const { data: accounts, isLoading, isError, refetch } = useBankAccounts();
+  /* R-254: billing reads Banking; only owner / manager / accountant may save bank records. */
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
   const [addOpen, setAddOpen] = React.useState(false);
   const [editAccount, setEditAccount] = React.useState<BankAccountRow | null>(null);
   const [deleteAccount, setDeleteAccount] = React.useState<BankAccountRow | null>(null);
@@ -71,16 +76,20 @@ export default function BankingPage() {
           <Button icon="check" onClick={() => router.push("/accounting/banking/brs" as Route)}>
             Bank reconciliation
           </Button>
-          {(accounts?.length ?? 0) >= 2 && (
+          {canWrite && (accounts?.length ?? 0) >= 2 && (
             <Button icon="refresh" onClick={() => setTransferOpen(true)}>
               Move money / withdraw
             </Button>
           )}
-          <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
-            Add account
-          </Button>
+          {canWrite && (
+            <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
+              Add account
+            </Button>
+          )}
         </div>
       </div>
+
+      {!canWrite && <ViewOnlyNote what="add bank accounts or move money" />}
 
       {/* Summary strip */}
       {!isLoading && !isError && accounts && accounts.length > 0 && (
@@ -122,11 +131,11 @@ export default function BankingPage() {
             icon="rupee"
             title="No bank accounts connected yet."
             body="Add your first bank account — HDFC, ICICI, SBI, Axis, or any Indian bank. Once added, upload a statement CSV and we'll match each transaction against your customer payments + vendor expenses."
-            action={
+            action={canWrite ? (
               <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
                 Add bank account
               </Button>
-            }
+            ) : undefined}
           />
         </Card>
       ) : (
@@ -136,8 +145,8 @@ export default function BankingPage() {
               key={acc.id}
               account={acc}
               onOpen={() => router.push(`/accounting/banking/${acc.id}` as Route)}
-              onEdit={() => setEditAccount(acc)}
-              onDelete={() => setDeleteAccount(acc)}
+              onEdit={canWrite ? () => setEditAccount(acc) : undefined}
+              onDelete={canWrite ? () => setDeleteAccount(acc) : undefined}
             />
           ))}
         </div>
@@ -168,8 +177,9 @@ function BankAccountCard({
 }: {
   account: BankAccountRow;
   onOpen: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  /** Left out for a read-only viewer (R-254). */
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const balance = account.current_balance ?? account.opening_balance;
   const isPositive = balance >= 0;
@@ -194,13 +204,19 @@ function BankAccountCard({
             <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onOpen}>
               <Icon name="arrow_right" size={16} /> View transactions
             </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
-              <Icon name="edit" size={16} /> Edit account
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={onDelete}>
-              <Icon name="trash" size={16} /> Delete account
-            </DropdownMenuItem>
+            {onEdit && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
+                <Icon name="edit" size={16} /> Edit account
+              </DropdownMenuItem>
+            )}
+            {onDelete && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={onDelete}>
+                  <Icon name="trash" size={16} /> Delete account
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
