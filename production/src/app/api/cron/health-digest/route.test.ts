@@ -10,6 +10,8 @@ const db = vi.hoisted(() => ({ current: null as null | ReturnType<typeof import(
 vi.mock("@/lib/supabase/server", () => ({ createAdminClient: () => db.current!.client }));
 const sendEmail = vi.hoisted(() => vi.fn(async (_msg: { to: string; subject: string; text: string }) => ({ status: "sent", providerId: "x", errorMessage: null })));
 vi.mock("@/lib/email/send", () => ({ sendEmail }));
+const session = vi.hoisted(() => ({ me: null as null | { email: string; user: { role: string; tenant_id: string } } }));
+vi.mock("@/lib/tenant", () => ({ getCurrentUser: async () => session.me }));
 
 import { GET } from "./route";
 
@@ -98,6 +100,55 @@ describe("R-220 health-digest route: owner morning digest", () => {
     db.current = seed();
     const res = await GET(new Request("https://example.invalid/api/cron/health-digest", { headers: { authorization: "Bearer nope" } }));
     expect(res.status).toBe(401);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-112 health-digest ?dryRun=1: preview, never send", () => {
+  const dry = (q = "", auth?: string) => new Request(`https://example.invalid/api/cron/health-digest?dryRun=1${q}`,
+    auth ? { headers: { authorization: auth } } : undefined);
+
+  it("cron secret: returns the first owner's numbers + mail body, sends nothing, reads no logs", async () => {
+    db.current = seed();
+    const res = await GET(dry("", "Bearer s3cret"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, dryRun: true, emailed: false, to: "owner@t1.test" });
+    expect(body.owner_digest).toMatchObject({ moneyIn: { count: 2, value: 61800 }, overdue: { count: 1, value: 23600 } });
+    expect(body.email.subject).toBe("ResellerOS morning: ₹61,800 in, 1 overdue, 2 waiting on you");
+    expect(body.email.text).toContain("Money in yesterday: ₹61,800");
+    expect(body.email.html).toContain("₹61,800");
+    expect(body.email.html).not.toContain("99,999");
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled(); // no Cloud Logging read, no heartbeat ping
+  });
+
+  it("format=html returns the mail as a page", async () => {
+    db.current = seed();
+    const res = await GET(dry("&format=html", "Bearer s3cret"));
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Overdue invoices");
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("logged-in owner without the secret sees their own tenant", async () => {
+    db.current = seed();
+    session.me = { email: "boss@t2.test", user: { role: "owner", tenant_id: "T2" } };
+    const body = await (await GET(dry())).json();
+    expect(body).toMatchObject({ dryRun: true, emailed: false, to: "boss@t2.test" });
+    expect(body.owner_digest.moneyIn.value).toBe(99999);
+    const reads = db.current.calls.filter((c) => c.table !== "users");
+    expect(reads.every((c) => c.filters.includes("tenant_id=T2"))).toBe(true);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("non-owner gets 403, anonymous 401, wrong secret 401 — and nothing is sent", async () => {
+    db.current = seed();
+    session.me = { email: "sales@t1.test", user: { role: "sales", tenant_id: "T1" } };
+    expect((await GET(dry())).status).toBe(403);
+    session.me = null;
+    expect((await GET(dry())).status).toBe(401);
+    expect((await GET(dry("", "Bearer nope"))).status).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });

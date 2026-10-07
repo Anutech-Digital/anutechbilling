@@ -2,7 +2,7 @@
  * GET|POST /api/cron/health-digest — production ke logs padho, kuch bigda ho to email karo.
  *
  * R-220 (6 Oct 2026): ab ye OWNER KA MORNING DIGEST bhi hai — kal aaya paisa, overdue, aapki haan
- *   (held AI actions + approval wale quotes), 30-din renewal risk (./owner-digest.ts). Isliye
+ *   (held AI actions + approval wale quotes), 30-din renewal risk (lib/digest/owner-digest.ts). Isliye
  *   mail ROZ jaata hai, sirf ek owner ko; logs ka hissa usi mail ke neeche. Logs na padh paye
  *   to bhi number jaate hain, galti ke saath. Schedule 08:00 IST chahiye — Cloud Scheduler
  *   badalna manager ka kaam (card R-220 par likha).
@@ -11,6 +11,12 @@
  *   cron bhi GET hain, aur khaali body wala POST Google ke front-end se 411 kha jata hai).
  *   `?hours=` se khidki badal sakti hai, 1 se 168 tak.
  * Haath se: `curl -H "Authorization: Bearer <CRON_SECRET>" .../api/cron/health-digest`
+ *
+ * R-112 DRY RUN: `?dryRun=1` — owner ke 4 number aur mail ka subject/text/html LAUTATA hai,
+ *   bhejta KUCH nahi (na email, na logs padhna, na heartbeat). `&format=html` = seedha mail
+ *   jaisa page. Kaun dekh sakta hai: CRON_SECRET wala (pehla owner, jaise cron) YA app me
+ *   login owner (apne tenant ke number). Baaki sab 401/403. Preview me sirf business ka
+ *   hissa hai; asli mail me neeche logs wala hissa bhi judta hai.
  *
  * ─── YE KYUN HAI ────────────────────────────────────────────────────────────
  * 28 Aug 2026 ko production ke logs pehli baar khule aur ek ghante me teen bug nikle jo
@@ -50,8 +56,10 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { sendEmail } from "@/lib/email/send";
 import { buildDigest, digestText, type Digest, type LogRow } from "@/lib/ops/health-digest";
 import { errorMessage } from "@/lib/ops/fetch-all";
-import { buildOwnerDigest, ownerDigestSubject, ownerDigestText, type OwnerDigest } from "./owner-digest";
-import { loadOwnerDigestFacts, type DigestDb } from "./owner-digest-facts";
+import { buildOwnerDigest, ownerDigestSubject, ownerDigestText, type OwnerDigest } from "@/lib/digest/owner-digest";
+import { loadOwnerDigestFacts, type DigestDb } from "@/lib/digest/owner-digest-facts";
+import { buildDigestEmail } from "@/lib/digest/owner-digest-html";
+import { getCurrentUser } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -113,12 +121,32 @@ export async function GET(req: Request) { return handle(req); }
 export async function POST(req: Request) { return handle(req); }
 
 async function handle(req: Request) {
+  const params = new URL(req.url).searchParams;
+  const dryRun = ["1", "true"].includes(params.get("dryRun") ?? "");
+  const asHtml = params.get("format") === "html";
+
   /* Fail closed, baaki cron ki tarah: ye route production ke logs padhta hai. */
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
   const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const cronOk = !!expected && !!provided && timingSafeEqualStr(provided, expected);
+
+  /* R-112: preview bina secret ke sirf login OWNER ko — apne tenant ke number, apna pata. */
+  if (dryRun && !cronOk) {
+    const me = await getCurrentUser().catch(() => null);
+    if (!me) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    if (me.user.role !== "owner") return NextResponse.json({ error: "owner only" }, { status: 403 });
+    return preview(me.user.tenant_id, me.email, asHtml);
+  }
+
+  if (!expected) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
+  if (!cronOk) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (dryRun) {
+    const first = await firstOwner();
+    if (!first.tenantId) {
+      return NextResponse.json({ ok: false, dryRun: true, emailed: false, error: "no owner tenant" }, { status: 404 });
+    }
+    return preview(first.tenantId, first.to, asHtml);
   }
 
   const hours = Math.min(168, Math.max(1, Number(new URL(req.url).searchParams.get("hours")) || 24));
@@ -132,11 +160,7 @@ async function handle(req: Request) {
   /* Kise bhejein: platform ka pehla owner (Pardeep) — sirf ek pata, aur usi ke tenant ke
      number. Ye ops + owner ka mail hai, kisi customer ka nahi (R-220: pehle sirf Pardeep). */
   const admin = createAdminClient();
-  const { data: owner } = await admin
-    .from("users").select("email, tenant_id").eq("role", "owner")
-    .order("created_at", { ascending: true }).limit(1).maybeSingle();
-  const to = (owner as { email?: string } | null)?.email ?? null;
-  const tenantId = (owner as { tenant_id?: string } | null)?.tenant_id ?? null;
+  const { to, tenantId } = await firstOwner();
 
   /* R-220: owner ke 4 number. Padhne me galti ho to mail phir bhi jaata hai, galti ke saath —
      "kuch nahi aaya" aur "padh hi nahi paye" ek jaise nahi dikhne chahiye. */
@@ -180,6 +204,43 @@ async function handle(req: Request) {
     failed: (sent.status === "sent" ? 0 : 1) + (logs.error ? 1 : 0) + (businessError ? 1 : 0),
     emailError: sent.errorMessage,
   }));
+}
+
+/** Platform ka pehla owner (Pardeep) — cron ka ek hi pata aur tenant. */
+async function firstOwner(): Promise<{ to: string | null; tenantId: string | null }> {
+  const { data: owner } = await createAdminClient()
+    .from("users").select("email, tenant_id").eq("role", "owner")
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  return {
+    to: (owner as { email?: string } | null)?.email ?? null,
+    tenantId: (owner as { tenant_id?: string } | null)?.tenant_id ?? null,
+  };
+}
+
+/**
+ * R-112 dry run: wahi 4 number aur mail ka body jo 8 baje jaata — par sendEmail, logs aur
+ * heartbeat KUCH nahi chhoota. Sirf padhna (ek tenant, service-role, tenant_id filter).
+ */
+async function preview(tenantId: string, to: string | null, asHtml: boolean) {
+  let owner_digest: OwnerDigest;
+  try {
+    owner_digest = buildOwnerDigest(
+      await loadOwnerDigestFacts(createAdminClient() as unknown as DigestDb, tenantId, new Date()),
+    );
+  } catch (e) {
+    return NextResponse.json({ ok: false, dryRun: true, emailed: false, businessError: errorMessage(e) }, { status: 500 });
+  }
+  const email = buildDigestEmail(owner_digest, process.env.NEXT_PUBLIC_APP_URL ?? "");
+  if (asHtml) {
+    return new NextResponse(email.html, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  return NextResponse.json(
+    { ok: true, dryRun: true, emailed: false, to, owner_digest, email },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 /** Production ke logs — kabhi throw nahi karta; na padh paye to `error` (aur 403 par `fix`). */
