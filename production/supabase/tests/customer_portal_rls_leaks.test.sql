@@ -13,7 +13,8 @@
 --      returns own non-draft quotes only, with no cost column and no line_items[].cost.
 --   3. subscriptions: no direct row (write_off_reason unreachable); portal_my_subscriptions()
 --      returns own rows with the basic fields.
---   4. Own invoices, payments and own customer row are STILL readable; another customer's are not.
+--   4. Own invoices, payments and own customer row are STILL readable (payments/customer via the
+--      R-398 readers portal_my_payments / portal_my_customer); another customer's are not.
 --   5. Two links + no selection → current_customer_id() is NULL and nothing is readable; a
 --      server claim selecting one of the user's OWN customers works; a claim naming a customer the
 --      user is not linked to is ignored.
@@ -133,9 +134,11 @@ begin
   if v_n <> 1 then raise exception 'FAIL 4: customer sees % of the 2 invoices, expected only their own 1', v_n; end if;
   select count(*) into v_n from public.invoices where id = 'INV-R395-A';
   if v_n <> 1 then raise exception 'FAIL 4: customer cannot read their own invoice'; end if;
-  select count(*) into v_n from public.payments where quote_id in ('Q-R395-A', 'Q-R395-B');
+  -- R-398 (20261007235000): payments + own customer row moved behind portal_my_payments() /
+  -- portal_my_customer(); direct reads give nothing (covered in customer_portal_rls_payments_self).
+  select count(*) into v_n from public.portal_my_payments() where quote_id in ('Q-R395-A', 'Q-R395-B');
   if v_n <> 1 then raise exception 'FAIL 4: customer sees % payments, expected own 1', v_n; end if;
-  select count(*) into v_n from public.customers where id in ('cccccccc-0000-0000-0000-000000395c0a', 'cccccccc-0000-0000-0000-000000395c0b');
+  select count(*) into v_n from public.portal_my_customer() where id in ('cccccccc-0000-0000-0000-000000395c0a', 'cccccccc-0000-0000-0000-000000395c0b');
   if v_n <> 1 then raise exception 'FAIL 4: customer sees % customer rows, expected own 1', v_n; end if;
 
   -- 1. tenants
