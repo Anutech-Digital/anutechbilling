@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { INBOX_LIST_MAX_ROWS } from "@/lib/inbound/list-columns";
+import { MAIL_FOLDERS } from "@/lib/inbound/folders";
 
 type Call = { method: string; args: unknown[] };
 const state = vi.hoisted(() => ({
@@ -95,6 +96,19 @@ describe("GET /api/inbound-emails — pages", () => {
     expect((await GET(req("?before=nope&before_id=00000000-0000-4000-8000-000000000001"))).status).toBe(400);
     expect((await GET(req("?before=2026-09-28T10:00:00Z&before_id=1),or(tenant_id.neq.x"))).status).toBe(400);
     expect(calls("limit")).toHaveLength(0);
+  });
+
+  /* R-363: folders are filtered on the client. A `folder` param (the page URL carries one
+     since R-286) must never change the query or turn into an error. */
+  it("every folder name is a 200 and the same tenant-scoped first page", async () => {
+    state.rows = [mail(1)];
+    for (const f of MAIL_FOLDERS.map((x) => x.id)) {
+      state.calls = [];
+      const res = await GET(req(`?folder=${f}`));
+      expect(res.status).toBe(200);
+      expect(calls("eq")[0].args).toEqual(["tenant_id", "T1"]);
+      expect(calls("or")).toHaveLength(0);
+    }
   });
 
   it("still refuses a signed-out caller", async () => {

@@ -58,6 +58,7 @@ import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { ReplyComposer } from "@/components/features/enquiries/reply-composer";
 import { FolderChips, AddLeadButton, SetUpEmailButton } from "./mobile-folders";
+import { inboxListView } from "@/lib/inbound/list-load-state";
 import { dialable } from "@/lib/leads/call-queue";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
 
@@ -183,6 +184,7 @@ export default function EnquiriesPage() {
   const {
     data: rows, isLoading, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage,
   } = useInboundEmailPages();
+  const listView = inboxListView({ isLoading, error, hasData: rows !== undefined });
   const olderMail = hasNextPage ? (
     <div className="px-3 py-2.5 text-center">
       <Button size="sm" variant="ghost" loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>
@@ -514,11 +516,20 @@ export default function EnquiriesPage() {
               </Button>
             </div>
 
-            {isLoading ? (
+            {/* R-363: a failed 20s poll keeps the mail already on screen and says so here,
+                instead of replacing every folder with "Could not load". */}
+            {listView.refreshFailed && (
+              <div role="status" className="flex items-center justify-between gap-2 border-b border-hairline bg-amber-soft px-3 py-1.5 text-xs text-ink shrink-0">
+                <span>Could not refresh. Showing mail loaded earlier.</span>
+                <Button size="sm" variant="ghost" onClick={() => refetch()}>Try again</Button>
+              </div>
+            )}
+
+            {listView.view === "loading" ? (
               <div className="space-y-2 p-3">
                 {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
               </div>
-            ) : error ? (
+            ) : listView.view === "error" ? (
               <div className="p-4">
                 <EmptyState
                   icon="alert"
