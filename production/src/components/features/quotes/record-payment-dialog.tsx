@@ -710,7 +710,7 @@ export function RecordPaymentDialog({
         receiptUploadFailed:  res.receiptUploadFailed,
       });
       const t = issuedInvoiceId
-        ? withIssuedInvoice(toastBase, issuedInvoiceId, `${invoiceHref(issuedInvoiceId)}?pdf=1`)
+        ? withIssuedInvoice(toastBase, issuedInvoiceId)
         : toastBase;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {

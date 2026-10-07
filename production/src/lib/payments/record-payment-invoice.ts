@@ -21,6 +21,7 @@
  *     whatever the box said before submit.
  */
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import type { PaymentToast, PaymentToastAction } from "@/lib/payments/record-payment-toast";
 
 /** The buyer's place-of-supply facts — the customer's row, else the lead's / the quote's. */
@@ -97,8 +98,10 @@ export function shouldIssueAfterPayment(a: {
 export function withIssuedInvoice(
   t: PaymentToast,
   invoiceId: string,
-  href: NonNullable<PaymentToastAction["href"]>,
 ): PaymentToast {
+  /* The invoice's own page with the PDF open — built here with invoiceHref, the one place
+     that knows the deep link (invoice-link.test.ts guards every "View invoice" label). */
+  const href: NonNullable<PaymentToastAction["href"]> = `${invoiceHref(invoiceId)}?pdf=1`;
   const send = t.primary?.kind === "send-receipt" ? t.primary : t.secondary;
   return {
     ...t,

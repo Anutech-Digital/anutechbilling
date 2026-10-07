@@ -73,14 +73,14 @@ describe("withIssuedInvoice", () => {
       title: "Paid in full · GST invoice can be generated now",
       primary: { kind: "generate-invoice", label: "Generate invoice" },
       secondary: { kind: "send-receipt", label: "Send receipt" },
-    }, "INV-27-0007", "/invoices/INV-27-0007?pdf=1");
+    }, "INV-27-0007");
     expect(t.title).toBe("Paid in full · GST invoice INV-27-0007 issued");
     expect(t.primary).toEqual({ kind: "view-invoice", label: "View invoice", href: "/invoices/INV-27-0007?pdf=1" });
     expect(t.secondary?.kind).toBe("send-receipt");
     expect(t.lines).toEqual(["TDS logged"]);
   });
   it("no receipt button → no secondary", () => {
-    const t = withIssuedInvoice({ tone: "success", lines: [], title: "x", primary: { kind: "generate-invoice", label: "g" }, secondary: null }, "I", "/invoices/I");
+    const t = withIssuedInvoice({ tone: "success", lines: [], title: "x", primary: { kind: "generate-invoice", label: "g" }, secondary: null }, "I");
     expect(t.secondary).toBeNull();
   });
 });
