@@ -31,6 +31,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import type { IssueConsequences } from "@/lib/invoices/issue-consequences";
+import type { EinvoiceNoticeText } from "@/lib/compliance/einvoice";
+import { EinvoiceBanner } from "./einvoice-banner";
 
 export interface ConfirmIssueDialogProps {
   open: boolean;
@@ -41,10 +43,13 @@ export interface ConfirmIssueDialogProps {
   confirmLabel: string;
   busy?: boolean;
   onConfirm: () => void;
+  /** R-337: e-invoice IRN reminder. Rendered on its own, never added to `consequences`,
+      so it cannot trip the blocking check below — it warns, it does not block. */
+  einvoiceNotice?: EinvoiceNoticeText | null;
 }
 
 export function ConfirmIssueDialog({
-  open, onOpenChange, consequences, confirmLabel, busy, onConfirm,
+  open, onOpenChange, consequences, confirmLabel, busy, onConfirm, einvoiceNotice = null,
 }: ConfirmIssueDialogProps) {
   /* A blocking warning is one that makes the action impossible — a ₹0 quote, or a
      selection with nothing to issue. generate_invoice would refuse it anyway (#26);
@@ -71,6 +76,8 @@ export function ConfirmIssueDialog({
               : "Read what this does before issuing."}
           </DialogDescription>
         </DialogHeader>
+
+        <EinvoiceBanner notice={einvoiceNotice} />
 
         <ul className="space-y-2.5">
           {consequences?.consequences.map((c, i) => (

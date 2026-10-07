@@ -38,6 +38,9 @@ import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-suppl
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
+import { useTurnoverBracket } from "@/lib/compliance/turnover";
+import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
+import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +68,15 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
+  /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
+     only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
+  const { data: turnover } = useTurnoverBracket();
+  const einvoiceNotice = invoiceEinvoiceNotice(turnover?.bracket ?? null, {
+    customerGstin: invoice.customer_gstin ?? customer?.gstin ?? null,
+    gstIrn: invoice.gst_irn,
+    status: invoice.status,
+    invoiceDate: invoice.invoice_date,
+  });
 
   /* ── WHO IS SELLING THIS — resolved or refused, never invented ──────────────
      This used to be `me || { tenantName: "Excel Technologies Pvt Ltd",
@@ -137,6 +149,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
         >
           <Icon name="chevron_left" size={14} /> All invoices
         </Link>
+        <EinvoiceBanner notice={einvoiceNotice} className="mb-3" />
         <div className="rounded-lg border border-hairline bg-paper overflow-hidden">
           {/* R-202. On a 375px phone the three buttons used to sit in one shrink-0 row beside
               the invoice number, making the sheet 446px wide: PDF off-screen, sideways scroll,

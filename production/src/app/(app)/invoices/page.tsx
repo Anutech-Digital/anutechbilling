@@ -52,6 +52,9 @@ import {
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
+import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
+import { useTurnoverBracket } from "@/lib/compliance/turnover";
+import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
 import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
@@ -92,6 +95,21 @@ function InvoicesPageInner() {
   const { data: customers } = useCustomers();
 
   const { data: invoices, isLoading, error, refetch } = useInvoices();
+  /* R-337: AATO bracket → e-invoice IRN warnings. Null ("not sure" or column not migrated)
+     shows nothing, i.e. exactly the page as it was. Warnings only, never a block. */
+  const { data: turnover } = useTurnoverBracket();
+  const bracket = turnover?.bracket ?? null;
+  const irnAgeing = React.useMemo(() => {
+    if (!invoices || !bracket) return null;
+    /* Older invoices may not carry customer_gstin — fall back to the customer's GSTIN. */
+    const gstinById = new Map((customers ?? []).map((c) => [c.id, c.gstin ?? null] as const));
+    const rows = invoices.map((i) => ({
+      ...i,
+      customer_gstin: i.customer_gstin ?? (i.customer_id ? gstinById.get(i.customer_id) ?? null : null),
+    }));
+    const { ageing, pastLimit } = irnAgeingInvoices(bracket, rows);
+    return irnAgeingNotice(ageing.length, pastLimit);
+  }, [invoices, customers, bracket]);
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
   // R-009: credit / debit note totals for every invoice — one query for the whole list.
   const { data: noteTotals } = useInvoiceNoteTotals();
@@ -187,6 +205,17 @@ function InvoicesPageInner() {
     if (selected.length === 0) return null;
     return bulkIssueConsequences({ quotes: selected.map(toIssuable), series: invoiceSeries });
   }, [confirmBulk, pending, pendingSelected, invoiceSeries, toIssuable]);
+
+  /* R-337: "IRN needed" banner in the issue dialog for B2B (GSTIN) buyers above ₹5 Cr. */
+  const singleEinvoice = React.useMemo(
+    () => (singleQuote ? issueEinvoiceNotice(bracket, isB2B(singleQuote.customer_gstin) ? 1 : 0, 1) : null),
+    [singleQuote, bracket],
+  );
+  const bulkEinvoice = React.useMemo(() => {
+    if (!confirmBulk || !pending) return null;
+    const selected = pending.filter((q) => pendingSelected.has(q.id));
+    return issueEinvoiceNotice(bracket, selected.filter((q) => isB2B(q.customer_gstin)).length, selected.length);
+  }, [confirmBulk, pending, pendingSelected, bracket]);
 
   /* Lifted out of the pending-card IIFE so the confirmation can call it. Unchanged
      otherwise — including that it issues one at a time and counts failures, which is
@@ -302,6 +331,9 @@ function InvoicesPageInner() {
       </div>
 
       {!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}
+
+      {/* R-337: ₹10 Cr+ turnover — B2B invoices 25+ days old with no IRN. */}
+      <EinvoiceBanner notice={irnAgeing} className="mb-4" />
 
       {/* Subscription vs Project invoices toggle */}
       <div className="mb-4">
@@ -807,6 +839,7 @@ function InvoicesPageInner() {
         open={confirmSingle !== null}
         onOpenChange={(v) => { if (!v) setConfirmSingle(null); }}
         consequences={singleConsequences}
+        einvoiceNotice={singleEinvoice}
         confirmLabel="Issue invoice"
         busy={generateInvoice.isPending}
         onConfirm={() => {
@@ -821,6 +854,7 @@ function InvoicesPageInner() {
         open={confirmBulk && bulkConsequences !== null}
         onOpenChange={(v) => { if (!v) setConfirmBulk(false); }}
         consequences={bulkConsequences}
+        einvoiceNotice={bulkEinvoice}
         confirmLabel={`Issue ${pendingSelected.size} invoice${pendingSelected.size === 1 ? "" : "s"}`}
         busy={generating}
         onConfirm={() => { void issueSelected(); }}
