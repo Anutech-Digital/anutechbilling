@@ -25,6 +25,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/components/ui/label";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -920,6 +926,19 @@ export function QuoteBuilder() {
   const removeLine = (id: string) => {
     setLineItems((s) => s.filter((l) => l.id !== id));
   };
+
+  // R-315: shared by the desktop Preview button and the phone "More" menu.
+  const openPreview = () => {
+    if (lineItems.length === 0) {
+      toast.error("Add at least one line item to preview", {
+        description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
+      });
+      return;
+    }
+    setPreviewOpen(true);
+  };
+  // Same rule the three send buttons always used — named once so the menu matches them.
+  const sendDisabled = !isLeadMode && !customerId && !prospectName.trim();
 
   // Submit
   // afterAction lets the caller request a follow-up on the detail page
@@ -2384,28 +2403,38 @@ export function QuoteBuilder() {
           dialog via a ?send= query param. "Duplicate" stays placeholder
           until we wire a real duplicate flow. */}
       {lineItems.length > 0 && (
-        <div className="order-last sticky bottom-[calc(var(--bottom-nav-h,56px))] md:bottom-0 z-20 -mx-4 -mb-4 flex items-center justify-between gap-3 flex-wrap border-t border-hairline bg-paper px-4 py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8">
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">
+        /* R-315 (7 Oct 2026): at 375px every button sat on its own line and the bar was
+           253px tall — a third of the screen, so the line items had no room. Below md it is
+           now ONE row: total + the main button + a "More" menu holding the rest (same
+           handlers, nothing dropped). md and up is unchanged. Layout only — the total,
+           GST and save logic are untouched. */
+        <div
+          data-quote-action-bar
+          className="order-last sticky bottom-[calc(var(--bottom-nav-h,56px))] md:bottom-0 z-20 -mx-4 -mb-4 flex items-center justify-between gap-2 md:gap-3 flex-nowrap md:flex-wrap border-t border-hairline bg-paper px-4 py-2 md:py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8"
+        >
+          <div className="min-w-0 flex flex-col md:flex-row md:items-baseline md:gap-2">
+            <span className="text-3xs md:text-2xs uppercase tracking-wider text-ink-3 font-semibold whitespace-nowrap">
               {!showPerInvoice && billingN === 1 ? "Total payable now" : "Total"}
             </span>
-            <span className="font-serif text-2xl text-amber tabular-nums">
+            <span className="font-serif text-xl md:text-2xl text-amber tabular-nums whitespace-nowrap leading-tight">
               {showPerInvoice ? fmtPayableC(dRound(dispTotal / billingN)) : fmtPayableC(dispTotal)}
             </span>
             {showPerInvoice && (
-              <span className="text-2xs text-ink-3">/invoice · {fmtPayableC(dispTotal)}/yr</span>
+              <span className="text-3xs md:text-2xs text-ink-3 whitespace-nowrap truncate">/invoice · {fmtPayableC(dispTotal)}/yr</span>
             )}
           </div>
           {isInvoiceMode ? (
-            /* Invoice mode — one-time/recurring choice + a single "Create invoice". */
-            <div className="flex gap-2 flex-wrap items-center">
+            /* Invoice mode — one-time/recurring choice + a single "Create invoice".
+               On phones Preview moves into the More menu so the row stays one line. */
+            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
               <div className="inline-flex rounded-lg border border-hairline bg-paper-2/40 p-1 text-xs">
                 {[{ k: false, l: "One-time" }, { k: true, l: "Recurring" }].map((o) => (
                   <button
                     key={String(o.k)}
                     type="button"
                     onClick={() => setInvoiceRecurring(o.k)}
-                    className={`px-3 py-1.5 rounded-md transition-colors ${
+                    aria-pressed={invoiceRecurring === o.k}
+                    className={`px-2 md:px-3 py-1.5 rounded-md transition-colors ${
                       invoiceRecurring === o.k ? "bg-paper text-ink shadow-sm font-medium" : "text-ink-3 hover:text-ink"
                     }`}
                   >
@@ -2413,20 +2442,19 @@ export function QuoteBuilder() {
                   </button>
                 ))}
               </div>
-              <Button
-                icon="file"
-                onClick={() => {
-                  if (lineItems.length === 0) {
-                    toast.error("Add at least one line item to preview", {
-                      description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
-                    });
-                    return;
-                  }
-                  setPreviewOpen(true);
-                }}
-              >
+              <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
                 Preview
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton icon="more_h" aria-label="More actions" className="md:hidden border border-hairline" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" className="min-w-[12rem]">
+                  <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
+                    <Icon name="file" size={15} /> Preview
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 variant="primary"
                 icon="receipt"
@@ -2434,53 +2462,79 @@ export function QuoteBuilder() {
                 loading={createQuote.isPending || generateInvoice.isPending}
                 disabled={!customerId && !prospectName.trim()}
               >
-                Create invoice
+                <span className="md:hidden">Create</span>
+                <span className="hidden md:inline">Create invoice</span>
               </Button>
             </div>
           ) : (
-          <div className="flex gap-2 flex-wrap">
-          <Button variant="ghost" icon="copy" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
+          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+          <Button variant="ghost" icon="copy" className="hidden md:inline-flex" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
             Save draft
           </Button>
-          <Button
-            icon="file"
-            onClick={() => {
-              if (lineItems.length === 0) {
-                    toast.error("Add at least one line item to preview", {
-                      description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
-                    });
-                    return;
-                  }
-              setPreviewOpen(true);
-            }}
-          >
+          <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
             Preview
           </Button>
           <Button
             icon="mail"
+            className="hidden md:inline-flex"
             onClick={() => handleSubmit("sent", "email")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
             Send via email
           </Button>
           <Button
             icon="whatsapp"
-            className="!text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
+            className="hidden md:inline-flex !text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
             onClick={() => handleSubmit("sent", "whatsapp")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
             Send via WhatsApp
           </Button>
+          {/* Phone only: everything except the main button lives here. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <IconButton
+                icon="more_h"
+                aria-label="More actions"
+                className="md:hidden border border-hairline"
+                disabled={createQuote.isPending}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="min-w-[13rem]">
+              <DropdownMenuItem className="gap-2.5 py-2" onSelect={() => handleSubmit("draft")}>
+                <Icon name="copy" size={15} /> Save draft
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
+                <Icon name="file" size={15} /> Preview
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", "email")}
+              >
+                <Icon name="mail" size={15} /> Send via email
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", "whatsapp")}
+              >
+                <Icon name="whatsapp" size={15} className="text-[#25D366]" /> Send via WhatsApp
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="primary"
             icon="send"
             onClick={() => handleSubmit("sent")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
-            Save &amp; send quote <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
+            <span className="md:hidden">Save &amp; send</span>
+            <span className="hidden md:inline">Save &amp; send quote</span>
+            <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
           </Button>
           </div>
           )}
