@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Staging gate — R-332 (7 Oct 2026). Manager runs this before EVERY staging merge and live deploy.
  *
