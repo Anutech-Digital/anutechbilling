@@ -7278,6 +7278,9 @@ export type Database = {
           bank_account_id: string | null
           created_at: string
           customer_id: string | null
+          gateway_fee: number | null
+          gateway_fee_gst: number | null
+          gateway_refund_ids: string[] | null
           id: string
           method: string
           notes: string | null
@@ -7298,6 +7301,9 @@ export type Database = {
           bank_account_id?: string | null
           created_at?: string
           customer_id?: string | null
+          gateway_fee?: number | null
+          gateway_fee_gst?: number | null
+          gateway_refund_ids?: string[] | null
           id?: string
           method: string
           notes?: string | null
@@ -7318,6 +7324,9 @@ export type Database = {
           bank_account_id?: string | null
           created_at?: string
           customer_id?: string | null
+          gateway_fee?: number | null
+          gateway_fee_gst?: number | null
+          gateway_refund_ids?: string[] | null
           id?: string
           method?: string
           notes?: string | null

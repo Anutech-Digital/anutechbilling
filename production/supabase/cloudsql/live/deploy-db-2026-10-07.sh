@@ -48,6 +48,7 @@ MIGS=(
   "oneterm|20261007160000_quote_one_billing_term.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_quotes_one_billing_term')"
   "leadsrc|20261007190000_lead_source_filter_search.sql|resellersos_migration|(exists(select 1 from pg_proc where proname='lead_source_key' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='list_leads' and pronamespace='public'::regnamespace and prosrc like '%lead_source_key%') and exists(select 1 from pg_proc where proname='lead_counts' and pronamespace='public'::regnamespace and prosrc like '%by_source%'))"
   "invstate|20261007200000_invoice_state_from_gstin.sql|resellersos_migration|(exists(select 1 from pg_proc where proname='generate_invoice' and pronamespace='public'::regnamespace and prosrc like '%v_cust_gstin%') and exists(select 1 from pg_proc where proname='accept_quote' and pronamespace='public'::regnamespace and prosrc like '%R-373%') and exists(select 1 from pg_proc where proname='record_payment' and pronamespace='public'::regnamespace and prosrc like '%R-373%'))"
+  "rzpfee|20261007210000_razorpay_gateway_fee_refund.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema='public' and table_name='payments' and column_name='gateway_refund_ids')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
