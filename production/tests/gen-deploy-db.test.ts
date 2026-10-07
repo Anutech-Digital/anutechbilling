@@ -63,7 +63,9 @@ describe("gen-deploy-db file choice + rewrite", () => {
 describe("today's deploy scripts (7 Oct 2026)", () => {
   it("regenerating is a no-op — the headers carry exactly the peeks the scripts had", () => {
     const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
-    expect(res.files).toHaveLength(17);
+    /* The count grows every time a migration lands — pin "no drift", not a number. */
+    expect(res.files.length).toBeGreaterThanOrEqual(17);
+    expect(res.files).toEqual(res.files.slice().sort());
     for (const env of ENVS) expect(res.scripts[env].after).toBe(res.scripts[env].before);
     const since: Gen = generate({ supabaseDir, date: "2026-10-07", since: "20261006130000" });
     expect(since.files).toEqual(res.files);
@@ -84,15 +86,15 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
         fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
         fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
       }
-      fs.writeFileSync(path.join(tmp, "migrations", "20261007235900_new_thing.sql"), "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n");
+      fs.writeFileSync(path.join(tmp, "migrations", "20261007999900_new_thing.sql"), "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n");
       const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
       for (const env of ENVS) {
         const before = res.scripts[env].before.split("\n");
         const added = res.scripts[env].after.split("\n").filter((l) => !before.includes(l));
-        expect(added).toEqual([`  "newthing|20261007235900_new_thing.sql|resellersos_migration|to_regclass('public.new_thing') is not null"`]);
+        expect(added).toEqual([`  "newthing|20261007999900_new_thing.sql|resellersos_migration|to_regclass('public.new_thing') is not null"`]);
       }
-      fs.writeFileSync(path.join(tmp, "migrations", "20261007235959_no_header.sql"), "-- forgot\nselect 1;\n");
-      expect(() => generate({ supabaseDir: tmp, date: "2026-10-07" })).toThrow(/20261007235959_no_header\.sql: no "-- deploy-peek:/);
+      fs.writeFileSync(path.join(tmp, "migrations", "20261007999959_no_header.sql"), "-- forgot\nselect 1;\n");
+      expect(() => generate({ supabaseDir: tmp, date: "2026-10-07" })).toThrow(/20261007999959_no_header\.sql: no "-- deploy-peek:/);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });

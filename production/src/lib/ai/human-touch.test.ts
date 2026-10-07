@@ -92,7 +92,7 @@ describe("the audit log records what the automation DID, not only what it refuse
   it("logs an outcome after the send, not just before it", () => {
     /* The refusal log sits before sendEmailInner; this one must sit after, or it is recording
        an intention rather than a result. */
-    const innerAt = SEND.indexOf("const result = await sendEmailInner(msg)");
+    const innerAt = SEND.indexOf("await sendEmailInner(msg);");
     expect(innerAt).toBeGreaterThan(0);
     expect(SEND.slice(innerAt)).toContain("logAiAction(");
   });
@@ -100,7 +100,7 @@ describe("the audit log records what the automation DID, not only what it refuse
   it("distinguishes a send that failed from one that went", () => {
     /* "did" on a failed send would be the worst possible row in this table: it would report a
        customer was emailed when the provider rejected it. */
-    const after = SEND.slice(SEND.indexOf("const result = await sendEmailInner(msg)"));
+    const after = SEND.slice(SEND.indexOf("await sendEmailInner(msg);"));
     expect(after).toMatch(/outcome:\s*result\.status === "failed" \? "failed" : "did"/);
   });
 
