@@ -59,6 +59,29 @@ export interface FeedbackListFilter {
  * score yet and must not sort as if it were a zero.
  */
 /**
+ * R-356 (7 Oct 2026): an open page went stale. The AI marked a report fixed at 05:47Z
+ * (/api/agent/feedback-fixed), but Pardeep's open tab still showed it under Open with
+ * "Run AI Auto-Fix" until he reloaded. The queue now refetches every 30 s while the tab
+ * is visible (never in a background tab) and again when he comes back to the tab.
+ */
+export const FEEDBACK_REFETCH_MS = 30_000;
+const LIVE = {
+  refetchInterval: FEEDBACK_REFETCH_MS,
+  refetchIntervalInBackground: false,
+  refetchOnWindowFocus: true,
+} as const;
+
+/** One cheap read (id, status, AI note) shared by the tab counts and the "just fixed" notice. */
+const STATUS_KEY = ["feedback", "statuses"] as const;
+export interface FeedbackStatusRow { id: string; status: string; resolution_note: string | null }
+async function fetchStatuses(): Promise<FeedbackStatusRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from("feedback").select("id, status, resolution_note").limit(5000);
+  if (error) throw error;
+  return (data ?? []) as FeedbackStatusRow[];
+}
+
+/**
  * How many reports sit in each status — for the tab counts (5 Oct 2026). "Run AI Auto-Fix"
  * moves a report from Open to Queued for agent, and with a count only on the open tab the
  * three queued reports looked like they had vanished. Same query-key prefix as the list, so
@@ -66,16 +89,26 @@ export interface FeedbackListFilter {
  */
 export function useFeedbackCounts() {
   return useQuery({
-    queryKey: ["feedback", "counts"],
-    queryFn: async (): Promise<Record<string, number>> => {
-      const supabase = createClient();
-      const { data, error } = await supabase.from("feedback").select("status").limit(5000);
-      if (error) throw error;
+    queryKey: STATUS_KEY,
+    queryFn: fetchStatuses,
+    select: (rows): Record<string, number> => {
       const out: Record<string, number> = { all: 0 };
-      for (const r of data ?? []) { out[r.status] = (out[r.status] ?? 0) + 1; out.all += 1; }
+      for (const r of rows) { out[r.status] = (out[r.status] ?? 0) + 1; out.all += 1; }
       return out;
     },
     staleTime: 15_000,
+    ...LIVE,
+  });
+}
+
+/** id → {status, AI note} for every report in the workspace — same fetch as the counts (R-356). */
+export function useFeedbackStatuses() {
+  return useQuery({
+    queryKey: STATUS_KEY,
+    queryFn: fetchStatuses,
+    select: (rows): Record<string, FeedbackStatusRow> => Object.fromEntries(rows.map((r) => [r.id, r])),
+    staleTime: 15_000,
+    ...LIVE,
   });
 }
 
@@ -118,6 +151,7 @@ export function useFeedbackList(filter: FeedbackListFilter = {}) {
       return rows.map((r) => ({ ...r, screenshots: byParent.get(r.id) ?? [] }));
     },
     staleTime: 15_000,
+    ...LIVE,
   });
 }
 

@@ -13,7 +13,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { COMPANY, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
 
 export interface ThanksOrder {
   quoteId:        string;
@@ -184,7 +184,7 @@ export function ThanksClient({
           </h1>
           <p className="text-base md:text-lg text-ink-3 leading-relaxed max-w-2xl mx-auto">
             Your <GWInline /> order is confirmed. Our team will call or WhatsApp you
-            the same working day to verify your domain and start
+            {SLA.firstReply} ({SLA.hours}) to verify your domain and start
             the setup.
           </p>
         </div>
@@ -249,7 +249,7 @@ export function ThanksClient({
             What happens next
           </div>
           <h2 className="font-serif text-2xl md:text-3xl tracking-tight">
-            From this page to live email — under 24 hours.
+            From this page to live email in {SLA.short.workspaceLive} after DNS is verified.
           </h2>
         </div>
 
@@ -265,13 +265,13 @@ export function ThanksClient({
             },
             {
               done: false,
-              title: "Same working day — our team calls or WhatsApps you",
+              title: `Within ${SLA.short.firstReply} — our team calls or WhatsApps you`,
               body:  "We'll confirm your domain ownership (DNS TXT record method) and answer any pre-provisioning questions.",
               accent: true,
             },
             {
               done: false,
-              title: "Within 24 hours — your team is live on Workspace",
+              title: `Within ${SLA.short.workspaceLive} of DNS verification — your team is live on Workspace`,
               body:  "Admin credentials emailed. We help configure MX records, recovery email, mobile sync — whatever your team needs.",
             },
             {

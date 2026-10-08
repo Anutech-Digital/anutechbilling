@@ -17,7 +17,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -92,7 +92,7 @@ export function useSavePersonalAccount() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Account save nahi hua"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save the account." }),
   });
 }
 
@@ -105,7 +105,7 @@ export function useDeletePersonalAccount() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Account delete nahi hua"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not delete the account." }),
   });
 }
 
@@ -152,7 +152,7 @@ export function useSavePersonalTransaction() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Entry save nahi hui"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save the entry." }),
   });
 }
 
@@ -165,7 +165,7 @@ export function useDeletePersonalTransaction() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Entry delete nahi hui"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not delete the entry." }),
   });
 }
 
@@ -210,7 +210,7 @@ export function useSavePersonalHolding() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Holding save nahi hui"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save the holding." }),
   });
 }
 
@@ -223,7 +223,7 @@ export function useDeletePersonalHolding() {
       if (error) throw error;
     },
     onSuccess: () => invalidateAll(qc),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Holding delete nahi hui"),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not delete the holding." }),
   });
 }
 

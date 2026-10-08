@@ -68,3 +68,17 @@ Pardeep: "ab card isi tarike se handle hon — manager aur worker local session 
 - **Worker** (har card ka alag LOCAL session ya background worker): [WORKER-SESSION-PROMPT.md](WORKER-SESSION-PROMPT.md) — apna worktree + port, `scripts/ops/worker-lock.mjs` se lock, fail-first test, gate, apne browser tab me jaanch, push sirf `manager-pardeep`, card "review" + howToCheck.
 - **Group chunna:** sirf code wale cards (koi key / live DB / insaan ka step / bahut bada kaam nahi), aur aise ki folders na takraayein. Ek area (jaise accounting) ka ek hi card ek waqt. Takraav ho bhi jaaye to lock rokta hai.
 - Pehli baar 6 Oct: 8 workers ek saath — R-197, R-179, R-181, R-191, R-187, R-177, R-065, R-104.
+
+## 9. Staging gate — har staging merge aur live deploy se pehle (7 Oct 2026, R-332)
+
+Research: staging/live merge GitHub CI nahi dekhta tha, aur Cloud Build gate me lint nahi hai (image `SKIP_BUILD_TYPECHECK=1`). Isliye laal CI wala SHA staging aur phir live tak ja sakta tha.
+
+**Niyam:** manager har 5 PM staging merge aur har live deploy se PEHLE `production/` me chalata hai:
+
+```
+node scripts/ops/staging-gate.mjs            # anutech/manager-pardeep ka HEAD
+node scripts/ops/staging-gate.mjs <sha>      # koi aur SHA
+node scripts/ops/staging-gate.mjs --local    # + poora local gate: vitest, lint, lint:ratchet, next build (dev server band karke)
+```
+
+Exit 0 = merge kar sakte hain. Exit 1 = **merge mat karo** — CI laal, abhi chal raha, us SHA par CI run hi nahi mila, ya `--local` ka koi step fail. Message wajah batata hai. Gate ko skip karne ka koi flag nahi hai; CI theek karo, phir dobara chalao.

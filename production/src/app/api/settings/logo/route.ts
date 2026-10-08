@@ -10,7 +10,7 @@
  * Body: multipart/form-data with an optional `file`. No file = remove logo.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only the owner can change the logo" }, { status: 403 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
 
   let form: FormData;
   try { form = await req.formData(); } catch { form = new FormData(); }

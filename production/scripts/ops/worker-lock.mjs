@@ -18,19 +18,27 @@
  *   node scripts/ops/worker-lock.mjs release R-197
  *   node scripts/ops/worker-lock.mjs push    R-197      (inside the worktree: waits its turn, rebases, pushes)
  *   node scripts/ops/worker-lock.mjs list
+ *   node scripts/ops/worker-lock.mjs prep    R-197 <path>...   (manager, before a card is given out)
+ *
+ * prep — card prep (6 Oct: R-202's card named a page that does not exist; R-197's page was a
+ * re-export of leads/page.tsx). For every path: does it exist, and if it is a one-line
+ * re-export, where the real code is. Prints the lockAreas to write on the card. Exit 1 if a
+ * path is missing — fix the card before a worker gets it.
  *
  * push — one worker pushes at a time (6 Oct: 6 of 8 workers had their push rejected because
  * another worker pushed in the same minute). Waits for the push turn, then fetch + rebase +
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
- * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 3 = MAX_WORKERS (4) already
+ * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = MAX_WORKERS (4) already
  * running. Either way: stop, do not work around it.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
 
@@ -47,16 +55,35 @@ export function pathsOverlap(a, b) {
   return x === y || y.startsWith(x + "/") || x.startsWith(y + "/");
 }
 
-/** A claim like "src" or "src/app" would lock out every other worker — refuse it. */
+/**
+ * A claim like "src" or "src/app" would lock out every other worker — refuse it.
+ * R-345: an exact FILE (name with an extension, e.g. sentry.client.config.ts,
+ * scripts/setup-cloud-scheduler.sh) locks only itself, so it is fine at any depth.
+ * Folders still need 3 parts; ".", "*" and wildcards are always refused.
+ */
 export function tooBroad(area) {
-  return normPath(area).split("/").filter(Boolean).length < 3;
+  const n = normPath(area);
+  if (!n || n === "." || n.includes("*")) return true;
+  const parts = n.split("/").filter(Boolean);
+  if (/^[^.].*\.[a-z0-9]{1,8}$|^\..+\..+$/i.test(parts[parts.length - 1])) return false;
+  return parts.length < 3;
 }
 
 /** Most workers allowed at once. 6 Oct 2026: 8 at once left 2 GB of 24 GB free and hung the machine. */
 export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
 
+/**
+ * Pardeep (6 Oct night): the local app crawled while 4 workers type-checked. While he works
+ * (09:00–21:59 IST) only 2 workers run; at night 4. WORKER_MAX still overrides.
+ */
+export function maxWorkersAt(date) {
+  if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
+  const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
+  return h >= 9 && h < 22 ? 2 : 4;
+}
+
 /** True when another worker may not start: the live locks (other cards) already fill every slot. */
-export function queueFull(card, locks, max = MAX_WORKERS) {
+export function queueFull(card, locks, max = maxWorkersAt(Date.now())) {
   return locks.filter((l) => l.card !== card).length >= max;
 }
 
@@ -117,31 +144,121 @@ export function pushTurnFree(turn, now) {
 
 function sh(cmd) { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
 
-async function pushWithTurn(card) {
-  const turnFile = path.join(LOCK_DIR, "_push-turn.json");
+/** Wait for a named turn (one holder at a time across all workers), run fn, release. */
+async function withTurn(name, card, doing, fn) {
+  const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
   for (;;) {
     let turn = null;
     try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+    if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
     if (pushTurnFree(turn, Date.now())) {
       if (turn) fs.rmSync(turnFile, { force: true });
       try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
     }
-    if (Date.now() > waitUntil) { console.error(`✗ 30 min se push ki baari nahi aayi (${turn?.card} push kar raha hai). Owner ko batao.`); process.exit(4); }
-    console.log(`… ${turn?.card ?? "koi"} push kar raha hai — baari ka intezaar`);
+    if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
+    console.log(`… ${turn?.card ?? "koi"} ${doing} — baari ka intezaar`);
     await new Promise((r) => setTimeout(r, 15000));
   }
-  try {
+  try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
+}
+
+/**
+ * One type-check at a time (6 Oct night): each tsc of this repo takes ~2.6 GB; two or three at
+ * once starved the local app on a 24 GB machine. Capping tsc's heap would just crash it.
+ */
+function tscWithTurn(card) {
+  return withTurn("heavy", card, "type-check kar raha hai", async () => {
+    try { sh("npx tsc --noEmit -p ."); return true; }
+    catch (e) { console.error("✗ tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); return false; }
+  });
+}
+
+/**
+ * R-385: the repo-scan / ratchet suites (scripts/ops/push-guard-suites.mjs) on the REBASED code.
+ * 7 Oct: two pushes broke CI with tests outside the worker's own area. Returns the failed files
+ * ([] = green). Runs inside the heavy turn so it never overlaps another worker's tsc.
+ * vitest is started as `node node_modules/vitest/vitest.mjs` — no shell, so "(app)" paths stay intact.
+ */
+export function runGuardSuites(card) {
+  return withTurn("heavy", card, "guard tests chala raha hai", async () => {
+    const root = process.cwd();
+    const missing = PUSH_GUARD_SUITES.filter((f) => !fs.existsSync(path.join(root, f)));
+    const files = PUSH_GUARD_SUITES.filter((f) => !missing.includes(f));
+    if (missing.length) console.log(`(guard list me ${missing.length} file nahi mili, chhodi: ${missing.join(", ")})`);
+    const out = path.join(os.tmpdir(), `push-guard-${card}-${Date.now()}.json`);
+    const t0 = Date.now();
+    let crashed = null;
+    try {
+      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`, ...files],
+        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+    } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
+    const ms = Date.now() - t0;
+    let failed = [];
+    try { failed = failedSuites(JSON.parse(fs.readFileSync(out, "utf8")), root); } catch {}
+    fs.rmSync(out, { force: true });
+    if (crashed && !failed.length) failed = [`(vitest fail, koi file naam nahi mila)\n${crashed}`];
+    console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
+    if (ms > PUSH_GUARD_BUDGET_MS) console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
+    return failed;
+  });
+}
+
+async function pushWithTurn(card) {
+  await withTurn("push", card, "push kar raha hai", async () => {
     sh("git fetch -q anutech");
     try { sh("git rebase -q anutech/manager-pardeep"); }
     catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
-    try { sh("npx tsc --noEmit -p ."); } catch (e) { console.error("✗ Rebase ke baad tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); process.exit(1); }
+    if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
+    const failed = await runGuardSuites(card);
+    if (failed.length) {
+      console.error("✗ Guard test fail — push NAHI hua (repo-scan/ratchet test, shayad tumhare area ke bahar ka):");
+      for (const f of failed) console.error(`   ${f}`);
+      console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      process.exit(5);
+    }
     const branch = sh("git branch --show-current").trim();
     sh(`git push -q anutech ${branch}:manager-pardeep`);
     console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);
-  } finally {
-    fs.rmSync(turnFile, { force: true });
+  });
+}
+
+/** "export { default } from '../leads/page'" → "../leads/page"; null when the file has real code. */
+export function reexportTarget(src) {
+  const lines = String(src).split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*"));
+  if (!lines.length || lines.length > 3) return null;
+  const m = lines.map((l) => l.match(/^export\s+(?:\{[^}]*\}|\*)\s+from\s+["']([^"']+)["']/)).find(Boolean);
+  return m && lines.every((l) => /^export\s/.test(l) || /^import\s/.test(l)) ? m[1] : null;
+}
+
+/** Lock area for a path: its folder for a file under src/app or src/lib, else the file itself. */
+export function lockAreaFor(p) {
+  const n = normPath(p);
+  if (/\.[a-z]+$/i.test(n) && /^src\/(app|lib)\//.test(n)) { const d = n.split("/").slice(0, -1).join("/"); return tooBroad(d) ? n : d; }
+  return n;
+}
+
+function prep(card, paths) {
+  const root = process.cwd().replace(/\\/g, "/").endsWith("/production") ? process.cwd() : path.join(process.cwd(), "production");
+  let missing = 0; const areas = new Set();
+  for (const raw of paths) {
+    const n = normPath(raw); const full = path.join(root, n);
+    if (!fs.existsSync(full)) { console.log(`✗ ${n} — NAHI MILA`); missing++; continue; }
+    let real = n;
+    if (fs.statSync(full).isFile()) {
+      const t = reexportTarget(fs.readFileSync(full, "utf8"));
+      if (t) {
+        const base = t.startsWith("@/") ? path.join(root, "src", t.slice(2)) : path.resolve(path.dirname(full), t);
+        const hit = [".tsx", ".ts", "/page.tsx", "/index.ts", ""].map((e) => base + e).find((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+        if (hit) { real = normPath(path.relative(root, hit)); console.log(`↪ ${n} sirf re-export hai — asli code: ${real}`); }
+      }
+    }
+    if (real === n) console.log(`✓ ${n}`);
+    areas.add(lockAreaFor(real)); if (real !== n) areas.add(lockAreaFor(n));
   }
+  console.log(`\nlockAreas (card par likho): ${JSON.stringify([...areas])}`);
+  if (missing) { console.error(`✗ ${card}: ${missing} path nahi mile — card theek karo, tab worker ko do.`); process.exit(1); }
+  console.log(`✓ ${card} taiyaar — card par prepared: true likho.`);
 }
 
 function main(argv) {
@@ -187,6 +304,8 @@ function main(argv) {
     return;
   }
   if (cmd === "push") return pushWithTurn(card);
+  if (cmd === "tsc") return tscWithTurn(card).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
+  if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
     fs.rmSync(lockFile(card), { force: true });
     console.log(`✓ ${card} ka lock hata.`);

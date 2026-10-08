@@ -34,23 +34,26 @@
  * view over `due_date`, not a column somebody has to remember to update.
  *
  * ─── THE ARITHMETIC MATCHES THE DUNNING ENGINE ON PURPOSE ───────────────────
- * `amount - paid_amount`, IST midnights, no due date means never overdue — the same
- * three rules as `lib/invoices/dunning.ts`. If the badge and the reminder email
+ * `invoiceAmountDue` (net_payable − paid_amount), IST midnights, no due date means never
+ * overdue — the same three rules as the dunning cron. If the badge and the reminder email
  * disagreed about which invoices are late, the reseller would be arguing with their own
  * software in front of a customer.
  *
- * One known divergence, stated rather than silently resolved: this ignores `net_payable`
- * (amount less adjusted advances), because the dunning cron ignores it too. An invoice
- * fully covered by advance receipts therefore still reads as overdue in both places.
- * Fixing that is one decision applied to both files, not a third answer invented here.
+ * R-371 (7 Oct 2026): both places used to compute `amount − paid_amount`, ignoring
+ * `net_payable` (lowered by credit notes and advances adjusted at issue), so an invoice
+ * fully covered that way read as overdue and was chased for the full amount. Fixed in
+ * both at once, through the one shared function in lib/payments/amount-due.
  */
 import { istToday } from "@/lib/dates/ist";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 
 /** The columns an overdue decision needs. Structural, so any invoice-shaped row fits. */
 export interface OverdueInvoice {
   status:       string;
   due_date:     string | null;
   amount:       number;
+  /** amount less credit notes / advances adjusted at issue. Absent → falls back to amount. */
+  net_payable?: number | null;
   paid_amount?: number | null;
 }
 
@@ -74,7 +77,7 @@ export function invoiceIsOverdue(inv: OverdueInvoice, today: string = istToday()
      were never told (the same rule decideDunning states). */
   if (!inv.due_date) return false;
   if (inv.due_date >= today) return false;
-  return Math.max(0, inv.amount - (inv.paid_amount ?? 0)) > 0;
+  return invoiceAmountDue(inv) > 0;
 }
 
 /**

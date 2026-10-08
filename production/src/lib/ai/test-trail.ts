@@ -70,11 +70,21 @@ export function classifyToast(text: string, marked = false): "input_needed" | "t
 }
 
 /**
+ * A data: or blob: URL is read from memory — no request reaches any server. R-365, 7 Oct 2026:
+ * the PDF engine's wasm loader fetches its own inlined data: URL, and a refusal there showed
+ * up as "API FAILED … network error" although the PDF was made. Such fetches are never an
+ * API failure, whether they reject or come back with an error status.
+ */
+export function isInPageUrl(url: string): boolean {
+  return /^\s*(data|blob):/i.test(url);
+}
+
+/**
  * Which failed requests are worth a tester's attention. Framework chunks, the UX beacon and a
  * 401 after sign-out are noise; a 4xx from our own API or Supabase, and every 5xx, are not.
  */
 export function apiFailureWorthNoting(url: string, status: number): boolean {
-  if (status < 400) return false;
+  if (status < 400 || isInPageUrl(url)) return false;
   let path = url;
   try { path = new URL(url, "http://x").pathname; } catch { /* keep raw */ }
   if (/\/_next\/|\/__nextjs|\/api\/public\/ux\/|\/monitoring|\/favicon/.test(path)) return false;

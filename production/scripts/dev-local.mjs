@@ -29,6 +29,12 @@ import { spawnSync, spawn } from "node:child_process";
 const ALLOW = new Set([
   "ALLOW_DEV_PAGES", "ALLOW_QUOTE_PAY_SIMULATION", "EMAIL_FROM", "EMAIL_REPLY_TO",
   "GEMINI_MODEL", "TELECALL_PROVIDER", "WHATSAPP_BSP", "NODE_ENV",
+  /* Inbound-only: lets the local test session mark feedback fixed / post test runs to THIS
+     local app (api/agent/*). The app never sends it anywhere (R-355, 7 Oct 2026). */
+  "AGENT_QUEUE_TOKEN",
+  /* Local-only vault key made by scripts/set-master-key.mjs (never the staging/live one).
+     Since R-051 the vault refuses to save any secret without it (7 Oct 2026). */
+  "SECRETS_MASTER_KEY",
 ]);
 
 function envKeyNames(file) {
@@ -88,8 +94,26 @@ console.log(`  band kiye  →  ${[...new Set(blanked)].filter((k) => !k.startsWi
    19 s → 1 s. Every browser check waited on those compiles. `--webpack` brings the old
    bundler back (next build still uses webpack, so a build-only problem shows in the build). */
 const rest = args.filter((_, i) => i !== portIdx && i !== portIdx + 1);
-const bundler = rest.includes("--webpack") ? [] : rest.includes("--turbopack") ? [] : ["--turbopack"];
-const child = spawn("npx", ["next", "dev", "-p", port, ...bundler, ...rest.filter((a) => a !== "--webpack")], {
-  env, stdio: "inherit", shell: process.platform === "win32",
-});
-child.on("exit", (code) => process.exit(code ?? 0));
+
+/* --prod (7 Oct 2026, R-321): same safe env, but `next build` + `next start` instead of dev.
+   Measured on this laptop: dev mode first visit /accounting/gst 15.2 s, repeat 1.7 s with
+   10 MB of unminified JS; the dev server alone held 3.2 GB RAM. A production build serves
+   every page pre-compiled and minified. Run it from its own worktree (reselleros-fast) so the
+   build never wipes the .next a dev server or Playwright is using. After pulling new code,
+   run it again — it rebuilds, then starts. `--no-build` starts the last build as is. */
+if (rest.includes("--prod")) {
+  const shell = process.platform === "win32";
+  if (!rest.includes("--no-build")) {
+    console.log("  prod:local →  next build (pehli baar ~5 min)…\n");
+    const b = spawnSync("npx", ["next", "build"], { env: { ...env, NODE_ENV: "production" }, stdio: "inherit", shell });
+    if (b.status !== 0) { console.error("Build fail — upar ka error dekho."); process.exit(b.status ?? 1); }
+  }
+  const s = spawn("npx", ["next", "start", "-p", port], { env: { ...env, NODE_ENV: "production" }, stdio: "inherit", shell });
+  s.on("exit", (code) => process.exit(code ?? 0));
+} else {
+  const bundler = rest.includes("--webpack") ? [] : rest.includes("--turbopack") ? [] : ["--turbopack"];
+  const child = spawn("npx", ["next", "dev", "-p", port, ...bundler, ...rest.filter((a) => a !== "--webpack")], {
+    env, stdio: "inherit", shell: process.platform === "win32",
+  });
+  child.on("exit", (code) => process.exit(code ?? 0));
+}

@@ -11,7 +11,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -31,7 +31,16 @@ function mask(s: string | null | undefined): string | null {
   return `${t.slice(0, 4)}••••${t.slice(-4)}`;
 }
 
-async function resolveTenantAndOwnership() {
+/**
+ * R-256: reading the STATUS (configured? mode? readiness) is open to owner / manager / billing,
+ * the roles that see Settings > Integrations. A GET that was owner-only answered 403, the card
+ * read that as "Not configured / simulation" and offered a Setup that then failed on save,
+ * while the integration was live. Saving and clearing stay owner-only, and secret previews
+ * (masks, tokens) go only to the owner.
+ */
+const READ_ROLES = new Set(["owner", "manager", "billing"]);
+
+async function resolveTenant(access: "read" | "manage") {
   const supabase = createClient();
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return { error: "Not authenticated" as const };
@@ -41,15 +50,21 @@ async function resolveTenantAndOwnership() {
     .eq("id", authData.user.id)
     .single();
   if (error || !me) return { error: "User not linked to a tenant" as const };
-  if (me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
-  return { tenantId: me.tenant_id };
+  if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
+  if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 export async function GET() {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("sandbox_api_key, sandbox_api_secret, sandbox_api_base, updated_at")
@@ -60,15 +75,16 @@ export async function GET() {
   return NextResponse.json({
     ok:           true,
     configured:   Boolean(data?.sandbox_api_key && data.sandbox_api_secret),
-    api_key_mask: mask(data?.sandbox_api_key),
-    api_secret_mask: mask(data?.sandbox_api_secret),
+    api_key_mask: r.isOwner ? mask(data?.sandbox_api_key) : null,
+    api_secret_mask: r.isOwner ? mask(data?.sandbox_api_secret) : null,
+    can_manage:   r.isOwner,
     api_base:     data?.sandbox_api_base ?? "https://api.sandbox.co.in",
     updated_at:   data?.updated_at ?? null,
   });
 }
 
 export async function POST(req: NextRequest) {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
   let body: unknown;
@@ -82,7 +98,7 @@ export async function POST(req: NextRequest) {
   }
   const { api_key, api_secret, api_base } = parsed.data;
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   // Upsert so first-time and edit both work.
   const { error } = await admin
     .from("tenant_secrets")
@@ -99,10 +115,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({

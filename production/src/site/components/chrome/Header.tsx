@@ -16,7 +16,9 @@ import Link from "@/site/components/ui/SiteLink";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { CLIENT_AREA_URL } from "@/site/lib/config";
+import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
+import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
+import { emailFromRate } from "@/site/lib/live-catalog";
 
 interface MenuItem { label: string; note: string; href: string }
 interface Menu {
@@ -25,6 +27,11 @@ interface Menu {
   cols: readonly (readonly MenuItem[])[];
   promo: { tag: string; title: string; body: string; cta: string; href: string; os?: boolean };
 }
+
+/* R-076 (7 Oct 2026): the "Mailboxes from ₹…" teaser was typed (₹79). It is now the same
+   figure the home page shows — emailFromRate over the live editions, which the marketing
+   layout reads from the catalogue and passes in. This marker is swapped at render. */
+const EMAIL_FROM_NOTE = "@email-from";
 
 const MENUS: readonly Menu[] = [
   {
@@ -79,7 +86,7 @@ const MENUS: readonly Menu[] = [
     label: "Email & security", href: "/email",
     cols: [
       [
-        { label: "Business email", note: "Mailboxes from ₹79/mo", href: "/email" },
+        { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
         { label: "Compare editions", note: "GW, M365, Zoho side by side", href: "/email/compare-editions" },
         { label: "Licence calculator", note: "Priced live, GST separate", href: "/email#products" },
       ],
@@ -89,7 +96,7 @@ const MENUS: readonly Menu[] = [
         { label: "SSL certificates", note: "DV free, OV/EV when needed", href: "/ssl" },
       ],
     ],
-    promo: { tag: "FREE MIGRATION", title: "Forty mailboxes moved overnight", body: "Mail, folders, contacts and calendars — moved by us, nothing lost.", cta: "Get a mailbox quote", href: "/quote" },
+    promo: { tag: "FREE MIGRATION", title: "Mailboxes moved by us, free", body: `Mail, folders, contacts and calendars, nothing lost — ${SLA.migration}.`, cta: "Get a mailbox quote", href: "/quote" },
   },
   {
     label: "ResellerOS", href: "/reselleros",
@@ -130,7 +137,7 @@ const MOBILE_PAGES = [
   { label: "Custom software", note: "Office automation, built for you", href: "/#software" },
   { label: "Domains", note: "500+ extensions, from ₹249/yr", href: "/domains" },
   { label: "Hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
-  { label: "Business email", note: "Mailboxes from ₹79/mo", href: "/email" },
+  { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
   { label: "Compare editions", note: "GW, M365 and Zoho side by side", href: "/email/compare-editions" },
   { label: "Google Workspace pricing", note: "Every plan in INR + GST", href: "/google-workspace/pricing" },
   { label: "SSL & security", note: "Free DV on every site", href: "/ssl" },
@@ -142,7 +149,14 @@ const MOBILE_PAGES = [
   { label: "Status", note: "90-day uptime", href: "/status" },
 ] as const;
 
-export function Header() {
+/**
+ * @param emailFrom ₹/mo for the "Mailboxes from" teaser — live (layout reads the catalogue);
+ *   without it, the typed fallback editions decide, never a figure written here.
+ */
+export function Header({ emailFrom }: { emailFrom?: number } = {}) {
+  const fromRs = emailFrom ?? emailFromRate(LICENCE_EDITIONS);
+  const noteOf = (note: string) =>
+    note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo` : note;
   const [open, setOpen] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const pathname = usePathname();
@@ -251,9 +265,13 @@ export function Header() {
             spot, present on every page. "Get a quote" used to sit here as the
             primary CTA but Pardeep had it removed from the header (3 Sep 2026); it
             still lives in the hero, the mega-menu promos and the footer. With it
-            gone, Log in is the header's right-side action, so it reads as a button. */}
-        <Link href="/login" className="btn btn-sm hide-mobile" aria-label="Log in to ResellerOS"
-          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Log in</Link>
+            gone, Log in is the header's right-side action, so it reads as a button.
+            R-233 (6 Oct 2026): it opened /login — the ResellerOS STAFF app — so a hosting or
+            domain customer landed on the wrong sign-in. On the Anutech site it is the
+            customer panel; the ResellerOS login lives in the ResellerOS menu and pages. */}
+        <Link href={CLIENT_AREA_URL as never} className="btn btn-sm hide-mobile" aria-label="Customer login (hosting & domains)"
+          title="Customer login (hosting & domains)"
+          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Customer login</Link>
         <button
           className="only-mobile"
           aria-label={mobile ? "Close menu" : "Open menu"}
@@ -283,7 +301,7 @@ export function Header() {
                       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     >
                       <div style={{ fontSize: 15, fontWeight: 500 }}>{item.label}</div>
-                      <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{item.note}</div>
+                      <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{noteOf(item.note)}</div>
                     </Link>
                   ))}
                 </div>
@@ -323,13 +341,14 @@ export function Header() {
               }}
             >
               <span style={{ fontSize: 15, fontWeight: 600 }}>{p.label}</span>
-              <span style={{ display: "block", fontSize: 13, color: "var(--text-muted)" }}>{p.note}</span>
+              <span style={{ display: "block", fontSize: 13, color: "var(--text-muted)" }}>{noteOf(p.note)}</span>
             </Link>
           ))}
           {/* Sign-in gets its own emphasised row on mobile — the desktop top-right
-              "Log in" is hidden here, so this is where a returning customer finds it. */}
-          <Link href="/login" style={{ display: "block", padding: "15px 20px", background: "var(--tint)", color: "var(--primary)", fontWeight: 700, fontSize: 15 }}>
-            Log in to ResellerOS →
+              "Log in" is hidden here, so this is where a returning customer finds it.
+              R-233: the customer panel, not the ResellerOS staff login. */}
+          <Link href={CLIENT_AREA_URL as never} style={{ display: "block", padding: "15px 20px", background: "var(--tint)", color: "var(--primary)", fontWeight: 700, fontSize: 15 }}>
+            Customer login (hosting &amp; domains) →
           </Link>
         </nav>
       )}

@@ -6,6 +6,10 @@
  * ⚠️ Client names, case-study figures and review quotes are PLACEHOLDERS to be replaced
  * with real ones before launch — the handoff marks them so.
  */
+import { SLA } from "../config";
+
+/** R-347: "1–2 WORKING DAYS" from SLA.migration (was "OVERNIGHT"). */
+const MIGRATION_CHIP = SLA.migration.replace(/^usually\s+/i, "").split(",")[0].toUpperCase();
 
 export const CATALOGUE = [
   { name: "Domains", from: "from ₹249/yr", body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
@@ -13,7 +17,7 @@ export const CATALOGUE = [
   { name: "Business email", from: "from ₹79/mo", body: "Anutech Mail, Google Workspace or Microsoft 365 — quoted side by side.", chips: ["NO SEAT MINIMUM", "FREE MIGRATION"], href: "/email" },
   { name: "SSL & security", from: "from ₹0", body: "Free DV on every site, wildcard and OV when a client needs the paperwork.", chips: ["DV", "OV", "WILDCARD"], href: "/ssl" },
   { name: "Reseller program", from: "₹0 to join", body: "Published wholesale rates with no slabs and no advance deposit.", chips: ["NO DEPOSIT", "ONE RATE", "WHITE LABEL"], href: "/reseller" },
-  { name: "Migration desk", from: "free", body: "Sites, mail and DNS moved by us, outside your business hours.", chips: ["ANY SIZE", "ANY HOST", "OVERNIGHT"], href: "/contact" },
+  { name: "Migration desk", from: "free", body: "Sites, mail and DNS moved by us, outside your business hours.", chips: ["ANY SIZE", "ANY HOST", MIGRATION_CHIP], href: "/contact" },
 ] as const;
 
 export const CASES = [
@@ -67,12 +71,12 @@ export const DOMAIN_FEATURES = [
 ] as const;
 
 export const EMAIL_FEATURES = [
-  { title: "Free migration", body: "Mail, folders, contacts and calendars moved across. Done overnight, nothing lost." },
+  { title: "Free migration", body: `Mail, folders, contacts and calendars moved across — ${SLA.migration}.` },
   { title: "No seat minimum", body: "One mailbox is a valid order. Add and remove seats month to month." },
   { title: "Deliverability setup", body: "SPF, DKIM and DMARC configured and tested, not left as a support article." },
   { title: "Hosted in India", body: "Anutech Mail stays on Indian infrastructure. Useful when a client asks where data sits." },
   { title: "Works with your app", body: "Outlook, Apple Mail, Thunderbird, Gmail app. Standard protocols, no lock-in." },
-  { title: "Same-day quotes", body: "Send a headcount, get all three options priced side by side the same working day." },
+  { title: "Quotes in 1 working day", body: `Send a headcount, get all three options priced side by side ${SLA.quote}.` },
   { title: "Retention and archive", body: "Configurable retention with recovery of deleted mail inside the window." },
   { title: "Mixed estates", body: "Run Workspace for sales and Anutech Mail for the rest. One invoice." },
 ] as const;

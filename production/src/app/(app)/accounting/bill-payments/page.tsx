@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { useMoneyOut } from "@/lib/queries/payments-made";
@@ -33,7 +34,8 @@ export default function PaymentsMadePage() {
   /* One filter, not seven tabs (2 Oct 2026, Pardeep: "isko ek hi me kar do") — the tab row ran
      off the screen after the third tab. In the URL, so a link can open one group. */
   const [tab, setTab] = useUrlChoice<Tab>("type", TABS, "all");
-  const [q, setQ] = React.useState("");
+  /* R-287: search in the URL next to ?type, so Back / reload keeps the filtered list. */
+  const [q, setQ] = useUrlState("q");
   /* Analytics card folds like the one on Payments Received; the choice is remembered per browser. */
   const [analyticsOpen, setAnalyticsOpen] = React.useState(true);
   React.useEffect(() => { try { setAnalyticsOpen(localStorage.getItem("ros.paymentsMade.analytics") !== "closed"); } catch { /* private mode */ } }, []);

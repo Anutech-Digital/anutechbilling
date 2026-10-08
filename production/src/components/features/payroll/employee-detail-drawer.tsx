@@ -46,7 +46,8 @@ export function EmployeeDetailDrawer({
   employee: Employee | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onEdit: () => void;
+  /** Left out for a read-only viewer (R-254: billing sees employees, cannot save them). */
+  onEdit?: () => void;
 }) {
   const { data: docs, isLoading } = useEmployeeDocuments(open ? employee?.id : null);
   const upload = useUploadEmployeeDocument();
@@ -86,7 +87,7 @@ export function EmployeeDetailDrawer({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-ink-2">Profile</p>
-                <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>
+                {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
               </div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-md border border-hairline bg-paper-2/30 p-3">
                 <Field label="Mobile" value={employee.phone} />

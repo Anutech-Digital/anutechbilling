@@ -1,10 +1,22 @@
 /**
  * GET|POST /api/cron/health-digest — production ke logs padho, kuch bigda ho to email karo.
  *
- * Schedule: roz 08:30 IST, Cloud Scheduler job `resellersos-health-digest` (GET — baaki 11
+ * R-220 (6 Oct 2026): ab ye OWNER KA MORNING DIGEST bhi hai — kal aaya paisa, overdue, aapki haan
+ *   (held AI actions + approval wale quotes), 30-din renewal risk (lib/digest/owner-digest.ts). Isliye
+ *   mail ROZ jaata hai, sirf ek owner ko; logs ka hissa usi mail ke neeche. Logs na padh paye
+ *   to bhi number jaate hain, galti ke saath. Schedule 08:00 IST chahiye — Cloud Scheduler
+ *   badalna manager ka kaam (card R-220 par likha).
+ *
+ * Schedule (purana): roz 08:30 IST, Cloud Scheduler job `resellersos-health-digest` (GET — baaki 11
  *   cron bhi GET hain, aur khaali body wala POST Google ke front-end se 411 kha jata hai).
  *   `?hours=` se khidki badal sakti hai, 1 se 168 tak.
  * Haath se: `curl -H "Authorization: Bearer <CRON_SECRET>" .../api/cron/health-digest`
+ *
+ * R-112 DRY RUN: `?dryRun=1` — owner ke 4 number aur mail ka subject/text/html LAUTATA hai,
+ *   bhejta KUCH nahi (na email, na logs padhna, na heartbeat). `&format=html` = seedha mail
+ *   jaisa page. Kaun dekh sakta hai: CRON_SECRET wala (pehla owner, jaise cron) YA app me
+ *   login owner (apne tenant ke number). Baaki sab 401/403. Preview me sirf business ka
+ *   hissa hai; asli mail me neeche logs wala hissa bhi judta hai.
  *
  * ─── YE KYUN HAI ────────────────────────────────────────────────────────────
  * 28 Aug 2026 ko production ke logs pehli baar khule aur ek ghante me teen bug nikle jo
@@ -14,7 +26,9 @@
  * `npm run health:prod` usi din bana, par use bhi koi chalata hai tab hi chalta hai. Ye wahi
  * chaar sawaal roz poochhta hai, bina kisi ke.
  *
- * ─── CHUP RAHNA DEFAULT HAI ─────────────────────────────────────────────────
+ * ─── CHUP RAHNA DEFAULT THA (R-220 se badla) ────────────────────────────────
+ * R-220 ke baad mail roz jaata hai kyunki usme owner ke kaam ke 4 number hain; logs wala
+ * hissa sab theek ho to ek line ("No server errors"). Purana tark neeche, itihaas ke liye:
  * Sab theek ho to ye kuch NAHI bhejta. Ek roz aane wali "sab theek hai" email do hafte me
  * padhi jaani band ho jaati hai, aur phir wo din bhi nahi padhi jaati jab usme kuch hota
  * hai. Isliye email sirf tab jab kuch kehne layak ho — aur response hamesha poora digest
@@ -40,7 +54,12 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { sendEmail } from "@/lib/email/send";
-import { buildDigest, digestText, type LogRow } from "@/lib/ops/health-digest";
+import { buildDigest, digestText, type Digest, type LogRow } from "@/lib/ops/health-digest";
+import { errorMessage } from "@/lib/ops/fetch-all";
+import { buildOwnerDigest, ownerDigestSubject, ownerDigestText, type OwnerDigest } from "@/lib/digest/owner-digest";
+import { loadOwnerDigestFacts, type DigestDb } from "@/lib/digest/owner-digest-facts";
+import { buildDigestEmail } from "@/lib/digest/owner-digest-html";
+import { getCurrentUser } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -102,12 +121,32 @@ export async function GET(req: Request) { return handle(req); }
 export async function POST(req: Request) { return handle(req); }
 
 async function handle(req: Request) {
+  const params = new URL(req.url).searchParams;
+  const dryRun = ["1", "true"].includes(params.get("dryRun") ?? "");
+  const asHtml = params.get("format") === "html";
+
   /* Fail closed, baaki cron ki tarah: ye route production ke logs padhta hai. */
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
   const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!timingSafeEqualStr(provided, expected)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const cronOk = !!expected && !!provided && timingSafeEqualStr(provided, expected);
+
+  /* R-112: preview bina secret ke sirf login OWNER ko — apne tenant ke number, apna pata. */
+  if (dryRun && !cronOk) {
+    const me = await getCurrentUser().catch(() => null);
+    if (!me) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    if (me.user.role !== "owner") return NextResponse.json({ error: "owner only" }, { status: 403 });
+    return preview(me.user.tenant_id, me.email, asHtml);
+  }
+
+  if (!expected) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
+  if (!cronOk) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (dryRun) {
+    const first = await firstOwner();
+    if (!first.tenantId) {
+      return NextResponse.json({ ok: false, dryRun: true, emailed: false, error: "no owner tenant" }, { status: 404 });
+    }
+    return preview(first.tenantId, first.to, asHtml);
   }
 
   const hours = Math.min(168, Math.max(1, Number(new URL(req.url).searchParams.get("hours")) || 24));
@@ -116,13 +155,98 @@ async function handle(req: Request) {
     `resource.type="cloud_run_revision" AND resource.labels.service_name="${SERVICE}" ` +
     `AND timestamp>="${since}"`;
 
-  const token = await metadataToken();
-  if (!token) {
-    return NextResponse.json(
-      { error: "no metadata token — this route only runs on Cloud Run" },
-      { status: 503 },
-    );
+  const logs = await readHealth(base, hours);
+
+  /* Kise bhejein: platform ka pehla owner (Pardeep) — sirf ek pata, aur usi ke tenant ke
+     number. Ye ops + owner ka mail hai, kisi customer ka nahi (R-220: pehle sirf Pardeep). */
+  const admin = createAdminClient();
+  const { to, tenantId } = await firstOwner();
+
+  /* R-220: owner ke 4 number. Padhne me galti ho to mail phir bhi jaata hai, galti ke saath —
+     "kuch nahi aaya" aur "padh hi nahi paye" ek jaise nahi dikhne chahiye. */
+  let owner_digest: OwnerDigest | null = null;
+  let businessError: string | null = null;
+  if (tenantId) {
+    try {
+      owner_digest = buildOwnerDigest(await loadOwnerDigestFacts(admin as unknown as DigestDb, tenantId, new Date()));
+    } catch (e) {
+      businessError = errorMessage(e);
+    }
+  } else {
+    businessError = "no owner tenant";
   }
+
+  if (!to) {
+    return NextResponse.json({ ok: true, emailed: false, reason: "no owner email", owner_digest, businessError, logs: logs.digest ?? logs.error });
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const parts: string[] = [];
+  if (owner_digest) parts.push(ownerDigestText(owner_digest, appUrl));
+  else parts.push(`The business numbers could not be read today: ${businessError}`);
+  parts.push("", "─── App health (production logs) ───");
+  if (logs.error) parts.push(`Logs were not read: ${logs.error}${logs.fix ? `\nFix: ${logs.fix}` : ""}`);
+  else if (logs.digest && !logs.digest.clean) parts.push(digestText(logs.digest, appUrl));
+  else parts.push(`No server errors in the last ${hours}h.`);
+
+  const worst = logs.digest ? (logs.digest.serverErrors[0] ?? logs.digest.refused[0] ?? logs.digest.appErrors[0]) : undefined;
+  const subject = owner_digest
+    ? ownerDigestSubject(owner_digest) + (worst ? " · app needs a look" : "")
+    : `ResellerOS — ${worst ? worst.what.slice(0, 60) : "morning digest (numbers missing)"}`;
+
+  const sent = await sendEmail({ to, subject, text: parts.join("\n") });
+
+  return NextResponse.json(reportCron("health-digest", {
+    ok: true, clean: logs.digest?.clean ?? false, emailed: sent.status === "sent", to,
+    owner_digest, digest: logs.digest ?? null,
+    logsError: logs.error ?? null,
+    businessError,
+    failed: (sent.status === "sent" ? 0 : 1) + (logs.error ? 1 : 0) + (businessError ? 1 : 0),
+    emailError: sent.errorMessage,
+  }));
+}
+
+/** Platform ka pehla owner (Pardeep) — cron ka ek hi pata aur tenant. */
+async function firstOwner(): Promise<{ to: string | null; tenantId: string | null }> {
+  const { data: owner } = await createAdminClient()
+    .from("users").select("email, tenant_id").eq("role", "owner")
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  return {
+    to: (owner as { email?: string } | null)?.email ?? null,
+    tenantId: (owner as { tenant_id?: string } | null)?.tenant_id ?? null,
+  };
+}
+
+/**
+ * R-112 dry run: wahi 4 number aur mail ka body jo 8 baje jaata — par sendEmail, logs aur
+ * heartbeat KUCH nahi chhoota. Sirf padhna (ek tenant, service-role, tenant_id filter).
+ */
+async function preview(tenantId: string, to: string | null, asHtml: boolean) {
+  let owner_digest: OwnerDigest;
+  try {
+    owner_digest = buildOwnerDigest(
+      await loadOwnerDigestFacts(createAdminClient() as unknown as DigestDb, tenantId, new Date()),
+    );
+  } catch (e) {
+    return NextResponse.json({ ok: false, dryRun: true, emailed: false, businessError: errorMessage(e) }, { status: 500 });
+  }
+  const email = buildDigestEmail(owner_digest, process.env.NEXT_PUBLIC_APP_URL ?? "");
+  if (asHtml) {
+    return new NextResponse(email.html, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  return NextResponse.json(
+    { ok: true, dryRun: true, emailed: false, to, owner_digest, email },
+    { headers: { "cache-control": "no-store" } },
+  );
+}
+
+/** Production ke logs — kabhi throw nahi karta; na padh paye to `error` (aur 403 par `fix`). */
+async function readHealth(base: string, hours: number): Promise<{ digest?: Digest; error?: string; fix?: string }> {
+  const token = await metadataToken();
+  if (!token) return { error: "no metadata token — logs are only readable on Cloud Run" };
 
   let http: Entry[] | "denied";
   let stderr: Entry[] | "denied";
@@ -132,43 +256,12 @@ async function handle(req: Request) {
       readLogs(token, `${base} AND logName:"stderr"`, 400),
     ]);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    return { error: (e as Error).message };
   }
 
   if (http === "denied" || stderr === "denied") {
     /* §24: kya hua, kyun, ab kya karein — aur wo "ab kya" ek command hai jo paste ho sake. */
-    return NextResponse.json({
-      error: "Cloud Logging refused this service account, so nothing could be read.",
-      fix: GRANT_CMD,
-    }, { status: 403 });
+    return { error: "Cloud Logging refused this service account, so nothing could be read.", fix: GRANT_CMD };
   }
-
-  const digest = buildDigest(hours, { http: toRows(http), stderr: toRows(stderr) });
-
-  if (digest.clean) return NextResponse.json({ ok: true, clean: true, hours });
-
-  /* Kise bhejein: is tenant ka owner. Ek hi tenant ka digest — ye ops ka mail hai, tenant
-     ka nahi, isliye platform ke owner par jata hai. */
-  const admin = createAdminClient();
-  const { data: owner } = await admin
-    .from("users").select("email").eq("role", "owner")
-    .order("created_at", { ascending: true }).limit(1).maybeSingle();
-  const to = (owner as { email?: string } | null)?.email ?? null;
-  if (!to) {
-    return NextResponse.json({ ok: true, clean: false, emailed: false, reason: "no owner email", digest });
-  }
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const worst = digest.serverErrors[0] ?? digest.refused[0] ?? digest.appErrors[0];
-  const sent = await sendEmail({
-    to,
-    subject: `ResellerOS — ${worst ? worst.what.slice(0, 60) : "kuch dekhne layak hai"}`,
-    text: digestText(digest, appUrl),
-  });
-
-  return NextResponse.json(reportCron("health-digest", {
-    ok: true, clean: false, emailed: sent.status === "sent", to, digest,
-    failed: sent.status === "sent" ? 0 : 1,
-    emailError: sent.errorMessage,
-  }));
+  return { digest: buildDigest(hours, { http: toRows(http), stderr: toRows(stderr) }) };
 }

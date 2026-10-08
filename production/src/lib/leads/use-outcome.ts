@@ -16,6 +16,7 @@
 "use client";
 
 import * as React from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useUpdateLead, useSetLeadJunk } from "@/lib/queries/leads";
@@ -23,6 +24,7 @@ import { useLogLeadActivity } from "@/lib/queries/lead-activities";
 import { applyOutcome, type LeadOutcome } from "./outcomes";
 import { useChangeLeadStage } from "./use-change-stage";
 import type { Lead } from "@/lib/supabase/database.types";
+import { leadQuoteHref } from "./lead-quote-href";
 
 type OutcomeTarget = Pick<
   Lead,
@@ -54,18 +56,10 @@ export function useLeadOutcome() {
         /* Carries the lead's context into the builder. The stage stays where it is until
            a quote row actually exists — see outcomes.ts.
 
-           These params match goSendQuote in (app)/leads/page.tsx exactly, including
-           contact / email / phone. An earlier version here passed only leadId, company,
-           plan and seats, so the same chip prefilled LESS depending on which surface it
-           was tapped from — the sort of difference nobody reports and everybody
-           re-types. */
-        const q = new URLSearchParams({ leadId: lead.id, company: lead.company });
-        if (lead.plan)          q.set("plan", lead.plan);
-        if (lead.seats != null) q.set("seats", String(lead.seats));
-        if (lead.contact_name)  q.set("contact", lead.contact_name);
-        if (lead.contact_email) q.set("email", lead.contact_email);
-        if (lead.contact_phone) q.set("phone", lead.contact_phone);
-        router.push(`/quotes/new?${q.toString()}`);
+           One link for every surface (lib/leads/lead-quote-href.ts), so the same chip
+           prefills the same everywhere. R-389 (F5): id + plan/seats only — the builder
+           loads company and contact from the lead, so no email or phone sits in the URL. */
+        router.push(leadQuoteHref(lead) as Route);
         return;
       }
 

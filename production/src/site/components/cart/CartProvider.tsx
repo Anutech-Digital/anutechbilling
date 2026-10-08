@@ -20,11 +20,20 @@ import { SEVERAL_HOSTING_PLANS_READY } from "@/lib/checkout/hosting-limit";
 const STORAGE_KEY = "anutech.cart.v1";
 const NO_DRAWER_ROUTES = ["/cart", "/checkout", "/done"];
 
+/**
+ * The typed coupon code as the SERVER judged it (R-329): the code table is not in the
+ * browser, so the cart asks POST /api/public/cart-coupon. "checking" while a reply is due
+ * (no discount shown yet); "error" when the check could not be made — the checkout still
+ * prices the code on the server, so nothing is charged wrongly.
+ */
+export type CouponStatus = "empty" | "checking" | "valid" | "invalid" | "error";
+
 interface CartApi {
   lines: CartLine[];
   totals: CartTotals;
   coupon: string;
   setCoupon: (code: string) => void;
+  couponStatus: CouponStatus;
   /** Adds (or bumps qty of an identical line) and opens the drawer. */
   add: (line: Omit<CartLine, "key" | "qty"> & { qty?: number }) => void;
   setQty: (key: string, delta: number) => void;
@@ -93,6 +102,10 @@ function save(lines: CartLine[]): void {
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [coupon, setCoupon] = useState("");
+  /* The last server answer, for the code it was about. A reply for an older code never
+     applies to the code now in the box. */
+  const [couponCheck, setCouponCheck] = useState<{ code: string; status: CouponStatus; ratePct: number }>({ code: "", status: "empty", ratePct: 0 });
+  const couponCode = coupon.trim().toUpperCase();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [justAdded, setJustAdded] = useState<string | null>(null);
   const pathname = usePathname();
@@ -165,7 +178,39 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setDrawerOpen(false);
   }, []);
 
-  const totals = useMemo(() => cartTotals(lines, coupon), [lines, coupon]);
+  useEffect(() => {
+    if (!couponCode) return;
+    const ctrl = new AbortController();
+    // Wait for the typing to pause — one check per code, not one per key.
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch("/api/public/cart-coupon", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ code: couponCode }),
+          signal: ctrl.signal,
+        });
+        const data = (await res.json().catch(() => null)) as { valid?: boolean; ratePct?: number } | null;
+        if (res.ok && data?.valid === true && typeof data.ratePct === "number") {
+          setCouponCheck({ code: couponCode, status: "valid", ratePct: data.ratePct });
+        } else if (res.ok && data?.valid === false) {
+          setCouponCheck({ code: couponCode, status: "invalid", ratePct: 0 });
+        } else {
+          setCouponCheck({ code: couponCode, status: "error", ratePct: 0 });
+        }
+      } catch {
+        if (!ctrl.signal.aborted) setCouponCheck({ code: couponCode, status: "error", ratePct: 0 });
+      }
+    }, 350);
+    return () => {
+      ctrl.abort();
+      window.clearTimeout(t);
+    };
+  }, [couponCode]);
+
+  const couponStatus: CouponStatus = !couponCode ? "empty" : couponCheck.code === couponCode ? couponCheck.status : "checking";
+  const couponRate = couponStatus === "valid" ? couponCheck.ratePct / 100 : 0;
+  const totals = useMemo(() => cartTotals(lines, couponRate), [lines, couponRate]);
 
   const api = useMemo<CartApi>(
     () => ({
@@ -173,6 +218,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       totals,
       coupon,
       setCoupon,
+      couponStatus,
       add,
       setQty,
       setYears,
@@ -182,7 +228,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       closeDrawer: () => setDrawerOpen(false),
       justAdded,
     }),
-    [lines, totals, coupon, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
+    [lines, totals, coupon, couponStatus, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
   );
 
   return (

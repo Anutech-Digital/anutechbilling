@@ -22,7 +22,7 @@ const strip = (f: string) =>
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
     .replace(/(^|\s)\/\/[^\n]*/gm, "$1");
 
-const PAGE   = "src/app/(app)/invoices/page.tsx";
+const PAGE   = "src/app/(app)/invoices/invoice-detail.tsx"; // R-086: the invoice detail, now its own page
 const DIALOG = "src/components/features/quotes/tax-invoice-dialog.tsx";
 const PDF    = "src/lib/pdf/InvoicePDF.tsx";
 

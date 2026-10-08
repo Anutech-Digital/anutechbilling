@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { cn, rupee } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -178,10 +179,10 @@ function LedgerPageInner() {
           {/* Customer / vendor. A segmented control, not a dropdown: it changes what the
               Dr and Cr columns MEAN, which is too consequential to hide in a menu. */}
           <div>
-            <label className="block text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
+            <p id="ledger-of-label" className="block text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               Ledger of
-            </label>
-            <div className="inline-flex rounded-md border border-hairline overflow-hidden">
+            </p>
+            <div role="group" aria-labelledby="ledger-of-label" className="inline-flex rounded-md border border-hairline overflow-hidden">
               {(["customer", "vendor"] as const).map((k) => (
                 <button
                   key={k}
@@ -284,6 +285,9 @@ function LedgerPageInner() {
               : "Every bill from this vendor and every payment against it, in date order. Purchase orders are not included — nothing is owed until the vendor actually bills you."
           }
         />
+      ) : entriesQ.isError && !statement ? (
+        /* R-270: a failed fetch used to leave the skeleton spinning forever. */
+        <LoadError what="Statement" onRetry={() => { void entriesQ.refetch(); }} />
       ) : entriesQ.isLoading || !statement ? (
         <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
       ) : (

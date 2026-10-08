@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paymentDomainDefault } from "./payment-domain";
+import { paymentDomainDefault, pickDomainStampTarget } from "./payment-domain";
 
 describe("the report: the domain did not pre-fill", () => {
   it("uses the domain on the quote", () => {
@@ -52,5 +52,59 @@ describe("a value that exists without meaning anything", () => {
        would look like a deliberate blank rather than an absent value. */
     expect(paymentDomainDefault({})).toBeUndefined();
     expect(paymentDomainDefault({ quoteDomain: null, customerDomain: null, leadDomain: "  " })).toBeUndefined();
+  });
+});
+
+describe("R-379 (j): a domain already on a subscription", () => {
+  it("customer row has no domain, but their subscription does → prefilled (Q-FBB9-27-0011)", () => {
+    expect(paymentDomainDefault({
+      quoteDomain: null, customerDomain: null,
+      customerSubscriptionDomains: [null, "testsharmatraders.in"],
+    })).toBe("testsharmatraders.in");
+  });
+  it("this quote's own subscription (credit activation) beats the customer's general domain", () => {
+    expect(paymentDomainDefault({
+      customerDomain: "acme.com", quoteSubscriptionDomains: ["acme.in"],
+    })).toBe("acme.in");
+  });
+  it("the quote's own domain still wins, and the lead stays last", () => {
+    expect(paymentDomainDefault({ quoteDomain: "q.in", quoteSubscriptionDomains: ["s.in"] })).toBe("q.in");
+    expect(paymentDomainDefault({ leadDomain: "lead.in", customerSubscriptionDomains: ["  "] })).toBe("lead.in");
+  });
+});
+
+describe("R-389 (F8): the domain lands on ONE subscription of the quote", () => {
+  /* Q-FBB9-27-0013: Workspace + Standard Support, both created on the first payment. */
+  const kapoor = [
+    { id: "sup", vendor: "support", domain: null },
+    { id: "gw", vendor: "google", domain: null },
+  ];
+
+  it("picks the Workspace licence, not the support plan", () => {
+    expect(pickDomainStampTarget(kapoor, "testkapoorexports.in")).toBe("gw");
+  });
+
+  it("never targets more than one row (the unique index refused the old all-rows update)", () => {
+    const id = pickDomainStampTarget(kapoor, "testkapoorexports.in");
+    expect(typeof id).toBe("string");
+  });
+
+  it("does nothing when a subscription of this quote already has the domain (second payment)", () => {
+    const after = [{ id: "sup", vendor: "support", domain: null }, { id: "gw", vendor: "google", domain: "TestKapoorExports.in" }];
+    expect(pickDomainStampTarget(after, "testkapoorexports.in")).toBeNull();
+  });
+
+  it("single subscription quote (Q-FBB9-27-0010) still gets it", () => {
+    expect(pickDomainStampTarget([{ id: "a", vendor: "google", domain: null }], "x.in")).toBe("a");
+  });
+
+  it("falls back to the first blank row when none is a licence", () => {
+    expect(pickDomainStampTarget([{ id: "h", vendor: "hosting" }, { id: "o", vendor: "other" }], "x.in")).toBe("h");
+  });
+
+  it("blank domain or no subscriptions → nothing", () => {
+    expect(pickDomainStampTarget(kapoor, "  ")).toBeNull();
+    expect(pickDomainStampTarget([], "x.in")).toBeNull();
+    expect(pickDomainStampTarget([{ id: "a", vendor: "google", domain: "other.in" }], "x.in")).toBeNull();
   });
 });

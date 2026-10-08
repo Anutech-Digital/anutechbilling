@@ -34,16 +34,11 @@ import {
 } from "@/components/ui/bulk-action-bar";
 import { cn } from "@/lib/utils";
 import type { Lead } from "@/lib/supabase/database.types";
+import { STAGE_META } from "@/lib/leads/stage-meta";
 
-const LEAD_STAGES: { id: Lead["stage"]; label: string; dot: string }[] = [
-  { id: "new",     label: "New",          dot: "bg-slate"   },
-  { id: "contact", label: "Contacted",    dot: "bg-amber"   },
-  { id: "demo",    label: "Demo Done",    dot: "bg-indigo"  },
-  { id: "trial",   label: "Trial Active", dot: "bg-rose"    },
-  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo"  },
-  { id: "won",     label: "Won",          dot: "bg-emerald" },
-  { id: "lost",    label: "Lost",         dot: "bg-ink-3"   },
-];
+/* R-290: the stage menu reads the one funnel-ordered table (quote → demo → trial) with Lost
+   at the end — this file used to keep its own copy in demo → trial → quote order. */
+const LEAD_STAGES = STAGE_META;
 
 interface LeadsBulkBarProps {
   count: number;

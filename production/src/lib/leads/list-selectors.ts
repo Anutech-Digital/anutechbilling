@@ -15,6 +15,8 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { looksLikeJunk } from "@/lib/leads/junk";
+import { leadMatchesSearch } from "@/lib/leads/lead-search";
+import { canonicalSource } from "@/lib/leads/lead-sources";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { isHotLead } from "@/lib/leads/heat";
 import { staleDeals } from "@/lib/leads/velocity";
@@ -80,6 +82,10 @@ export interface SearchInput {
    * pick one person's.)
    */
   ownerFilter?: readonly string[];
+  /** R-392: Source filter — canonical source keys (lead-sources.ts), any-of. Empty = all. */
+  sourceFilter?: readonly string[];
+  /** R-392: owner id → name, so the search box finds a lead by the assigned person. */
+  ownerNames?: ReadonlyMap<string, string>;
 }
 
 /** The ownerFilter value that means "no owner". */
@@ -99,17 +105,16 @@ export function searchLeads<T extends LeadListRow>(workspaceLeads: readonly T[],
   list = smartView === "junk"
     ? list.filter((l) => l.is_junk || looksLikeJunk(l).suspect)
     : list.filter((l) => !l.is_junk);
-  // 1. Text search across company / contact name / email / phone / plan
+  // 1. Text search across company / contact name / email / phone / plan —
+  //    lib/leads/lead-search.ts (R-221: words may come from different fields; phone by digits).
   if (search.trim()) {
-    const s = search.toLowerCase();
-    list = list.filter(
-      (l) =>
-        l.company.toLowerCase().includes(s) ||
-        (l.contact_name?.toLowerCase().includes(s) ?? false) ||
-        (l.contact_email?.toLowerCase().includes(s) ?? false) ||
-        (l.contact_phone?.toLowerCase().includes(s) ?? false) ||
-        (l.plan?.toLowerCase().includes(s) ?? false)
-    );
+    const names = input.ownerNames;
+    list = list.filter((l) => leadMatchesSearch(l, search, l.owner_id ? names?.get(l.owner_id) : null));
+  }
+  // 1b. Source (R-392, any-of over canonical keys). Empty = no constraint.
+  const sources = input.sourceFilter ?? [];
+  if (sources.length > 0) {
+    list = list.filter((l) => sources.includes(canonicalSource(l.source)));
   }
   // 2. Stage filter (any-of). Empty array = no constraint.
   if (stageFilter.length > 0) {

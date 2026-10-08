@@ -94,6 +94,12 @@ export function productionHostReason(urlOrHost) {
   if (host.includes("resellsubsos-prod")) return `${host} belongs to the resellsubsos-prod project`;
   // Production Cloud Run service is "resellersos" in project 490252291080. The test
   // site is "reselleros-test-1027476185726" (different service and project), so it passes.
+  // R-058 (7 Oct 2026): the STAGING service "resellersos-staging" (docs/STAGING.md — its
+  // own Cloud SQL `resellersos-staging-db`, a wiped clone) shares the "resellersos-" prefix,
+  // so the rule below refused it as production and the CI job could never target staging.
+  // Allowed by its exact service-name prefix, checked BEFORE the production rule; the bare
+  // production hosts (resellersos-<hash>-…, resellersos-490252291080.…) are still refused.
+  if (host.endsWith(".run.app") && /^resellersos-staging-/.test(host)) return null;
   if (host.endsWith(".run.app") && (/^resellersos-/.test(host) || host.includes("490252291080"))) {
     return `${host} is the production Cloud Run service`;
   }

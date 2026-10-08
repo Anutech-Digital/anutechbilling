@@ -216,6 +216,31 @@ describe("coupon — charged exactly as the cart page shows it", () => {
     expect(q.amount).toBe(Math.round(1350 * 1.18)); // 1593
   });
 
+  /* R-329 (7 Oct 2026): domain + hosting + code. The coupon is for the FIRST payment only:
+     the hosting line is charged 10% less, but carries renewal_rate = list, which
+     record_payment files as the subscription's mrr (migration 20261007050000) — so the
+     renewal is at list. The domain is charged in full. The invoice sums the charged rates. */
+  it("domain + hosting + ANUTECH10: first payment off hosting only, renewal at list", async () => {
+    const res = await POST(req({ coupon: "ANUTECH10", address, domain: "acme.in", lines: [
+      { sku: "hosting:standard", cycle: "monthly", qty: 1 },
+      { sku: "domain:in", label: "acme.in", domain: "acme.in", qty: 1 },
+    ] }));
+    expect(res.status).toBe(200);
+    const q = quote()!;
+    const items = q.line_items as { rate: number; list_rate?: number; renewal_rate?: number; commitment?: string; domain?: string; hostingPlan?: string }[];
+    const hosting = items.find((i) => i.hostingPlan)!;
+    const dom = items.find((i) => i.domain && !i.hostingPlan)!;
+    expect(hosting.commitment).toBe("monthly");
+    expect(hosting.list_rate).toBeGreaterThan(0);
+    expect(hosting.renewal_rate).toBe(hosting.list_rate);
+    expect(hosting.rate).toBe(Math.round(hosting.list_rate! * 0.9));
+    expect(dom.rate).toBe(749);
+    expect(dom.renewal_rate).toBeUndefined();
+    expect(q.discount_pct).toBe(0);
+    expect(q.subtotal).toBe(hosting.rate + 749);
+    expect(q.amount).toBe(Math.round((hosting.rate + 749) * 1.18));
+  });
+
   it("an unknown code counts for nothing, as on the cart page", async () => {
     await POST(req({ coupon: "FREE100", domain: "x.in", lines: [{ sku: "hosting:standard", cycle: "yearly", qty: 1 }] }));
     expect(quote()!.discount_pct).toBe(0);

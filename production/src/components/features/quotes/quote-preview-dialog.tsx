@@ -17,10 +17,13 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
+import { includedSupportLine } from "@/lib/pdf/quote-support-line";
+import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -54,6 +57,9 @@ interface Props {
   tax:           number;
   total:         number;
   interState:    boolean;
+  /** R-376 (f): "Haryana (06) · IGST" — the buyer's state by name and code
+   *  (lib/quotes/quote-place-of-supply). Omitted → the old "Inter-state (IGST applies)". */
+  placeOfSupply?: string | null;
   /** Export supply (recipient outside India) → zero-rated under LUT, no GST. */
   isExport?:     boolean;
   /** Billing currency + rate — foreign → the whole quote shows in that currency. */
@@ -89,6 +95,7 @@ export function QuotePreviewDialog({
   tax,
   total,
   interState,
+  placeOfSupply,
   isExport = false,
   currency,
   exchangeRate,
@@ -109,6 +116,8 @@ export function QuotePreviewDialog({
   const billingN     = cycleInvoicesPerYear(effectiveCycle);
   const billingUnit  = cycleUnitLabel(effectiveCycle);
   const perInvoice   = billingN > 1;
+  /* R-369: the PDF's divisor — a flex quote's stored totals are already one MONTH. */
+  const totalsDiv    = perInvoiceDivisor(billingN, firstCommitment);
   // Foreign customer → show the whole quote in their currency (USD…); books stay ₹,
   // so the INR equivalent is printed as a GST reference near the total.
   const isForeign    = isForeignCurrency(currency);
@@ -116,7 +125,12 @@ export function QuotePreviewDialog({
   const money        = (n: number) =>
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
   const fmt          = (n: number) =>
-    perInvoice ? `${money(Math.round(n / billingN))}${billingUnit}` : money(n);
+    perInvoice ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
+
+  // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
+  const intra        = splitIntraStateTax(tax);
+  // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
+  const includedSupport = includedSupportLine(lineItems);
 
   const handlePrint = () => {
     window.print();
@@ -212,7 +226,7 @@ export function QuotePreviewDialog({
               <p className="text-sm">
                 {isExport
                   ? "Export · zero-rated under LUT (no GST)"
-                  : interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)"}
+                  : placeOfSupply || (interState ? "Inter-state (IGST applies)" : "Intra-state (CGST + SGST)")}
               </p>
               {lineItems.length > 0 && firstCommitment && (
                 <>
@@ -252,10 +266,12 @@ export function QuotePreviewDialog({
               ) : (
                 lineItems.map((line) => {
                   // Frequency is quote-level now (0161) — every line shares it.
+                  /* R-369: a flex line's rate is already one month; only annual lines divide. */
                   const lineN    = billingN;
+                  const lineDiv  = perInvoiceDivisor(billingN, line.commitment);
                   const lineUnit = billingUnit;
                   const showPer  = lineN > 1;
-                  const rate     = showPer ? Math.round(line.rate / lineN) : line.rate;
+                  const rate     = showPer ? Math.round(line.rate / lineDiv) : line.rate;
                   const amount   = line.qty * rate;
                   return (
                     <tr key={line.id} className="border-b border-hairline">
@@ -281,7 +297,7 @@ export function QuotePreviewDialog({
                         <div>{money(amount)}{showPer ? lineUnit : ""}</div>
                         {showPer && (
                           <div className="text-3xs font-normal text-ink-3">
-                            = {money(line.qty * line.rate)}/yr
+                            = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
                           </div>
                         )}
                       </td>
@@ -314,8 +330,8 @@ export function QuotePreviewDialog({
                   <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />
                 ) : (
                   <>
-                    <Row label={`CGST (${taxRate / 2}%)`} value={fmt(Math.round(tax / 2))} />
-                    <Row label={`SGST (${taxRate / 2}%)`} value={fmt(tax - Math.round(tax / 2))} />
+                    <Row label={`CGST (${taxRate / 2}%)`} value={fmt(intra.cgst)} />
+                    <Row label={`SGST (${taxRate / 2}%)`} value={fmt(intra.sgst)} />
                   </>
                 )}
                 <div className="border-t-2 border-ink pt-2 mt-2">
@@ -325,14 +341,14 @@ export function QuotePreviewDialog({
                     </span>
                     <span className="font-serif text-2xl tabular-nums">
                       {perInvoice
-                        ? `${money(Math.round(total / billingN))}${billingUnit}`
+                        ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}
                     </span>
                   </div>
                   {perInvoice && (
                     <div className="flex justify-between items-baseline mt-1.5 text-ink-3">
                       <span className="text-2xs">Annual contract value</span>
-                      <span className="text-sm tabular-nums">{money(total)}/yr</span>
+                      <span className="text-sm tabular-nums">{money(annualContractValue(total, billingN, firstCommitment))}/yr</span>
                     </div>
                   )}
                   {isForeign && (
@@ -343,6 +359,14 @@ export function QuotePreviewDialog({
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Default free support, included (R-367) */}
+          {includedSupport && (
+            <div className="mb-6 pt-4 border-t border-hairline" data-testid="included-support">
+              <p className="text-sm text-ink-2">{includedSupport.text}</p>
+              <p className="text-2xs text-ink-3">{includedSupport.detail}</p>
             </div>
           )}
 

@@ -15,12 +15,15 @@
  * the GST tax invoice follows when it is issued; hosting logins arrive in a separate
  * email; a migration starts when the customer replies. It no longer promises a WhatsApp
  * call from a "migration desk", NEFT/RTGS activation (checkout takes Razorpay only), or a
- * client area at /dashboard (that is the staff app; customers sign in at /login).
+ * client area at /dashboard (that is the staff app).
+ * R-233 (6 Oct 2026): /login is the ResellerOS sign-in too — the button now opens the
+ * hosting & domains customer panel (CLIENT_AREA_URL, which falls back to /login if unset).
  */
 import Link from "@/site/components/ui/SiteLink";
 import { useEffect, useState, type ReactNode } from "react";
 import { CLIENT_AREA_URL, COMPANY, WHATSAPP_READY, WHATSAPP_URL } from "@/site/lib/config";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
+import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 
 type Tone = "success" | "warn";
 interface Step { title: string; body: ReactNode; done?: boolean }
@@ -238,18 +241,15 @@ export default function DonePage() {
         ) : (
           <div style={{ fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>Your order number is in the confirmation email.</div>
         )}
-        {/* A direct way into the Customer Portal once it is all set up (7 Oct 2026, Pawan) — the
-            same address as the trial's "Your hosting is live" page, not the shop's /login. */}
-        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }}>
-          <div className="mono-label" style={{ color: "var(--text-muted)", marginBottom: 8 }}>Customer Portal</div>
-          <div style={{ fontSize: 14, lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
-            Manage your hosting, domains and invoices there. First time? Sign in with the one-time password in the &ldquo;Your Customer Portal is ready&rdquo; email, then choose your own.
-          </div>
-          <a href={CLIENT_AREA_URL} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>Log in to the Customer Portal</a>
-        </div>
+        <AfterYouPay style={{ borderTop: "1px solid var(--border-light)", paddingTop: 18, marginTop: 18 }} />
         <HelpBlock subject={orderNo ? `My order ${orderNo}` : "My order"} />
       </>}
       actions={<>
+        <Link href={CLIENT_AREA_URL as never} className="btn btn-primary">Customer login (hosting &amp; domains)</Link>
+        {/* The one-time password (7 Oct 2026): a new account's first sign-in uses it, then asks for their own. */}
+        <p className="meta" style={{ margin: "-2px 0 4px", fontSize: 13, lineHeight: 1.5 }}>
+          First time? Sign in with the one-time password in the &ldquo;Your Customer Portal is ready&rdquo; email, then choose your own.
+        </p>
         <Link href="/" className="btn btn-outline">Back to home</Link>
       </>}
     />

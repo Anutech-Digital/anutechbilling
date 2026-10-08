@@ -22,17 +22,22 @@ import { z } from "zod";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Icon } from "@/components/ui/icon";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
-import { GST_STATE_OPTIONS, stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { CONTACT_FOR_PRICING, isPublicPriceHiddenTier } from "@/lib/catalog/public-price-policy";
+import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
+import { tierAnnualPrice, annualTotals } from "./tier-price";
+import { buyNowSchema,buyerCompany, BUY_ANNUAL_NOTE, type BuyNowForm } from "./buy-now-schema";
+import { normalizeGstinInput } from "@/site/lib/checkout-details";
 import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database.types";
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
-import { COMPANY, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -181,9 +186,7 @@ function calcForTier(tier: Tier, seats: number): PriceCalc {
 
   // Promo override (Standard's first-20 discount) when the tier carries one.
   const baseRate  = tier.promoPrice ?? tier.annualPrice;
-  const annual    = seats * baseRate * 12;
-  const gst       = Math.round(annual * 0.18);
-  const total     = annual + gst;
+  const { annual, gst, total } = annualTotals(seats, baseRate);   // R-276: the server's sum
   const perUserPm = seats > 0 ? Math.round(total / (seats * 12)) : 0;
 
   // Savings = (regular rate − promo rate) × seats × 12 × 1.18, if promo applies.
@@ -362,7 +365,12 @@ function buildTiers(catalog: CatalogItem[]): Tier[] {
   return catalog.map((item) => {
     const slug    = slugFromName(item.name);
     const preset  = TIER_PRESETS[slug];
-    const annual  = item.prices?.annual?.msrp  ?? item.msrp;
+    /* R-328 (7 Oct 2026, Pardeep): Business Plus has no price on the website — like Google's
+       own page. Its card says "Contact us for pricing" and goes to the quote form; the server
+       page already sends it with no figures and the checkout route refuses it. */
+    const onRequest = slug === "enterprise" || isPublicPriceHiddenTier(slug);
+    /* R-276: same floor as the server's order amount, so a stale row is never shown below list. */
+    const annual  = tierAnnualPrice(slug, item.prices?.annual?.msrp ?? item.msrp);
     /* R-157: used to multiply the annual rate by 1.25 when no monthly existed — an invented rate. Only a real
        flexible price above the annual one is shown (a lower one is a stale catalogue row). */
     const flex = item.prices?.monthly?.msrp ?? null;
@@ -371,8 +379,8 @@ function buildTiers(catalog: CatalogItem[]): Tier[] {
       id:           slug,
       catalogId:    item.id,
       name:         item.name.replace(/^Google Workspace\s*/i, "") || item.name,
-      monthlyPrice: slug === "enterprise" ? null : monthly,
-      annualPrice:  slug === "enterprise" ? null : annual,
+      monthlyPrice: onRequest ? null : monthly,
+      annualPrice:  onRequest ? null : annual,
       maxUsers:     slug === "enterprise" ? null : 300,
       isPopular:    preset.isPopular,
       cta:          slug === "enterprise" ? "Contact sales" : "Get a quote",
@@ -576,9 +584,9 @@ interface TimelineStep { time: string; title: string; body: string; }
 const POST_PURCHASE_TIMELINE: TimelineStep[] = [
   { time: "0 min",  title: "You pay via Razorpay",         body: "UPI, NEFT, card, net-banking — your choice."                                       },
   { time: "Right away", title: "GST invoice in your inbox", body: "The order confirmation email carries your GST tax invoice."                       },
-  { time: "Same day", title: "Onboarding call",            body: "We call or WhatsApp to confirm domain, MX records, and migration source."           },
-  { time: "Same day", title: "Domain verified",            body: "DNS configured, admin console handed over with your owner credentials."           },
-  { time: "24 hours", title: "Team emails live",           body: "Custom @yourcompany.com working. Old mail still migrating in background."         },
+  { time: SLA.short.firstReply, title: "Onboarding call",     body: `We call or WhatsApp ${SLA.firstReply} to confirm domain, MX records, and migration source.` },
+  { time: "Your DNS step", title: "Domain verified",       body: "You add the DNS record we send; we verify it and hand over the admin console."     },
+  { time: SLA.short.workspaceLive, title: "Team emails live", body: `Custom @yourcompany.com working ${SLA.workspaceLive}. Old mail keeps migrating in the background.` },
 ];
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1444,10 +1452,12 @@ export function BuyWorkspaceClient({
 
               {/* Tier picker — segmented control */}
               <div className="mb-4">
-                <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+                <p id="plan-picker-label" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                   Which plan?
-                </label>
+                </p>
                 <div
+                  role="group"
+                  aria-labelledby="plan-picker-label"
                   className="grid gap-1.5 p-1 rounded-lg bg-paper border border-hairline"
                   style={{ gridTemplateColumns: `repeat(${TIERS.length}, minmax(0, 1fr))` }}
                 >
@@ -1471,7 +1481,7 @@ export function BuyWorkspaceClient({
                         <div className={`text-3xs mt-0.5 ${isActive ? "text-paper/80" : "text-ink-3"}`}>
                           {t.annualPrice
                             ? `₹${(t.promoPrice ?? t.annualPrice).toLocaleString("en-IN")}/user · excl GST`
-                            : "Custom"}
+                            : isPublicPriceHiddenTier(t.id) ? "On request" : "Custom"}
                         </div>
                       </button>
                     );
@@ -1683,12 +1693,12 @@ export function BuyWorkspaceClient({
                   <div className="font-serif text-2xl text-ink">{stdPrice}</div>
                 </div>
                 <ul className="space-y-2.5">
-                  <CompareBullet positive>Hand-held migration from M365/Zoho (zero downtime)</CompareBullet>
+                  <CompareBullet positive>Hand-held migration from M365/Zoho, planned to avoid downtime</CompareBullet>
                   <CompareBullet positive>Hindi + English phone support, {COMPANY.hours}</CompareBullet>
                   <CompareBullet positive>Dedicated account manager (one human, not a ticket queue)</CompareBullet>
                   <CompareBullet positive>GST invoice with HSN code (CGST + SGST or IGST)</CompareBullet>
                   <CompareBullet positive>Razorpay · UPI · NEFT · card · net-banking</CompareBullet>
-                  <CompareBullet positive>Same-day domain verification + DNS setup</CompareBullet>
+                  <CompareBullet positive>Domain verification + DNS setup done by us</CompareBullet>
                   <CompareBullet positive>Annual upfront with single invoice</CompareBullet>
                   <CompareBullet positive>Direct Google escalation via Premier Partner status</CompareBullet>
                 </ul>
@@ -1845,8 +1855,8 @@ export function BuyWorkspaceClient({
           />
           <HowItWorksStep
             number={3}
-            title="Live in 24 hours"
-            body="DNS verification, MX records, mailbox provisioning, and migration from your old provider — all hands-on by us."
+            title={`Live in ${SLA.short.workspaceLive}`}
+            body={`Live ${SLA.workspaceLive}. MX records, mailbox setup and migration from your old provider — all hands-on by us.`}
           />
         </div>
       </section>
@@ -1921,7 +1931,7 @@ export function BuyWorkspaceClient({
             />
             <FaqItem
               q="What if I'm switching from Microsoft 365 / Zoho?"
-              a="We do the migration for you — emails, contacts, calendars, drive files — free, for any number of users. Most migrations finish in 24-48 hours with zero downtime."
+              a={`We do the migration for you — emails, contacts, calendars, drive files — free, for any number of users. How long: ${SLA.migration}.`}
             />
             <FaqItem
               q="Annual or monthly — what's better?"
@@ -1944,7 +1954,7 @@ export function BuyWorkspaceClient({
         <Card className="p-8 text-center">
           <h2 className="font-serif text-3xl mb-3">Ready to switch?</h2>
           <p className="text-base text-ink-3 mb-6 leading-relaxed">
-            Tell us how many users and we'll send a GST quote the same working day.
+            Tell us how many users and we&apos;ll send a GST quote {SLA.quote}.
           </p>
           <Button
             variant="primary"
@@ -2111,8 +2121,17 @@ function PricingCard({
           </div>
         ) : (
           <div className="mb-4">
-            <div className="font-serif text-3xl text-ink">Let&apos;s talk</div>
-            <div className="text-xs text-ink-3 mt-1">Custom pricing for 300+ users</div>
+            {isPublicPriceHiddenTier(tier.id) ? (
+              <>
+                <div className="font-serif text-3xl text-ink">{CONTACT_FOR_PRICING}</div>
+                <div className="text-xs text-ink-3 mt-1">We send the price for your team {SLA.quote}</div>
+              </>
+            ) : (
+              <>
+                <div className="font-serif text-3xl text-ink">Let&apos;s talk</div>
+                <div className="text-xs text-ink-3 mt-1">Custom pricing for 300+ users</div>
+              </>
+            )}
           </div>
         )}
 
@@ -2393,18 +2412,19 @@ function TrialDialog({
       toast.error(json.error ?? "Could not start trial. Please try again.");
       return;
     }
-    toast.success("Trial requested! Pardeep will WhatsApp you within 4 hours.");
+    toast.success(`Trial requested! Pardeep will WhatsApp you ${SLA.firstReply}.`);
     onClose();
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-center p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-md w-full max-h-[90vh] overflow-y-auto border-2 border-emerald/30"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: on ui/dialog (Radix) — focus stays inside, Esc closes, focus returns to the
+       button that opened it. The hand-made overlay let Tab walk out into the page behind. */
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!w-[min(28rem,calc(100vw-2rem))] border-2 border-emerald/30"
       >
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
@@ -2413,9 +2433,9 @@ function TrialDialog({
                 <Icon name="rocket" size={11} />
                 14-day free trial · no card needed
               </div>
-              <h2 className="font-serif text-2xl leading-tight">
+              <DialogTitle className="font-serif text-2xl leading-tight">
                 Try <GWInline /> free
-              </h2>
+              </DialogTitle>
               <p className="text-sm text-ink-3 mt-1">
                 <span className="font-medium">{tier.name}</span> · {initialSeats} {initialSeats === 1 ? "user" : "users"}
               </p>
@@ -2431,9 +2451,9 @@ function TrialDialog({
 
           {/* Trial promise band */}
           <div className="mb-5 p-3 rounded-lg bg-emerald-soft/40 border border-emerald/20 text-xs text-ink-2 leading-relaxed">
-            <b className="text-ink">Within 4 hours:</b> Pardeep WhatsApps you to verify
+            <b className="text-ink">First call:</b> Pardeep WhatsApps you {SLA.firstReply} to verify
             domain. <br />
-            <b className="text-ink">Within 24 hours:</b> Your team is on Workspace.
+            <b className="text-ink">Live:</b> Your team is on Workspace {SLA.workspaceLive}.
             <br />
             <b className="text-ink">Day 12:</b> We check in re: convert / extend / cancel.
           </div>
@@ -2488,8 +2508,8 @@ function TrialDialog({
             </p>
           </form>
         </div>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2527,18 +2547,18 @@ function EnquiryDialog({
       toast.error(json.error ?? "Could not submit enquiry. Please try again.");
       return;
     }
-    toast.success("Got it! We'll call you within 30 minutes.");
+    toast.success(`Got it! We'll call you ${SLA.firstReply}.`);
     onClose();
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-center p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-md w-full max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: ui/dialog — focus trap, Esc, focus return (see TrialDialog). */
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!w-[min(28rem,calc(100vw-2rem))]"
       >
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
@@ -2546,9 +2566,9 @@ function EnquiryDialog({
               <div className="text-3xs uppercase tracking-wider text-ink-3 mb-1 font-semibold">
                 Quote request
               </div>
-              <h2 className="font-serif text-2xl leading-tight">
+              <DialogTitle className="font-serif text-2xl leading-tight">
                 <GWInline />
-              </h2>
+              </DialogTitle>
               <p className="text-sm text-ink-3 mt-1">
                 <span className="font-medium">{tier.name}</span> · {billing}
               </p>
@@ -2617,12 +2637,12 @@ function EnquiryDialog({
             </Button>
 
             <p className="text-2xs text-ink-3 text-center leading-relaxed">
-              We'll call within 30 minutes (Mon–Sat, 9am–7pm IST). No spam.
+              We'll call {SLA.firstReply} ({SLA.hours}). No spam.
             </p>
           </form>
         </div>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2702,24 +2722,7 @@ function loadRazorpayCheckout(): Promise<RazorpayCtor> {
 //   4. On success → success toast (webhook handles the DB flip + emails)
 //   5. On failure / dismiss → error toast, can retry
 // ──────────────────────────────────────────────────────────────────────
-const buyNowSchema = z.object({
-  fullName:    z.string().min(2, "Your name"),
-  companyName: z.string().min(2, "Company name"),
-  email:       z.string().email("Valid work email"),
-  phone:       z.string().min(10, "10-digit phone"),
-  seats:       z.coerce.number().int().min(1).max(10000),
-  domain:      z.string().min(3, "Your business domain (e.g. acme.in)"),
-  tierId:      z.string(),
-  gstin:       z.string().optional(),
-  couponCode:  z.string().optional(),
-  stateCode:   z.string().optional(),
-}).superRefine((v, ctx) => {
-  /* R-173: the GST invoice needs a place of supply; a valid GSTIN carries one. */
-  if (!v.stateCode && !stateCodeFromGstin(v.gstin)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["stateCode"], message: "Select your state — the GST invoice needs it" });
-  }
-});
-type BuyNowForm = z.infer<typeof buyNowSchema>;
+// Schema lives in ./buy-now-schema (R-226: tested on its own).
 
 /**
  * Coupon validation state — owned by the dialog. Updated each time the
@@ -2798,6 +2801,8 @@ function BuyNowDialog({
   const [couponApplied,  setCouponApplied]  = React.useState<AppliedCoupon | null>(null);
   const [couponError,    setCouponError]    = React.useState<string | null>(null);
   const [validatingCoupon, setValidatingCoupon] = React.useState(false);
+  /* R-023: true while Razorpay's window is open — the dialog steps aside (see the return). */
+  const [rzpOpen, setRzpOpen] = React.useState(false);
 
   // Pre-promo subtotal + discount line — needed for the breakdown card.
   // (calc.annual is the post-promo pre-GST subtotal, calc.savings is the
@@ -2927,6 +2932,7 @@ function BuyNowDialog({
     // directly instead of creating a Razorpay Order.
     const payload = {
       ...values,
+      companyName: buyerCompany(values),   // R-232: optional; blank → buyer name
       tierId,
       seats,
       simulate:   isSimulation,
@@ -2993,6 +2999,7 @@ function BuyNowDialog({
       },
       modal: {
         ondismiss: () => {
+          setRzpOpen(false);
           toast.message("Payment cancelled. We've saved your quote — Pardeep will follow up.");
         },
         escape: true,
@@ -3001,6 +3008,7 @@ function BuyNowDialog({
     rzp.on("payment.failed", (resp) => {
       toast.error(`Payment failed: ${resp.error?.description ?? "Please retry or use WhatsApp."}`);
     });
+    setRzpOpen(true);
     rzp.open();
   }
 
@@ -3009,13 +3017,17 @@ function BuyNowDialog({
   const SEAT_PRESETS = [5, 10, 25, 50, 100, 250];
 
   return (
-    <div
-      className="fixed inset-0 bg-ink/50 z-50 grid place-items-start lg:place-items-center p-2 sm:p-4 backdrop-blur-sm overflow-y-auto"
-      onClick={onClose}
-    >
-      <Card
-        className="max-w-4xl w-full my-4 lg:my-0 border-2 border-amber/30 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+    /* R-023: ui/dialog — focus trap, Esc, focus return. While Razorpay's own window is up
+       this dialog steps aside (rzpOpen): a Radix modal blocks pointer events and focus
+       outside itself, and Razorpay's window lives outside it — the visitor could not have
+       typed a UPI id. Form values survive (react-hook-form keeps them; tier, seats and
+       coupon are this component's state), so dismissing Razorpay brings the form back filled. */
+    <Dialog open={!rzpOpen} onOpenChange={(o) => { if (!o && !rzpOpen) onClose(); }}>
+      <DialogContent
+        hideClose
+        resizable={false}
+        aria-describedby={undefined}
+        className="gap-0 p-0 md:p-0 md:!max-w-4xl md:!w-[min(56rem,calc(100vw-2rem))] border-2 border-amber/30 shadow-2xl"
       >
         {/* Sticky header — survives the long form scroll on mobile */}
         <div className="sticky top-0 z-10 bg-paper border-b border-hairline px-5 sm:px-6 py-4 flex items-start justify-between rounded-t-xl">
@@ -3031,9 +3043,9 @@ function BuyNowDialog({
                 Instant checkout · UPI / Card / NetBanking
               </div>
             )}
-            <h2 className="font-serif text-2xl leading-tight">
+            <DialogTitle className="font-serif text-2xl leading-tight">
               Buy <GWInline />
-            </h2>
+            </DialogTitle>
             <p className="text-xs text-ink-3 mt-0.5">
               {isSimulation
                 ? "Walks the full pipeline (lead → quote → customer + emails) without taking real money."
@@ -3058,10 +3070,12 @@ function BuyNowDialog({
             {/* Tier picker */}
             {buyableTiers.length > 1 && (
               <div>
-                <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+                <p id="buy-plan-label" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                   1 · Choose your plan
-                </label>
+                </p>
                 <div
+                  role="group"
+                  aria-labelledby="buy-plan-label"
                   className="grid gap-1.5 p-1 rounded-lg bg-paper border border-hairline"
                   style={{ gridTemplateColumns: `repeat(${buyableTiers.length}, minmax(0, 1fr))` }}
                 >
@@ -3094,7 +3108,7 @@ function BuyNowDialog({
 
             {/* Seat stepper */}
             <div>
-              <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
+              <label htmlFor="buy-seats" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-2">
                 {buyableTiers.length > 1 ? "2 · " : ""}How many users?
               </label>
 
@@ -3109,6 +3123,7 @@ function BuyNowDialog({
                   −
                 </button>
                 <input
+                  id="buy-seats"
                   type="number"
                   min={1}
                   max={10000}
@@ -3233,7 +3248,7 @@ function BuyNowDialog({
                 Validation hits /api/public/coupons/validate (dry-run); actual
                 redemption only happens at checkout. */}
             <div className="p-3 rounded-xl border border-dashed border-hairline bg-paper/60">
-              <label className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-1.5 inline-flex items-center gap-1.5">
+              <label htmlFor="buy-coupon" className="text-2xs uppercase tracking-wider text-ink-3 font-semibold block mb-1.5 inline-flex items-center gap-1.5">
                 <Icon name="rupee" size={11} /> Have a coupon code?
               </label>
               {couponApplied ? (
@@ -3259,6 +3274,7 @@ function BuyNowDialog({
                 <>
                   <div className="flex items-stretch gap-2">
                     <input
+                      id="buy-coupon"
                       type="text"
                       value={couponInput}
                       onChange={(e) => {
@@ -3324,12 +3340,12 @@ function BuyNowDialog({
             <input type="hidden" {...register("seats")} />
 
             <FormField label="Your name" required htmlFor="buy-fullName">
-              <Input id="buy-fullName" placeholder="e.g. Rajesh Kumar"
+              <Input id="buy-fullName" placeholder="e.g. Rajesh Kumar" autoComplete="name"
                 error={errors.fullName?.message} {...register("fullName")} />
             </FormField>
 
-            <FormField label="Company" required htmlFor="buy-companyName">
-              <Input id="buy-companyName" placeholder="e.g. Acme Pvt Ltd"
+            <FormField label="Company (optional)" htmlFor="buy-companyName">
+              <Input id="buy-companyName" placeholder="e.g. Acme Pvt Ltd" autoComplete="organization"
                 error={errors.companyName?.message} {...register("companyName")} />
             </FormField>
 
@@ -3343,17 +3359,27 @@ function BuyNowDialog({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormField label="Work email" required htmlFor="buy-email">
-                <Input id="buy-email" type="email" placeholder="e.g. rajesh@acme.in"
+                <Input id="buy-email" type="email" placeholder="e.g. rajesh@acme.in" autoComplete="email" inputMode="email"
                   error={errors.email?.message} {...register("email")} />
               </FormField>
               <FormField label="Phone (WhatsApp)" required htmlFor="buy-phone">
-                <Input id="buy-phone" type="tel" placeholder="e.g. +91 98765 43210"
+                <Input id="buy-phone" type="tel" placeholder="e.g. +91 98765 43210" autoComplete="tel" inputMode="tel"
                   error={errors.phone?.message} {...register("phone")} />
               </FormField>
             </div>
 
             <FormField label="GSTIN (optional)" htmlFor="buy-gstin">
-              <Input id="buy-gstin" placeholder="e.g. 27ABCDE1234F1Z5" {...register("gstin")} />
+              <Input
+                id="buy-gstin"
+                placeholder="e.g. 27ABCDE1234F1Z5"
+                maxLength={15}
+                autoCapitalize="characters"
+                className="uppercase font-mono"
+                aria-invalid={!!errors.gstin || undefined}
+                aria-describedby={errors.gstin ? "buy-gstin-error" : undefined}
+                {...register("gstin", { setValueAs: (v: string) => normalizeGstinInput(v ?? "") })}
+              />
+              {errors.gstin?.message && <p id="buy-gstin-error" role="alert" className="text-xs text-rose mt-1">{errors.gstin.message}</p>}
               <p className="text-3xs text-ink-3 mt-1">
                 Add your GSTIN to claim input tax credit. Skip if not GST-registered.
               </p>
@@ -3376,6 +3402,31 @@ function BuyNowDialog({
               </select>
               {errors.stateCode?.message && <p className="text-xs text-rose mt-1">{errors.stateCode.message}</p>}
             </FormField>
+
+            {/* R-226: annual licence, no mid-term cancel — said before Pay, and the terms /
+                refund box must be ticked (schema blocks submit, so Razorpay never opens). */}
+            <p className="text-xs text-ink-2 rounded-md border border-hairline bg-paper-2 px-3 py-2">
+              {BUY_ANNUAL_NOTE}
+            </p>
+            <div className="flex items-start gap-2.5">
+              <input
+                id="buy-agree-terms"
+                type="checkbox"
+                aria-invalid={!!errors.agreeTerms || undefined}
+                aria-describedby={errors.agreeTerms ? "buy-agree-terms-error" : undefined}
+                {...register("agreeTerms")}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-amber"
+              />
+              <label htmlFor="buy-agree-terms" className="text-xs text-ink-2 cursor-pointer leading-relaxed">
+                I have read the{" "}
+                <a href="/terms-and-conditions" target="_blank" rel="noopener" className="font-semibold text-amber-ink underline">terms and conditions</a>{" "}
+                and the{" "}
+                <a href="/refund" target="_blank" rel="noopener" className="font-semibold text-amber-ink underline">refund policy</a>.
+              </label>
+            </div>
+            {errors.agreeTerms?.message && (
+              <p id="buy-agree-terms-error" role="alert" className="text-xs text-rose -mt-2">{errors.agreeTerms.message}</p>
+            )}
 
             <BusyPanel active={isSubmitting} title="Preparing your secure payment" steps={["Re-checking the price on our server", "Creating your order", "Opening the Razorpay payment window"]} />
             <Button
@@ -3406,8 +3457,8 @@ function BuyNowDialog({
             </p>
           </div>
         </form>
-      </Card>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

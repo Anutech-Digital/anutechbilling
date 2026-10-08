@@ -36,7 +36,8 @@ export type CrmKeyInput = z.infer<typeof crmKeySchema>;
 /** Shape of GET /api/leads/indiamart (minus the `ok` envelope). */
 export interface IndiamartKeyStatus {
   configured: boolean;
-  /** true = sealed with SECRETS_MASTER_KEY; false = saved in the clear (deployment has no master key). */
+  /** true = sealed with SECRETS_MASTER_KEY; false = an OLD key saved in the clear before R-051
+   *  (the route now refuses to save without the master key — it never stores plaintext). */
   encrypted: boolean;
   /** Last 4 characters, or null when not shown (no key, too short, or could not be opened). */
   key_last4: string | null;
@@ -47,6 +48,34 @@ export interface IndiamartKeyStatus {
   last_imported: number | null;
   /** Every IndiaMART enquiry ever turned into a lead for this company. */
   total_imported: number | null;
+}
+
+/**
+ * R-399: a key stored in the clear can only be one saved BEFORE R-051 — since then POST
+ * refuses (503) without SECRETS_MASTER_KEY instead of storing plaintext. So the status card
+ * says how to fix THAT, not "the server has no master key" (it may well have one now).
+ */
+export const PLAINTEXT_KEY_NOTE =
+  "This key was saved before encryption was switched on, so it is stored without encryption. Save the key again to encrypt it.";
+
+export interface SaveKeyFailure {
+  title: string;
+  description: string;
+  /** The server has no SECRETS_MASTER_KEY: retrying will not help until an admin sets it. */
+  vaultMissing: boolean;
+}
+
+/**
+ * R-399: what to tell the owner when saving the key fails. A 503 from POST is the vault
+ * refusing (VaultNotConfiguredError → trySealTenantSecrets): its message already names the
+ * next step, so it is shown as-is and nothing suggests pasting the key again. There is no
+ * "saved, not encrypted" outcome any more — the key is either sealed or not saved.
+ */
+export function saveKeyFailure(status: number, message: string): SaveKeyFailure {
+  if (status === 503) {
+    return { title: "Key not saved — encryption is not set up on the server", description: message, vaultMissing: true };
+  }
+  return { title: message, description: "Couldn't save key. Paste it again; if it keeps failing, refresh the page.", vaultMissing: false };
 }
 
 /** Last four characters of a key, only when the key is long enough for that to reveal little. */

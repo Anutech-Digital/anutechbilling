@@ -1,3 +1,3 @@
-/* Subscription catalog — the same page as /items, on its subscription tab. Its own
-   address so the menu can list it next to Product catalog and Packages. */
+/* Subscriptions tab of Products (/items) — the same page, on its subscription tab. Its
+   own address so the tab can keep the URL in step (menu row since R-384: just "Products"). */
 export { default } from "../page";

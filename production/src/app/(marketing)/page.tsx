@@ -4,8 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { HomeCompany } from "@/site/components/home/HomeCompany";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { COMPANY, SITE_URL } from "@/site/lib/config";
-import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
-import { MAIL_RATES } from "@/site/lib/data/catalog";
+import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 
 /**
  * Home — the whole company (R-155, 5 Oct 2026). Pardeep: the home is about Anutech Digital,
@@ -58,7 +57,7 @@ export default async function HomePage(
   // "Business email from ₹…" on the IT card: the cheapest of the live licence rates and
   // the Anutech Mail mailbox, so the card never undercuts or overstates /email.
   const editions = mergeEditions(await fetchLiveWorkspace());
-  const emailFrom = Math.min(MAIL_RATES["Anutech Mail"] ?? Infinity, ...editions.map((e) => e.annual));
+  const emailFrom = emailFromRate(editions);
 
   const jsonLd = {
     "@context": "https://schema.org",

@@ -16,6 +16,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import type { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { LeadCounts } from "@/lib/leads/list-page";
+import { leadTitle } from "@/lib/leads/display-name";
 
 export interface LeadsHotCardProps {
   /** Quote / trial leads in the current list — lead_counts().list.hot (S40). */
@@ -41,7 +42,7 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
   const handleCallTop = () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
     if (!topHot.contact_phone) {
-      toast.error(`${topHot.company} has no phone on record · open the lead to add one`);
+      toast.error(`${leadTitle(topHot).label} has no phone on record.`, { description: "Open the lead and add a phone number, then call." });
       return;
     }
     // tel: schemes ignore spaces but be defensive
@@ -51,11 +52,11 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
   const handleSendNudge = () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
     if (!topHot.contact_email) {
-      toast.error(`${topHot.company} has no email on record · open the lead to add one`);
+      toast.error(`${leadTitle(topHot).label} has no email on record.`, { description: "Open the lead and add an email, then send the nudge." });
       return;
     }
     const signoff = currentUser?.tenantName ?? "your team";
-    const subject = `Following up · ${topHot.company}`;
+    const subject = `Following up · ${leadTitle(topHot).label}`;
     const body =
       `Hi ${topHot.contact_name ?? "there"},\n\n` +
       `Just checking in on ${topHot.plan ? `the ${topHot.plan} discussion` : "your inquiry"}. ` +
@@ -75,7 +76,7 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
           actions={
             <>
               <Button size="sm" variant="primary" icon="phone" disabled={!topHot} onClick={handleCallTop}>
-                {topHot ? `Call ${topHot.company.split(/\s+/)[0]}` : "Call top lead"}
+                {topHot ? `Call ${leadTitle(topHot).label.split(/\s+/)[0]}` : "Call top lead"}
               </Button>
               <Button size="sm" icon="mail" disabled={!topHot} onClick={handleSendNudge}>Send nudge</Button>
             </>
@@ -88,7 +89,7 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
         >
           <b className="text-ink">{hotCount} hot lead{hotCount === 1 ? "" : "s"} worth focusing today.</b>{" "}
           {topHot
-            ? <>Top: <b>{topHot.company}</b> ({topHot.plan ?? "—"}, {topHot.value ? rupee(topHot.value, { compact: true }) : "value pending"}). Quote/Trial stages convert highest — prioritize today.</>
+            ? <>Top: <b>{leadTitle(topHot).label}</b> ({topHot.plan ?? "—"}, {topHot.value ? rupee(topHot.value, { compact: true }) : "value pending"}). Quote/Trial stages convert highest — prioritize today.</>
             : <>No leads in Quote Sent or Trial Active right now. Move some forward to surface hot opportunities.</>}
         </GeminiCard>
       ) : (

@@ -106,8 +106,9 @@ export default function SendWhatsAppDialog({
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
           <div>
-            <Label>To (E.164)</Label>
+            <Label htmlFor="send-whatsapp-to">To (E.164)</Label>
             <Input
+              id="send-whatsapp-to"
               className="font-mono"
               placeholder="e.g. +91 98765 43210"
               value={to}
@@ -118,8 +119,9 @@ export default function SendWhatsAppDialog({
             </p>
           </div>
           <div>
-            <Label>Message{attachQuoteId && attachOn ? " (becomes the PDF caption)" : ""}</Label>
+            <Label htmlFor="send-whatsapp-message">Message{attachQuoteId && attachOn ? " (becomes the PDF caption)" : ""}</Label>
             <textarea
+              id="send-whatsapp-message"
               rows={5}
               placeholder="Hi, this is regarding your quote …"
               className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber resize-none"

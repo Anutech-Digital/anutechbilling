@@ -165,6 +165,41 @@ describe("publicApiLimit — kaun si raah kis seema par", () => {
     expect(pin.limit / (pin.windowMs / 60_000)).toBeLessThan(chat.limit / (chat.windowMs / 60_000));
   });
 
+  /* R-050 (7 Oct 2026): /api/v1 (API-key + vendor webhooks) aur attendance/punch (ingest key)
+     bhi session ke bina chalte hain, par middleware unhe ginta hi nahi tha. */
+  it("R-050: /api/v1 aur attendance/punch par bhi seema hai", () => {
+    for (const p of [
+      "/api/v1/customers",
+      "/api/v1/customers/C-1/invoices",
+      "/api/v1/telecalling/make-call",
+      "/api/v1/telecalling/webhook",
+      "/api/v1/integrations/support-whatsapp-inbound",
+      "/api/v1/documents/invoice/INV-1/pdf",
+      "/api/attendance/punch",
+    ]) {
+      expect(publicApiLimit(p), p).not.toBeNull();
+    }
+  });
+
+  it("R-050: paise wali make-call ki seema padhne wale v1 routes se kasi hai", () => {
+    const call = publicApiLimit("/api/v1/telecalling/make-call")!;
+    const read = publicApiLimit("/api/v1/customers/C-1")!;
+    const perMin = (l: { limit: number; windowMs: number }) => l.limit / (l.windowMs / 60_000);
+    expect(perMin(call)).toBeLessThan(perMin(read));
+  });
+
+  it("R-050: v1 ki seema poori hone par 429-yogya (middleware wali key se)", () => {
+    const lim = publicApiLimit("/api/v1/telecalling/make-call")!;
+    const key = "pub:/api/v1/telecalling:203.0.113.9";
+    for (let i = 0; i < lim.limit; i++) expect(rateLimit(key, lim).ok).toBe(true);
+    expect(rateLimit(key, lim).ok).toBe(false);
+  });
+
+  it("R-050: attendance ke baaki (session wale) routes ko nahi chhoota", () => {
+    expect(publicApiLimit("/api/attendance/mark")).toBeNull();
+    expect(publicApiLimit("/api/attendance/self")).toBeNull();
+  });
+
   it("authenticated app-routes ko chhoota hai", () => {
     expect(publicApiLimit("/api/quotes/abc/send")).toBeNull();
     expect(publicApiLimit("/dashboard")).toBeNull();

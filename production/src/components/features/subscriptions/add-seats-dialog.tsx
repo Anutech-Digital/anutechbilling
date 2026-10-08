@@ -24,6 +24,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,9 @@ import { Badge } from "@/components/ui/badge";
 import { rupee, formatDate } from "@/lib/utils";
 import { newIdempotencyKey } from "@/lib/ops/idempotency-key";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { useCustomer } from "@/lib/queries/customers";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 
 interface Props {
   sub:          Subscription;
@@ -88,7 +92,18 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     : 0;
   const proRataPerSeat   = Math.round(annualPerSeat * factor);
   const subtotal         = proRataPerSeat * additionalSeats;
-  const gstAmt           = Math.round(subtotal * 0.18);
+  /* R-389 (F9): name the head the invoice will use — "IGST 18%" for an inter-state customer,
+     "CGST 9% + SGST 9%" within the state — and zero-rate an export, the same rule the server
+     applies (lib/subscriptions/apply-seat-increase.ts resolveSeatTax). */
+  const { data: customer } = useCustomer(sub.customer_id ?? undefined);
+  const { data: me } = useCurrentUser();
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
+  });
+  const taxRatePct       = pos.isExport ? 0 : 18;
+  const taxLabel         = gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport });
+  const gstAmt           = Math.round((subtotal * taxRatePct) / 100);
   const totalIncl        = subtotal + gstAmt;
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = Math.round((annualPerSeat * newSeats) / 12);
@@ -97,7 +112,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
 
   const onSubmit = async () => {
     if (additionalSeats < 1) {
-      toast.error("Add at least 1 seat");
+      toast.error("Add at least 1 seat.", { description: "Enter how many seats to add to this subscription." });
       return;
     }
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
@@ -110,7 +125,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error ?? "Could not add seats");
+        toast.error(json.error ?? "Could not add seats.", { description: "No seats were added and no quote was made. Try again." });
         return;
       }
       toast.success(
@@ -126,7 +141,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       onOpenChange(false);
       router.push(`/quotes/${json.quoteId}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error");
+      toastError(err, { fallback: "Could not add seats.", description: "Check your connection, then try again — pressing again will not add the seats twice." });
     } finally {
       setSubmitting(false);
     }
@@ -208,7 +223,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                 <span className="tabular-nums text-ink-2">{rupee(subtotal)}</span>
               </div>
               <div className="flex justify-between mb-1">
-                <span className="text-ink-3">GST 18%</span>
+                <span className="text-ink-3">{taxLabel}</span>
                 <span className="tabular-nums text-ink-2">{rupee(gstAmt)}</span>
               </div>
               <div className="flex justify-between pt-2 border-t border-hairline">

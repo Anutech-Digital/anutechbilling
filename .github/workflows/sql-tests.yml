@@ -85,11 +85,45 @@ jobs:
         run: |
           set -euo pipefail
           DB="supabase_db_$(sed -n 's/^project_id *= *"\([^"]*\)".*/\1/p' supabase/config.toml)"
+          # R-380 (7 Oct 2026): 20261002190000_storage_policies.sql does `set local role
+          # supabase_storage_admin` (storage.objects is owned by that role). On production /
+          # staging the migrator (postgres / resellersos_migration) is a member of it; in the
+          # local Supabase image `postgres` is not, so every run since 2 Oct died here with
+          # "permission denied to set role". Give the CI `postgres` the same membership —
+          # the migration itself is unchanged.
+          docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U supabase_admin -d postgres \
+            -c "grant supabase_storage_admin to postgres"
+          # R-401 (7 Oct 2026) — emulate Cloud SQL's function privileges. Local Supabase gives
+          # every function `postgres` creates in public EXECUTE to anon/authenticated/
+          # service_role (default privileges) and to PUBLIC (Postgres built-in). Cloud SQL
+          # (staging/live) gives neither: its default privileges were deferred at the 6 Sep
+          # cut-over (supabase/cloudsql/01b). So R-381's trigger helper, created without a
+          # GRANT, was callable here and a 403 on every staging quote save (R-400). From
+          # CLOUDSQL_FROM on — the same cut-off as the repo scan
+          # src/lib/security/invoker-function-grants.test.ts — new functions get only the
+          # grants their migration writes, and the suite's
+          # authenticated_quote_write_cloudsql.test.sql writes a quote as authenticated.
+          # CI database only; nothing here touches staging or live.
+          CLOUDSQL_FROM=20261001
+          EMULATED=0
           for f in $(ls supabase/migrations/*.sql | sort); do
+            if [ "$EMULATED" = 0 ] && [[ "$(basename "$f")" > "$CLOUDSQL_FROM" ]]; then
+              echo "::notice::Cloud SQL emulation: revoking default function EXECUTE before $(basename "$f")"
+              docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres <<'SQL'
+          alter default privileges for role postgres in schema public
+            revoke execute on functions from public, anon, authenticated, service_role;
+          alter default privileges for role postgres revoke execute on functions from public;
+          SQL
+              EMULATED=1
+            fi
             echo "::group::$f"
             docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres < "$f"
             echo "::endgroup::"
           done
+          # The emulation must have bitten: R-381's helper is granted to authenticated only
+          # (20261007250000), so anon — which only ever had it through PUBLIC — must not have it.
+          docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -c \
+            "do \$\$ begin if has_function_privilege('anon', 'public.quote_line_terms_mixed(jsonb)', 'execute') then raise exception 'Cloud SQL emulation did not apply: PUBLIC still has EXECUTE on new functions'; end if; end \$\$"
 
       - name: Run the SQL test suite
         run: npm run test:sql:local

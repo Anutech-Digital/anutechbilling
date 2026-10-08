@@ -81,15 +81,27 @@ export function describeAmendment(a: ContractAmendment): AmendmentLine[] {
   return out;
 }
 
+/**
+ * An amendment row as read with `select("*")`. `actor_label` arrives with migration
+ * 20261007040000 (R-096) and is optional here on purpose: until that migration is
+ * applied the column is simply absent from the row, and the reader must behave exactly
+ * as before rather than crash. Naming the column in a select would 42703 on such a DB.
+ */
+export type AmendmentWithActor = ContractAmendment & { actor_label?: string | null };
+
 /** Who made the change, in words. */
-export function amendmentActor(a: ContractAmendment, nameById?: Map<string, string>): string {
+export function amendmentActor(a: AmendmentWithActor, nameById?: Map<string, string>): string {
   if (a.source === "system") {
     /* Named as automatic rather than left blank. An unattributed change reads as
        hidden; "automatic" reads as explainable. */
     return "Automatic (renewal, payment or import)";
   }
   if (a.changed_by && nameById?.has(a.changed_by)) return nameById.get(a.changed_by)!;
-  return a.changed_by ? "A team member" : "Unknown";
+  if (a.changed_by) return "A team member";
+  /* R-326: a portal customer has no public.users row, so changed_by is null and the
+     trigger records who it was in actor_label ("Customer Acme Pvt Ltd"). */
+  const label = typeof a.actor_label === "string" ? a.actor_label.trim() : "";
+  return label || "Unknown";
 }
 
 /**

@@ -63,6 +63,14 @@ const ADDED_FOR_OWNER = ["/marketing/indiamart"];
  *  guard bounced it to /leads), so this is a real, named grant — not a snapshot drift. */
 const ADDED_DEALS = ["/deals"];
 const DEALS_ROLES = ["owner", "manager", "sales", "sales_senior"];
+/** R-382 (7 Oct 2026, owner decision — Pardeep: "contact page ko sales tab me show karo"):
+ *  Contacts back in Sell, after Tasks, for the same roles as Tasks (owner, manager, sales;
+ *  sales_senior sees what sales sees). A real, named route grant; the guard matches by prefix,
+ *  so this one entry also admits /contacts/[id] (the "every page route" test checks it).
+ *  Not a snapshot drift: it had been removed from the menu on purpose on 10 Sep and the
+ *  guard bounced sales users. */
+const ADDED_7OCT_CONTACTS = ["/contacts"];
+const CONTACTS_ROLES = ["owner", "manager", "sales", "sales_senior"];
 /** 3 Oct 2026 — "koi bhi hidden link nahi rahna chahiye" (Pardeep): pages that existed but
  *  had no menu row, plus AI Entry / Packages / UX & UI Insights. Each at the roles the page
  *  was already built for. Real route grants (not only menu rows): billing → /ai-entry and
@@ -77,7 +85,12 @@ const ADDED_3OCT_OM = ["/ai-entry", "/online-orders", "/items/packages", "/accou
  *  (Pardeep: "subscription catalog aur product catalog bhi hone chahiye"). Same page, same
  *  owner/manager roles as /items — new addresses, not new access. */
 /** …and Apprentice Academy (R-149), owner / manager in phase 1. */
-const ADDED_4OCT_OM = ["/items/subscriptions", "/items/products", "/marketing/landing-pages", "/academy"];
+/** R-384 (7 Oct 2026, owner decision — Pardeep): the two catalog rows are gone again; one
+ *  menu row "Products" (/items) opens the page and its tabs link to /items/subscriptions and
+ *  /items/products. So those two leave this list (no longer separate guard entries), and the
+ *  "every page route on disk" test below — plus the explicit check in "2. structure" — proves
+ *  the guard still admits both through /items. Same access, fewer menu rows. */
+const ADDED_4OCT_OM = ["/marketing/landing-pages", "/academy"];
 /** R-163 (5 Oct 2026): Payment Runs, a child of Payments Made — same owner/manager/billing roles. */
 const ADDED_5OCT_OMB = ["/accounting/payment-runs", "/accounting/google-bill-check"];
 const ADDED_3OCT_OWNER = ["/vault/personal/banking", "/vault/personal/expenses", "/vault/personal/wealth"];
@@ -85,6 +98,18 @@ const ADDED_3OCT_BOOKS = ["/accounting/banking/brs", "/accounting/banking/rules"
   "/accounting/profitability", "/reports/purchases", "/accounting/tds-receivable/year-end", "/compliance/gst", "/compliance/income-tax", "/compliance/roc"];
 const ADDED_3OCT_BILLING = ["/ai-entry", "/online-orders", "/accounting/advances", "/accounting/reimbursements"];
 const ADDED_3OCT_SALES = ["/ai-entry"];
+/** R-061 (6 Oct 2026): the accountant could already open these by URL (the guard admits all of
+ *  /accounting/* through BOOKS) but had no menu row. A menu row only — the guard answer is unchanged. */
+const ADDED_6OCT_ACCOUNTANT = ["/accounting/payroll", "/accounting/salary-register"];
+/** R-255 (7 Oct 2026): the accountant / CA menu — Purchases in full (the guard already admitted
+ *  them through /accounting) and Sales read-only: Customers, Invoices, Payments Received. */
+const ADDED_7OCT_ACCOUNTANT = [
+  "/customers", "/invoices", "/payments",
+  "/accounting/vendors", "/accounting/bills", "/accounting/google-bill-check", "/accounting/bill-payments",
+  "/accounting/payment-runs", "/accounting/expenses", "/accounting/prepaid", "/accounting/advances", "/accounting/reimbursements",
+];
+/** R-263 (6 Oct 2026): Quality Score, owner / manager — a new page, next to Bug Reports. */
+const ADDED_6OCT_OM = ["/quality"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
  *  so its Balance Sheet showed salary payable and statutory dues as Rs 0 (Pardeep's call). */
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet"] };
@@ -97,9 +122,13 @@ const addedFor = (role: string) => [
   ...(BOOKS_ROLES.includes(role) ? ADDED_3OCT_BOOKS : []),
   ...(role === "billing" ? ADDED_3OCT_BILLING : []),
   ...(role === "sales" || role === "sales_senior" ? ADDED_3OCT_SALES : []),
+  ...(role === "accountant" ? ADDED_6OCT_ACCOUNTANT : []),
+  ...(role === "accountant" ? ADDED_7OCT_ACCOUNTANT : []),
+  ...(role === "owner" || role === "manager" ? ADDED_6OCT_OM : []),
   ...(role === "owner" || role === "manager" ? ADDED_FOR_OWNER_MANAGER : []),
   ...(role === "owner" ? ADDED_FOR_OWNER : []),
   ...(DEALS_ROLES.includes(role) ? ADDED_DEALS : []),
+  ...(CONTACTS_ROLES.includes(role) ? ADDED_7OCT_CONTACTS : []),
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
@@ -200,8 +229,32 @@ describe("2. structure", () => {
   it("has ~40 sidebar rows, none of the groups over 8", () => {
     const rows = APP_NAV.reduce((n, s) => n + s.items.length, 0);
     expect(rows).toBeGreaterThanOrEqual(35);
-    expect(rows).toBeLessThanOrEqual(45);
-    for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(8);
+    // 46 since R-204 (6 Oct 2026): Orders (website) left Payments Received's accordion for its own Sell row.
+    // 47 since R-382 (7 Oct 2026): Contacts back in Sell — owner decision, one named row only.
+    expect(rows).toBeLessThanOrEqual(47);
+    // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
+    for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
+  });
+
+  it("R-384 (7 Oct 2026): one 'Products' row for the catalog, Packages its only child, both tabs still open", () => {
+    const items = APP_NAV.find((s) => s.section === "Bill")!.items.find((i) => i.id === "items")!;
+    expect(items.label).toBe("Products");
+    expect(items.href).toBe("/items");
+    expect(items.children?.map((c) => c.href)).toEqual(["/items/packages"]);
+    for (const h of ["/items/subscriptions", "/items/products"]) {
+      expect(flat.some((e) => e.item.href === h), `${h} should not be its own menu row`).toBe(false);
+      for (const r of ["owner", "manager"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(true);
+      for (const r of ["sales", "billing", "support"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(isRouteAllowed(r, "/items"));
+    }
+    expect(getCrumb("/items")).toEqual(["Billing", "Products"]);
+    expect(getCrumb("/items/subscriptions")).toEqual(["Billing", "Products", "Subscriptions"]);
+    expect(getCrumb("/items/products")).toEqual(["Billing", "Products", "One-time products"]);
+  });
+
+  it("R-384 (7 Oct 2026): the employees row reads 'Employees & Users' (was 'Employees & Team')", () => {
+    const row = flat.find((e) => e.item.id === "employees")!.item;
+    expect(row.href).toBe("/accounting/employees");
+    expect(row.label).toBe("Employees & Users");
   });
 
   it("lists every href exactly once (the old nav had 9 duplicates)", () => {
@@ -287,7 +340,7 @@ describe("3. breadcrumbs come from the nav", () => {
       expect(getCrumb(h), h).toEqual(OLD_CRUMBS[h]);
     }
     expect(getCrumb("/customers/abc/edit")).toEqual(["Billing", "Customers", "Edit"]);
-    expect(getCrumb("/online-orders")).toEqual(["Billing", "Online Orders"]);
+    // /online-orders left Billing on 6 Oct 2026 (R-204) — see block 5 below.
   });
 
   it("gives sub-pages the crumb of the page they sit under", () => {
@@ -325,5 +378,58 @@ describe("4. Deals sits in Sell right after Sales & Pipeline (30 Sep 2026)", () 
     const deals = sell.find((i) => i.href === "/deals")!;
     expect(deals.label).toBe("Deals");
     expect(deals.roles).toEqual(leads.roles);
+  });
+});
+
+describe("5. Website orders sit in Sell next to Deals/Enquiries, not under Payments Received (R-204, 6 Oct 2026)", () => {
+  /* Pardeep: an online order is a sale's journey (cart, trial, DMS) — many have no money
+     yet, and a paid order's money already lands in Payments Received on its own. */
+  const sell = () => APP_NAV.find((s) => s.section === "Sell")!.items;
+
+  it("is a Sell row labelled \"Orders (website)\", right after Enquiries", () => {
+    const hrefs = sell().map((i) => i.href);
+    expect(hrefs[hrefs.indexOf("/enquiries") + 1]).toBe("/online-orders");
+    const row = sell().find((i) => i.href === "/online-orders")!;
+    expect(row.id).toBe("online-orders");
+    expect(row.label).toBe("Orders (website)");
+    expect(row.roles).toEqual(["owner", "manager", "billing"]);
+    expect(row.hint).toBe("All website orders — cart, checkout, trial");
+  });
+
+  it("is no longer anywhere in Bill (not a child of Payments Received)", () => {
+    const bill = APP_NAV.find((s) => s.section === "Bill")!;
+    expect(flattenNav([bill]).map((e) => e.item.href)).not.toContain("/online-orders");
+  });
+
+  it("has the crumb Sell › Orders (website)", () => {
+    expect(getCrumb("/online-orders")).toEqual(["Sell", "Orders (website)"]);
+  });
+
+  it.each(["owner", "manager", "billing"] as UserRole[])("%s still sees it and the guard lets it through", (role) => {
+    const sellRows = filterNavForRole(APP_NAV, role).find((s) => s.section === "Sell")?.items ?? [];
+    expect(sellRows.map((i) => i.href)).toContain("/online-orders");
+    expect(isRouteAllowed(role, "/online-orders")).toBe(true);
+  });
+});
+
+describe("R-061: payroll — the menu and the guard give the same answer", () => {
+  const SALARY_PAGES = ["/accounting/payroll", "/accounting/salary-register"];
+  /* The accountant may read and write salaries in the database (role hardening, 20260930175000),
+     and the guard already let them open these pages by URL. The menu must say the same. */
+  it("the accountant sees Payroll and the Salary Register in the menu and may open them", () => {
+    const menu = clickable("accountant");
+    for (const h of SALARY_PAGES) {
+      expect(menu.has(h), `${h} missing from the accountant's menu`).toBe(true);
+      expect(isRouteAllowed("accountant", h), `guard refuses ${h} for the accountant`).toBe(true);
+    }
+  });
+
+  it("no role has a payroll page in its menu that the guard refuses, or the other way round", () => {
+    for (const r of USER_ROLES) {
+      const menu = clickable(r);
+      for (const h of SALARY_PAGES) {
+        expect(menu.has(h), `${r}: menu says ${menu.has(h)}, guard says ${isRouteAllowed(r, h)} for ${h}`).toBe(isRouteAllowed(r, h));
+      }
+    }
   });
 });

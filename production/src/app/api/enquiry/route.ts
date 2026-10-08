@@ -12,6 +12,11 @@
  * alerts the operator with a deep-link to it, and acknowledges the customer. Its
  * `draftQuoteId` comes back through us so the form can name the document.
  *
+ * R-228: every success also carries `reference` — the draft quote's number, else the lead id
+ * (both paths return `leadId`), else null. The forms show THAT, never a number of their own:
+ * a per-browser localStorage counter started every new visitor at AQ-YYYYMM-001, which sales
+ * could not match to anything in the app.
+ *
  * Everything else (M365, Zoho, Anutech Mail, Hosting, Domains) goes to
  * `/api/public/enquiry/general` — lead + notification, priced by a person. The app has no
  * auto-quote path for those vendors yet, and inventing one here would mean website-side
@@ -46,6 +51,11 @@ interface EnquiryBody {
 }
 
 const PRODUCTS = new Set(["google-workspace", "microsoft-365", "zoho", "other"]);
+
+/** An id the app returned, trimmed; null when it sent none. */
+function idOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+}
 
 export async function POST(req: NextRequest) {
   let body: Partial<EnquiryBody>;
@@ -118,10 +128,12 @@ export async function POST(req: NextRequest) {
         console.error("[enquiry-proxy] workspace upstream refused:", res.status, await res.text().catch(() => ""));
         return fail();
       }
-      const data = (await res.json()) as { success?: boolean; draftQuoteId?: string | null; autoSent?: boolean; ackSent?: boolean };
+      const data = (await res.json()) as { success?: boolean; leadId?: string | null; draftQuoteId?: string | null; autoSent?: boolean; ackSent?: boolean };
       /* draftQuoteId can be null (doc-number retries exhausted) — the lead still exists
          and the operator was alerted, so that is a success with no number to show. */
-      return NextResponse.json({ ok: true, quoteId: data.draftQuoteId ?? null, sent: data.autoSent === true, ackSent: data.ackSent === true });
+      const quoteId = idOrNull(data.draftQuoteId);
+      const leadId = idOrNull(data.leadId);
+      return NextResponse.json({ ok: true, quoteId, leadId, reference: quoteId ?? leadId, sent: data.autoSent === true, ackSent: data.ackSent === true });
     }
 
     /* ── GENERAL PATH: everything else ────────────────────────────────────── */
@@ -136,8 +148,9 @@ export async function POST(req: NextRequest) {
       console.error("[enquiry-proxy] general upstream refused:", res.status, await res.text().catch(() => ""));
       return fail();
     }
-    const general = (await res.json().catch(() => ({}))) as { ackSent?: boolean };
-    return NextResponse.json({ ok: true, quoteId: null, sent: false, ackSent: general.ackSent === true });
+    const general = (await res.json().catch(() => ({}))) as { leadId?: string | null; ackSent?: boolean };
+    const leadId = idOrNull(general.leadId);
+    return NextResponse.json({ ok: true, quoteId: null, leadId, reference: leadId, sent: false, ackSent: general.ackSent === true });
   } catch (err) {
     console.error("[enquiry-proxy] upstream unreachable:", err);
     return fail();

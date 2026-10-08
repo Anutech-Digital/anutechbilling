@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { TrialsExpiringCard } from "@/components/features/trials/trials-expiring-card";
 import { GettingStartedCard } from "@/components/features/dashboard/getting-started-card";
+import { useSetupFacts } from "@/lib/onboarding/use-setup-facts";
 import { MoneyHealthCard } from "@/components/features/dashboard/money-health-card";
 import { AiPerformanceCard } from "@/components/features/dashboard/ai-performance-card";
 import { PriorityActionHub } from "@/components/features/dashboard/priority-action-hub";
@@ -52,6 +53,9 @@ import { canSeeDeals } from "@/lib/deals/access";
 import { PendingJoinRequestsCard } from "@/components/features/team/pending-join-requests-card";
 import { Badge } from "@/components/ui/badge";
 import { LoadErrorBanner } from "@/components/shared/load-error";
+import { leadTitle } from "@/lib/leads/display-name";
+import { LEAD_STAGES } from "@/lib/leads/stage-meta";
+import { COPY } from "@/lib/copy";
 
 // ============================================================
 // Helpers
@@ -73,17 +77,7 @@ function relativeTime(ts: number, now: number): string {
   return `${day} days ago`;
 }
 
-// ============================================================
-// Lead stage config (matches prototype LEAD_STAGES)
-// ============================================================
-const LEAD_STAGES = [
-  { id: "new",     label: "New",          dot: "bg-slate",   color: "bg-slate" },
-  { id: "contact", label: "Contacted",    dot: "bg-amber",   color: "bg-amber" },
-  { id: "demo",    label: "Demo Done",    dot: "bg-indigo",  color: "bg-indigo" },
-  { id: "trial",   label: "Trial Active", dot: "bg-rose",    color: "bg-rose" },
-  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo",  color: "bg-indigo" },
-  { id: "won",     label: "Won",          dot: "bg-emerald", color: "bg-emerald" },
-] as const;
+// Lead stages come from lib/leads/stage-meta (R-249: one funnel order on every screen).
 
 // Default card order per column — the seller can drag to re-order and the
 // choice is remembered in localStorage (keys below).
@@ -120,6 +114,7 @@ export default function DashboardPage() {
   const { data: tasksToday }    = useTasks("today");
   const { data: tasksOverdue }  = useTasks("overdue");
   const { data: currentUser }   = useCurrentUser();
+  const setupFacts              = useSetupFacts();
   /* Getting-started ke "Load your price list" kadam ke liye — khali catalogue
      naye tenant ka pehla deadend tha (audit B2). */
   const { data: catalogItems, isSuccess: catalogLoaded }  = useItems();
@@ -294,8 +289,8 @@ export default function DashboardPage() {
           icon:  "target",
           tone:  l.stage === "won" ? "emerald" : l.plan ? "indigo" : "amber",
           title: l.stage === "won"
-            ? `Lead won: ${l.company}${l.value ? ` · ${rupee(l.value, { compact: true })}` : ""}`
-            : `New lead: ${l.company}${l.plan ? ` · ${l.plan}` : ""}`,
+            ? `Lead won: ${leadTitle(l).label}${l.value ? ` · ${rupee(l.value, { compact: true })}` : ""}`
+            : `New lead: ${leadTitle(l).label}${l.plan ? ` · ${l.plan}` : ""}`,
           time:  relativeTime(ts, now),
           ts,
         });
@@ -345,7 +340,7 @@ export default function DashboardPage() {
           formatDate(dueDate);
         return {
           type: l.stage === "demo" ? "Demo" : l.stage === "trial" ? "Trial" : "Follow-up",
-          who:  l.company,
+          who:  leadTitle(l).label,
           time: timeLabel,
           icon: l.stage === "demo" ? "users" : l.stage === "trial" ? "rocket" : "phone",
           tone: daysAway < 0 ? "rose" : daysAway === 0 ? "amber" : "indigo",
@@ -421,7 +416,7 @@ export default function DashboardPage() {
                     <span className={cn("w-1.5 h-1.5 rounded-full", s.dot)} />{s.label}
                   </div>
                   <div className="h-2 rounded-full bg-paper-2 overflow-hidden">
-                    <div className={cn("h-full rounded-full transition-all", s.color)} style={{ width: `${pct}%` }} />
+                    <div className={cn("h-full rounded-full transition-all", s.dot)} style={{ width: `${pct}%` }} />
                   </div>
                   <div className="text-right tabular-nums text-sm text-ink-2">{value > 0 ? rupee(value, { compact: true }) : "—"}</div>
                   <div className="text-right tabular-nums text-xs text-ink-3">{stageCount}</div>
@@ -604,7 +599,7 @@ export default function DashboardPage() {
             <Link href={"/leads?action=quick-add" as any}>Quick add lead</Link>
           </Button>
           <Button asChild variant="primary" icon="plus">
-            <Link href={"/quotes/new" as any}>Quick add quote</Link>
+            <Link href={"/quotes/new" as any}>{COPY.newQuote}</Link>
           </Button>
         </div>
       </div>
@@ -642,16 +637,14 @@ export default function DashboardPage() {
       {/* First-run onboarding — guides a new reseller to their first quote, then
           retires itself once they're set up (all steps derived from real data). */}
       <GettingStartedCard
-        setupDone={Boolean(currentUser?.tenantSetupCompletedAt)}
+        /* S31: company, GSTIN, invoice numbering, bank/UPI, email, team — read from the
+           same sources the settings screens save to (lib/onboarding/use-setup-facts.ts). */
+        setup={setupFacts}
         hasCustomer={(customers?.length ?? 0) > 0}
         hasCatalog={(catalogItems?.length ?? 0) > 0}
         hasQuote={(quotes?.length ?? 0) > 0}
         hasSale={(subscriptions?.length ?? 0) > 0}
         workspaceName={currentUser?.tenantName ?? ""}
-        /* The GSTIN itself, not a boolean derived here. The card validates it (format AND
-           checksum) so there is one rule, in one place — a `hasGstin` computed at this call
-           site would be a second, looser definition of "GST is set up". */
-        gstin={currentUser?.tenantGstin ?? null}
         ready={Boolean(currentUser) && catalogLoaded && customersQ.isSuccess && quotesQ.isSuccess && subscriptionsQ.isSuccess}
       />
 

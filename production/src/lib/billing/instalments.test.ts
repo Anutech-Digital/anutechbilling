@@ -88,41 +88,54 @@ describe("plannedInstalments", () => {
 });
 
 describe("instalmentSkip — when billing must NOT run", () => {
-  it("refuses to bill a term that was already collected up front", () => {
-    /* Today's sell path charges the whole term on quote acceptance. Raising
-       instalments on top of that bills the customer a second time. */
+  /* R-375 (audit finding 5): a split-billed quote paid IN FULL at the desk can never get a
+     whole-term GST invoice (the invoices trigger refuses it). Skipping its instalments as
+     well left paid supply with no tax invoice anywhere. raise_subscription_billing credits
+     the money already received, so each instalment is issued PAID — not billed twice. */
+  it("bills a term collected up front with NO invoice yet — the instalments carry the GST invoice", () => {
+    expect(instalmentSkip({
+      cycle: "quarterly", quotePaid: 28_320, quoteAmount: 28_320, quoteInvoiced: false, scheduleSize: 4,
+    })).toBeNull();
+  });
+
+  it("treats an overpaid, uninvoiced term the same way", () => {
+    expect(instalmentSkip({
+      cycle: "monthly", quotePaid: 28_321, quoteAmount: 28_320, quoteInvoiced: false, scheduleSize: 12,
+    })).toBeNull();
+  });
+
+  it("refuses when the quote already has a whole-term invoice — instalments would invoice it twice", () => {
     const skip = instalmentSkip({
-      cycle: "monthly", quotePaid: 28_320, quoteAmount: 28_320, scheduleSize: 12,
+      cycle: "monthly", quotePaid: 28_320, quoteAmount: 28_320, quoteInvoiced: true, scheduleSize: 12,
     });
-    expect(skip?.code).toBe("term_already_collected");
+    expect(skip?.code).toBe("term_already_invoiced");
     expect(skip?.reason).toMatch(/twice/);
   });
 
-  it("treats an overpayment as collected too", () => {
-    const skip = instalmentSkip({
-      cycle: "monthly", quotePaid: 28_321, quoteAmount: 28_320, scheduleSize: 12,
-    });
-    expect(skip?.code).toBe("term_already_collected");
+  it("refuses a whole-term-invoiced quote even when only part is collected", () => {
+    expect(instalmentSkip({
+      cycle: "monthly", quotePaid: 2_360, quoteAmount: 28_320, quoteInvoiced: true, scheduleSize: 12,
+    })?.code).toBe("term_already_invoiced");
   });
 
   it("allows billing when nothing has been collected", () => {
     expect(instalmentSkip({
-      cycle: "monthly", quotePaid: 0, quoteAmount: 28_320, scheduleSize: 12,
+      cycle: "monthly", quotePaid: 0, quoteAmount: 28_320, quoteInvoiced: false, scheduleSize: 12,
     })).toBeNull();
   });
 
   it("allows billing when only part has been collected", () => {
     /* One instalment paid is exactly the pay-as-you-go case this exists for. */
     expect(instalmentSkip({
-      cycle: "monthly", quotePaid: 2_360, quoteAmount: 28_320, scheduleSize: 12,
+      cycle: "monthly", quotePaid: 2_360, quoteAmount: 28_320, quoteInvoiced: false, scheduleSize: 12,
     })).toBeNull();
   });
 
   it("names a reason for every skip — never a silent drop", () => {
     const cases = [
-      { cycle: "yearly" as BillingCycle, quotePaid: 0, quoteAmount: 100, scheduleSize: 1 },
-      { cycle: "monthly" as BillingCycle, quotePaid: 0, quoteAmount: 100, scheduleSize: 0 },
-      { cycle: "monthly" as BillingCycle, quotePaid: 100, quoteAmount: 100, scheduleSize: 12 },
+      { cycle: "yearly" as BillingCycle, quotePaid: 0, quoteAmount: 100, quoteInvoiced: false, scheduleSize: 1 },
+      { cycle: "monthly" as BillingCycle, quotePaid: 0, quoteAmount: 100, quoteInvoiced: false, scheduleSize: 0 },
+      { cycle: "monthly" as BillingCycle, quotePaid: 100, quoteAmount: 100, quoteInvoiced: true, scheduleSize: 12 },
     ];
     for (const c of cases) {
       const skip = instalmentSkip(c);
@@ -135,7 +148,7 @@ describe("instalmentSkip — when billing must NOT run", () => {
     /* paid 0 >= amount 0 is true, and would skip everything on a quote with no
        amount recorded. That is a missing figure, not a settled term. */
     expect(instalmentSkip({
-      cycle: "monthly", quotePaid: 0, quoteAmount: 0, scheduleSize: 12,
+      cycle: "monthly", quotePaid: 0, quoteAmount: 0, quoteInvoiced: false, scheduleSize: 12,
     })).toBeNull();
   });
 });

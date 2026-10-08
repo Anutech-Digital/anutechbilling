@@ -131,3 +131,92 @@ describe("making the missing customer + subscription from the bill", async () =>
     expect(nameFromDomain("gcs.in.net")).toBe("Gcs");                  // a 2-letter label is never the company
   });
 });
+
+/**
+ * R-320 — "Add all missing" made every subscription "Google Workspace", 1 user, ₹0. The bill's
+ * edition and quantity (Google's invoice CSV) now reach the subscription, priced from the tenant
+ * catalogue's list price; an unknown edition or a missing catalogue row stays unpriced, never ₹0
+ * passed off as a price and never an invented one.
+ */
+describe("R-320: edition, seats and price from the bill", async () => {
+  const { billEditionOf, parseGoogleBillCsv, draftFromBill, catalogPriceForEdition, newSubscriptionRow } = await import("./google-bill");
+
+  const CSV = [
+    "Domain name,Customer ID,Description,Order name,Interval,Quantity,Amount",
+    "accesstel.in,C04e9zwp8,Google Workspace Business Starter - Annual Plan (Monthly Payment),Commitment,1 Sep - 30 Sep,5,\"1,323.00\"",
+    "accesstel.in,C04e9zwp8,Google Workspace Business Starter - Annual Plan (Monthly Payment),Commitment,15 Sep - 30 Sep,7,84.00",
+    "adclues.com,C00nlpovy,Google Workspace Business Standard - Flexible Plan,Flexible,1 Sep - 30 Sep,3,\"2,646.00\"",
+    "mixed.in,C01mixxxx,Google Workspace Business Starter,Commitment,1 Sep - 30 Sep,2,529.20",
+    "mixed.in,C01mixxxx,Google Workspace Business Plus,Commitment,1 Sep - 30 Sep,1,1218.00",
+    "vaultonly.com,C01vaultx,Google Vault,Flexible,1 Sep - 30 Sep,2,400.00",
+  ].join("\n");
+
+  it("reads the edition from Google's SKU descriptions, and nothing it cannot name", () => {
+    expect(billEditionOf("Google Workspace Business Starter - Annual Plan")).toBe("Business Starter");
+    expect(billEditionOf("Google Workspace Business Plus")).toBe("Business Plus");
+    expect(billEditionOf("Google Workspace Enterprise Standard")).toBe("Enterprise Standard");
+    expect(billEditionOf("G Suite Basic")).toBeNull();
+    expect(billEditionOf("Google Vault")).toBeNull();
+    expect(billEditionOf("Google Workspace Archived User")).toBeNull();
+    expect(billEditionOf("Google Workspace")).toBeNull();
+  });
+
+  it("a CSV bill gives each domain its edition and seats; mixed editions stay unknown", () => {
+    const b = parseGoogleBill(CSV);
+    expect(b).toEqual(parseGoogleBillCsv(CSV));
+    const by = (d: string) => b.lines.find((l) => l.domain === d)!;
+    // two rows of the same edition = a mid-month change → the larger quantity, amounts added
+    expect(by("accesstel.in")).toEqual({ domain: "accesstel.in", customerId: "C04e9zwp8", amount: 1407, plan: "Business Starter", seats: 7 });
+    expect(by("adclues.com")).toMatchObject({ plan: "Business Standard", seats: 3, amount: 2646 });
+    expect(by("mixed.in")).toMatchObject({ plan: null, seats: null, amount: 1747.2 });
+    expect(by("vaultonly.com")).toMatchObject({ plan: null, seats: null, amount: 400 });
+    expect(b.linesTotal).toBe(6200.2);
+  });
+
+  it("the PDF names no edition — its lines carry none, and the rows say so", () => {
+    const pdf = parseGoogleBill(PDF_TEXT);
+    expect(pdf.lines.every((l) => l.plan == null && l.seats == null)).toBe(true);
+    const rows = checkBill(pdf.lines, [], []).rows;
+    expect(rows.every((r) => r.billPlan === null && r.billSeats === null)).toBe(true);
+  });
+
+  const catalog = [
+    // the old seed price, under the ₹270 list → floored by catalogYearlyPrice (R-205/R-387)
+    { id: "it-starter", name: "Google Workspace Business Starter", vendor: "google", msrp: 136, wholesale: 120, prices: {}, item_type: "subscription", is_active: true },
+    { id: "it-standard", name: "Google Workspace Business Standard", vendor: "google", msrp: 1100, wholesale: 900, prices: {}, item_type: "subscription", is_active: true },
+    { id: "it-std-support", name: "Google Workspace Business Standard Support", vendor: "google", msrp: 50, wholesale: 0, prices: {}, item_type: "subscription", is_active: true },
+    { id: "m365", name: "Business Plus", vendor: "microsoft", msrp: 999, wholesale: 800, prices: {}, item_type: "subscription", is_active: true },
+  ];
+
+  it("prices the edition from the catalogue list price (floor applied), not a support plan or another vendor", () => {
+    expect(catalogPriceForEdition("Business Starter", catalog)).toEqual({ perSeatPm: 270, itemId: "it-starter" });
+    expect(catalogPriceForEdition("Business Standard", catalog)).toEqual({ perSeatPm: 1100, itemId: "it-standard" });
+    expect(catalogPriceForEdition("Business Plus", catalog)).toBeNull();          // only an M365 row by that name
+    expect(catalogPriceForEdition("Google Workspace", [{ ...catalog[0], name: "Google Workspace" }])).toBeNull();
+  });
+
+  it("the subscription made from a CSV line has the edition, seats, MRR and catalogue item", () => {
+    const row = checkBill(parseGoogleBill(CSV).lines, [], []).rows.find((r) => r.domain === "accesstel.in")!;
+    const d = draftFromBill(row, catalog);
+    expect(d).toEqual({ plan: "Business Starter", users: 7, sellPerUserMonth: 270, itemId: "it-starter", noCatalogPrice: false, editionUnknown: false });
+    const sub = newSubscriptionRow({
+      tenantId: "t", customerId: "c", customerName: "Accesstel", domain: row.domain, plan: d.plan, users: d.users,
+      sellPerUserMonth: d.sellPerUserMonth, googleCostMonth: row.googleCost, syncedAt: "2026-10-07T00:00:00Z", itemId: d.itemId,
+    });
+    expect(sub).toMatchObject({ plan: "Business Starter", seats: 7, vendor_seats: 7, mrr: 1890, item_id: "it-starter", vendor_cost_per_seat_month: 201 });
+  });
+
+  it("no catalogue row → no price (flagged), never ₹0 presented as a price or an invented one", () => {
+    const d = draftFromBill({ billPlan: "Business Plus", billSeats: 4 }, catalog);
+    expect(d).toEqual({ plan: "Business Plus", users: 4, sellPerUserMonth: null, itemId: null, noCatalogPrice: true, editionUnknown: false });
+    const sub = newSubscriptionRow({ tenantId: "t", customerId: "c", customerName: "X", domain: "x.in", plan: d.plan, users: d.users, sellPerUserMonth: d.sellPerUserMonth, googleCostMonth: 100, syncedAt: "s", itemId: d.itemId });
+    expect(sub.mrr).toBe(0);
+    expect(sub).not.toHaveProperty("item_id");
+  });
+
+  it("a bill with no edition (the PDF) is not priced, even with a catalogue", () => {
+    expect(draftFromBill({ billPlan: null, billSeats: null }, catalog)).toEqual({
+      plan: "Google Workspace", users: 1, sellPerUserMonth: null, itemId: null, noCatalogPrice: false, editionUnknown: true,
+    });
+  });
+});

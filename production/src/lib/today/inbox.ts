@@ -18,7 +18,8 @@
  * just under "paid, not delivered" (90), because it costs money per day and the
  * penalty has no cap on several of them.
  */
-import { buildComplianceRows, type ComplianceCategory } from "@/lib/compliance/obligations";
+import { buildComplianceRows, type ComplianceCategory, type ComplianceProfile } from "@/lib/compliance/obligations";
+import { daysBetweenISO, toIstDate } from "@/lib/dates/ist";
 
 export type TodayKind =
   | "task"
@@ -92,13 +93,18 @@ function istMidnightISO(date: string): string {
  * marked filed. `filed` is the same map the /compliance page builds from
  * compliance_log (`${obligation_key}|${period_key}` → filed date). `notApplicable`
  * is the same predicate too (R-181: no TDS deducted → no TDS deposit to chase).
+ *
+ * R-325: `profile` is the tenant's business type + GST mode (R-262), the same one the
+ * /compliance page uses — so a QRMP filer sees the quarterly GSTR-3B / monthly PMT-06,
+ * not a monthly GSTR-3B. Omitted / unknown → the Pvt Ltd, monthly-GST list, as before.
  */
 export function complianceTodayItems(
   today: Date,
   filed: Map<string, string>,
   notApplicable?: (obligationKey: string, periodKey: string) => boolean,
+  profile?: ComplianceProfile,
 ): TodayItem[] {
-  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable)
+  return buildComplianceRows(today, filed, TODAY_COMPLIANCE_CATEGORIES, notApplicable, profile)
     .filter((r) => r.status !== "filed" && r.status !== "not_applicable" && r.daysToDue <= COMPLIANCE_WINDOW_DAYS)
     .map((r) => ({
       kind: "compliance",
@@ -132,3 +138,25 @@ export function rankTodayItems(items: readonly TodayItem[]): TodayItem[] {
 
 /** Rows at or above this are shown under "Do first". */
 export const URGENT_PRIORITY = 75;
+
+/** Kinds whose due_at is when the thing ARRIVED, not a deadline — shown as a relative time. */
+export const TODAY_ARRIVAL_KINDS: readonly string[] = [
+  "enquiry", "whatsapp", "automation", "purchase_inbox", "join_request", "approval", "provisioning",
+];
+
+/**
+ * "2d late", "due today", "in 3d" — by IST calendar day (R-241, 6 Oct 2026). It used to
+ * compare milliseconds with Math.round: a filing due today (IST midnight) read "late" all
+ * day, and tomorrow 15:00 read "due today" from 03:00. Returns "" when there is no usable
+ * deadline, and null for arrival kinds (the page shows their relative arrival time).
+ */
+export function todayWhenLabel(item: TodayItem, now: number): string | null {
+  if (TODAY_ARRIVAL_KINDS.includes(item.kind)) return null;
+  if (!item.due_at) return "";
+  const t = Date.parse(item.due_at);
+  if (Number.isNaN(t)) return "";
+  const days = daysBetweenISO(toIstDate(now), toIstDate(t));
+  if (days < 0) return `${-days}d late`;
+  if (days === 0) return "due today";
+  return `in ${days}d`;
+}

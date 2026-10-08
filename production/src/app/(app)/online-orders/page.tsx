@@ -11,9 +11,9 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { useUrlState } from "@/lib/hooks/use-url-state";
 import { ORDER_FOCI, ORDER_FOCUS_LABEL, orderInFocus, type OrderFocus } from "@/lib/online-orders/focus";
 import { FocusBanner } from "@/components/shared/focus-banner";
-import { toast } from "sonner";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,6 +34,14 @@ import { rupee } from "@/lib/utils";
 import { WEBSITE_ORDER_FILTER, orderChannel, isTrialOrder, trialWindow } from "@/lib/online-orders/sources";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
+import { invoiceHref } from "./invoice-links";
+import { orderPaymentView, paymentByLead, type OrderPayment, type QuotePaymentRow } from "./order-payment";
+import { ordersEmptyState } from "./empty-state";
+import { orderDrawerActions, type DrawerAction } from "./drawer-actions";
+import { useLeadOutcome } from "@/lib/leads/use-outcome";
+import { useCallLog } from "@/components/features/leads/call-log-dialog";
+import type { Lead } from "@/lib/supabase/database.types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,15 +78,21 @@ interface Order {
   /** The trial's own length — hosting 15, Workspace 14 — from the lead's dates. */
   trialLength: number | null;
   trialEndsOn: string | null;
-  /** True only when the lead is won — a cart order awaiting payment is NOT paid. */
+  /** R-351: true only when a full payment is recorded on the order's quote (order-payment.ts) —
+      never from the lead stage. Badge, Paid tab, KPIs and the Payment step all read this. */
   paid:        boolean;
+  /** R-351: drawer Invoice row text when there is no invoice to link. */
+  invoiceText: string;
   razorpayId:  string | null;
+  /** R-083: the GST invoice raised for this order's quote (R-079), or null if none yet. */
   invoiceNo:   string | null;
   status:      OrderStatus;
   source:      string;
   progress:    Record<string, ProgressState>;
   amAssigned:  string;
   nextAction:  string;
+  /** R-236: the lead row behind the order — the drawer's quote + call-log buttons act on it. */
+  lead:        LeadRow;
 }
 
 
@@ -156,10 +170,49 @@ function OrderDetailDrawer({
   const isPaid = order.type === "paid";
   const steps  = isPaid ? PAID_STEPS : TRIAL_STEPS;
   const s      = STATUS_META[order.status];
+  /* R-236: every button does its real job or is not shown — see drawer-actions.ts. */
+  const actions = orderDrawerActions({
+    type: order.type, status: order.status, trialDay: order.trialDay,
+    leadId: order.lead.id, company: order.company, plan: order.lead.plan,
+    seats: order.lead.seats, contact: order.contact,
+  });
+  const runOutcome = useLeadOutcome();
+  const callLog = useCallLog(runOutcome);
+  const renderAction = (a: DrawerAction) => {
+    const variant = a.key === "admin-console" ? "ghost" : a.primary ? "primary" : "default";
+    if (a.kind === "call-log") {
+      return (
+        <Button key={a.key} variant={variant} size="sm" onClick={() => callLog.run("talked", order.lead)}>
+          <Icon name={a.icon} size={12} />
+          {a.label}
+        </Button>
+      );
+    }
+    return (
+      <Button key={a.key} variant={variant} size="sm" asChild>
+        {a.kind === "link" ? (
+          <Link href={a.href as never}>
+            <Icon name={a.icon} size={12} />
+            {a.label}
+          </Link>
+        ) : (
+          <a
+            href={a.href}
+            /* tel:/mailto: hand off to the phone or mail app; web links open a new tab. */
+            target={a.href?.startsWith("http") ? "_blank" : undefined}
+            rel="noopener noreferrer"
+          >
+            <Icon name={a.icon} size={12} />
+            {a.label}
+          </a>
+        )}
+      </Button>
+    );
+  };
 
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()}>
-      <SheetContent side="right" className="w-[520px] flex flex-col p-0">
+      <SheetContent side="right" className="w-full sm:max-w-[520px] flex flex-col p-0">
         <SheetHeader className="border-b border-hairline px-6 py-4">
           <div className="flex items-center gap-2 mb-0.5">
             <SheetTitle className="font-serif text-lg leading-tight">
@@ -206,7 +259,15 @@ function OrderDetailDrawer({
                   <span className="font-semibold text-amber">{rupee(order.total)}</span>
                 </DrawerRow>
                 <DrawerRow label="Razorpay ID" mono>{order.razorpayId}</DrawerRow>
-                <DrawerRow label="Invoice" mono>{order.invoiceNo}</DrawerRow>
+                <DrawerRow label="Invoice" mono>
+                  {order.invoiceNo ? (
+                    <Link href={invoiceHref(order.invoiceNo) as never} className="text-indigo-ink hover:underline" title="Open GST invoice">
+                      {order.invoiceNo}
+                    </Link>
+                  ) : (
+                    <span className="font-sans text-ink-3">{order.invoiceText}</span>
+                  )}
+                </DrawerRow>
               </>
             ) : (
               <>
@@ -259,115 +320,20 @@ function OrderDetailDrawer({
 
         {/* Action bar */}
         <div className="flex flex-wrap gap-2 border-t border-hairline bg-paper-2 px-6 py-3">
-          {isPaid && order.status === "provisioning" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.info("Re-running provisioning…")}
-            >
-              <Icon name="refresh" size={12} />
-              Retry provisioning
-            </Button>
-          )}
-          {isPaid && order.status === "dns-pending" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.success("DNS guide re-sent")}
-            >
-              <Icon name="mail" size={12} />
-              Re-send DNS guide
-            </Button>
-          )}
-          {isPaid && order.status === "issue" && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => toast.info("Escalating to Google support…")}
-            >
-              <Icon name="alert" size={12} />
-              Escalate to Google
-            </Button>
-          )}
-          {!isPaid &&
-            order.status === "trial-active" &&
-            (order.trialDay ?? 0) >= 7 && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => toast.success("Conversion quote sent")}
-              >
-                <Icon name="rupee" size={12} />
-                Send convert quote
-              </Button>
-            )}
-          {!isPaid &&
-            order.status === "trial-active" &&
-            (order.trialDay ?? 0) < 7 && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => toast.success("Call logged")}
-              >
-                <Icon name="phone" size={12} />
-                Log AM call
-              </Button>
-            )}
-          {!isPaid && order.status === "trial-expired" && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => toast.success("Winback email queued")}
-            >
-              <Icon name="mail" size={12} />
-              Send winback
-            </Button>
-          )}
-
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`WhatsApp: ${order.contact.name}`)}
-          >
-            <Icon name="whatsapp" size={12} />
-            WhatsApp
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`Calling ${order.contact.phone}`)}
-          >
-            <Icon name="phone" size={12} />
-            Call
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => toast.info(`Email: ${order.contact.email}`)}
-          >
-            <Icon name="mail" size={12} />
-            Email
-          </Button>
-          {isPaid && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => toast.info("Downloading invoice PDF…")}
-            >
-              <Icon name="download" size={12} />
-              Invoice
+          {actions.filter((a) => a.key !== "admin-console").map(renderAction)}
+          {/* R-083: opens the order's real GST invoice (it used to toast "Downloading…"). */}
+          {isPaid && order.invoiceNo && (
+            <Button variant="default" size="sm" asChild>
+              <Link href={invoiceHref(order.invoiceNo) as never}>
+                <Icon name="receipt" size={12} />
+                Invoice
+              </Link>
             </Button>
           )}
           <div className="flex-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => toast.info("Opening Google Admin Console")}
-          >
-            <Icon name="external" size={12} />
-            Admin console
-          </Button>
+          {actions.filter((a) => a.key === "admin-console").map(renderAction)}
         </div>
+        {callLog.dialog}
       </SheetContent>
     </Sheet>
   );
@@ -406,7 +372,7 @@ function DrawerRow({
       style={{ gridTemplateColumns: "120px 1fr" }}
     >
       <span className="text-ink-3">{label}</span>
-      <span className={cn("text-ink", mono && "font-mono text-xs")}>{children}</span>
+      <span className={cn("min-w-0 break-words text-ink", mono && "break-all font-mono text-xs")}>{children}</span>
     </div>
   );
 }
@@ -417,7 +383,7 @@ function DrawerRow({
 
 // ─── DB → UI mapping ─────────────────────────────────────────────────────────
 // Map a website-order row from public.leads (sources: lib/online-orders/sources.ts) into the
-// Order shape the UI expects. Many UI fields (Razorpay ID, invoice no, granular
+// Order shape the UI expects (invoice no comes from the order's quote — R-083). Some UI fields (Razorpay ID, granular
 // progress) aren't populated yet — set to sensible defaults so the row still
 // renders. Once payments + provisioning land, we backfill from quotes/payments.
 
@@ -430,10 +396,11 @@ interface LeadRow {
   plan:          string | null;
   seats:         number | null;
   value:         number | null;
-  stage:         string;
+  stage:         Lead["stage"];
   source:        string | null;
   notes:         string | null;
   created_at:    string;
+  follow_up_date:   string | null;
   domain:           string | null;
   utm_source:       string | null;
   trial_started_at: string | null;
@@ -464,14 +431,15 @@ function domainFromNotes(notes: string | null, email: string | null): string {
   return "—";
 }
 
-/** Status badge derived from lead stage + source. */
-function statusFromLead(l: LeadRow): OrderStatus {
+/** Status badge derived from lead stage + source + the RECORDED payment (R-351). */
+function statusFromLead(l: LeadRow, paid: boolean): OrderStatus {
   if (isTrialOrder(l)) {
     const w = trialWindow(l);
     return w.state === "expired" ? "trial-expired" : w.state === "converting" ? "trial-converting" : "trial-active";
   }
   if (l.stage === "lost")  return "issue";
-  if (l.stage === "won")   return "active";
+  /* R-351: "Paid" only with a recorded payment — a lead marked won by hand is not money. */
+  if (paid)                return "active";
   /* R-077: a cart order sits at stage 'quote' until Razorpay confirms — it was shown as
      "DNS pending" (and anything else as "Provisioning"), which nothing measured. */
   return "awaiting-payment";
@@ -491,7 +459,7 @@ function formatCreatedAt(iso: string): string {
 }
 
 /** Reasonable "next action" string based on stage + age. */
-function nextActionFromLead(l: LeadRow): string {
+function nextActionFromLead(l: LeadRow, paid: boolean): string {
   if (isTrialOrder(l)) {
     const w = trialWindow(l);
     if (w.state === "expired")    return `Trial ended ${w.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} · convert or close`;
@@ -499,18 +467,20 @@ function nextActionFromLead(l: LeadRow): string {
     if (w.day >= 7)               return `Day ${w.day} of ${w.length} · scheduled health-check`;
     return `Day ${w.day} of ${w.length} · onboarding in progress`;
   }
+  if (paid) return "Paid · provisioning in progress";
   switch (l.stage) {
     case "new":      return "New lead · qualify and call within 30 min";
     case "contact":  return "Contacted · waiting for response";
     case "quote":    return "Quote sent · awaiting acceptance";
-    case "won":      return "Paid · provisioning in progress";
+    case "won":      return "Marked won, but no payment is recorded · record it on the quote";
     case "lost":     return "Lost — review reason in notes";
     default:         return "Review lead";
   }
 }
 
-function leadToOrder(l: LeadRow): Order {
+function leadToOrder(l: LeadRow, payment?: OrderPayment): Order {
   const isTrial = isTrialOrder(l);
+  const pay     = orderPaymentView(payment);
   const win     = isTrial ? trialWindow(l) : null;
   const tier    = tierFromPlan(l.plan);
   const seats   = l.seats ?? 0;
@@ -542,26 +512,32 @@ function leadToOrder(l: LeadRow): Order {
     trialDay:    day,
     trialLength: win?.length ?? null,
     trialEndsOn: win ? win.endsOn.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : null,
-    paid:        l.stage === "won",
+    paid:        pay.paid,
     razorpayId:  null,    // future: from payments table
-    invoiceNo:   null,    // future: from invoices table
-    status:      statusFromLead(l),
+    invoiceNo:   pay.invoiceNo,
+    invoiceText: pay.invoiceText,
+    status:      statusFromLead(l, pay.paid),
     source:      orderChannel(l.source, l.utm_source),
     progress:    isTrial
       ? { trial: "done", onboarding: "active", checkin: "pending", convert: "pending" }
-      : { payment: "pending", invoice: "pending", tenant: "pending", users: "pending", dns: "pending", welcome: "pending" },
+      /* R-351: Payment + GST Invoice from the recorded payment (same view as the badge); the
+         rest is not measured yet, so it honestly stays "Pending". */
+      : { payment: pay.steps.payment, invoice: pay.steps.invoice, tenant: "pending", users: "pending", dns: "pending", welcome: "pending" },
     /* Was the literal "Pardeep A" on every row. The lead's real owner, or says so. */
     amAssigned:  l.owner?.full_name?.trim() || "Unassigned",
-    nextAction:  nextActionFromLead(l),
+    nextAction:  nextActionFromLead(l, pay.paid),
+    lead:        l,
   };
 }
 
 export default function OnlineOrdersPage() {
-  const [tab, setTab]       = React.useState("all");
+  /* R-286: tab and search live in the URL, so opening an order and pressing Back
+     returns to the same filtered list. */
+  const [tab, setTab]       = useUrlState("tab", "all");
   /* R-118: each KPI's own orders (lib/online-orders/focus.ts) — "" = none. */
   const [focus, setFocus]   = useUrlChoice<OrderFocus>("focus", ORDER_FOCI, "");
   const focusOn = (f: OrderFocus) => { setTab("all"); setFocus(f); };
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlState("q");
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [orders, setOrders]   = React.useState<Order[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -578,7 +554,7 @@ export default function OnlineOrdersPage() {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("leads")
-      .select("id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)")
+      .select("id, company, contact_name, contact_email, contact_phone, plan, seats, value, stage, source, notes, created_at, follow_up_date, domain, utm_source, trial_started_at, trial_expires_at, owner:users!leads_owner_id_fkey(full_name)")
       .or(WEBSITE_ORDER_FILTER)
       .order("created_at", { ascending: false })
       .limit(100);
@@ -590,9 +566,27 @@ export default function OnlineOrdersPage() {
       setLoading(false);
       return;
     }
+    const leads = (data ?? []) as unknown as LeadRow[];
+
+    /* R-083: the invoice R-079 issues on payment sits on the order's quote
+       (quotes.lead_id -> quotes.invoice_id). R-351: the same rows say whether the order is
+       PAID (quotes.payment_status) — the one source for the badge and the steps. A failure
+       here shows nothing as paid (never a guess) — the orders themselves still show. */
+    let payments = new Map<string, OrderPayment>();
+    const leadIds = leads.map((l) => l.id);
+    if (leadIds.length) {
+      const { data: qRows, error: qErr } = await supabase
+        .from("quotes")
+        .select("lead_id, payment_status, invoice_id, created_at")
+        .in("lead_id", leadIds);
+      if (signal?.cancelled) return;
+      if (qErr) console.error("[online-orders] payment/invoice lookup failed:", qErr);
+      else payments = paymentByLead((qRows ?? []) as QuotePaymentRow[]);
+    }
+
     // Real orders only — no demo/seed data. An empty buy-flow correctly shows
     // an empty state, never fabricated revenue.
-    setOrders((data ?? []).map((r) => leadToOrder(r as unknown as LeadRow)));
+    setOrders(leads.map((l) => leadToOrder(l, payments.get(l.id))));
     setLoading(false);
   }, []);
 
@@ -636,6 +630,14 @@ export default function OnlineOrdersPage() {
     (s, o) => s + (o.total ?? 0),
     0,
   );
+
+  /* R-350: each tab / search / filter gets its own empty message — "No orders yet" only on All. */
+  const empty = ordersEmptyState({
+    tab,
+    search,
+    focusLabel: focus ? ORDER_FOCUS_LABEL[focus] : "",
+    totalOrders: orders.length,
+  });
 
   const tabItems: TabBarItem[] = [
     { id: "all",    label: `All · ${orders.length}` },
@@ -773,6 +775,7 @@ export default function OnlineOrdersPage() {
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none"
             />
             <Input
+              aria-label="Search orders"
               placeholder="Search company / email / order ID…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -795,20 +798,8 @@ export default function OnlineOrdersPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon="inbox"
-            title={
-              search
-                ? "No orders match your search"
-                : tab === "issues"
-                  ? "No issues — all clear!"
-                  : "No orders yet"
-            }
-            body={
-              search
-                ? `Try a different search term or clear filters.`
-                : tab === "issues"
-                  ? "Every order is provisioning smoothly."
-                  : "Orders from your website — cart, trials, DMS — appear here as they come in."
-            }
+            title={empty.title}
+            body={empty.body}
             action={
               search ? (
                 <Button variant="default" onClick={() => setSearch("")}>
@@ -850,13 +841,24 @@ export default function OnlineOrdersPage() {
                       </div>
                     </div>
                     <p className="text-xs text-ink-2 truncate mb-2">{o.tier}</p>
-                    <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
-                      <Badge kind={s.kind} size="sm" dot>{s.label}</Badge>
-                      <span className="text-2xs text-ink-3 truncate max-w-[60%] text-right">
+                    {/* R-350: status line wraps to 2 lines on a 375px phone instead of cutting off with "…" */}
+                    <div className="flex items-start justify-between gap-2 mt-2 pt-2 border-t border-hairline/60">
+                      <Badge kind={s.kind} size="sm" dot className="shrink-0">{s.label}</Badge>
+                      <span className="min-w-0 text-2xs text-ink-3 text-right line-clamp-2 break-words">
                         {o.nextAction}
                       </span>
                     </div>
                   </button>
+                  {o.invoiceNo && (
+                    <Link
+                      href={invoiceHref(o.invoiceNo) as never}
+                      className="mt-1 inline-flex min-h-[40px] items-center gap-1 px-2 font-mono text-2xs text-indigo-ink hover:underline"
+                      title="Open GST invoice"
+                    >
+                      <Icon name="receipt" size={11} />
+                      {o.invoiceNo}
+                    </Link>
+                  )}
                 </li>
               );
             })}
@@ -914,6 +916,17 @@ export default function OnlineOrdersPage() {
                           <Badge kind="info" dot>
                             Trial · D{o.trialDay}
                           </Badge>
+                        )}
+                        {/* R-083: the order's GST invoice, one click away. */}
+                        {o.invoiceNo && (
+                          <Link
+                            href={invoiceHref(o.invoiceNo) as never}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1 block font-mono text-3xs text-indigo-ink hover:underline"
+                            title="Open GST invoice"
+                          >
+                            {o.invoiceNo}
+                          </Link>
                         )}
                       </td>
 

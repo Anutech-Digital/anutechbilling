@@ -22,7 +22,39 @@ const LISTS = [
   ["src/lib/queries/invoices.ts",      "invoices"],
   ["src/lib/queries/subscriptions.ts", "subscriptions"],
   ["src/lib/queries/customers.ts",     "customers"],
+  /* R-264 — the money lists R-046 left on a bare select: same 1000-row cut, same silence. */
+  ["src/lib/queries/payments.ts",        "payments"],
+  ["src/lib/queries/quotes.ts",          "quotes"],
+  ["src/lib/queries/expenses.ts",        "expenses"],
+  ["src/lib/queries/vendor-bills.ts",    "vendor_bills"],
+  ["src/lib/queries/purchase-orders.ts", "purchase_orders"],
+  ["src/lib/queries/vendors.ts",         "vendors"],
+  ["src/lib/queries/projects.ts",        "project_sales"],
 ] as const;
+
+/* R-264 — list hooks whose totals are rolled up from OTHER tables in the browser. A capped
+   rollup is the same bug one step removed: vendor 'outstanding' or project 'receivable'
+   summed over the first 1000 bills/payments. Every select inside these hooks must page. */
+const ROLLUPS = [
+  ["src/lib/queries/vendors.ts",  "useVendors"],
+  ["src/lib/queries/projects.ts", "useProjectSales"],
+] as const;
+
+describe("list rollups page every table they sum (R-264)", () => {
+  it.each(ROLLUPS)("%s %s", (file, fn) => {
+    const src = strip(file);
+    const start = src.indexOf(`export function ${fn}(`);
+    expect(start, `${fn} not found`).toBeGreaterThan(-1);
+    const next = src.indexOf("export function", start + 1);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    const selects = body.split(".select(").slice(1);
+    expect(selects.length).toBeGreaterThan(1);
+    for (const tail of selects) {
+      expect(tail.slice(0, 300), `${fn}: a select with no .range() before the next statement`)
+        .toContain(".range(");
+    }
+  });
+});
 
 describe("the billing lists page past the 1000-row cap", () => {
   it.each(LISTS)("%s reads every row", (file) => {

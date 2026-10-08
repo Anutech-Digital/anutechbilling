@@ -25,15 +25,18 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { hasNoPrice } from "@/lib/subscriptions/list-price-mrr";
 import { useCustomers } from "@/lib/queries/customers";
 import { useLeadStageCounts } from "@/lib/queries/leads";
 import { useMrrSnapshots } from "@/lib/queries/seat-requests";
 import { KPI } from "@/components/shared/kpi";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Card } from "@/components/ui/card";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { NavDirectory } from "@/components/layout/nav-directory";
+import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 import { DealsReportCard } from "@/components/features/deals/deals-report-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import {
@@ -133,27 +136,31 @@ function ReportCard({
 // Ye "funnel conversion" nahi hai: stage ka itihaas record nahi hota, sirf
 // aaj ki stage — isliye card kehta hai "Pipeline today" aur % kul ka hissa
 // hai, conversion nahi.
-const PIPELINE_STAGES: ReadonlyArray<{ id: Lead["stage"]; label: string; color: string }> = [
-  { id: "new",     label: "New",            color: "#64748b" },
-  { id: "contact", label: "Contacted",      color: "#6366f1" },
-  { id: "demo",    label: "Demo Done",      color: "#0ea5e9" },
-  { id: "trial",   label: "Trial Active",   color: "#f43f5e" },
-  { id: "quote",   label: "Quote Sent",     color: "#C2410C" },
-  { id: "won",     label: "Won",            color: "#16a34a" },
-];
+// R-290: stages, labels and order come from the one table (lib/leads/stage-meta, funnel
+// order quote → demo → trial); only the bar colours are this card's own.
+const PIPELINE_COLOR: Record<Lead["stage"], string> = {
+  new: "#64748b", contact: "#6366f1", quote: "#C2410C", demo: "#0ea5e9",
+  trial: "#f43f5e", won: "#16a34a", lost: "#94a3b8",
+};
+const PIPELINE_STAGES: ReadonlyArray<{ id: Lead["stage"]; label: string; color: string }> =
+  LEAD_STAGES.map((s) => ({ id: s.id, label: s.label, color: PIPELINE_COLOR[s.id] }));
 
 const PIPELINE_STAGE_IDS = PIPELINE_STAGES.map((s) => s.id);
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
-  const { data: subs,      isLoading: subsLoading  } = useSubscriptions();
-  const { data: customers, isLoading: custsLoading } = useCustomers();
+  const subsQ  = useSubscriptions();
+  const custsQ = useCustomers();
+  const { data: subs,      isLoading: subsLoading  } = subsQ;
+  const { data: customers, isLoading: custsLoading } = custsQ;
   /* WC-scale: exact per-stage counts from the server. This used to be useLeads() — every
      lead, cut at PostgREST's 1000 rows — counted here, so past the thousandth lead the
      pipeline card described the newest thousand. Junk is excluded, as the card always said. */
-  const { data: stageCounts = {} } = useLeadStageCounts(PIPELINE_STAGE_IDS);
-  const { data: snapshots } = useMrrSnapshots(13);
+  const stageQ    = useLeadStageCounts(PIPELINE_STAGE_IDS);
+  const snapshotQ = useMrrSnapshots(13);
+  const { data: stageCounts = {} } = stageQ;
+  const { data: snapshots } = snapshotQ;
   const { data: currentUser } = useCurrentUser();
 
   const loading = subsLoading || custsLoading;
@@ -175,10 +182,29 @@ export default function ReportsPage() {
     );
   }
 
+  /* MRR, ARR, seats and the customer count all come from these two. If either
+     failed, every KPI below would read ₹0 / 0 — say so instead, and keep the
+     reports directory usable. */
+  if (subsQ.isError || custsQ.isError) {
+    return (
+      <div className="mx-auto max-w-[1800px] px-4 md:px-8 pb-20 pt-7">
+        <h1 className="mb-6 font-serif text-3xl text-ink">Reports</h1>
+        <div className="mb-8">
+          <LoadError what="Subscription and customer figures" onRetry={() => { void subsQ.refetch(); void custsQ.refetch(); }} />
+        </div>
+        <NavDirectory parentId="reports" title="All reports" />
+      </div>
+    );
+  }
+  const partialFail = stageQ.isError || snapshotQ.isError;
+
   // ── KPIs from real data ──────────────────────────────────────────────────
   const activeSubs = (subs ?? []).filter((s) => s.status === "active");
   const totalMrr   = activeSubs.reduce((s, x) => s + x.mrr, 0);
   const totalArr   = totalMrr * 12;
+  /* R-317: active subscriptions with no price (mostly imports with no edition). They add
+     ₹0 above, so MRR/ARR are a floor while this is non-zero — say so, and link to them. */
+  const noPriceCount = activeSubs.filter(hasNoPrice).length;
   const custCount  = (customers ?? []).length;
   const totalSeats = activeSubs.reduce((s, x) => s + x.seats, 0);
 
@@ -300,6 +326,10 @@ export default function ReportsPage() {
         </Link>
       </div>
 
+      {partialFail && (
+        <LoadErrorBanner onRetry={() => { void stageQ.refetch(); void snapshotQ.refetch(); }} />
+      )}
+
       {/* ── Reports directory (S30) — every report in one place, from APP_NAV. P&L,
              Balance Sheet, GST, TDS, Aging, ESI… are no longer sidebar rows; they are
              listed here, role-filtered exactly like the sidebar. ── */}
@@ -329,6 +359,14 @@ export default function ReportsPage() {
           icon="award"
         />
       </div>
+      {noPriceCount > 0 && (
+        <p role="status" className="-mt-3 mb-6 text-xs text-amber-ink">
+          {noPriceCount} subscription{noPriceCount === 1 ? " has" : "s have"} no price — MRR undercounted.{" "}
+          <Link href="/subscriptions?price=missing" className="font-medium underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm">
+            Set their plan
+          </Link>
+        </p>
+      )}
 
       {/* ── Row 1: MRR trend + Funnel ── */}
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -339,8 +377,7 @@ export default function ReportsPage() {
         >
           {trendData.length === 0 ? (
             <p className="text-sm text-ink-3 py-8 text-center">
-              Pehla snapshot mahine ki 1 taareekh ko banega — cron har mahine
-              MRR ka bindu jodta hai.
+              The first snapshot is taken on the 1st of next month.
             </p>
           ) : (
             <>
@@ -380,9 +417,7 @@ export default function ReportsPage() {
               </ResponsiveContainer>
               {trendData.length < 3 && (
                 <p className="mt-2 text-xs text-ink-3">
-                  History {trendData[0].month} se shuru hui hai — curve mahine-dar-mahine
-                  apne aap banegi. (Pehle yahan 12 mahine ka DEMO data tha; wo kisi
-                  faisle ke kaam ka nahi tha.)
+                  History starts in {trendData[0].month}. A new point is added on the 1st of each month.
                 </p>
               )}
             </>

@@ -12,6 +12,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { BusinessLoanRow, BusinessLoanPaymentRow } from "@/lib/supabase/database.types";
 
@@ -101,7 +102,7 @@ export function useRecordBusinessLoan() {
       return data as string;
     },
     onSuccess: () => { invalidate(qc); toast.success("Loan recorded — cash added to the account"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -123,7 +124,7 @@ export function useRecordLoanEmi() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => { invalidate(qc); toast.success("EMI recorded"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -136,6 +137,6 @@ export function useDeleteBusinessLoan() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => { invalidate(qc); toast.success("Loan removed"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

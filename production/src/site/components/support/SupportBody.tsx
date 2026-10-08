@@ -15,7 +15,7 @@
  */
 import { useMemo, useState } from "react";
 import { KB_ARTICLES, SUPPORT_CHANNELS } from "@/site/lib/data/misc";
-import { WHATSAPP_READY, WHATSAPP_URL, COMPANY, CLIENT_AREA_URL } from "@/site/lib/config";
+import { WHATSAPP_READY, WHATSAPP_URL, COMPANY, CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { addDaysISO, istToday } from "@/lib/dates/ist";
 
 const SLOTS = ["10:30", "11:30", "14:00", "15:30", "17:00", "18:15"];
@@ -91,7 +91,7 @@ export function SupportBody() {
         <div className="card card-highlight">
           <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>Email support</div>
           <p className="body" style={{ margin: "0 0 12px", fontSize: 14 }}>
-            {COMPANY.hours}. We aim to reply inside four working hours.
+            {SLA.hours}. We aim to reply {SLA.firstReply}.
           </p>
           <a href={mail("Support request")} className="btn btn-primary btn-sm">{COMPANY.supportEmail}</a>
         </div>

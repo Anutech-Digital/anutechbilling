@@ -144,19 +144,19 @@ export function EnquiryClient({
 
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 <FormField label="Your name" required htmlFor="fullName">
-                  <Input id="fullName" placeholder="e.g. Rajesh Kumar" error={errors.fullName?.message} {...register("fullName")} />
+                  <Input id="fullName" placeholder="e.g. Rajesh Kumar" autoComplete="name" error={errors.fullName?.message} {...register("fullName")} />
                 </FormField>
 
                 <FormField label="Company" required htmlFor="companyName">
-                  <Input id="companyName" placeholder="e.g. Acme Pvt Ltd" error={errors.companyName?.message} {...register("companyName")} />
+                  <Input id="companyName" placeholder="e.g. Acme Pvt Ltd" autoComplete="organization" error={errors.companyName?.message} {...register("companyName")} />
                 </FormField>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField label="Work email" required htmlFor="email">
-                    <Input id="email" type="email" placeholder="e.g. rajesh@acme.in" error={errors.email?.message} {...register("email")} />
+                    <Input id="email" type="email" placeholder="e.g. rajesh@acme.in" autoComplete="email" inputMode="email" error={errors.email?.message} {...register("email")} />
                   </FormField>
                   <FormField label="Phone" required htmlFor="phone">
-                    <Input id="phone" type="tel" placeholder="e.g. +91 98765 43210" error={errors.phone?.message} {...register("phone")} />
+                    <Input id="phone" type="tel" placeholder="e.g. +91 98765 43210" autoComplete="tel" inputMode="tel" error={errors.phone?.message} {...register("phone")} />
                   </FormField>
                 </div>
 

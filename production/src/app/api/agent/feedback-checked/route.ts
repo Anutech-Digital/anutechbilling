@@ -14,12 +14,12 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { AI_CHECKER_NAME } from "./checker-name";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const AI_CHECKER_NAME = "AI browser check";
 
 export async function POST(req: Request) {
   const expected = process.env.AGENT_QUEUE_TOKEN?.trim();

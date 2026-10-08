@@ -349,7 +349,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
     e.preventDefault();
     const parsedAmount = parseFloat(amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      toast.error("Valid advance amount daalo");
+      toast.error("Enter the advance amount", { description: "More than ₹0." });
       return;
     }
 
@@ -357,7 +357,7 @@ function DisburseAdvanceDialog({ open, onOpenChange, prefill }: { open: boolean;
     const empName = empObj ? empObj.name : customName.trim();
 
     if (!empName) {
-      toast.error("Employee select karo ya naam enter karo");
+      toast.error("Choose who gets the advance", { description: "Pick an employee, or type a name." });
       return;
     }
 
@@ -567,7 +567,7 @@ function EditAdvanceDialog({ advance, open, onOpenChange }: { advance: EmployeeA
           onSubmit={(e) => {
             e.preventDefault();
             const n = Math.round(Number(amount));
-            if (!name.trim()) { toast.error("Enter who you gave the money to"); return; }
+            if (!name.trim()) { toast.error("Enter who you gave the money to", { description: "A name is needed to track who owes it back." }); return; }
             if (!n || n <= 0) { toast.error("Enter the amount", { description: "More than ₹0." }); return; }
             update.mutate(
               { advance_id: advance.id, employee_name: name.trim(), amount: n, date, purpose: purpose.trim() || null },

@@ -2,6 +2,7 @@
  * Owner-facing API-key management (session-authenticated).
  *   GET  → list this tenant's keys (metadata only — never the hash/plaintext)
  *   POST → mint a new key; returns the plaintext ONCE (never stored/retrievable)
+ *          body { label?, scopes? } — scopes from API_SCOPES (R-327), default ["read"]
  *
  * Owner-only: an API key can read all of a tenant's billing data, so only the
  * owner may create one. Tenant isolation is also enforced by RLS.
@@ -9,6 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateApiKey } from "@/lib/api-keys/keys";
+import { DEFAULT_SCOPES, parseScopes } from "@/lib/api-keys/scopes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,8 +44,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only the owner can create API keys" }, { status: 403 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { label?: string };
+  const body = (await req.json().catch(() => ({}))) as { label?: string; scopes?: unknown };
   const label = (body.label ?? "").toString().trim().slice(0, 60) || "API key";
+  const scopes = body.scopes === undefined ? DEFAULT_SCOPES : parseScopes(body.scopes);
+  if (!scopes) {
+    return NextResponse.json({ error: "Pick at least one valid scope (read, telecalling)" }, { status: 400 });
+  }
 
   const { plaintext, hash, keyPrefix } = generateApiKey();
   const { data, error } = await ctx.supabase
@@ -53,9 +59,10 @@ export async function POST(req: NextRequest) {
       label,
       key_prefix: keyPrefix,
       key_hash:   hash,
+      scopes,
       created_by: ctx.userId,
     })
-    .select("id, label, key_prefix, created_at")
+    .select("id, label, key_prefix, scopes, created_at")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

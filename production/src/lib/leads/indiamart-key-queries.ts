@@ -10,7 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import type { IndiamartKeyStatus } from "./indiamart-key";
+import { saveKeyFailure, type IndiamartKeyStatus } from "./indiamart-key";
 
 export const INDIAMART_KEY_QUERY = ["leads", "indiamart-key"] as const;
 
@@ -45,13 +45,20 @@ export function useIndiamartKeyStatus() {
 export function useSaveIndiamartKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (crmKey: string) => call<{ encrypted: boolean }>("POST", { crm_key: crmKey }),
-    onSuccess: (r) => {
+    /* R-399: since R-051 a save is either sealed or refused (503, vault missing) — there is
+       no plaintext-save outcome to report. */
+    mutationFn: (crmKey: string) => call<{ encrypted: true }>("POST", { crm_key: crmKey }),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: INDIAMART_KEY_QUERY });
-      if (r.encrypted) toast.success("Key saved");
-      else toast.warning("Key saved, not encrypted", { description: "SECRETS_MASTER_KEY is not set on the server. Ask an admin to set it, then save the key again." });
+      toast.success("Key saved", { description: "Encrypted before it was stored." });
     },
-    onError: (e) => toastError(e, { description: "Couldn't save key. Paste it again; if it keeps failing, refresh the page." }),
+    onError: (e) => {
+      if (e instanceof IndiamartApiError) {
+        const f = saveKeyFailure(e.status, e.message);
+        if (f.vaultMissing) { toast.error(f.title, { description: f.description }); return; }
+      }
+      toastError(e, { description: saveKeyFailure(0, "").description });
+    },
   });
 }
 

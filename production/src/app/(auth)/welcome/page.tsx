@@ -22,6 +22,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -91,7 +92,9 @@ function WelcomeInner() {
 
   async function createWorkspace() {
     if (companyName.trim().length < 2) {
-      toast.error("Enter your company name.");
+      toast.error("Enter your company name.", {
+        description: "At least 2 letters — it goes on your quotes and invoices. You can change it later in Settings.",
+      });
       return;
     }
     setBusy(true);
@@ -103,11 +106,19 @@ function WelcomeInner() {
       });
       const json = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || json.error) {
-        toast.error(json.error ?? "Could not create the workspace.");
+        toastError(json.error, {
+          fallback: "Could not create the workspace.",
+          description: "Nothing was created. Check the company name and press Create again.",
+        });
         return;
       }
       toast.success("Workspace created 🎉");
       window.location.href = "/setup?welcome=1";
+    } catch (err) {
+      toastError(err, {
+        fallback: "Could not create the workspace.",
+        description: "The connection dropped before it finished. Check your internet and press Create again.",
+      });
     } finally {
       setBusy(false);
     }
@@ -115,7 +126,9 @@ function WelcomeInner() {
 
   async function requestToJoin() {
     if (domain.trim().length < 3) {
-      toast.error("Enter your work email domain, like anutech.in");
+      toast.error("Enter your work email domain, like anutech.in", {
+        description: "The part after @ in your work email — we use it to find your company's workspace.",
+      });
       return;
     }
     setBusy(true);
@@ -127,10 +140,18 @@ function WelcomeInner() {
       });
       const json = await res.json() as { ok?: boolean; error?: string; message?: string };
       if (!res.ok || json.error) {
-        toast.error(json.error ?? "Could not send the request.");
+        toastError(json.error, {
+          fallback: "Could not send the request.",
+          description: "Check the domain (like anutech.in) and try again, or ask your admin to invite you.",
+        });
         return;
       }
       setSentMsg(json.message ?? "We've asked the workspace owner to add you.");
+    } catch (err) {
+      toastError(err, {
+        fallback: "Could not send the request.",
+        description: "The connection dropped before it finished. Check your internet and try again.",
+      });
     } finally {
       setBusy(false);
     }
@@ -139,7 +160,9 @@ function WelcomeInner() {
   function openQuote() {
     const id = quoteId.trim();
     if (!id) {
-      toast.error("Enter the quote code from your email.");
+      toast.error("Enter the quote code from your email.", {
+        description: "It is in the quote email we sent you — or open the link in that email directly.",
+      });
       return;
     }
     router.push(`/quote/${encodeURIComponent(id)}/accept`);

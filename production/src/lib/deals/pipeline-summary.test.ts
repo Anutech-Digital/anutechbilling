@@ -36,9 +36,9 @@ describe("summarizeDealStrip", () => {
       deal({ stage: "demo",  value: 50_000,  expected_close_date: "2026-10-01" }), // 40% · next month
       deal({ stage: "trial", value: 10_000,  expected_close_date: "2026-09-30" }), // 60% · this month
       deal({ stage: "trial", value: null }),                                         // no value, still counted
-      deal({ stage: "won",   value: 70_000,  stage_changed_at: "2026-09-02T05:00:00Z" }),
-      deal({ stage: "won",   value: 5_000,   stage_changed_at: "2026-08-31T19:00:00Z" }), // 1 Sep IST → in
-      deal({ stage: "won",   value: 9_000,   stage_changed_at: "2026-08-31T17:00:00Z" }), // 31 Aug IST → out
+      deal({ stage: "won",   value: 70_000,  stage_changed_at: "2026-09-02T05:00:00Z", paid: true }),
+      deal({ stage: "won",   value: 5_000,   stage_changed_at: "2026-08-31T19:00:00Z", paid: true }), // 1 Sep IST → in
+      deal({ stage: "won",   value: 9_000,   stage_changed_at: "2026-08-31T17:00:00Z", paid: true }), // 31 Aug IST → out
       deal({ stage: "lost",  value: 999_000, expected_close_date: "2026-09-20" }),
       deal({ stage: "new",   value: 1_000_000, expected_close_date: "2026-09-20" }),      // not a deal
     ], NOW);
@@ -52,6 +52,7 @@ describe("summarizeDealStrip", () => {
     expect(summarizeDealStrip([], NOW)).toEqual({
       pipeline: { count: 0, value: 0 }, weighted: 0,
       closingThisMonth: { count: 0, value: 0 }, wonThisMonth: { count: 0, value: 0 },
+      wonAwaitingPayment: { count: 0, value: 0 },
     });
   });
 
@@ -59,14 +60,25 @@ describe("summarizeDealStrip", () => {
     const s = summarizeDealStrip([deal({ stage: "quote", value: 1, expected_close_date: "2026-11-05" })], new Date("2026-10-31T19:00:00Z"));
     expect(s.closingThisMonth.count).toBe(1);
   });
+
+  /* R-375 (audit finding 8): accept_quote sets stage 'won' BEFORE any payment. */
+  it("an accepted-but-unpaid won deal is counted as won but its ₹ is NOT won revenue", () => {
+    const s = summarizeDealStrip([
+      deal({ stage: "won", value: 70_000, stage_changed_at: "2026-09-02T05:00:00Z", paid: true }),
+      deal({ stage: "won", value: 40_000, stage_changed_at: "2026-09-03T05:00:00Z", paid: false }),
+      deal({ stage: "won", value: 25_000, stage_changed_at: "2026-09-04T05:00:00Z" }), // unknown = no money
+    ], NOW);
+    expect(s.wonThisMonth).toEqual({ count: 3, value: 70_000 });
+    expect(s.wonAwaitingPayment).toEqual({ count: 2, value: 65_000 });
+  });
 });
 
 describe("dealReport", () => {
   it("win rate, averages and per-owner table over the last 90 IST days", () => {
     const r = dealReport([
-      deal({ stage: "won",  value: 100_000, owner_id: "a", created_at: "2026-09-01T05:00:00Z", stage_changed_at: "2026-09-11T05:00:00Z" }), // 10d
-      deal({ stage: "won",  value: 50_000,  owner_id: "a", created_at: "2026-08-01T05:00:00Z", stage_changed_at: "2026-08-21T05:00:00Z" }), // 20d
-      deal({ stage: "won",  value: 30_000,  owner_id: "b", created_at: "2026-09-20T05:00:00Z", stage_changed_at: "2026-09-25T05:00:00Z" }), // 5d
+      deal({ stage: "won",  value: 100_000, owner_id: "a", created_at: "2026-09-01T05:00:00Z", stage_changed_at: "2026-09-11T05:00:00Z", paid: true }), // 10d
+      deal({ stage: "won",  value: 50_000,  owner_id: "a", created_at: "2026-08-01T05:00:00Z", stage_changed_at: "2026-08-21T05:00:00Z", paid: true }), // 20d
+      deal({ stage: "won",  value: 30_000,  owner_id: "b", created_at: "2026-09-20T05:00:00Z", stage_changed_at: "2026-09-25T05:00:00Z", paid: true }), // 5d
       deal({ stage: "lost", value: 80_000,  owner_id: "b", lost_at: "2026-09-10T05:00:00Z" }),
       deal({ stage: "lost", value: 1,       owner_id: null, lost_at: "2026-09-10T05:00:00Z" }),
       deal({ stage: "won",  value: 999_999, owner_id: "a", stage_changed_at: "2026-06-01T05:00:00Z" }), // outside window
@@ -99,6 +111,20 @@ describe("dealReport", () => {
     expect(r.avgWonValue).toBeNull();
     expect(r.avgDaysToClose).toBeNull();
     expect(r.byOwner).toEqual([]);
+  });
+
+  it("R-375: won ₹, average and per-owner ₹ count only deals with a recorded payment", () => {
+    const r = dealReport([
+      deal({ stage: "won", value: 100_000, owner_id: "a", stage_changed_at: "2026-09-11T05:00:00Z", paid: true }),
+      deal({ stage: "won", value: 400_000, owner_id: "a", stage_changed_at: "2026-09-12T05:00:00Z", paid: false }),
+      deal({ stage: "lost", value: 1, owner_id: "a", lost_at: "2026-09-10T05:00:00Z" }),
+    ], NOW);
+    expect([r.won, r.lost, r.winRatePct]).toEqual([2, 1, 67]); // the decision still counts
+    expect(r.wonValue).toBe(100_000);
+    expect(r.paidWon).toBe(1);
+    expect(r.awaitingPaymentValue).toBe(400_000);
+    expect(r.avgWonValue).toBe(100_000);
+    expect(r.byOwner[0]).toMatchObject({ ownerId: "a", won: 2, wonValue: 100_000 });
   });
 });
 

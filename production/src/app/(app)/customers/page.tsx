@@ -27,7 +27,14 @@ import { ImportDomainsDialog } from "@/components/features/customers/import-doma
 import { CustomerProfile } from "@/components/features/customers/customer-profile";
 import { CustomersBulkBar } from "@/components/features/customers/customers-bulk-bar";
 import { useCustomerGroups, useSetCustomerGroup } from "@/lib/queries/customer-groups";
-import { useCustomers, useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive } from "@/lib/queries/customers";
+import {
+  useCustomers, useCustomersPaged, useCustomerListCounts, fetchAllCustomers, CUSTOMERS_PAGE_SIZE,
+  useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
+} from "@/lib/queries/customers";
+import { createClient } from "@/lib/supabase/client";
+import {
+  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, type ViewCtx,
+} from "./server-list";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
 import { newestFirst } from "@/lib/sort/newest-first";
@@ -54,13 +61,15 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteSales } from "@/lib/nav";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
 // (receivables + unused credit + subscriptions).
 /* R-005: `projects` joined this in Sep 2026. A reseller who also sells custom software
    had those customers reading as dead accounts, because every filter here asked only
-   about subscriptions. */
-type ViewCtx = { amount: number; credit: number; hasSub: boolean; projects: readonly ProjectLike[]; received: number; noState: boolean };
+   about subscriptions. ViewCtx lives in ./server-list.ts (R-210), which counts the chips. */
 const VIEW_DEFS: { id: string; label: string; test: (x: ViewCtx) => boolean }[] = [
   { id: "all",        label: "All",              test: () => true },
   { id: "unpaid",     label: "Has receivables",  test: (x) => x.amount > 0 },
@@ -121,7 +130,6 @@ function customerSubline(c: CustomerLike): string {
    subscriptions. */
 
 export default function CustomersPage() {
-  const { data: customers, isLoading, error, refetch } = useCustomers();
   const { data: subscriptions } = useSubscriptions();
   const { data: outstanding } = useOutstandingReceivables();
   const { data: creditsByCustomer = {} } = useOpenCreditsByCustomer();
@@ -154,6 +162,8 @@ export default function CustomersPage() {
 
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
+  /* R-255: the accountant reads customers; adding, importing and editing stay with the team. */
+  const canWrite = canWriteSales(useCurrentUser().data?.role);
   /* `?contact=` arrives from the "Serves N customers" chip on a contact. It seeds the
      search box rather than living as a filter of its own, so the operator lands on an
      ordinary search they can widen, narrow or clear — and so there is one filter to
@@ -202,7 +212,7 @@ export default function CustomersPage() {
   // swaps the whole list to show ONLY archived ones (Zoho-style status filter).
   const [showArchived, setShowArchived] = React.useState(false);
   const [sort, setSort] = React.useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "recent", dir: "desc" });
-  const [visible, setVisible] = React.useState(60);
+  const [visible, setVisible] = React.useState(CUSTOMERS_PAGE_SIZE);
   const [kpiOpen, setKpiOpen] = React.useState(true);
   // Row action → "Create invoice": open the invoice chooser for that customer.
   const [invoiceForCustomer, setInvoiceForCustomer] = React.useState<string | null>(null);
@@ -232,29 +242,67 @@ export default function CustomersPage() {
   }, [allProjects]);
   const NO_PROJECTS: readonly ProjectLike[] = React.useMemo(() => [], []);
 
-  // Workspace keyword filter removed 2026-08-13 — RLS already scopes to tenant.
-  const customersByWorkspace = React.useMemo(() => customers ?? [], [customers]);
-
-  const activeView = VIEW_DEFS.find((v) => v.id === view) ?? VIEW_DEFS[0];
-
-  const viewCounts = React.useMemo(() => {
-    const m: Record<string, number> = Object.fromEntries(VIEW_DEFS.map((v) => [v.id, 0]));
-    for (const c of customersByWorkspace) {
-      const out = outstandingByCustomer.get(c.id);
-      const ctx: ViewCtx = { amount: out?.amount ?? 0, credit: creditsByCustomer[c.id] ?? 0, hasSub: subsByCustomer.has(c.id), projects: projectsByCustomer.get(c.id) ?? NO_PROJECTS, received: receivedBy[c.id]?.total ?? 0, noState: missingInvoiceState(c) };
-      for (const v of VIEW_DEFS) if (v.test(ctx)) m[v.id]++;
-    }
-    return m;
-  }, [customersByWorkspace, outstandingByCustomer, creditsByCustomer, subsByCustomer, projectsByCustomer, NO_PROJECTS, receivedBy]);
-
   /* Who serves which customers, so the search box below can find a customer by the
      person rather than only by the company. One fetch, shared with Subscriptions
      through the query cache. */
   const { data: contactIndex } = useContactSearchIndex();
 
-  // Filter — segment then free-text.
-  const archivedCount = customersByWorkspace.filter((c) => c.is_active === false).length;
-  const filtered = customersByWorkspace.filter((c) => {
+  /* ── R-210: WHICH READ FEEDS THE LIST ────────────────────────────────────────
+     The default screen (All, newest first) reads 50 customers at a time from the server,
+     search and archived switch included, with an exact total. The other views and the
+     money sorts filter or order by other tables, so they read the full list as before —
+     server-list.ts#customerListMode says exactly when. The search box waits 250 ms after
+     the last key before asking the server, so typing a name is one request, not eight. */
+  const [serverSearch, setServerSearch] = React.useState(search);
+  React.useEffect(() => {
+    const t = setTimeout(() => setServerSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const contactIds = React.useMemo(
+    () => contactMatchedCustomerIds(contactIndex, serverSearch),
+    [contactIndex, serverSearch],
+  );
+  const mode = customerListMode({ view, sortKey: sort.key, sortDir: sort.dir, contactIds });
+  const paged = useCustomersPaged(
+    { search: serverSearch, archived: showArchived, contactIds },
+    { enabled: mode === "server" },
+  );
+  const full = useCustomers({ enabled: mode === "full" });
+  const listCounts = useCustomerListCounts();
+  const customers = mode === "server" ? paged.rows : full.data;
+  const isLoading = mode === "server" ? paged.isLoading : full.isLoading;
+  const error = (mode === "server" ? paged.error : full.error) ?? listCounts.error;
+  const refetch = () => {
+    void listCounts.refetch();
+    if (mode === "server") void paged.refetch(); else void full.refetch();
+  };
+  /* "Has this workspace any customer at all" — the server count, not the rows on screen,
+     since a page of 50 (or a filtered page) says nothing about the rest. */
+  const anyCustomers = listCounts.data ? listCounts.data.all > 0 : (customers?.length ?? 0) > 0;
+
+  // Workspace keyword filter removed 2026-08-13 — RLS already scopes to tenant.
+  const customersByWorkspace = React.useMemo(() => customers ?? [], [customers]);
+
+  const activeView = VIEW_DEFS.find((v) => v.id === view) ?? VIEW_DEFS[0];
+
+  /* R-210: the per-customer facts the chips and KPIs are built from — all loaded in full
+     already, so neither needs the customer rows (server-list.ts#customerViewCounts). */
+  const facts = React.useMemo(() => ({
+    outstanding: outstandingByCustomer,
+    credits: creditsByCustomer,
+    subs: subsByCustomer,
+    projects: projectsByCustomer,
+    received: receivedBy,
+    noState: new Set(listCounts.data?.noStateIds ?? []),
+  }), [outstandingByCustomer, creditsByCustomer, subsByCustomer, projectsByCustomer, receivedBy, listCounts.data]);
+  const viewCounts = React.useMemo(
+    () => customerViewCounts(listCounts.data?.all ?? 0, facts, VIEW_DEFS),
+    [listCounts.data, facts],
+  );
+
+  // Filter — segment then free-text. In server mode the server already did both.
+  const archivedCount = listCounts.data?.archived ?? 0;
+  const filtered = mode === "server" ? customersByWorkspace : customersByWorkspace.filter((c) => {
     // Active by default; the Archived toggle swaps to show only inactive ones.
     if ((c.is_active === false) !== showArchived) return false;
     const out = outstandingByCustomer.get(c.id);
@@ -295,6 +343,8 @@ export default function CustomersPage() {
        generic comparator, and a timestamp squeezed through String().localeCompare()
        sorts "2026-9-1" after "2026-10-1". One shared implementation, same as every
        other table. */
+    /* R-210: server pages arrive already in this order (newest first, nulls last, A–Z). */
+    if (mode === "server") return filtered;
     if (sort.key === "recent") {
       const byNewest = newestFirst(filtered);
       return sort.dir === "desc" ? byNewest : byNewest.reverse();
@@ -309,9 +359,18 @@ export default function CustomersPage() {
       return sort.dir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [filtered, sort, sortVal]);
+  }, [filtered, sort, sortVal, mode]);
 
-  const shown = sorted.slice(0, visible);
+  /* Server mode: every loaded row is on screen and "Load more" asks the server for the next
+     50. Full mode: the old in-browser paging over the whole list. */
+  const shown = mode === "server" ? sorted : sorted.slice(0, visible);
+  const leftCount = mode === "server"
+    ? Math.max(0, (paged.total ?? sorted.length) - sorted.length)
+    : sorted.length - shown.length;
+  const loadMore = () => {
+    if (mode === "server") void paged.fetchNextPage();
+    else setVisible((v) => v + CUSTOMERS_PAGE_SIZE);
+  };
 
   /* ── Bulk actions ──────────────────────────────────────────────────────────
      Each of these is N independent writes, not one transaction, so every one reports
@@ -412,7 +471,7 @@ export default function CustomersPage() {
     reportBulk(done, failed, "Deleted");
   };
 
-  const hasMore = sorted.length > shown.length;
+  const hasMore = leftCount > 0;
 
   /* j / k / Enter / o over the full-width table (the same pattern as /leads,
      /quotes, /subscriptions, /enquiries). Disabled while a customer is open —
@@ -435,7 +494,7 @@ export default function CustomersPage() {
      mobile card list and the split-view rail iterate the same `shown` and must
      not light up. */
   const kbSelectedId = custKeys.index >= 0 ? shown[custKeys.index]?.id ?? null : null;
-  React.useEffect(() => { setVisible(60); }, [search, view]);
+  React.useEffect(() => { setVisible(CUSTOMERS_PAGE_SIZE); }, [search, view]);
 
   // Toggle sort: same key flips direction; a new money key defaults to desc
   // (biggest first — the reseller wants top payers / biggest debtors on top).
@@ -447,11 +506,13 @@ export default function CustomersPage() {
     );
 
   // KPIs — calculated over active workspace customers.
-  const total = customersByWorkspace.filter((c) => (c.is_active === false) === showArchived).length;
-  const totalMRR = customersByWorkspace.reduce((sum, c) => sum + (subsByCustomer.get(c.id)?.mrr ?? 0), 0);
-  const totalARR = totalMRR * 12;
-  const totalReceivables = customersByWorkspace.reduce((sum, c) => sum + (outstandingByCustomer.get(c.id)?.amount ?? 0), 0);
-  const totalReceived = customersByWorkspace.reduce((sum, c) => sum + (receivedBy[c.id]?.total ?? 0), 0);
+  /* R-210: from the server counts and the fact maps, not from the rows on screen — a page
+     of 50 would otherwise make "Customers 50" and a ₹ total of just those 50. */
+  const total = listCounts.data
+    ? (showArchived ? listCounts.data.archived : listCounts.data.all - listCounts.data.archived)
+    : 0;
+  const { mrr: totalMRR, arr: totalARR, receivables: totalReceivables, received: totalReceived } =
+    customerMoneyTotals(facts);
 
   /* Contract value of WON project work across the portfolio (R-005). */
   const totalProjectValue = React.useMemo(
@@ -460,7 +521,7 @@ export default function CustomersPage() {
   );
 
   const stats: React.ComponentProps<typeof StatStrip>["items"] = [];
-  if (!isLoading && customers) {
+  if (!isLoading && customers && listCounts.data) {
     stats.push({ label: "Customers", value: total, onClick: () => setView("all"), active: view === "all" });
     /* R-005: these are subscription MRR / ARR only. Named "Monthly / Yearly revenue" they
        read as total income — a customer who paid ₹11.8L for a project showed ₹0 in all of them. */
@@ -493,8 +554,15 @@ export default function CustomersPage() {
     });
   }
 
-  function handleExport() {
-    const rows = customers ?? [];
+  /* R-210: the export is every customer, not the 50 on screen — read in full on click. */
+  async function handleExport() {
+    let rows: NonNullable<typeof full.data>;
+    try {
+      rows = mode === "full" && full.data ? full.data : await fetchAllCustomers(createClient());
+    } catch (e) {
+      toast.error("Could not export customers", { description: (e as Error).message });
+      return;
+    }
     if (rows.length === 0) { toast.error("No customers to export yet."); return; }
     const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
     const esc = (v: unknown) => {
@@ -533,19 +601,25 @@ export default function CustomersPage() {
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={handleExport}>
                 <Icon name="download" size={15} /> Export CSV
               </DropdownMenuItem>
+              {canWrite && (<>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setImportOpen(true)}>
                 <Icon name="upload" size={15} /> Import customers
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setDomainsOpen(true)}>
                 <Icon name="link" size={15} /> Link domains
               </DropdownMenuItem>
+              </>)}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
-            Add customer
-          </Button>
+          {canWrite && (
+            <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
+              Add customer
+            </Button>
+          )}
         </div>
       </div>
+
+      {!canWrite && <ViewOnlyNote what="add, import or edit customers" />}
 
       {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (
@@ -596,7 +670,7 @@ export default function CustomersPage() {
       )}
 
       {/* Sticky Segment chips + search */}
-      {!isLoading && customers && customers.length > 0 && !selectedId && (
+      {!isLoading && customers && anyCustomers && !selectedId && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-2.5">
           <div className="flex justify-between items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="w-full sm:w-64 shrink-0">
@@ -651,9 +725,11 @@ export default function CustomersPage() {
                 <span className="rounded-full bg-paper-2 px-1.5 tabular-nums text-2xs text-ink-3">{archivedCount}</span>
               </button>
             )}
-            <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
-              Add customer
-            </Button>
+            {canWrite && (
+              <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
+                Add customer
+              </Button>
+            )}
           </div>
           {/* Quick Sort Bar */}
           <div className="flex items-center gap-2 pt-1 border-t border-hairline/60 text-xs text-ink-3 overflow-x-auto [ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -733,13 +809,13 @@ export default function CustomersPage() {
       )}
 
       {/* ── Empty ── */}
-      {!isLoading && !error && customers && customers.length === 0 && (
+      {!isLoading && !error && listCounts.data && listCounts.data.all === 0 && (
         <EmptyState
           icon="users"
           title="No customers yet"
           body="Add your first customer to start tracking subscriptions, invoices, and renewals."
-          action={<Button variant="primary" icon="plus" onClick={goAdd}>Add your first customer</Button>}
-          secondary={<Button icon="download" onClick={() => setImportOpen(true)}>Import CSV</Button>}
+          action={canWrite ? <Button variant="primary" icon="plus" onClick={goAdd}>Add your first customer</Button> : undefined}
+          secondary={canWrite ? <Button icon="download" onClick={() => setImportOpen(true)}>Import CSV</Button> : undefined}
         />
       )}
 
@@ -831,8 +907,8 @@ export default function CustomersPage() {
           })}
           {hasMore && (
             <li className="pt-1 text-center">
-              <Button variant="default" size="sm" onClick={() => setVisible((v) => v + 100)}>
-                Show more ({sorted.length - shown.length} left)
+              <Button variant="default" size="sm" onClick={loadMore} disabled={paged.isFetchingNextPage}>
+                Load {Math.min(leftCount, CUSTOMERS_PAGE_SIZE)} more ({leftCount} left)
               </Button>
             </li>
           )}
@@ -987,6 +1063,7 @@ export default function CustomersPage() {
                             onNewQuote={() => router.push(`/quotes/new?customer=${c.id}` as never)}
                             onInvoice={() => setInvoiceForCustomer(c.id)}
                             onManageSubs={() => router.push(`/customers/${c.id}` as never)}
+                            readOnly={!canWrite}
                           />
                         </td>
                       </tr>
@@ -1003,8 +1080,8 @@ export default function CustomersPage() {
           </div>
           {hasMore && (
             <div className="flex justify-center py-3">
-              <Button variant="default" size="sm" onClick={() => setVisible((v) => v + 100)}>
-                Show more ({sorted.length - shown.length} left)
+              <Button variant="default" size="sm" onClick={loadMore} disabled={paged.isFetchingNextPage}>
+                Load {Math.min(leftCount, CUSTOMERS_PAGE_SIZE)} more ({leftCount} left)
               </Button>
             </div>
           )}
@@ -1012,7 +1089,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Search / filter empty ── */}
-      {!isLoading && !error && customers && customers.length > 0 && filtered.length === 0 && (
+      {!isLoading && !error && customers && anyCustomers && filtered.length === 0 && (
         <div className="mt-6">
           <EmptyState
             icon="search"
@@ -1076,10 +1153,10 @@ export default function CustomersPage() {
               {hasMore && (
                 <button
                   type="button"
-                  onClick={() => setVisible((v) => v + 100)}
+                  onClick={loadMore} disabled={paged.isFetchingNextPage}
                   className="w-full text-center py-2 text-xs text-amber-ink hover:bg-paper-2/50"
                 >
-                  Show more ({sorted.length - shown.length} left)
+                  Load {Math.min(leftCount, CUSTOMERS_PAGE_SIZE)} more ({leftCount} left)
                 </button>
               )}
             </div>
@@ -1104,6 +1181,7 @@ export default function CustomersPage() {
         onSetGroup={(g) => void bulkSetGroup(g)}
         onDelete={() => void bulkDelete()}
         onDeselectAll={clearPicked}
+        readOnly={!canWrite}
       />
 
       <ImportCustomersDialog open={importOpen} onOpenChange={setImportOpen} onImportComplete={() => refetch()} />
@@ -1171,9 +1249,11 @@ function SortHead({
 /** Per-row overflow menu (View · Edit · New quote · Create invoice · Manage subs).
  *  stopPropagation on the trigger so opening it doesn't also fire the row click. */
 function RowActions({
-  customerName, onView, onEdit, onNewQuote, onInvoice, onManageSubs,
+  customerName, onView, onEdit, onNewQuote, onInvoice, onManageSubs, readOnly = false,
 }: {
   customerName: string;
+  /** R-255: view-only role — View details and the profile only. */
+  readOnly?: boolean;
   onView: () => void;
   onEdit: () => void;
   onNewQuote: () => void;
@@ -1196,6 +1276,7 @@ function RowActions({
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onView)}>
           <Icon name="eye" size={15} /> View details
         </DropdownMenuItem>
+        {!readOnly && (<>
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onEdit)}>
           <Icon name="edit" size={15} /> Edit customer
         </DropdownMenuItem>
@@ -1208,6 +1289,7 @@ function RowActions({
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onManageSubs)}>
           <Icon name="refresh" size={15} /> Manage subscriptions
         </DropdownMenuItem>
+        </>)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

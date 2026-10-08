@@ -17,6 +17,7 @@ import { DEAL_STAGES, LEAD_STAGES, type StageMeta } from "@/lib/leads/stage-meta
 import { BOARD_COLUMN_CAP } from "@/lib/queries/leads";
 import { checkBoardMove } from "@/lib/leads/deal-rules";
 import { boardColumnSummary } from "@/lib/leads/forecast";
+import { leadTitle } from "@/lib/leads/display-name";
 
 export interface LeadsKanbanBoardProps {
   boardLeads: LeadListRow[];
@@ -48,7 +49,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
          lock decorative: the rep would simply drag instead.
          §24 — say what happened, why, and what to do instead, never a bare "not allowed". */
       if (lead && lead.stage === "won" && toStage !== "won") {
-        toast.error(`${lead.company} is already won`, {
+        toast.error(`${leadTitle(lead).label} is already won`, {
           description:
             "Money is recorded against it — a payment, an invoice and a subscription. " +
             "Reopening it here would leave those behind. Raise a credit note on the invoice instead.",
@@ -75,7 +76,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
         const moved = await changeStage(lead, toStage);
         if (moved) {
           const stageLabel = LEAD_STAGES.find((s) => s.id === toStage)?.label;
-          toast.success(`${lead.company} → ${stageLabel}`);
+          toast.success(`${leadTitle(lead).label} → ${stageLabel}`);
         }
       }
     }

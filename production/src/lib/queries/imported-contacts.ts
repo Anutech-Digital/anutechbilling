@@ -10,7 +10,9 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { ContactRow, ContactStatus } from "@/lib/supabase/database.types";
 
 /** All contacts in the standalone table (any status). */
@@ -19,12 +21,14 @@ export function useImportedContacts() {
     queryKey: ["imported_contacts"],
     queryFn: async (): Promise<ContactRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      /* R-294: paged past the 1000-row cap; order ends on the unique id. */
+      const data = await fetchAllRows((from, to) => supabase
         .from("contacts")
         .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as ContactRow[];
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
+      return data as ContactRow[];
     },
   });
 }
@@ -47,7 +51,7 @@ export function useUpdateContactStatus() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
     },
-    onError: (e) => toast.error((e as Error).message || "Status update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Could not update the status." }),
   });
 }
 
@@ -64,6 +68,6 @@ export function useDeleteContact() {
       qc.invalidateQueries({ queryKey: ["imported_contacts"] });
       toast.success("Contact deleted");
     },
-    onError: (e) => toast.error((e as Error).message || "Delete nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Could not delete." }),
   });
 }

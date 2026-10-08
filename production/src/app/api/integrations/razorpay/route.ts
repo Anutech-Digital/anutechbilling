@@ -13,9 +13,9 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { razorpayReadiness, razorpayMode } from "@/lib/payments/razorpay-readiness";
-import { sealTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { buildSecretPatch } from "@/lib/integrations/secret-field";
 import { maskSecret } from "@/lib/crypto/vault";
 
@@ -51,7 +51,16 @@ function mask(s: string | null | undefined): string | null {
   return s ? maskSecret(s) : null;
 }
 
-async function resolveTenantAndOwnership() {
+/**
+ * R-256: reading the STATUS (configured? mode? readiness) is open to owner / manager / billing,
+ * the roles that see Settings > Integrations. A GET that was owner-only answered 403, the card
+ * read that as "Not configured / simulation" and offered a Setup that then failed on save,
+ * while the integration was live. Saving and clearing stay owner-only, and secret previews
+ * (masks, tokens) go only to the owner.
+ */
+const READ_ROLES = new Set(["owner", "manager", "billing"]);
+
+async function resolveTenant(access: "read" | "manage") {
   const supabase = createClient();
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return { error: "Not authenticated" as const };
@@ -61,8 +70,14 @@ async function resolveTenantAndOwnership() {
     .eq("id", authData.user.id)
     .single();
   if (error || !me) return { error: "User not linked to a tenant" as const };
-  if (me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
-  return { tenantId: me.tenant_id };
+  if (access === "manage" && me.role !== "owner") return { error: "Only the workspace owner can manage integration credentials" as const };
+  if (access === "read" && !READ_ROLES.has(me.role)) return { error: "Your role cannot see integration settings" as const };
+  return {
+    tenantId: me.tenant_id as string,
+    isOwner: me.role === "owner",
+    // R-051: service-role writes carry the verified caller, so the audit log names them.
+    admin: createAdminClientFor(authData.user.id),
+  };
 }
 
 function webhookUrlFor(tenantId: string, req: NextRequest): string {
@@ -78,10 +93,10 @@ function webhookUrlFor(tenantId: string, req: NextRequest): string {
 }
 
 export async function GET(req: NextRequest) {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { data, error } = await admin
     .from("tenant_secrets")
     .select("razorpay_mode, razorpay_key_id, razorpay_key_secret, razorpay_webhook_secret, updated_at")
@@ -107,15 +122,16 @@ export async function GET(req: NextRequest) {
     readiness,
     mode:                  razorpayMode(data?.razorpay_key_id),
     key_id:                data?.razorpay_key_id ?? null,
-    key_secret_mask:       mask(data?.razorpay_key_secret),
-    webhook_secret_mask:   mask(data?.razorpay_webhook_secret),
+    key_secret_mask:       r.isOwner ? mask(data?.razorpay_key_secret) : null,
+    webhook_secret_mask:   r.isOwner ? mask(data?.razorpay_webhook_secret) : null,
+    can_manage:            r.isOwner,
     webhook_url:           webhookUrlFor(r.tenantId, req),
     updated_at:            data?.updated_at ?? null,
   });
 }
 
 export async function POST(req: NextRequest) {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
   let body: unknown;
@@ -131,7 +147,7 @@ export async function POST(req: NextRequest) {
   // Mode is inferred from the key_id prefix — single source of truth.
   const mode = v.key_id.startsWith("rzp_live_") ? "live" : "test";
 
-  const admin = createAdminClient();
+  const admin = r.admin;
 
   // What is already stored decides whether a blank box is "keep" or "missing".
   const { data: current } = await admin
@@ -160,8 +176,10 @@ export async function POST(req: NextRequest) {
 
   // Seal only the fields actually being written. An untouched field is ABSENT
   // from the patch, so the upsert leaves its stored value alone — that absence is
-  // the whole fix.
-  const sealed = sealTenantSecrets(patch);
+  // the whole fix. No master key = refuse (503 + next step), never store the
+  // secret in the clear (R-051).
+  const sealed = trySealTenantSecrets(patch);
+  if (!sealed.ok) return NextResponse.json({ ok: false, error: sealed.error }, { status: sealed.status });
 
   const { error } = await admin
     .from("tenant_secrets")
@@ -174,16 +192,11 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
-  // Say so when a secret had to be stored in the clear. Silence here would let
-  // an operator believe their credentials are encrypted when they are not.
-  if (sealed.storedInClear.length > 0) {
-    console.warn(
-      `[integrations/razorpay] stored in PLAINTEXT (${sealed.storedInClear.join(", ")}) — SECRETS_MASTER_KEY is not configured`,
-    );
-  }
   return NextResponse.json({
     ok: true, mode,
-    encrypted: sealed.storedInClear.length === 0,
+    // Always true now — an unencrypted save is refused above. Kept so the
+    // response shape the settings screen reads does not change.
+    encrypted: true,
     // So the UI can say "webhook secret left unchanged" instead of implying it
     // was rewritten.
     unchanged,
@@ -191,10 +204,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
-  const r = await resolveTenantAndOwnership();
+  const r = await resolveTenant("manage");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
-  const admin = createAdminClient();
+  const admin = r.admin;
   const { error } = await admin
     .from("tenant_secrets")
     .update({

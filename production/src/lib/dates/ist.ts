@@ -18,6 +18,10 @@
  */
 
 export const IST_OFFSET_MS = 330 * 60_000;
+
+/** R-275: pass as `timeZone` to every toLocale…String that shows a date or time, so a
+ *  device on another zone (or a UTC server render) still prints India time. */
+export const IST_TZ = "Asia/Kolkata";
 const DAY_MS = 86_400_000;
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -139,6 +143,16 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
  * "28 Sep 2026" — IST me. YYYY-MM-DD string ko calendar date maana jata hai (koi shift nahi);
  * Date / timestamp string ko pehle IST me badla jata hai.
  */
+/**
+ * R-275: "02:30 pm" — the IST clock time of an instant. "" for null or an unparseable value.
+ */
+export function formatIstTime(at: string | Date | number | null | undefined): string {
+  if (at === null || at === undefined || at === "") return "";
+  const d = at instanceof Date ? at : new Date(at);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: IST_TZ });
+}
+
 export function formatIstDate(at: string | Date | number): string {
   const iso = typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) ? at : toIstDate(at);
   return `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;

@@ -8,14 +8,14 @@ import { useTheme } from "next-themes";
 
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/button";
-import { AiHelpButton } from "@/components/shared/ai-help";
+import { AiHelpButton, openHelpReport } from "@/components/shared/ai-help";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel } from "./notification-panel";
 import { useNotifications } from "@/lib/queries/notifications";
 import { QuickActionsPanel } from "./quick-actions-panel";
-import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { getCrumb, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
 import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
@@ -42,7 +42,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  const [feedbackOpen, setFeedbackOpen] = React.useState(false);
   // Bell badge = open tasks due by end of today (today + overdue). When push
   // notifications + WhatsApp reminders arrive in Phase 2 they'll feed the
   // same number (any unread notification becomes a virtual task surface).
@@ -56,7 +55,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   React.useEffect(() => setMounted(true), []);
 
   return (
-    <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-2 px-3 md:px-4">
+    <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-1 sm:gap-2 px-3 md:px-4">
       {/* STAGING banner — so a screenshot can never be mistaken for production (docs/STAGING.md). */}
       {process.env.NEXT_PUBLIC_APP_ENV === "staging" && (
         <span className="shrink-0 rounded bg-amber text-ink text-3xs font-bold uppercase tracking-wider px-2 py-0.5" title="Ye staging hai — demo data, koi customer nahi">Staging</span>
@@ -96,12 +95,14 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           aria-label="Go back"
         >
           <Icon name="chevron-left" size={18} />
-          <span>Back</span>
+          <span className="hidden sm:inline">Back</span>
         </button>
       )}
 
-      {/* Breadcrumb — hidden on phone */}
-      <nav aria-label="Breadcrumb" className="hidden md:flex items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
+      {/* Breadcrumb — hidden on phone. R-180: from md up it IS the spacer (flex-1 min-w-0), so it
+          gets every free pixel instead of sharing them with an empty div — at 800px it read
+          "Boo… > Compliance Calen…". */}
+      <nav aria-label="Breadcrumb" className="hidden md:flex flex-1 min-w-0 items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
         {crumb.map((c, i) => (
           <React.Fragment key={c}>
             {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4 flex-shrink-0" />}
@@ -113,22 +114,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       </nav>
 
 
-      <div className="flex-1" />
+      <div className="flex-1 md:hidden" />
 
-      {/* Team Testing & Feedback / Bug Report Trigger */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setFeedbackOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-soft/80 border border-rose/30 hover:bg-rose-soft text-rose-ink text-xs font-semibold transition-all shadow-sm"
-          >
-            <Icon name="bug" size={14} className="text-rose-ink" />
-            <span className="hidden sm:inline">Report Bug</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent shortcut="report-bug">Report a bug or suggest a new feature</TooltipContent>
-      </Tooltip>
+      {/* R-383 (7 Oct 2026): no separate "Report Bug" button any more — reporting lives in the
+          one Help button (AiHelpButton, below) on its "Report a problem" tab; Ctrl+Shift+B opens it. */}
 
       {/* Search button (triggers ⌘K) */}
       <button
@@ -152,12 +141,14 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
             icon={mounted && resolvedTheme === "dark" ? "sun" : "moon"}
             aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+            className="hidden sm:inline-flex"
+            data-topbar="theme"
           />
         </TooltipTrigger>
         <TooltipContent>Toggle theme</TooltipContent>
       </Tooltip>
 
-      {/* AI Help (R-158/R-162) — a small icon, not a floating button over the page. */}
+      {/* Help (R-158/R-162/R-383) — Ask AI + Report a problem, one small icon, not a floating button over the page. */}
       <AiHelpButton />
 
       {/* Quick actions — page-aware "what should I do now" panel.
@@ -169,6 +160,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
             icon="sparkles"
             aria-label="Quick actions for this page"
             onClick={() => setActionsOpen(true)}
+            className="hidden sm:inline-flex"
+            data-topbar="quick-actions"
           />
         </TooltipTrigger>
         <TooltipContent>Quick actions</TooltipContent>
@@ -196,6 +189,31 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         )}
       </div>
 
+      {/* R-203: phone only — Report a problem, theme and Quick actions live here below sm so the
+          topbar never gets wider than a 375px screen. From sm up they are their own buttons. */}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <IconButton
+            icon="more_h"
+            aria-label="More actions"
+            className="sm:hidden"
+            data-topbar="more"
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => setActionsOpen(true)}>
+            <Icon name="sparkles" size={14} /> Quick actions
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
+            <Icon name={mounted && resolvedTheme === "dark" ? "sun" : "moon"} size={14} />
+            {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openHelpReport()}>
+            <Icon name="bug" size={14} /> Report a problem
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       {/* Mounted panels */}
       {/* Mounted only while open. Both panels run ~14 unbounded table reads (leads, customers,
          quotes, invoices, subscriptions, payments, contacts, tasks) the moment they mount, and
@@ -203,7 +221,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
       {cmdk.isOpen && <CommandPalette open onOpenChange={cmdk.setOpen} />}
       {notifOpen && <NotificationPanel open onOpenChange={setNotifOpen} />}
       <QuickActionsPanel open={actionsOpen} onOpenChange={setActionsOpen} />
-      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </header>
   );
 }

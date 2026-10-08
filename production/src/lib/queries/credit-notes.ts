@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { CreditNoteRow, CreditNoteReasonCode } from "@/lib/supabase/database.types";
 
@@ -57,6 +58,6 @@ export function useIssueCreditNote() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success(`Credit note ${res.credit_note_id} issued`);
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }

@@ -206,10 +206,10 @@ export function ContactForm({
               </FormField>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormField label="Company">
-                  <Input placeholder="e.g. Acme Corp" {...register("company")} />
+                <FormField label="Company" htmlFor="contact-company">
+                  <Input id="contact-company" placeholder="e.g. Acme Corp" {...register("company")} />
                 </FormField>
-                <FormField label="Designation"><Input placeholder="e.g. Founder / IT Head" {...register("title")} /></FormField>
+                <FormField label="Designation" htmlFor="contact-title"><Input id="contact-title" placeholder="e.g. Founder / IT Head" {...register("title")} /></FormField>
               </div>
             </Section>
 
@@ -218,13 +218,14 @@ export function ContactForm({
             <Section title="How to reach">
               {/* Emails */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink-2">Email{emailFields.fields.length > 1 ? "s" : ""}</label>
+                <label htmlFor="contact-email-0" className="text-xs font-medium text-ink-2">Email{emailFields.fields.length > 1 ? "s" : ""}</label>
                 {emailFields.fields.map((f, i) => (
                   <div key={f.id} className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <Input type="email" placeholder="e.g. rajesh@acme.com" error={errors.emails?.[i]?.value?.message} {...register(`emails.${i}.value`)} />
+                      <Input id={`contact-email-${i}`} aria-label={i === 0 ? undefined : `Email ${i + 1}`} type="email" placeholder="e.g. rajesh@acme.com" error={errors.emails?.[i]?.value?.message} {...register(`emails.${i}.value`)} />
                     </div>
                     <select
+                      aria-label={`Email ${i + 1} type`}
                       {...register(`emails.${i}.label`)}
                       className="h-9 shrink-0 rounded-md border border-hairline bg-paper px-2 text-sm text-ink-2 focus:outline-none focus:ring-2 focus:ring-amber/40"
                     >
@@ -244,13 +245,14 @@ export function ContactForm({
 
               {/* Phones */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink-2">Phone{phoneFields.fields.length > 1 ? "s" : ""}</label>
+                <label htmlFor="contact-phone-0" className="text-xs font-medium text-ink-2">Phone{phoneFields.fields.length > 1 ? "s" : ""}</label>
                 {phoneFields.fields.map((f, i) => (
                   <div key={f.id} className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <Input placeholder="e.g. +91 98765 43210" {...register(`phones.${i}.value`)} />
+                      <Input id={`contact-phone-${i}`} aria-label={i === 0 ? undefined : `Phone ${i + 1}`} placeholder="e.g. +91 98765 43210" {...register(`phones.${i}.value`)} />
                     </div>
                     <select
+                      aria-label={`Phone ${i + 1} type`}
                       {...register(`phones.${i}.label`)}
                       className="h-9 shrink-0 rounded-md border border-hairline bg-paper px-2 text-sm text-ink-2 focus:outline-none focus:ring-2 focus:ring-amber/40"
                     >
@@ -269,42 +271,42 @@ export function ContactForm({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormField label="WhatsApp"><Input placeholder="e.g. +91 98765 43210" {...register("whatsapp")} /></FormField>
-                <FormField label="Website"><Input placeholder="e.g. acme.com" {...register("website")} /></FormField>
+                <FormField label="WhatsApp" htmlFor="contact-whatsapp"><Input id="contact-whatsapp" placeholder="e.g. +91 98765 43210" {...register("whatsapp")} /></FormField>
+                <FormField label="Website" htmlFor="contact-website"><Input id="contact-website" placeholder="e.g. acme.com" {...register("website")} /></FormField>
               </div>
             </Section>
 
             {/* Social — for advertising / outreach */}
             <Section title="Social media">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormField label="LinkedIn"><Input placeholder="linkedin.com/in/… or @handle" {...register("linkedin")} /></FormField>
-                <FormField label="Instagram"><Input placeholder="@handle" {...register("instagram")} /></FormField>
-                <FormField label="Facebook"><Input placeholder="fb.com/… or name" {...register("facebook")} /></FormField>
-                <FormField label="X / Twitter"><Input placeholder="@handle" {...register("twitter")} /></FormField>
+                <FormField label="LinkedIn" htmlFor="contact-linkedin"><Input id="contact-linkedin" placeholder="linkedin.com/in/… or @handle" {...register("linkedin")} /></FormField>
+                <FormField label="Instagram" htmlFor="contact-instagram"><Input id="contact-instagram" placeholder="@handle" {...register("instagram")} /></FormField>
+                <FormField label="Facebook" htmlFor="contact-facebook"><Input id="contact-facebook" placeholder="fb.com/… or name" {...register("facebook")} /></FormField>
+                <FormField label="X / Twitter" htmlFor="contact-twitter"><Input id="contact-twitter" placeholder="@handle" {...register("twitter")} /></FormField>
               </div>
             </Section>
 
             {/* Location — for meeting in person */}
             <Section title="Where to meet">
-              <FormField label="Address"><Textarea rows={2} placeholder="Office / home address" {...register("address")} /></FormField>
-              <FormField label="City"><Input placeholder="e.g. Pune" {...register("city")} /></FormField>
+              <FormField label="Address" htmlFor="contact-address"><Textarea id="contact-address" rows={2} placeholder="Office / home address" {...register("address")} /></FormField>
+              <FormField label="City" htmlFor="contact-city"><Input id="contact-city" placeholder="e.g. Pune" {...register("city")} /></FormField>
             </Section>
 
             {/* Personal — what you keep about a real relationship (birthday to
                 wish them, family context, what you call them). */}
             <Section title="Personal">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormField label="Birthday"><Input type="date" {...register("birthday")} /></FormField>
-                <FormField label="Anniversary"><Input type="date" {...register("anniversary")} /></FormField>
+                <FormField label="Birthday" htmlFor="contact-birthday"><Input id="contact-birthday" type="date" {...register("birthday")} /></FormField>
+                <FormField label="Anniversary" htmlFor="contact-anniversary"><Input id="contact-anniversary" type="date" {...register("anniversary")} /></FormField>
               </div>
-              <FormField label="Nickname"><Input placeholder="e.g. what you call them" {...register("nickname")} /></FormField>
-              <FormField label="Family"><Textarea rows={2} placeholder="Spouse, children, relations…" {...register("family")} /></FormField>
+              <FormField label="Nickname" htmlFor="contact-nickname"><Input id="contact-nickname" placeholder="e.g. what you call them" {...register("nickname")} /></FormField>
+              <FormField label="Family" htmlFor="contact-family"><Textarea id="contact-family" rows={2} placeholder="Spouse, children, relations…" {...register("family")} /></FormField>
             </Section>
 
             {/* Notes + tags */}
             <Section title="Notes">
-              <FormField label="Tags"><Input placeholder="investor, warm, event-2026 (comma separated)" {...register("tags")} /></FormField>
-              <FormField label="Notes"><Textarea rows={3} placeholder="How you met, what they care about, next step…" {...register("notes")} /></FormField>
+              <FormField label="Tags" htmlFor="contact-tags"><Input id="contact-tags" placeholder="investor, warm, event-2026 (comma separated)" {...register("tags")} /></FormField>
+              <FormField label="Notes" htmlFor="contact-notes"><Textarea id="contact-notes" rows={3} placeholder="How you met, what they care about, next step…" {...register("notes")} /></FormField>
             </Section>
           </div>
 

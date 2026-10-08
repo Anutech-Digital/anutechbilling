@@ -318,9 +318,12 @@ describe("promisesDelivery — harkat ke jhooth ka pehredaar (1 Sep 2026)", () =
   });
 
   it("imandaar replacement khud vaada-mukt hai aur agla kadam deta hai", () => {
-    const r = honestNoDeliveryReply();
+    const r = honestNoDeliveryReply("quotation bheji kya?");
     expect(promisesDelivery(r)).toBe(false);
     expect(r).toMatch(/naam, email aur phone/i);
+    const en = honestNoDeliveryReply("Was the quotation sent?");
+    expect(promisesDelivery(en)).toBe(false);
+    expect(en).toMatch(/name, email and phone/i);
   });
 });
 
@@ -333,6 +336,6 @@ describe("route delivery-vaade ko leadCreated se bandhta hai (source pin)", () =
     const tripped = src.indexOf("const guardTripped");
     expect(enforce).toBeGreaterThan(filing);
     expect(enforce).toBeLessThan(tripped);
-    expect(src).toContain("honestNoDeliveryReply()");
+    expect(src).toContain("honestNoDeliveryReply(messages[messages.length - 1]?.text");
   });
 });

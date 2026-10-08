@@ -13,7 +13,7 @@
  * the caller's own users row (withRoute), never from the body.
  */
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute, RouteError, dbFail } from "@/lib/api/with-route";
 import { resolveWhatsAppCreds } from "@/lib/whatsapp/client";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
@@ -31,8 +31,8 @@ const OM = ["owner", "manager"] as const;
 const ROLE_HINT = "WhatsApp reminders sirf owner / manager badal sakte hain — unse kahiye.";
 const LOG_LIMIT = 20;
 
-export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles: OM, roleHint: ROLE_HINT }, async ({ tenantId }) => {
-  const db = createAdminClient();
+export const GET = withRoute({ route: "api/marketing/whatsapp/reminders", roles: OM, roleHint: ROLE_HINT }, async ({ tenantId, user }) => {
+  const db = createAdminClientFor(user.id);
   const [s, m, t, l, creds, policy] = await Promise.all([
     db.from("whatsapp_reminder_settings").select("enabled, updated_at").eq("tenant_id", tenantId).maybeSingle(),
     db.from("whatsapp_reminder_templates").select("kind, template_name, language, param_map, enabled, updated_at").eq("tenant_id", tenantId),
@@ -96,7 +96,7 @@ const switchSchema = z.object({
 export const PATCH = withRoute(
   { route: "api/marketing/whatsapp/reminders", input: switchSchema, roles: OM, roleHint: ROLE_HINT },
   async ({ input, tenantId, user }) => {
-    const { error } = await createAdminClient().from("whatsapp_reminder_settings").upsert(
+    const { error } = await createAdminClientFor(user.id).from("whatsapp_reminder_settings").upsert(
       { tenant_id: tenantId, enabled: input.enabled, updated_by: user.id, updated_at: new Date().toISOString() },
       { onConflict: "tenant_id" },
     );
@@ -120,8 +120,8 @@ const mappingSchema = z.object({
 
 export const PUT = withRoute(
   { route: "api/marketing/whatsapp/reminders", input: mappingSchema, roles: OM, roleHint: ROLE_HINT },
-  async ({ input, tenantId }) => {
-    const db = createAdminClient();
+  async ({ input, tenantId, user }) => {
+    const db = createAdminClientFor(user.id);
     /* Agar app ke paas is naam + language ka text hai to {{n}} ki ginti usi se milao — Meta
        ek bhi kam/zyada parameter wala send reject karta hai, aur wo failure cron me dikhta. */
     const { data: known, error: kErr } = await db.from("whatsapp_templates").select("body")
@@ -147,8 +147,8 @@ const deleteSchema = z.object({ kind: kindSchema });
 
 export const DELETE = withRoute(
   { route: "api/marketing/whatsapp/reminders", input: deleteSchema, roles: OM, roleHint: ROLE_HINT },
-  async ({ input, tenantId }) => {
-    const { error } = await createAdminClient().from("whatsapp_reminder_templates")
+  async ({ input, tenantId, user }) => {
+    const { error } = await createAdminClientFor(user.id).from("whatsapp_reminder_templates")
       .delete().eq("tenant_id", tenantId).eq("kind", input.kind);
     dbFail(error, "Mapping hata nahi paaye — dobara try kariye.");
     return { kind: input.kind };

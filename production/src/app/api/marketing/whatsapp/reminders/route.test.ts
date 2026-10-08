@@ -7,6 +7,9 @@
  * automation dial and the approval the cron will actually check.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// R-051: who createAdminClientFor() was opened for (the audit log actor).
+const actors = vi.hoisted(() => [] as string[]);
 import type { NextRequest } from "next/server";
 
 type Call = { table: string; op: string; args: unknown[] };
@@ -40,7 +43,7 @@ vi.mock("@/lib/supabase/server", () => {
       auth: { getUser: async () => ({ data: { user: { id: "U1", email: "o@example.invalid" } } }) },
       from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { tenant_id: "T1", role: state.role }, error: null }) }) }) }),
     }),
-    createAdminClient: () => ({ from: (t: string) => builder(t) }),
+    createAdminClientFor: (actor: string) => (actors.push(actor), { from: (t: string) => builder(t) }),
   };
 });
 vi.mock("@/lib/whatsapp/client", () => ({ resolveWhatsAppCreds: async () => state.creds }));
@@ -58,6 +61,7 @@ const eqs = (table: string) => state.calls.filter((c) => c.table === table && c.
 const op = (table: string, o: string) => state.calls.find((c) => c.table === table && c.op === o);
 
 beforeEach(() => {
+  actors.length = 0;
   state.role = "owner";
   state.calls = [];
   state.data = {};
@@ -81,6 +85,7 @@ describe("role gate — the switch messages customers", () => {
   it("manager is allowed", async () => {
     state.role = "manager";
     expect((await PATCH(req("PATCH", { enabled: false }))).status).toBe(200);
+    expect(actors).toContain("U1"); // R-051: audit log names the signed-in caller
   });
 });
 
@@ -118,7 +123,7 @@ describe("PUT — template per kind", () => {
     state.data.whatsapp_templates = { body: "Hi {{1}} {{2}}" };
     const res = await PUT(req("PUT", good));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/2 jagah.*5 field/);
+    expect((await res.json()).error).toMatch(/2 slots.*5 fields/);
     expect(op("whatsapp_reminder_templates", "upsert")).toBeUndefined();
   });
 

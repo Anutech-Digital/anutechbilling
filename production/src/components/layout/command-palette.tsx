@@ -48,6 +48,12 @@ import {
 } from "@/lib/search/keywords";
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import {
+  subscriptionHref, subscriptionStatusLabel, paymentHref, SUBSCRIPTION_SEARCH_EVENT, searchFromSubscriptionHref,
+} from "@/app/(app)/subscriptions/palette-links";
+import { paymentMethodLabel } from "@/app/(app)/payments/method-label";
+import { COPY } from "@/lib/copy";
 
 // ============================================================
 // Hook to manage open state + register ⌘K shortcut
@@ -219,9 +225,10 @@ export function CommandPalette({
   const quickActions = [
     { icon: "sparkles", label: "AI Entry",              meta: "Paste or photograph anything — it fills the entry", href: "/ai-entry" },
     { icon: "plus",    label: "Create new lead",        meta: "Open the quick-add form",                     href: "/leads?action=quick-add" },
-    { icon: "file",    label: "Create new quote",       meta: "Open Quote Builder",                          href: "/quotes/new" },
+    { icon: "file",    label: COPY.newQuote,             meta: "Open Quote Builder",                          href: "/quotes/new" },
     { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
-    { icon: "rupee",   label: "Record a payment",       meta: "Open an invoice to record what you received", href: "/invoices" },
+    /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
+    { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },
     { icon: "users",   label: "Add new customer",       meta: "Open new customer form",                      href: "/customers/new" },
     { icon: "send",    label: "Launch new campaign",    meta: "Email or WhatsApp blast",                     href: "/campaigns" },
     { icon: "mail",    label: "Send renewal reminders", meta: "Go to Renewals",                              href: "/renewals" },
@@ -366,8 +373,8 @@ export function CommandPalette({
                 </Command.Group>
               )}
 
-              {/* Invoices — real, tenant-scoped. Deep-links to /invoices?open=<id>
-                  which auto-opens that invoice's preview (existing pattern). */}
+              {/* Invoices — real, tenant-scoped. Opens the invoice's own page
+                  (invoiceHref → /invoices/<id>, R-218). */}
               {fInvoices.length > 0 && (
                 <Command.Group heading={`Invoices · ${count(fInvoices, invoices)}`}>
                   {fInvoices.map((inv) => {
@@ -380,7 +387,7 @@ export function CommandPalette({
                         label={inv.id}
                         meta={meta}
                         keywords={invoiceKeywords(inv)}
-                        onSelect={() => go(`/invoices?open=${inv.id}`)}
+                        onSelect={() => go(invoiceHref(inv.id))}
                       />
                     );
                   })}
@@ -423,7 +430,7 @@ export function CommandPalette({
                 <Command.Group heading={`Subscriptions · ${count(fSubs, subscriptions)}`}>
                   {fSubs.map((s) => {
                     const mrr = s.mrr ? `${rupee(s.mrr, { compact: true })}/mo` : "";
-                    const meta = [s.plan, mrr, s.status].filter(Boolean).join(" · ");
+                    const meta = [s.plan, mrr, subscriptionStatusLabel(s.status)].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={s.id}
@@ -431,7 +438,12 @@ export function CommandPalette({
                         label={s.customer_name}
                         meta={meta}
                         keywords={subscriptionKeywords(s)}
-                        onSelect={() => go("/subscriptions")}
+                        onSelect={() => {
+                          const href = subscriptionHref(s);
+                          go(href);
+                          /* Already on /subscriptions: the page stays mounted, so tell it. */
+                          window.dispatchEvent(new CustomEvent(SUBSCRIPTION_SEARCH_EVENT, { detail: searchFromSubscriptionHref(href) }));
+                        }}
                       />
                     );
                   })}
@@ -445,14 +457,14 @@ export function CommandPalette({
                   {fPayments.map((p) => {
                     const who = (p.customer_id && customerNameById.get(p.customer_id)) || "Payment";
                     const amount = rupee(p.amount, { compact: true });
-                    const meta = [amount, p.method, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
+                    const meta = [amount, p.method ? paymentMethodLabel(p.method) : null, formatDate(p.received_at), p.reference].filter(Boolean).join(" · ");
                     return (
                       <PaletteItem
                         key={p.id}
                         icon="rupee"
                         label={who}
                         meta={meta}
-                        onSelect={() => go("/payments")}
+                        onSelect={() => go(paymentHref(p))}
                       />
                     );
                   })}

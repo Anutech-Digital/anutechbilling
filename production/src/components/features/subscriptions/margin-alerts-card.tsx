@@ -105,7 +105,7 @@ export function MarginAlertsView({ alerts: data }: { alerts: MarginAlert[] }) {
       }
       actions={
         <Button variant="default" icon="package" asChild>
-          <Link href="/items">Catalog & Products</Link>
+          <Link href="/items">Products</Link>
         </Button>
       }
     >
@@ -131,7 +131,7 @@ export function MarginAlertsView({ alerts: data }: { alerts: MarginAlert[] }) {
             {new Set(unpriced.map((a) => a.plan)).size > 4 ? " and others" : ""}. Their
             margin is unknown, not healthy. Add the vendor cost in{" "}
             <Link href="/items" className="font-semibold text-primary hover:underline">
-              Catalog & Products
+              Products
             </Link>{" "}
             and they will start being checked.
           </p>

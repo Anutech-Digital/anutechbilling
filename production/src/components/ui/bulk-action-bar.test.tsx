@@ -125,3 +125,29 @@ describe("BulkBarButton", () => {
     expect(onClick).toHaveBeenCalledOnce();
   });
 });
+
+/* R-268: on a 375×812 phone the bar sat at bottom-6 — UNDER the 56px bottom tab bar (same
+   z-40), and wider than the screen with three actions. jsdom has no layout, so the contract
+   is pinned on the classes that produce the geometry: lift above --bottom-nav-h on phones,
+   never wider than the viewport minus the gutter, and a marker the FAB hides itself against. */
+describe("BulkActionBar — phone geometry (R-268)", () => {
+  it("sits above the mobile bottom nav, not under it", () => {
+    render(<BulkActionBar count={2} noun="invoice" onClear={() => {}} />);
+    const cls = screen.getByRole("toolbar").className;
+    expect(cls).toContain("bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)]");
+    expect(cls).toContain("md:bottom-6");
+    expect(cls).not.toMatch(/(^|\s)bottom-6(\s|$)/);
+  });
+
+  it("is never wider than the viewport and scrolls its actions instead", () => {
+    render(<BulkActionBar count={2} noun="invoice" onClear={() => {}} />);
+    const cls = screen.getByRole("toolbar").className;
+    expect(cls).toContain("max-w-[calc(100vw-1.5rem)]");
+    expect(cls).toContain("overflow-x-auto");
+  });
+
+  it("marks itself so the FAB can step aside while rows are selected", () => {
+    render(<BulkActionBar count={2} noun="invoice" onClear={() => {}} />);
+    expect(screen.getByRole("toolbar").hasAttribute("data-bulk-bar")).toBe(true);
+  });
+});

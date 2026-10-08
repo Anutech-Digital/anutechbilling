@@ -79,12 +79,23 @@ export function plannedInstalments(sub: ScheduleFields): PlannedInstalment[] {
  * "0 invoices raised" is indistinguishable from a broken one, which is how the
  * renewal engine's own dry-run mode came to exist.
  *
- * This is the honest boundary of split billing today: the machinery bills correctly,
- * but nothing collects per instalment yet, so it only engages once a subscription is
- * genuinely sold on a pay-as-you-go footing.
+ * ─── R-375: COLLECTED IS NOT THE SAME AS INVOICED ────────────────────────────
+ * The skip above used to fire on "collected" alone. But a split-billed quote paid IN FULL
+ * at the desk can never get a whole-term GST invoice — the invoices trigger
+ * (reject_full_term_invoice_when_split_billed, 20260817110200) refuses generate_invoice for
+ * it — so skipping its instalments too left real, paid supply with NO tax invoice anywhere.
+ *
+ * The double-billing fear does not apply to raising the instalments of a collected term:
+ * raise_subscription_billing credits what was received against the quote (minus what earlier
+ * instalments already absorbed — 20260817120100, kept in 20261007130000), so each period's
+ * invoice is issued already PAID from the advance. One GST invoice per period, no new demand.
+ *
+ * So the only collected term that must still be skipped is one that ALREADY has a whole-term
+ * invoice (raised before the guard existed, or before the cycle was changed): instalments on
+ * top of that would be a second tax invoice for the same supply.
  */
 export interface InstalmentSkip {
-  code:   "not_split_billed" | "term_already_collected" | "no_schedule";
+  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule";
   reason: string;
 }
 
@@ -94,6 +105,11 @@ export function instalmentSkip(args: {
   quotePaid:    number | null | undefined;
   /** ₹ the quote was for, GST-inclusive. */
   quoteAmount:  number | null | undefined;
+  /**
+   * The quote already has a whole-term tax invoice (quotes.invoice_id, or a non-void invoice
+   * row carrying its quote_id). Required, not optional: the caller has to look.
+   */
+  quoteInvoiced: boolean;
   scheduleSize: number;
 }): InstalmentSkip | null {
   if (!isSplitBilled(args.cycle)) {
@@ -105,12 +121,16 @@ export function instalmentSkip(args: {
 
   const paid   = args.quotePaid ?? 0;
   const amount = args.quoteAmount ?? 0;
-  /* `>=` not `===`: an overpayment is still a collected term, and billing it again
-     because ₹1 extra arrived would be absurd. */
-  if (amount > 0 && paid >= amount) {
+  /* A whole-term invoice already exists → instalments would be a second tax invoice for the
+     same supply. Collected-but-NOT-invoiced is billed (R-375): each instalment is raised
+     with the collected money applied as credit, so it is issued paid, not demanded again. */
+  if (args.quoteInvoiced) {
+    const collected = amount > 0 && paid >= amount;
     return {
-      code: "term_already_collected",
-      reason: `The whole term was collected up front (₹${paid.toLocaleString("en-IN")} of ₹${amount.toLocaleString("en-IN")}). Instalment invoices would bill it twice.`,
+      code: "term_already_invoiced",
+      reason: collected
+        ? `The whole term was collected (₹${paid.toLocaleString("en-IN")} of ₹${amount.toLocaleString("en-IN")}) and already has a whole-term tax invoice. Instalment invoices would invoice it twice.`
+        : "The quote already has a whole-term tax invoice. Instalment invoices would invoice the same supply twice.",
     };
   }
   return null;

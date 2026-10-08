@@ -76,3 +76,41 @@ export function sourceOptions(current: string | null | undefined): readonly Lead
 export function sourceLabel(value: string | null | undefined): string {
   return LEAD_SOURCES.find((s) => s.value === canonicalSource(value))?.label ?? (value || "—");
 }
+
+/**
+ * R-392 (7 Oct 2026, Abhishek's report): typing "Google Ads" in the /leads search found
+ * nothing — the search never looked at the source. The text a lead's source adds to its
+ * search haystack: the saved value, that value with dashes as spaces ("google ads"), and
+ * its label ("Facebook / Instagram Ads"). Lowercased. SQL twin: public.lead_search_hit()'s
+ * source part in migration 20261007190000_lead_source_filter_search.sql.
+ */
+export function sourceSearchText(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const key = canonicalSource(raw);
+  const label = LEAD_SOURCES.find((s) => s.value === key)?.label ?? "";
+  return [raw, raw.replace(/-/g, " "), label].join(" ").toLowerCase();
+}
+
+/**
+ * The Source filter's options (R-392): only sources the tenant's leads actually carry
+ * (lead_counts().pool.by_source — keys already canonical on the server), with labels, in
+ * LEAD_SOURCES order, then unknown sources A→Z. Zero-count keys are dropped.
+ */
+export function sourceFilterOptions(
+  bySource: Readonly<Record<string, number>> | undefined,
+): Array<{ value: string; label: string; count: number }> {
+  const merged = new Map<string, number>();
+  for (const [k, n] of Object.entries(bySource ?? {})) {
+    const key = canonicalSource(k);
+    if (!key || n <= 0) continue;
+    merged.set(key, (merged.get(key) ?? 0) + n);
+  }
+  const order = (v: string) => {
+    const i = LEAD_SOURCES.findIndex((s) => s.value === v);
+    return i === -1 ? LEAD_SOURCES.length : i;
+  };
+  return [...merged.entries()]
+    .map(([value, count]) => ({ value, label: sourceLabel(value), count }))
+    .sort((a, b) => order(a.value) - order(b.value) || a.label.localeCompare(b.label));
+}

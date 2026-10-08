@@ -13,10 +13,15 @@
 
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
-import { convertRateForCommitment } from "@/lib/quotes/commitment-rate";
+import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
+import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
+import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
+import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
+import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,6 +29,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/components/ui/label";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -43,12 +54,13 @@ import { useUpdateLead, useLeads } from "@/lib/queries/leads";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply } from "@/lib/gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
 import { COUNTRIES } from "@/lib/gst/countries";
 import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/currency";
+import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
 import { headlinePrice } from "@/lib/catalog/headline-price";
@@ -61,8 +73,15 @@ import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
+import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
+import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
+import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
+import { canEditSupportCatalog } from "@/lib/support/catalog-row";
+import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
  *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
@@ -77,9 +96,11 @@ const isRegistrationLine = (l: QuoteLineItem) =>
 // Plan → monthly price per seat (same map used in Add Lead form).
 // Cost approximated at 70% of rate (≈30% reseller margin); user can edit per line.
 const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
-  "Google Workspace Business Starter": 136,
-  "Google Workspace Standard":         736,
-  "Google Workspace Plus":            1380,
+  /* R-205: GW list prices come from ONE place (lib/pricing/workspace.ts) — this map used
+     to carry its own ₹136 / ₹736, under cost. */
+  "Google Workspace Business Starter": WORKSPACE_LIST_PRICE_PM.starter,
+  "Google Workspace Standard":         WORKSPACE_LIST_PRICE_PM.standard,
+  "Google Workspace Plus":             WORKSPACE_LIST_PRICE_PM.plus,
   "Google Workspace Enterprise":      2000,
   "Microsoft 365 Business Basic":      145,
   "Microsoft 365 Business Standard":   735,
@@ -96,8 +117,16 @@ export function QuoteBuilder() {
   const { data: customers, isLoading: customersLoading } = useCustomers();
   // Subscription quotes only pull recurring items — one-time products live in
   // the separate Items Catalog and are quoted via project quotes.
-  const { data: allCatalog } = useItems();
-  const catalog = React.useMemo(() => (allCatalog ?? []).filter((c) => c.item_type !== "one_time"), [allCatalog]);
+  /* R-388: `isPending` is the only honest "has the catalogue answered yet?" — `catalog`
+     below is `[]` while loading, which the lead prefill used to read as "no such plan". */
+  const { data: allCatalog, isPending: catalogPending } = useItems();
+  /* R-205: a GW Starter/Standard/Plus row under the list price (the old ₹136 seed) is lifted
+     to the list price here, so the product chips, the lead prefill and every added line quote
+     ₹270 / ₹1,080 / ₹1,380 — never a loss-making price. */
+  const catalog = React.useMemo(
+    () => (allCatalog ?? []).filter((c) => c.item_type !== "one_time").map((c) => floorWorkspaceRow(c)),
+    [allCatalog],
+  );
   const { data: currentUser } = useCurrentUser();
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
@@ -206,6 +235,10 @@ export function QuoteBuilder() {
   const [leadStateCode, setLeadStateCode] = React.useState(leadStateInit);
   const [leadGstin,     setLeadGstin]     = React.useState(leadGstinInit);
   React.useEffect(() => { if (leadStateInit) setLeadStateCode(leadStateInit); }, [leadStateInit]);
+  /* R-376 (a): a lead saved with only a GSTIN still told us its state — prefill Place of
+     supply from it. Kept apart from leadStateInit so the save writes it back to the lead. */
+  const leadGstinState = !leadStateInit ? (stateCodeFromGstin(leadGstinInit) ?? "") : "";
+  React.useEffect(() => { if (leadGstinState) setLeadStateCode((s) => s || leadGstinState); }, [leadGstinState]);
   React.useEffect(() => { if (leadGstinInit) setLeadGstin(leadGstinInit); }, [leadGstinInit]);
 
   // Sync local state when the lead loads asynchronously (initial mount the
@@ -214,6 +247,11 @@ export function QuoteBuilder() {
   React.useEffect(() => { if (leadContactInit) setLeadContact(leadContactInit); }, [leadContactInit]);
   React.useEffect(() => { if (leadPhoneInit)   setLeadPhone(leadPhoneInit);     }, [leadPhoneInit]);
   React.useEffect(() => { if (leadEmailInit)   setLeadEmail(leadEmailInit);     }, [leadEmailInit]);
+  /* R-278: a lead with no company is still somebody. Company -> contact -> email -> phone,
+     so the quote is saved, previewed and headed with a real name instead of "Prospect". */
+  const leadDisplayName = leadQuoteName({
+    company: leadCompany, contact_name: leadContact, contact_email: leadEmail, contact_phone: leadPhone,
+  });
 
   // Lead mode applies when either:
   //   - explicit leadId in URL (from Lead Detail → Send Quote OR direct URL), OR
@@ -334,7 +372,10 @@ export function QuoteBuilder() {
   // hand-types a stale rate. `fxInfo` shows provenance (as-of date); `fxAuto`
   // marks the current rate as auto-fetched (an edit clears it → "manual").
   const [fxLoading, setFxLoading] = React.useState(false);
-  const [fxInfo, setFxInfo] = React.useState<{ asOf: string | null } | null>(null);
+  /* R-045 slice 3: provenance of the CURRENT rate — saved on the quote as fx_source / fx_date
+     and copied onto the invoice at issue. source: fbil (RBI reference) | er-api / frankfurter
+     (indicative) | manual (typed) | null (an older quote that never recorded it). */
+  const [fxInfo, setFxInfo] = React.useState<FxStamp | null>(null);
   const [fxAuto, setFxAuto] = React.useState(false);
   const fetchLatestFx = React.useCallback(async (cur: string) => {
     const c = (cur ?? "").toUpperCase();
@@ -344,15 +385,20 @@ export function QuoteBuilder() {
       const res = await fetch(`/api/fx/latest?from=${encodeURIComponent(c)}`);
       const data = await res.json();
       if (!res.ok || typeof data.rate !== "number") {
-        toast.error(data.error ?? "Couldn't fetch the latest rate — enter it manually.");
+        toastError(data.error, {
+          fallback: "Couldn't fetch the latest rate.",
+          description: "Type the exchange rate in the rate box yourself — the quote works the same.",
+        });
         return;
       }
       setExchangeRate(data.rate);
-      setFxInfo({ asOf: data.asOf ?? null });
+      setFxInfo({ asOf: data.asOf ?? null, source: data.source ?? null, kind: data.kind ?? null, label: data.label ?? null });
       setFxAuto(true);
-      toast.success(`Latest rate: ₹${data.rate}/${c}`);
+      toast.success(`Latest rate: ₹${data.rate}/${c}`, data.label ? { description: data.label } : undefined);
     } catch {
-      toast.error("Couldn't reach the rates service — enter it manually.");
+      toast.error("Couldn't reach the rates service.", {
+        description: "Check your internet, or type the exchange rate in the rate box yourself.",
+      });
     } finally {
       setFxLoading(false);
     }
@@ -364,6 +410,15 @@ export function QuoteBuilder() {
   React.useEffect(() => { if (leadCountryInit) setLeadCountry(leadCountryInit); }, [leadCountryInit]);
   const [notes, setNotes] = React.useState("");
   const [lineItems, setLineItems] = React.useState<QuoteLineItem[]>([]);
+  /* R-388 — a line's cost has three states, and `cost: number` alone cannot say which:
+       • PENDING  (costPendingRef): never known — prefilled before/without a catalogue row.
+                  Filled the moment the catalogue can answer (see the backfill effect).
+       • TYPED    (costTypedRef):   the user entered it. Never overwritten by a catalogue
+                  load or a background refetch.
+       • neither: came from the catalogue, follows it.
+     Refs, not state: they steer the effects below and never render anything. */
+  const costPendingRef = React.useRef<Set<string>>(new Set());
+  const costTypedRef   = React.useRef<Set<string>>(new Set());
 
   // No react-hook-form here, so "dirty" is defined explicitly: a line item
   // added, or a customer chosen. Deliberately NOT every keystroke — a quote
@@ -392,11 +447,15 @@ export function QuoteBuilder() {
       if (!l.item_id || l.bulk) return l;
       const it = catalog.find((c) => c.id === l.item_id);
       if (!it) return l;
+      /* R-369: "annualRate" is the line's STORED unit — the year on an annual line, one
+         month on a flex ("monthly") line. ×12 on a flex line re-priced every saved flex
+         quote to twelve months the moment it was opened for editing. */
+      const lineCommitment = l.commitment ?? "annual_yearly";
       let annualRate: number, annualCost: number;
       const usd = it.prices?.usd;
       if (usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0) {
-        annualRate = Math.round(usd.msrp * 12 * fx);
-        annualCost = Math.round(usd.wholesale * 12 * fx);
+        annualRate = storedLineRate(usd.msrp * fx, lineCommitment);
+        annualCost = storedLineRate(usd.wholesale * fx, lineCommitment);
       } else if (headlinePrice(it).unit === "yr") {
         /* A yearly-total plan (support "(Yearly)", msrp 0). msrp × 12 here re-priced it
            to ₹0 the moment this effect re-ran (2 Oct 2026). */
@@ -404,19 +463,24 @@ export function QuoteBuilder() {
         annualRate = p.rate;
         annualCost = p.cost;
       } else {
-        const commitment = l.commitment ?? "annual_yearly";
-        const tier = it.prices?.[commitment === "monthly" ? "monthly" : "annual"];
-        annualRate = (tier?.msrp ?? it.msrp) * 12;
-        annualCost = (tier?.wholesale ?? it.wholesale) * 12;
+        const tier = it.prices?.[lineCommitment === "monthly" ? "monthly" : "annual"];
+        annualRate = storedLineRate(tier?.msrp ?? it.msrp, lineCommitment);
+        annualCost = storedLineRate(tier?.wholesale ?? it.wholesale, lineCommitment);
       }
       /* Keep the line's discount: a package (or a rep) priced it below list, and a
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
       const listBefore = l.list_rate ?? l.rate;
       const ratio = listBefore > 0 && l.rate < listBefore ? l.rate / listBefore : 1;
       const rate = Math.round(annualRate * ratio);
-      return l.rate === rate && l.cost === annualCost && (l.list_rate ?? l.rate) === annualRate
+      /* R-388: a cost the user TYPED is theirs — a catalogue (re)load or a background
+         refetch must not replace it. And a catalogue that cannot answer (wholesale 0 /
+         missing) never wipes a cost the line already knows: 0 there means "unknown",
+         and swapping a real ₹7,440 for it is how a margin silently becomes 98%. */
+      const cost = costTypedRef.current.has(l.id) || (annualCost <= 0 && l.cost > 0) ? l.cost : annualCost;
+      if (cost > 0) costPendingRef.current.delete(l.id);
+      return l.rate === rate && l.cost === cost && (l.list_rate ?? l.rate) === annualRate
         ? l
-        : { ...l, rate, list_rate: annualRate, cost: annualCost };
+        : { ...l, rate, list_rate: annualRate, cost };
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currency, exchangeRate, catalog, usdPricingBasis]);
@@ -448,43 +512,20 @@ export function QuoteBuilder() {
   React.useEffect(() => {
     if (prefilledRef.current) return;
     if (!leadCompany) return;
-    // Wait for catalog to load — so we can use the tenant's actual prices,
-    // not the hardcoded fallback map.
-    if (!catalog) return;
+    /* Wait for the catalogue query to ANSWER — so we use the tenant's actual prices,
+       not the hardcoded fallback map. R-388: this used to be `if (!catalog) return`, but
+       `catalog` is `[]` while loading, never falsy — so on a reload (empty query cache)
+       the prefill ran against nothing, fell back to the plan map with cost 0, and the
+       Workspace line's ₹7,440 cost was lost for good. If the query FAILS we go on with
+       the fallback; the backfill effect below fills the cost when a retry succeeds. */
+    if (catalogPending) return;
 
     prefilledRef.current = true;
 
     const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
 
-    // 1. Find the matching catalog item — tries exact / substring / tier-keyword.
-    //    Normalize hyphens to spaces because lead plans coming from the buy
-    //    page are stored as slugs like "google-workspace-standard" while
-    //    catalog item names use spaces ("Google Workspace Standard").
-    const normalize = (s: string) => s.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
-    const target = leadPlan ? normalize(leadPlan) : "";
-
-    let catalogItem = target
-      ? catalog.find((c) => normalize(c.name) === target)
-      : undefined;
-
-    if (!catalogItem && target) {
-      // Substring match: normalized catalog name contains the lead's plan keyword (or vice versa)
-      catalogItem = catalog.find((c) => {
-        const n = normalize(c.name);
-        return n.includes(target) || target.includes(n);
-      });
-    }
-
-    if (!catalogItem && target) {
-      // Last-resort: pluck out a tier keyword ("starter" / "standard" / "plus" /
-      // "enterprise") from the lead plan and find a catalog item containing it.
-      // Handles slugs like "google-workspace-standard" cleanly.
-      const TIER_KEYWORDS = ["enterprise", "plus", "standard", "starter"];
-      const tierWord = TIER_KEYWORDS.find((k) => target.includes(k));
-      if (tierWord) {
-        catalogItem = catalog.find((c) => normalize(c.name).includes(tierWord));
-      }
-    }
+    // 1. Find the matching catalog item — exact / substring / tier-keyword (lib/quotes/lead-plan-match.ts).
+    const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
 
     let rate = 0;
     let cost = 0;
@@ -531,9 +572,13 @@ export function QuoteBuilder() {
     }
 
     if (leadPlan && seatsNum > 0 && rate > 0) {
+      const lineId = `line-${Date.now()}`;
+      /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
+         fills it the moment the catalogue can answer (until the user types one). */
+      if (cost <= 0) costPendingRef.current.add(lineId);
       setLineItems([
         {
-          id:         `line-${Date.now()}`,
+          id:         lineId,
           item_id:    catalogItem?.id,
           // Use the full catalog name when matched (so "Starter" → "Google Workspace Business Starter")
           name:       catalogItem?.name ?? leadPlan,
@@ -570,7 +615,33 @@ export function QuoteBuilder() {
       (leadContact ? `Attn: ${leadContact}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog]);
+  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending]);
+
+  /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
+     The prefill above waits for the catalogue, but if that query failed (or a row
+     was added since), a prefilled line still carries "cost unknown". When the
+     catalogue (re)loads, fill only those lines — by item_id, or by the plan name for
+     a line that had no catalogue row — and never a cost the user typed. */
+  React.useEffect(() => {
+    if (catalog.length === 0 || costPendingRef.current.size === 0) return;
+    setLineItems((prev) => {
+      const { lines, filled } = fillUnknownCosts(
+        prev,
+        (l) => costPendingRef.current.has(l.id) && !costTypedRef.current.has(l.id),
+        (l) => {
+          const item = (l.item_id ? catalog.find((c) => c.id === l.item_id) : undefined)
+            ?? matchCatalogItemForPlan(catalog, l.name);
+          if (!item) return null;
+          const perSeatMonth = isAnnualTier(l.commitment)
+            ? slabPricing(item, l.qty).wholesalePerSeatMonth
+            : (item.prices?.monthly?.wholesale ?? item.wholesale);
+          return { cost: storedLineRate(perSeatMonth, l.commitment), item_id: item.id };
+        },
+      );
+      for (const l of filled) costPendingRef.current.delete(l.id);
+      return lines;
+    });
+  }, [catalog]);
 
   // ── Pre-fill from existing quote (Duplicate / Revise & resend / in-place Edit) ──
   const duplicatedRef = React.useRef(false);
@@ -618,6 +689,8 @@ export function QuoteBuilder() {
     if (sourceQuote.currency)             setCurrency(sourceQuote.currency);
     if (sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0) {
       setExchangeRate(sourceQuote.exchange_rate);
+      /* R-045: keep where that rate came from — an untouched Save must not relabel it. */
+      setFxInfo(fxStampFromQuote(sourceQuote));
     }
     if (sourceQuote.prospect_state_code)  setProspectStateCode(sourceQuote.prospect_state_code);
     if (sourceQuote.prospect_country)     setProspectCountry(sourceQuote.prospect_country);
@@ -680,9 +753,9 @@ export function QuoteBuilder() {
   /* Lines that are actually being SOLD but whose cost nobody knows. A ₹0 line is
      excluded — a free line legitimately costs nothing, and flagging it would train
      people to dismiss the banner. A support plan is excluded too: it is our own
-     service, so ₹0 is its real cost. */
-  const costUnknown       = (it: { cost: number; rate: number; item_id?: string | null }) =>
-    it.cost <= 0 && it.rate > 0 && !isSupportSkuId(it.item_id);
+     service, so ₹0 is its real cost. R-388: the same rule the saved-quote approval
+     uses (lib/quotes/line-cost.ts), so the builder and the approval never disagree. */
+  const costUnknown       = lineCostUnknown;
   const costlessLines     = lineItems.filter(costUnknown);
   /* One-tap product chips for an empty quote, from the lead's interest. */
   const planChips         = suggestPlanProducts(catalog, leadPlan);
@@ -700,6 +773,8 @@ export function QuoteBuilder() {
   // For a prospect/lead quote (no customer record yet) export can't be inferred
   // here — mark the customer as export once created. (Phase 1c: lead country.)
   const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
+  /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
+  const placeOfSupply     = placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
   // USD (books still record in ₹) so the operator doesn't have to remember to
@@ -766,16 +841,33 @@ export function QuoteBuilder() {
   const dispTotal    = isUsdBill ? dRound(dispTaxable + dispTax) : total;
   const dispListGross = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.list_rate ?? l.rate)), 0)) : listGross;
   const dispCustomerDiscount = Math.max(0, dRound(dispListGross - dispSubtotal));
-  // Per-invoice-aware formatter for a DISPLAY-currency ANNUAL figure.
+  /* R-369: what the stored totals are divided by for one invoice — the PDF's own rule
+     (first line's commitment). An annual quote billed monthly stores the YEAR (÷12); a
+     flex quote stores one MONTH (÷1). Dividing a flex total by 12 showed a twelfth. */
+  const totalsDiv   = quoteTotalsDivisor(billingN, lineItems);
+  const totalsYear  = (stored: number) => stored * (billingN / totalsDiv);
+  // Per-invoice-aware formatter for a DISPLAY-currency STORED figure.
   const fmtTotalC = (annualDisp: number) =>
-    showPerInvoice ? `${fmtDispC(dRound(annualDisp / billingN))}${billingUnit}` : fmtDispC(annualDisp);
+    showPerInvoice ? `${fmtDispC(dRound(annualDisp / totalsDiv))}${billingUnit}` : fmtDispC(annualDisp);
   const fmtPayableC = (annualDisp: number) =>
     isUsdBill
       ? (roundTotal ? formatForeign(Math.round(annualDisp), currency ?? "USD", 0) : formatForeign(annualDisp, currency ?? "USD"))
       : rupee(annualDisp);
 
+  /* R-381: one quote = one billing term. A monthly flex line beside an annual line added
+     a month to a year in the subtotal. Refuse the mix wherever a line enters or changes
+     term; the database refuses it too (20261007160000_quote_one_billing_term.sql). */
+  const refuseMixedTerm = (next: ReadonlyArray<QuoteLineItem>): boolean => {
+    if (!isMixedTerm(next)) return false;
+    toast.error(ONE_TERM_MESSAGE, {
+      description: "Monthly flex is billed per month, the other lines per year — one quote can't total both.",
+    });
+    return true;
+  };
+
   // Line item handlers
   const addLine = (line: QuoteLineItem) => {
+    if (refuseMixedTerm([...lineItems, line])) return;
     // Freeze the LIST price at add time (= the rate we start from). Lowering the
     // rate later surfaces the gap as the customer's discount. (see totals)
     const withList: QuoteLineItem = { ...line, list_rate: line.list_rate ?? line.rate, start_date: line.start_date ?? todayISO };
@@ -791,6 +883,7 @@ export function QuoteBuilder() {
   };
   /** Add several lines at once (solution package), reusing the merge rule per line. */
   const addLines = (incoming: QuoteLineItem[]) => {
+    if (refuseMixedTerm([...lineItems, ...incoming])) return;
     setLineItems((current) =>
       incoming.reduce((acc, line) => {
         const withList: QuoteLineItem = { ...line, list_rate: line.list_rate ?? line.rate, start_date: line.start_date ?? todayISO };
@@ -811,6 +904,9 @@ export function QuoteBuilder() {
          because they added a seat would undo a decision they made on a call. */
       const item = l.item_id ? catalog.find((c) => c.id === l.item_id) : undefined;
       if (!item) return { ...l, qty: nextQty };
+      /* Seat bands price the ANNUAL tier, in ₹/seat/YEAR. A flex line is per MONTH
+         (R-369) and has no band table of its own — never re-price it from one. */
+      if (!isAnnualTier(l.commitment)) return { ...l, qty: nextQty };
 
       const atOldQty = slabPricing(item, l.qty);
       const untouched = Math.round(atOldQty.msrpPerSeatMonth * 12) === l.rate;
@@ -837,6 +933,9 @@ export function QuoteBuilder() {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, rate: Math.max(0, rate) } : l)));
   };
   const updateCost = (id: string, cost: number) => {
+    /* R-388: a typed cost is the user's — no catalogue load may replace it. */
+    costTypedRef.current.add(id);
+    costPendingRef.current.delete(id);
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, cost: Math.max(0, cost) } : l)));
   };
   const updateStartDate = (id: string, date: string) => {
@@ -853,7 +952,18 @@ export function QuoteBuilder() {
   const updateAdjustable = (id: string, patch: Partial<QuoteLineItem>) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
-  const updateCommitment = (id: string, commitment: LineCommitment) => {
+  const updateCommitment = (id: string, commitment: LineCommitment | null) => {
+    /* R-389 (F4): "One-time" = no commitment — record_payment makes no subscription for it.
+       The rate is kept as typed: a one-time price has no per-month / per-year unit. */
+    if (commitment === null) {
+      setLineItems((s) => s.map((l) => {
+        if (l.id !== id) return l;
+        const { commitment: _was, ...oneTime } = l;
+        return oneTime;
+      }));
+      return;
+    }
+    if (refuseMixedTerm(lineItems.map((l) => (l.id === id ? { ...l, commitment } : l)))) return;
     setLineItems((s) =>
       s.map((l) => {
         if (l.id !== id) return l;
@@ -866,11 +976,17 @@ export function QuoteBuilder() {
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
           const tier    = item?.prices?.[tierKey];
           if (tier && tier.msrp > 0) {
+            /* R-369: the tier is ₹/seat/MONTH. An annual line stores the year (×12); a
+               flex line stores the month as-is — that is what the PDF, e-mail, accept
+               page and record_payment read. `tier.msrp * 12` on a flex line was a
+               twelvefold overcharge ("Payable each month ₹24,072" for ₹2,040). */
+            const rate = storedLineRate(tier.msrp, commitment);
             return {
               ...l,
               commitment,
-              rate: tier.msrp * 12,        // store as ₹/seat/year
-              cost: tier.wholesale * 12,
+              rate,
+              list_rate: rate,
+              cost: storedLineRate(tier.wholesale, commitment),
             };
           }
         }
@@ -892,13 +1008,34 @@ export function QuoteBuilder() {
         const conv = convertRateForCommitment({
           rate: l.rate, cost: l.cost, from: l.commitment, to: commitment,
         });
-        return { ...l, commitment, rate: conv.rate, cost: conv.cost };
+        /* The frozen list price is in the same unit as the rate (R-369) — convert it too,
+           or a ₹3,240/yr list beside a ₹270/month rate reads as a ₹2,970 "discount". */
+        const listConv = l.list_rate == null ? null : convertRateForCommitment({
+          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment,
+        });
+        return {
+          ...l, commitment, rate: conv.rate, cost: conv.cost,
+          ...(listConv ? { list_rate: listConv.rate } : {}),
+        };
       }),
     );
   };
   const removeLine = (id: string) => {
     setLineItems((s) => s.filter((l) => l.id !== id));
   };
+
+  // R-315: shared by the desktop Preview button and the phone "More" menu.
+  const openPreview = () => {
+    if (lineItems.length === 0) {
+      toast.error("Add at least one line item to preview", {
+        description: "Use Add item (Alt+A) first — the preview shows the quote the customer will get.",
+      });
+      return;
+    }
+    setPreviewOpen(true);
+  };
+  // Same rule the three send buttons always used — named once so the menu matches them.
+  const sendDisabled = !isLeadMode && !customerId && !prospectName.trim();
 
   // Submit
   // afterAction lets the caller request a follow-up on the detail page
@@ -911,19 +1048,27 @@ export function QuoteBuilder() {
     // prospect name — prospect mode lets the operator quote a brand-new
     // company without first creating a customer record.
     if (!isLeadMode && !customerId && !prospectName.trim()) {
-      toast.error("Pick a customer or type a new prospect name");
+      toast.error("Pick a customer or type a new prospect name", {
+        description: "A quote needs someone to send it to. Use the customer box at the top.",
+      });
       return;
     }
     if (lineItems.length === 0) {
-      toast.error("Add at least one line item");
+      toast.error("Add at least one line item", {
+        description: "Use Add item (Alt+A) to put a product or service on the quote.",
+      });
       return;
     }
+    // R-381: an older mixed draft opened for editing can't be saved as it is.
+    if (refuseMixedTerm(lineItems)) return;
     /* GST guard (2 Oct 2026). With no place of supply the quote assumes CGST+SGST; a
        draft may wait for the state, a quote that goes to the customer may not. Only for a
        lead or typed prospect, where the state field is on this screen; an existing
        customer without one keeps the amber note (their record is fixed on /customers). */
     if (status === "sent" && !customerId && supplyStateMissing({ isExport, buyerStateCode })) {
-      toast.error("Pick the customer's state first — it decides CGST+SGST or IGST");
+      toast.error("Pick the customer's state first", {
+        description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
+      });
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
       return;
     }
@@ -938,7 +1083,12 @@ export function QuoteBuilder() {
         const { data: newId, error: seqErr } = await supabase
           .rpc("next_document_number", { p_doc_type: "quote" });
         if (seqErr || !newId) {
-          toast.error("Failed to allocate quote number — please retry");
+          /* S31: no dead end — one click to the numbering settings (lib/onboarding/setup-links). */
+          toastError(seqErr, {
+            fallback: "Couldn't get a quote number.",
+            description: NUMBERING_FIX.description,
+            action: { label: NUMBERING_FIX.label, onClick: () => router.push(NUMBERING_FIX.href as never) },
+          });
           return;
         }
         idToUse = newId;
@@ -957,12 +1107,12 @@ export function QuoteBuilder() {
          word before the generic placeholder. */
       const resolvedCustomerName =
         (isLeadMode
-          ? (leadCompany?.trim() || "")
+          ? leadDisplayName
           : customer
             ? customer.name
             : prospectName.trim())
         || (editOf ? (sourceQuote?.customer_name?.trim() ?? "") : "")
-        || "Prospect";
+        || PLACEHOLDER_QUOTE_NAME;
 
       const quote = await createQuote.mutateAsync({
         id: idToUse,
@@ -990,6 +1140,9 @@ export function QuoteBuilder() {
         amount:        total,              // canonical ₹ (books stay INR)
         currency:      currency,
         exchange_rate: isForeign ? exchangeRate : 1,
+        // R-045: where the rate came from + its date; generate_invoice's trigger copies both onto the invoice.
+        fx_source:     isForeign ? (fxInfo?.source ?? null) : null,
+        fx_date:       isForeign ? (fxInfo?.asOf ?? null) : null,
         billing_cycle: effectiveCycle,   // quote-level invoice frequency (0161)
         // Invoice payment terms → generate_invoice stamps the due date (0163).
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
@@ -997,7 +1150,10 @@ export function QuoteBuilder() {
         status,
         notes:         notes || null,
         expires_date:  addDaysISO(istToday(), validityDays),
-        seats:         lineItems.reduce((s, l) => s + l.qty, 0),
+        /* R-389 (F7): licence lines only — support / one-time services are not seats
+           (Q-FBB9-27-0013 saved 27 for 25 Workspace seats). A quote with no licence line
+           keeps the old total so the column is never newly empty. */
+        seats:         quoteSeatCount(lineItems) ?? lineItems.reduce((s, l) => s + l.qty, 0),
         plan:          lineItems[0]?.name ?? null,
         // Direct invoice: a one-time invoice must NOT create a subscription on
         // payment; a recurring one should. Ignored for normal quotes.
@@ -1021,7 +1177,7 @@ export function QuoteBuilder() {
       // Leads (raw) tab forever.
       if (isLeadMode && linkedLeadId && status === "sent") {
         try {
-          const totalSeats = lineItems.reduce((s, l) => s + l.qty, 0);
+          const totalSeats = quoteSeatCount(lineItems) ?? 0;   // R-389 (F7): licence lines only
           // Forward-only, through the same rule the two server-side send paths use. This line
           // was `stage: "quote"` unconditionally — which, on an upsell quote to a WON customer,
           // dragged them back into the pipeline and restarted their stage age. The judgement
@@ -1139,7 +1295,7 @@ export function QuoteBuilder() {
                 : (quoteId ?? "New quotation")}
             </h1>
             <p className="text-sm text-ink-3 mt-1">
-              For <b className="text-ink">{isLeadMode ? leadCompany : (customer?.name ?? prospectName.trim() ?? "—")}</b>
+              For <b className="text-ink">{isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}</b>
               {(isLeadMode || (!customer && prospectName.trim())) && (
                 <span className="ml-1 text-amber-ink">(prospect)</span>
               )}
@@ -1549,7 +1705,12 @@ export function QuoteBuilder() {
                         type="text"
                         inputMode="decimal"
                         value={String(exchangeRate)}
-                        onChange={(e) => { setExchangeRate(parseFloat(e.target.value) || 1); setFxAuto(false); }}
+                        onChange={(e) => {
+                          setExchangeRate(parseFloat(e.target.value) || 1);
+                          setFxAuto(false);
+                          // R-045: a typed rate is the owner's own — saved as source "manual", dated today.
+                          setFxInfo(manualFxStamp(istToday()));
+                        }}
                         disabled={!isForeign}
                         placeholder="₹ / unit"
                       />
@@ -1601,8 +1762,14 @@ export function QuoteBuilder() {
                 ) : isForeign && fxAuto ? (
                   <p className="text-2xs text-emerald">
                     ✓ Latest rate: <b>₹{exchangeRate}/{currency}</b>
-                    {fxInfo?.asOf ? ` · as of ${fxInfo.asOf}` : ""} (auto — you can edit to override).
+                    {fxInfo?.asOf ? ` · as of ${fxInfo.asOf}` : ""}
+                    {fxInfo?.label ? ` · ${fxInfo.label}` : ""} (auto — you can edit to override).
                     Books are recorded in ₹ (GST).
+                    {fxInfo?.kind === "indicative" && (
+                      <span className="block text-amber-ink">
+                        ⚠ Indicative rate, not the RBI reference rate. For GST use the RBI/FBIL reference rate (or the CBIC customs rate) for the invoice date — type it in the rate box if it differs.
+                      </span>
+                    )}
                   </p>
                 ) : isForeign ? (
                   <p className="text-2xs text-indigo-ink">
@@ -1693,9 +1860,10 @@ export function QuoteBuilder() {
             {lineItems.map((line) => {
               const commitment  = line.commitment ?? "annual_yearly";
               const unitLabel   = billingUnit;   // quote-level frequency (0161)
-              const displayRate = Math.round(line.rate / billingN);
-              const displayCost = Math.round(line.cost / billingN);
-              const commitType: "monthly" | "annual" = commitment === "monthly" ? "monthly" : "annual";
+              /* R-369: a flex line already IS one month; only an annual line is divided. */
+              const lineDiv     = perInvoiceDivisor(billingN, commitment);
+              const displayRate = Math.round(line.rate / lineDiv);
+              const displayCost = Math.round(line.cost / lineDiv);
               const lineDiscountPct = line.discount_pct ?? 0;
               const netRate  = line.rate * (1 - lineDiscountPct / 100);
               const lineMargin = computeMargin(line.cost * line.qty, netRate * line.qty);
@@ -1734,19 +1902,18 @@ export function QuoteBuilder() {
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
                         value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * billingN); }}
+                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
                         className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
                       />
                     </label>
                     <label className="block col-span-2">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
                       <select
-                        value={commitType}
-                        onChange={(e) => updateCommitment(line.id, e.target.value === "monthly" ? "monthly" : "annual_yearly")}
+                        value={commitChoiceOf(line.commitment)}
+                        onChange={(e) => updateCommitment(line.id, commitmentForChoice(e.target.value))}
                         className="mt-0.5 w-full px-2 py-1.5 text-sm border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
                       >
-                        <option value="monthly">Monthly flex</option>
-                        <option value="annual">Annual (1-yr)</option>
+                        {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </select>
                     </label>
                   </div>
@@ -1800,7 +1967,7 @@ export function QuoteBuilder() {
                       aria-label={`Cost for ${line.name}`}
                       type="number" min={0} step={isUsdBill ? "0.01" : "1"}
                       value={isUsdBill ? Number((displayCost / fxRate).toFixed(2)) : displayCost}
-                      onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateCost(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * billingN); }}
+                      onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateCost(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
                       className="w-14 px-1 py-0.5 text-2xs text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
                     />
                     {/* "Margin unknown" beats "Margin 100%" when cost is 0 — see the
@@ -1817,7 +1984,7 @@ export function QuoteBuilder() {
                   </details>
                   <div className="flex items-center justify-between border-t border-hairline pt-2">
                     <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Amount</span>
-                    <span className="font-medium text-sm tabular-nums">{fmtDispC(dispAmt(line.rate, line.qty, line.discount_pct ?? 0))}{billingN > 1 ? " /yr" : ""}</span>
+                    <span className="font-medium text-sm tabular-nums">{fmtDispC(dispAmt(line.rate, line.qty, line.discount_pct ?? 0))}{lineAmountSuffix(commitment, billingN)}</span>
                   </div>
                 </div>
               );
@@ -1843,25 +2010,25 @@ export function QuoteBuilder() {
                 const netRate         = line.rate * (1 - lineDiscountPct / 100);
                 const lineMargin      = computeMargin(line.cost * line.qty, netRate * line.qty);
 
-                // Display unit depends on commitment + billing term.
-                // Storage is always ₹/seat/YEAR — divide by invoicesPerYear for display.
+                // Display unit depends on commitment + billing term (R-369): an annual
+                // line stores ₹/seat/YEAR and is divided by invoices-per-year; a flex
+                // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
                 const unitLabel   = billingUnit;   // quote-level frequency (0161)
-                const displayRate = Math.round(line.rate / billingN);
-                const displayCost = Math.round(line.cost / billingN);
+                const lineDiv     = perInvoiceDivisor(billingN, commitment);
+                const displayRate = Math.round(line.rate / lineDiv);
+                const displayCost = Math.round(line.cost / lineDiv);
                 const isPerInvoice = billingN > 1; // anything other than yearly invoice
+                /* Invoices this line's stored amount covers in a year: 1 for annual, 12 for flex. */
+                const yearFactor  = billingN / lineDiv;
 
-                // When user edits, convert back to annual for storage
-                const handleRateChange = (raw: number) => updateRate(line.id, raw * billingN);
-                const handleCostChange = (raw: number) => updateCost(line.id, raw * billingN);
+                // When user edits, convert back to the line's storage unit
+                const handleRateChange = (perInvoice: number) => updateRate(line.id, perInvoice * lineDiv);
+                const handleCostChange = (perInvoice: number) => updateCost(line.id, perInvoice * lineDiv);
 
-                // Commitment selector: "monthly" (flex) OR "annual". Flipping to
-                // flex → "monthly"; flipping to annual → default annual_yearly
-                // (the quote-level picker then sets the billing frequency).
-                const commitType: "monthly" | "annual" = commitment === "monthly" ? "monthly" : "annual";
-                const handleCommitTypeChange = (t: "monthly" | "annual") => {
-                  updateCommitment(line.id, t === "monthly" ? "monthly" : "annual_yearly");
-                };
+                // Commitment selector: One-time (no commitment), "monthly" (flex) or
+                // annual → annual_yearly (the quote-level picker sets billing frequency).
+                // R-389 (F4): shows the SAVED value — a null commitment is One-time.
 
                 return (
                   <tr key={line.id} className="border-b border-hairline last:border-0">
@@ -1912,12 +2079,11 @@ export function QuoteBuilder() {
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
                           <select
                             aria-label={`Commitment for ${line.name}`}
-                            value={commitType}
-                            onChange={(e) => handleCommitTypeChange(e.target.value as "monthly" | "annual")}
+                            value={commitChoiceOf(line.commitment)}
+                            onChange={(e) => updateCommitment(line.id, commitmentForChoice(e.target.value))}
                             className="text-2xs px-1.5 py-0.5 border border-hairline rounded bg-paper focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"
                           >
-                            <option value="monthly">Monthly flex</option>
-                            <option value="annual">Annual (1-yr)</option>
+                            {COMMIT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                           </select>
                         </div>
                         <div className="flex items-center gap-1">
@@ -2004,9 +2170,9 @@ export function QuoteBuilder() {
                           {/* Per-invoice amount = what customer pays each billing cycle */}
                           <div>{fmtDispC(dispAmt(displayRate, line.qty, lineDiscountPct))}{unitLabel}</div>
                           <div className="text-3xs text-ink-3 font-normal">
-                            = {fmtDispC(dispAmt(line.rate, line.qty, lineDiscountPct))}/yr
+                            = {fmtDispC(dispAmt(line.rate * yearFactor, line.qty, lineDiscountPct))}/yr
                             {lineDiscountPct > 0 && (
-                              <span className="text-ink-3"> (was {fmtDispC(dispAmt(line.rate, line.qty))})</span>
+                              <span className="text-ink-3"> (was {fmtDispC(dispAmt(line.rate * yearFactor, line.qty))})</span>
                             )}
                           </div>
                         </>
@@ -2297,12 +2463,12 @@ export function QuoteBuilder() {
                   <div className="text-right">
                     <span className="font-serif text-3xl text-amber tabular-nums">
                       {showPerInvoice
-                        ? fmtPayableC(dRound(dispTotal / billingN))
+                        ? fmtPayableC(dRound(dispTotal / totalsDiv))
                         : fmtPayableC(dispTotal)}
                     </span>
                     {showPerInvoice && (
                       <div className="text-2xs text-ink-3 font-normal mt-0.5">
-                        per invoice ({billingN}/yr) · = {fmtPayableC(dispTotal)} / year
+                        per invoice ({billingN}/yr) · = {fmtPayableC(dRound(totalsYear(dispTotal)))} / year
                       </div>
                     )}
                     {isForeign && (
@@ -2347,34 +2513,45 @@ export function QuoteBuilder() {
 
       {/* Bottom action row. On phones it sticks ABOVE the fixed bottom tab bar (56px + safe
           area): at bottom-0 the tab bar covered "Create invoice", so an invoice could not be
-          made on a phone at all (found on staging, 6 Oct 2026).
+          made on a phone at all (found on staging, 6 Oct 2026). R-291: the height comes from
+          the shared --bottom-nav-h (app layout), like the FAB and bulk bar.
           All 3 send-shaped buttons save the quote first
           (status='sent') and then signal the detail page to open the right
           dialog via a ?send= query param. "Duplicate" stays placeholder
           until we wire a real duplicate flow. */}
       {lineItems.length > 0 && (
-        <div className="order-last sticky bottom-[calc(56px+env(safe-area-inset-bottom))] md:bottom-0 z-20-mx-4 -mb-4 flex items-center justify-between gap-3 flex-wrap border-t border-hairline bg-paper px-4 py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8">
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">
+        /* R-315 (7 Oct 2026): at 375px every button sat on its own line and the bar was
+           253px tall — a third of the screen, so the line items had no room. Below md it is
+           now ONE row: total + the main button + a "More" menu holding the rest (same
+           handlers, nothing dropped). md and up is unchanged. Layout only — the total,
+           GST and save logic are untouched. */
+        <div
+          data-quote-action-bar
+          className="order-last sticky bottom-[calc(var(--bottom-nav-h,56px))] md:bottom-0 z-20 -mx-4 -mb-4 flex items-center justify-between gap-2 md:gap-3 flex-nowrap md:flex-wrap border-t border-hairline bg-paper px-4 py-2 md:py-3 shadow-[0_-6px_16px_-10px_rgba(0,0,0,0.25)] md:-mx-6 md:-mb-6 md:px-6 lg:-mx-8 lg:-mb-8 lg:px-8"
+        >
+          <div className="min-w-0 flex flex-col md:flex-row md:items-baseline md:gap-2">
+            <span className="text-3xs md:text-2xs uppercase tracking-wider text-ink-3 font-semibold whitespace-nowrap">
               {!showPerInvoice && billingN === 1 ? "Total payable now" : "Total"}
             </span>
-            <span className="font-serif text-2xl text-amber tabular-nums">
-              {showPerInvoice ? fmtPayableC(dRound(dispTotal / billingN)) : fmtPayableC(dispTotal)}
+            <span className="font-serif text-xl md:text-2xl text-amber tabular-nums whitespace-nowrap leading-tight">
+              {showPerInvoice ? fmtPayableC(dRound(dispTotal / totalsDiv)) : fmtPayableC(dispTotal)}
             </span>
             {showPerInvoice && (
-              <span className="text-2xs text-ink-3">/invoice · {fmtPayableC(dispTotal)}/yr</span>
+              <span className="text-3xs md:text-2xs text-ink-3 whitespace-nowrap truncate">/invoice · {fmtPayableC(dRound(totalsYear(dispTotal)))}/yr</span>
             )}
           </div>
           {isInvoiceMode ? (
-            /* Invoice mode — one-time/recurring choice + a single "Create invoice". */
-            <div className="flex gap-2 flex-wrap items-center">
+            /* Invoice mode — one-time/recurring choice + a single "Create invoice".
+               On phones Preview moves into the More menu so the row stays one line. */
+            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
               <div className="inline-flex rounded-lg border border-hairline bg-paper-2/40 p-1 text-xs">
                 {[{ k: false, l: "One-time" }, { k: true, l: "Recurring" }].map((o) => (
                   <button
                     key={String(o.k)}
                     type="button"
                     onClick={() => setInvoiceRecurring(o.k)}
-                    className={`px-3 py-1.5 rounded-md transition-colors ${
+                    aria-pressed={invoiceRecurring === o.k}
+                    className={`px-2 md:px-3 py-1.5 rounded-md transition-colors ${
                       invoiceRecurring === o.k ? "bg-paper text-ink shadow-sm font-medium" : "text-ink-3 hover:text-ink"
                     }`}
                   >
@@ -2382,15 +2559,19 @@ export function QuoteBuilder() {
                   </button>
                 ))}
               </div>
-              <Button
-                icon="file"
-                onClick={() => {
-                  if (lineItems.length === 0) { toast.error("Add at least one line item to preview"); return; }
-                  setPreviewOpen(true);
-                }}
-              >
+              <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
                 Preview
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton icon="more_h" aria-label="More actions" className="md:hidden border border-hairline" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" className="min-w-[12rem]">
+                  <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
+                    <Icon name="file" size={15} /> Preview
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 variant="primary"
                 icon="receipt"
@@ -2398,48 +2579,79 @@ export function QuoteBuilder() {
                 loading={createQuote.isPending || generateInvoice.isPending}
                 disabled={!customerId && !prospectName.trim()}
               >
-                Create invoice
+                <span className="md:hidden">Create</span>
+                <span className="hidden md:inline">Create invoice</span>
               </Button>
             </div>
           ) : (
-          <div className="flex gap-2 flex-wrap">
-          <Button variant="ghost" icon="copy" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
+          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+          <Button variant="ghost" icon="copy" className="hidden md:inline-flex" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
             Save draft
           </Button>
-          <Button
-            icon="file"
-            onClick={() => {
-              if (lineItems.length === 0) { toast.error("Add at least one line item to preview"); return; }
-              setPreviewOpen(true);
-            }}
-          >
+          <Button icon="file" className="hidden md:inline-flex" onClick={openPreview}>
             Preview
           </Button>
           <Button
             icon="mail"
+            className="hidden md:inline-flex"
             onClick={() => handleSubmit("sent", "email")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
             Send via email
           </Button>
           <Button
             icon="whatsapp"
-            className="!text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
+            className="hidden md:inline-flex !text-[#25D366] !border-[#25D366] hover:!bg-[#25D366]/5"
             onClick={() => handleSubmit("sent", "whatsapp")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
             Send via WhatsApp
           </Button>
+          {/* Phone only: everything except the main button lives here. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <IconButton
+                icon="more_h"
+                aria-label="More actions"
+                className="md:hidden border border-hairline"
+                disabled={createQuote.isPending}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="min-w-[13rem]">
+              <DropdownMenuItem className="gap-2.5 py-2" onSelect={() => handleSubmit("draft")}>
+                <Icon name="copy" size={15} /> Save draft
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5 py-2" onSelect={openPreview}>
+                <Icon name="file" size={15} /> Preview
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", "email")}
+              >
+                <Icon name="mail" size={15} /> Send via email
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2.5 py-2"
+                disabled={sendDisabled}
+                onSelect={() => handleSubmit("sent", "whatsapp")}
+              >
+                <Icon name="whatsapp" size={15} className="text-[#25D366]" /> Send via WhatsApp
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="primary"
             icon="send"
             onClick={() => handleSubmit("sent")}
             loading={createQuote.isPending}
-            disabled={!isLeadMode && !customerId && !prospectName.trim()}
+            disabled={sendDisabled}
           >
-            Save &amp; send quote <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
+            <span className="md:hidden">Save &amp; send</span>
+            <span className="hidden md:inline">Save &amp; send quote</span>
+            <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
           </Button>
           </div>
           )}
@@ -2473,10 +2685,16 @@ export function QuoteBuilder() {
               onAdd={addLine}
               selected={line ? {
                 name: line.name,
-                annualRate: line.rate,
+                /* A monthly plan's rate is one month (R-369); the card states the year. */
+                annualRate: isAnnualTier(line.commitment) ? line.rate : line.rate * 12,
                 cycleLabel: line.commitment === "monthly" ? "per year, billed monthly" : "per year",
               } : null}
               onRemove={line ? () => removeLine(line.id) : undefined}
+              /* R-364: owner/manager (who can open Catalog & Products) get "Add to catalog"
+                 on a missing plan; everyone else keeps the "ask an owner" line. */
+              catalogAccess={currentUser && canEditSupportCatalog(currentUser.role)
+                ? { tenantId: currentUser.tenantId, tenantName: currentUser.tenantName }
+                : null}
             />
           );
           if (!hasProductSupport || line) return picker;
@@ -2531,7 +2749,7 @@ export function QuoteBuilder() {
         tenantPhone={currentUser?.tenantPhone}
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
-        customerName={isLeadMode ? (leadCompany ?? "Prospect") : (customer?.name ?? prospectName.trim() ?? "—")}
+        customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
         contactName={isLeadMode ? leadContact : null}
         contactEmail={isLeadMode ? leadEmail : null}
         contactPhone={isLeadMode ? leadPhone : null}
@@ -2544,6 +2762,7 @@ export function QuoteBuilder() {
         tax={tax}
         total={total}
         interState={interState}
+        placeOfSupply={placeOfSupply}
         isExport={isExport}
         currency={currency}
         exchangeRate={exchangeRate}
@@ -2623,6 +2842,8 @@ function LineBandNote({ line, catalog }: { line: QuoteLineItem; catalog: Item[] 
   const item = line.item_id ? catalog.find((c) => c.id === line.item_id) : undefined;
   const slabs = item?.prices?.slabs;
   if (!item || !slabs || slabs.length === 0) return null;
+  /* Bands are annual ₹/seat/YEAR; a flex line is per month (R-369) and is never banded. */
+  if (!isAnnualTier(line.commitment)) return null;
 
   const priced = slabPricing(item, line.qty);
   if (priced.source !== "slab") return null;

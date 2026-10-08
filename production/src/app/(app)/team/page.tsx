@@ -15,10 +15,13 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SendResetLinkButton } from "@/components/features/team/send-reset-link-button";
+import { SetTempPasswordButton } from "@/components/features/team/set-temp-password-button";
+import { canSetTempPassword } from "@/lib/auth/temp-password";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
@@ -95,7 +98,7 @@ export default function TeamPage() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "invites"] }); toast.success("Invite removed"); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't remove invite"),
+    onError: (e) => toastError(e, { fallback: "Couldn't remove the invite." }),
   });
 
   const updateMember = useMutation({
@@ -105,7 +108,7 @@ export default function TeamPage() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "members"] }); toast.success("Member updated"); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't update member"),
+    onError: (e) => toastError(e, { fallback: "Couldn't update this member." }),
   });
 
   const owners = members.filter((m) => m.role === "owner").length;
@@ -205,6 +208,7 @@ export default function TeamPage() {
                   <td className="p-3">
                     {isOwner && m.id !== me?.userId ? (
                       <select
+                        aria-label={`Role for ${m.full_name ?? m.email}`}
                         value={m.role}
                         onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                         className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
@@ -257,14 +261,19 @@ export default function TeamPage() {
                     </td>
                   )}
                   <td className="p-3"><Badge kind={m.is_active === false ? "muted" : "success"} dot>{m.is_active === false ? "Inactive" : "Active"}</Badge></td>
-                  {/* Owner-side recovery. resetPasswordForEmail is a PUBLIC Supabase call, so
-                      this grants no privilege the owner did not already have — it saves a trip
-                      to the Supabase dashboard, which the app never told anybody about. The
-                      owner still never learns or sets the password: the link goes to the
-                      teammate's own mailbox. */}
+                  {/* Owner-side recovery. "Send reset link" is a PUBLIC Supabase call and grants
+                      nothing new. "Set temporary password" (R-391) does let the owner know a
+                      password for a moment, so it is offered only where the server allows it
+                      (not another owner, not yourself), and the member must pick their own at
+                      the next sign-in. The server re-checks all of it. */}
                   {isOwner && (
                     <td className="p-3">
-                      <SendResetLinkButton email={m.email} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SendResetLinkButton email={m.email} />
+                        {canSetTempPassword(m, me?.userId) && (
+                          <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -322,6 +331,7 @@ export default function TeamPage() {
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 {isOwner && m.id !== me?.userId ? (
                   <select
+                    aria-label={`Role for ${m.full_name ?? m.email}`}
                     value={m.role}
                     onChange={(e) => updateMember.mutate({ id: m.id, patch: { role: e.target.value as Role } })}
                     className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
@@ -363,6 +373,14 @@ export default function TeamPage() {
                     ))}
                   </select>
                 </label>
+              )}
+              {isOwner && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <SendResetLinkButton email={m.email} />
+                  {canSetTempPassword(m, me?.userId) && (
+                    <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                  )}
+                </div>
               )}
             </Card>
           </li>
@@ -439,7 +457,10 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
 
   async function submit() {
     const clean = email.trim().toLowerCase();
-    if (!clean.includes("@") || clean.length < 5) { toast.error("Enter a valid email."); return; }
+    if (!clean.includes("@") || clean.length < 5) {
+      toast.error("Enter a valid email.", { description: "Use the full address they sign in with, like name@company.com." });
+      return;
+    }
     setSaving(true);
     try {
       // Server route: creates the invite AND emails the invitee (best-effort).
@@ -450,7 +471,7 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(json.error ?? "Invite failed");
+        toastError(json.error, { fallback: "Couldn't send the invite." });
         return;
       }
       // Reflect whether the notification email actually went out.
@@ -466,7 +487,7 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       onInvited();
       onOpenChange(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Invite failed");
+      toastError(e, { fallback: "Couldn't send the invite." });
     } finally {
       setSaving(false);
     }

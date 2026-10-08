@@ -3,7 +3,7 @@
  * PATCH /api/marketing/ads — { accountId, enabled } toggle (the only user-side write).
  */
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { googleOAuthCreds } from "@/lib/google/oauth";
 import { hasGoogleAdsScope } from "@/lib/google/scope-union";
 import { googleAdsDeveloperToken } from "@/lib/google/google-ads-api";
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export const GET = withRoute({ route: "api/marketing/ads" }, async ({ tenantId, user }) => {
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
   const { data: accounts } = await admin.from("ad_accounts")
     .select("id, platform, account_id, name, currency, enabled, connected_user_id, token_expires_at, last_synced_at, last_error")
     .eq("tenant_id", tenantId).order("platform").order("name");
@@ -43,8 +43,8 @@ const patchSchema = z.object({
 
 export const PATCH = withRoute(
   { route: "api/marketing/ads", input: patchSchema, roles: ["owner", "manager"] },
-  async ({ input, tenantId }) => {
-    const { error } = await createAdminClient().from("ad_accounts")
+  async ({ input, tenantId, user }) => {
+    const { error } = await createAdminClientFor(user.id).from("ad_accounts")
       .update({ enabled: input.enabled, updated_at: new Date().toISOString() })
       .eq("id", input.accountId).eq("tenant_id", tenantId);
     dbFail(error, "Ad account update nahi hua — page refresh karke dobara try kariye.");

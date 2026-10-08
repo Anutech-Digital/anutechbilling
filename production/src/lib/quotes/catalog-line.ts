@@ -11,11 +11,21 @@
  * Foreign-currency pricing stays in the dialog; this is the ₹ path.
  */
 import { catalogDefaultQty } from "@/lib/quotes/line-items";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
 type PriceTier = { msrp?: number; wholesale?: number } | undefined;
 
-export function catalogYearlyPrice(it: Pick<Item, "msrp" | "wholesale" | "prices">): { rate: number; cost: number } {
+/**
+ * R-387 (7 Oct 2026): the Add-item dialog passed the RAW row here while the quote chips passed a
+ * floored one, so GW Standard was ₹736 by one path and ₹1,080 by the other. The floor now lives
+ * here, the one place every adder prices through — a row whose name is a GW tier and whose price
+ * is under the list price (lib/catalog/workspace-floor) is lifted; anything else is untouched.
+ */
+export function catalogYearlyPrice(
+  raw: Pick<Item, "msrp" | "wholesale" | "prices"> & { name?: string | null },
+): { rate: number; cost: number } {
+  const it = raw.name ? floorWorkspaceRow({ ...raw, name: raw.name }) : raw;
   const prices = (it.prices ?? null) as { annual_total?: PriceTier; annual?: PriceTier; monthly?: PriceTier } | null;
   const total = prices?.annual_total;
   if (total && typeof total.msrp === "number" && total.msrp > 0 && !(it.msrp > 0)) {

@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
@@ -80,7 +81,7 @@ export function useUpsertEmployee() {
       qc.invalidateQueries({ queryKey: ["employees"] });
       toast.success("Employee saved");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -107,7 +108,7 @@ export function useDeleteEmployee() {
       qc.invalidateQueries({ queryKey: ["leave-entries"] });
       toast.success("Employee removed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -179,7 +180,7 @@ export function useUploadEmployeeDocument() {
       qc.invalidateQueries({ queryKey: ["employee-documents", v.employeeId] });
       toast.success("Document uploaded");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -196,7 +197,7 @@ export function useDeleteEmployeeDocument() {
       qc.invalidateQueries({ queryKey: ["employee-documents", doc.employee_id] });
       toast.success("Document removed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -238,7 +239,7 @@ export function useCreateLeaveEntry() {
       qc.invalidateQueries({ queryKey: ["leave-entries"] });
       toast.success("Leave recorded");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -251,7 +252,7 @@ export function useDeleteLeaveEntry() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["leave-entries"] }); toast.success("Leave removed"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -283,7 +284,7 @@ export function useCreateHoliday() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["holidays"] }); toast.success("Holiday added"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -296,7 +297,7 @@ export function useDeleteHoliday() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["holidays"] }); toast.success("Holiday removed"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -413,7 +414,7 @@ export function usePaySalary() {
       qc.invalidateQueries({ queryKey: ["statutory-dues"] });
       toast.success("Salary paid");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -605,7 +606,7 @@ export function useSetEmployeePin() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["employees"] }); toast.success("PIN set"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -655,7 +656,7 @@ export function useSetAttendanceNetwork() {
       return json as { allowedIps: string[]; currentIp: string };
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["attendance-network"] }); toast.success("Attendance network updated"); },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }
 
@@ -682,6 +683,6 @@ export function usePayStatutoryDues() {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       toast.success("Statutory dues paid");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

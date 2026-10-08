@@ -14,6 +14,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import {
   Sheet,
@@ -345,10 +346,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     /* A password-protected PDF (bank e-statements usually are) cannot be read by the AI —
        it fails with a bare 400. Say so before uploading it, and say what works instead. */
     if (/pdf/i.test(file.type) && isEncryptedPdf(new Uint8Array(await file.arrayBuffer()))) {
-      toast.error(
-        "This PDF is password-protected, so it can't be read. Download the statement as CSV / \"Delimited\" (.txt) from net banking — or open the PDF with its password, Print → Save as PDF, and upload that copy.",
-        { duration: 12000 },
-      );
+      toast.error("This PDF is password-protected, so it can't be read.", {
+        description: "Download the statement as CSV / \"Delimited\" (.txt) from net banking — or open the PDF with its password, Print → Save as PDF, and upload that copy.",
+        duration: 12000,
+      });
       return;
     }
     setReading(true);
@@ -367,14 +368,21 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
       });
       const json = await res.json();
-      if (!res.ok) { toast.error(json.error ?? "Couldn't read the statement."); setParsed(null); return; }
+      if (!res.ok) {
+        toastError(json.error, {
+          fallback: "Couldn't read the statement.",
+          description: "Nothing was imported. Download the statement as CSV from net banking and upload or paste that instead.",
+        });
+        setParsed(null);
+        return;
+      }
       setParsed(withRealDates({
         rows: (json.rows ?? []) as ParsedRow[],
         skipped: json.skipped ?? 0,
-        warnings: (json.rows ?? []).length === 0 ? ["AI ne koi transaction nahi padha — CSV download try karo."] : [],
+        warnings: (json.rows ?? []).length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : [],
       }, Number(json.datesSwapped) || 0));
     } catch {
-      toast.error("Upload failed — try again, ya CSV daalo.");
+      toast.error("Upload failed.", { description: "Nothing was imported. Check your connection and try again — or paste the CSV instead." });
       setParsed(null);
     } finally {
       setReading(false);
@@ -386,7 +394,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     e.target.value = "";
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) {
-      toast.error("File too large (>8 MB). Paste the CSV instead.");
+      toast.error("File too large (over 8 MB).", { description: "Download a shorter date range, or paste the CSV text instead." });
       return;
     }
     // PDF / image → AI reader; CSV / text → parse in the browser.
@@ -397,7 +405,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
 
   const handleImport = async () => {
     if (!parsed || parsed.rows.length === 0) {
-      toast.error("Nothing to import. Paste a statement first.");
+      toast.error("Nothing to import yet.", { description: "Upload the statement file or paste its CSV text above first." });
       return;
     }
     try {

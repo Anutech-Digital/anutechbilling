@@ -16,12 +16,15 @@
  *   - DOES NOT create payment / receipt voucher / subscription
  *     (those land via record_payment when the money actually arrives)
  *
- * Returns: { customerId, convertedNow, awaitsPayment }
+ * Returns: { customerId, convertedNow, awaitsPayment, matchedExisting, customerName }
+ *   matchedExisting (R-379): converted_now is also true when the lead was LINKED to a
+ *   customer that already existed; this says which, so the toast can say "linked to <name>".
  */
 
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
+import { createdBeforeRequest } from "@/lib/quotes/accepted-toast";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,6 +37,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const requestStartedMs = Date.now();
   const { data, error } = await supabase.rpc("accept_quote", {
     p_quote_id: params.id,
   });
@@ -58,11 +62,23 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   };
   const result = data as unknown as AcceptResult;
 
+  /* R-379 (h): created now, or matched? Best-effort read — a failure keeps the old wording. */
+  let matchedExisting = false;
+  let customerName: string | null = null;
+  if (result.converted_now && result.customer_id) {
+    const { data: cust } = await supabase
+      .from("customers").select("name, created_at").eq("id", result.customer_id).maybeSingle();
+    customerName    = cust?.name ?? null;
+    matchedExisting = createdBeforeRequest(cust?.created_at ?? null, requestStartedMs);
+  }
+
   return NextResponse.json({
     quoteId:       result.quote_id,
     customerId:    result.customer_id,
     convertedNow:  result.converted_now,
     quoteStatus:   result.quote_status,
     awaitsPayment: result.awaits_payment,
+    matchedExisting,
+    customerName,
   });
 }

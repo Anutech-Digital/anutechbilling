@@ -24,7 +24,7 @@
  * real number there, once, for every page.
  */
 import { LANDING_PLANS } from "./hosting-landing";
-import { WHATSAPP_URL } from "@/site/lib/config";
+import { SLA, WHATSAPP_URL } from "@/site/lib/config";
 
 /* Re-exported so HostingLanding keeps its import. This file used to hold its own copy of
    the placeholder, so setting the real number in config.ts would have left /hosting
@@ -107,7 +107,7 @@ export const HOSTING_MATRIX: readonly { k: string; a: string; b: string; c: stri
   { k: "Unlimited free SSL", a: "Yes", b: "Yes", c: "Yes" },
   { k: "Automatic daily backups", a: "Yes", b: "Yes", c: "Yes" },
   { k: "Free website migration", a: "Yes", b: "Yes", c: "Yes" },
-  { k: "24×7 phone & email support", a: "Yes", b: "Yes", c: "Yes" },
+  { k: "Phone, WhatsApp & email support", a: "Yes", b: "Yes", c: "Yes" },
   { k: "Priority support queue", a: "—", b: "—", c: "Yes" },
   { k: "Advanced security features", a: "—", b: "—", c: "Yes" },
   { k: "30-day money-back (yearly)", a: "Yes", b: "Yes", c: "Yes" },
@@ -136,7 +136,7 @@ export const MIGRATION_WEDO: readonly string[] = [
 export const HOSTING_WORRIES: readonly { q: string; a: string }[] = [
   { q: "Will my site go down during the move?", a: "No. The migrated copy is tested on our servers first and DNS is switched only after you approve it, so your live site keeps serving throughout." },
   { q: "Will it actually be faster?", a: "The platform is Google Cloud with NVMe SSD storage and LiteSpeed. You have the whole trial to measure your own pages before paying anything." },
-  { q: "What if support disappears after I pay?", a: "Support is 24×7 on phone, chat and ticket, and Plus adds a priority queue. Test it during the trial — that is the point of the trial." },
+  { q: "What if support disappears after I pay?", a: `Support is on phone, WhatsApp and email, ${SLA.hours}, with a first reply ${SLA.firstReply}; Plus adds a priority queue. Test it during the trial — that is the point of the trial.` },
   { q: "What if I lose data?", a: "Automatic daily backups are included on every plan and are restorable. Ask support and they will walk a restore through with you." },
   { q: "Will the price jump at renewal?", a: "The renewal figure is printed on every plan card and matches the signup price. Yearly plans also carry a 30-day money-back guarantee." },
   { q: "Am I locked in?", a: "No lock-in: cancel any time, and because it is standard cPanel your site is portable. We'd rather earn the renewal." },

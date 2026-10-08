@@ -12,6 +12,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type EmiPurchaseRow = Database["public"]["Tables"]["emi_purchases"]["Row"];
@@ -102,7 +103,7 @@ export function useRecordEmiPurchase() {
       return data as string;
     },
     onSuccess: () => { invalidate(qc); toast.success("Purchase recorded"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -124,6 +125,6 @@ export function useRecordEmiPayment() {
       if (error) throw error;
     },
     onSuccess: () => { invalidate(qc); toast.success("EMI paid"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

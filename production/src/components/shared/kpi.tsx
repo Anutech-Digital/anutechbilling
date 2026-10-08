@@ -101,7 +101,10 @@ export function KPI({
       ) : (
         <div className={cn("font-serif text-3xl tabular-nums leading-none mb-2", valueColor)}>
           {displayValue}
-          {unit && <span className="text-base text-ink-3 ml-1 font-sans">{unit}</span>}
+          {/* R-316: a word unit ("days") gets a real space — copied/read text said "0days".
+              A symbol unit ("%", "/5") stays tight with only the visual margin. */}
+          {unit && /^[A-Za-z]/.test(unit) ? " " : null}
+          {unit && <span className={cn("text-base text-ink-3 font-sans", !/^[A-Za-z]/.test(unit) && "ml-1")}>{unit}</span>}
         </div>
       )}
 

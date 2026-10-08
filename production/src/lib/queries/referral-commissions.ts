@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { ReferralCommissionRow } from "@/lib/supabase/database.types";
 
@@ -64,7 +65,7 @@ export function usePayCommission() {
       qc.invalidateQueries({ queryKey: ["pnl"] });
       toast.success("Commission paid");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }
 
@@ -86,6 +87,6 @@ export function useCancelCommission() {
       qc.invalidateQueries({ queryKey: ["pnl"] });
       toast.success("Commission cancelled");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }

@@ -12,6 +12,7 @@ import { intentMeta, staleWarning, isHighValueLead } from "@/lib/leads/heat";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { cn } from "@/lib/utils";
+import { leadTitle } from "@/lib/leads/display-name";
 
 interface LeadCardProps {
   lead: LeadListRow;
@@ -70,8 +71,9 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
       <div className="flex justify-between items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[13px] font-semibold text-ink leading-tight truncate" title={lead.company}>
-              {lead.company}
+            <span className="text-[13px] font-semibold text-ink leading-tight truncate" title={leadTitle(lead).hint ?? leadTitle(lead).label}>
+              {/* R-279: company, else the contact's name — never a blank title. */}
+              {leadTitle(lead).label}
             </span>
             {/* Design tokens, not raw Tailwind palette values (§5) — the old
                 bg-rose-100/dark:bg-rose-950 pair bypassed the theme. */}
@@ -105,7 +107,7 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
               type="button"
               onClick={handleWhatsApp}
               className="p-1 text-emerald hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded transition-colors"
-              title={`WhatsApp ${lead.contact_name || lead.company}`}
+              title={`WhatsApp ${lead.contact_name || leadTitle(lead).label}`}
             >
               <Icon name="whatsapp" size={13} />
             </button>

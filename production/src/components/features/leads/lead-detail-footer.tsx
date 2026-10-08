@@ -33,7 +33,6 @@ function useCustomerHasSubscription(customerId: string | null | undefined, enabl
 export interface LeadDetailFooterProps {
   lead: Lead;
   onEdit: (lead: Lead) => void;
-  onClose: () => void;
   handleArchive: () => void;
   handleDelete: () => void;
   deletePending: boolean;
@@ -47,7 +46,7 @@ export interface LeadDetailFooterProps {
 }
 
 export function LeadDetailFooter({
-  lead, onEdit, onClose, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen,
+  lead, onEdit, handleArchive, handleDelete, deletePending, handleEmail, setWhatsOpen,
   latestQuote, hasQuotes, nextAction, handleSendQuote, handleReviseQuote,
 }: LeadDetailFooterProps) {
   const router = useRouter();
@@ -133,7 +132,7 @@ export function LeadDetailFooter({
             {lead.stage === "won" && latestQuote && (
               <Button
                 icon="receipt"
-                onClick={() => { onClose(); router.push(`/quotes/${latestQuote.id}` as any); }}
+                onClick={() => router.push(`/quotes/${latestQuote.id}` as never)}
               >
                 Open accepted quote
               </Button>
@@ -142,7 +141,7 @@ export function LeadDetailFooter({
             {lead.stage === "won" && hasSub.data === false && (
               <Button
                 icon="refresh"
-                onClick={() => { onClose(); router.push(subscriptionFromLeadHref(lead.id) as any); }}
+                onClick={() => router.push(subscriptionFromLeadHref(lead.id) as never)}
               >
                 Create subscription
               </Button>
@@ -150,7 +149,7 @@ export function LeadDetailFooter({
             {lead.stage === "won" && hasSub.data === true && (
               <Button
                 icon="refresh"
-                onClick={() => { onClose(); router.push("/subscriptions" as any); }}
+                onClick={() => router.push("/subscriptions" as never)}
               >
                 Open subscriptions
               </Button>

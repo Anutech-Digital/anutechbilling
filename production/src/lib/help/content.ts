@@ -133,12 +133,13 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         q: "Invoices — issuing a GST tax invoice",
-        what: "Once paid, generate a GST-compliant Tax Invoice. It gets a gap-free serial number, freezes its tax split, and is immutable (you never edit an issued invoice — you correct it with a credit/debit note).",
+        what: "Once paid, generate a GST-compliant Tax Invoice. It gets a gap-free serial number (INV-<your code>-<financial year>-<number>), freezes its tax split, and is immutable (you never edit an issued invoice — you correct it with a credit/debit note).",
         steps: [
+          "Before your first invoice, set your invoice code (2–4 letters) in Settings → Company → Invoice numbering. It locks once the first invoice is issued.",
           "Open the paid quote → Issue GST invoice (or Revenue → Invoices).",
           "View / Download PDF to share.",
         ],
-        example: "INV-2026-27-0002 for ₹38,232 with CGST ₹2,916 + SGST ₹2,916 — the PDF shows the frozen split even if the customer's address changes later.",
+        example: "INV-SHRM-27-0002 (code SHRM, FY 2026-27, second invoice) for ₹38,232 with CGST ₹2,916 + SGST ₹2,916 — the PDF shows the frozen split even if the customer's address changes later.",
       },
       {
         q: "Subscriptions and renewals",

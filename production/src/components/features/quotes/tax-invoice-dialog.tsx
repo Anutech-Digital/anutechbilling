@@ -28,6 +28,8 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, toWhatsAppDigits, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { invoiceFx } from "@/lib/pdf/build-props";
+import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN } from "@/lib/gst/hsn";
@@ -110,8 +112,8 @@ export function TaxInvoiceDialog({
   customerAddress: liveCustomerAddress,
   customerState: liveCustomerState,
   customerCountry: liveCustomerCountry,
-  currency,
-  exchangeRate,
+  currency: currencyProp,
+  exchangeRate: exchangeRateProp,
   tenantName,
   tenantGstin: liveTenantGstin,
   tenantEmail,
@@ -174,6 +176,9 @@ export function TaxInvoiceDialog({
   const isExport = isExportSupply(customerCountry);
   /* Rule 46: state NAME and CODE, from the code frozen at issue. */
   const placeOfSupply = placeOfSupplyLabel({ posCode: invoice.pos_state_code, interState: fInter, isExport, country: customerCountry });
+  /* R-045 slice 3: the rate frozen on the invoice at issue wins (with its source + date);
+     an older invoice falls back to the quote's currency/rate passed in, as before. */
+  const { currency, exchangeRate, fxSource, fxDate } = invoiceFx(invoice, { currency: currencyProp ?? null, exchange_rate: exchangeRateProp ?? null });
   const isForeign = isForeignCurrency(currency);
   const fxRate = exchangeRate ?? 1;
   // Export invoices display in the CLIENT's currency (USD…); books stay ₹, so the
@@ -241,10 +246,12 @@ export function TaxInvoiceDialog({
       invoice, lineItems, subtotal, discountPct, discount,
       taxable: fTaxable, taxRate: fRate, tax: fTax, total: fTotal, interState: fInter,
       customerGstin, customerEmail, customerAddress, customerState, customerCountry,
-      currency, exchangeRate,
+      currency, exchangeRate, fxSource, fxDate,
       tenantName, tenantGstin, tenantEmail, tenantPhone,
       tenantAddress, tenantState, placeOfSupply,
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
+      /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF. */
+      lutNumber: me?.tenantLutNumber ?? null,
     });
   }
 
@@ -562,7 +569,8 @@ export function TaxInvoiceDialog({
                     <span className="font-serif text-xl tabular-nums">{money(fTotal)}</span>
                     {isForeign && (
                       <span className="block text-2xs text-ink-3 font-normal">
-                        INR equivalent (for GST): {rupee(fTotal)} @ ₹{exchangeRate}/{currency}
+                        INR equivalent (for GST): {rupee(fTotal)}
+                        <span className="block">{fxEquivalentLine({ currency: currency ?? "", rate: fxRate, source: fxSource, date: fxDate })}</span>
                       </span>
                     )}
                   </td>

@@ -120,6 +120,33 @@ describe("buildInvoicePdfProps", () => {
     expect(p.total).toBe(118000);
     expect(p.interState).toBe(true);  // persisted head wins
   });
+
+  /* R-375 (audit finding 9): the quote is live, the issued invoice is frozen. */
+  it("quote edited after issue → the invoice prints its OWN persisted figures, not the live quote", () => {
+    const issued = { id: "INV-3", amount: 38232, customer_name: "Acme", tenant_id: "t1",
+      taxable_value: 32400, tax_amount: 5832, tax_rate: 18,
+      line_items: [{ description: "Workspace x 10", quantity: 10, unit_price: 3240 }] } as unknown as Invoice;
+    const repriced = { subtotal: 40000, discount_pct: 0, tax_rate: 18, amount: 47200,
+      line_items: [{ description: "Workspace x 12", quantity: 12, unit_price: 3333 }] } as unknown as Quote;
+    const p = buildInvoicePdfProps({ invoice: issued, quote: repriced, customer: null, tenant });
+    expect(p.total).toBe(38232);
+    expect(p.taxable).toBe(32400);
+    expect(p.tax).toBe(5832);
+    expect(p.subtotal).toBe(32400);
+    expect(p.discount).toBe(0);
+    expect(p.lineItems).toEqual(issued.line_items);
+  });
+
+  it("quote still matches the persisted figures → keeps the quote's subtotal + discount display", () => {
+    const issued = { id: "INV-4", amount: 132840, customer_name: "Acme", tenant_id: "t1",
+      taxable_value: 90000, tax_amount: 16200, tax_rate: 18 } as unknown as Invoice;
+    const discounted = { subtotal: 100000, discount_pct: 10, tax_rate: 18, amount: 132840, line_items: [] } as unknown as Quote;
+    const p = buildInvoicePdfProps({ invoice: issued, quote: discounted, customer: null, tenant });
+    expect(p.subtotal).toBe(100000);
+    expect(p.discount).toBe(10000);
+    expect(p.taxable).toBe(90000);
+    expect(p.total).toBe(132840);
+  });
 });
 
 describe("buildQuotePdfProps", () => {
@@ -192,6 +219,21 @@ describe("place of supply names the state (R-175)", () => {
   it("a quote names the buyer's state too", () => {
     expect(buildQuotePdfProps({ quote, customer: cust("06"), tenant }).placeOfSupply).toBe("Haryana (06) · IGST");
   });
+
+  /* R-376 (f): a quote raised on a LEAD has no customer yet. The PDF used to read the
+     customer only, find nothing and print "Intra-state (CGST + SGST)" for a Haryana lead. */
+  it("a lead quote (no customer) takes the lead's state and the IGST head", () => {
+    const p = buildQuotePdfProps({ quote, customer: null, lead: { state_code: "06" }, tenant });
+    expect(p.placeOfSupply).toBe("Haryana (06) · IGST");
+    expect(p.interState).toBe(true);
+  });
+
+  it("a typed-prospect quote in the seller's state: 'Maharashtra (27) · CGST + SGST'", () => {
+    const q = { ...quote, prospect_state_code: "27" } as unknown as Quote;
+    const p = buildQuotePdfProps({ quote: q, customer: null, tenant });
+    expect(p.placeOfSupply).toBe("Maharashtra (27) · CGST + SGST");
+    expect(p.interState).toBe(false);
+  });
 });
 
 describe("quote Bill-to carries the state and GSTIN (R-175)", () => {
@@ -204,5 +246,30 @@ describe("quote Bill-to carries the state and GSTIN (R-175)", () => {
   });
   it("else the prospect state the quote was priced for", () => {
     expect(buildQuotePdfProps({ quote, customer: null, tenant }).customerState).toBe("Punjab");
+  });
+});
+
+/* R-367 (7 Oct 2026): quote PDF + preview never said the default free support comes with
+   the quote. build-props carries the line from the shared builder (quote-support-line). */
+describe("included free support line (R-367)", () => {
+  const base = { id: "Q-1", customer_name: "X", subtotal: 1000, discount_pct: 0, tax_rate: 18, amount: 1180 };
+  const licence = { id: "l1", name: "Google Workspace Business Starter", qty: 1, rate: 1000, cost: 900 };
+
+  it("no support line on the quote → 'Support: Free — Included'", () => {
+    const quote = { ...base, line_items: [licence] } as unknown as Quote;
+    const p = buildQuotePdfProps({ quote, customer: null, tenant });
+    expect(p.includedSupport?.text).toBe("Support: Free — Included");
+    expect(p.includedSupport?.planName).toBe("Free");
+  });
+
+  it("paid support plan on the quote → no included line (its priced row stands)", () => {
+    const quote = { ...base, line_items: [licence,
+      { id: "s1", item_id: "SUP-STANDARD-YR-abc", name: "Standard Support (Yearly)", qty: 1, rate: 9996, cost: 0 }] } as unknown as Quote;
+    expect(buildQuotePdfProps({ quote, customer: null, tenant }).includedSupport).toBeNull();
+  });
+
+  it("empty quote → nothing", () => {
+    const quote = { ...base, line_items: [] } as unknown as Quote;
+    expect(buildQuotePdfProps({ quote, customer: null, tenant }).includedSupport).toBeNull();
   });
 });

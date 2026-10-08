@@ -28,7 +28,7 @@ vi.mock("@/lib/supabase/server", () => ({
     },
   }),
 }));
-vi.mock("@/lib/api-keys/auth", () => ({ authenticateApiKey: async () => ({ tenantId: "tenant-1" }) }));
+vi.mock("@/lib/api-keys/auth", () => ({ authenticateApiKey: async () => ({ tenantId: "tenant-1", keyId: "key-1", scopes: ["read"] }) }));
 vi.mock("@/lib/api/v1-customer", () => ({ resolveCustomer: async () => ({ id: "cust-1" }) }));
 vi.mock("@/lib/pdf/pdf-token", () => ({ pdfDownloadUrl: () => "https://x.invalid/pdf" }));
 

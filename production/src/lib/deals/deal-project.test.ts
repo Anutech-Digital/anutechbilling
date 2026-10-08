@@ -137,7 +137,7 @@ describe("buildDealHistory — project quotation events", () => {
   it("carries amount and a link to the existing project / invoice page", () => {
     expect(byId(`project:${PID}`)).toMatchObject({ title: "Project quote created", amount: 5_900_000, href: `/projects/${PID}` });
     expect(byId(`project-accept:${PID}`)).toMatchObject({ title: "Project quote accepted", tone: "emerald" });
-    expect(byId("project-invoice:INV-1")).toMatchObject({ amount: 590_000, href: "/invoices?open=INV-1" });
+    expect(byId("project-invoice:INV-1")).toMatchObject({ amount: 590_000, href: "/invoices/INV-1" });
     expect(byId("project-payment:pp2").title).toMatch(/TDS/);
     expect(byId("project-payment:pp1")).toMatchObject({ amount: 540_000, href: `/projects/${PID}` });
   });

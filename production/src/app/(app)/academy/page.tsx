@@ -44,8 +44,8 @@ export default function AcademyPage() {
   const [tab, setTab] = React.useState<Tab>("overview");
   const [edit, setEdit] = React.useState<Apprentice | "new" | null>(null);
 
-  const list = apprentices.data ?? [];
-  const allTasks = tasks.data ?? [];
+  const list = React.useMemo(() => apprentices.data ?? [], [apprentices.data]);
+  const allTasks = React.useMemo(() => tasks.data ?? [], [tasks.data]);
   const today = istToday();
   const toReview = allTasks.filter((t) => t.status === "submitted");
   const dueToday = allTasks.filter((t) => t.due_date === today && t.status !== "completed");

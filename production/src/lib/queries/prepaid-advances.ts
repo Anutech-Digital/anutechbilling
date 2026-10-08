@@ -8,6 +8,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 import type { PrepaidAdvanceRow, ExpenseRow } from "@/lib/supabase/database.types";
@@ -89,7 +90,7 @@ export function useCreatePrepaidAdvance() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Advance recorded (held as prepaid asset). Reconcile its bank line in Banking.");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -108,7 +109,7 @@ export function useSetPrepaidAdvanceChannel() {
       qc.invalidateQueries({ queryKey: ["marketing-report"] });
       toast.success("Channel updated — is advance ke invoices bhi.");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -135,7 +136,7 @@ export function useConsumePrepaidAdvance() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Consumed — expense booked to P&L, advance balance reduced.");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -152,7 +153,7 @@ export function useDeletePrepaidAdvance() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success("Advance deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -180,7 +181,7 @@ export function useBookBankTxnAsPrepaid() {
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success(`Booked as a ${input.vendorName.trim()} advance (prepaid asset). Book its invoice on the Prepaid page when it arrives.`);
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -225,6 +226,6 @@ export function useConsumePrepaidFifo() {
       qc.invalidateQueries({ queryKey: ["vendors"] });
       toast.success(`Invoice booked to P&L. ${input.vendorName.trim()} advance left: ₹${left}.${input.tdsAmount ? ` TDS ₹${input.tdsAmount} recorded — challan mein jodo; vendor ko TDS certificate se credit milega.` : ""}`);
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

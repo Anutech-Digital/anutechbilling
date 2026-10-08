@@ -28,7 +28,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import fs from "node:fs";
 import path from "node:path";
-import { Button } from "./button";
+import { Button, IconButton } from "./button";
+import { Checkbox } from "./checkbox";
+import { Switch } from "./switch";
 
 afterEach(cleanup);
 
@@ -116,5 +118,75 @@ describe("the variant that replaces className=\"bg-primary text-white\"", () => 
     // while the text stays white. This is the reported defect, pinned.
     expect(cls).toContain("bg-primary");
     expect(cls).toContain("hover:bg-paper-2");
+  });
+});
+
+/* ─── R-269: a finger needs a 40px target ─────────────────────────────────────
+ * Audit 6 Oct: Button sm is h-8 (32px, 368 call sites), IconButton sm h-7 (28px),
+ * the DataTable row checkbox 16px, the switch 20px tall. Fine for a mouse, a miss
+ * for a thumb. On a touch screen (pointer: coarse) each control must offer at least
+ * 40px; with a mouse nothing may change. jsdom cannot evaluate the media query, so
+ * these tests pin the classes that carry it: every touch rule sits behind
+ * `[@media(pointer:coarse)]:`, and the desktop size classes are still there. */
+const COARSE = "[@media(pointer:coarse)]:";
+
+describe("touch hit area (R-269)", () => {
+  it("Button sm stays h-8 for a mouse but is at least 40px tall under a finger", () => {
+    render(<Button size="sm">Save</Button>);
+    const cls = screen.getByRole("button").className;
+    expect(cls).toContain("h-8");
+    expect(cls).toContain(`${COARSE}min-h-10`);
+  });
+
+  it("every regular size gets the touch minimum; a link-styled button does not grow", () => {
+    for (const size of ["sm", "md", "lg", "icon"] as const) {
+      cleanup();
+      render(<Button size={size} aria-label="x">x</Button>);
+      expect(screen.getByRole("button").className).toContain(`${COARSE}min-h-10`);
+    }
+    cleanup();
+    render(<Button variant="link">Open</Button>);
+    expect(screen.getByRole("button").className).not.toContain(`${COARSE}min-h-10`);
+  });
+
+  it("IconButton sm keeps h-7 w-7 for a mouse and is 40x40 under a finger", () => {
+    render(<IconButton size="sm" icon="x" aria-label="Close" />);
+    const cls = screen.getByRole("button", { name: "Close" }).className;
+    expect(cls).toContain("h-7");
+    expect(cls).toContain("w-7");
+    expect(cls).toContain(`${COARSE}min-h-10`);
+    expect(cls).toContain(`${COARSE}min-w-10`);
+  });
+
+  it("Checkbox keeps its 16px box but gets an invisible 40px target under a finger", () => {
+    render(<Checkbox aria-label="Select row" />);
+    const cls = screen.getByRole("checkbox", { name: "Select row" }).className;
+    expect(cls).toContain("h-4");
+    expect(cls).toContain("w-4");
+    expect(cls).toContain("relative");
+    expect(cls).toContain(`${COARSE}after:h-10`);
+    expect(cls).toContain(`${COARSE}after:w-10`);
+    expect(cls).toContain(`${COARSE}after:absolute`);
+  });
+
+  it("Switch keeps its 20px track but gets the same 40px target under a finger", () => {
+    render(<Switch aria-label="Notifications" />);
+    const cls = screen.getByRole("switch", { name: "Notifications" }).className;
+    expect(cls).toContain("h-5");
+    expect(cls).toContain("relative");
+    expect(cls).toContain(`${COARSE}after:h-10`);
+    expect(cls).toContain(`${COARSE}after:w-10`);
+  });
+
+  it("no touch rule leaks onto a mouse: every hit-area class is behind pointer:coarse", () => {
+    render(<><Checkbox aria-label="c" /><Switch aria-label="s" /><IconButton icon="x" aria-label="i" size="sm" /></>);
+    for (const el of [
+      screen.getByRole("checkbox", { name: "c" }),
+      screen.getByRole("switch", { name: "s" }),
+      screen.getByRole("button", { name: "i" }),
+    ]) {
+      const bare = el.className.split(/\s+/).filter((c) => /^(after:|min-h-10$|min-w-10$)/.test(c));
+      expect(bare, el.className).toEqual([]);
+    }
   });
 });

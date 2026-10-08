@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import crypto from "node:crypto";
 import {
   encryptSecret, decryptSecret, isEncrypted, isVaultConfigured,
-  encryptSecretIfPossible, generateMasterKey, maskSecret,
+  generateMasterKey, maskSecret, VaultNotConfiguredError, VAULT_NOT_CONFIGURED_MESSAGE,
 } from "./vault";
 
 const KEY_A = crypto.randomBytes(32).toString("base64");
@@ -123,19 +123,20 @@ describe("failures are loud, never silent", () => {
   });
 });
 
-describe("encryptSecretIfPossible — for write paths that must not fail", () => {
-  it("encrypts and says so when a key is present", () => {
-    const r = encryptSecretIfPossible(SECRET);
-    expect(r.encrypted).toBe(true);
-    expect(decryptSecret(r.value)).toBe(SECRET);
+describe("no key = refuse, never plaintext (R-051)", () => {
+  it("throws VaultNotConfiguredError with the next step, not the value", () => {
+    withKey(undefined);
+    let err: unknown = null;
+    try { encryptSecret(SECRET); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(VaultNotConfiguredError);
+    expect((err as Error).message).toBe(VAULT_NOT_CONFIGURED_MESSAGE);
+    expect((err as Error).message).toMatch(/Next step/);
+    expect((err as Error).message).not.toContain(SECRET);
   });
 
-  it("returns plaintext and SAYS SO when no key is present", () => {
-    // The caller must be able to warn. A secret stored in the clear must never
-    // be indistinguishable from success.
-    withKey(undefined);
-    const r = encryptSecretIfPossible(SECRET);
-    expect(r).toEqual({ value: SECRET, encrypted: false });
+  it("has no plaintext-fallback export left to call", async () => {
+    const mod = await import("./vault");
+    expect("encryptSecretIfPossible" in mod).toBe(false);
   });
 });
 

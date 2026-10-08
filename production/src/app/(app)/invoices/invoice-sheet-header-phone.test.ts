@@ -10,7 +10,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const src = readFileSync(join(process.cwd(), "src/app/(app)/invoices/page.tsx"), "utf8");
+// R-086 moved the sheet body onto its own page (/invoices/<id>); the header and its
+// buttons are the same, now a <header data-invoice-header> in invoice-detail.tsx.
+const src = readFileSync(join(process.cwd(), "src/app/(app)/invoices/invoice-detail.tsx"), "utf8");
 
 function classOf(tagStart: number): string {
   const tag = src.slice(tagStart, src.indexOf(">", tagStart) + 1);
@@ -18,9 +20,9 @@ function classOf(tagStart: number): string {
 }
 
 function header(): { row: string; identity: string; actions: string } {
-  const start = src.indexOf("<SheetHeader");
+  const start = src.indexOf("<header data-invoice-header");
   expect(start, "invoice sheet header not found").toBeGreaterThan(-1);
-  const end = src.indexOf("</SheetHeader>", start);
+  const end = src.indexOf("</header>", start);
   const block = src.slice(start, end);
   const actionsAt = block.indexOf("data-invoice-actions");
   expect(actionsAt, "button group must carry data-invoice-actions").toBeGreaterThan(-1);

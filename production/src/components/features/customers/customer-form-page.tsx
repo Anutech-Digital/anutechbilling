@@ -26,12 +26,6 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TabBar } from "@/components/ui/tabs";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
 import { GST_STATE_BY_CODE, cn } from "@/lib/utils";
 import { FieldPill } from "@/components/ui/field-pill";
 import { SmartPaste } from "@/components/shared/smart-paste";
@@ -44,17 +38,13 @@ import { COUNTRIES } from "@/lib/gst/countries";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
+import { ContactPersonsTable } from "./contact-persons-table";
 import { GroupFormDialog } from "./group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import type { Customer } from "@/lib/supabase/database.types";
 
 const selectClass =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
-
-// Borderless cell input for the Zoho-style contact-persons table — the table
-// cell borders draw the grid; the input fills the cell and highlights on focus.
-const cellInput =
-  "w-full bg-transparent px-3 py-2 text-sm text-ink placeholder:text-ink-4/70 focus:outline-none focus:bg-amber-soft/25";
 
 /** Label-left / field-right row (Zoho parity). Stacks on mobile. */
 function Row({
@@ -631,70 +621,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             <p className="text-[12px] text-ink-3 mt-0.5">The primary contact is set above. Use a row&rsquo;s menu to make it the primary instead.</p>
           </div>
 
-          {contactPersonFields.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-hairline mb-3">
-              <table className="w-full min-w-[860px] border-collapse text-sm">
-                <thead>
-                  <tr className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3">
-                    <th className="w-[92px] text-left font-medium px-3 py-2 border-b border-r border-hairline">Salutation</th>
-                    <th className="text-left font-medium px-3 py-2 border-b border-r border-hairline">First name</th>
-                    <th className="text-left font-medium px-3 py-2 border-b border-r border-hairline">Last name</th>
-                    <th className="text-left font-medium px-3 py-2 border-b border-r border-hairline">Email address</th>
-                    <th className="text-left font-medium px-3 py-2 border-b border-r border-hairline">Work phone</th>
-                    <th className="text-left font-medium px-3 py-2 border-b border-r border-hairline">Mobile</th>
-                    <th className="w-10 border-b border-hairline" aria-label="Remove" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {contactPersonFields.map((f, i) => (
-                    <tr key={f.id} className="border-b border-hairline last:border-b-0">
-                      <td className="border-r border-hairline p-0">
-                        <select className={cellInput} aria-label="Salutation" {...register(`contact_persons.${i}.salutation`)}>
-                          <option value="">—</option>
-                          <option value="Mr.">Mr.</option>
-                          <option value="Ms.">Ms.</option>
-                          <option value="Mrs.">Mrs.</option>
-                          <option value="Dr.">Dr.</option>
-                        </select>
-                      </td>
-                      <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="First name" aria-label="First name" {...register(`contact_persons.${i}.first_name`)} />
-                      </td>
-                      <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="Last name" aria-label="Last name" {...register(`contact_persons.${i}.last_name`)} />
-                      </td>
-                      <td className="border-r border-hairline p-0">
-                        <input className={cellInput} type="email" placeholder="e.g. name@company.com" aria-label="Email address" {...register(`contact_persons.${i}.email`)} />
-                      </td>
-                      <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="e.g. +91 98765 43210" aria-label="Work phone" {...register(`contact_persons.${i}.phone`)} />
-                      </td>
-                      <td className="border-r border-hairline p-0">
-                        <input className={cellInput} placeholder="e.g. +91 98765 43210" aria-label="Mobile" {...register(`contact_persons.${i}.mobile`)} />
-                      </td>
-                      <td className="text-center">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button type="button" className="text-ink-3 hover:text-ink p-1" aria-label="Contact actions">
-                              <Icon name="more_h" size={16} />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => makePrimary(i)}>
-                              <Icon name="check_circle" size={14} className="text-amber" /> Make primary contact
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => removeContactPerson(i)} className="text-rose focus:text-rose">
-                              <Icon name="trash" size={14} /> Remove
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ContactPersonsTable
+            fields={contactPersonFields}
+            register={register}
+            onMakePrimary={makePrimary}
+            onRemove={removeContactPerson}
+          />
 
           <Button
             type="button" variant="default" size="sm" icon="plus"

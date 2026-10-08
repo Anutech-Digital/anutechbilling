@@ -72,3 +72,26 @@ describe("trial-expiry cron (R-065)", () => {
     expect(stamps).toHaveLength(3);
   });
 });
+
+describe("trial-expiry cron — trials started from an accepted quote (R-282)", () => {
+  /* Pardeep (6 Oct): a quote-trial ends with a REMINDER TASK for the owner only — no automatic
+     message to the customer, no suspension. The "trial ended, reply to convert" mail is for
+     self-serve trials; a customer who has already accepted a quote is chased by a person. */
+  function withQuote(status: string) {
+    const s = seed();
+    return { ...s, quotes: [{ id: "Q-1", tenant_id: "T1", lead_id: "L-ws", status }] };
+  }
+
+  it("does not mail the customer whose trial came from an accepted quote — but still stamps it", async () => {
+    db.current = fakePostgrest(withQuote("accepted"));
+    const body = await (await GET(req())).json();
+    expect(sent.calls.map((c) => c.to)).toEqual(["sita@beta.test"]);
+    expect(body.total_expired).toBe(3);
+  });
+
+  it("a lead whose quote is only sent/draft keeps the normal mail", async () => {
+    db.current = fakePostgrest(withQuote("sent"));
+    await GET(req());
+    expect(sent.calls.map((c) => c.to).sort()).toEqual(["ravi@acme.test", "sita@beta.test"]);
+  });
+});

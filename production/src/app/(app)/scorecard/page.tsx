@@ -38,8 +38,8 @@ export default function ScorecardPage() {
           </p>
         </div>
         <div>
-          <label className="block text-2xs text-ink-3 mb-1">Month</label>
-          <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
+          <label htmlFor="scorecard-month" className="block text-2xs text-ink-3 mb-1">Month</label>
+          <Input id="scorecard-month" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-44" />
         </div>
       </header>
 

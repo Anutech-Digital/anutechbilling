@@ -16,24 +16,21 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FAB } from "@/components/ui/fab";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { GroupFormDialog } from "@/components/features/customers/group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
-import { useCustomers } from "@/lib/queries/customers";
+import { useGroupMemberCounts } from "./group-queries";
 import { newestFirst } from "@/lib/sort/newest-first";
 
 export default function CustomerGroupsPage() {
   const router = useRouter();
-  const { data: groups, isLoading } = useCustomerGroups();
-  const { data: customers } = useCustomers();
+  const groupsQ = useCustomerGroups();
+  const { data: groups, isLoading } = groupsQ;
   const [addOpen, setAddOpen] = React.useState(false);
 
-  const countByGroup = React.useMemo(() => {
-    const map = new Map<string, number>();
-    for (const c of customers ?? []) {
-      if (c.group_id) map.set(c.group_id, (map.get(c.group_id) ?? 0) + 1);
-    }
-    return map;
-  }, [customers]);
+  /* R-222: one slim read of grouped customers' group_id — not every customer row. */
+  const countsQ = useGroupMemberCounts();
+  const { data: countByGroup = new Map<string, number>() } = countsQ;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
@@ -50,10 +47,14 @@ export default function CustomerGroupsPage() {
         <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>New group</Button>
       </div>
 
+      {countsQ.isError && !groupsQ.isError && <LoadErrorBanner onRetry={() => void countsQ.refetch()} />}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-28 w-full" />)}
         </div>
+      ) : groupsQ.isError ? (
+        <LoadError what="Parent accounts" onRetry={() => void groupsQ.refetch()} />
       ) : !groups || groups.length === 0 ? (
         <Card>
           <EmptyState

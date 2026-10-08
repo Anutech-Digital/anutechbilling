@@ -16,7 +16,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { resolveWhatsAppCreds } from "@/lib/whatsapp/client";
 import { isReminderKind, type ReminderKind } from "@/lib/marketing/whatsapp-reminders";
@@ -51,7 +51,7 @@ export const POST = withRoute(
       }, { status: 409 });
     }
 
-    const db = createAdminClient();
+    const db = createAdminClientFor(user.id);
     const { data: existing, error } = await db.from("whatsapp_templates")
       .select("id, name, language, status").eq("tenant_id", tenantId);
     dbFail(error, "Templates load nahi hue — page refresh karke dobara try kariye.");

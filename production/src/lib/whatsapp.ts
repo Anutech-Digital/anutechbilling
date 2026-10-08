@@ -32,7 +32,7 @@
  * bank, not through a webhook, so somebody still records the payment. That is what
  * the bank-credit matcher is for.
  */
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee, formatDate, toWhatsAppDigits } from "@/lib/utils";
 import { buildUpiIntent } from "@/lib/payments/upi";
 import type { Invoice, Lead } from "@/lib/supabase/database.types";
 
@@ -113,17 +113,42 @@ export function getInvoiceWhatsAppUrl(
   const amount = invoice.net_payable || invoice.amount || 0;
   const amountStr = rupee(amount);
   const invNumber = invoice.id || "";
-  const dueDate = invoice.due_date ? formatDate(invoice.due_date) : "due date";
+  /* R-245: with no due date the line used to read "which is due on *due date*" — the
+     placeholder went to the customer. No date → the clause is left out. */
+  const dueClause = invoice.due_date ? ` which is due on *${formatDate(invoice.due_date)}*` : "";
 
   const message = `Namaste 🙏,
 
-This is a friendly reminder regarding Tax Invoice *${invNumber}* for *${amountStr}* which is due on *${dueDate}*.
+This is a friendly reminder regarding Tax Invoice *${invNumber}* for *${amountStr}*${dueClause}.
 
 Kindly arrange the payment at your earliest convenience. If already paid, please ignore this message.${payLine(sender, amount, invNumber)}
 
 Thank you!${signOff(sender)}`;
 
   return `https://wa.me/${targetPhone}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * R-245: the reminder link, or why there is none.
+ *
+ * The invoice list used to call `getInvoiceWhatsAppUrl(inv, null, …)` — a `wa.me/?text=…`
+ * link with no recipient, so WhatsApp opened a contact picker and the owner had to find
+ * the customer by hand. Every caller now passes the customer's phone; with no usable
+ * phone it gets `no_phone` and shows "Add phone" instead of opening WhatsApp blind (the
+ * quote page's rule).
+ */
+export type InvoiceWhatsAppTarget =
+  | { ok: true; url: string }
+  | { ok: false; reason: "no_phone" };
+
+export function invoiceWhatsAppTarget(
+  invoice: Partial<Invoice>,
+  phone: string | null | undefined,
+  sender?: WhatsAppSender | null,
+): InvoiceWhatsAppTarget {
+  const digits = toWhatsAppDigits(phone);
+  if (!digits) return { ok: false, reason: "no_phone" };
+  return { ok: true, url: getInvoiceWhatsAppUrl(invoice, digits, sender) };
 }
 
 /**

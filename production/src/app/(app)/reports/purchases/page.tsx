@@ -23,6 +23,7 @@ import { StatStrip } from "@/components/shared/stat-strip";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { utcDateISO } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
@@ -68,16 +69,25 @@ function usePurchases(range: RangeKey) {
     queryKey: ["reports", "purchases", { from, to }],
     queryFn: async (): Promise<PurchaseLine[]> => {
       const supabase = createClient();
-      let ex = supabase.from("expenses").select("id, expense_date, amount, gst_paid, category, vendor_name");
-      let bi = supabase.from("vendor_bills").select("id, bill_date, subtotal, cgst, sgst, igst, category, vendor_name");
-      if (from) { ex = ex.gte("expense_date", from); bi = bi.gte("bill_date", from); }
-      if (to)   { ex = ex.lte("expense_date", to);   bi = bi.lte("bill_date", to); }
-      const [exRes, biRes] = await Promise.all([ex, bi]);
-      if (exRes.error) throw exRes.error;
-      if (biRes.error) throw biRes.error;
+      /* R-265: every row, paged on a total order — a bare select stops at PostgREST's
+         1000-row cap and the totals silently cover only the first 1000. */
+      const [exRows, biRows] = await Promise.all([
+        fetchAllRows((a, b) => {
+          let ex = supabase.from("expenses").select("id, expense_date, amount, gst_paid, category, vendor_name");
+          if (from) ex = ex.gte("expense_date", from);
+          if (to)   ex = ex.lte("expense_date", to);
+          return ex.order("id").range(a, b);
+        }),
+        fetchAllRows((a, b) => {
+          let bi = supabase.from("vendor_bills").select("id, bill_date, subtotal, cgst, sgst, igst, category, vendor_name");
+          if (from) bi = bi.gte("bill_date", from);
+          if (to)   bi = bi.lte("bill_date", to);
+          return bi.order("id").range(a, b);
+        }),
+      ]);
 
       const lines: PurchaseLine[] = [];
-      for (const e of exRes.data ?? []) {
+      for (const e of exRows) {
         // Salaries are payroll, not a "purchase" — exclude so the report reflects
         // real buying (Amazon, software, hosting, supplies) and isn't dominated
         // by salary payouts.
@@ -92,7 +102,7 @@ function usePurchases(range: RangeKey) {
           gst: e.gst_paid ?? 0,
         });
       }
-      for (const b of biRes.data ?? []) {
+      for (const b of biRows) {
         lines.push({
           id: b.id,
           source: "cogs",

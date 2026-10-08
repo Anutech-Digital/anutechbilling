@@ -5757,12 +5757,16 @@ export type Database = {
           amount: number
           billing_address: string | null
           created_at: string
+          currency: string | null
           customer_country: string | null
           customer_gstin: string | null
           customer_id: string | null
           customer_name: string
           due_date: string | null
           first_advance_at: string | null
+          fx_date: string | null
+          fx_rate: number | null
+          fx_source: string | null
           gst_irn: string | null
           id: string
           inter_state: boolean | null
@@ -5790,12 +5794,16 @@ export type Database = {
           amount: number
           billing_address?: string | null
           created_at?: string
+          currency?: string | null
           customer_country?: string | null
           customer_gstin?: string | null
           customer_id?: string | null
           customer_name: string
           due_date?: string | null
           first_advance_at?: string | null
+          fx_date?: string | null
+          fx_rate?: number | null
+          fx_source?: string | null
           gst_irn?: string | null
           id: string
           inter_state?: boolean | null
@@ -5823,12 +5831,16 @@ export type Database = {
           amount?: number
           billing_address?: string | null
           created_at?: string
+          currency?: string | null
           customer_country?: string | null
           customer_gstin?: string | null
           customer_id?: string | null
           customer_name?: string
           due_date?: string | null
           first_advance_at?: string | null
+          fx_date?: string | null
+          fx_rate?: number | null
+          fx_source?: string | null
           gst_irn?: string | null
           id?: string
           inter_state?: boolean | null
@@ -7278,6 +7290,9 @@ export type Database = {
           bank_account_id: string | null
           created_at: string
           customer_id: string | null
+          gateway_fee: number | null
+          gateway_fee_gst: number | null
+          gateway_refund_ids: string[] | null
           id: string
           method: string
           notes: string | null
@@ -7298,6 +7313,9 @@ export type Database = {
           bank_account_id?: string | null
           created_at?: string
           customer_id?: string | null
+          gateway_fee?: number | null
+          gateway_fee_gst?: number | null
+          gateway_refund_ids?: string[] | null
           id?: string
           method: string
           notes?: string | null
@@ -7318,6 +7336,9 @@ export type Database = {
           bank_account_id?: string | null
           created_at?: string
           customer_id?: string | null
+          gateway_fee?: number | null
+          gateway_fee_gst?: number | null
+          gateway_refund_ids?: string[] | null
           id?: string
           method?: string
           notes?: string | null
@@ -8746,6 +8767,8 @@ export type Database = {
           exchange_rate: number
           expires_date: string | null
           extension_months: number
+          fx_date: string | null
+          fx_source: string | null
           hot_lead_alerted_at: string | null
           id: string
           invoice_id: string | null
@@ -8803,6 +8826,8 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fx_date?: string | null
+          fx_source?: string | null
           hot_lead_alerted_at?: string | null
           id: string
           invoice_id?: string | null
@@ -8860,6 +8885,8 @@ export type Database = {
           exchange_rate?: number
           expires_date?: string | null
           extension_months?: number
+          fx_date?: string | null
+          fx_source?: string | null
           hot_lead_alerted_at?: string | null
           id?: string
           invoice_id?: string | null

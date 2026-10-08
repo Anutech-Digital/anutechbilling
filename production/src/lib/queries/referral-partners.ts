@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { ReferralPartnerRow, ReferralAgreementRow } from "@/lib/supabase/database.types";
@@ -132,7 +133,7 @@ export function useCreatePartner() {
       qc.invalidateQueries({ queryKey: ["referral-partners"] });
       toast.success("Referral partner added");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }
 
@@ -174,9 +175,11 @@ export function useCreateAgreement() {
       const msg = (e as Error).message;
       // Friendly message for the one-active-agreement-per-customer unique index.
       if (msg.includes("referral_agreements_one_active_per_customer")) {
-        toast.error("This customer already has an active referral. Close it first.");
+        toast.error("This customer already has an active referral.", {
+          description: "Close the existing referral first, then tag this deal again.",
+        });
       } else {
-        toast.error(msg);
+        toastError(e);
       }
     },
   });
@@ -198,6 +201,6 @@ export function useCloseAgreement() {
       qc.invalidateQueries({ queryKey: ["referral-agreements"] });
       toast.success("Referral agreement closed");
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => toastError(e),
   });
 }

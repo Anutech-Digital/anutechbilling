@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FormField } from "@/components/ui/label";
 import { useConfirm } from "@/components/providers/confirm-provider";
@@ -134,14 +135,18 @@ export default function PaymentRunsPage() {
       {/* ── To pay ─────────────────────────────────────────────── */}
       <section aria-label="Bills to pay">
         <div className="flex items-end justify-between gap-3 flex-wrap mb-2">
-          <h2 className="text-sm font-semibold text-ink">To pay <span className="text-ink-3 font-normal">· {free.length} bills · {rupee(owedTotal)}</span></h2>
+          <h2 className="text-sm font-semibold text-ink">To pay {!payablesQ.isError && !runsQ.isError && <span className="text-ink-3 font-normal">· {free.length} bills · {rupee(owedTotal)}</span>}</h2>
           {canCreate && urgentKeys.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => setPicked(new Set(urgentKeys))}>Pick all urgent ({urgentKeys.length})</Button>
           )}
         </div>
         <Card className="overflow-hidden">
-          {payablesQ.isLoading ? (
+          {payablesQ.isLoading || runsQ.isLoading ? (
             <div className="p-4 space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+          ) : payablesQ.isError || runsQ.isError ? (
+            // Without the open runs we cannot tell which bills are already in one —
+            // listing them as "to pay" would invite paying the same bill twice.
+            <LoadError what="Bills to pay" onRetry={() => { void payablesQ.refetch(); void runsQ.refetch(); }} />
           ) : free.length === 0 ? (
             <EmptyState compact icon="check" title="Nothing to pay" body="Every rupee bill and expense is paid or already in a run." />
           ) : (
@@ -185,9 +190,11 @@ export default function PaymentRunsPage() {
         </details>
       )}
 
-      {/* ── Sticky create bar ──────────────────────────────────── */}
+      {/* ── Sticky create bar ──────────────────────────────────── R-298: phones sit on the
+          shared --bottom-nav-h (it already carries the home-indicator inset); from md the bar
+          touches the screen edge, so only there is the inset padded. */}
       {canCreate && pickedRows.length > 0 && (
-        <div className="fixed left-0 right-0 bottom-16 md:bottom-0 z-40 border-t border-hairline bg-paper/95 backdrop-blur px-4 py-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0px))" }}>
+        <div className="fixed left-0 right-0 bottom-[var(--bottom-nav-h,56px)] md:bottom-0 z-40 border-t border-hairline bg-paper/95 backdrop-blur px-4 py-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
           <div className="max-w-[1400px] mx-auto flex flex-wrap items-center gap-3">
             <div className="text-sm"><b>{pickedRows.length}</b> selected · <b className="tabular-nums">{rupee(pickedTotal)}</b></div>
             <label className="text-xs text-ink-3 flex items-center gap-1.5">Pay from

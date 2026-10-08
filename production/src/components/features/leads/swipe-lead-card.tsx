@@ -56,22 +56,15 @@ import { heatScore, heatBadge } from "@/lib/leads/heat-score";
 import { decideSwipe, SWIPE_TRIGGER_PX } from "@/lib/leads/swipe-gesture";
 import { chipsForStage, type LeadOutcome } from "@/lib/leads/outcomes";
 import type { Lead } from "@/lib/supabase/database.types";
+import { STAGE_META } from "@/lib/leads/stage-meta";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { istToday } from "@/lib/dates/ist";
 import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
+import { leadTitle } from "@/lib/leads/display-name";
 
-// LEAD_STAGES mirrors the array in leads/page.tsx — kept here as a small
-// constant to avoid coupling the swipe card to that file's internals. If
-// these labels diverge in the future we can lift to `lib/lead-stages.ts`.
-const LEAD_STAGES: { id: Lead["stage"]; label: string; dot: string }[] = [
-  { id: "new",     label: "New",          dot: "bg-slate"   },
-  { id: "contact", label: "Contacted",    dot: "bg-amber"   },
-  { id: "demo",    label: "Demo Done",    dot: "bg-indigo"  },
-  { id: "trial",   label: "Trial Active", dot: "bg-rose"    },
-  { id: "quote",   label: "Quote Sent",   dot: "bg-indigo"  },
-  { id: "won",     label: "Won",          dot: "bg-emerald" },
-  { id: "lost",    label: "Lost",         dot: "bg-ink-3"   },
-];
+// R-290: the stage chip reads the shared table (lib/leads/stage-meta) — this used to be a
+// private copy, and copies are how stage order and labels drift between screens.
+const LEAD_STAGES = STAGE_META;
 
 // Drag thresholds now live in lib/leads/swipe-gesture.ts, beside the logic that uses
 // them. Two copies of "80" is how a reveal panel ends up appearing at a different point
@@ -268,7 +261,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
                 <span className={cn("w-2 h-2 rounded-full shrink-0", prio.color)} title={prio.title} />
-                <p className="font-medium text-ink truncate text-[15px]">{lead.company}</p>
+                <p className="font-medium text-ink truncate text-[15px]" title={leadTitle(lead).hint ?? undefined}>{leadTitle(lead).label}</p>
                 {/* Intent tier + stale nudge — same lib/leads/heat helpers the
                     desktop table uses, so phone and desktop can never disagree
                     about the same lead. (The old `stale` prop used its own
@@ -426,7 +419,7 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
                 <span
                   role="button"
                   tabIndex={0}
-                  aria-label={`Actions for ${lead.company}`}
+                  aria-label={`Actions for ${leadTitle(lead).label}`}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-3 hover:bg-paper-2 active:bg-paper-2/70"
@@ -552,9 +545,12 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
 /** Pre-fill WhatsApp message with greeting + lead context. */
 function buildWaMessage(lead: LeadListRow): string {
   const greeting = lead.contact_name ? `Hi ${lead.contact_name},` : "Hello,";
+  /* R-279: no company → no dangling "for " in a message the customer reads. */
+  const company = lead.company?.trim() ?? "";
+  const forCompany = company ? ` for ${company}` : "";
   const ref = lead.plan
-    ? `our conversation about ${lead.plan} for ${lead.company}`
-    : `your inquiry for ${lead.company}`;
+    ? `our conversation about ${lead.plan}${forCompany}`
+    : `your inquiry${forCompany}`;
   return `${greeting} Following up on ${ref}. When's a good time for a quick call?`;
 }
 

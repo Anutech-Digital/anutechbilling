@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { SLA } from "@/site/lib/config";
 import React from "react";
 
 /* ───────────────────────────────────────────────────────────────
@@ -222,7 +223,7 @@ function TierCard({ tier, index }: { tier: (typeof TIERS)[number]; index: number
           )}
         </Button>
         <p className="mt-2 text-center text-2xs text-ink-3">
-          {tier.name === "Pro" ? "Reply within 24 hours" : "14-day trial · No credit card"}
+          {tier.name === "Pro" ? `Reply ${SLA.quote}` : "14-day trial · No credit card"}
         </p>
       </div>
     </motion.div>

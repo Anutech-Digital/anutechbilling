@@ -45,8 +45,8 @@ describe("ad platforms", () => {
     const rec = reconcileMonths(rows, new Map([["2026-08", 11800], ["2026-07", 3000]]), "google-ads");
     expect(rec.map((r) => r.month)).toEqual(["2026-09", "2026-08", "2026-07"]);
     expect(rec[1].note).toMatch(/18% GST/);
-    expect(rec[0].note).toMatch(/Google ka invoice/);
-    expect(rec[2].note).toMatch(/connected tha/);
+    expect(rec[0].note).toMatch(/Google's invoice/);
+    expect(rec[2].note).toMatch(/was the account connected/);
     const meta = reconcileMonths([G("2026-09-01", 4000, { platform: "meta-ads" })], new Map(), "meta-ads");
     expect(meta[0].note).toMatch(/advance/);
   });

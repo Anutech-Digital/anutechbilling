@@ -143,6 +143,13 @@ JOBS=(
   # 27 Sep) and four never existed anywhere. A job that lives only in the console is a job
   # the next region move loses again.
   "resellersos-health-digest|30 8 * * *|/api/cron/health-digest|Morning ops digest: cron failures + health signals to the owner"
+  # R-112 / R-220 (7 Oct 2026): the same route now carries the OWNER MORNING DIGEST (money in
+  # yesterday, overdue, waiting on you, 30-day renewal risk) and should run at 08:00 IST.
+  # NOT ENABLED — Pardeep enables it himself. Check the numbers first with
+  #   GET /api/cron/health-digest?dryRun=1   (sends nothing; &format=html shows the mail)
+  # then uncomment the line below, delete the 08:30 line above, and run this script with
+  # ONLY=resellersos-health-digest UPDATE_EXISTING=1 so the existing job is moved, not doubled.
+  # "resellersos-health-digest|0 8 * * *|/api/cron/health-digest|Owner morning digest (money in, overdue, waiting on you, renewal risk) + app health"
   "resellersos-billing|0 8 * * *|/api/cron/billing|Subscription billing run (idempotent, at-least-once safe)"
   "resellersos-ai-reflection|0 8 * * *|/api/cron/ai-reflection|AI agents daily reflection over yesterday conversations"
   # Every 5 minutes: a reply the AI could not send (Gemini 503, timeout) is retried here; a

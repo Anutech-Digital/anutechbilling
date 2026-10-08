@@ -20,6 +20,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -269,7 +270,7 @@ export default function TdsYearEndPage() {
   // CSV export
   function exportFullCsv() {
     if (rows.length === 0) {
-      toast.error("No TDS rows for this FY to export");
+      toast.error("No TDS rows for this FY", { description: "Pick another financial year, or add TDS rows first." });
       return;
     }
     downloadCSV(
@@ -307,7 +308,7 @@ export default function TdsYearEndPage() {
       const text   = await file.text();
       const parsed = parse26ASCsv(text);
       if (parsed.length === 0) {
-        toast.error("Could not detect TAN / Amount columns in the CSV. Headers must include 'TAN' and 'Amount'.");
+        toast.error("Could not find TAN / Amount columns", { description: "The CSV header row must include 'TAN' and 'Amount'. Export 26AS again as CSV and upload it." });
         return;
       }
       const results = reconcile(parsed, rows);
@@ -315,7 +316,7 @@ export default function TdsYearEndPage() {
       const matched = results.filter((r) => r.status === "matched").length;
       toast.success(`Parsed ${parsed.length} rows · ${matched} matched · ${results.length - matched} need review`);
     } catch (err) {
-      toast.error("CSV parse failed: " + (err as Error).message);
+      toastError(err, { fallback: "Could not read the CSV", description: "Export 26AS again as CSV and upload it." });
     } finally {
       setRecoUploading(false);
       if (reco26ASInputRef.current) reco26ASInputRef.current.value = "";
@@ -356,7 +357,7 @@ export default function TdsYearEndPage() {
       setMatchResults(null);
       window.location.reload();
     } catch (err) {
-      toast.error("Bulk update failed: " + (err as Error).message);
+      toastError(err, { fallback: "Could not mark rows verified", description: "Nothing was changed. Refresh the page and try again." });
     }
   }
 

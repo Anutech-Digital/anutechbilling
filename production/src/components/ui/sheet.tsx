@@ -54,9 +54,10 @@ const sheetVariants = cva(
         top: "inset-x-0 top-0 border-b border-hairline data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
         bottom:
           "inset-x-0 bottom-0 border-t border-hairline data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
-        left: "inset-y-0 left-0 h-full border-r border-hairline data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+        /* R-291: max-w-[100vw] — a caller width like w-96 (384px) must not run off a 375px phone. */
+        left: "inset-y-0 left-0 h-full max-w-[100vw] border-r border-hairline data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
         right:
-          "inset-y-0 right-0 h-full border-l border-hairline data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+          "inset-y-0 right-0 h-full max-w-[100vw] border-l border-hairline data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
       },
     },
     defaultVariants: {

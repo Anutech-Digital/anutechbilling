@@ -43,6 +43,12 @@ export interface DirectiveInput {
   screenshotCount?: number;
   /** Formatted for humans by the caller — this module never touches a clock. */
   reportedAt?: string | null;
+  /**
+   * The feedback row id. Printed so a directive pasted by hand still links back: the card
+   * carries it as feedbackId and the report then shows "AI worker has it · R-…" and later
+   * "Fixed by AI · R-…" on its own (Pardeep, 7 Oct: "sab automatically update hona chahiye").
+   */
+  reportId?: string | null;
 }
 
 const TYPE_LABEL: Record<FeedbackType, string> = {
@@ -142,6 +148,9 @@ export function buildDirective(input: DirectiveInput): string {
     meta.push(`- **Screenshots:** ${input.screenshotCount} attached in /admin/feedback — look at them, they usually show the exact state.`);
   }
   meta.push(`- **Confidence in this triage:** ${triage.confidence}`);
+  if (input.reportId) {
+    meta.push(`- **Report id:** \`${input.reportId}\` — put it on the card as \`feedbackId\` so this report updates itself (claimed, then fixed).`);
+  }
 
   const steps = stepsFor(triage.inferredType, files, triage.routePattern);
 

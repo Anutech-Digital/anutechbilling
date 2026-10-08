@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { googleOAuthCreds, refreshAccessToken } from "@/lib/google/oauth";
+import { resealIfPlain } from "@/lib/google/token-vault";
 import { hasGoogleAdsScope } from "@/lib/google/scope-union";
 import { gaqlCampaignSpend, googleRowsFromSearchStream, type AdSpendRow, type GoogleSearchStreamChunk } from "@/lib/marketing/ad-platforms";
 
@@ -48,7 +49,8 @@ export async function getFreshGoogleAdsAccessToken(admin: Admin, userId: string)
   const creds = googleOAuthCreds();
   if (!creds) throw new Error("Google OAuth not configured");
   const r = await refreshAccessToken(tok.refresh_token, creds);
-  await admin.from("user_google_tokens").update({ access_token: r.access_token, token_expiry: new Date(Date.now() + (r.expires_in ?? 3600) * 1000).toISOString() }).eq("user_id", userId);
+  // A legacy plaintext refresh token is sealed on this write (R-051).
+  await admin.from("user_google_tokens").update({ access_token: r.access_token, token_expiry: new Date(Date.now() + (r.expires_in ?? 3600) * 1000).toISOString(), ...resealIfPlain(tok.refresh_token) }).eq("user_id", userId);
   return r.access_token;
 }
 

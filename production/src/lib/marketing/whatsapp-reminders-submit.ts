@@ -38,7 +38,7 @@ export type Starter = (typeof STARTER_REMINDER_TEMPLATES)[number];
 export function starterExampleValues(body: string, paramMap: readonly ReminderParamField[]): string[] {
   const n = paramCount(body);
   if (paramMap.length !== n) {
-    throw new Error(`Template me ${n} jagah hain par ${paramMap.length} field — starter galat hai.`);
+    throw new Error(`Template has ${n} slot${n === 1 ? "" : "s"} but ${paramMap.length} fields — the starter is wrong.`);
   }
   return paramMap.map((f) => REMINDER_EXAMPLE_VALUES[f]);
 }
@@ -104,13 +104,13 @@ export function metaErrorText(j: unknown, httpStatus: number, token: string): st
   const raw = e?.error_user_msg || e?.message || `HTTP ${httpStatus}`;
   const safe = token ? raw.split(token).join("***") : raw;
   if (httpStatus === 401 || e?.code === 190) {
-    return "Meta ne WhatsApp token mana kar diya (expire ya galat) — Settings → Integrations mein WhatsApp dobara connect karo.";
+    return "Meta rejected the WhatsApp token (expired or invalid) — reconnect WhatsApp in Settings → Integrations.";
   }
   if (httpStatus === 403 || e?.code === 10 || e?.code === 200) {
-    return `Meta ne permission nahi di (${safe}) — token ko whatsapp_business_management permission chahiye. Settings → Integrations check karo.`;
+    return `Meta denied permission (${safe}) — the token needs the whatsapp_business_management permission. Check Settings → Integrations.`;
   }
   if (httpStatus === 429 || e?.code === 4 || e?.code === 80008) {
-    return "Meta ne abhi bahut requests ki wajah se roka — 10–15 minute baad dobara bhejo.";
+    return "Meta is rate-limiting requests — try again in 10–15 minutes.";
   }
-  return `Meta ne template nahi liya: ${safe} — wording dekh kar dobara bhejo, ya WhatsApp Manager mein khud submit karo.`;
+  return `Meta rejected the template: ${safe} — check the wording and resubmit, or submit it yourself in WhatsApp Manager.`;
 }

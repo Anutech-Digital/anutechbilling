@@ -24,7 +24,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
 
@@ -61,7 +61,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json({ error: "A subject and a message are both required." }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(user.id);
   const { data: lead } = await admin
     .from("leads")
     .select("id, tenant_id, company, contact_email")

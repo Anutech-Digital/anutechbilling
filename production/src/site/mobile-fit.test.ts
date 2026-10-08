@@ -17,8 +17,10 @@ describe("the site fits a 320px phone", () => {
     expect(header).not.toMatch(/alignItems: "center", gap: 26 \}\}/);
     expect(header).toMatch(/minWidth: 44, minHeight: 44/);
   });
-  it("the cookie banner is never wider than the screen", () => {
-    expect(read("src/site/components/chrome/Chrome.tsx")).toContain('maxWidth: "min(360px, calc(100vw - 44px))"');
+  it("the cookie banner is never wider than the screen (Pardeep's R-230: full width with a 12px gutter on a phone)", () => {
+    const chrome = read("src/site/components/chrome/Chrome.tsx");
+    expect(chrome).toContain('className="consent-banner"');
+    expect(chrome).toMatch(/@media \(max-width: 979px\) \{\s*\.consent-banner \{ left: 12px; right: 12px; bottom: 12px; max-width: none; \}/);
   });
   it("/done wraps a long email address and its links are 44px tall", () => {
     const done = read("src/app/(marketing)/done/page.tsx");

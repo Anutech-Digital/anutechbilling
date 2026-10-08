@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 
@@ -175,7 +176,7 @@ export function useCreateTdsReceivable() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("TDS entry recorded");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -197,7 +198,7 @@ export function useUpdateTdsReceivable() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("TDS entry updated");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -214,7 +215,7 @@ export function useDeleteTdsReceivable() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("TDS entry deleted");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -245,7 +246,7 @@ export function useMarkCertReceived() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Form 16A marked received");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -272,7 +273,7 @@ export function useMarkVerified26AS() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Verified on Form 26AS · ready to claim in ITR");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -294,12 +295,10 @@ export function useApply26asMatches() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       if (updated === asked) toast.success(`${updated} TDS entr${updated === 1 ? "y" : "ies"} verified on 26AS`);
       else toast.warning(`${updated} of ${asked} verified`, {
-        description: "Baaki rows ka status is beech badal gaya (claimed / written off) — list reload karke dekhein.",
+        description: "The other rows changed status meanwhile (claimed / written off) — reload the list to see them.",
       });
     },
-    onError: (err) => toast.error("26AS verification save nahi hua", {
-      description: `${(err as Error).message} — kuch nahi badla; dobara try karein.`,
-    }),
+    onError: (err) => toastError(err, { fallback: "26AS verification not saved." }),
   });
 }
 
@@ -326,7 +325,7 @@ export function useMarkClaimed() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Marked claimed in ITR 🎉");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -352,7 +351,7 @@ export function useMarkDisputed() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Marked disputed · chase customer for deposit proof");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -375,7 +374,7 @@ export function useWriteOffTds() {
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Written off");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

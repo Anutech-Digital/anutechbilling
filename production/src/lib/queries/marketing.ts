@@ -28,6 +28,7 @@ import {
 import { isMarketingCategory } from "@/lib/marketing/ad-channels";
 import { channelFor, EMPTY_UTM } from "@/lib/marketing/utm";
 import type { Expense } from "@/lib/queries/expenses";
+import { fetchPaidLeadIds } from "@/lib/payments/won-paid";
 
 export type RangeKey = "this_month" | "last_quarter" | "ytd" | "all";
 
@@ -115,7 +116,7 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
       // have. Selected together so both generations of lead work.
       const leadsQ = await supabase
         .from("leads")
-        .select("source, stage, value, created_at, utm_source, utm_medium, utm_campaign, referrer_url")
+        .select("id, project_id, source, stage, value, created_at, utm_source, utm_medium, utm_campaign, referrer_url")
         .gte("created_at", range.start)
         .lt("created_at", range.end);
       if (leadsQ.error) throw leadsQ.error;
@@ -124,10 +125,13 @@ export function useMarketingReport(rangeKey: RangeKey = "ytd") {
          lead from a Facebook tracking link counted as "enquiry-form" (the form's own tag)
          and never met the Facebook spend. channelFor applies the stated order: utm_source,
          then the referrer host, then the form's source (Pardeep, 26 Sep 2026). */
+      /* R-375: won value (and so ROAS) counts only won leads with a recorded payment —
+         accept_quote marks a lead won before any money arrives. */
+      const paidIds = await fetchPaidLeadIds(supabase, (leadsQ.data ?? []).filter((l) => l.stage === "won"));
       const leads: ChannelLeadInput[] = (leadsQ.data ?? []).map((l) => ({
         source: channelFor({ ...EMPTY_UTM, utm_source: l.utm_source, utm_medium: l.utm_medium,
                              utm_campaign: l.utm_campaign, referrer_url: l.referrer_url }, l.source),
-        stage: l.stage, value: l.value,
+        stage: l.stage, value: l.value, paid: paidIds.has(l.id),
       }));
 
       // ── Ad spend, per channel, from `expenses` ───────────────────────────

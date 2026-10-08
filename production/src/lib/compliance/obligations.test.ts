@@ -185,3 +185,40 @@ describe("catalog integrity", () => {
     }
   });
 });
+
+describe("R-334 — yearly LUT renewal (Form GST RFD-11)", () => {
+  const lutProfile = { businessType: null, gstFiling: null, exportsUnderLut: true };
+  const lutRow = (rows: ReturnType<typeof buildComplianceRows>) => rows.find((r) => r.ob.key === "gst_lut_rfd11");
+
+  it("an exporter with an LUT gets a 'Renew LUT' row due 31 March for the NEXT FY", () => {
+    const row = lutRow(buildComplianceRows(AUG_13_2026, new Map(), undefined, undefined, lutProfile));
+    expect(row?.ob.name).toBe("Renew LUT (Form GST RFD-11)");
+    expect(row?.inst.dueDate).toBe("2027-03-31");
+    expect(row?.inst.periodLabel).toBe("FY 2027-28");
+    expect(row?.ob.category).toBe("gst");
+  });
+
+  it("is due-soon in mid-March and moves to next year once filed", () => {
+    const mar20 = new Date("2027-03-20T12:00:00+05:30");
+    const due = lutRow(buildComplianceRows(mar20, new Map(), undefined, undefined, lutProfile));
+    expect(due?.status).toBe("due_soon");
+    const filed = new Map([["gst_lut_rfd11|fy2027", "2027-03-18"]]);
+    const after = lutRow(buildComplianceRows(new Date("2027-04-02T12:00:00+05:30"), filed, undefined, undefined, lutProfile));
+    expect(after?.inst.dueDate).toBe("2028-03-31");
+  });
+
+  it("no LUT on file → no row, and the unknown-profile list is unchanged", () => {
+    expect(lutRow(buildComplianceRows(AUG_13_2026, new Map()))).toBeUndefined();
+    expect(lutRow(buildComplianceRows(AUG_13_2026, new Map(), undefined, undefined,
+      { businessType: null, gstFiling: null, exportsUnderLut: false }))).toBeUndefined();
+  });
+});
+
+describe("R-334 — profileFromRow reads the LUT", async () => {
+  const { profileFromRow } = await import("./profile-row");
+  it("an LUT number on the tenant row turns the renewal reminder on", () => {
+    expect(profileFromRow({ lut_number: "AD290425000000X" }, null).exportsUnderLut).toBe(true);
+    expect(profileFromRow({ lut_number: "  " }, null).exportsUnderLut).toBeFalsy();
+    expect(profileFromRow({}, null).exportsUnderLut).toBeFalsy();
+  });
+});

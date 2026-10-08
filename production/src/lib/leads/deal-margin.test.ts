@@ -175,7 +175,7 @@ describe("marginBadge", () => {
     const b = marginBadge(dealMargin(lead({ plan: "Tally Prime Gold License" }), index));
     expect(b.label).toBe("—");
     expect(b.kind).toBe("muted");
-    expect(b.title).toMatch(/no row in Catalog/i);
+    expect(b.title).toMatch(/no row in Products/i);
   });
 
   it("names the floor when a margin is thin", () => {

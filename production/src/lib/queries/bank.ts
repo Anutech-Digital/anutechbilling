@@ -19,6 +19,9 @@ import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { localDateISO } from "@/lib/leads/outcomes";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -1042,5 +1045,109 @@ export function useSuggestMatches(transactionId: string | null | undefined) {
       return (data ?? []) as MatchSuggestion[];
     },
     staleTime: 60_000,
+  });
+}
+
+/* ─── R-109: bank credit → open invoice → one-click record payment ─────────────────── */
+
+/**
+ * Every open (pending / overdue) invoice as the matcher's input, with what is STILL due
+ * computed by invoiceAmountDue (R-371) — never `amount`, which would ask a part-paid
+ * invoice for the full sum again. Project-milestone invoices are flagged: their money
+ * goes through project_payments, so the drawer must not one-click them via record_payment.
+ */
+export function useOpenInvoicesForCreditMatch(enabled = true) {
+  return useQuery({
+    queryKey: ["invoices", "open-for-credit-match"],
+    enabled,
+    queryFn: async (): Promise<OpenInvoice[]> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows<{
+        id: string; quote_id: string | null; customer_name: string | null; invoice_date: string;
+        amount: number | null; net_payable: number | null; paid_amount: number | null;
+        status: string | null; taxable_value: number | null;
+      }>((from, to) => supabase
+        .from("invoices")
+        .select("id, quote_id, customer_name, invoice_date, amount, net_payable, paid_amount, status, taxable_value")
+        .in("status", ["pending", "overdue"])
+        .order("invoice_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
+      const { data: ms, error: e2 } = await supabase
+        .from("project_milestones").select("invoice_id").not("invoice_id", "is", null);
+      if (e2) throw e2;
+      const projectIds = new Set((ms ?? []).map((m) => m.invoice_id as string));
+      return rows
+        .map((r) => ({
+          id: r.id,
+          quoteId: r.quote_id,
+          customerName: r.customer_name,
+          invoiceDate: r.invoice_date,
+          amountDue: invoiceAmountDue(r),
+          taxableValue: r.taxable_value,
+          isProject: projectIds.has(r.id),
+        }))
+        .filter((r) => r.amountDue > 0);
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The "Match & record payment" click. Two existing money paths, nothing new:
+ *   1. record_payment on the invoice's quote (the only way a payment is recorded — it
+ *      flips the invoice to paid, issues the receipt, spawns/rolls the subscription).
+ *      The reference is the line's UTR, else BANK-<txn id>; record_payment is idempotent
+ *      on reference, so a double click cannot record the money twice.
+ *   2. reconcile_bank_txn links THIS bank line to that payment.
+ * Only called for a candidate the matcher marked oneClick (exact due, not TDS-short, not a
+ * project invoice). The caller passes the credit amount, which equals the due.
+ */
+export function useMatchCreditToInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      transactionId: string;
+      bankAccountId: string;
+      quoteId: string;
+      invoiceId: string;
+      amount: number;
+      reference: string | null;
+    }) => {
+      const amount = Math.round(input.amount);
+      if (!(amount > 0)) throw new Error("Amount must be more than ₹0.");
+      const supabase = createClient();
+      const ref = (input.reference ?? "").trim() || `BANK-${input.transactionId}`;
+      const { data: payData, error: e1 } = await supabase.rpc("record_payment", {
+        p_quote_id:  input.quoteId,
+        p_amount:    amount,
+        p_method:    "bank_transfer",
+        p_reference: ref,
+        p_notes:     `Matched from bank credit to ${input.invoiceId}`,
+      });
+      if (e1) throw e1;
+      const pay = (Array.isArray(payData) ? payData[0] : payData) as { payment_id?: string } | null;
+      if (!pay?.payment_id) throw new Error("Payment record nahi bana.");
+
+      await supabase.from("payments").update({ bank_account_id: input.bankAccountId }).eq("id", pay.payment_id);
+      const { error: e2 } = await supabase.rpc("reconcile_bank_txn", {
+        p_txn_id:           input.transactionId,
+        p_matched_to_type:  "payment",
+        p_matched_to_id:    pay.payment_id,
+        p_match_confidence: "manual",
+      });
+      if (e2) throw e2;
+      return { invoiceId: input.invoiceId };
+    },
+    onSuccess: ({ invoiceId }) => {
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["aging"] });
+      toast.success(`Payment recorded on ${invoiceId} & line reconciled`);
+    },
+    onError: (err) => toastError(err, { fallback: "Match failed" }),
   });
 }

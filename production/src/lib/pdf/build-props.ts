@@ -12,11 +12,29 @@
  * interState (GST head) uses the shared place-of-supply helper.
  */
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "../gst/place-of-supply";
+import { quotePlaceOfSupply } from "../quotes/quote-place-of-supply";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { QuotePDFProps } from "./QuotePDF";
 import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
+import { includedSupportLine } from "./quote-support-line";
+
+/**
+ * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
+ * 20261007251000 carries its own (snapshot at issue — the quote can be edited later, the
+ * issued invoice cannot); an older invoice falls back to its quote exactly as before, with
+ * no source/date because nothing recorded them at the time.
+ */
+export function invoiceFx(
+  invoice: Pick<Invoice, "currency" | "fx_rate" | "fx_source" | "fx_date">,
+  quote: { currency?: string | null; exchange_rate?: number | null } | null,
+): { currency: string | null; exchangeRate: number | null; fxSource: string | null; fxDate: string | null } {
+  if (invoice.currency && invoice.fx_rate != null && invoice.fx_rate > 0) {
+    return { currency: invoice.currency, exchangeRate: invoice.fx_rate, fxSource: invoice.fx_source ?? null, fxDate: invoice.fx_date ?? null };
+  }
+  return { currency: quote?.currency ?? null, exchangeRate: quote?.exchange_rate ?? null, fxSource: null, fxDate: null };
+}
 
 /** Supplier fields needed on both PDFs (from the tenants row). */
 export interface TenantPdfInfo {
@@ -56,6 +74,17 @@ export interface TenantPdfInfo {
   remit_account_number: string | null;
   remit_ifsc:           string | null;
   remit_branch:         string | null;
+  /**
+   * R-334. tenants.lut_number (LUT ARN) for the Rule 46 export endorsement. Optional so the
+   * quote route (a quote is not an export invoice) need not select it; the invoice route does.
+   */
+  lut_number?:          string | null;
+  /**
+   * R-368. tenants.udyam_number — the company's MSME registration, printed under the GSTIN.
+   * Optional and read SEPARATELY (lib/compliance/udyam.ts readTenantUdyam), never in the
+   * tenant select: before its migration the column does not exist and the select would fail.
+   */
+  udyam_number?:        string | null;
 }
 
 interface Amounts {
@@ -108,9 +137,21 @@ export function buildInvoicePdfProps(args: {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
   // invoice → use the breakdown persisted on the invoice itself (migration 0116).
-  const a: Amounts = quote ? quoteAmounts(quote) : invoiceAmounts(invoice);
-  const total    = quote?.amount   ?? invoice.amount;
-  const subtotal = quote?.subtotal ?? a.subtotal;
+  //
+  // R-375 (audit finding 9): an ISSUED invoice's figures are frozen on the invoice row
+  // (amount / taxable_value / tax_amount). The quote is live — it can be edited, re-priced
+  // or re-accepted after the invoice was issued — so a reprint built from it could print a
+  // different GST invoice from the one in the books. When the invoice carries its own
+  // figures and the quote no longer agrees with them, the invoice's own figures (and lines)
+  // win; the quote is used for its subtotal/discount display only while it still matches.
+  const persisted = invoice.taxable_value != null && invoice.tax_amount != null;
+  const q         = quote ? quoteAmounts(quote) : null;
+  const useQuote  = q !== null && (!persisted || (
+    q.taxable === invoice.taxable_value && q.tax === invoice.tax_amount && q.total === invoice.amount
+  ));
+  const a: Amounts = useQuote && q ? q : invoiceAmounts(invoice);
+  const total    = useQuote ? (quote?.amount ?? invoice.amount) : invoice.amount;
+  const subtotal = useQuote ? (quote?.subtotal ?? a.subtotal) : a.subtotal;
   // GST head: the value persisted at issue time wins; else derive from states,
   // falling back to each party's GSTIN when a state code is missing.
   //
@@ -132,7 +173,9 @@ export function buildInvoicePdfProps(args: {
        quote would print ₹28,320 — and an invoice with no description, HSN or
        quantity does not satisfy CGST Rule 46. This also fills in the project
        milestone invoices that used to print "No line items recorded". */
-    lineItems:   quote?.line_items ?? invoice.line_items ?? [],
+    lineItems:   useQuote
+      ? (quote?.line_items ?? invoice.line_items ?? [])
+      : (invoice.line_items ?? quote?.line_items ?? []),
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,
@@ -164,12 +207,13 @@ export function buildInvoicePdfProps(args: {
     tenantAddress: tenant.address,
     tenantState:   tenant.state,
     tenantLogo:    args.logoDataUri ?? null,
+    lutNumber:     tenant.lut_number ?? null,
+    udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
     customerCountry: customer?.country ?? null,
-    // Foreign-currency display (books stay ₹). Carried on the backing quote — an
-    // export client's PDF then shows the USD (etc.) equivalent, not just ₹.
-    currency:      quote?.currency ?? null,
-    exchangeRate:  quote?.exchange_rate ?? null,
+    // Foreign-currency display (books stay ₹). R-045: the rate frozen on the invoice at
+    // issue (+ its source and date); older invoices fall back to the backing quote.
+    ...invoiceFx(invoice, quote),
     termsConditions: quote?.terms_conditions ?? null,
     /* R-038. Derived once, here, so the footer sentence and the bank block cannot
        disagree — and so "Razorpay" appears only when Razorpay actually exists. */
@@ -199,9 +243,18 @@ export function buildQuotePdfProps(args: {
    * running on the inbound-mail webhook. Omitted → the document draws its monogram.
    */
   logoDataUri?: string | null;
+  /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
+  lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
 }): QuotePDFProps {
   const { quote, customer, tenant } = args;
   const a = quoteAmounts(quote);
+  /* R-376 (f): customer → lead → typed prospect; one helper for preview, PDF and accept page. */
+  const pos = quotePlaceOfSupply({
+    customer,
+    lead: args.lead ?? null,
+    quote: quote as { prospect_state_code?: string | null; prospect_country?: string | null },
+    seller: tenant,
+  });
   const validityDays =
     quote.created_date && quote.expires_date
       ? Math.max(0, Math.round((new Date(quote.expires_date).getTime() - new Date(quote.created_date).getTime()) / 86_400_000))
@@ -210,6 +263,7 @@ export function buildQuotePdfProps(args: {
   return {
     tenantName:    tenant.name,
     tenantGstin:   tenant.gstin,
+    udyamNumber:   tenant.udyam_number ?? null,
     tenantEmail:   tenant.email,
     tenantPhone:   tenant.phone,
     tenantAddress: tenant.address,
@@ -235,25 +289,20 @@ export function buildQuotePdfProps(args: {
     total:         a.total,
     // A quote is not yet a tax document, so unlike an invoice there is nothing
     // frozen to respect — always compute the best answer available today.
-    interState:    isInterStateSupply(
-      customer?.state_code, tenant.state_code,
-      { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-    ),
-    isExport:      isExportSupply(customer?.country),
-    /* R-175: name the buyer's state, as the invoice does — today's customer, else the
-       prospect state the quote was priced for. */
-    placeOfSupply: placeOfSupplyLabel({
-      posCode: customer?.state_code ?? (quote as { prospect_state_code?: string | null }).prospect_state_code ?? null,
-      interState: isInterStateSupply(
-        customer?.state_code, tenant.state_code,
-        { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
-      ),
-    }),
+    interState:    pos.interState,
+    isExport:      pos.isExport,
+    /* R-175 / R-376 (f): name the buyer's state, as the invoice does — "Haryana (06) · IGST". */
+    placeOfSupply: pos.label,
     currency:      quote.currency ?? null,
     exchangeRate:  quote.exchange_rate ?? null,
+    fxSource:      quote.fx_source ?? null,
+    fxDate:        quote.fx_date ?? null,
     billingCycle:  quote.billing_cycle,
     notes:         quote.notes ?? undefined,
     termsConditions: quote.terms_conditions ?? null,
+    /* R-367: "Support: Free — Included" when no support line is on the quote — the same
+       builder the preview dialog calls, so the two documents agree. */
+    includedSupport: includedSupportLine(quote.line_items ?? []),
     isRenewal:     quote.is_renewal,
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */

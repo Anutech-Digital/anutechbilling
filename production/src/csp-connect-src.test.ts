@@ -91,4 +91,41 @@ describe("CSP connect-src names the real Supabase origin", () => {
     const d = await connectSrcFor("http://127.0.0.1:54321");
     expect(d).toContain("'self'");
   });
+
+  /* R-365, 7 Oct 2026: @react-pdf's layout engine (yoga-layout 3) ships its wasm inlined and
+     loads it with fetch("data:application/octet-stream;base64,AGFzbQ…"). Without data: in
+     connect-src that fetch is refused — yoga then decodes the bytes itself, so the PDF still
+     downloads, but every Download PDF printed a CSP violation and AI Help recorded an
+     "API FAILED … network error". A data: URL never leaves the browser, so it opens no
+     exfiltration path. */
+  it("allows data: so the PDF engine can load its inlined wasm", async () => {
+    const d = await connectSrcFor("https://api.anutech.in");
+    expect(d.split(/\s+/)).toContain("data:");
+  });
+});
+
+describe("R-365 did not loosen the rest of the CSP", () => {
+  async function cspDirectives(): Promise<Map<string, string>> {
+    const groups = await (nextConfig as ConfigWithHeaders).headers();
+    const csp = groups.flatMap((g) => g.headers).find((h) => h.key === "Content-Security-Policy");
+    if (!csp) throw new Error("no Content-Security-Policy header emitted");
+    return new Map(
+      csp.value.split(";").map((d) => d.trim()).filter(Boolean).map((d): [string, string] => {
+        const [name, ...rest] = d.split(/\s+/);
+        return [name, rest.join(" ")];
+      }),
+    );
+  }
+
+  it("script-src and default-src gain no data:, blob: or bare *; object-src stays 'none'", async () => {
+    const m = await cspDirectives();
+    for (const name of ["script-src", "default-src"]) {
+      expect(m.get(name) ?? "").not.toMatch(/(^|\s)(data:|blob:|\*)(\s|$)/);
+    }
+    expect(m.get("object-src")).toBe("'none'");
+  });
+
+  it("connect-src gets data: only — no blob: or bare *", async () => {
+    expect((await cspDirectives()).get("connect-src") ?? "").not.toMatch(/(^|\s)(blob:|\*)(\s|$)/);
+  });
 });

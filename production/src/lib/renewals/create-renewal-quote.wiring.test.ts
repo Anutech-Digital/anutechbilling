@@ -117,6 +117,12 @@ describe("a zero cost reaches readers that already call it unknown", () => {
     ["src/lib/quotes/configure.ts",          "quote configurator"],
     ["src/app/(app)/quotes/[id]/page.tsx",   "quote detail"],
   ])("%s (%s) treats a zero cost as unknown", (file) => {
-    expect(readFileSync(file, "utf8")).toMatch(/cost <= 0 && l?\w*\.?rate > 0/);
+    /* R-388: the rule now lives in ONE place, lib/quotes/line-cost.ts — a reader either
+       inlines it or calls the shared helper. */
+    expect(readFileSync(file, "utf8")).toMatch(/cost <= 0 && l?\w*\.?rate > 0|\b(lineCostUnknown|anyCostUnknown)\(/);
+  });
+
+  it("the shared rule (lib/quotes/line-cost.ts) still reads a zero vendor cost as unknown", () => {
+    expect(readFileSync("src/lib/quotes/line-cost.ts", "utf8")).toMatch(/return line\.cost <= 0;/);
   });
 });

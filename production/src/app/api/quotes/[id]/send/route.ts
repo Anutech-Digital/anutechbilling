@@ -22,7 +22,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { renderQuotePDF } from "@/lib/pdf";
@@ -34,7 +34,7 @@ import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteAmountDue } from "@/lib/payments/amount-due";
 import { rupee } from "@/lib/utils";
-import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
@@ -72,7 +72,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   let body: SendBody = {};
   try { body = await req.json(); } catch { /* empty body is OK */ }
 
-  const supabase = createAdminClient();
+  const supabase = createAdminClientFor(authData.user.id);
 
   /* ── 3. Load quote (scoped to tenant) ─────────────────────────────
      `lead_id` was added to this select on 24 Aug 2026 and its absence is part of why
@@ -91,7 +91,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     .select(`
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
-      created_date, expires_date, notes, is_renewal, public_token, lead_id
+      created_date, expires_date, notes, is_renewal, public_token, lead_id,
+      prospect_state_code, prospect_country
     `)
     .eq("id", params.id)
     .single();
@@ -128,10 +129,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const { data: customer } = quote.customer_id
     ? await supabase
         .from("customers")
-        .select("name, contact_name, contact_email, contact_phone, gstin, state_code")
+        .select("name, contact_name, contact_email, contact_phone, gstin, state_code, country")
         .eq("id", quote.customer_id)
         .single()
     : { data: null };
+  /* R-376 (f): a quote raised on a lead has no customer yet — the lead's state is the place
+     of supply. Without it the emailed PDF said "Intra-state" for an out-of-state lead. */
+  const { data: lead } = !quote.customer_id && quote.lead_id
+    ? await supabase.from("leads").select("state_code, gstin, country").eq("id", quote.lead_id).maybeSingle()
+    : { data: null };
+  const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
 
   // ── 5. Resolve recipient ─────────────────────────────────────────
   /* The customer's PRIMARY CONTACT. customers.contact_email stopped being the truth on
@@ -249,7 +256,10 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       tax,
       total,
       // GST head derived from seller (tenant) vs buyer (customer) state. (audit #18-20)
-      interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
+      interState:    pos.interState,
+      isExport:      pos.isExport,
+      /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
+      placeOfSupply: pos.label,
       validityDays:  30,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,

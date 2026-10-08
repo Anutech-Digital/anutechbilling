@@ -20,6 +20,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,9 +31,11 @@ import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatDate } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { FeedbackAutoSendToggle } from "@/components/feedback/auto-send-toggle";
 import {
   useFeedbackList,
   useFeedbackCounts,
+  useFeedbackStatuses,
   usePlatformFeedbackList,
   useTriageFeedback,
   useDispatchFeedback,
@@ -43,6 +46,11 @@ import {
   type FeedbackWithShots,
   type FeedbackStatus,
 } from "@/lib/queries/feedback";
+import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
+import { PlatformAiStatus, SendToAiButton, SendAllOpenButton } from "./platform-ai";
+import { RecheckTypeScore } from "./recheck";
+import { UrgentToggle, UrgentStrip, urgentAtOf } from "./urgent-toggle";
+import { isUrgent, mayMarkUrgent } from "@/lib/feedback/urgent";
 
 const STATUS_TABS: { id: string; label: string }[] = [
   { id: "open", label: "Open" },
@@ -186,7 +194,31 @@ function ScreenshotThumb({ path, name }: { path: string; name: string | null }) 
   );
 }
 
-function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId: string | null; meName: string }) {
+/**
+ * R-356: the fixed report's one-line receipt — "Fixed by AI · R-354 · 279cb0d2 · what
+ * changed · when" — plus a link to the screen the bug was filed on, so the owner can look.
+ */
+function AiFixedStrip({ note, resolvedAt, pagePath }: { note: string; resolvedAt: string | null; pagePath: string | null }) {
+  const n = parseFixedNote(note);
+  const href = pagePath && pagePath.startsWith("/") && !pagePath.startsWith("//") ? pagePath : null;
+  return (
+    <div data-testid="ai-fixed-strip" className="mt-1 text-xs text-ink-2 bg-emerald-soft/40 border border-emerald/30 rounded-md px-2 py-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <span className="font-semibold text-emerald-ink">🤖 Fixed by AI</span>
+      {n.card && <><span className="text-ink-4">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
+      {n.commit && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
+      <span className="text-ink-4">·</span>
+      <span className="min-w-0 break-words">{n.text}</span>
+      {resolvedAt && <><span className="text-ink-4">·</span><span className="text-ink-3" title={formatDate(resolvedAt, "long")}>{formatDate(resolvedAt, "relative")}</span></>}
+      {href && (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="ml-auto font-medium text-primary hover:underline inline-flex items-center gap-1">
+          Open the page <Icon name="external" size={12} />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = false }: { row: FeedbackWithShots; userId: string | null; meName: string; justFixed?: boolean; canUrgent?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const directiveRef = React.useRef<HTMLPreElement>(null);
   /* Copy failed: open the details and select the directive, after the panel has rendered. */
@@ -207,7 +239,7 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
 
   const handleCopy = async () => {
     if (!row.directive) {
-      toast.error("There is no directive yet.", { description: "Run triage on this report first." });
+      toast.error("There is no directive yet.", { description: "Open Details and press Re-check type & score." });
       return;
     }
     /* R-200: the last step tells the fixing session to mark THIS report fixed in this app,
@@ -271,7 +303,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
         { description: mode === "stub" ? "No Gemini key is configured, so the deterministic engine ran." : undefined },
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Triage failed.");
+      toastError(err, {
+        fallback: "Triage failed.",
+        description: "The report is unchanged. Press Re-check type & score again in a moment.",
+      });
     }
   };
 
@@ -300,7 +335,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
         duration: 10_000,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not queue this report.");
+      toastError(err, {
+        fallback: "Could not queue this report.",
+        description: "It is still in the Open tab. Press the button again.",
+      });
     }
   };
 
@@ -309,14 +347,24 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
       await setStatus.mutateAsync({ id: row.id, status });
       toast.success(status === "fixed" ? "Marked fixed." : status === "wont_fix" ? "Marked won't fix." : "Reopened.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update the status.");
+      toastError(err, {
+        fallback: "Could not update the status.",
+        description: "The report keeps its old status. Refresh and try again.",
+      });
     }
   };
 
   const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
+  /* A note can survive a Reopen → re-queue; if it names a card, the queued strip shows it. */
+  // R-357: the worker's claim (agent_card) names the card once the claim migration is applied.
+  const claimedCard = (row as { agent_card?: string | null }).agent_card ?? null;
+  const queuedCard = row.status === "agent_queued" ? claimedCard ?? parseFixedNote(row.resolution_note).card : null;
 
   return (
-    <Card className="p-4 space-y-3">
+    <Card
+      data-testid={`feedback-card-${row.id}`}
+      className={"p-4 space-y-3 transition-shadow " + (justFixed ? "ring-2 ring-emerald border-emerald/40" : "")}
+    >
       <div className="flex items-start gap-3">
         <div
           className="flex-shrink-0 w-11 h-11 rounded-lg bg-paper-2 border border-hairline flex flex-col items-center justify-center"
@@ -353,10 +401,19 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
           <p className="mt-1.5 text-sm font-medium text-ink">
             {row.problem_summary || row.title}
           </p>
-          {/* R-200: what the AI did and when it reaches this app (set by /api/agent/feedback-fixed). */}
+          {/* R-200 / R-356: what the AI did, which card + commit, and when (all from the note
+              /api/agent/feedback-fixed stores — no extra columns). */}
           {row.status === "fixed" && row.resolution_note && (
-            <p className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
-              🤖 {row.resolution_note}
+            <AiFixedStrip note={row.resolution_note} resolvedAt={row.resolved_at} pagePath={row.page_path} />
+          )}
+          {/* R-356: a queued report says the AI worker has it, not just a chip. */}
+          {/* R-397: an urgent report says so first — "⚡ Urgent · AI worker has it · R-xxx". */}
+          {row.status === "agent_queued" && isUrgent(row) && <UrgentStrip card={queuedCard} urgentAt={urgentAtOf(row)} />}
+          {row.status === "agent_queued" && !isUrgent(row) && (
+            <p data-testid="ai-queued-strip" className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
+              🤖 AI worker has it{queuedCard ? <> · card <b className="font-mono">{queuedCard}</b></> : null}
+              {row.dispatched_at ? <> · queued {formatDate(row.dispatched_at, "relative")}</> : null}
+              {queuedCard ? null : <span className="text-ink-3"> · card id shows here once it is fixed</span>}
             </p>
           )}
 
@@ -402,6 +459,8 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
             Run AI Auto-Fix
           </Button>
         )}
+        {/* R-397: owner/manager (or platform owner) only; hidden until the urgent migration is applied. */}
+        {canUrgent && <UrgentToggle row={row} disabled={busy} />}
         {row.status === "fixed" ? (
           <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy} title="Copies a prompt: re-test this in a browser, fix it if still broken">
             <Icon name="copy" size={14} className="mr-1.5" />
@@ -422,12 +481,6 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive} title="Copies the fix instructions to paste into Claude Code yourself">
             <Icon name="copy" size={14} className="mr-1.5" />
             Copy Directive
-          </Button>
-        )}
-        {(row.status === "open" || row.status === "agent_queued") && (
-          <Button size="sm" variant="ghost" onClick={handleRunTriage} disabled={busy}>
-            <Icon name="refresh" size={14} className="mr-1.5" />
-            {untriaged ? "Triage" : "Re-triage"}
           </Button>
         )}
         <span className="flex-1" />
@@ -462,6 +515,10 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
 
       {open && (
         <div className="pt-3 border-t border-hairline space-y-4">
+          {/* R-393: re-running triage is a rare fix-up, so it lives here, not in the row. */}
+          {(row.status === "open" || row.status === "agent_queued") && (
+            <RecheckTypeScore onRun={() => void handleRunTriage()} disabled={busy} />
+          )}
           <div>
             <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">{row.filed_via === "ai-chat" ? "What the AI wrote (after the chat), filed by the reporter" : "What the reporter wrote"}</h4>
             {row.filed_via === "ai-chat" && row.ai_chat_summary && (
@@ -523,7 +580,7 @@ function FeedbackCard({ row, userId, meName }: { row: FeedbackWithShots; userId:
               </pre>
             ) : (
               <p className="text-xs text-ink-3">
-                No directive yet — press <b>Triage</b> above to generate one.
+                No directive yet — press <b>Re-check type &amp; score</b> above to make one.
               </p>
             )}
           </div>
@@ -540,6 +597,35 @@ export default function AdminFeedbackPage() {
   const filter = tab === "all" ? {} : { status: tab as FeedbackStatus };
   const { data, isLoading, error } = useFeedbackList(filter);
   const { data: counts } = useFeedbackCounts();
+  const { data: statuses } = useFeedbackStatuses();
+
+  /* R-356: the AI marks a report fixed from outside this page. When a poll (every 30 s,
+     visible tab only) or coming back to the tab sees a report turn fixed WITH an AI note,
+     say so — the card leaves Open on its own, and the toast says where it went. A note-less
+     fix is the owner's own "Mark fixed", which already has its own toast. */
+  const prevStatuses = React.useRef<Record<string, string> | null>(null);
+  const [justFixed, setJustFixed] = React.useState<Set<string>>(() => new Set());
+  React.useEffect(() => {
+    if (!statuses) return;
+    const next: Record<string, string> = {};
+    for (const [id, r] of Object.entries(statuses)) next[id] = r.status;
+    const fresh = newlyFixedIds(prevStatuses.current, next).filter((id) => Boolean(statuses[id]?.resolution_note));
+    prevStatuses.current = next;
+    if (fresh.length === 0) return;
+    const first = parseFixedNote(statuses[fresh[0]].resolution_note);
+    toast.success(fresh.length === 1 ? "Fixed by AI — moved to Fixed" : `${fresh.length} reports fixed by AI — moved to Fixed`, {
+      description: [first.card, first.commit, first.text].filter(Boolean).join(" · ").slice(0, 200),
+      action: { label: "Show", onClick: () => setTab("fixed") },
+      duration: 10_000,
+    });
+    setJustFixed(new Set(fresh));
+  }, [statuses]);
+  /* The green ring is a flash, not a state: gone after 8 s. */
+  React.useEffect(() => {
+    if (justFixed.size === 0) return;
+    const t = setTimeout(() => setJustFixed(new Set()), 8_000);
+    return () => clearTimeout(t);
+  }, [justFixed]);
 
   /* ── Every workspace, for the platform owner ───────────────────────────────
      A tester with his own tenant filed a bug on 22 Aug and nobody could read it:
@@ -565,6 +651,8 @@ export default function AdminFeedbackPage() {
           <kbd className="px-1 py-0.5 rounded bg-paper-2 border border-hairline font-mono text-2xs">B</kbd>, triaged and turned into a directive for a coding agent.
         </p>
       </div>
+
+      <FeedbackAutoSendToggle />
 
       {/* Only the platform owner sees this. Everyone else gets the page exactly as before. */}
       {me?.isPlatformAdmin && (
@@ -622,7 +710,7 @@ export default function AdminFeedbackPage() {
 
       {untriagedCount > 0 && (
         <p className="text-xs text-amber-ink bg-amber-soft border border-amber/30 rounded-md px-3 py-2">
-          {untriagedCount} report(s) in this view have no directive yet. Press <b>Triage</b> on each, or{" "}
+          {untriagedCount} report(s) in this view have no directive yet. Open <b>Details</b> and press <b>Re-check type &amp; score</b>, or{" "}
           <b>Run AI Auto-Fix</b>, which triages first.
         </p>
       )}
@@ -667,7 +755,7 @@ export default function AdminFeedbackPage() {
       {!isLoading && !error && rows.length > 0 && (
         <div className="space-y-3">
           {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} />
+            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} justFixed={justFixed.has(row.id)} canUrgent={Boolean(me?.isPlatformAdmin) || mayMarkUrgent(me?.role)} />
           ))}
         </div>
       )}
@@ -677,13 +765,13 @@ export default function AdminFeedbackPage() {
 
 
 /**
- * Other workspaces' reports — READ ONLY, and it says so.
+ * Other workspaces' reports.
  *
  * Every mutation on this page (triage, auto-fix, mark fixed) goes through the browser
  * client, so RLS would refuse a row belonging to another tenant. Rather than render
- * buttons that fail, this list offers the two things that genuinely work across a tenant
- * boundary: reading the report, and copying the directive that was already generated for
- * it. Showing an action that cannot succeed is worse than not showing it.
+ * buttons that fail, this list offers what genuinely works across a tenant boundary:
+ * reading the report, copying its directive, and (R-366) "Send to AI" — a server route
+ * that re-checks the platform allowlist and queues the row with the service role.
  */
 function PlatformFeedbackList({
   rows, isLoading, error,
@@ -717,9 +805,10 @@ function PlatformFeedbackList({
       <div className="px-4 py-2.5 border-b border-hairline bg-paper-2/50">
         <p className="text-[12px] text-ink-2">
           <b className="text-ink">{others.length} report{others.length === 1 ? "" : "s"} from other workspaces.</b>{" "}
-          Read-only here — triage and Auto-Fix act on your own workspace, so those buttons
-          would fail on these rows rather than do nothing.
+          Send to AI puts a report in the AI worker&apos;s queue; triage and Mark fixed stay with
+          that workspace.
         </p>
+        <div className="mt-1.5"><SendAllOpenButton rows={rows} /></div>
       </div>
       <ul className="divide-y divide-hairline">
         {others.map((r) => (
@@ -733,6 +822,7 @@ function PlatformFeedbackList({
                 <span className="text-2xs text-ink-3 tabular-nums">{r.severity_score}/100</span>
               )}
             </div>
+            <PlatformAiStatus row={r} />
             <p className="mt-1 text-[12px] text-ink-2 leading-snug">{r.body}</p>
             <p className="mt-1 text-2xs text-ink-3">
               {r.reporter_name ?? "someone"} &middot; {r.reporter_email ?? "no email"}
@@ -743,8 +833,8 @@ function PlatformFeedbackList({
               <div className="mt-2 flex flex-wrap gap-2">
                 {r.screenshots.map((sh) =>
                   sh.url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
                     <a key={sh.id} href={sh.url} target="_blank" rel="noopener noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331: this disable sat one line too high) */}
                       <img src={sh.url} alt={sh.fileName} className="h-20 rounded border border-hairline" />
                     </a>
                   ) : (
@@ -755,6 +845,9 @@ function PlatformFeedbackList({
                 )}
               </div>
             )}
+            <SendToAiButton row={r} />
+            {/* R-397: the platform owner may mark another workspace's report urgent. */}
+            <UrgentToggle row={r} className="mt-2 mr-2 py-0.5 text-2xs" />
             {r.directive && (
               <button
                 type="button"

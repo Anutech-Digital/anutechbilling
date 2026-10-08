@@ -30,7 +30,8 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-import { POST, AI_CHECKER_NAME } from "./route";
+import { POST } from "./route";
+import { AI_CHECKER_NAME } from "./checker-name";
 
 const ID = "93b38539-0a9b-4942-bb33-3daa6cff97df";
 const call = (body: unknown, token: string | null = "q-token") =>

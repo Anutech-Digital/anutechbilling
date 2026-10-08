@@ -31,6 +31,7 @@ import { useItems } from "@/lib/queries/items";
 import { catalogDefaultQty } from "@/lib/quotes/line-items";
 import { headlinePrice, isOwnService } from "@/lib/catalog/headline-price";
 import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
@@ -74,7 +75,12 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
   const entryCur = usdEntry ? (currency ?? "USD") : "₹";
   const { data: allItems, isLoading } = useItems();
   // Subscription quote line picker — exclude one-time (Items Catalog) products.
-  const items = React.useMemo(() => (allItems ?? []).filter((i) => i.item_type !== "one_time"), [allItems]);
+  // R-387: rows are floored to the GW list price here too, so the price SHOWN in this picker is
+  // the price the line gets (catalogYearlyPrice floors as well) and matches the quote chips.
+  const items = React.useMemo(
+    () => (allItems ?? []).filter((i) => i.item_type !== "one_time").map((i) => floorWorkspaceRow(i)),
+    [allItems],
+  );
   const [tab, setTab] = React.useState("catalog");
   const [search, setSearch] = React.useState("");
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeline, timelineMeta } from "./timeline";
+import { buildTimeline, timelineMeta, quoteHref, taskHref } from "./timeline";
 
 const at = (iso: string) => iso;
 
@@ -112,15 +112,57 @@ describe("buildTimeline — ordering is TOTAL", () => {
 
 describe("timelineMeta", () => {
   it("gives money its own icon and tone", () => {
-    expect(timelineMeta({ id: "x", kind: "payment", at: "", title: "" }).icon).toBe("rupee");
+    expect(timelineMeta({ id: "x", kind: "payment", at: "", title: "", href: null }).icon).toBe("rupee");
   });
 
   it("picks the icon from the activity variant", () => {
-    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", variant: "whatsapp" }).icon).toBe("whatsapp");
-    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", variant: "call" }).icon).toBe("mobile");
+    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", href: null, variant: "whatsapp" }).icon).toBe("whatsapp");
+    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", href: null, variant: "call" }).icon).toBe("mobile");
   });
 
   it("falls back to a clock for an unknown variant rather than rendering nothing", () => {
-    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", variant: "mystery" }).icon).toBe("clock");
+    expect(timelineMeta({ id: "x", kind: "activity", at: "", title: "", href: null, variant: "mystery" }).icon).toBe("clock");
+  });
+});
+
+/* R-341 (7 Oct 2026, Pardeep on lead L-MUWVLYIU): "ye clickable hone chahiye aur related
+   document open kare click par" — every row now names the record it is about. */
+describe("buildTimeline — every row knows where it opens (R-341)", () => {
+  const t = buildTimeline({
+    activities: [
+      { id: "a1", kind: "email", detail: "Sent pricing", created_at: "2026-10-01T10:00:00Z" },
+      { id: "a2", kind: "whatsapp", detail: "Hi", created_at: "2026-10-01T11:00:00Z" },
+    ],
+    quotes:   [{ id: "Q-FBB9-27-0009", status: "accepted", amount: 50_000, created_at: "2026-10-02T09:00:00Z" }],
+    tasks:    [{ id: "6f1c2d3e-0000-4000-8000-000000000001", title: "Call back", status: "pending", created_at: "2026-10-03T08:00:00Z" }],
+    payments: [
+      { id: "p1", amount: 50_000, paid_at: "2026-10-04T11:00:00Z", quote_id: "Q-FBB9-27-0009" },
+      { id: "p2", amount: 1_000, paid_at: "2026-10-04T12:00:00Z" },
+    ],
+  });
+  const byId = (id: string) => t.entries.find((e) => e.id === id)!;
+
+  it("a quote row opens that quote", () => {
+    expect(byId("quote:Q-FBB9-27-0009").href).toBe("/quotes/Q-FBB9-27-0009");
+  });
+
+  it("a task row opens the tasks page with that task's dialog, on the All tab", () => {
+    expect(byId("task:6f1c2d3e-0000-4000-8000-000000000001").href)
+      .toBe("/tasks?tab=all&task=6f1c2d3e-0000-4000-8000-000000000001");
+  });
+
+  it("a payment opens the quote it was recorded against — where its receipt lives", () => {
+    expect(byId("payment:p1").href).toBe("/quotes/Q-FBB9-27-0009");
+  });
+
+  it("a payment with no quote, and email/WhatsApp activity, are not links (no page of their own)", () => {
+    expect(byId("payment:p2").href).toBeNull();
+    expect(byId("activity:a1").href).toBeNull();
+    expect(byId("activity:a2").href).toBeNull();
+  });
+
+  it("escapes ids so an odd character cannot break out of the path", () => {
+    expect(quoteHref("Q/1?x")).toBe("/quotes/Q%2F1%3Fx");
+    expect(taskHref("a&b")).toBe("/tasks?tab=all&task=a%26b");
   });
 });

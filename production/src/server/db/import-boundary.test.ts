@@ -82,7 +82,11 @@ describe("database import boundary", () => {
        manager-pardeep, which does not have src/server/db yet. R-194 moves both onto the jobs
        client when R-161 lands there, and this goes back to 205. */
     // 208 since 6 Oct evening: /api/agent/feedback-fixed (R-200), same reason, same R-194.
-    const BASELINE = 208;
+    /* 217 since the 7 Oct 2026 staging train (b11e9539): manager-pardeep added 9 service-role
+       call sites (agent feedback-claimed, feedback auto-send, platform Send to AI, temp password,
+       accept Pay now, …) and has no src/server/db yet. Same R-194 plan: move them to the jobs
+       client / withTenant when R-161 lands on manager-pardeep, then lower this. */
+    const BASELINE = 217;
     const count = FILES.filter((f) => !isTest(f.path)).reduce((n, f) => n + (f.code.match(/createAdminClient\(\)/g)?.length ?? 0), 0);
     expect(count).toBeLessThanOrEqual(BASELINE);
   });

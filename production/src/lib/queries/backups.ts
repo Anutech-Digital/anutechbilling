@@ -7,6 +7,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -53,7 +54,7 @@ export function useCreateBackup() {
       return data as { id: string; table_count: number; bytes: number; created_at: string };
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -72,7 +73,7 @@ export function useRestoreBackup() {
       qc.invalidateQueries(); // every screen's data just changed
       toast.success(`Restore ho gaya — ${res.restored_tables} tables wapas is point par. (Pehle wala data "Before restore" point me safe hai.)`);
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -95,7 +96,7 @@ export function useDeleteBackup() {
       if (error) throw new Error(error.message);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("Backup deleted"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

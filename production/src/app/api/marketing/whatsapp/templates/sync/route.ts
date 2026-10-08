@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { withRoute, RouteError } from "@/lib/api/with-route";
+import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { resolveWhatsAppCreds } from "@/lib/whatsapp/client";
 import { paramCount, type ParamField } from "@/lib/marketing/whatsapp-broadcast";
 
@@ -30,7 +31,13 @@ interface MetaTemplate {
   components?: { type: string; text?: string }[];
 }
 
-export const POST = withRoute({ route: "api/marketing/whatsapp/templates/sync" }, async ({ tenantId, user }) => {
+/* R-051: the company's WhatsApp Business account — same gate as connecting company accounts
+   (the page is owner/manager in nav; the API took any signed-in member). */
+export const POST = withRoute({
+  route: "api/marketing/whatsapp/templates/sync",
+  roles: ACTION_ROLES["integration.company"],
+  roleHint: forbiddenMessage("integration.company"),
+}, async ({ tenantId, user }) => {
   const creds = await resolveWhatsAppCreds(tenantId);
   if (!creds?.businessAccountId) {
     return NextResponse.json({ ok: false, error: "WhatsApp connect nahi hai, ya Business Account ID nahi bhara — Settings mein jodo.", code: "not_configured" }, { status: 409 });

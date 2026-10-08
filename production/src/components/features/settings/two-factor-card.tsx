@@ -97,6 +97,7 @@ export function TwoFactorCard() {
             <li>Open your authenticator app and scan this code.</li>
             <li>Type the 6-digit code it shows.</li>
           </ol>
+          {/* eslint-disable-next-line @next/next/no-img-element -- QR is a runtime data: URL; next.config images.unoptimized (R-331) */}
           <img src={setup.qr} alt="QR code to add ResellerOS to your authenticator app" width={180} height={180} className="rounded-md border border-hairline bg-white p-2" />
           <p className="text-xs text-ink-3">Can&apos;t scan? Enter this key in the app: <span className="font-mono break-all select-all">{setup.secret}</span></p>
           <label htmlFor="tf-code" className="block text-sm font-medium text-ink">Code from the app</label>

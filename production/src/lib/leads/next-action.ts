@@ -15,6 +15,7 @@
 import type { Lead } from "@/lib/supabase/database.types";
 import type { ThreadSummary } from "@/lib/leads/email-thread";
 import { formatDate } from "@/lib/utils";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 
 export type NextActionTarget =
   /** changeStage(lead, stage) */
@@ -83,8 +84,8 @@ export function nextActionFor(input: NextActionInput): NextAction | null {
     };
   }
   if (latestQuoteForAction?.payment_status === "invoiced") {
-    /* A button labelled "View invoice" goes to the INVOICE. `?open=<id>` opens it
-       directly, and the quote id is only used when there is no invoice id to open,
+    /* A button labelled "View invoice" goes to the INVOICE. invoiceHref() opens its
+       own page (R-218), and the quote id is only used when there is no invoice id to open,
        which should not happen at payment_status `invoiced` but is not worth crashing
        over if it does. */
     const invoiceId = latestQuoteForAction.invoice_id;
@@ -92,7 +93,7 @@ export function nextActionFor(input: NextActionInput): NextAction | null {
       label: invoiceId ? "View invoice" : "Open quote",
       icon: "receipt",
       tone: "emerald",
-      target: { kind: "go", href: invoiceId ? `/invoices?open=${invoiceId}` : `/quotes/${latestQuoteForAction.id}` },
+      target: { kind: "go", href: invoiceId ? invoiceHref(invoiceId) : `/quotes/${latestQuoteForAction.id}` },
       hint: invoiceId ? `Invoiced · ${invoiceId}` : "Already invoiced",
     };
   }

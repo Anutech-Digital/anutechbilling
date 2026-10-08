@@ -22,6 +22,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
 import { daysBetweenDates } from "./proration";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 
 type Admin = SupabaseClient<Database>;
 
@@ -42,19 +43,6 @@ export interface SeatIncreaseSubject {
 }
 
 /**
- * Derive the customer's GST rate.
- *
- * `isExportSupply` is conservative: an unknown country counts as domestic, so a
- * missing country over-charges rather than under-charges and is never silently
- * zero-rated.
- */
-export async function resolveTaxRatePct(supabase: Admin, customerId: string | null): Promise<number> {
-  if (!customerId) return 18;
-  const { data } = await supabase.from("customers").select("country").eq("id", customerId).maybeSingle();
-  return isExportSupply(data?.country) ? 0 : 18;
-}
-
-/**
  * The length of THIS term, not an assumed year.
  *
  * Falls back to 365 when start_date is missing — guessing 730 would over-charge, and
@@ -62,6 +50,31 @@ export async function resolveTaxRatePct(supabase: Admin, customerId: string | nu
  */
 export function resolveTermDays(startDate: string | null, renewalDate: string): number {
   return startDate ? Math.max(1, daysBetweenDates(startDate, renewalDate)) : 365;
+}
+
+/**
+ * Derive the customer's GST rate. `isExportSupply` is conservative: an unknown country
+ * counts as domestic, so a missing country over-charges rather than under-charges and is
+ * never silently zero-rated.
+ *
+ * R-389 (F9): the rate AND the head it is charged under. The pro-rata quote's note said
+ * "GST 18%" for an inter-state customer, whose invoice charges IGST 18%. Place of supply
+ * comes from the same helper the quote page and PDF use (lib/quotes/quote-place-of-supply).
+ */
+export async function resolveSeatTax(
+  supabase: Admin,
+  customerId: string | null,
+  tenantId: string,
+): Promise<{ taxRatePct: number; taxLabel: string }> {
+  const [{ data: customer }, { data: tenant }] = await Promise.all([
+    customerId
+      ? supabase.from("customers").select("country, state_code, gstin").eq("id", customerId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from("tenants").select("state_code, gstin").eq("id", tenantId).maybeSingle(),
+  ]);
+  const taxRatePct = isExportSupply(customer?.country) ? 0 : 18;
+  const pos = quotePlaceOfSupply({ customer: customer ?? null, seller: tenant ?? {} });
+  return { taxRatePct, taxLabel: gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport }) };
 }
 
 /** Add `additionalSeats` to `sub`, with tax and term derived once, here. */
@@ -77,7 +90,7 @@ export async function applySeatIncrease(args: {
     return { ok: false, code: "no_renewal_date", message: "subscription has no renewal_date" };
   }
 
-  const taxRatePct = await resolveTaxRatePct(supabase, sub.customer_id);
+  const { taxRatePct, taxLabel } = await resolveSeatTax(supabase, sub.customer_id, sub.tenant_id);
   const termDays = resolveTermDays(sub.start_date, sub.renewal_date);
 
   return addSeats({
@@ -96,6 +109,7 @@ export async function applySeatIncrease(args: {
     renewalDate:    sub.renewal_date,
     graceDays,
     taxRatePct,
+    taxLabel,
     termDays,
   });
 }

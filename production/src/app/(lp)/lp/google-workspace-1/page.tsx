@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LpCategoryPage } from "@/site/lib/lp-plan-page";
+import { LpCategoryPage, type LpSearchParams } from "@/site/lib/lp-plan-page";
 
 /** /lp/google-workspace-1 — Google Ads landing page 1 for the whole Google Workspace category (R-154). */
 export const metadata: Metadata = {
@@ -8,6 +8,6 @@ export const metadata: Metadata = {
 };
 export const revalidate = 600;
 
-export default function Page() {
-  return <LpCategoryPage />;
+export default function Page({ searchParams }: { searchParams: LpSearchParams }) {
+  return <LpCategoryPage searchParams={searchParams} />;
 }

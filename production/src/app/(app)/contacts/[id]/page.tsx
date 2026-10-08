@@ -19,6 +19,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { LeadHistoryCard } from "@/components/features/contacts/lead-history-card";
 import { initials, formatDate, cn } from "@/lib/utils";
@@ -48,7 +49,8 @@ function socialUrl(kind: "linkedin" | "instagram" | "facebook" | "twitter" | "we
 export default function ContactDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { data: contact, isLoading, error } = useContact(params.id);
+  const contactQ = useContact(params.id);
+  const { data: contact, isLoading } = contactQ;
   const del = useDeleteContact();
   const confirm = useConfirm();
   const [editOpen, setEditOpen] = React.useState(false);
@@ -66,13 +68,22 @@ export default function ContactDetailPage() {
     );
   }
 
-  if (error || !contact) {
+  // A failed fetch is not "not found" — and the raw database message is not for the user.
+  if (contactQ.isError) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[900px] mx-auto">
+        <LoadError what="This contact" onRetry={() => void contactQ.refetch()} />
+      </div>
+    );
+  }
+
+  if (!contact) {
     return (
       <div className="p-8">
         <EmptyState
           icon="user"
           title="Contact not found"
-          body={error?.message ?? "This contact may have been deleted."}
+          body="This contact may have been deleted."
           action={<Button icon="arrow_left" onClick={() => router.push("/contacts" as never)}>Back to Contacts</Button>}
         />
       </div>

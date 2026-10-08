@@ -1,5 +1,7 @@
 /**
- * Statutory-compliance catalog for an Indian Private Limited company.
+ * Statutory-compliance catalog for an Indian business — written for a Private Limited
+ * company, and since R-262 narrowed by business type (Proprietor / Partnership / LLP /
+ * Pvt Ltd) and GST filing mode (monthly / QRMP): see obligationsFor().
  *
  * A curated, code-owned list of the recurring obligations a Pvt Ltd has to file
  * — ROC/MCA, Income-tax, TDS, GST, and PF/ESI — with the STANDARD due dates and
@@ -14,6 +16,46 @@
 
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
 export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual";
+
+/**
+ * R-262: who the business is, which decides what it files. Stored on
+ * tenants.business_type / tenants.gst_filing (Settings → Company). Before those columns
+ * exist, or while unset, both are null and the catalog behaves exactly as it always did:
+ * a Pvt Ltd filing GST monthly.
+ */
+export type BusinessType = "proprietor" | "partnership" | "llp" | "pvt_ltd";
+export type GstFiling = "monthly" | "qrmp";
+export interface ComplianceProfile {
+  businessType: BusinessType | null;
+  gstFiling: GstFiling | null;
+  /**
+   * R-334: the seller has an LUT on file (tenants.lut_number set) — it exports without
+   * paying IGST, so it must renew the LUT (Form GST RFD-11) before every FY. Optional:
+   * omitted / false → no LUT reminder, and every other row is unchanged.
+   */
+  exportsUnderLut?: boolean;
+}
+export const UNKNOWN_PROFILE: ComplianceProfile = { businessType: null, gstFiling: null };
+
+export const BUSINESS_TYPE_LABEL: Record<BusinessType, string> = {
+  proprietor: "Proprietor",
+  partnership: "Partnership",
+  llp: "LLP",
+  pvt_ltd: "Pvt Ltd",
+};
+export const GST_FILING_LABEL: Record<GstFiling, string> = {
+  monthly: "Monthly",
+  qrmp: "QRMP (quarterly)",
+};
+const COMPANY_ONLY: readonly BusinessType[] = ["pvt_ltd"];
+
+/** Narrow whatever the database returned to a known value, or null. */
+export function toBusinessType(v: unknown): BusinessType | null {
+  return v === "proprietor" || v === "partnership" || v === "llp" || v === "pvt_ltd" ? v : null;
+}
+export function toGstFiling(v: unknown): GstFiling | null {
+  return v === "monthly" || v === "qrmp" ? v : null;
+}
 
 export interface ComplianceInstance {
   /** ISO due date of the next actionable instance. */
@@ -39,6 +81,16 @@ export interface Obligation {
   dataHref?: { href: string; label: string };
   /** Step-by-step to actually file it (portal flow) — shown in a "How to file" guide. */
   filingSteps?: string[];
+  /**
+   * R-262: business types this applies to. Omitted = every business. A tenant whose
+   * type is not set yet is treated as a Pvt Ltd (the catalog's original audience),
+   * so nothing changes for it until the owner picks a type in Settings → Company.
+   */
+  entities?: readonly BusinessType[];
+  /** R-262: only for this GST filing mode. Omitted = both. Not set yet = "monthly". */
+  gstMode?: GstFiling;
+  /** R-334: only for a seller exporting under an LUT (profile.exportsUnderLut). */
+  lutOnly?: boolean;
   /**
    * Next actionable instance given today.
    *
@@ -176,6 +228,7 @@ export const OBLIGATIONS: Obligation[] = [
   // ROC / MCA (annual)
   {
     key: "roc_aoc4", name: "AOC-4 — file financial statements", authority: "MCA / ROC",
+    entities: COMPANY_ONLY,
     category: "roc", freq: "annual", form: "AOC-4",
     penalty: "₹100/day of delay, no cap", link: "https://www.mca.gov.in",
     applies: "Every Pvt Ltd — within 30 days of the AGM (AGM by 30 Sep → due ~29 Oct).",
@@ -193,6 +246,7 @@ export const OBLIGATIONS: Obligation[] = [
   },
   {
     key: "roc_mgt7", name: "MGT-7 / MGT-7A — annual return", authority: "MCA / ROC",
+    entities: COMPANY_ONLY,
     category: "roc", freq: "annual", form: "MGT-7A",
     penalty: "₹100/day of delay, no cap", link: "https://www.mca.gov.in",
     applies: "Every Pvt Ltd — within 60 days of the AGM (due ~28 Nov).",
@@ -208,6 +262,7 @@ export const OBLIGATIONS: Obligation[] = [
   },
   {
     key: "roc_dir3kyc", name: "DIR-3 KYC — director KYC", authority: "MCA / ROC",
+    entities: ["pvt_ltd", "llp"],
     category: "roc", freq: "annual", form: "DIR-3 KYC",
     penalty: "₹5,000 per director if late", link: "https://www.mca.gov.in",
     applies: "Every director with a DIN — by 30 Sep each year.",
@@ -223,6 +278,7 @@ export const OBLIGATIONS: Obligation[] = [
   },
   {
     key: "roc_dpt3", name: "DPT-3 — return of deposits", authority: "MCA / ROC",
+    entities: COMPANY_ONLY,
     category: "roc", freq: "annual", form: "DPT-3",
     penalty: "Company + officers penalty", link: "https://www.mca.gov.in",
     applies: "Companies with loans/advances outstanding — by 30 Jun for the prior FY.",
@@ -239,6 +295,7 @@ export const OBLIGATIONS: Obligation[] = [
   },
   {
     key: "roc_adt1", name: "ADT-1 — auditor appointment", authority: "MCA / ROC",
+    entities: COMPANY_ONLY,
     category: "roc", freq: "annual", form: "ADT-1",
     penalty: "₹100/day of delay", link: "https://www.mca.gov.in",
     applies: "Only in a year an auditor is appointed/re-appointed at AGM (within 15 days).",
@@ -253,6 +310,7 @@ export const OBLIGATIONS: Obligation[] = [
   },
   {
     key: "roc_agm", name: "Hold the AGM", authority: "Companies Act",
+    entities: COMPANY_ONLY,
     category: "roc", freq: "annual",
     penalty: "Up to ₹1,00,000 + ₹5,000/day", link: "https://www.mca.gov.in",
     applies: "Within 6 months of FY-end — by 30 Sep.",
@@ -269,6 +327,7 @@ export const OBLIGATIONS: Obligation[] = [
   // Income tax
   {
     key: "it_itr6", name: "Company ITR (ITR-6)", authority: "Income Tax",
+    entities: COMPANY_ONLY,
     category: "income_tax", freq: "annual", form: "ITR-6",
     penalty: "₹5,000 late fee + interest u/s 234A", link: "https://www.incometax.gov.in",
     applies: "Audit case: by 31 Oct. Non-audit: by 31 Jul.",
@@ -452,6 +511,170 @@ export const OBLIGATIONS: Obligation[] = [
   },
 ];
 
+// ── R-262: business type + GST filing mode ──────────────────────────────────
+/*
+ * The catalog above was written for a Pvt Ltd filing GST monthly, and it told a
+ * proprietor to file AOC-4 and MGT-7 (₹100/day penalties he can never owe) and a QRMP
+ * filer that GSTR-1 was due on the 11th every month. The entries below are what those
+ * other businesses file instead. They are NOT in OBLIGATIONS, so a tenant whose profile
+ * is not set (or whose database has no columns for it yet) sees exactly today's list.
+ */
+
+/** GST quarters: Apr–Jun, Jul–Sep, Oct–Dec, Jan–Mar. The return falls due in the month after. */
+function gstQuarterNext(dayNum: number): Obligation["next"] {
+  return fixedNext((s) => [
+    { dueDate: iso(s, 7, dayNum),     periodKey: `${s}-q1`, periodLabel: `Q1 (Apr–Jun) ${fyLabel(s)}` },
+    { dueDate: iso(s, 10, dayNum),    periodKey: `${s}-q2`, periodLabel: `Q2 (Jul–Sep) ${fyLabel(s)}` },
+    { dueDate: iso(s + 1, 1, dayNum), periodKey: `${s}-q3`, periodLabel: `Q3 (Oct–Dec) ${fyLabel(s)}` },
+    { dueDate: iso(s + 1, 4, dayNum), periodKey: `${s}-q4`, periodLabel: `Q4 (Jan–Mar) ${fyLabel(s)}` },
+  ]);
+}
+
+/** PMT-06: tax for the first two months of each quarter, by the 25th of the next month. */
+function pmt06Next(): Obligation["next"] {
+  return fixedNext((s) => {
+    const firstTwo: [number, number][] = [[s, 4], [s, 5], [s, 7], [s, 8], [s, 10], [s, 11], [s + 1, 1], [s + 1, 2]];
+    return firstTwo.map(([y, m]) => {
+      const due = new Date(y, m, 25); // month m (1-based) + 1 → JS month index m
+      return {
+        dueDate: iso(due.getFullYear(), due.getMonth() + 1, 25),
+        periodKey: `${y}-${String(m).padStart(2, "0")}`,
+        periodLabel: `${MONTHS[m - 1]} ${y}`,
+      };
+    });
+  });
+}
+
+/**
+ * R-334: LUT renewal. An LUT (Form GST RFD-11) is valid for one financial year and has to
+ * be furnished before the year starts, so the due date is 31 March and the PERIOD is the FY
+ * that begins the next day — unlike annualNext(), which labels the FY just ended.
+ */
+function lutRenewNext(): Obligation["next"] {
+  return (t, isFiled) => {
+    const cands: ComplianceInstance[] = [-1, 0, 1].map((off) => {
+      const y = t.getFullYear() + off;
+      return { dueDate: iso(y, 3, 31), periodKey: `fy${y}`, periodLabel: fyLabel(y) };
+    });
+    return pick(t, cands, isFiled);
+  };
+}
+
+/** Replaces the monthly GSTR-1 / GSTR-3B rows for a QRMP filer — same keys, quarterly periods. */
+const QRMP_REPLACEMENTS: Record<string, Partial<Obligation>> = {
+  gst_gstr1: {
+    freq: "quarterly",
+    applies: "QRMP filers — quarterly, by the 13th of the month after the quarter (IFF for B2B invoices in months 1–2 is optional, by the 13th).",
+    next: gstQuarterNext(13),
+  },
+  gst_gstr3b: {
+    freq: "quarterly",
+    applies: "QRMP filers — quarterly, by the 22nd or 24th of the month after the quarter depending on your state. Shown on the 22nd, the earlier date — confirm your state with your CA.",
+    next: gstQuarterNext(22),
+  },
+};
+
+export const EXTRA_OBLIGATIONS: Obligation[] = [
+  {
+    key: "gst_lut_rfd11", name: "Renew LUT (Form GST RFD-11)", authority: "GST",
+    category: "gst", freq: "annual", form: "GST RFD-11", lutOnly: true,
+    penalty: "Without a valid LUT, IGST is payable on every export invoice (refund claim later)",
+    link: "https://www.gst.gov.in/",
+    applies: "Exporters billing at 0% GST under an LUT — a fresh LUT for each financial year, before 31 March.",
+    filingSteps: [
+      "gst.gov.in → Services → User Services → Furnish Letter of Undertaking (LUT).",
+      "Pick the next financial year; enter the previous LUT's ARN if asked.",
+      "Fill the two independent witnesses (name, address, occupation) and the place.",
+      "Sign with DSC or EVC → submit → download the acknowledgement and note the new ARN.",
+      "Settings → Company → LUT number: save the new ARN (it prints on every export invoice), then Mark filed here.",
+    ],
+    next: lutRenewNext(),
+  },
+  {
+    key: "gst_pmt06", name: "PMT-06 — monthly GST payment (QRMP)", authority: "GST",
+    category: "gst", freq: "monthly", form: "PMT-06", gstMode: "qrmp",
+    penalty: "18% interest on tax paid late", link: "https://www.gst.gov.in/",
+    applies: "QRMP filers — tax for months 1 and 2 of each quarter, by the 25th of the next month (fixed-sum 35% or self-assessed).",
+    dataHref: { href: "/accounting/gst", label: "Open GST Report — net GST for the month" },
+    filingSteps: [
+      "In ResellerOS, open GST Report → set the month → note the net GST payable (output − input).",
+      "gst.gov.in → Services → Payments → Create Challan → reason 'Monthly payment for quarterly return'.",
+      "Choose fixed sum (35% of last quarter's cash tax) or self-assessment (this month's actual tax).",
+      "Pay by net-banking / NEFT by the 25th → save the CPIN / CIN.",
+      "Mark filed here (CIN in Reference). Nothing to pay in the month? Mark it filed with a note.",
+    ],
+    next: pmt06Next(),
+  },
+  {
+    key: "llp_form11", name: "LLP Form 11 — annual return", authority: "MCA / ROC",
+    category: "roc", freq: "annual", form: "Form 11", entities: ["llp"],
+    penalty: "₹100/day of delay", link: "https://www.mca.gov.in",
+    applies: "Every LLP — by 30 May for the year ended 31 Mar.",
+    filingSteps: [
+      "List the partners and designated partners, their contributions and any changes during the year.",
+      "MCA V3 → LLP e-Filing → Form 11.",
+      "Fill partner + contribution details; attach anything the form asks for.",
+      "Pay the fee → affix a designated partner's DSC → submit → note the SRN.",
+      "Mark filed here (SRN in Reference).",
+    ],
+    next: annualNext(5, 30),
+  },
+  {
+    key: "llp_form8", name: "LLP Form 8 — statement of account & solvency", authority: "MCA / ROC",
+    category: "roc", freq: "annual", form: "Form 8", entities: ["llp"],
+    penalty: "₹100/day of delay", link: "https://www.mca.gov.in",
+    applies: "Every LLP — by 30 Oct for the year ended 31 Mar.",
+    dataHref: { href: "/accounting/balance-sheet", label: "Open Balance Sheet (for the statement)" },
+    filingSteps: [
+      "Close the year's accounts — Statement of Assets & Liabilities + Income & Expenditure.",
+      "Get them audited if turnover > ₹40 lakh or contribution > ₹25 lakh.",
+      "MCA V3 → LLP e-Filing → Form 8 → fill Part A (solvency) and Part B (accounts).",
+      "Pay the fee → DSC of two designated partners (+ a practising professional) → submit → note the SRN.",
+      "Mark filed here.",
+    ],
+    next: annualNext(10, 30),
+  },
+  {
+    key: "it_itr_business", name: "Business ITR (ITR-3 / ITR-5)", authority: "Income Tax",
+    category: "income_tax", freq: "annual", form: "ITR-3/5",
+    entities: ["proprietor", "partnership", "llp"],
+    penalty: "₹5,000 late fee + interest u/s 234A", link: "https://www.incometax.gov.in",
+    applies: "Proprietor: ITR-3 on the owner's PAN. Partnership / LLP: ITR-5. Non-audit: by 31 Jul. If your accounts are audited: 31 Oct.",
+    dataHref: { href: "/accounting/itr", label: "Open the ITR pack (computation + CA export)" },
+    filingSteps: [
+      "Close the year's books; get the tax-audit report accepted first if you need one.",
+      "Compute business income — depreciation as per the IT Act, disallowances, partner remuneration/interest limits.",
+      "incometax.gov.in → e-File → Income Tax Return → pick the AY + ITR-3 (proprietor) or ITR-5 (firm / LLP).",
+      "Reconcile with Form 26AS + AIS; pay any self-assessment tax via challan.",
+      "Submit → e-Verify (Aadhaar OTP / DSC; DSC mandatory if audited) → note the acknowledgement number.",
+      "Mark filed here.",
+    ],
+    next: annualNext(7, 31),
+  },
+];
+
+function appliesTo(ob: Obligation, p: ComplianceProfile): boolean {
+  const type = p.businessType ?? "pvt_ltd";
+  const gst = p.gstFiling ?? "monthly";
+  if (ob.entities && !ob.entities.includes(type)) return false;
+  if (ob.gstMode && ob.gstMode !== gst) return false;
+  if (ob.lutOnly && !p.exportsUnderLut) return false;
+  return true;
+}
+
+/**
+ * The obligations this business actually files. An unknown profile gives back
+ * OBLIGATIONS unchanged — same entries, same order — which is what keeps the app
+ * working before the tenants.business_type / gst_filing migration is applied.
+ */
+export function obligationsFor(profile: ComplianceProfile = UNKNOWN_PROFILE): Obligation[] {
+  const qrmp = (profile.gstFiling ?? "monthly") === "qrmp";
+  const base = OBLIGATIONS.map((ob) =>
+    qrmp && QRMP_REPLACEMENTS[ob.key] ? { ...ob, ...QRMP_REPLACEMENTS[ob.key] } : ob,
+  );
+  return [...base, ...EXTRA_OBLIGATIONS].filter((ob) => appliesTo(ob, profile));
+}
+
 // ── Status derivation ─────────────────────────────────────────────────────
 /** `not_applicable` — nothing to file for that period (e.g. no TDS deducted that month, R-181). */
 export type ComplianceStatus = "filed" | "not_applicable" | "overdue" | "due_soon" | "upcoming";
@@ -477,11 +700,14 @@ export function buildComplianceRows(
   filed: Map<string, string>, // `${key}|${periodKey}` → filedDate
   categories?: ComplianceCategory[],
   notApplicable?: (obligationKey: string, periodKey: string) => boolean,
+  /** R-262: business type + GST mode. Omitted / unknown → the Pvt Ltd, monthly-GST list. */
+  profile?: ComplianceProfile,
 ): ComplianceRow[] {
   const t0 = day0(today).getTime();
+  const catalog = obligationsFor(profile);
   const list = categories?.length
-    ? OBLIGATIONS.filter((o) => categories.includes(o.category))
-    : OBLIGATIONS;
+    ? catalog.filter((o) => categories.includes(o.category))
+    : catalog;
   return list
     .map((ob) => {
       // Tell the picker what is already done, so it advances past a filed period

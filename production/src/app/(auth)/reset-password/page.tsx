@@ -19,6 +19,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -73,7 +74,11 @@ export default function ResetPasswordPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const blocking = checkNewPassword(password, confirm);
-    if (blocking) { toast.error(blocking.message); return; }
+    if (blocking) {
+      const { message: problem } = blocking;   // our own copy from checkNewPassword, not a raw error
+      toast.error(problem, { description: "Fix the password above and press Save again." });
+      return;
+    }
 
     setBusy(true);
     if (resetToken) {
@@ -99,9 +104,9 @@ export default function ResetPasswordPage() {
     setBusy(false);
 
     if (error) {
-      /* Surfaced as-is. Supabase says things like "New password should be different from the
+      /* Surfaced as-is via toastError (only raw plumbing is translated). Supabase says things like "New password should be different from the
          old password", which is more useful than anything paraphrased. */
-      toast.error(error.message);
+      toastError(error, { fallback: "Could not change the password.", description: "Your old password still works. Try again — if the reset link has expired, ask for a new one from the sign-in page." });
       return;
     }
     setDone(true);

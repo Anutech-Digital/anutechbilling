@@ -61,9 +61,9 @@ export function reviewEmail(i: ReviewMessageInput): { subject: string; text: str
 }
 
 export function reviewWhatsAppText(i: ReviewMessageInput): string {
-  return `Namaste ${firstName(i.contactName)}, ${i.sender} ke saath kaam karne ke liye dhanyavaad! ` +
-    `Agar aap hamare kaam se khush hain to 1 minute nikaal kar Google par review de dijiye: ${i.link} ` +
-    `— aur kuch theek na laga ho to bataiye, pehle use theek karenge.`;
+  return `Namaste ${firstName(i.contactName)}, ${i.sender} ke saath kaam karne ke liye dhanyavaad! ` + // customer-language
+    `Agar aap hamare kaam se khush hain to 1 minute nikaal kar Google par review de dijiye: ${i.link} ` + // customer-language
+    `— aur kuch theek na laga ho to bataiye, pehle use theek karenge.`; // customer-language
 }
 
 /** wa.me click-to-chat link; a 10-digit Indian mobile gets 91. Null when there is no number. */

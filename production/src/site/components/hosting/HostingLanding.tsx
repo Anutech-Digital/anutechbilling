@@ -185,7 +185,7 @@ export function HostingLanding() {
               <span style={{ fontFamily: SERIF, fontWeight: 400, fontStyle: "italic", color: C.accent }}>FREE for {TRIAL_DAYS} Days.</span>
             </h1>
             <p style={{ marginTop: 18, fontSize: 18, lineHeight: 1.55, color: C.ink2, maxWidth: "min(100%,560px)", textWrap: "pretty" } as React.CSSProperties}>
-              Enterprise-grade web hosting powered by Google Cloud. Free SSL, daily backups, free migration and 24×7 expert support — and the trial needs no credit card, so your old host stays live until you approve the move.
+              Enterprise-grade web hosting powered by Google Cloud. Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
             </p>
             <div style={{ marginTop: 26, display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button type="button" onClick={startTrialInCart} className="hlp-orange" style={{ background: C.accent, color: "#fff", padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center", border: 0, cursor: "pointer", fontFamily: "inherit" }}>Start the free {TRIAL_PLAN_NAME} trial</button>

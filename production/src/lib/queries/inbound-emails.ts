@@ -9,10 +9,10 @@
 import * as React from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
-import {
-  INBOX_NEXT_CURSOR_HEADER, flattenPages, inboxCursorQuery, readInboxNextCursor, type InboxCursor,
-} from "@/lib/queries/keyset";
+import { flattenPages, type InboxCursor } from "@/lib/queries/keyset";
+import { fetchInboxPage, type InboxPage } from "@/lib/inbound/list-load-state";
 
 /**
  * How often the inbox looks for new mail.
@@ -34,14 +34,8 @@ const INBOX_REFETCH_MS = 20_000;
 export function useInboundEmails() {
   return useQuery({
     queryKey: ["inbound-emails"],
-    queryFn: async (): Promise<InboundEmailRow[]> => {
-      const res = await fetch("/api/inbound-emails");
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Could not fetch inbound emails");
-      }
-      return res.json();
-    },
+    /* R-363: React Query's signal goes to fetch, so a superseded poll is cancelled. */
+    queryFn: ({ signal }): Promise<InboundEmailRow[]> => fetchInboxPage(null, signal).then((p) => p.rows),
     refetchInterval: INBOX_REFETCH_MS,
     /* Overridden LOCALLY, not globally. query-provider.tsx turns this off for the
        whole app and is right to — a settings screen that refetches every time you
@@ -63,10 +57,7 @@ export function useInboundEmails() {
  *  flat list reaches it too. */
 export const INBOX_PAGES_KEY = ["inbound-emails", "pages"] as const;
 
-export interface InboundEmailPage {
-  rows: InboundEmailRow[];
-  next: InboxCursor | null;
-}
+export type InboundEmailPage = InboxPage;
 
 /**
  * The Enquiries inbox, in keyset pages (S37).
@@ -85,15 +76,8 @@ export function useInboundEmailPages() {
   const q = useInfiniteQuery({
     queryKey: INBOX_PAGES_KEY,
     initialPageParam: null as InboxCursor | null,
-    queryFn: async ({ pageParam }): Promise<InboundEmailPage> => {
-      const res = await fetch(`/api/inbound-emails${inboxCursorQuery(pageParam)}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Could not fetch inbound emails");
-      }
-      const rows = (await res.json()) as InboundEmailRow[];
-      return { rows, next: readInboxNextCursor(res.headers.get(INBOX_NEXT_CURSOR_HEADER)) };
-    },
+    /* R-363: signal passed through (abort stays an abort); lib/inbound/list-load-state.ts. */
+    queryFn: ({ pageParam, signal }) => fetchInboxPage(pageParam, signal),
     getNextPageParam: (last) => last.next,
     refetchInterval: INBOX_REFETCH_MS,
     refetchOnWindowFocus: true,
@@ -179,7 +163,7 @@ export function useSetInboundState() {
     onError: (err, _input, ctx) => {
       if (ctx?.previous) qc.setQueryData(["inbound-emails"], ctx.previous);
       if (ctx?.previousPages) qc.setQueryData(INBOX_PAGES_KEY, ctx.previousPages);
-      toast.error((err as Error).message, {
+      toastError(err, {
         description: "Nothing was changed — the email is back where it was.",
       });
     },
@@ -210,7 +194,7 @@ export function useConvertInboundToLead() {
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success("Lead created from email");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 

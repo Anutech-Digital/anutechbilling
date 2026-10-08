@@ -7,6 +7,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 import type { AssessmentRow, AssessmentAttemptRow } from "@/lib/supabase/database.types";
@@ -67,7 +68,7 @@ export function useCreateAssessment() {
       return data.public_token as string;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["assessments"] }); toast.success("Test created — share the link with your team."); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -95,6 +96,6 @@ export function useDeleteAssessment() {
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["assessments"] }); toast.success("Test deleted"); },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

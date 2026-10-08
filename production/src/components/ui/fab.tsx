@@ -83,9 +83,12 @@ export type FABProps = FABButtonProps | FABLinkProps;
 // Positioning — applied to the outer wrapper so both main + mini FABs
 // share the same anchor + drag transform.
 const positionStyles = cn(
-  "fixed right-4 bottom-20 md:bottom-6 z-30",
-  // Safe area for notched / gesture devices
-  "mb-[env(safe-area-inset-bottom)]",
+  // Phones: 1rem above the bottom tab bar. --bottom-nav-h (app shell) already carries the
+  // safe area, so the margin is desktop-only — R-268 had two drifting copies of that height.
+  "fixed right-4 bottom-[calc(var(--bottom-nav-h,56px)+1rem)] md:bottom-6 z-30",
+  "md:mb-[env(safe-area-inset-bottom)]",
+  // Step aside while a BulkActionBar (data-bulk-bar) is open — same thumb zone.
+  "[body:has([data-bulk-bar])_&]:hidden",
   // Drag handling
   "touch-none select-none",
 );
@@ -117,7 +120,7 @@ export function FAB(props: FABProps) {
   const { icon, label, showOnDesktop, className, ariaLabel, quickAction } = props;
   const visibility = showOnDesktop ? "" : "md:hidden";
 
-  // Drag-offset state. (0,0) = default anchored position (right-4 bottom-20).
+  // Drag-offset state. (0,0) = default anchored position (right-4, above the bottom nav).
   // Negative x → moves left of right-anchor. Negative y → moves up.
   const [offset, setOffset] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = React.useState(false);

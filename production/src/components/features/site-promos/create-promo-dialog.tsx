@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,16 +68,16 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
   const onSubmit = async () => {
     if (headline.trim().length < 4) {
-      toast.error("Headline ≥ 4 characters");
+      toast.error("Headline is too short", { description: "Use at least 4 characters." });
       return;
     }
     const dv = Number(discountValue);
     if (!Number.isFinite(dv) || dv <= 0) {
-      toast.error("Discount value must be greater than 0");
+      toast.error("Enter a discount", { description: "The discount must be more than 0." });
       return;
     }
     if (discountType === "percent" && dv > 100) {
-      toast.error("Percent discount cannot exceed 100");
+      toast.error("Discount is over 100%", { description: "Enter a percent between 1 and 100." });
       return;
     }
 
@@ -97,7 +98,10 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
       reset();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create");
+      toastError(err, {
+        fallback: "Promo not created.",
+        description: "Nothing went live. Check the fields and press Create again.",
+      });
     }
   };
 
@@ -149,8 +153,8 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
         {/* Quick-pick preset headlines */}
         <div className="mb-3">
-          <Label>Quick start</Label>
-          <div className="grid grid-cols-2 gap-1.5 mt-1">
+          <p id="create-promo-quick-start" className="text-xs font-medium leading-none text-ink-2">Quick start</p>
+          <div role="group" aria-labelledby="create-promo-quick-start" className="grid grid-cols-2 gap-1.5 mt-1">
             {PRESET_HEADLINES.map((p) => (
               <button
                 key={p.h}
@@ -180,10 +184,12 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
 
         <div className="grid grid-cols-3 gap-3 mb-4">
           <div>
-            <Label>Type</Label>
-            <div className="grid grid-cols-2 gap-1 mt-1">
+            <p id="create-promo-type" className="text-xs font-medium leading-none text-ink-2">Type</p>
+            <div role="group" aria-labelledby="create-promo-type" className="grid grid-cols-2 gap-1 mt-1">
               <button
                 type="button"
+                aria-label="Percent"
+                aria-pressed={discountType === "percent"}
                 onClick={() => setDiscountType("percent")}
                 className={cn(
                   "border rounded py-2 text-xs font-medium",
@@ -192,6 +198,8 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
               >%</button>
               <button
                 type="button"
+                aria-label="Flat rupees"
+                aria-pressed={discountType === "flat"}
                 onClick={() => setDiscountType("flat")}
                 className={cn(
                   "border rounded py-2 text-xs font-medium",
@@ -216,12 +224,14 @@ export default function CreatePromoDialog({ open, onOpenChange }: Props) {
         </div>
 
         <div className="mb-4">
-          <Label>Banner colour</Label>
-          <div className="grid grid-cols-5 gap-1.5 mt-1.5">
+          <p id="create-promo-banner-colour" className="text-xs font-medium leading-none text-ink-2">Banner colour</p>
+          <div role="group" aria-labelledby="create-promo-banner-colour" className="grid grid-cols-5 gap-1.5 mt-1.5">
             {BANNER_STYLES.map((s) => (
               <button
                 key={s.id}
                 type="button"
+                aria-label={s.label}
+                aria-pressed={bannerStyle === s.id}
                 onClick={() => setBannerStyle(s.id)}
                 className={cn(
                   "h-9 rounded-md transition-all",

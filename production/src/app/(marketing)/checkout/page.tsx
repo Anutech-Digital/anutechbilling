@@ -14,7 +14,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { rupee, cycleLabel } from "@/site/lib/money";
-import { missingCheckoutDetails, missingDetailsMessage } from "@/site/lib/checkout-details";
+import { missingCheckoutDetails, missingDetailsMessage, gstinProblem, normalizeGstinInput } from "@/site/lib/checkout-details";
+import { stateCodeFromGstin, gstinContradictsState } from "@/lib/gst/gstin-state";
 import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
@@ -32,7 +33,9 @@ import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } f
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { COMPANY } from "@/site/lib/config";
+import { AfterYouPay } from "@/site/components/checkout/AfterYouPay";
 import { TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
+import { Field, TermsCheckbox, TERMS_NUDGE_ID } from "./fields";
 
 /* 30 Sep 2026: the choice was never sent anywhere, so every option opened the same Razorpay
    window, and "Bank transfer — NEFT/RTGS, activated on credit" was not a path this checkout
@@ -170,6 +173,14 @@ export default function CheckoutPage() {
       if (typeof s.addrPin === "string") setAddrPin(s.addrPin);
     } catch { /* private window / blocked storage — just start empty */ }
   }, []);
+  /* R-227: a checksum-valid GSTIN already says the state (its first two digits) — fill an
+     empty state from it. A state the buyer chose is never overwritten; a clash is shown. */
+  useEffect(() => {
+    const fromGstin = stateCodeFromGstin(gstin);
+    if (fromGstin) setStateCode((cur) => cur || fromGstin);
+  }, [gstin]);
+  const gstinError = gstinProblem(gstin);
+  const gstinStateClash = gstinContradictsState({ stateCode, gstin });
   // Hosting + a domain being bought in the same cart: the hosting goes on that domain,
   // so pre-fill it rather than making the customer type what is already in the cart.
   const cartDomain = cart.lines.find((l) => l.domain)?.domain ?? "";
@@ -206,7 +217,7 @@ export default function CheckoutPage() {
      says what is still needed (lib/checkout-details). */
   const missing = missingCheckoutDetails({
     name, email, phone, domain, plans, hasHosting: hasHosting || hasTrial, hasDomain,
-    needsState: !isTrialCart, stateCode,
+    needsState: !isTrialCart, stateCode, gstin,
     address: { line1: addrLine1, city: addrCity, state: GST_STATE_BY_CODE[stateCode] ?? "", pin: addrPin },
   });
   const missingMsg = missingDetailsMessage(missing);
@@ -464,9 +475,9 @@ export default function CheckoutPage() {
             <div style={{ maxWidth: 460 }}>
               {/* Required first, optional last (owner, 30 Sep 2026): a buyer fills top to
                   bottom and can stop at the "Optional" line. */}
-              <Field label="YOUR NAME" value={name} onChange={setName} />
-              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" />
-              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" />
+              <Field label="YOUR NAME" value={name} onChange={setName} autoComplete="name" />
+              <Field id="checkout-email" label="EMAIL — THE GST INVOICE GOES HERE" value={email} onChange={setEmail} type="email" autoComplete="email" inputMode="email" />
+              <Field label="MOBILE" value={phone} onChange={setPhone} type="tel" autoComplete="tel" inputMode="tel" />
               {(hasHosting || hasTrial) && (
                 <>
                   {hostingLines.length > 1 ? (
@@ -502,10 +513,11 @@ export default function CheckoutPage() {
               {!isTrialCart && (
                 /* Required on every paid order (R-091): without it the GST invoice cannot be
                    issued, because GST picks CGST+SGST or IGST by the buyer's state. */
-                <label style={{ display: "block", marginBottom: 14 }}>
-                  <span className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>STATE — DECIDES THE GST ON YOUR INVOICE</span>
+                <div style={{ marginBottom: 14 }}>
+                  <label htmlFor="checkout-state" className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>STATE — DECIDES THE GST ON YOUR INVOICE</label>
                   <select
                     id="checkout-state"
+                    autoComplete="address-level1"
                     value={stateCode}
                     onChange={(e) => setStateCode(e.target.value)}
                     style={{ width: "100%", minHeight: 44, border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: "inherit", background: "#fff" }}
@@ -513,24 +525,44 @@ export default function CheckoutPage() {
                     <option value="">Choose your state</option>
                     {STATE_OPTIONS.map(([code, nameOf]) => <option key={code} value={code}>{nameOf}</option>)}
                   </select>
-                </label>
+                  {gstinStateClash && (
+                    <p role="status" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "9px 12px", fontSize: 14, margin: "8px 0 0" }}>
+                      Your GSTIN is registered in {GST_STATE_BY_CODE[stateCodeFromGstin(gstin) ?? ""]}, but the state chosen is {GST_STATE_BY_CODE[stateCode] ?? stateCode}.
+                      The invoice uses the state chosen here — change it if that&apos;s not right.
+                    </p>
+                  )}
+                </div>
               )}
               {hasDomain && (
                 <>
                   <p className="meta" style={{ margin: "6px 0 2px" }}>
                     The domain is registered in your name, so the registry needs the owner&apos;s postal address.
                   </p>
-                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} />
-                  <Field label="CITY" value={addrCity} onChange={setAddrCity} />
-                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono />
+                  <Field label="ADDRESS" value={addrLine1} onChange={setAddrLine1} autoComplete="street-address" />
+                  <Field label="CITY" value={addrCity} onChange={setAddrCity} autoComplete="address-level2" />
+                  <Field label="PIN CODE" value={addrPin} onChange={setAddrPin} mono autoComplete="postal-code" inputMode="numeric" />
                 </>
               )}
 
               <div className="mono-label" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border-hairline)", paddingTop: 16, margin: "8px 0 14px" }}>
                 OPTIONAL
               </div>
-              <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} />
-              <Field label="GSTIN — FOR INPUT CREDIT" value={gstin} onChange={setGstin} mono />
+              <Field label="COMPANY / BUSINESS NAME — YOUR NAME IS USED IF BLANK" value={company} onChange={setCompany} autoComplete="organization" />
+              <Field
+                label="GSTIN — FOR INPUT CREDIT"
+                value={gstin}
+                onChange={(v) => setGstin(normalizeGstinInput(v))}
+                mono
+                maxLength={15}
+                autoCapitalize="characters"
+                invalid={!!gstinError}
+                describedBy={gstinError ? "checkout-gstin-error" : undefined}
+              />
+              {gstinError && (
+                <p id="checkout-gstin-error" role="alert" style={{ color: "#B91C1C", fontSize: 14, margin: "-8px 0 14px" }}>
+                  {gstinError}
+                </p>
+              )}
 
               {trialMixed && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
@@ -608,16 +640,13 @@ export default function CheckoutPage() {
                 );
               })}
 
-              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "16px 0", cursor: "pointer" }}>
-                <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--primary)" }} />
-                <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>
+              <TermsCheckbox checked={agreed} onChange={setAgreed} invalid={agreeNudge && !agreed}>
                   I have read the{" "}
                   <a href="/terms-and-conditions" target="_blank" rel="noopener" style={{ color: "var(--primary)", fontWeight: 600 }}>terms and conditions</a>{" "}
                   and the{" "}
                   <a href="/refund" target="_blank" rel="noopener" style={{ color: "var(--primary)", fontWeight: 600 }}>refund policy</a>, including that domain
                   registrations are non-refundable once submitted to the registry.
-                </span>
-              </label>
+              </TermsCheckbox>
 
               {priceCheck && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
@@ -634,7 +663,7 @@ export default function CheckoutPage() {
                 </div>
               )}
               {agreeNudge && !agreed && (
-                <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
+                <div id={TERMS_NUDGE_ID} role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
                   Please tick the box above to accept the terms and the refund policy, then press Pay.
                 </div>
               )}
@@ -699,6 +728,7 @@ export default function CheckoutPage() {
             <div className="meta" style={{ marginTop: 10 }}>
               GST invoice with GSTIN issued on every order — it reaches your inbox with the receipt.
             </div>
+            <AfterYouPay style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-hairline)" }} />
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-hairline)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12.5, color: "var(--text-muted)" }}>
               <span aria-hidden>🔒</span>
               <span>Payments secured &amp; powered by</span>
@@ -709,21 +739,6 @@ export default function CheckoutPage() {
         </aside>
       </div>
     </section>
-  );
-}
-
-function Field({ id, label, value, onChange, type = "text", mono }: { id?: string; label: string; value: string; onChange: (v: string) => void; type?: string; mono?: boolean }) {
-  return (
-    <label style={{ display: "block", marginBottom: 14 }}>
-      <span className="mono-label" style={{ color: "var(--text-muted)", display: "block", marginBottom: 6 }}>{label}</span>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ width: "100%", border: "1px solid var(--border-strong)", borderRadius: 6, padding: "11px 12px", fontSize: 15, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
-      />
-    </label>
   );
 }
 

@@ -229,18 +229,18 @@ export interface Insight { kind: "good" | "warn" | "act"; text: string; href?: s
 /** Plain-language observations the page shows above the numbers. Ordered by urgency. */
 export function insights(cmp: PeriodComparison, stats: ReviewStats, opts: { hasWebsite: boolean; hasPhone: boolean; reviewLinkSaved: boolean }): Insight[] {
   const out: Insight[] = [];
-  if (stats.overdue > 0) out.push({ kind: "act", text: `${stats.overdue} review${stats.overdue > 1 ? "s" : ""} ${REPLY_SLA_DAYS}+ din se bina jawab — Google aur customers dono dekhte hain ki owner jawab deta hai ya nahi.` });
+  if (stats.overdue > 0) out.push({ kind: "act", text: `${stats.overdue} review${stats.overdue > 1 ? "s" : ""} unanswered for ${REPLY_SLA_DAYS}+ days — Google and customers both notice whether the owner replies.` });
   if (stats.count && stats.distribution[1] + stats.distribution[2] > 0 && stats.average !== null && stats.average < 4) {
-    out.push({ kind: "warn", text: `Average ${stats.average}★ — 4★ se neeche listing ko "near me" results mein peeche dhakelta hai. Khush customers se review maango.`, href: "/marketing/reviews" });
+    out.push({ kind: "warn", text: `Average ${stats.average}★ — below 4★ pushes the listing down in "near me" results. Ask happy customers for reviews.`, href: "/marketing/reviews" });
   }
-  if (!opts.hasPhone) out.push({ kind: "act", text: "Listing par phone number nahi hai — \"Call\" button ke bina mobile searchers seedha next result par jaate hain." });
-  if (!opts.hasWebsite) out.push({ kind: "act", text: "Listing par website link nahi hai — Tracking links se ek UTM link banao aur Google profile mein daalo.", href: "/marketing/links" });
-  if (!opts.reviewLinkSaved) out.push({ kind: "act", text: "Google review link Reviews page par save nahi hai — sync ne link nikal liya hai, ek click mein save karo.", href: "/marketing/reviews" });
-  if (cmp.change.impressions !== null && cmp.change.impressions <= -20) out.push({ kind: "warn", text: `Listing ka dikhna ${Math.abs(cmp.change.impressions)}% gira pichhle ${daysBetween(cmp.from, cmp.to)} din mein — photos / posts / category check karo.` });
-  if (cmp.change.actions !== null && cmp.change.actions >= 20) out.push({ kind: "good", text: `Calls + website + directions ${cmp.change.actions}% badhe — listing kaam kar rahi hai.` });
-  if (cmp.current.impressions > 0 && cmp.current.actionRate < 2) out.push({ kind: "warn", text: `${cmp.current.impressions.toLocaleString("en-IN")} baar dikhi, par sirf ${cmp.current.actionRate}% ne kuch kiya — description, photos aur offers dekho.` });
-  if (stats.last30 === 0 && stats.count > 0) out.push({ kind: "warn", text: "Pichhle 30 din mein ek bhi naya review nahi — recent reviews ranking mein zyada ginte hain.", href: "/marketing/reviews" });
-  if (out.length === 0) out.push({ kind: "good", text: "Sab theek — reviews ka jawab diya hua hai aur listing ka dikhna stable hai." });
+  if (!opts.hasPhone) out.push({ kind: "act", text: "No phone number on the listing — without a \"Call\" button, mobile searchers move on to the next result." });
+  if (!opts.hasWebsite) out.push({ kind: "act", text: "No website link on the listing — build a UTM link in Tracking links and add it to the Google profile.", href: "/marketing/links" });
+  if (!opts.reviewLinkSaved) out.push({ kind: "act", text: "Google review link is not saved on the Reviews page — sync found it; save it in one click.", href: "/marketing/reviews" });
+  if (cmp.change.impressions !== null && cmp.change.impressions <= -20) out.push({ kind: "warn", text: `Listing views fell ${Math.abs(cmp.change.impressions)}% in the last ${daysBetween(cmp.from, cmp.to)} days — check photos / posts / category.` });
+  if (cmp.change.actions !== null && cmp.change.actions >= 20) out.push({ kind: "good", text: `Calls + website + directions up ${cmp.change.actions}% — the listing is working.` });
+  if (cmp.current.impressions > 0 && cmp.current.actionRate < 2) out.push({ kind: "warn", text: `${cmp.current.impressions.toLocaleString("en-IN")} views, but only ${cmp.current.actionRate}% took an action — review the description, photos and offers.` });
+  if (stats.last30 === 0 && stats.count > 0) out.push({ kind: "warn", text: "No new review in the last 30 days — recent reviews count more for ranking.", href: "/marketing/reviews" });
+  if (out.length === 0) out.push({ kind: "good", text: "All good — reviews are answered and listing views are stable." });
   return out;
 }
 

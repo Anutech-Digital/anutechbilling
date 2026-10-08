@@ -19,7 +19,8 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
-import { pdfRupee } from "./pdf-money";
+import { pdfRupee, pdfSafeMoney } from "./pdf-money";
+import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { invoicePaidInFull, lineDomainNote } from "./invoice-display";
 import { isRenderableLogo } from "./logo";
@@ -27,6 +28,8 @@ import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { exportEndorsement } from "@/lib/gst/export-lut";
+import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
 import type {
   Invoice,
@@ -66,6 +69,9 @@ export interface InvoicePDFProps {
   customerCountry?: string | null;   // foreign → export (zero-rated under LUT)
   currency?:        string | null;   // billing currency (books stay ₹)
   exchangeRate?:    number | null;   // INR per unit of currency
+  /** R-045: where exchangeRate came from (fbil | er-api | frankfurter | manual) and its date. */
+  fxSource?:        string | null;
+  fxDate?:          string | null;
   termsConditions?: string | null;   // document-level T&C (migration 0162)
 
   // Tenant (supplier)
@@ -75,6 +81,14 @@ export interface InvoicePDFProps {
   tenantPhone?:  string | null;
   tenantAddress?: string | null;
   tenantState?:   string | null;
+  /**
+   * R-334. tenants.lut_number — the ARN of the seller's Letter of Undertaking. Printed
+   * with the Rule 46 export endorsement on a zero-rated export invoice; absent → the
+   * endorsement prints without an ARN line rather than inventing one.
+   */
+  lutNumber?:     string | null;
+  /** R-368. tenants.udyam_number — "MSME Udyam: UDYAM-…" under the supplier GSTIN when set. */
+  udyamNumber?:   string | null;
   /**
    * The company logo as a resolved `data:image/...` URI, from `logoDataUri()`.
    *
@@ -398,6 +412,15 @@ const s = StyleSheet.create({
   upiTitle: { fontSize: 10, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginBottom: 2 },
   upiSub:   { fontSize: 8, color: COLORS.ink3, lineHeight: 1.4 },
   upiVpa:   { fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginTop: 2, marginBottom: 2 },
+  /* R-334: Rule 46 export endorsement, under the totals. */
+  exportBlock: {
+    marginTop:       10,
+    padding:         8,
+    borderWidth:     1,
+    borderColor:     COLORS.hairline,
+  },
+  exportText: { fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.ink },
+  exportArn:  { fontSize: 9, color: COLORS.ink2, marginTop: 3 },
   reverseCharge: {
     fontSize:      9,
     color:         COLORS.ink2,
@@ -413,8 +436,9 @@ export function InvoicePDF(props: InvoicePDFProps) {
     invoice, lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState = false,
     customerGstin, customerEmail, customerAddress, customerState, customerCountry, placeOfSupply,
-    currency, exchangeRate, termsConditions,
+    currency, exchangeRate, fxSource = null, fxDate = null, termsConditions,
     tenantName, tenantGstin, tenantEmail, tenantPhone, tenantAddress, tenantState, tenantLogo,
+    lutNumber = null, udyamNumber = null,
     upiQrDataUrl, upiVpa, payMethods = null,
   } = props;
 
@@ -439,6 +463,9 @@ export function InvoicePDF(props: InvoicePDFProps) {
 
   // Export supply (recipient outside India) → zero-rated under LUT, no GST.
   const isExport = isExportSupply(customerCountry);
+  /* R-334: CGST Rule 46 — a zero-rated export (no IGST) carries the LUT endorsement + ARN.
+     Words only: the tax figures above are untouched. */
+  const endorsement = exportEndorsement({ isExport, tax, lutNumber });
   const isForeign = isForeignCurrency(currency);
   const rate = exchangeRate ?? 1;
   // Foreign-currency (export) invoices are shown in the CLIENT's currency (USD…)
@@ -479,6 +506,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
             <Text style={s.partyLabel}>From (Supplier)</Text>
             <Text style={s.partyName}>{pdfText(tenantName)}</Text>
             {tenantGstin   && <Text style={s.partyGstin}>GSTIN: {tenantGstin}</Text>}
+            {udyamPdfLine(udyamNumber) && <Text style={s.partyMeta}>{udyamPdfLine(udyamNumber)}</Text>}
             {tenantAddress && <Text style={s.partyMeta}>{pdfText(tenantAddress)}</Text>}
             {tenantState   && <Text style={s.partyMeta}>State: {tenantState}</Text>}
             {tenantEmail   && <Text style={[s.partyMeta, { fontFamily: "Courier" }]}>{tenantEmail}</Text>}
@@ -614,14 +642,42 @@ export function InvoicePDF(props: InvoicePDFProps) {
               <Text style={s.grandValue}>{money(total)}</Text>
             </View>
             {isForeign && (
-              /* Books stay ₹ — print the INR equivalent for GST / GSTR-1 filing. */
-              <View style={s.totalRow}>
-                <Text style={s.totalLabel}>INR equivalent (for GST) @ Rs {exchangeRate}/{currency}</Text>
-                <Text style={s.totalValue}>{pdfRupee(total)}</Text>
-              </View>
+              /* Books stay ₹ — print the INR equivalent for GST / GSTR-1 filing.
+                 R-045: say WHICH rate (FBIL/RBI reference, indicative, or the supplier's own)
+                 and its date, and give the taxable value and GST in ₹ — GST is always in ₹. */
+              <>
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>
+                    {pdfSafeMoney(fxEquivalentLine({ currency: currency ?? "", rate, source: fxSource, date: fxDate }))}
+                  </Text>
+                </View>
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>Taxable value (INR)</Text>
+                  <Text style={s.totalValue}>{pdfRupee(taxable)}</Text>
+                </View>
+                {tax > 0 && (
+                  <View style={s.totalRow}>
+                    <Text style={s.totalLabel}>GST (INR)</Text>
+                    <Text style={s.totalValue}>{pdfRupee(tax)}</Text>
+                  </View>
+                )}
+                <View style={s.totalRow}>
+                  <Text style={s.totalLabel}>Invoice total (INR, for GST)</Text>
+                  <Text style={s.totalValue}>{pdfRupee(total)}</Text>
+                </View>
+              </>
             )}
           </View>
         </View>
+
+        {endorsement && (
+          <View style={s.exportBlock}>
+            <Text style={s.exportText}>{endorsement.text}</Text>
+            {endorsement.lutArn && (
+              <Text style={s.exportArn}>LUT ARN: {pdfText(endorsement.lutArn)}</Text>
+            )}
+          </View>
+        )}
 
         {/* ── Advance adjustment (CGST Sec 31 + Rule 53) ──────── */}
         {advances.length > 0 && (

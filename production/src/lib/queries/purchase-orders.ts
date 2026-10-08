@@ -10,7 +10,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type {
   Database,
   PurchaseOrderRow,
@@ -51,12 +53,14 @@ export function usePurchaseOrders() {
     queryKey: ["purchase_orders"],
     queryFn: async (): Promise<PurchaseOrderRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("purchase_orders")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data ?? [];
+      /* R-264: paged past the silent 1000-row cap; id last makes the order total. */
+      return await fetchAllRows<PurchaseOrderRow>((from, to) =>
+        supabase
+          .from("purchase_orders")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
     },
   });
 }
@@ -126,7 +130,7 @@ export function useUpdatePurchaseOrder() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Purchase order updated");
     },
-    onError: (e) => toast.error((e as Error).message || "Purchase order update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Purchase order update nahi hua" }),
   });
 }
 
@@ -254,7 +258,7 @@ export function useAllocateBillToPO() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Bill allocated to PO");
     },
-    onError: (e) => toast.error((e as Error).message || "Bill allocate nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Bill allocate nahi hua" }),
   });
 }
 
@@ -275,7 +279,7 @@ export function useDeallocate() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("Bill unlinked from PO");
     },
-    onError: (e) => toast.error((e as Error).message || "Unlink nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Unlink nahi hua" }),
   });
 }
 
@@ -300,6 +304,6 @@ export function useUpdatePurchaseOrderCost() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       toast.success("PO cost updated");
     },
-    onError: (e) => toast.error((e as Error).message || "Cost update nahi hua"),
+    onError: (e) => toastError(e, { fallback: "Cost update nahi hua" }),
   });
 }

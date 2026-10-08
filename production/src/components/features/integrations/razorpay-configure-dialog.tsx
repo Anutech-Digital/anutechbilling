@@ -13,6 +13,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -96,7 +97,10 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
       qc.invalidateQueries({ queryKey: ["integrations", "razorpay"] });
       setKeySecret(""); setWebhookSecret("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Razorpay keys were not saved.",
+      description: "Copy the Key ID and Key Secret again from Razorpay Dashboard → Account & Settings → API Keys, then press Save.",
+    }),
   });
 
   const disconnect = useMutation({
@@ -110,7 +114,10 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
       qc.invalidateQueries({ queryKey: ["integrations", "razorpay"] });
       setKeyId(""); setKeySecret(""); setWebhookSecret("");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err, {
+      fallback: "Razorpay was not disconnected.",
+      description: "Your saved keys are unchanged. Try again in a moment.",
+    }),
   });
 
   async function testConnection() {
@@ -121,10 +128,16 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
       if (json.ok) {
         toast.success(`Connected ✓ — ${json.mode.toUpperCase()} mode · ${json.payments_seen} payment${json.payments_seen === 1 ? "" : "s"} in your account`);
       } else {
-        toast.error(json.error ?? "Test failed");
+        toastError(json.error, {
+          fallback: "Razorpay test failed.",
+          description: "Check that the Key ID and Secret are from the same mode (test or live), save them again, then press Test.",
+        });
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Network error");
+      toastError(e, {
+        fallback: "Could not reach the server.",
+        description: "Check your internet connection and press Test again.",
+      });
     } finally {
       setTesting(false);
     }
@@ -133,7 +146,9 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
   function copyToClipboard(text: string, label: string) {
     navigator.clipboard?.writeText(text).then(
       () => toast.success(`${label} copied`),
-      () => toast.error("Clipboard blocked"),
+      () => toast.error("Clipboard blocked", {
+        description: "Your browser did not allow copying. Select the text and press Ctrl + C instead.",
+      }),
     );
   }
 
@@ -172,8 +187,8 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div className="min-w-0">
-              <Label>Key ID *</Label>
-              <Input
+              <Label htmlFor="rzp-key-id">Key ID *</Label>
+              <Input id="rzp-key-id"
                 className="font-mono"
                 placeholder="rzp_test_ABCDEF1234 or rzp_live_..."
                 value={keyId}
@@ -190,9 +205,9 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
             </div>
 
             <div className="min-w-0">
-              <Label>{status?.configured ? "Key Secret" : "Key Secret *"}</Label>
+              <Label htmlFor="rzp-key-secret">{status?.configured ? "Key Secret" : "Key Secret *"}</Label>
               <div className="flex gap-2 min-w-0">
-                <Input
+                <Input id="rzp-key-secret"
                   type={showSecret ? "text" : "password"}
                   className="font-mono min-w-0 flex-1"
                   placeholder={status?.configured ? "leave blank to keep the saved secret" : "server-only secret"}
@@ -200,7 +215,7 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
                   onChange={(e) => setKeySecret(e.target.value)}
                   autoComplete="off"
                 />
-                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowSecret((v) => !v)}>
+                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowSecret((v) => !v)} aria-label={showSecret ? "Hide key secret" : "Show key secret"} aria-pressed={showSecret}>
                   <Icon name={showSecret ? "eye_off" : "eye"} size={14} />
                 </Button>
               </div>
@@ -237,9 +252,9 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
                 </div>
 
                 <div className="min-w-0 pt-1">
-                  <Label>Webhook Secret — optional</Label>
+                  <Label htmlFor="rzp-webhook-secret">Webhook Secret — optional</Label>
                   <div className="flex gap-2 min-w-0">
-                    <Input
+                    <Input id="rzp-webhook-secret"
                       type={showWebhook ? "text" : "password"}
                       className="font-mono min-w-0 flex-1"
                       placeholder={status?.webhook_secret_mask ? "leave blank to keep the saved secret" : "webhook signing secret"}
@@ -247,7 +262,7 @@ export default function RazorpayConfigureDialog({ open, onOpenChange }: Props) {
                       onChange={(e) => setWebhookSecret(e.target.value)}
                       autoComplete="off"
                     />
-                    <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowWebhook((v) => !v)}>
+                    <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => setShowWebhook((v) => !v)} aria-label={showWebhook ? "Hide webhook secret" : "Show webhook secret"} aria-pressed={showWebhook}>
                       <Icon name={showWebhook ? "eye_off" : "eye"} size={14} />
                     </Button>
                   </div>

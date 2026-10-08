@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { toast } from "sonner";
 import { cn, formatDate } from "@/lib/utils";
 import { LEAD_SOURCES, sourceLabel } from "@/lib/leads/lead-sources";
@@ -36,8 +37,8 @@ function siteOrigin(): string {
 }
 
 async function copy(text: string) {
-  try { await navigator.clipboard.writeText(text); toast.success("Link copy ho gaya"); }
-  catch { toast.error("Copy nahi hua — link select karke copy karo"); }
+  try { await navigator.clipboard.writeText(text); toast.success("Link copied"); }
+  catch { toast.error("Couldn't copy the link", { description: "Select the link and copy it by hand." }); }
 }
 
 export default function TrackingLinksPage() {
@@ -67,7 +68,7 @@ export default function TrackingLinksPage() {
   const isLocal = /localhost|127\.0\.0\.1/.test(origin);
 
   async function save() {
-    if (!label.trim()) { toast.error("Link ka naam likho — jaise \"FB ad — Diwali\""); return; }
+    if (!label.trim()) { toast.error("Name the link", { description: "e.g. \"FB ad — Diwali\", so you can tell its leads apart later." }); return; }
     const u = new URL(url);
     await create.mutateAsync({
       label: label.trim(), channel,
@@ -85,24 +86,24 @@ export default function TrackingLinksPage() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Tracking links</h1>
         <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-          Har ad, post ya listing ke liye alag link banao. Us link se form bharne wali lead ka source aur campaign
-          khud lag jaata hai — ROAS &amp; CAC use usi channel ke kharche ke saath milata hai.
+          Make a separate link for each ad, post or listing. A lead who fills the form through it gets the source and campaign
+          automatically — ROAS &amp; CAC then matches it with that channel's spend.
         </p>
       </header>
 
       <Card className="p-4 space-y-3">
-        <p className="text-sm font-semibold text-ink">Naya link</p>
+        <p className="text-sm font-semibold text-ink">New link</p>
         <div className="grid gap-3 md:grid-cols-2">
-          <FormField label="Naam (sirf aapke liye)" required htmlFor="tl_label">
+          <FormField label="Name (only for you)" required htmlFor="tl_label">
             <Input id="tl_label" placeholder="e.g. FB ad — Diwali Workspace offer" value={label} onChange={(e) => setLabel(e.target.value)} />
           </FormField>
-          <FormField label="Kahan lagega (channel)" htmlFor="tl_channel">
+          <FormField label="Where it goes (channel)" htmlFor="tl_channel">
             <Select value={channel} onValueChange={(v) => { setChannel(v); setMedium(""); }}>
               <SelectTrigger id="tl_channel"><SelectValue /></SelectTrigger>
               <SelectContent>{LINK_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
             </Select>
           </FormField>
-          <FormField label="Link kis page par le jaaye" htmlFor="tl_path">
+          <FormField label="Page the link opens" htmlFor="tl_path">
             <Select value={path} onValueChange={setPath}>
               <SelectTrigger id="tl_path"><SelectValue /></SelectTrigger>
               <SelectContent>{DESTINATIONS.map((d) => <SelectItem key={d.path} value={d.path}>{d.label}</SelectItem>)}</SelectContent>
@@ -111,32 +112,32 @@ export default function TrackingLinksPage() {
           <FormField label="Campaign" htmlFor="tl_campaign">
             {(campaigns.data ?? []).length > 0 && (
               <Select value={linkedCampaign?.code ?? "free"} onValueChange={(v) => setCampaign(v === "free" ? "" : v)}>
-                <SelectTrigger className="mb-1.5" aria-label="Campaign chuno"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="mb-1.5" aria-label="Choose campaign"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="free">Apna naam likho…</SelectItem>
+                  <SelectItem value="free">Type your own name…</SelectItem>
                   {(campaigns.data ?? []).filter((c) => !c.cancelled).map((c) => <SelectItem key={c.id} value={c.code}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             )}
             <Input id="tl_campaign" placeholder="e.g. Diwali 2026" value={campaign} onChange={(e) => setCampaign(e.target.value)} />
-            {linkedCampaign && <p className="mt-1 text-xs text-emerald">Is link ki leads &ldquo;{linkedCampaign.name}&rdquo; campaign mein ginengi.</p>}
-            <p className="mt-1 text-xs text-ink-3">Ek campaign ke saare ads mein same naam — tab uski saari leads ek saath ginti hain. Link mein: <code>{slugCampaign(campaign) || "general"}</code></p>
+            {linkedCampaign && <p className="mt-1 text-xs text-emerald">Leads from this link count towards the &ldquo;{linkedCampaign.name}&rdquo; campaign.</p>}
+            <p className="mt-1 text-xs text-ink-3">Use the same name in every ad of a campaign so all its leads count together. In the link: <code>{slugCampaign(campaign) || "general"}</code></p>
           </FormField>
-          <FormField label="Kaunsa ad / post (optional)" htmlFor="tl_content">
+          <FormField label="Which ad / post (optional)" htmlFor="tl_content">
             <Input id="tl_content" placeholder="e.g. video-1, carousel" value={content} onChange={(e) => setContent(e.target.value)} />
           </FormField>
           <FormField label="Medium" htmlFor="tl_medium">
             <Input id="tl_medium" placeholder={defaultMedium(channel)} value={medium} onChange={(e) => setMedium(e.target.value)} />
-            <p className="mt-1 text-xs text-ink-3">Khaali chhodo to &ldquo;{defaultMedium(channel)}&rdquo; lagega.</p>
+            <p className="mt-1 text-xs text-ink-3">Leave blank to use &ldquo;{defaultMedium(channel)}&rdquo;.</p>
           </FormField>
         </div>
 
         <div className="rounded-lg border border-hairline bg-paper-2/50 p-3">
-          <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Aapka link</p>
+          <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Your link</p>
           <p className="font-mono text-xs text-ink break-all">{url || "—"}</p>
           {isLocal && (
             <p className="mt-1.5 text-xs text-amber-ink">
-              Ye localhost ka link hai — asli ad mein live site ka link chahiye. NEXT_PUBLIC_APP_URL set hone par wahi aayega.
+              This is a localhost link — a real ad needs the live site link. It appears once NEXT_PUBLIC_APP_URL is set.
             </p>
           )}
         </div>
@@ -145,27 +146,27 @@ export default function TrackingLinksPage() {
           <Button onClick={save} disabled={!url || create.isPending}>{create.isPending ? "Saving…" : "Save link"}</Button>
         </div>
         <p className="text-xs text-ink-3">
-          Link seedha form wale page par le jaata hai. Home page ka link dene se, form tak pahunchte-pahunchte source kho jaata hai.
+          The link goes straight to a page with the form. Linking to the home page loses the source before the visitor reaches a form.
         </p>
       </Card>
 
       <Card flush>
         <div className="px-4 pt-4 pb-2">
           <p className="text-sm font-semibold text-ink">Saved links</p>
-          <p className="text-xs text-ink-3 mt-0.5">Leads = is link ke channel + campaign se aayi leads.</p>
+          <p className="text-xs text-ink-3 mt-0.5">Leads = leads that came in through this link's channel + campaign.</p>
         </div>
         {links.isLoading ? (
           <div className="p-4 space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : links.error ? (
           <p className="p-4 text-sm text-red-600">{(links.error as Error).message}</p>
         ) : (links.data ?? []).length === 0 ? (
-          <EmptyState icon="globe" title="Abhi koi link nahi" body="Upar se pehla link banao — jaise apne Facebook ad ke liye." />
+          <EmptyState icon="globe" title="No links yet" body="Create your first link above — for example, for your Facebook ad." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px]">
               <thead className="bg-paper-2 border-y border-hairline-strong">
                 <tr>
-                  {["Naam", "Channel", "Campaign", "Leads", "Won", "Bana", ""].map((h, i) => (
+                  {["Name", "Channel", "Campaign", "Leads", "Won", "Created", ""].map((h, i) => (
                     <th key={h + i} className={cn("px-3 py-2 text-2xs font-semibold text-ink-3 uppercase tracking-wider", i >= 3 && i <= 4 ? "text-right" : "text-left")}>{h}</th>
                   ))}
                 </tr>
@@ -186,12 +187,12 @@ export default function TrackingLinksPage() {
                       <Button variant="ghost" size="sm" onClick={() => copy(l.full_url)}>Copy</Button>
                       <Button variant="ghost" size="sm" onClick={async () => {
                         const ok = await confirm({
-                          title: "Link hatayein?",
-                          body: "Sirf list se hatega. Jo ad is link ko use kar raha hai wo chalta rahega, aur aayi hui leads ka source waisa hi rahega.",
-                          confirmLabel: "Haan, hatao", cancelLabel: "Nahi",
+                          title: "Remove link?",
+                          body: "Removes it from this list only. Any ad using this link keeps working, and leads that came in keep their source.",
+                          confirmLabel: COPY.yesRemove, cancelLabel: COPY.cancel,
                         });
                         if (ok) del.mutate(l.id);
-                      }}>Hatao</Button>
+                      }}>{COPY.remove}</Button>
                     </td>
                   </tr>
                 ))}

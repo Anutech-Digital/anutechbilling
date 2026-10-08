@@ -44,7 +44,7 @@ const RANGES: TabBarItem[] = [
 
 type HeadFilter = "all" | "Marketing" | "Advertising";
 const HEADS: TabBarItem[] = [
-  { id: "all",         label: "Sab" },
+  { id: "all",         label: "All" },
   { id: "Marketing",   label: "Marketing" },
   { id: "Advertising", label: "Advertising" },
 ];
@@ -84,13 +84,13 @@ export default function MarketingSpendPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Spend</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-2xl">
-            <b className="text-ink-2">Advertising</b> = media ko ad dikhane ka paisa (Google / Facebook / LinkedIn ads, akhbaar, hoarding).{" "}
-            <b className="text-ink-2">Marketing</b> = baaki brand ka kaam (SEO, branding, campaign tools, content).
+            <b className="text-ink-2">Advertising</b> = money paid to show ads (Google / Facebook / LinkedIn ads, newspaper, hoardings).{" "}
+            <b className="text-ink-2">Marketing</b> = other brand work (SEO, branding, campaign tools, content).
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" icon="plus" onClick={() => setAdding("Marketing")}>Marketing kharcha</Button>
-          <Button size="sm" icon="plus" onClick={() => setAdding("Advertising")}>Advertising kharcha</Button>
+          <Button variant="outline" size="sm" icon="plus" onClick={() => setAdding("Marketing")}>Marketing expense</Button>
+          <Button size="sm" icon="plus" onClick={() => setAdding("Advertising")}>Advertising expense</Button>
         </div>
       </header>
 
@@ -105,20 +105,20 @@ export default function MarketingSpendPage() {
         </div>
       ) : error ? (
         <Card className="py-2">
-          <EmptyState icon="alert" title="Kharcha load nahi hua" body={(error as Error).message} />
+          <EmptyState icon="alert" title="Could not load spend" body={(error as Error).message} />
         </Card>
       ) : (
         <>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Metric label="Kul kharcha" value={rupee(all.total)} sub={`${(data?.rows ?? []).length} entries · GST samet`} />
+            <Metric label="Total spend" value={rupee(all.total)} sub={`${(data?.rows ?? []).length} entries · incl. GST`} />
             <Metric label="Advertising" value={rupee(all.byHead.Advertising)} sub={share(all.byHead.Advertising, all.total)} tone="Advertising" />
-            <Metric label="Marketing" value={rupee(all.byHead.Marketing)} sub={share(all.byHead.Marketing, all.total) + (all.byHead.Other ? ` · aur ${rupee(all.byHead.Other)} doosri marketing category mein` : "")} tone="Marketing" />
+            <Metric label="Marketing" value={rupee(all.byHead.Marketing)} sub={share(all.byHead.Marketing, all.total) + (all.byHead.Other ? ` · plus ${rupee(all.byHead.Other)} in other marketing categories` : "")} tone="Marketing" />
             <Metric
-              label="Channel nahi chuna"
+              label="No channel set"
               value={rupee(all.untagged.amount)}
               sub={all.untagged.count === 0
-                ? "Sab entries par channel hai — ROAS & CAC poora ginta hai."
-                : `${all.untagged.count} ${all.untagged.count === 1 ? "entry" : "entries"} ROAS & CAC mein nahi ginti. Neeche channel chuno.`}
+                ? "Every entry has a channel — ROAS & CAC counts it all."
+                : `${all.untagged.count} ${all.untagged.count === 1 ? "entry" : "entries"} not counted in ROAS & CAC. Set a channel below.`}
               warn={all.untagged.count > 0}
             />
           </div>
@@ -127,8 +127,8 @@ export default function MarketingSpendPage() {
 
           {(data?.rows ?? []).length === 0 ? (
             <Card className="py-2">
-              <EmptyState icon="chart" title="Is samay mein koi Marketing / Advertising kharcha nahi"
-                body="Upar ke button se kharcha jodo, ya date range badlo. Expenses mein Marketing ya Advertising category wale kharche yahan aate hain." />
+              <EmptyState icon="chart" title="No Marketing / Advertising spend in this period"
+                body="Add spend with the buttons above, or change the date range. Expenses in the Marketing or Advertising category show up here." />
             </Card>
           ) : (
             <>
@@ -178,15 +178,15 @@ function AdvancesCard({ advances }: { advances: PrepaidAdvance[] }) {
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Advance baaki (platform ke paas)</p>
+          <p className="text-2xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Advance balance (held by platforms)</p>
           <p className="font-serif text-2xl leading-none text-ink">{rupee(total)}</p>
           <p className="text-xs text-ink-2 mt-2 max-w-xl leading-relaxed">
-            Pehle diya hua paisa — ye abhi kharcha nahi hai. Mahine ke end mein platform ka invoice aaye to
-            Prepaid par <b>Book invoice</b> karo; wahi raqam upar kharche mein judegi aur ye balance ghatega.
+            Money paid in advance — not spend yet. When the platform's month-end invoice arrives,
+            use <b>Book invoice</b> on Prepaid; that amount is added to spend above and this balance goes down.
           </p>
         </div>
         <Link href="/accounting/prepaid" className="text-sm font-medium text-amber-ink hover:underline whitespace-nowrap">
-          Invoice book karo →
+          Book invoice →
         </Link>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -194,7 +194,7 @@ function AdvancesCard({ advances }: { advances: PrepaidAdvance[] }) {
           <div key={v.vendor} className="rounded-lg border border-hairline bg-paper-2/40 px-3 py-2 text-sm">
             <span className="font-medium text-ink">{v.vendor}</span>
             <span className="text-ink-3"> · {channelLabel(v.channel)}</span>
-            <div className="text-xs text-ink-2 mt-0.5 tabular-nums">{rupee(v.balance)} baaki</div>
+            <div className="text-xs text-ink-2 mt-0.5 tabular-nums">{rupee(v.balance)} left</div>
           </div>
         ))}
       </div>
@@ -225,7 +225,7 @@ function MonthlyChart({ monthly, head }: { monthly: ReturnType<typeof summariseS
   const showOther = head === "all" && monthly.some((m) => m.Other > 0);
   return (
     <Card className="p-4">
-      <p className="text-sm font-semibold text-ink mb-3">Mahine ke hisaab se kharcha</p>
+      <p className="text-sm font-semibold text-ink mb-3">Spend by month</p>
       <div className="h-64 -ml-2">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={monthly}>
@@ -240,7 +240,7 @@ function MonthlyChart({ monthly, head }: { monthly: ReturnType<typeof summariseS
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {head !== "Marketing" && <Bar dataKey="Advertising" stackId="s" fill={HEAD_COLOR.Advertising} maxBarSize={48} />}
             {head !== "Advertising" && <Bar dataKey="Marketing" stackId="s" fill={HEAD_COLOR.Marketing} maxBarSize={48} />}
-            {showOther && <Bar dataKey="Other" name="Doosri marketing" stackId="s" fill={HEAD_COLOR.Other} maxBarSize={48} />}
+            {showOther && <Bar dataKey="Other" name="Other marketing" stackId="s" fill={HEAD_COLOR.Other} maxBarSize={48} />}
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -255,8 +255,8 @@ function ChannelBreakdown({ s, head }: { s: ReturnType<typeof summariseSpend>; h
   return (
     <Card flush>
       <div className="px-4 pt-4 pb-2">
-        <p className="text-sm font-semibold text-ink">Channel ke hisaab se</p>
-        <p className="text-xs text-ink-3 mt-0.5">Kis raaste par kitna gaya. Leads aur ROAS ke liye → ROAS &amp; CAC.</p>
+        <p className="text-sm font-semibold text-ink">By channel</p>
+        <p className="text-xs text-ink-3 mt-0.5">How much went through each channel. For leads and ROAS → ROAS &amp; CAC.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">
@@ -265,7 +265,7 @@ function ChannelBreakdown({ s, head }: { s: ReturnType<typeof summariseSpend>; h
               <th className={cn(th, "text-left")}>Channel</th>
               {head === "all" && <th className={cn(th, "text-right")}>Advertising</th>}
               {head === "all" && <th className={cn(th, "text-right")}>Marketing</th>}
-              <th className={cn(th, "text-right")}>Kul</th>
+              <th className={cn(th, "text-right")}>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -292,15 +292,15 @@ function VendorBreakdown({ s }: { s: ReturnType<typeof summariseSpend> }) {
   return (
     <Card flush>
       <div className="px-4 pt-4 pb-2">
-        <p className="text-sm font-semibold text-ink">Kisko diya (top {top.length})</p>
-        <p className="text-xs text-ink-3 mt-0.5">Agency, platform ya vendor — sabse bade pehle.</p>
+        <p className="text-sm font-semibold text-ink">Paid to (top {top.length})</p>
+        <p className="text-xs text-ink-3 mt-0.5">Agency, platform or vendor — largest first.</p>
       </div>
       <table className="w-full">
         <thead className="bg-paper-2 border-y border-hairline-strong">
           <tr>
             <th className={cn(th, "text-left")}>Vendor</th>
             <th className={cn(th, "text-right")}>Entries</th>
-            <th className={cn(th, "text-right")}>Kul</th>
+            <th className={cn(th, "text-right")}>Total</th>
           </tr>
         </thead>
         <tbody>
@@ -333,12 +333,12 @@ function EntriesTable({ rows, total, onlyUntagged, setOnlyUntagged, untaggedCoun
     <Card flush>
       <div className="px-4 pt-4 pb-2 flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-semibold text-ink">Saari entries</p>
-          <p className="text-xs text-ink-3 mt-0.5">Channel{campOpts.length ? " aur campaign" : ""} yahin se chuno — turant save hota hai. Baaki badlaav ke liye Edit.</p>
+          <p className="text-sm font-semibold text-ink">All entries</p>
+          <p className="text-xs text-ink-3 mt-0.5">Set the channel{campOpts.length ? " and campaign" : ""} right here — it saves instantly. Use Edit for other changes.</p>
         </div>
         {untaggedCount > 0 && (
           <Button variant={onlyUntagged ? "primary" : "outline"} size="sm" onClick={() => setOnlyUntagged(!onlyUntagged)}>
-            {onlyUntagged ? `Sab dikhao (${total})` : `Sirf bina channel (${untaggedCount})`}
+            {onlyUntagged ? `Show all (${total})` : `Only without channel (${untaggedCount})`}
           </Button>
         )}
       </div>
@@ -347,7 +347,7 @@ function EntriesTable({ rows, total, onlyUntagged, setOnlyUntagged, untaggedCoun
           <thead className="bg-paper-2 border-y border-hairline-strong">
             <tr>
               <th className={cn(th, "text-left")}>Date</th>
-              <th className={cn(th, "text-left")}>Kisko / kis liye</th>
+              <th className={cn(th, "text-left")}>Paid to / for</th>
               <th className={cn(th, "text-left")}>Head</th>
               <th className={cn(th, "text-left")}>Channel</th>
               {campOpts.length > 0 && <th className={cn(th, "text-left")}>Campaign</th>}
@@ -357,7 +357,7 @@ function EntriesTable({ rows, total, onlyUntagged, setOnlyUntagged, untaggedCoun
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-ink-3">Koi entry nahi.</td></tr>
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-ink-3">No entries.</td></tr>
             ) : rows.map((e) => {
               const h = headOf(e.category);
               return (
@@ -378,7 +378,7 @@ function EntriesTable({ rows, total, onlyUntagged, setOnlyUntagged, untaggedCoun
                         <SelectValue>{channelLabel(e.channel)}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">Pata nahi / general</SelectItem>
+                        <SelectItem value="none">Unknown / general</SelectItem>
                         {AD_CHANNELS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
@@ -390,7 +390,7 @@ function EntriesTable({ rows, total, onlyUntagged, setOnlyUntagged, untaggedCoun
                           <SelectValue>{campOpts.find((c) => c.id === e.campaign_id)?.name ?? "—"}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Kisi campaign ka nahi</SelectItem>
+                          <SelectItem value="none">No campaign</SelectItem>
                           {campOpts.filter((c) => !c.cancelled || c.id === e.campaign_id).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                         </SelectContent>
                       </Select>

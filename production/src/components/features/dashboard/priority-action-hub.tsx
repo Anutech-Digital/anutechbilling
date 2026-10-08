@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "./route-access";
 
 interface PriorityActionHubProps {
   expiringRenewalsCount: number;
@@ -21,6 +23,9 @@ export function PriorityActionHub({
   draftQuotesCount,
   pendingCollectValue,
 }: PriorityActionHubProps) {
+  /* R-253: billing sees the Dashboard but cannot open /quotes — middleware sends it home. */
+  const { data: me } = useCurrentUser();
+  const canQuotes = canOpenRoute(me?.role ?? null, "/quotes");
   return (
     <div className="space-y-4 mb-6">
       {/* Priority Action Banner */}
@@ -81,11 +86,15 @@ export function PriorityActionHub({
             <span className="text-2xs font-medium text-muted-foreground">
               Quote builder
             </span>
-            <Button asChild size="sm" variant="outline" className="h-7 text-xs border-blue-500/30 hover:bg-blue-500/10">
-              <Link href="/quotes">
-                Open quotes <Icon name="chevron_right" size={14} className="ml-1" />
-              </Link>
-            </Button>
+            {canQuotes ? (
+              <Button asChild size="sm" variant="outline" className="h-7 text-xs border-blue-500/30 hover:bg-blue-500/10">
+                <Link href="/quotes">
+                  Open quotes <Icon name="chevron_right" size={14} className="ml-1" />
+                </Link>
+              </Button>
+            ) : (
+              <span className="text-2xs text-muted-foreground">Sales or owner sends quotes</span>
+            )}
           </div>
         </Card>
 

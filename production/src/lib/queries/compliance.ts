@@ -7,6 +7,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
 import type { ComplianceLogRow } from "@/lib/supabase/database.types";
@@ -109,7 +110,7 @@ export function useMarkComplianceFiled() {
       qc.invalidateQueries({ queryKey: KEY });
       toast.success("Marked filed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }
 
@@ -129,6 +130,6 @@ export function useUnmarkComplianceFiled() {
       qc.invalidateQueries({ queryKey: KEY });
       toast.success("Marked not filed");
     },
-    onError: (err) => toast.error((err as Error).message),
+    onError: (err) => toastError(err),
   });
 }

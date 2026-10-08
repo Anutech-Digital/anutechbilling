@@ -34,6 +34,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import {
   Dialog,
   DialogContent,
@@ -120,7 +121,7 @@ export function ImportCsvDialog({ open, onOpenChange, onImportComplete }: Import
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) {
-      toast.error("File too large (>2 MB). Split into smaller files.");
+      toast.error("File too large (over 2 MB)", { description: "Split it into smaller CSV files and import them one by one." });
       return;
     }
     setFileName(file.name);
@@ -128,12 +129,12 @@ export function ImportCsvDialog({ open, onOpenChange, onImportComplete }: Import
       const text = await file.text();
       const rows = parseCsv(text);
       if (rows.length === 0) {
-        toast.error("No rows found. Make sure the file has a header + data rows.");
+        toast.error("No rows found", { description: "The file needs a header row plus at least one data row. Download the sample to see the format." });
         return;
       }
       setParsed(rows);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't read the file");
+      toastError(err, { fallback: "Couldn't read the file", description: "Save it as a CSV (comma separated) and pick it again." });
     }
   };
 
@@ -142,7 +143,7 @@ export function ImportCsvDialog({ open, onOpenChange, onImportComplete }: Import
     if (!parsed || !me) return;
     const valid = parsed.filter((r) => !r.error);
     if (valid.length === 0) {
-      toast.error("No valid rows to import. Every row needs a company name.");
+      toast.error("No valid rows to import", { description: "Every row needs a company name. Fix the file and pick it again." });
       return;
     }
 
@@ -180,7 +181,7 @@ export function ImportCsvDialog({ open, onOpenChange, onImportComplete }: Import
       onImportComplete?.();
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
+      toastError(err, { fallback: "Import failed", description: "No leads were added. Try again; if it repeats, import a smaller file." });
     } finally {
       setImporting(false);
     }

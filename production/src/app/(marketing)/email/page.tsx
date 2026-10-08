@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { HomeV2 } from "@/site/components/home/HomeV2";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
-import { SITE_URL } from "@/site/lib/config";
+import { SITE_URL, SLA } from "@/site/lib/config";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 
 /**
@@ -15,7 +15,7 @@ import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 export const metadata: Metadata = {
   title: { absolute: "Business email in India — Google Workspace, Microsoft 365 & Zoho prices · Anutech Digital" },
   description:
-    "Google Workspace, Microsoft 365 and Zoho Workplace for Indian businesses — every edition's price published in rupees, GST invoice with input credit, free migration done overnight, WhatsApp support. Google Premier Partner since 2014.",
+    `Google Workspace, Microsoft 365 and Zoho Workplace for Indian businesses — every edition's price published in rupees, GST invoice with input credit, free migration done by us (${SLA.migration}), WhatsApp support. Google Premier Partner since 2014.`,
   keywords: [
     "business email India",
     "Google Workspace price India",

@@ -23,6 +23,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import {
@@ -38,6 +39,8 @@ import {
 import { TdsDetailDialog } from "@/components/features/accounting/tds-detail-dialog";
 import { Tds26asImport } from "@/components/features/accounting/tds-26as-import";
 import { istToday } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
 
 // ────────────────────────────────────────────────────────────────
 // Status color mapping
@@ -62,6 +65,8 @@ export default function TdsReceivablePage() {
   /* R-118: in the URL so each KPI (and a link) opens its own entries. */
   const [activeTab, setActiveTab] = useUrlChoice<TdsStatus | "all" | "claimable">("tab", TDS_TABS, "all");
   const [selected, setSelected]   = React.useState<TdsReceivable | null>(null);
+  /* R-255: "Record Payment" links to Payments Received only for a role that may open it. */
+  const canOpenPayments = canOpenRoute(useCurrentUser().data?.role, "/payments");
 
   const summaryQ = useTdsSummary(fy);
   const listQ    = useTdsReceivables({
@@ -117,6 +122,9 @@ export default function TdsReceivablePage() {
         </div>
       </div>
 
+      {/* R-270: the tiles fall back to "—" when the summary fails; say why. */}
+      {summaryQ.isError && <LoadErrorBanner onRetry={() => { void summaryQ.refetch(); }} />}
+
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
         <KPI
@@ -163,14 +171,15 @@ export default function TdsReceivablePage() {
               amount is deposited with govt against your PAN.
             </p>
             <p>
-              TDS entries get auto-created from the <Link href="/payments" className="text-amber-ink underline">Record Payment</Link> dialog
+              TDS entries get auto-created from the{" "}
+              {canOpenPayments
+                ? <Link href="/payments" className="text-amber-ink underline">Record Payment</Link>
+                : <span>Record Payment</span>}{" "}
+              dialog
               when you check &quot;TDS was deducted&quot;. Each entry travels through:
               <span className="font-mono text-xs mt-1 block bg-paper px-2 py-1 rounded">
                 Pending cert → Cert received → Verified on 26AS → Claimed in ITR
               </span>
-            </p>
-            <p className="text-ink-3 text-xs italic">
-              Phase 2 (Record Payment integration) coming next — for now this page is view-only.
             </p>
           </div>
         </Card>
@@ -217,13 +226,16 @@ export default function TdsReceivablePage() {
         <div className="space-y-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
         </div>
+      ) : listQ.isError && !listQ.data ? (
+        /* R-270: was "No TDS entries yet" — wrong when the fetch simply failed. */
+        <LoadError what="TDS entries" onRetry={() => { void listQ.refetch(); }} />
       ) : rows.length === 0 ? (
         <Card className="py-2">
           <EmptyState
             icon="receipt"
             title={activeTab === "all" ? "No TDS entries yet" : `No entries in "${activeTab === "claimable" ? "Ready to claim" : TDS_STATUS_LABEL[activeTab as TdsStatus]}"`}
             body={activeTab === "all"
-              ? "TDS entries will appear here when customers deduct tax on payments. Wait for Phase 2 (Record Payment integration) — or add manually for past invoices."
+              ? "TDS entries appear here when you tick \"TDS was deducted\" while recording a payment. For past invoices, add them manually."
               : "Switch to a different tab or fiscal year."}
           />
         </Card>

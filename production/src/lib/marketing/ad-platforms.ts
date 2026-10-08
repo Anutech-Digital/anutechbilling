@@ -146,12 +146,12 @@ export function reconcileMonths(platformRows: readonly AdSpendRow[], booksByMont
     const diffPct = p > 0 ? Math.round((diff / p) * 100) : null;
     let note: string;
     if (p === 0 && b === 0) note = "—";
-    else if (b === 0) note = platform === "meta-ads" ? "Books mein kuch nahi — advance se consume karke expense banao (Prepaid page)" : "Books mein kuch nahi — Google ka invoice aate hi Add expense (channel Google Ads)";
-    else if (p === 0) note = "Platform ne is mahine kuch report nahi kiya — account connected tha?";
-    else if (Math.abs(diff - r2(p * gstRate)) <= Math.max(50, p * 0.02)) note = `Farq ≈ ${Math.round(gstRate * 100)}% GST — milta hai`;
-    else if (Math.abs(diff) <= Math.max(50, p * 0.02)) note = "Milta hai";
-    else if (diff > 0) note = "Books mein zyada — top-up / advance poora expense mein gaya hoga; consumption utna nahi";
-    else note = "Books mein kam — invoice abhi book nahi hua ya galat channel par";
+    else if (b === 0) note = platform === "meta-ads" ? "Nothing in books — consume from the advance to create the expense (Prepaid page)" : "Nothing in books — add an expense (channel Google Ads) when Google's invoice arrives";
+    else if (p === 0) note = "Platform reported nothing this month — was the account connected?";
+    else if (Math.abs(diff - r2(p * gstRate)) <= Math.max(50, p * 0.02)) note = `Difference ≈ ${Math.round(gstRate * 100)}% GST — matches`;
+    else if (Math.abs(diff) <= Math.max(50, p * 0.02)) note = "Matches";
+    else if (diff > 0) note = "Books higher — a full top-up / advance was probably expensed; actual consumption is lower";
+    else note = "Books lower — invoice not booked yet, or booked on the wrong channel";
     return { month, platform: p, books: b, diff, diffPct, note };
   });
 }

@@ -13,6 +13,7 @@ import { buildQuotePdfProps, type TenantPdfInfo } from "@/lib/pdf/build-props";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteAmountDue } from "@/lib/payments/amount-due";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
+import { readTenantUdyam } from "@/lib/compliance/udyam";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,11 +35,17 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const q = quote as Quote;
-  const [{ data: customer }, { data: tenant }] = await Promise.all([
+  const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber] = await Promise.all([
     q.customer_id
       ? admin.from("customers").select("*").eq("id", q.customer_id).maybeSingle()
       : Promise.resolve({ data: null }),
+    /* R-376 (f): a lead quote's place of supply is the lead's state. */
+    !q.customer_id && q.lead_id
+      ? admin.from("leads").select("state_code, gstin, country").eq("id", q.lead_id).eq("tenant_id", q.tenant_id).maybeSingle()
+      : Promise.resolve({ data: null }),
     admin.from("tenants").select("name, gstin, email, phone, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch").eq("id", q.tenant_id).maybeSingle(),
+    /* R-368: read on its own — never fails the PDF, null before its migration. */
+    readTenantUdyam(admin, q.tenant_id),
   ]);
 
   /* Fetched here, not inside the renderer: `logoDataUri` carries a 4s deadline and swallows
@@ -49,14 +56,15 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     logoDataUri: logo,
     quote:    q,
     customer: (customer as Customer) ?? null,
-    tenant:   (tenant as TenantPdfInfo) ?? {
+    lead,
+    tenant:   tenant ? { ...(tenant as TenantPdfInfo), udyam_number: udyamNumber } : {
       name: q.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
       /* A quote PDF prints no bank block (R-038 is the invoice footer), but the shared
          TenantPdfInfo is what forces every caller to think about these — see its
          comment. Nulls here, not an omission. */
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,
-      remit_ifsc: null, remit_branch: null,
+      remit_ifsc: null, remit_branch: null, udyam_number: udyamNumber,
     },
   });
 

@@ -15,19 +15,19 @@
 export type ToolGroup = "ads" | "listings" | "messaging" | "website" | "email" | "social";
 
 export const TOOL_GROUPS: Record<ToolGroup, { title: string; why: string }> = {
-  ads:       { title: "Paid ads",              why: "Paisa dekar leads — kharcha aur ROAS dono yahan ginte hain" },
-  listings:  { title: "Listings & marketplaces", why: "Log jahan dhoondhte hain wahan dikhna" },
-  messaging: { title: "WhatsApp & calling",    why: "Lead se baat — sabse zyada deal yahin band hoti hain" },
-  email:     { title: "Email",                 why: "Purane leads aur customers ko yaad dilana" },
-  website:   { title: "Website & tracking",    why: "Har lead ka source pakadna" },
-  social:    { title: "Social (bina ad)",      why: "Bharosa banana — free reach" },
+  ads:       { title: "Paid ads",              why: "Paid leads — spend and ROAS are both counted here" },
+  listings:  { title: "Listings & marketplaces", why: "Be seen where people search" },
+  messaging: { title: "WhatsApp & calling",    why: "Talk to leads — most deals close here" },
+  email:     { title: "Email",                 why: "Remind past leads and customers" },
+  website:   { title: "Website & tracking",    why: "Capture every lead's source" },
+  social:    { title: "Social (organic)",      why: "Build trust — free reach" },
 };
 
 export interface MarketingTool {
   key: string;
   name: string;
   group: ToolGroup;
-  /** One or two lines: why this business needs it. Hinglish, like the rest of the app. */
+  /** One or two lines: why this business needs it. Plain English (app UI copy). */
   why: string;
   /** Where the account lives, for the "open" button before an account URL is saved. */
   homeUrl: string;
@@ -43,118 +43,118 @@ export const MARKETING_TOOLS: readonly MarketingTool[] = [
   // ── Paid ads ──────────────────────────────────────────────────────────────
   {
     key: "meta-ads", name: "Meta Ads Manager (Facebook / Instagram)", group: "ads", channel: "meta-ads",
-    why: "Local businesses ko Workspace / email ke liye target karne ka sabse sasta tareeka. Lead form ya WhatsApp click ads.",
+    why: "The cheapest way to target local businesses for Workspace / email. Lead form or click-to-WhatsApp ads.",
     homeUrl: "https://adsmanager.facebook.com",
     inApp: [
-      { href: "/marketing/links", label: "Ad ke liye tracking link" },
-      { href: "/accounting/prepaid", label: "Top-up (advance) aur mahine ka invoice" },
-      { href: "/marketing/spend", label: "Kharcha" },
+      { href: "/marketing/links", label: "Tracking link for the ad" },
+      { href: "/accounting/prepaid", label: "Top-up (advance) and monthly invoice" },
+      { href: "/marketing/spend", label: "Spend" },
     ],
     setup: [
-      "Business Manager banao, payment method lagao (advance top-up hota hai)",
-      "Har ad ka link Tracking links se banao — lead ka source khud lagega",
-      "Top-up ko Banking reconcile mein \"Advance / prepaid\" chuno; mahine ka invoice Prepaid par book karo",
+      "Create a Business Manager and add a payment method (it works on advance top-ups)",
+      "Build every ad's link in Tracking links — the lead source is set automatically",
+      "In Banking reconcile, mark top-ups as \"Advance / prepaid\"; book the monthly invoice on Prepaid",
     ],
   },
   {
     key: "google-ads", name: "Google Ads", group: "ads", channel: "google-ads",
-    why: "Jo abhi \"Google Workspace price\" ya \"business email\" search kar raha hai — sabse garam lead.",
+    why: "People searching \"Google Workspace price\" or \"business email\" right now — the hottest leads.",
     homeUrl: "https://ads.google.com",
     inApp: [
-      { href: "/marketing/links", label: "Ad ke liye tracking link" },
+      { href: "/marketing/links", label: "Tracking link for the ad" },
       { href: "/marketing/reports", label: "ROAS & CAC" },
     ],
     setup: [
-      "Search campaign: \"google workspace price\", \"business email india\" jaise keywords",
-      "Final URL Tracking links se banao",
-      "Google ka monthly invoice Expenses mein Advertising → Google Ads channel ke saath",
+      "Search campaign with keywords like \"google workspace price\", \"business email india\"",
+      "Build the final URL in Tracking links",
+      "Book Google's monthly invoice in Expenses under Advertising → Google Ads channel",
     ],
   },
   {
     key: "linkedin-ads", name: "LinkedIn Ads", group: "ads", channel: "linkedin-ads",
-    why: "Custom software / ERP ke bade deals ke liye — decision makers yahan milte hain. Mehenga, isliye chhota budget se shuru.",
+    why: "For large custom software / ERP deals — decision makers are here. Expensive, so start with a small budget.",
     homeUrl: "https://www.linkedin.com/campaignmanager",
     inApp: [{ href: "/marketing/links", label: "Tracking link" }],
-    setup: ["Company page pehle banao", "Chhota test budget, sirf project (custom software) ke liye"],
+    setup: ["Create the company page first", "Small test budget, only for projects (custom software)"],
   },
   // ── Listings ─────────────────────────────────────────────────────────────
   {
     key: "google-business", name: "Google Business Profile", group: "listings", channel: "google-organic",
-    why: "\"IT company near me\" par map mein dikhna — free. Reviews yahin aate hain, aur naya customer pehle yahi dekhta hai.",
+    why: "Show up on the map for \"IT company near me\" — free. Reviews land here, and new customers look here first.",
     homeUrl: "https://business.google.com",
-    inApp: [{ href: "/marketing/reviews", label: "Customers se review maango" }, { href: "/marketing/links", label: "Website button ke liye tracking link" }],
-    setup: ["Profile verify karo (address + phone)", "\"Ask for reviews\" link Google reviews page par save karo", "Har project / setup ke baad customer se review maango", "Website link Tracking links se banao"],
+    inApp: [{ href: "/marketing/reviews", label: "Ask customers for reviews" }, { href: "/marketing/links", label: "Tracking link for the website button" }],
+    setup: ["Verify the profile (address + phone)", "Save the \"Ask for reviews\" link on the Google reviews page", "Ask for a review after every project / setup", "Build the website link in Tracking links"],
   },
   {
     key: "indiamart", name: "IndiaMART", group: "listings", channel: "indiamart",
-    why: "B2B buyers seedhe requirement bhejte hain. Paid package — isliye kitni leads aur kitni deal, dono naapna zaroori.",
+    why: "B2B buyers send requirements directly. It is a paid package, so measure both leads and deals won.",
     homeUrl: "https://seller.indiamart.com",
-    inApp: [{ href: "/marketing/indiamart", label: "CRM key — leads apne aap" }, { href: "/marketing/spend", label: "Package ka kharcha" }],
-    setup: ["Products: Google Workspace, Microsoft 365, custom software", "Lead Manager ki CRM key Marketing Hub → IndiaMART leads par save karo — enquiries apne aap lead banengi", "Haath se daali IndiaMART lead ka source \"IndiaMART\" rakho", "Package ki payment Expenses → Advertising → IndiaMART"],
+    inApp: [{ href: "/marketing/indiamart", label: "CRM key — automatic leads" }, { href: "/marketing/spend", label: "Package spend" }],
+    setup: ["Products: Google Workspace, Microsoft 365, custom software", "Save the Lead Manager CRM key in Marketing Hub → IndiaMART leads — enquiries become leads automatically", "Set the source of manually added IndiaMART leads to \"IndiaMART\"", "Book the package payment in Expenses → Advertising → IndiaMART"],
   },
   {
     key: "justdial", name: "JustDial", group: "listings", channel: "justdial",
-    why: "Local search se phone calls. Paid listing ho to uska kharcha vs leads dekhte raho.",
+    why: "Phone calls from local search. On a paid listing, track its spend against leads.",
     homeUrl: "https://www.justdial.com/Free-Listing",
-    inApp: [{ href: "/leads", label: "Lead ka source \"JustDial\" chuno" }],
-    setup: ["Free listing se shuru", "Har JustDial call ka source \"JustDial\" rakho"],
+    inApp: [{ href: "/leads", label: "Set lead source to \"JustDial\"" }],
+    setup: ["Start with the free listing", "Set the source of every JustDial call to \"JustDial\""],
   },
   // ── Messaging ────────────────────────────────────────────────────────────
   {
     key: "whatsapp-business", name: "WhatsApp Business (API)", group: "messaging", channel: "whatsapp",
-    why: "Lead se turant baat, quote bhejna, follow-up. App ka WhatsApp inbox isi se chalta hai.",
+    why: "Instant replies to leads, quotes and follow-ups. The app's WhatsApp inbox runs on it.",
     homeUrl: "https://business.facebook.com/wa/manage",
     inApp: [{ href: "/whatsapp", label: "WhatsApp inbox" }, { href: "/marketing/whatsapp", label: "Broadcast + templates" }, { href: "/marketing/whatsapp/reminders", label: "Renewal / invoice reminders" }, { href: "/automation", label: "Auto follow-up" }],
-    setup: ["Meta par WhatsApp Business number verify karo", "App mein connect karo (Settings) — Business Account ID bhi bharo", "Starter templates Meta par submit karo, approve hone par Sync from Meta", "Broadcast sirf un logon ko jo aapko jaante hain"],
+    setup: ["Verify the WhatsApp Business number on Meta", "Connect it in the app (Settings) — fill in the Business Account ID too", "Submit the starter templates on Meta, then Sync from Meta once approved", "Broadcast only to people who know you"],
   },
   // ── Email ────────────────────────────────────────────────────────────────
   {
-    key: "email-campaigns", name: "Email campaigns (app ke andar)", group: "email", channel: "email-outreach",
-    why: "Purane leads ko offer, renewals se pehle yaad dilana. App se hi jaata hai — alag tool ki zaroorat nahi.",
+    key: "email-campaigns", name: "Email campaigns (in-app)", group: "email", channel: "email-outreach",
+    why: "Offers for past leads and reminders before renewals. Sent from the app — no separate tool needed.",
     homeUrl: "/campaigns",
-    inApp: [{ href: "/campaigns", label: "Email campaigns" }, { href: "/coupons", label: "Offer ka coupon code" }],
-    setup: ["Sending domain verify karo (Resend) taaki mail spam mein na jaaye", "Har mail mein unsubscribe link khud lagta hai — hatana mat"],
+    inApp: [{ href: "/campaigns", label: "Email campaigns" }, { href: "/coupons", label: "Offer coupon code" }],
+    setup: ["Verify the sending domain (Resend) so mail does not land in spam", "Every mail gets an unsubscribe link automatically — do not remove it"],
   },
   // ── Website ──────────────────────────────────────────────────────────────
   {
     key: "search-console", name: "Google Search Console", group: "website", channel: "google-organic",
-    why: "Website Google search mein kin shabdon par aati hai — SEO ka pehla qadam, free.",
+    why: "Which search terms bring up your website on Google — the free first step of SEO.",
     homeUrl: "https://search.google.com/search-console",
     inApp: [{ href: "/lead-gen", label: "Lead sources" }],
-    setup: ["Website verify karo", "Sitemap submit karo"],
+    setup: ["Verify the website", "Submit the sitemap"],
   },
   {
     key: "ga4", name: "Google Analytics 4", group: "website",
-    why: "Website par kitne log aaye, kahan se, aur kitne ne form bhara.",
+    why: "How many people visited the website, from where, and how many filled the form.",
     homeUrl: "https://analytics.google.com",
     inApp: [],
-    setup: ["Property banao, website par tag lagao", "Enquiry form submit ko conversion banao"],
+    setup: ["Create a property and add the tag to the website", "Mark the enquiry form submit as a conversion"],
   },
   // ── Social ───────────────────────────────────────────────────────────────
   {
     key: "facebook-page", name: "Facebook / Instagram page", group: "social", channel: "meta-organic",
-    why: "Kaam ke photos, customer reviews — ad dekhne wala pehle page dekhta hai.",
+    why: "Work photos and customer reviews — people who see an ad check the page first.",
     homeUrl: "https://business.facebook.com",
-    inApp: [{ href: "/marketing/links", label: "Post ke liye tracking link" }],
-    setup: ["Hafte mein 2 post: ek project, ek tip", "Bio ka link Tracking links se banao"],
+    inApp: [{ href: "/marketing/links", label: "Tracking link for posts" }],
+    setup: ["2 posts a week: one project, one tip", "Build the bio link in Tracking links"],
   },
   {
     key: "linkedin-page", name: "LinkedIn company page", group: "social", channel: "linkedin-organic",
-    why: "Custom software ke clients yahan company ko check karte hain.",
+    why: "Custom software clients check the company here.",
     homeUrl: "https://www.linkedin.com/company/setup/new",
-    inApp: [{ href: "/marketing/links", label: "Post ke liye tracking link" }],
-    setup: ["Page banao, team ko jodo", "Har project case study post karo"],
+    inApp: [{ href: "/marketing/links", label: "Tracking link for posts" }],
+    setup: ["Create the page and add the team", "Post a case study for every project"],
   },
 ];
 
 export type ToolStatus = "not_started" | "setting_up" | "active" | "paused" | "not_needed";
 
 export const TOOL_STATUS: Record<ToolStatus, { label: string; kind: "muted" | "warning" | "success" | "info" }> = {
-  not_started: { label: "Shuru nahi",   kind: "muted" },
-  setting_up:  { label: "Setup chal raha", kind: "warning" },
-  active:      { label: "Chal raha",    kind: "success" },
-  paused:      { label: "Ruka hua",     kind: "info" },
-  not_needed:  { label: "Zaroorat nahi", kind: "muted" },
+  not_started: { label: "Not started",  kind: "muted" },
+  setting_up:  { label: "Setting up",   kind: "warning" },
+  active:      { label: "Active",       kind: "success" },
+  paused:      { label: "Paused",       kind: "info" },
+  not_needed:  { label: "Not needed",   kind: "muted" },
 };
 
 export interface ToolState {

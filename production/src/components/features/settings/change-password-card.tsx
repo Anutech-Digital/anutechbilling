@@ -23,7 +23,11 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { checkNewPassword, PASSWORD_MIN_LENGTH } from "@/lib/auth/password-rules";
 
-export default function ChangePasswordCard() {
+/**
+ * `forced` (R-391): shown on /change-password after an owner set a temporary password — the
+ * "current" password is that temporary one, and `onChanged` moves the member on.
+ */
+export default function ChangePasswordCard({ forced = false, onChanged }: { forced?: boolean; onChanged?: () => void } = {}) {
   const [current, setCurrent] = React.useState("");
   const [next, setNext]       = React.useState("");
   const [confirm, setConfirm] = React.useState("");
@@ -50,6 +54,7 @@ export default function ChangePasswordCard() {
     onSuccess: (r) => {
       setCurrent(""); setNext(""); setConfirm(""); setShow(false);
       toast.success(r.note ?? "Password changed.");
+      onChanged?.();
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -61,14 +66,18 @@ export default function ChangePasswordCard() {
   return (
     <Card className="p-4">
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-ink">Change your password</h3>
+        <h3 className="text-sm font-semibold text-ink">{forced ? "Choose your own password" : "Change your password"}</h3>
         <p className="mt-0.5 text-2xs leading-relaxed text-ink-3">
-          Only yours. To reset a teammate&apos;s, use <b>Send reset link</b> on the Team page.
+          {forced ? (
+            <>Your owner set a temporary password for you. Pick your own to continue — after this, only you know it.</>
+          ) : (
+            <>Only yours. To reset a teammate&apos;s, use <b>Send reset link</b> or <b>Set temporary password</b> on the Team page.</>
+          )}
         </p>
       </div>
 
       <div className="space-y-3">
-        <FormField label="Current password" required htmlFor="cp-current">
+        <FormField label={forced ? "Temporary password" : "Current password"} required htmlFor="cp-current">
           <Input
             id="cp-current"
             type={show ? "text" : "password"}

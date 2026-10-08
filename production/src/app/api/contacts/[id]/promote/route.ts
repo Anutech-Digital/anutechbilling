@@ -13,7 +13,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,7 +51,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     );
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClientFor(authData.user.id);
 
   // Load contact + verify tenant
   const { data: contact, error: cErr } = await admin

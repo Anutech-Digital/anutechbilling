@@ -16,12 +16,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+type Row = Record<string, unknown>;
+type Result = { data: unknown; error: { code?: string; message: string } | null };
+
 const state = vi.hoisted(() => ({
-  claims: [] as Record<string, any>[],
+  claims: [] as Row[],
   seq: 0,
-  sub: null as Record<string, any> | null,
-  apply: null as any,
+  sub: null as Row | null,
+  apply: null as unknown as (...args: unknown[]) => unknown,
   role: "billing" as string,
+  actors: [] as string[], // R-051: who createAdminClientFor() was opened for
 }));
 
 vi.mock("@/lib/subscriptions/apply-seat-increase", () => ({
@@ -31,10 +35,10 @@ vi.mock("@/lib/subscriptions/apply-seat-increase", () => ({
 
 vi.mock("@/lib/supabase/server", () => {
   const makeChain = (table: string) => {
-    const ctx: { op: string; payload: any; filters: Record<string, any> } =
-      { op: "select", payload: null, filters: {} };
+    const ctx: { op: string; payload: Row; filters: Row } =
+      { op: "select", payload: {}, filters: {} };
 
-    const run = async () => {
+    const run = async (): Promise<Result> => {
       if (table === "subscriptions") {
         return { data: state.sub, error: state.sub ? null : { message: "not found" } };
       }
@@ -68,15 +72,21 @@ vi.mock("@/lib/supabase/server", () => {
       return { data: null, error: null };
     };
 
-    const chain: any = {
+    type Chain = {
+      select: () => Chain; insert: (p: Row) => Chain; update: (p: Row) => Chain;
+      delete: () => Chain; eq: (col: string, val: unknown) => Chain;
+      single: () => Promise<Result>; maybeSingle: () => Promise<Result>;
+      then: (ok: (r: Result) => unknown, err?: (e: unknown) => unknown) => Promise<unknown>;
+    };
+    const chain: Chain = {
       select: () => chain,
-      insert: (p: any) => { ctx.op = "insert"; ctx.payload = p; return chain; },
-      update: (p: any) => { ctx.op = "update"; ctx.payload = p; return chain; },
+      insert: (p: Row) => { ctx.op = "insert"; ctx.payload = p; return chain; },
+      update: (p: Row) => { ctx.op = "update"; ctx.payload = p; return chain; },
       delete: () => { ctx.op = "delete"; return chain; },
       eq: (col: string, val: unknown) => { ctx.filters[col] = val; return chain; },
       single: () => run(),
       maybeSingle: () => run(),
-      then: (ok: any, err: any) => run().then(ok, err),
+      then: (ok, err) => run().then(ok, err),
     };
     return chain;
   };
@@ -85,7 +95,10 @@ vi.mock("@/lib/supabase/server", () => {
     auth: { getUser: async () => ({ data: { user: { id: "U1" } }, error: null }) },
     from: (table: string) => makeChain(table),
   });
-  return { createClient: client, createAdminClient: client };
+  return {
+    createClient: client,
+    createAdminClientFor: (actor: string) => { state.actors.push(actor); return client(); },
+  };
 });
 
 import { POST } from "./route";
@@ -110,6 +123,7 @@ beforeEach(() => {
   state.claims = [];
   state.seq = 0;
   state.role = "billing";
+  state.actors = [];
   state.sub = { id: "S1", tenant_id: "T1", status: "active", renewal_date: "2027-04-01", seats: 10, mrr: 6200 };
   state.apply = vi.fn(async () => okResult);
 });
@@ -124,6 +138,7 @@ describe("a double POST adds the seats once", () => {
     expect(state.apply).toHaveBeenCalledTimes(1);
 
     expect(first.status).toBe(200);
+    expect(state.actors[0]).toBe("U1"); // R-051: audit log gets the signed-in caller
     expect(second.status).toBe(200);
     const a = await first.json();
     const b = await second.json();

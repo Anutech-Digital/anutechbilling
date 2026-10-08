@@ -22,6 +22,7 @@ import { createClient as createSupabaseJs } from "@supabase/supabase-js";
 import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
 import { authProvider } from "@/server/auth/authjs";
 import { accessTokenForRequest, adminAuth, serverAuth } from "@/server/auth/compat";
+import { actorHeaders } from "./admin-actor";
 
 type ServerClient = ReturnType<typeof createServerClient<Database>>;
 
@@ -31,11 +32,11 @@ const noStoreFetch = (input: RequestInfo | URL, init?: RequestInit) => fetch(inp
    without its own auth module; requests carry a short-lived token minted for the Auth.js user
    (src/server/auth/supabase-jwt.ts), and `client.auth` answers from Auth.js
    (src/server/auth/compat.ts) — so the ~190 existing call sites keep working unchanged. */
-function authjsClient(key: string, kind: "user" | "admin"): ServerClient {
+function authjsClient(key: string, kind: "user" | "admin", headers: Record<string, string> = {}): ServerClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const client = createSupabaseJs<Database>(url, key, {
     accessToken: kind === "admin" ? async () => key : accessTokenForRequest,
-    global: { fetch: gatewayEnabled() ? gatewayFetch(url, { allowService: kind === "admin" }) : noStoreFetch },
+    global: { headers, fetch: gatewayEnabled() ? gatewayFetch(url, { allowService: kind === "admin" }) : noStoreFetch },
   });
   return Object.assign(client, { auth: kind === "admin" ? adminAuth() : serverAuth() }) as unknown as ServerClient;
 }
@@ -83,10 +84,25 @@ export function createClient(): ServerClient {
  * NEVER call from Server Components used in normal request flow.
  */
 export function createAdminClient(): ServerClient {
+  return adminClient({});
+}
+
+/**
+ * R-051: the admin client for a write made ON BEHALF OF a signed-in user. Same as
+ * createAdminClient(), plus the `x-actor-id` header, so the audit trigger (log_row_change,
+ * record_contract_amendment) records that user instead of nobody. Pass only an id the route
+ * has already verified (withRoute's `user.id` / auth.getUser()). An invalid id sends no
+ * header (= plain createAdminClient()).
+ */
+export function createAdminClientFor(actorUserId: string): ServerClient {
+  return adminClient(actorHeaders(actorUserId));
+}
+
+function adminClient(headers: Record<string, string>): ServerClient {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
   }
-  if (authProvider() === "authjs") return authjsClient(process.env.SUPABASE_SERVICE_ROLE_KEY, "admin");
+  if (authProvider() === "authjs") return authjsClient(process.env.SUPABASE_SERVICE_ROLE_KEY, "admin", headers);
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -104,6 +120,7 @@ export function createAdminClient(): ServerClient {
       // or an out-of-date payment/subscription status on /api/v1). Admin
       // queries must always hit the DB — never cache them.
       global: {
+        headers,
         fetch: gatewayEnabled()
           ? gatewayFetch(process.env.NEXT_PUBLIC_SUPABASE_URL!, { allowService: true })
           : noStoreFetch,

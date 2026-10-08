@@ -45,7 +45,7 @@ export const ANCHOR_TLD = ".in";
 export const DOMAIN_NEEDS: readonly { n: string; t: string; b: string }[] = [
   { n: "01", t: "The name", b: "What you just searched — the address people type. On its own it is a signpost with nothing behind it." },
   { n: "02", t: "A place to serve pages from", b: "Hosting is the ground the website actually stands on. Without it, the name resolves to nothing." },
-  { n: "03", t: "Mail routing", b: "you@yourname.in only delivers once the domain points at a mail host. The bundle wires this the same day." },
+  { n: "03", t: "Mail routing", b: "you@yourname.in only delivers once the domain points at a mail host. The bundle wires this for you." },
 ];
 
 /**
@@ -67,7 +67,7 @@ export const DOMAIN_INCLUDED: readonly { t: string; b: string }[] = [
   { t: "Auto-renew, your call", b: "On or off, you decide. We remind you before every renewal at the printed price — never a surprise charge." },
   { t: "Free email forwards", b: "Route you@yourname.in to any inbox at no cost, even before you add a full mailbox." },
   { t: "Bulk operations", b: "Move, renew or update a whole portfolio in one action — built for resellers running a book of names." },
-  { t: "DNS set up for you", b: "Send us where it should point and our team wires the records the same day. No dashboard wrestling." },
+  { t: "DNS set up for you", b: "Send us where it should point and our team wires the records for you. No dashboard wrestling." },
   { t: "GST invoice", b: "Every order carries a proper GST invoice with our GSTIN — claim the input credit like any business expense." },
 ];
 

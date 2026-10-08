@@ -14,6 +14,7 @@ import { fyBounds } from "@/lib/dates/ist";
 import { receivedThisFy, type ReceivedFacts } from "@/lib/customers/received-this-fy";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import type {
@@ -23,8 +24,6 @@ import type {
   ProjectQuoteLine,
   ExpenseRow,
   ProjectLabourRow,
-  ProjectTaskRow,
-  ProjectTaskStatus,
 } from "@/lib/supabase/database.types";
 
 export type { ProjectSaleRow, ProjectMilestoneRow, ProjectPaymentRow, ProjectQuoteLine };
@@ -51,22 +50,31 @@ export function useProjectSales() {
     queryKey: ["project_sales"],
     queryFn: async (): Promise<ProjectSaleWithTotals[]> => {
       const supabase = createClient();
-      const { data: projects, error } = await supabase
-        .from("project_sales")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
+      /* R-264: the list AND every table its paid/cost/labour totals are summed from are paged
+         past PostgREST's silent 1000-row cap (a capped sum = wrong receivable, no error).
+         Each order ends on id so offset pages never repeat or skip a row. */
+      const projects = await fetchAllRows((from, to) =>
+        supabase
+          .from("project_sales")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to));
 
-      const [{ data: pays, error: pErr }, { data: exps, error: xErr }, { data: labourRows, error: lErr }, { data: emps, error: eErr }] = await Promise.all([
-        supabase.from("project_payments").select("project_id, amount"),
-        supabase.from("expenses").select("project_id, amount").not("project_id", "is", null),
-        supabase.from("project_labour").select("project_id, employee_id, percent, months"),
-        supabase.from("employees").select("id, monthly_gross"),
+      const [pays, exps, labourRows, emps] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase.from("project_payments").select("project_id, amount")
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("expenses").select("project_id, amount").not("project_id", "is", null)
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("project_labour").select("project_id, employee_id, percent, months")
+            .order("id", { ascending: true }).range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from("employees").select("id, monthly_gross")
+            .order("id", { ascending: true }).range(from, to)),
       ]);
-      if (pErr) throw pErr;
-      if (xErr) throw xErr;
-      if (lErr) throw lErr;
-      if (eErr) throw eErr;
 
       const paidBy = new Map<string, number>();
       for (const p of pays ?? []) paidBy.set(p.project_id, (paidBy.get(p.project_id) ?? 0) + (p.amount ?? 0));
@@ -690,146 +698,9 @@ export function useRecordProjectPayment() {
   });
 }
 
-// ── Project task roadmap (migration 0214) ────────────────────────────────────
-// Tasks per project, assignable to the project's allocated employees (labour).
-export function useProjectTasks(projectId: string | null | undefined) {
-  return useQuery({
-    queryKey: ["project_tasks", projectId],
-    enabled:  Boolean(projectId),
-    queryFn: async (): Promise<ProjectTaskRow[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("project_tasks").select("*").eq("project_id", projectId!)
-        .order("seq", { ascending: true }).order("created_at", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as ProjectTaskRow[];
-    },
-  });
-}
-
-export function useCreateProjectTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { projectId: string; title: string; assigneeId?: string | null; dueDate?: string | null; seq?: number }) => {
-      const supabase = createClient();
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData?.user) throw new Error("Not authenticated");
-      const { data: me, error: meErr } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
-      if (meErr || !me) throw new Error("User not linked to a tenant");
-      const { error } = await supabase.from("project_tasks").insert({
-        tenant_id:            me.tenant_id,
-        project_id:           input.projectId,
-        title:                input.title.trim(),
-        assignee_employee_id: input.assigneeId ?? null,
-        due_date:             input.dueDate ?? null,
-        seq:                  input.seq ?? 0,
-        created_by:           authData.user.id,
-      });
-      if (error) throw error;
-    },
-    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["project_tasks", v.projectId] }); },
-    onError: (e) => toastError(e),
-  });
-}
-
-export function useUpdateProjectTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; projectId: string; patch: { title?: string; status?: ProjectTaskStatus; assignee_employee_id?: string | null; due_date?: string | null; seq?: number } }) => {
-      const supabase = createClient();
-      const { error } = await supabase.from("project_tasks")
-        .update(input.patch).eq("id", input.id);
-      if (error) throw error;
-    },
-    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["project_tasks", v.projectId] }); },
-    onError: (e) => toastError(e),
-  });
-}
-
-export function useDeleteProjectTask() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; projectId: string }) => {
-      const supabase = createClient();
-      const { error } = await supabase.from("project_tasks").delete().eq("id", input.id);
-      if (error) throw error;
-    },
-    onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["project_tasks", v.projectId] }); toast.success("Task removed"); },
-    onError: (e) => toastError(e),
-  });
-}
-
-/** AI project planner — returns a detailed explanation + a suggested task list. */
-export type PlannedTask = { title: string; phase?: string; assignee?: string };
-export type QuestionOption = { labelEn: string; labelHi: string };
-export type QuestionItem = { en: string; hi: string; options?: QuestionOption[] };
-export type ProjectPlan = {
-  explanation: string;
-  clientProposal?: string;
-  tasks: PlannedTask[];
-  questions?: QuestionItem[];
-  mode: string;
-};
-
-export async function fetchProjectQuestions(input: {
-  title: string; customer?: string; details?: string;
-}): Promise<QuestionItem[]> {
-  const res = await fetch("/api/ai/plan-project", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      action: "questions",
-      title: input.title, customer: input.customer, details: input.details,
-    }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? "Could not generate questions.");
-  return json.questions ?? [];
-}
-
-export async function generateProjectPlan(input: {
-  title: string; customer?: string; value?: number; startDate?: string | null; targetDate?: string | null; details?: string; qaAnswers?: string; team?: string[];
-}): Promise<ProjectPlan> {
-  const res = await fetch("/api/ai/plan-project", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      action: "plan",
-      title: input.title, customer: input.customer, value: input.value,
-      startDate: input.startDate ?? undefined, targetDate: input.targetDate ?? undefined,
-      details: input.details, qaAnswers: input.qaAnswers, team: input.team,
-    }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? "Could not generate the plan.");
-  return json as ProjectPlan;
-}
-
-/** Bulk-create tasks (from the AI plan), appended after existing ones. */
-export function useCreateProjectTasksBulk() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { projectId: string; tasks: { title: string; assigneeId?: string | null }[]; startSeq?: number }) => {
-      const supabase = createClient();
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData?.user) throw new Error("Not authenticated");
-      const { data: me, error: meErr } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
-      if (meErr || !me) throw new Error("User not linked to a tenant");
-      const base = input.startSeq ?? 0;
-      const rows = input.tasks
-        .filter((t) => t.title.trim())
-        .map((t, i) => ({
-          tenant_id: me.tenant_id, project_id: input.projectId,
-          title: t.title.trim(), assignee_employee_id: t.assigneeId ?? null,
-          seq: base + i, created_by: authData.user.id,
-        }));
-      if (rows.length === 0) return 0;
-      const { error } = await supabase.from("project_tasks").insert(rows);
-      if (error) throw error;
-      return rows.length;
-    },
-    onSuccess: (n, v) => { qc.invalidateQueries({ queryKey: ["project_tasks", v.projectId] }); toast.success(`${n} tasks added to the roadmap`); },
-    onError: (e) => toastError(e),
-  });
-}
+// Project task roadmap + AI planner live in ./project-tasks (R-331 split); re-exported
+// here so imports from "@/lib/queries/projects" keep working.
+export * from "./project-tasks";
 
 /**
  * The lead this project was quoted from, if any — R-008 (Pardeep, 26 Sep 2026).

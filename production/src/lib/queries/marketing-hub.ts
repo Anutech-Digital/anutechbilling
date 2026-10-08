@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import { isMarketingCategory } from "@/lib/marketing/ad-channels";
 import type { ToolState, ToolStatus } from "@/lib/marketing/tool-catalog";
@@ -64,15 +65,17 @@ export function useSpendThisMonth() {
   return useQuery({
     queryKey: ["expenses", "spend-by-channel-month", iso(start)],
     queryFn: async (): Promise<Record<string, number>> => {
-      const { data, error } = await createClient()
+      const supabase = createClient();
+      const data = await fetchAllRows((from, to) => supabase
         .from("expenses")
         .select("channel, amount, category")
         .not("channel", "is", null)
         .gte("expense_date", iso(start))
-        .lt("expense_date", iso(end));
-      if (error) throw error;
+        .lt("expense_date", iso(end))
+        .order("id", { ascending: true })
+        .range(from, to));
       const out: Record<string, number> = {};
-      for (const r of (data ?? []) as { channel: string | null; amount: number | null; category: string | null }[]) {
+      for (const r of data as { channel: string | null; amount: number | null; category: string | null }[]) {
         if (!r.channel || !isMarketingCategory(r.category)) continue;
         out[r.channel] = (out[r.channel] ?? 0) + (r.amount ?? 0);
       }
@@ -95,22 +98,25 @@ export function useTrackingLinks() {
   return useQuery({
     queryKey: LINKS_KEY,
     queryFn: async (): Promise<TrackingLink[]> => {
-      const { data, error } = await db().from("tracking_links")
+      const data = await fetchAllRows((from, to) => db().from("tracking_links")
         .select("id, label, channel, utm_medium, utm_campaign, utm_content, destination_path, full_url, created_at")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      const links = (data ?? []) as Omit<TrackingLink, "leads" | "won">[];
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
+      const links = data as Omit<TrackingLink, "leads" | "won">[];
       if (links.length === 0) return [];
 
       /* Count leads per (source, campaign). One query over the campaigns in use, not one
-         per link. */
-      const { data: leads, error: lErr } = await createClient()
+         per link. R-294: paged, so a busy campaign's count does not stop at 1000. */
+      const supabase = createClient();
+      const leads = await fetchAllRowsIn(links.map((l) => l.utm_campaign), (campaigns, from, to) => supabase
         .from("leads")
         .select("utm_source, utm_campaign, stage")
-        .in("utm_campaign", [...new Set(links.map((l) => l.utm_campaign))]);
-      if (lErr) throw lErr;
+        .in("utm_campaign", campaigns)
+        .order("id", { ascending: true })
+        .range(from, to));
       const count = new Map<string, { leads: number; won: number }>();
-      for (const l of (leads ?? []) as { utm_source: string | null; utm_campaign: string | null; stage: string | null }[]) {
+      for (const l of leads as { utm_source: string | null; utm_campaign: string | null; stage: string | null }[]) {
         const k = `${(l.utm_source ?? "").toLowerCase()}|${l.utm_campaign ?? ""}`;
         const c = count.get(k) ?? { leads: 0, won: 0 };
         c.leads++; if (l.stage === "won") c.won++;
@@ -156,10 +162,14 @@ export function useEmailSuppressions() {
   return useQuery({
     queryKey: SUPPRESS_KEY,
     queryFn: async (): Promise<Suppression[]> => {
-      const { data, error } = await db().from("email_suppressions")
-        .select("email, reason, campaign_id, created_at").order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Suppression[];
+      /* R-294: paged. No id column — (tenant_id, email) is the key, and RLS pins the tenant,
+         so email is the unique tie-break. */
+      const data = await fetchAllRows((from, to) => db().from("email_suppressions")
+        .select("email, reason, campaign_id, created_at")
+        .order("created_at", { ascending: false })
+        .order("email", { ascending: true })
+        .range(from, to));
+      return data as Suppression[];
     },
   });
 }
@@ -221,19 +231,22 @@ export function useReviewCustomers() {
     queryKey: REVIEW_KEY,
     queryFn: async (): Promise<ReviewCustomer[]> => {
       const supabase = createClient();
-      const { data: cs, error } = await supabase.from("customers")
+      const cs = await fetchAllRows((from, to) => supabase.from("customers")
         .select("id, name, display_name, contact_name, contact_first_name, contact_email, contact_phone, contact_mobile, is_active")
-        .order("name");
-      if (error) throw error;
-      const { data: asks, error: aErr } = await db().from("review_requests").select("customer_id, created_at");
-      if (aErr) throw aErr;
+        .order("name")
+        .order("id", { ascending: true })
+        .range(from, to));
+      const asks = await fetchAllRows((from, to) => db().from("review_requests")
+        .select("customer_id, created_at")
+        .order("id", { ascending: true })
+        .range(from, to));
       const by = new Map<string, { last: string; n: number }>();
-      for (const a of (asks ?? []) as { customer_id: string; created_at: string }[]) {
+      for (const a of asks as { customer_id: string; created_at: string }[]) {
         const c = by.get(a.customer_id) ?? { last: a.created_at, n: 0 };
         c.n++; if (a.created_at > c.last) c.last = a.created_at;
         by.set(a.customer_id, c);
       }
-      return ((cs ?? []) as Record<string, any>[])  // eslint-disable-line @typescript-eslint/no-explicit-any
+      return (cs as Record<string, any>[])  // eslint-disable-line @typescript-eslint/no-explicit-any
         .filter((c) => c.is_active !== false)
         .map((c) => ({
           id: c.id, name: c.display_name || c.name,

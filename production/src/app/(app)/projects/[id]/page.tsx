@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import {
   useProjectSale,
   useProjectSourceLead,
@@ -42,7 +43,8 @@ import { bookedToDate, labourMonthsElapsed, labourToDate } from "@/lib/projects/
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
-  const { data, isLoading } = useProjectSale(id);
+  const projectQ = useProjectSale(id);
+  const { data, isLoading } = projectQ;
   const { data: customer } = useCustomer(data?.project.customer_id ?? undefined);
   // R-008: the CRM lead this deal was quoted from, when it came in that way.
   const { data: sourceLead } = useProjectSourceLead(id);
@@ -67,6 +69,14 @@ export default function ProjectDetailPage() {
       <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto space-y-4">
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+  // A failed fetch is not "project not found".
+  if (projectQ.isError) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
+        <LoadError what="This project" onRetry={() => void projectQ.refetch()} />
       </div>
     );
   }

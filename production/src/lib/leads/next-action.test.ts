@@ -56,7 +56,7 @@ describe("quote money states outrank everything else", () => {
   it("invoiced → View invoice (opens the INVOICE), or Open quote when no invoice id", () => {
     const a = nextActionFor({ ...base, latestQuoteForAction: quote({ payment_status: "invoiced", invoice_id: "INV-9" }), quoteAgeDays: 1 })!;
     expect(a.label).toBe("View invoice");
-    expect(a.target).toEqual({ kind: "go", href: "/invoices?open=INV-9" });
+    expect(a.target).toEqual({ kind: "go", href: "/invoices/INV-9" });
     const b = nextActionFor({ ...base, latestQuoteForAction: quote({ payment_status: "invoiced", invoice_id: null }), quoteAgeDays: 1 })!;
     expect(b.label).toBe("Open quote");
     expect(b.target).toEqual({ kind: "go", href: "/quotes/Q-1" });

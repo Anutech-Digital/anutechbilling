@@ -46,6 +46,7 @@ export function AiDraftButton({
   const [subject, setSubject] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [mode, setMode] = React.useState<string>("");
+  const fieldId = React.useId();
 
   async function generate() {
     setDrafting(true);
@@ -56,12 +57,12 @@ export function AiDraftButton({
         body: JSON.stringify({ leadId, customerId, channel, purpose }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error ?? "Couldn't draft."); return; }
+      if (!res.ok) { toast.error(data.error ?? "Couldn't draft.", { description: "Try again, or write the message yourself." }); return; }
       setSubject(data.subject ?? "");
       setMessage(data.message ?? "");
       setMode(data.mode ?? "stub");
     } catch {
-      toast.error("Couldn't reach the AI service.");
+      toast.error("Couldn't reach the AI service.", { description: "Check your connection and try again, or write the message yourself." });
     } finally {
       setDrafting(false);
     }
@@ -79,7 +80,7 @@ export function AiDraftButton({
       await navigator.clipboard.writeText(text);
       toast.success("Copied — paste it into WhatsApp / email");
     } catch {
-      toast.error("Couldn't copy");
+      toast.error("Couldn't copy.", { description: "Your browser blocked the clipboard. Select the text and copy it by hand." });
     }
   }
 
@@ -110,13 +111,13 @@ export function AiDraftButton({
             <div className="space-y-3">
               {channel === "email" && (
                 <div>
-                  <label className="block text-xs font-medium text-ink-2 mb-1">Subject</label>
-                  <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+                  <label htmlFor={`${fieldId}-subject`} className="block text-xs font-medium text-ink-2 mb-1">Subject</label>
+                  <Input id={`${fieldId}-subject`} value={subject} onChange={(e) => setSubject(e.target.value)} />
                 </div>
               )}
               <div>
-                <label className="block text-xs font-medium text-ink-2 mb-1">Message</label>
-                <Textarea rows={6} value={message} onChange={(e) => setMessage(e.target.value)} />
+                <label htmlFor={`${fieldId}-message`} className="block text-xs font-medium text-ink-2 mb-1">Message</label>
+                <Textarea id={`${fieldId}-message`} rows={6} value={message} onChange={(e) => setMessage(e.target.value)} />
               </div>
             </div>
           )}

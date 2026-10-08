@@ -24,7 +24,8 @@ import { useBalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { Icon } from "@/components/ui/icon";
 import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-month-sheet";
-import { cashFlowByActivity, type CashFlowTxn } from "@/lib/accounting/cash-flow-lines";
+import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
+import { loadCashFlow, type CashFlowData } from "./load";
 import { monthRows, runway as computeRunway, type MonthRow } from "@/lib/accounting/cash-flow-summary";
 import { utcDateISO } from "@/lib/dates/ist";
 
@@ -52,43 +53,8 @@ function useCashFlow(range: RangeKey) {
   const { from, to } = rangeBounds(range);
   return useQuery({
     queryKey: ["cash-flow", { from, to }],
-    /* The whole line, not just amounts: the month drill-down lists these same rows,
-       so its totals are the row's totals by construction. */
-    queryFn: async (): Promise<{ lines: CashFlowTxn[]; balanceBefore: number }> => {
-      const supabase = createClient();
-      /* The balance the first month starts from: every account's opening balance plus
-         every line dated before the range — the same sum bank_account_current_balance()
-         makes, so the last month ends on the bank's own balance. */
-      const [{ data: accts, error: aErr }, { data: before, error: bErr }] = await Promise.all([
-        supabase.from("bank_accounts").select("opening_balance"),
-        from
-          ? supabase.from("bank_transactions").select("credit, debit").lt("txn_date", from)
-          : Promise.resolve({ data: [] as { credit: number | null; debit: number | null }[], error: null }),
-      ]);
-      if (aErr) throw aErr;
-      if (bErr) throw bErr;
-      const balanceBefore = (accts ?? []).reduce((s, a) => s + (a.opening_balance ?? 0), 0)
-        + (before ?? []).reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
-
-      let q = supabase
-        .from("bank_transactions")
-        .select("id, bank_account_id, txn_date, description, debit, credit, matched_to_type, category");
-      if (from) q = q.gte("txn_date", from);
-      if (to)   q = q.lte("txn_date", to);
-      const { data, error } = await q;
-      if (error) throw error;
-      const lines = (data ?? []).map((t) => ({
-        id: t.id,
-        bank_account_id: t.bank_account_id,
-        txn_date: t.txn_date,
-        description: t.description ?? null,
-        debit: t.debit ?? 0,
-        credit: t.credit ?? 0,
-        matched_to_type: t.matched_to_type ?? null,
-        category: t.category ?? null,
-      }));
-      return { lines, balanceBefore };
-    },
+    /* Every row, past PostgREST's 1000-row cap (R-265) — cash-flow/load.ts. */
+    queryFn: (): Promise<CashFlowData> => loadCashFlow(createClient(), from, to),
   });
 }
 
@@ -194,7 +160,7 @@ export default function CashFlowPage() {
         <Card className="mb-5 p-3.5">
           <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
             <p className="text-sm font-semibold text-ink">Cash flow statement — by activity (direct method)</p>
-            <span className="text-xs text-ink-3">reconciliation se classify; transfers alag; unreconciled alag</span>
+            <span className="text-xs text-ink-3">Classified from reconciliation; transfers and unreconciled lines shown separately</span>
           </div>
           <table className="w-full text-sm">
             <tbody className="divide-y divide-hairline">
@@ -214,7 +180,7 @@ export default function CashFlowPage() {
               </tr>
             </tbody>
           </table>
-          <p className="mt-2 text-xs text-ink-3">Opening cash {rupee(flow?.balanceBefore ?? 0)} → closing {rupee(months.length ? months[months.length - 1].balanceEnd : 0)}. Indirect method (net profit ± working capital) ke liye P&amp;L aur Balance Sheet — ye direct method hai, jo chhoti company ke liye CA aksar yahi maangta hai.</p>
+          <p className="mt-2 text-xs text-ink-3">Opening cash {rupee(flow?.balanceBefore ?? 0)} → closing {rupee(months.length ? months[months.length - 1].balanceEnd : 0)}. For the indirect method (net profit ± working capital), use P&amp;L and Balance Sheet. This is the direct method, which CAs usually ask small companies for.</p>
         </Card>
       )}
 
@@ -222,32 +188,33 @@ export default function CashFlowPage() {
       {!empty && !error && runway != null && (() => {
         const tight = runway.atTrend !== null && runway.atTrend < 3;
         const watch = runway.atTrend !== null && runway.atTrend < 6;
+        const spanLabel = runway.months === 1 ? "last month" : `last ${runway.months} months`;
         return (
           <Card className={`mb-5 p-3.5 ${tight ? "border-rose/40 bg-rose/5" : watch ? "border-amber/30 bg-amber-soft/20" : ""}`}>
             <p className="text-sm text-ink-2 mb-2">
-              <b>Bank mein {rupee(currentCash)}</b> — kitne din chalega? (pichhle {runway.months} mahine ke hisaab se)
+              <b>{rupee(currentCash)} in the bank</b> — how long will it last? (based on the {spanLabel})
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Agar ab koi paisa na aaye</div>
+                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">If no more money comes in</div>
                 <div className="font-serif text-2xl text-ink tabular-nums">
-                  {runway.ifNoIncome === null ? "—" : <>≈ {fmtMonths(runway.ifNoIncome)} mahine</>}
+                  {runway.ifNoIncome === null ? "—" : <>≈ {fmtMonths(runway.ifNoIncome)} months</>}
                 </div>
-                <div className="text-xs text-ink-3">average kharcha {rupee(runway.spendPerMonth)}/mahina</div>
+                <div className="text-xs text-ink-3">average spend {rupee(runway.spendPerMonth)}/month</div>
               </div>
               <div>
-                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Pichhle {runway.months} mahine jaisa chale</div>
+                <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">At the pace of the {spanLabel}</div>
                 <div className={`font-serif text-2xl tabular-nums ${tight ? "text-rose" : "text-ink"}`}>
-                  {runway.atTrend === null ? "Paisa badh raha hai" : <>≈ {fmtMonths(runway.atTrend)} mahine</>}
+                  {runway.atTrend === null ? "Cash is growing" : <>≈ {fmtMonths(runway.atTrend)} months</>}
                 </div>
                 <div className="text-xs text-ink-3">
                   {runway.netPerMonth < 0
-                    ? <>income ke baad bhi average {rupee(-runway.netPerMonth)}/mahina ghat raha hai</>
-                    : <>average {rupee(runway.netPerMonth)}/mahina badh raha hai</>}
+                    ? <>falling {rupee(-runway.netPerMonth)}/month on average, even after income</>
+                    : <>growing {rupee(runway.netPerMonth)}/month on average</>}
                 </div>
               </div>
             </div>
-            {tight && <p className="text-xs text-rose mt-2">Tight — receivables jaldi collect karo ya non-essential kharcha roko.</p>}
+            {tight && <p className="text-xs text-rose mt-2">Tight — collect receivables soon or cut non-essential spending.</p>}
           </Card>
         );
       })()}

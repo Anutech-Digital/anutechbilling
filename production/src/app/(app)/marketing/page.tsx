@@ -33,6 +33,7 @@ import {
   useEmailSuppressions, useRemoveSuppression,
 } from "@/lib/queries/marketing-hub";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { COPY } from "@/lib/copy";
 import { NavDirectory } from "@/components/layout/nav-directory";
 
 const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
@@ -52,8 +53,8 @@ export default function MarketingHubPage() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sell</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Marketing Hub</h1>
         <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-          Business chalane ke liye jo marketing tools chahiye — har ek ka status, account, kaun sambhalta hai,
-          mahine ka budget vs asli kharcha, aur app mein uska kaam kahan hota hai.
+          The marketing tools the business runs on — each one's status, account, owner,
+          monthly budget vs actual spend, and where its work happens in the app.
         </p>
       </header>
 
@@ -69,13 +70,13 @@ export default function MarketingHubPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            <Metric label="Tools chal rahe" value={`${sum.active} / ${sum.total}`} sub={`"Zaroorat nahi" wale gine nahi jaate`} />
-            <Metric label="Is mahine ka budget" value={rupee(sum.budget)} sub="Sirf chal rahe tools ka" />
-            <Metric label="Is mahine ka kharcha" value={rupee(sum.spent)} sub="Expenses mein channel wale marketing kharche" />
+            <Metric label="Tools running" value={`${sum.active} / ${sum.total}`} sub={`"Not needed" tools are not counted`} />
+            <Metric label="Budget this month" value={rupee(sum.budget)} sub="Running tools only" />
+            <Metric label="Spend this month" value={rupee(sum.spent)} sub="Channel-tagged marketing expenses" />
             <Metric
-              label="Budget se upar"
+              label="Over budget"
               value={String(sum.overBudget.length)}
-              sub={sum.overBudget.length ? sum.overBudget.map((r) => r.name.split(" (")[0]).join(", ") : "Koi nahi"}
+              sub={sum.overBudget.length ? sum.overBudget.map((r) => r.name.split(" (")[0]).join(", ") : "None"}
               warn={sum.overBudget.length > 0}
             />
           </div>
@@ -136,10 +137,10 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-3">
-        <span>Kaun: <b className="text-ink-2 font-medium">{r.state.owner_name || "—"}</b></span>
+        <span>Owner: <b className="text-ink-2 font-medium">{r.state.owner_name || "—"}</b></span>
         {r.channel && (
           <span>
-            Is mahine: <b className={cn("font-medium tabular-nums", over ? "text-red-600" : "text-ink-2")}>{rupee(spent ?? 0)}</b>
+            This month: <b className={cn("font-medium tabular-nums", over ? "text-red-600" : "text-ink-2")}>{rupee(spent ?? 0)}</b>
             {budget > 0 && <> / {rupee(budget)} budget</>}
           </span>
         )}
@@ -155,10 +156,10 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
         {external ? (
           <a href={account} target="_blank" rel="noopener noreferrer"
              className="inline-flex items-center gap-1 text-xs font-medium text-amber-ink hover:underline">
-            Account kholo <Icon name="external" size={11} />
+            Open account <Icon name="external" size={11} />
           </a>
         ) : (
-          <Link href={account as Route} className="text-xs font-medium text-amber-ink hover:underline">Kholo →</Link>
+          <Link href={account as Route} className="text-xs font-medium text-amber-ink hover:underline">{COPY.open} →</Link>
         )}
         {r.inApp.map((l) => (
           <Link key={l.href + l.label} href={l.href as Route}
@@ -168,7 +169,7 @@ function ToolCard({ r, onEdit }: { r: ToolRow; onEdit: () => void }) {
         ))}
         <span className="flex-1" />
         <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-ink-3 hover:text-ink" aria-expanded={open}>
-          {open ? "Steps chhupao" : "Setup steps"}
+          {open ? "Hide steps" : "Setup steps"}
         </button>
         <Button variant="outline" size="sm" onClick={onEdit}>Update</Button>
       </div>
@@ -205,7 +206,7 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
       <DialogContent className="md:!max-w-md">
         <DialogHeader>
           <DialogTitle>{r.name}</DialogTitle>
-          <DialogDescription>Status, account aur budget. Kharcha khud Expenses se aata hai.</DialogDescription>
+          <DialogDescription>Status, account and budget. Spend comes from Expenses automatically.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <FormField label="Status" htmlFor="mt_status">
@@ -216,24 +217,24 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
               </SelectContent>
             </Select>
           </FormField>
-          <FormField label="Account ka link" htmlFor="mt_url">
+          <FormField label="Account link" htmlFor="mt_url">
             <Input id="mt_url" placeholder={r.homeUrl.startsWith("http") ? r.homeUrl : "https://…"} value={url} onChange={(e) => setUrl(e.target.value)} />
-            {urlBad && <p className="mt-1 text-xs text-red-600">Poora link daalo, https:// ke saath.</p>}
+            {urlBad && <p className="mt-1 text-xs text-red-600">Enter the full link, starting with https://.</p>}
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Kaun sambhalta hai" htmlFor="mt_owner">
+            <FormField label="Owner" htmlFor="mt_owner">
               <Input id="mt_owner" placeholder="e.g. Pardeep" value={owner} onChange={(e) => setOwner(e.target.value)} />
             </FormField>
-            <FormField label="Mahine ka budget (₹)" htmlFor="mt_budget">
+            <FormField label="Monthly budget (₹)" htmlFor="mt_budget">
               <Input id="mt_budget" type="number" min={0} prefix="₹" value={budget} onChange={(e) => setBudget(e.target.value)}
                      disabled={!r.channel} />
             </FormField>
           </div>
-          {!r.channel && <p className="text-xs text-ink-3 -mt-1">Is tool ka kharcha kisi channel se nahi judta, isliye budget nahi.</p>}
+          {!r.channel && <p className="text-xs text-ink-3 -mt-1">This tool's spend is not linked to a channel, so it has no budget.</p>}
           <FormField label="Note" htmlFor="mt_notes">
-            <Input id="mt_notes" placeholder="e.g. login Pardeep ke Gmail se" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Input id="mt_notes" placeholder="e.g. login via the owner's Gmail" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </FormField>
-          <p className="text-xs text-ink-3">Password yahan mat likho — uske liye Admin → Password Vault hai.</p>
+          <p className="text-xs text-ink-3">Do not write passwords here — use Admin → Password Vault.</p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -256,7 +257,7 @@ function OptOuts() {
         <div>
           <p className="text-sm font-semibold text-ink">Email unsubscribe list</p>
           <p className="text-xs text-ink-3 mt-0.5">
-            Har campaign mail mein unsubscribe link khud lagta hai. Jo mana kar de, use campaign mail dobara nahi jaata.
+            Every campaign email carries an unsubscribe link automatically. Anyone who opts out gets no more campaign email.
           </p>
         </div>
         <button type="button" className="text-sm text-amber-ink hover:underline whitespace-nowrap" onClick={() => setOpen((o) => !o)}>
@@ -266,7 +267,7 @@ function OptOuts() {
       {open && (
         <div className="mt-3 divide-y divide-hairline border-t border-hairline">
           {list.length === 0 ? (
-            <p className="py-3 text-xs text-ink-3">Abhi kisi ne unsubscribe nahi kiya.</p>
+            <p className="py-3 text-xs text-ink-3">Nobody has unsubscribed yet.</p>
           ) : list.map((s) => (
             <div key={s.email} className="flex items-center justify-between gap-2 py-2 text-sm">
               <span className="text-ink">{s.email}</span>
@@ -274,12 +275,12 @@ function OptOuts() {
                 <span className="text-xs text-ink-3">{formatDate(s.created_at)}</span>
                 <Button variant="ghost" size="sm" onClick={async () => {
                   const ok = await confirm({
-                    title: "Wapas list mein daalein?",
-                    body: `${s.email} ne khud unsubscribe kiya tha. Sirf tab hatao jab unhone khud dobara mail maange hon.`,
-                    confirmLabel: "Haan, unhone maanga hai", cancelLabel: "Nahi",
+                    title: "Add back to the mailing list?",
+                    body: `${s.email} unsubscribed themselves. Only remove this if they asked for emails again.`,
+                    confirmLabel: "Yes, they asked", cancelLabel: COPY.cancel,
                   });
                   if (ok) remove.mutate(s.email);
-                }}>Hatao</Button>
+                }}>{COPY.remove}</Button>
               </span>
             </div>
           ))}

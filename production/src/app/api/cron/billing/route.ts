@@ -23,11 +23,14 @@
  * it was — the invoice is a GST document, and quietly editing the row it came from
  * would leave the two disagreeing about the same supply.
  *
- * ─── IT WILL REPORT SKIPS LOUDLY, AND TODAY IT SKIPS EVERYTHING ─────────────
- * The sell path still collects the WHOLE term when a quote is accepted, so every
- * subscription that exists has already been paid for and instalment invoices would
- * bill it a second time. Those are skipped with a reason (see instalmentSkip), not
- * silently dropped. `?dry=1` returns what WOULD happen without writing anything.
+ * ─── A COLLECTED TERM IS STILL INVOICED, PERIOD BY PERIOD (R-375) ───────────
+ * A split-billed quote paid in full up front cannot get a whole-term invoice (the
+ * invoices trigger from 20260817110200 refuses it), so this cron is the ONLY way its
+ * supply is ever invoiced. Its instalments are raised as usual; raise_subscription_billing
+ * applies the money already received against the quote as credit, so each invoice is
+ * issued PAID — a GST document per period, never a second demand. Only a term whose
+ * quote already carries a whole-term invoice is skipped (term_already_invoiced), with a
+ * reason, never silently. `?dry=1` returns what WOULD happen without writing anything.
  *
  * Auth: Authorization: Bearer <CRON_SECRET>. Fails CLOSED — this job issues tax
  * invoices, so an unconfigured secret must refuse, never allow.
@@ -113,17 +116,34 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   /* Quote payment state, fetched separately rather than as an embedded join. This
      schema has two paths between quotes and subscriptions and PostgREST answers an
      ambiguous embed with PGRST201 — which surfaces as an empty page, not an error. */
-  const quoteById = new Map<string, { amount: number | null; payment_amount: number | null }>();
+  const quoteById = new Map<string, { amount: number | null; payment_amount: number | null; invoiced: boolean }>();
   try {
     /* 200 ids a request — the whole list in one url stops working long before 5,000. */
-    const quotes = await fetchAllRowsIn(subs.map((s) => s.quote_id), (ids, from, to) => supabase
-      .from("quotes")
-      .select("id, amount, payment_amount")
-      .in("id", ids)
-      .order("id", { ascending: true })
-      .range(from, to));
+    const quoteIds = subs.map((s) => s.quote_id);
+    const [quotes, wholeTerm] = await Promise.all([
+      fetchAllRowsIn(quoteIds, (ids, from, to) => supabase
+        .from("quotes")
+        .select("id, amount, payment_amount, invoice_id")
+        .in("id", ids)
+        .order("id", { ascending: true })
+        .range(from, to)),
+      /* R-375: a whole-term invoice may exist without quotes.invoice_id pointing at it
+         (raised before the split-billing guard). Instalment invoices carry quote_id NULL,
+         so any non-void invoice WITH this quote_id is a whole-term one. */
+      fetchAllRowsIn(quoteIds, (ids, from, to) => supabase
+        .from("invoices")
+        .select("id, quote_id")
+        .in("quote_id", ids)
+        .neq("status", "void")
+        .order("id", { ascending: true })
+        .range(from, to)),
+    ]);
+    const invoicedQuotes = new Set(wholeTerm.map((i) => i.quote_id).filter((x): x is string => !!x));
     for (const q of quotes) {
-      quoteById.set(q.id, { amount: q.amount, payment_amount: q.payment_amount });
+      quoteById.set(q.id, {
+        amount: q.amount, payment_amount: q.payment_amount,
+        invoiced: q.invoice_id != null || invoicedQuotes.has(q.id),
+      });
     }
   } catch (e) {
     return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
@@ -138,6 +158,7 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
         cycle:        sub.billing_cycle,
         quotePaid:    quote?.payment_amount,
         quoteAmount:  quote?.amount,
+        quoteInvoiced: quote?.invoiced ?? false,
         scheduleSize: planned.length,
       });
       if (skip) {

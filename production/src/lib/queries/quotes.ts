@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import type { Quote, Database } from "@/lib/supabase/database.types";
 
 type QuoteInsert = Database["public"]["Tables"]["quotes"]["Insert"];
@@ -20,21 +21,23 @@ export function useQuotes(filter?: { status?: QuoteStatus | "all" }) {
     queryKey: ["quotes", filter?.status ?? "all"],
     queryFn: async (): Promise<Quote[]> => {
       const supabase = createClient();
-      let query = supabase
-        .from("quotes")
-        .select("*")
-        .order("created_at", { ascending: false, nullsFirst: false });
-
-      if (filter?.status && filter.status !== "all") {
-        query = query.eq("status", filter.status);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        console.warn("Supabase quotes query error:", error.message);
+      /* R-264: page past PostgREST's silent 1000-row cap; order ends on id (total order). */
+      try {
+        return await fetchAllRows<Quote>((from, to) => {
+          let query = supabase
+            .from("quotes")
+            .select("*")
+            .order("created_at", { ascending: false, nullsFirst: false })
+            .order("id", { ascending: true });
+          if (filter?.status && filter.status !== "all") {
+            query = query.eq("status", filter.status);
+          }
+          return query.range(from, to);
+        });
+      } catch (error) {
+        console.warn("Supabase quotes query error:", errorMessage(error));
         return [];
       }
-      return data ?? [];
     },
   });
 }

@@ -17,6 +17,8 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import type { SalesFolder } from "@/lib/leads/folders";
 import { UNASSIGNED } from "@/lib/leads/list-selectors";
+import { leadMatchesSearch, normalizeLeadSearch } from "@/lib/leads/lead-search";
+import { canonicalSource } from "@/lib/leads/lead-sources";
 
 /**
  * The columns list_leads() returns — must equal the LATEST migration's select list (checked
@@ -68,6 +70,8 @@ export interface LeadListFilters {
   open_only?: boolean;
   /** "Kiska": owner ids any-of; UNASSIGNED keeps leads with no owner. */
   owners?: string[];
+  /** R-392 Source filter: canonical source keys (lead-sources.ts#canonicalSource), any-of. */
+  sources?: string[];
   /** The View menu. When set, it also decides the junk cut (and `junk` is ignored). */
   smart_view?: SmartView;
   /** The folder cut — applied only together with smart_view. */
@@ -91,12 +95,13 @@ export interface LeadListFilters {
  * Build `p_filters` from page state, dropping every key that would mean "no constraint", so
  * two equivalent states give the same JSON — and therefore the same query key.
  *
- * `search` is sent AS TYPED when it has any non-blank character (the page matches untrimmed
- * text too), and omitted when it is blank.
+ * `search` is sent NORMALIZED (lead-search.ts: lowercased, trimmed, one space between words —
+ * R-221) and omitted when it is blank, so " Acme " and "acme" are one query key.
  */
 export function toListLeadsFilters(input: LeadListFilters): LeadListFilters {
   const out: LeadListFilters = {};
-  if (input.search !== undefined && input.search.trim() !== "") out.search = input.search;
+  const search = input.search === undefined ? "" : normalizeLeadSearch(input.search);
+  if (search !== "") out.search = search;
   if (input.stages && input.stages.length > 0) out.stages = [...input.stages].sort();
   if (input.priorities && input.priorities.length > 0) out.priorities = [...input.priorities].sort();
   if (input.junk && input.junk !== "exclude") out.junk = input.junk;
@@ -104,6 +109,7 @@ export function toListLeadsFilters(input: LeadListFilters): LeadListFilters {
   if (input.owner_id) out.owner_id = input.owner_id;
   if (input.open_only) out.open_only = true;
   if (input.owners && input.owners.length > 0) out.owners = [...input.owners].sort();
+  if (input.sources && input.sources.length > 0) out.sources = [...input.sources].sort();
   if (input.smart_view) out.smart_view = input.smart_view;
   if (input.folder && input.folder !== "all") out.folder = input.folder;
   if (input.sort && input.sort !== "created") out.sort = input.sort;
@@ -116,20 +122,15 @@ export function toListLeadsFilters(input: LeadListFilters): LeadListFilters {
  * The server rule, in TypeScript, for a row that is already in memory — the parity oracle
  * the tests hold both sides to. Mirrors the migration's WHERE clause key by key.
  */
-export function matchesListLeadsFilters(l: LeadListRow, f: LeadListFilters): boolean {
+export function matchesListLeadsFilters(l: LeadListRow, f: LeadListFilters, ownerName?: string | null): boolean {
   const junk = f.junk ?? "exclude";
   if (junk === "exclude" && l.is_junk) return false;
   if (junk === "only" && !l.is_junk) return false;
-  if (f.search !== undefined && f.search.trim() !== "") {
-    const s = f.search.toLowerCase();
-    const hit =
-      l.company.toLowerCase().includes(s) ||
-      (l.contact_name?.toLowerCase().includes(s) ?? false) ||
-      (l.contact_email?.toLowerCase().includes(s) ?? false) ||
-      (l.contact_phone?.toLowerCase().includes(s) ?? false) ||
-      (l.plan?.toLowerCase().includes(s) ?? false);
-    if (!hit) return false;
-  }
+  /* public.lead_search_hit() — migrations 20261007000000 (R-221) and 20261007190000 (R-392:
+     the source and the assigned person, whose name the caller passes as ownerName). */
+  if (f.search !== undefined && !leadMatchesSearch(l, f.search, ownerName)) return false;
+  /* public.lead_source_key(l.source) = any (v_sources) — R-392. */
+  if (f.sources && f.sources.length > 0 && !f.sources.includes(canonicalSource(l.source))) return false;
   if (f.stages && f.stages.length > 0 && !f.stages.includes(l.stage)) return false;
   if (f.priorities && f.priorities.length > 0 && !f.priorities.includes(l.priority as "low" | "medium" | "high")) return false;
   if (f.owner_ids && l.owner_id && !f.owner_ids.includes(l.owner_id)) return false;
@@ -153,7 +154,10 @@ export interface LeadCounts {
   /** The IST date every date rule used. */
   today: string;
   /** Every lead the caller can see, no filter: team-toggle note, Kiska counts, KPI tiles. */
-  pool: { total: number; unassigned: number; high_priority: number; by_owner: Record<string, number> };
+  pool: { total: number; unassigned: number; high_priority: number; by_owner: Record<string, number>;
+    /** R-392: leads per canonical source key (public.lead_source_key) — the Source filter's
+        options. Optional: absent until migration 20261007190000 is applied. */
+    by_source?: Record<string, number> };
   /** The team cut only: "All leads", the Junk entry. */
   workspace: { junk: number; everything: number; suspects: number };
   /** Open leads in the workspace: the View menu. */
