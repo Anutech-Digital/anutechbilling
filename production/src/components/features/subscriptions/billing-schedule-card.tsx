@@ -27,7 +27,7 @@ import { subscriptionSchedule, nextTermSchedule } from "@/lib/billing/subscripti
 import { scheduleTotal, periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
-import { scheduleInvoices, nextUninvoiced, type ScheduleInvoice } from "./schedule-invoices";
+import { scheduleInvoices, nextUninvoiced, nextTermShowsNext, type ScheduleInvoice } from "./schedule-invoices";
 
 export function BillingScheduleCard({ subscription, todayISO }: {
   subscription: Subscription;
@@ -70,7 +70,8 @@ export function BillingScheduleCard({ subscription, todayISO }: {
 
       {next.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-4">
-          <ScheduleTable rows={next} todayISO={todayISO} label="Next term (on renewal)" muted invoiced={EMPTY} />
+          <ScheduleTable rows={next} todayISO={todayISO} label="Next term (on renewal)" muted invoiced={EMPTY}
+            showNext={nextTermShowsNext(current, invoiced, todayISO)} />
         </div>
       )}
 
@@ -84,15 +85,17 @@ export function BillingScheduleCard({ subscription, todayISO }: {
 
 const EMPTY = new Map<number, ScheduleInvoice>();
 
-function ScheduleTable({ rows, todayISO, label, muted, invoiced }: {
+function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true }: {
   rows: ReturnType<typeof subscriptionSchedule>;
   todayISO: string;
   label: string;
   muted?: boolean;
   invoiced: Map<number, ScheduleInvoice>;
+  /** R-527: only one table on the card may tag a row "next". */
+  showNext?: boolean;
 }) {
   const total = scheduleTotal(rows);
-  const nextIndex = nextUninvoiced(rows, invoiced, todayISO);
+  const nextIndex = showNext ? nextUninvoiced(rows, invoiced, todayISO) : null;
   return (
     <div className={cn(muted && "opacity-75")}>
       <div className="mb-1.5 flex items-baseline justify-between">

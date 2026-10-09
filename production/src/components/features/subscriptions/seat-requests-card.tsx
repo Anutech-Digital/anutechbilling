@@ -24,11 +24,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useAskText } from "@/components/providers/confirm-provider";
-import { cn, rupee, formatDate, daysBetween } from "@/lib/utils";
+import { cn, rupee, formatDate } from "@/lib/utils";
 import type { SeatRequest, Subscription } from "@/lib/supabase/database.types";
 import { assessRequest, previewCharge, requestBadge } from "@/lib/subscriptions/seat-request";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { daysBetweenDates } from "@/lib/subscriptions/proration";
+import { seatChargeWindow } from "@/lib/subscriptions/seat-charge-window";
+import { istToday } from "@/lib/dates/ist";
 
 export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
   requests: SeatRequest[];
@@ -95,15 +96,16 @@ export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
             today,
           });
 
-          const preview = verdict.canApprove && sub?.renewal_date
+          /* R-527: the same window the server charges — the current instalment on a
+             split-billed subscription, else the rest of the term. */
+          const window = verdict.canApprove && sub?.renewal_date ? seatChargeWindow(sub, istToday()) : null;
+          const preview = verdict.canApprove && window && sub
             ? previewCharge({
                 currentSeats: sub.seats,
                 currentMrr: sub.mrr,
                 seatsToAdd: verdict.seatsToAdd,
-                remainingDays: Math.max(0, daysBetween(new Date(), sub.renewal_date)),
-                termDays: sub.start_date
-                  ? Math.max(1, daysBetweenDates(sub.start_date, sub.renewal_date))
-                  : 365,
+                remainingDays: Math.max(0, window.remainingDays),
+                termDays: window.termDays,
                 taxRatePct: 18,
               })
             : null;

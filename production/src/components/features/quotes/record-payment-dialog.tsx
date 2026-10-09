@@ -61,13 +61,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome } from "@/lib/accounting/tds-receipt";
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
 import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
+import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
 
 const schema = z.object({
   /* R-449: ₹0 used to stop the form with no message — the browser's own min=1 check
@@ -169,7 +170,7 @@ export function RecordPaymentDialog({
   onOpenChange,
   quoteId,
   customerName,
-  expectedAmount,
+  expectedAmount: quoteTotal,
   alreadyReceived = 0,
   isProspect = false,
   invoiceId = null,
@@ -204,6 +205,36 @@ export function RecordPaymentDialog({
   // Optional proof-of-payment file (screenshot / PDF). Uploaded best-effort
   // AFTER record_payment succeeds, so it never blocks the money.
   const [receiptFile, setReceiptFile] = React.useState<File | null>(null);
+
+  /* R-527: a split-billed quote (annual commitment billed monthly / quarterly / half-yearly)
+     expects only the instalments that have fallen due — the same figure the customer page
+     and the online pay button collect — never the whole year. Read once when the sheet
+     opens; until it arrives (or for any other quote) the quote total stands. */
+  const [split, setSplit] = React.useState<SplitExpectation | null>(null);
+  React.useEffect(() => {
+    if (!open || invoiceId) { setSplit(null); return; }
+    let live = true;
+    (async () => {
+      const supabase = createClient();
+      const [{ data: q }, { data: s }] = await Promise.all([
+        supabase.from("quotes")
+          .select("subtotal, discount_pct, tax_rate, amount, billing_cycle, line_items")
+          .eq("id", quoteId).maybeSingle(),
+        supabase.from("subscriptions")
+          .select("start_date").eq("quote_id", quoteId)
+          .order("created_at", { ascending: true }).limit(1),
+      ]);
+      if (!live) return;
+      setSplit(splitExpectation({
+        quote: q ?? null,
+        termStart: s?.[0]?.start_date ?? null,
+        todayISO: istToday(),
+        alreadyReceived,
+      }));
+    })();
+    return () => { live = false; };
+  }, [open, quoteId, invoiceId, alreadyReceived]);
+  const expectedAmount = split ? split.expected : quoteTotal;
 
   const remaining = Math.max(0, expectedAmount - alreadyReceived);
   const hasPriorPayments = alreadyReceived > 0;
@@ -299,7 +330,11 @@ export function RecordPaymentDialog({
   const willBeOverpaid       = newRunningTotal > expectedAmount;
   /* R-523: the ONE sentence about how the quote ends up — the TDS box used to say "fully
      satisfied" while the partial box said "₹X pending", both on screen at once. */
-  const outcome = paymentOutcome({ expected: expectedAmount, alreadyReceived, settled: settledAgainstQuote });
+  const baseOutcome = paymentOutcome({ expected: expectedAmount, alreadyReceived, settled: settledAgainstQuote });
+  /* R-527: on a split-billed quote the sentence is about instalments, never "fully paid". */
+  const outcome = split
+    ? { ...baseOutcome, sentence: splitOutcomeSentence(split, { ...baseOutcome, formatRupee: rupee, formatDate }) }
+    : baseOutcome;
   /* R-523: section change sets the rate from the one table (tds-rates.ts); a hand-typed
      rate that does not fit the section is allowed but warned about. */
   const tdsSectionValue = watch("tdsSection") ?? "194J";
@@ -830,9 +865,39 @@ export function RecordPaymentDialog({
         subscriptionNote,
         receiptUploadFailed:  res.receiptUploadFailed,
       });
-      const t = issuedInvoiceId
-        ? withIssuedInvoice(toastBase, issuedInvoiceId)
+      /* R-527: a split-billed quote's tax invoice is the INSTALMENT's, raised now through the
+         billing cron's own code (POST /api/quotes/:id/raise-instalments) — Q-FBB9-27-0020 had
+         a Rs 7,646 payment and 0 invoices. The toast then speaks of instalments, not of the
+         year's "outstanding" the RPC reports. */
+      let splitRaise: InstalmentRaiseResult | null = null;
+      if (split) {
+        try {
+          const resp = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/raise-instalments`, { method: "POST" });
+          const body = (await resp.json().catch(() => null)) as (InstalmentRaiseResult & { error?: string }) | null;
+          splitRaise = resp.ok && body
+            ? { raised: body.raised ?? [], errors: body.errors ?? [] }
+            : { raised: [], errors: [{ message: body?.error ?? `HTTP ${resp.status}.` }] };
+        } catch (e) {
+          splitRaise = { raised: [], errors: [{ message: e instanceof Error ? e.message : String(e) }] };
+        }
+        qc.invalidateQueries({ queryKey: ["invoices"] });
+        qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      }
+      const splitToastBase = split
+        ? splitPaymentToast(toastBase, {
+            split,
+            receivedAfter: newRunningTotal,
+            raise: splitRaise,
+            formatRupee: rupee,
+            formatDate,
+          })
         : toastBase;
+      const firstRaised = splitRaise?.raised[0]?.invoice_id ?? null;
+      const t = issuedInvoiceId
+        ? withIssuedInvoice(splitToastBase, issuedInvoiceId)
+        : firstRaised
+        ? { ...withIssuedInvoice(splitToastBase, firstRaised), title: splitToastBase.title }
+        : splitToastBase;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
@@ -1028,10 +1093,30 @@ export function RecordPaymentDialog({
 
           {/* Payment summary — already paid + this payment + remaining */}
           <div className="bg-paper-2 rounded-md p-3 text-sm space-y-1.5">
-            <div className="flex justify-between items-baseline">
-              <span className="text-ink-3">Quote total</span>
-              <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
-            </div>
+            {split ? (
+              /* R-527: the year is shown for reference; what is expected is the instalments
+                 due so far — the same per-instalment figure the customer page collects. */
+              <>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-ink-3">Year, {split.scheduleLabel}</span>
+                  <span className="tabular-nums text-ink-3">
+                    {split.plan.lines.every((l) => l.gross === split.plan.lines[0].gross)
+                      ? `${split.plan.count} × ${rupee(split.plan.lines[0].gross)} = `
+                      : `${split.plan.count} instalments · `}
+                    {rupee(split.plan.instalmentsGross)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-ink-3">Due now · {split.dueLabel}</span>
+                  <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between items-baseline">
+                <span className="text-ink-3">Quote total</span>
+                <span className="font-medium tabular-nums">{rupee(expectedAmount)}</span>
+              </div>
+            )}
             {hasPriorPayments && (
               <div className="flex justify-between items-baseline">
                 <span className="text-ink-3">Already received</span>
@@ -1319,7 +1404,7 @@ export function RecordPaymentDialog({
                     TDS computation
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-ink-3">Quote total (incl 18% GST)</span>
+                    <span className="text-ink-3">{split ? "Due now (incl 18% GST)" : "Quote total (incl 18% GST)"}</span>
                     <span className="font-mono">{rupee(expectedAmount)}</span>
                   </div>
                   <div className="flex justify-between">
@@ -1412,7 +1497,9 @@ export function RecordPaymentDialog({
                 ) : (
                   <>
                     <b>{outcome.sentence}</b>{" "}
-                    {invoiceOffer.offer && issueInvoice
+                    {split
+                      ? null
+                      : invoiceOffer.offer && issueInvoice
                       ? "The GST invoice is issued right after the payment is saved."
                       : "You can then generate the GST invoice from the quote detail page."}
                   </>

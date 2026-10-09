@@ -225,6 +225,12 @@ export function QuoteAcceptView({
     // Flex me stored aankde per-month hain — split kuch hai hi nahi (12× ka parivar).
     lineCommitment: firstCommitment ?? null,
   }), [effectiveCycle, quote.subtotal, quote.discount_pct, quote.tax_rate, payableTotal, firstCommitment]);
+  /* R-527: the totals box prints ONE instalment by the instalment invoice's own rounding —
+     taxable, GST and total from the same plan (lib/billing/instalments.ts), and the year as
+     the sum of instalments. The tax rows were the year's GST ÷ 4. Only when nothing was
+     changed on the page (a changed basket is the server's figure, not a plan yet). */
+  const inst = dueToday && !liveConfig && !isFlex ? dueToday : null;
+  const fmtInst = (n: number) => `${fmtC(n)}${billingUnit}`;
 
   const [notifying, setNotifying] = React.useState(false);
   /**
@@ -838,14 +844,14 @@ export function QuoteAcceptView({
               {quote.discount_pct > 0 && !liveConfig && (
                 <Row label={`Discount (${quote.discount_pct}%)`} value={`−${fmtInv(dDiscount)}`} accent />
               )}
-              <Row label="Taxable" value={fmtInv(liveConfig ? liveConfig.subtotal : dTaxable)} />
+              <Row label="Taxable" value={inst ? fmtInst(inst.firstTaxable) : fmtInv(liveConfig ? liveConfig.subtotal : dTaxable)} />
               {/* R-376(b): the heads the quote preview and PDF print — IGST on an
                   inter-state supply, CGST + SGST (lib/gst/tax-split) within the state. */}
               <TaxRows
                 taxRate={quote.tax_rate}
-                tax={liveConfig ? liveConfig.total - liveConfig.subtotal : dTax}
+                tax={inst ? inst.firstGross - inst.firstTaxable : liveConfig ? liveConfig.total - liveConfig.subtotal : dTax}
                 interState={interState}
-                fmt={fmtInv}
+                fmt={inst ? fmtInst : fmtInv}
               />
               <div className="border-t-2 border-ink pt-2 mt-2">
                 <div className="flex justify-between items-baseline">
@@ -874,7 +880,7 @@ export function QuoteAcceptView({
                 {perInvoice && !isFlex && (
                   <div className="flex justify-between items-baseline mt-1.5 text-ink-3">
                     <span className="text-2xs">Annual contract value</span>
-                    <span className="text-sm tabular-nums">{fmtC(payableTotal)}/yr</span>
+                    <span className="text-sm tabular-nums">{fmtC(inst ? inst.instalmentsGross : payableTotal)}/yr</span>
                   </div>
                 )}
                 {!perInvoice && billingN === 1 && (
@@ -945,7 +951,7 @@ export function QuoteAcceptView({
               <p className="text-[12px] leading-snug text-ink-3">
                 This is instalment 1 of {dueToday.count}. The rest are invoiced one
                 period at a time on their own dates — you pay each from the invoice you
-                receive, never the whole {fmtC(dueToday.termGross)} at once.
+                receive, never the whole {fmtC(dueToday.instalmentsGross)} at once.
               </p>
             )}
             {payOnline && liveConfig?.changed && (

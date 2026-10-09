@@ -60,3 +60,13 @@ export function scheduleInvoices(args: {
 export function nextUninvoiced(periods: BillingPeriod[], invoiced: Map<number, ScheduleInvoice>, todayISO: string): number | null {
   return periods.find((p) => !invoiced.has(p.index) && p.billOn >= todayISO)?.index ?? null;
 }
+
+/**
+ * R-527: the "next" tag belongs to ONE row on the card. The next-term table computed its own
+ * "next" with no invoices to look at, so its first row (9 Oct 2027 on a07416e3) was tagged
+ * "next" beside the current term's own next row. The next term may carry the tag only when
+ * the current term has no un-invoiced bill left to come.
+ */
+export function nextTermShowsNext(current: BillingPeriod[], invoiced: Map<number, ScheduleInvoice>, todayISO: string): boolean {
+  return nextUninvoiced(current, invoiced, todayISO) === null;
+}

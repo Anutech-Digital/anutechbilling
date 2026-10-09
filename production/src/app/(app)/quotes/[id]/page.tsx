@@ -22,6 +22,7 @@ import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
+import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
@@ -84,7 +85,7 @@ import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
 import { cn } from "@/lib/utils";
-import type { Quote, QuoteLineItem, Payment } from "@/lib/supabase/database.types";
+import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
 
@@ -623,8 +624,23 @@ export default function QuoteDetailPage() {
     quote.billing_cycle,
     (allSubs ?? []).filter((s) => s.quote_id === quote.id).map((s) => s.billing_cycle),
   );
+  /* R-527: a split-billed quote owes only the instalments whose date has arrived — the same
+     plan (and rounding) as the customer page, the payment sheet and the instalment invoice. */
+  const firstQuoteSub = (allSubs ?? [])
+    .filter((s) => s.quote_id === quote.id)
+    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
+  const splitPlan = splitCycle && !quote.invoice_id
+    ? planForQuote(quote, (firstQuoteSub?.start_date ?? istToday()).slice(0, 10))
+    : null;
+  const due = splitPlan ? splitDue(splitPlan, { todayISO: istToday(), received: totalReceivedSoFar }) : null;
   const money = quoteMoneyActions(
     {
+      splitDue: splitPlan && due ? {
+        dueGross: due.dueGross,
+        outstanding: due.outstanding,
+        count: splitPlan.count,
+        next: due.next ? { gross: due.next.gross, billOn: formatDate(due.next.billOn), index: due.next.index } : null,
+      } : null,
       status:        quote.status,
       paymentStatus: quote.payment_status,
       invoiceId:     quote.invoice_id,
@@ -1175,7 +1191,9 @@ export default function QuoteDetailPage() {
                   possibility. */}
               {totalReceivedSoFar > 0 ? (
                 <span className="font-medium text-rose">
-                  {rupee(totalReceivedSoFar)} already received of {rupee(total)} — {rupee(Math.max(0, total - totalReceivedSoFar))} still outstanding.
+                  {due
+                    ? <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
+                    : <>{rupee(totalReceivedSoFar)} already received of {rupee(total)} — {rupee(Math.max(0, total - totalReceivedSoFar))} still outstanding.</>}
                 </span>
               ) : (
                 <span className="text-ink-2">Payment can land later — record it when received.</span>
@@ -1790,6 +1808,9 @@ export default function QuoteDetailPage() {
         interState={interState}
         placeOfSupply={pos.label}
         isExport={pos.isExport}
+        /* R-527: without it the preview fell back to the line's commitment and printed a
+           quarterly quote as "billed yearly" with the year's CGST/SGST. */
+        billingCycle={quote.billing_cycle as BillingCycle}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))

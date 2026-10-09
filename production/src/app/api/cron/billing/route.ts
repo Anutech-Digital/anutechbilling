@@ -40,9 +40,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { plannedInstalments, instalmentSkip, instalmentsDue } from "@/lib/billing/instalments";
-import { billingTermStart } from "@/lib/billing/subscription-schedule";
-import { addDaysISO } from "@/lib/dates/ist";
+import { syncSubscriptionInstalments, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
 import { reportCron } from "@/lib/ops/cron-report";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +50,7 @@ export const runtime = "nodejs";
 function readActiveSubs(supabase: ReturnType<typeof createAdminClient>) {
   return fetchAllRows((from, to) => supabase
     .from("subscriptions")
-    .select("id, tenant_id, quote_id, mrr, billing_cycle, term_months, start_date, renewal_date")
+    .select(INSTALMENT_SUB_SELECT)
     .eq("status", "active")
     .order("id", { ascending: true })
     .range(from, to));
@@ -153,116 +151,19 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
 
   for (const sub of subs) {
     try {
-      const planned = plannedInstalments(sub);
-      const quote   = sub.quote_id ? quoteById.get(sub.quote_id) : undefined;
-
-      const skip = instalmentSkip({
-        cycle:        sub.billing_cycle,
-        quotePaid:    quote?.payment_amount,
-        quoteAmount:  quote?.amount,
-        quoteInvoiced: quote?.invoiced ?? false,
-        scheduleSize: planned.length,
-      });
-      if (skip) {
-        result.skipped.push({ subscription_id: sub.id, code: skip.code, reason: skip.reason });
+      const quote = sub.quote_id ? quoteById.get(sub.quote_id) : undefined;
+      /* R-527: the per-subscription work lives in lib/billing/sync-instalments.server.ts so a
+         recorded payment raises its instalment invoice at once, through this same code. */
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote, todayISO: today, dryRun });
+      if (r.skip) {
+        result.skipped.push({ subscription_id: sub.id, code: r.skip.code, reason: r.skip.reason });
         continue;
       }
-
-      /* R-451: the corrected term start can be one day earlier than the key this term's
-         instalments were already filed under — keep that key, or they are made twice. */
-      const correctedStart = planned[0].termStart;
-      const { data: termRows, error: tsErr } = await supabase
-        .from("subscription_billings")
-        .select("term_start")
-        .eq("subscription_id", sub.id)
-        .in("term_start", [correctedStart, addDaysISO(correctedStart, 1)]);
-      if (tsErr) throw new Error(tsErr.message);
-      const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start));
-      if (termStart !== correctedStart) {
-        for (const p of planned) p.termStart = termStart;
-      }
-
-      const { data: existing, error: exErr } = await supabase
-        .from("subscription_billings")
-        .select("id, period_index, taxable_amount, invoice_id, bill_on")
-        .eq("subscription_id", sub.id)
-        .eq("term_start", termStart);
-      if (exErr) throw new Error(exErr.message);
-
-      const byIndex = new Map((existing ?? []).map((r) => [r.period_index, r]));
-
-      // ── Materialise: insert what is new, re-sync what is unbilled ──────────
-      const toInsert = planned
-        .filter((p) => !byIndex.has(p.periodIndex))
-        .map((p) => ({
-          tenant_id:       sub.tenant_id,
-          subscription_id: sub.id,
-          term_start:      p.termStart,
-          period_index:    p.periodIndex,
-          bill_on:         p.billOn,
-          period_start:    p.periodStart,
-          period_end:      p.periodEnd,
-          taxable_amount:  p.taxableAmount,
-        }));
-
-      /* Only rows with no invoice. An instalment already invoiced is frozen — see
-         the header. */
-      const toResync = planned.filter((p) => {
-        const row = byIndex.get(p.periodIndex);
-        return row != null && row.invoice_id == null && row.taxable_amount !== p.taxableAmount;
-      });
-
-      if (!dryRun) {
-        if (toInsert.length > 0) {
-          const { error } = await supabase.from("subscription_billings").insert(toInsert);
-          if (error) throw new Error(error.message);
-        }
-        for (const p of toResync) {
-          const row = byIndex.get(p.periodIndex)!;
-          const { error } = await supabase
-            .from("subscription_billings")
-            .update({ taxable_amount: p.taxableAmount, bill_on: p.billOn, updated_at: new Date().toISOString() })
-            .eq("id", row.id)
-            .is("invoice_id", null);   // re-checked at write time, not just at read time
-          if (error) throw new Error(error.message);
-        }
-      }
-      result.instalments_created  += toInsert.length;
-      result.instalments_resynced += toResync.length;
-
-      // ── Raise what is due ─────────────────────────────────────────────────
-      const { data: fresh, error: frErr } = dryRun
-        ? { data: existing ?? [], error: null }
-        : await supabase
-            .from("subscription_billings")
-            .select("id, period_index, bill_on, invoice_id")
-            .eq("subscription_id", sub.id)
-            .eq("term_start", termStart);
-      if (frErr) throw new Error(frErr.message);
-
-      const due = instalmentsDue(
-        (fresh ?? []).map((r) => ({ ...r, billOn: r.bill_on, invoiceId: r.invoice_id })),
-        today,
-      );
-
-      for (const row of due) {
-        if (dryRun) { result.invoices_raised += 1; continue; }
-        const { data, error } = await supabase.rpc("raise_subscription_billing", { p_billing_id: row.id });
-        if (error) throw new Error(error.message);
-        const out = data?.[0];
-        if (!out) throw new Error(`raise_subscription_billing returned nothing for instalment ${row.id}`);
-        if (out.already_raised) {
-          result.already_raised += 1;
-        } else {
-          result.invoices_raised += 1;
-          result.raised.push({
-            subscription_id: sub.id,
-            period_index:    row.period_index,
-            invoice_id:      out.invoice_id,
-            gross:           out.gross,
-          });
-        }
-      }
+      result.instalments_created  += r.created;
+      result.instalments_resynced += r.resynced;
+      result.invoices_raised      += r.raised.length + r.wouldRaise;
+      result.already_raised       += r.alreadyRaised;
+      for (const x of r.raised) result.raised.push({ subscription_id: sub.id, ...x });
     } catch (e) {
       result.errors.push({
         subscription_id: sub.id,

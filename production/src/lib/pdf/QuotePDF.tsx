@@ -38,6 +38,7 @@ import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invoice-divisor";
+import { quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
@@ -504,6 +505,21 @@ export function QuotePDF(props: QuotePDFProps) {
     ? (({ cgst, sgst }) => ({ cgst: cgst / 100, sgst: sgst / 100 }))(splitIntraStateTax(Math.round(dTax * 100)))
     : splitIntraStateTax(dTax);
 
+  /* R-527: per-instalment figures by ONE rounding rule — the instalment invoice's own
+     (taxable + round(taxable × GST%)), from lib/billing/instalments.ts, the plan the editor,
+     customer page and payment sheet read. "Per invoice" was the year's total ÷ 4 (₹7,647 on
+     Q-FBB9-27-0020) beside CGST/SGST of the year's tax ÷ 4 that summed to ₹7,646. ₹ quotes on
+     an annual commitment only; flex and foreign keep their own figures. */
+  const splitPlan = !isForeign && perInvoice && !noYearlyCommitment
+    ? quoteInstalmentPlan({
+        cycle: effectiveCycle, termTaxable: dTaxable, termGross: dTotal,
+        taxRate: isExport ? 0 : taxRate, lineCommitment: firstCommitment ?? null, termStart: "2000-01-01",
+      })
+    : null;
+  const firstInst = splitPlan?.lines[0] ?? null;
+  const fmtInst = (v: number) => `${fmtC(v)}${billingUnit}`;
+  const instHeads = firstInst ? splitIntraStateTax(firstInst.tax) : null;
+
   return (
     <Document
       title={`${isPaid ? "Paid order" : "Quote"} ${quoteId}`}
@@ -694,7 +710,7 @@ export function QuotePDF(props: QuotePDFProps) {
               )}
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>Taxable amount</Text>
-                <Text style={s.totalValue}>{fmtInv(dTaxable)}</Text>
+                <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.taxable) : fmtInv(dTaxable)}</Text>
               </View>
               {isExport ? (
                 <View style={s.totalRow}>
@@ -704,17 +720,17 @@ export function QuotePDF(props: QuotePDFProps) {
               ) : interState ? (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>IGST ({taxRate}%)</Text>
-                  <Text style={s.totalValue}>{fmtInv(dTax)}</Text>
+                  <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.tax) : fmtInv(dTax)}</Text>
                 </View>
               ) : (
                 <>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>CGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(intra.cgst)}</Text>
+                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.cgst) : fmtInv(intra.cgst)}</Text>
                   </View>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>SGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{fmtInv(intra.sgst)}</Text>
+                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.sgst) : fmtInv(intra.sgst)}</Text>
                   </View>
                 </>
               )}
@@ -726,7 +742,9 @@ export function QuotePDF(props: QuotePDFProps) {
                       : "Grand total"}
                   </Text>
                   <Text style={s.grandValue}>
-                    {perInvoice
+                    {firstInst
+                      ? fmtInst(firstInst.gross)
+                      : perInvoice
                       ? `${fmtC(dRound(dTotal / invoiceDivisor))}${billingUnit}`
                       : fmtC(dTotal)}
                   </Text>
@@ -758,7 +776,7 @@ export function QuotePDF(props: QuotePDFProps) {
                           monthly, `dTotal` IS the year. `annualContractValue` keeps the two
                           in step, and its tests keep the flex branch honest even though this
                           document no longer renders it. */}
-                      <Text>{fmtC(annualContractValue(dTotal, billingN, firstCommitment))}/yr</Text>
+                      <Text>{splitPlan ? fmtC(splitPlan.instalmentsGross) : fmtC(annualContractValue(dTotal, billingN, firstCommitment))}/yr</Text>
                     </View>
                   )
                 )}

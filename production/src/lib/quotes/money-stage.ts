@@ -46,6 +46,15 @@ export interface QuoteMoneyInput {
    *  The database refuses a whole-term invoice then (trigger
    *  invoices_reject_full_term_when_split_billed), so the page must not offer one. */
   splitBilledCycle?: string | null;
+  /** R-527: on a split-billed quote, what is due TODAY (lib/billing/instalments.ts splitDue) —
+   *  the instalments whose date has arrived, never the rest of the year. */
+  splitDue?: {
+    dueGross: number;
+    outstanding: number;
+    /** The first instalment not yet covered, with its date. */
+    next: { gross: number; billOn: string; index: number } | null;
+    count: number;
+  } | null;
 }
 
 export type MoneyStage =
@@ -88,6 +97,24 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
   const cycle = q.splitBilledCycle ? q.splitBilledCycle.replace(/_/g, "-") : null;
   if (cycle && (stage === "unpaid" || stage === "partial" || stage === "paid")) {
     const each = `Billed ${cycle}: each period gets its own GST invoice on its date.`;
+    /* R-527: with the plan known, "outstanding" is what has fallen due. Q-FBB9-27-0020 read
+       "₹7,646 of ₹30,586 received · ₹22,940 still outstanding" the day Q1 was paid. */
+    const d = q.splitDue;
+    if (d) {
+      const nextLine = d.next ? ` Next instalment ${rupees(d.next.gross)} (${d.next.index} of ${d.count}) on ${d.next.billOn}.` : "";
+      if (d.outstanding > 0) {
+        return base(q.received > 0 ? "partial" : "unpaid", d.outstanding, {
+          note: `${rupees(d.outstanding)} due now${q.received > 0 ? ` · ${rupees(q.received)} received so far` : ""}. ${each}`,
+          canRecordPayment: true,
+          recordLabel: q.received > 0 ? "Record instalment payment" : "Record payment",
+        });
+      }
+      return base(d.next ? "partial" : "paid", 0, {
+        note: `Instalments due so far are paid — ${rupees(q.received)} received.${nextLine} ${each}`,
+        canRecordPayment: d.next != null,
+        recordLabel: "Record next instalment",
+      });
+    }
     if (stage === "unpaid") {
       return base(stage, outstanding, {
         note: `Accepted. ${rupees(q.total)} to collect — record the payment when it arrives. ${each}`,
