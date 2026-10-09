@@ -16,7 +16,8 @@
  *    and under-sells by one line
  */
 import { slabPricing } from "@/lib/quotes/volume-tiers";
-import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
+import { catalogYearlyPrice, commitmentForUnit } from "@/lib/quotes/catalog-line";
+import { billingUnitOf } from "@/lib/catalog/billing-unit";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
 export interface PackageItemRow {
@@ -115,17 +116,21 @@ export function pricePackage(
 /** The quote lines a priced package adds. */
 export function packageLines(p: PricedPackage, opts: { startDate?: string } = {}): QuoteLineItem[] {
   const stamp = Date.now();
-  return p.parts.map((pp, i) => ({
-    id: `line-${stamp}-${i}`,
-    item_id: pp.item.id,
-    name: pp.item.name,
-    qty: pp.qty,
-    rate: pp.rate,
-    list_rate: pp.listRate,
-    cost: pp.cost,
-    commitment: "annual_yearly",
-    ...(opts.startDate ? { start_date: opts.startDate } : {}),
-  }));
+  return p.parts.map((pp, i) => {
+    /* R-526: a one-time part (migration, setup) is a one-time line — no commitment. */
+    const commitment = commitmentForUnit(billingUnitOf(pp.item));
+    return {
+      id: `line-${stamp}-${i}`,
+      item_id: pp.item.id,
+      name: pp.item.name,
+      qty: pp.qty,
+      rate: pp.rate,
+      list_rate: pp.listRate,
+      cost: pp.cost,
+      ...(commitment ? { commitment } : {}),
+      ...(opts.startDate ? { start_date: opts.startDate } : {}),
+    };
+  });
 }
 
 /** "Support plan (Yearly) is no longer in the catalogue" — names the gap and the fix. */

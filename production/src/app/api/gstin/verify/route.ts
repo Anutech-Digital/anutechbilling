@@ -23,6 +23,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { isValidGstin }      from "@/lib/utils";
+import { mockGstinVerification } from "@/lib/gst/mock-gstin";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -236,33 +237,8 @@ function normaliseSandbox(raw: unknown): GstinVerification {
 // First 2 digits = state code, first 5 letters after = PAN's name part.
 // ──────────────────────────────────────────────────────────────────────
 function mockVerify(gstin: string): GstinVerification {
-  const stateCode  = gstin.slice(0, 2);
-  const panLetters = gstin.slice(2, 7);
-  // Deterministic "business name" — same GSTIN always produces same mock
-  const principal_address = {
-    building:   "Plot 14",
-    street:     "BKC Main Road",
-    locality:   "Bandra Kurla Complex",
-    city:       "Mumbai",
-    district:   "Mumbai",
-    state:      stateCode,
-    pin_code:   "400051",
-  };
-  return {
-    status:             "Active",
-    legal_name:         `${panLetters} Technologies Private Limited`,
-    trade_name:         `${panLetters} Technologies`,
-    constitution:       "Private Limited Company",
-    registration_type:  "Regular",
-    valid_from:         "2017-07-01",
-    valid_upto:         null,
-    last_return_filed:  "2026-04-20",
-    jurisdiction:       `State - ${stateCode} (Mock)`,
-    state_code:         stateCode,
-    principal_address,
-    address:            "Plot 14, BKC Main Road, Bandra Kurla Complex, Mumbai, 400051",
-    source:             "mock",
-  };
+  /* R-526: the address follows the GSTIN's state (lib/gst/mock-gstin.ts) — it was always Mumbai. */
+  return mockGstinVerification(gstin);
 }
 
 // ──────────────────────────────────────────────────────────────────────

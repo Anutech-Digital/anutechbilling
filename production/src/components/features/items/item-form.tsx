@@ -37,6 +37,7 @@ import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, ItemPrices, ItemPriceTier, TenantWithParent } from "@/lib/supabase/database.types";
+import { BILLING_UNITS, billingUnitOf, isBillingUnit, type BillingUnit } from "@/lib/catalog/billing-unit";
 
 /* All seven values of the DB's `vendor` enum. This list held four, so an operator
    could not create a hosting, support or domain item through the UI at all — yet 7 of
@@ -70,6 +71,8 @@ interface PriceTierRow {
   label:  string;
   hint:   string;
   badge?: string;
+  /** Overrides the input suffix ("/yr", " once") — R-526 per-year / one-time rows. */
+  suffix?: string;
 }
 
 const PRICE_TIERS: PriceTierRow[] = [
@@ -77,6 +80,25 @@ const PRICE_TIERS: PriceTierRow[] = [
   { tier: "annual",  unit: "mo", label: "Annual, monthly bill", hint: "1-yr commit · 12 monthly invoices" },
   { tier: "annual",  unit: "yr", label: "Annual, yearly bill",  hint: "1-yr commit · 1 invoice per year (= ₹/mo × 12)", badge: "Headline" },
 ];
+
+/* R-526: a per-year or one-time item has ONE price — the year, or once. Stored in the
+   annual tier as-is (no ×12); lib/catalog/billing-unit.ts reads the unit, never the name. */
+function priceRowsFor(unit: BillingUnit): PriceTierRow[] {
+  if (unit === "unit_year") {
+    return [{ tier: "annual", unit: "mo", suffix: "/yr", label: "Per year", hint: "1 invoice a year, per unit (e.g. per domain)", badge: "Headline" }];
+  }
+  if (unit === "one_time") {
+    return [{ tier: "annual", unit: "mo", suffix: " once", label: "One-time", hint: "Charged once — no renewal, no ×12", badge: "Headline" }];
+  }
+  return PRICE_TIERS;
+}
+
+/** The prices to edit: legacy rows (no tier, maybe only a billing_unit) start from msrp/wholesale. */
+function editablePrices(item: Item): ItemPrices {
+  const p = (item.prices ?? {}) as ItemPrices;
+  if (p.annual || p.monthly) return p;
+  return { ...p, annual: { msrp: item.msrp, wholesale: item.wholesale } };
+}
 
 type FormData = z.infer<typeof schema>;
 
@@ -94,6 +116,10 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
 
   const [vendor, setVendor] = React.useState<FormData["vendor"]>(item?.vendor ?? "google");
   const [kind,   setKind]   = React.useState<FormData["kind"]>(item?.kind ?? "main");
+  /* R-526: how the price is billed. An old row shows what it bills as today (billingUnitOf). */
+  const [billingUnit, setBillingUnit] = React.useState<BillingUnit>(item ? billingUnitOf(item) : "seat_month");
+  const priceRows = priceRowsFor(billingUnit);
+  const perSeatUnit = billingUnit === "seat_month";
 
   // Per-commitment pricing matrix. Stored locally — saved as JSON on submit.
   const blankTier = { msrp: 0, wholesale: 0 };
@@ -154,6 +180,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
       reset();
       setVendor("google");
       setKind("main");
+      setBillingUnit("seat_month");
       setPrices({
         monthly: { ...blankTier },
         annual:  { ...blankTier },
@@ -164,14 +191,9 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
       reset({ id: item.id, name: item.name, vendor: item.vendor, kind: item.kind, hsn: item.hsn ?? "998313" });
       setVendor(item.vendor);
       setKind(item.kind);
-      setPrices(
-        item.prices && Object.keys(item.prices).length > 0
-          ? item.prices
-          : {
-              // Backfill from legacy msrp/wholesale columns
-              annual: { msrp: item.msrp, wholesale: item.wholesale },
-            },
-      );
+      setBillingUnit(billingUnitOf(item));
+      // Backfill from legacy msrp/wholesale columns when the row has no tier yet.
+      setPrices(editablePrices(item));
       setIsPartnerVisible(item.is_partner_visible ?? false);
       setPartnerPrice(item.partner_price ?? 0);
     }
@@ -185,15 +207,21 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
 
   const onSubmit = async (data: FormData) => {
     // Strip tiers where both prices are 0 (treat as "not offered")
-    const cleanPrices: ItemPrices = {};
-    for (const tier of ["monthly", "annual"] as ItemPriceTier[]) {
+    const cleanPrices: ItemPrices & { billing_unit?: BillingUnit; annual_total?: unknown } = {};
+    /* R-526: a per-year / one-time item has only the one price (annual tier, as-is). */
+    const tiers: ItemPriceTier[] = billingUnit === "unit_year" || billingUnit === "one_time" ? ["annual"] : ["monthly", "annual"];
+    for (const tier of tiers) {
       const v = prices[tier];
       if (v && (v.msrp > 0 || v.wholesale > 0)) cleanPrices[tier] = v;
     }
+    // Keep what this form does not edit — a yearly-total plan and seat slabs were wiped on every save.
+    const kept = prices as ItemPrices & { annual_total?: unknown };
+    if (kept.annual_total) cleanPrices.annual_total = kept.annual_total;
+    if (kept.slabs && perSeatUnit) cleanPrices.slabs = kept.slabs;
     // Preserve the optional real USD price (per seat / month) for export deals.
     if (prices.usd && (prices.usd.msrp > 0 || prices.usd.wholesale > 0)) cleanPrices.usd = prices.usd;
 
-    if (Object.keys(cleanPrices).length === 0) {
+    if (!cleanPrices.annual && !cleanPrices.monthly && !cleanPrices.annual_total) {
       // No tier filled — error out
       toast.error("Enter a price for at least one commitment tier.", { description: "Fill Annual or Monthly in the pricing section, then save again." });
       return;
@@ -208,6 +236,8 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
        Faisla yahan nahi, us file me hai — taaki test use pakad sake. Guard `headline` ki
        wahi value dekhta hai jo neeche save hoti hai; do alag hisaab do alag jawab dete. */
     const headline = headlineTier(cleanPrices);
+    // The owner chose (or confirmed) the unit in this form — save it on the row.
+    if (isBillingUnit(billingUnit)) cleanPrices.billing_unit = billingUnit;
     const blocker = agentQuoteBlocker(data.kind, cleanPrices);
     if (blocker) {
       toast.error(blocker, { description: "Fix this in the pricing section, then save again." });
@@ -339,12 +369,36 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
             />
           </FormField>
 
+          {/* ─── R-526: how the price is billed — decides ×12, the default qty and the commitment ─── */}
+          <FormField
+            label="How is it billed?"
+            required
+            htmlFor="billing-unit"
+            hint={BILLING_UNITS.find((u) => u.value === billingUnit)?.hint}
+          >
+            <Select value={billingUnit} onValueChange={(v) => { if (isBillingUnit(v)) setBillingUnit(v); }}>
+              <SelectTrigger id="billing-unit">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BILLING_UNITS.map((u) => (
+                  <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+
           {/* ─── Pricing matrix by commitment ─── */}
           <div className="rounded-lg border border-hairline overflow-hidden">
             <div className="px-3 py-2 bg-paper-2 border-b border-hairline flex items-center justify-between">
               <div>
-                <div className="text-sm font-semibold text-ink">Pricing by commitment</div>
-                <div className="text-2xs text-ink-3">All rates in ₹/seat/month · leave 0 to skip a tier</div>
+                <div className="text-sm font-semibold text-ink">{perSeatUnit || billingUnit === "unit_month" ? "Pricing by commitment" : "Price"}</div>
+                <div className="text-2xs text-ink-3">
+                  {billingUnit === "seat_month" ? "All rates in ₹/seat/month · leave 0 to skip a tier"
+                    : billingUnit === "unit_month" ? "All rates in ₹ per unit per month · leave 0 to skip a tier"
+                    : billingUnit === "unit_year" ? "₹ per unit per year — a quote charges this once a year"
+                    : "₹ charged once — a quote never multiplies it"}
+                </div>
               </div>
               <Icon name="info" size={13} className="text-ink-3" />
             </div>
@@ -357,7 +411,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
               <div className="text-right">Margin</div>
             </div>
 
-            {PRICE_TIERS.map((row, idx) => {
+            {priceRows.map((row, idx) => {
               // Underlying value (always stored as ₹/seat/month)
               const stored = prices[row.tier] ?? blankTier;
               // Multiplier: monthly display = 1, yearly display = 12
@@ -402,7 +456,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                       min={0}
                       step="any"
                       prefix="₹"
-                      suffix={row.unit === "yr" ? "/yr" : "/mo"}
+                      suffix={row.suffix ?? (row.unit === "yr" ? "/yr" : "/mo")}
                       aria-label={`${row.label} customer price`}
                       value={displayMsrp}
                       onValue={(n) => handleEdit("msrp", n)}
@@ -414,7 +468,7 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                       min={0}
                       step="any"
                       prefix="₹"
-                      suffix={row.unit === "yr" ? "/yr" : "/mo"}
+                      suffix={row.suffix ?? (row.unit === "yr" ? "/yr" : "/mo")}
                       aria-label={`${row.label} cost price`}
                       value={displayWholesale}
                       onValue={(n) => handleEdit("wholesale", n)}
@@ -532,8 +586,16 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
             <div className="text-2xs text-ink-3 flex items-center gap-1.5">
               <Icon name="info" size={11} />
               Headline rate{" "}
-              <b className="text-ink">{rupee(headlinePreview.msrp)}/seat/mo</b>{" "}
-              (= <b className="text-ink">{rupee(headlinePreview.msrp * 12)}/seat/yr</b>){" "}
+              {billingUnit === "unit_year" ? (
+                <><b className="text-ink">{rupee(headlinePreview.msrp)}/yr</b> per unit{" "}</>
+              ) : billingUnit === "one_time" ? (
+                <><b className="text-ink">{rupee(headlinePreview.msrp)}</b> once{" "}</>
+              ) : (
+                <>
+                  <b className="text-ink">{rupee(headlinePreview.msrp)}{perSeatUnit ? "/seat" : ""}/mo</b>{" "}
+                  (= <b className="text-ink">{rupee(headlinePreview.msrp * 12)}{perSeatUnit ? "/seat" : ""}/yr</b>){" "}
+                </>
+              )}
               will appear in quotes, dashboards and the customer-facing PDF.
             </div>
           )}

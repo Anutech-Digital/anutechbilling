@@ -66,6 +66,15 @@ describe("packages — priced from the catalogue at quote time", () => {
     expect(lines[0]).toMatchObject({ item_id: "GW-STR", qty: 10, rate: 2916, list_rate: 3240, cost: 1320, start_date: "2026-10-02" });
   });
 
+  it("R-526: a one-time part is a one-time line (no commitment), priced once", () => {
+    const cat = [...CAT, item({ id: "MIG", name: "Email migration (one-time)", kind: "addon", msrp: 199, wholesale: 80, prices: { billing_unit: "one_time" } as never })];
+    const pkg = PKG({ items: [PKG().items[0], { item_id: "MIG", qty_mode: "fixed", fixed_qty: 1, optional: false, sort_order: 1 }] });
+    const lines = packageLines(pricePackage(pkg, cat, 10));
+    expect(lines[0].commitment).toBe("annual_yearly");
+    expect(lines[1]).toMatchObject({ item_id: "MIG", qty: 1, rate: 199 });
+    expect(lines[1].commitment).toBeUndefined();
+  });
+
   it("seat count never goes below one", () => {
     expect(partQty({ item_id: "x", qty_mode: "per_seat", fixed_qty: null, optional: false, sort_order: 0 }, 0)).toBe(1);
   });

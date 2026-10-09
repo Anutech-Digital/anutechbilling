@@ -38,3 +38,27 @@ describe("R-387 — one product, one price, whichever adder", () => {
     expect(catalogYearlyPrice(sup as never).rate).toBe(199 * 12);
   });
 });
+
+describe("R-526 — the quote prices by the item's own unit", () => {
+  const domain = { id: "DOM-IN-t", name: "Domain registration (.in / .com / yr)", vendor: "other", msrp: 999, wholesale: 650, prices: { billing_unit: "unit_year" } };
+  const migration = { id: "M365-EM-t", name: "M365 Email migration (one-time)", vendor: "microsoft", msrp: 199, wholesale: 80, prices: { billing_unit: "one_time" } };
+
+  it("a per-year domain is ₹999 a year, not ₹11,988 — and one domain, not ten", () => {
+    expect(catalogYearlyPrice(domain as never)).toEqual({ rate: 999, cost: 650 });
+    const line = lineFromCatalog(domain as never, { qty: 25 });
+    expect(line).toMatchObject({ rate: 999, cost: 650, qty: 1, commitment: "annual_yearly" });
+  });
+  it("a one-time migration is ₹199 once, on a line with no commitment", () => {
+    const line = lineFromCatalog(migration as never, { qty: 25 });
+    expect(line).toMatchObject({ rate: 199, cost: 80, qty: 1 });
+    expect(line.commitment).toBeUndefined();
+  });
+  it("a per-seat licence still takes the seats and ×12", () => {
+    const lic = lineFromCatalog({ id: "GW-STD-t", name: "Google Workspace Standard", vendor: "google", msrp: 1080, wholesale: 620, prices: { billing_unit: "seat_month" } } as never, { qty: 25 });
+    expect(lic).toMatchObject({ rate: 12960, qty: 25, commitment: "annual_yearly" });
+  });
+  it("a support plan ignores the seat chip — one per company", () => {
+    const sup = lineFromCatalog({ id: "SUP-x", name: "Standard Support", vendor: "support", msrp: 199, wholesale: 0, prices: {} } as never, { qty: 25 });
+    expect(sup.qty).toBe(1);
+  });
+});

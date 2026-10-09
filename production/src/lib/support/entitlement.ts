@@ -162,13 +162,22 @@ export interface EntitlementRow {
  * Support subscriptions are excluded from the licence list — a support plan covering
  * itself is not a fact anybody needs, and it would show up as a row claiming the
  * customer has support for their support.
+ *
+ * R-526: a domain registration is not a licence either. Q-FBB9-27-0019's support card counted
+ * the yearly .in registration as a covered licence next to Workspace and M365 — a domain has
+ * no seats and no product to support. Left out by vendor "domain" or by its name.
  */
+export function isDomainRegistration(l: Pick<LicenceHolding, "vendor" | "plan">): boolean {
+  if (l.vendor === "domain") return true;
+  return /\bdomain\b.*\b(registration|renewal|transfer)\b|\b(registration|renewal)\b.*\bdomain\b/i.test(l.plan ?? "");
+}
+
 export function entitlementRows(
   licences: readonly LicenceHolding[],
   supports: readonly SupportCoverage[],
 ): EntitlementRow[] {
   return licences
-    .filter((l) => l.vendor !== "support")
+    .filter((l) => l.vendor !== "support" && !isDomainRegistration(l))
     .map((licence) => ({ licence, verdict: coverageFor(licence.vendor, supports) }));
 }
 

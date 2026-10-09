@@ -15,8 +15,8 @@ import { rupee } from "@/lib/utils";
 import type { Item } from "@/lib/supabase/database.types";
 import { pricePackage, type PackageRow } from "@/lib/packages/price";
 import { useSavePackage, type PackageDraft } from "@/lib/queries/packages";
-import { headlinePrice } from "@/lib/catalog/headline-price";
-import { catalogDefaultQty } from "@/lib/quotes/line-items";
+import { headlinePrice, headlineSuffix } from "@/lib/catalog/headline-price";
+import { billingUnitOf, isPerSeat } from "@/lib/catalog/billing-unit";
 
 type Part = PackageDraft["items"][number];
 
@@ -62,8 +62,8 @@ export function PackageEditor({ open, onOpenChange, initial, catalog }: {
   const addPart = (id: string) => {
     const it = catalog.find((c) => c.id === id);
     if (!it) return;
-    /* A licence is per seat; support, a domain, hosting — one of them. */
-    const perSeat = catalogDefaultQty(it.vendor) > 1 && it.vendor !== "domain";
+    /* A licence is per seat; support, a domain, hosting, a migration — one of them (R-526: by the item's unit). */
+    const perSeat = isPerSeat(billingUnitOf(it));
     setD((s) => ({ ...s, items: [...s.items, { item_id: id, qty_mode: perSeat ? "per_seat" : "fixed", fixed_qty: perSeat ? null : 1, optional: false }] }));
     setPick("");
   };
@@ -123,7 +123,7 @@ export function PackageEditor({ open, onOpenChange, initial, catalog }: {
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-ink truncate">{it?.name ?? p.item_id}</div>
                         <div className="text-2xs text-ink-3">
-                          {it ? `${rupee(hp!.amount)}/${hp!.unit}` : <span className="text-amber-ink">Not active in the catalogue</span>}
+                          {it ? `${rupee(hp!.amount)}${headlineSuffix(it)}` : <span className="text-amber-ink">Not active in the catalogue</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
@@ -165,7 +165,7 @@ export function PackageEditor({ open, onOpenChange, initial, catalog }: {
               <option value="">+ Add an item from the catalogue…</option>
               {sellable.map((c) => {
                 const hp = headlinePrice(c);
-                return <option key={c.id} value={c.id}>{c.name} — {rupee(hp.amount)}/{hp.unit}</option>;
+                return <option key={c.id} value={c.id}>{c.name} — {rupee(hp.amount)}{headlineSuffix(c)}</option>;
               })}
             </select>
           </div>
