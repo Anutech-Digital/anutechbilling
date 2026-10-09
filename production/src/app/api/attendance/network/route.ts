@@ -9,6 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { newPresenceSecret } from "@/lib/attendance/presence";
+import { parseShiftRules, validateShiftInput } from "@/lib/attendance/shift";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
 
 /* S20: /mark jaisa hi IP — dono ek hi niyam se padhein, warna "lock" kiya IP "mark" par
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
   const u = await me(supabase);
   if (!u) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, selfie_retention_days, require_face_match").maybeSingle();
+  const { data } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, selfie_retention_days, require_face_match, shift_start, shift_end, late_grace_minutes, half_day_under_hours").maybeSingle();
   const allowedIps: string[] = data?.allowed_ips ?? [];
   const currentIp = clientIp(request);
   return NextResponse.json({
@@ -41,6 +42,8 @@ export async function GET(request: NextRequest) {
     requirePresence: data?.require_presence ?? false,
     retentionDays: data?.selfie_retention_days ?? 180,
     requireFaceMatch: data?.require_face_match ?? false,
+    // R-604: office hours (late / half-day). Defaults when the workspace has no row.
+    shift: parseShiftRules(data),
   });
 }
 
@@ -60,13 +63,14 @@ export async function POST(request: NextRequest) {
      the office code), so the owner's settings write goes through the server client, scoped
      to the owner's tenant here — the owner check above is the gate. */
   const admin = createAdminClientFor(u.userId);
-  const { data: existing } = await admin.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, presence_secret, selfie_retention_days, require_face_match").eq("tenant_id", u.tenant_id).maybeSingle();
+  const { data: existing } = await admin.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, presence_secret, selfie_retention_days, require_face_match, shift_start, shift_end, late_grace_minutes, half_day_under_hours").eq("tenant_id", u.tenant_id).maybeSingle();
   let allowed: string[] = existing?.allowed_ips ?? [];
   let requireSelfie: boolean = existing?.require_selfie ?? true;
   let requirePresence: boolean = existing?.require_presence ?? false;
   let presenceSecret: string | null = existing?.presence_secret ?? null;
   let retentionDays: number = existing?.selfie_retention_days ?? 180;
   let requireFaceMatch: boolean = existing?.require_face_match ?? false;
+  let shift = parseShiftRules(existing);
 
   if (action === "lock") {
     if (!currentIp) return NextResponse.json({ error: "Couldn't read this network's IP" }, { status: 400 });
@@ -90,14 +94,18 @@ export async function POST(request: NextRequest) {
     retentionDays = Math.round(v);
   } else if (action === "require_face_match") {
     requireFaceMatch = Boolean(body?.value);
+  } else if (action === "set_shift") {
+    const v = validateShiftInput(body?.value ?? {});
+    if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+    shift = v.rules;
   } else {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
   const { error } = await admin
     .from("attendance_settings")
-    .upsert({ tenant_id: u.tenant_id, allowed_ips: allowed, require_selfie: requireSelfie, require_presence: requirePresence, presence_secret: presenceSecret, selfie_retention_days: retentionDays, require_face_match: requireFaceMatch, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
+    .upsert({ tenant_id: u.tenant_id, allowed_ips: allowed, require_selfie: requireSelfie, require_presence: requirePresence, presence_secret: presenceSecret, selfie_retention_days: retentionDays, require_face_match: requireFaceMatch, shift_start: shift.shiftStart, shift_end: shift.shiftEnd, late_grace_minutes: shift.lateGraceMinutes, half_day_under_hours: shift.halfDayUnderHours, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ allowedIps: allowed, currentIp, requireSelfie, requirePresence, retentionDays, requireFaceMatch });
+  return NextResponse.json({ allowedIps: allowed, currentIp, requireSelfie, requirePresence, retentionDays, requireFaceMatch, shift });
 }

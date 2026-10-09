@@ -1761,31 +1761,43 @@ export type Database = {
       attendance_settings: {
         Row: {
           allowed_ips: string[]
+          half_day_under_hours: number
+          late_grace_minutes: number
           presence_secret: string | null
           require_face_match: boolean
           require_presence: boolean
           require_selfie: boolean
           selfie_retention_days: number
+          shift_end: string
+          shift_start: string
           tenant_id: string
           updated_at: string
         }
         Insert: {
           allowed_ips?: string[]
+          half_day_under_hours?: number
+          late_grace_minutes?: number
           presence_secret?: string | null
           require_face_match?: boolean
           require_presence?: boolean
           require_selfie?: boolean
           selfie_retention_days?: number
+          shift_end?: string
+          shift_start?: string
           tenant_id: string
           updated_at?: string
         }
         Update: {
           allowed_ips?: string[]
+          half_day_under_hours?: number
+          late_grace_minutes?: number
           presence_secret?: string | null
           require_face_match?: boolean
           require_presence?: boolean
           require_selfie?: boolean
           selfie_retention_days?: number
+          shift_end?: string
+          shift_start?: string
           tenant_id?: string
           updated_at?: string
         }
@@ -3739,6 +3751,42 @@ export type Database = {
           turned_on_at?: string
         }
         Relationships: []
+      }
+      demo_tenants: {
+        Row: {
+          created_at: string
+          seeder_user_id: string
+          tenant_id: string
+          visitor_user_id: string
+        }
+        Insert: {
+          created_at?: string
+          seeder_user_id: string
+          tenant_id: string
+          visitor_user_id: string
+        }
+        Update: {
+          created_at?: string
+          seeder_user_id?: string
+          tenant_id?: string
+          visitor_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "demo_tenants_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "demo_tenants_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       document_series: {
         Row: {
@@ -13649,6 +13697,8 @@ export type Database = {
       delete_tenant_backup: { Args: { p_id: string }; Returns: undefined }
       demo_data_add_invoices: { Args: { p_rows: Json }; Returns: number }
       demo_data_clear_invoices: { Args: never; Returns: number }
+      demo_pre_request: { Args: never; Returns: undefined }
+      demo_readonly_probe: { Args: never; Returns: string }
       disburse_employee_loan: {
         Args: {
           p_bank_account_id: string
@@ -13878,6 +13928,7 @@ export type Database = {
           seller_state_code: string
         }[]
       }
+      is_demo_visitor: { Args: never; Returns: boolean }
       issue_credit_note: {
         Args: {
           p_gross_amount: number
