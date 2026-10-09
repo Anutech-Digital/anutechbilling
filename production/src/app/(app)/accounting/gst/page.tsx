@@ -35,7 +35,8 @@ import { Term } from "@/components/shared/term";
 import { gstLastMonth, gstThisMonth, gstThisQuarter, type GstPeriod } from "@/lib/gst/periods";
 import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
 import { useGstReport, useGstPaidInRange } from "./report";
-import { gstCashHeadline, gstr3bFromReport, toGstr1Doc } from "./cash-to-pay";
+import { gstCashHeadline, gstr3bFromReport, outputTaxBridge, toGstr1Doc } from "./cash-to-pay";
+import { OutputTaxBridgeCard } from "./output-tax-bridge-card";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
@@ -267,6 +268,8 @@ function GstReportInner() {
   }
 
   const g3b = data ? gstr3bFromReport(data, range) : null;
+  const bridge = data && g3b ? outputTaxBridge(data, range, g3b) : null;   // R-521: card → 3B, every part named
+  const advTax = bridge ? bridge.lines.filter((l) => l.key === "advances_11a" || l.key === "advances_11b").reduce((s, l) => s + l.tax, 0) : 0;
 
   function exportGstr3b() {
     if (!g3b) return;
@@ -349,6 +352,11 @@ function GstReportInner() {
           rowCount={data?.outputRows.length ?? 0}
           rowLabel="invoice"
           rowNote="dated in this period"
+          footnote={bridge && advTax !== 0 ? (
+            <a href="#output-tax-bridge" className="underline decoration-dotted hover:text-ink">
+              {advTax > 0 ? "+" : "−"} {rupee(Math.abs(advTax))} tax on advances = {rupee(bridge.gstr3b.tax)} in GSTR-3B
+            </a>
+          ) : undefined}
         />
         <SummaryCard
           label={<><Term k="input_gst">Input GST</Term> paid</>}
@@ -407,6 +415,11 @@ function GstReportInner() {
                           ))}
                         </tbody>
                       </table>
+                    )}
+                    {bridge && so && advTax !== 0 && (
+                      <p className="text-3xs text-ink-3 mt-1.5 leading-relaxed">
+                        Output = invoices/notes {rupee(bridge.card.tax)} {advTax > 0 ? "+" : "−"} tax on advances {rupee(Math.abs(advTax))}{g3b.rcmTax > 0 ? ` + reverse charge ${rupee(g3b.rcmTax)}` : ""}. <a href="#output-tax-bridge" className="underline decoration-dotted">Breakdown</a>
+                      </p>
                     )}
                   </>
                 )}
@@ -503,6 +516,11 @@ function GstReportInner() {
           })()}
         </Card>
       )}
+
+      {/* R-521: Output GST card → GSTR-3B 3.1, every part named (advances 11A/11B) */}
+      {bridge && g3b && (data?.outputRows.length || data?.advances.length) ? (
+        <OutputTaxBridgeCard bridge={bridge} g3b={g3b} advTax={advTax} rangeLabel={range.label} />
+      ) : null}
 
       {/* GSTR-3B worksheet — the summary figures to type on the portal */}
       {g3b && data && (data.outputRows.length > 0 || data.inputRows.length > 0) && (
@@ -861,8 +879,10 @@ function SectionHeader({
 }
 
 function SummaryCard({
-  label, taxable, gst, rowCount, rowLabel, rowNote,
+  label, taxable, gst, rowCount, rowLabel, rowNote, footnote,
 }: {
+  /** R-521: one line naming what GSTR-3B adds to this figure (tax on advances). */
+  footnote?: React.ReactNode;
   label: React.ReactNode;
   taxable: number;
   gst: number;
@@ -879,6 +899,7 @@ function SummaryCard({
       <div className="text-xs text-ink-3 leading-relaxed">
         on {rupee(taxable)} taxable value · {rowCount} {rowLabel}{rowCount === 1 ? "" : "s"}{rowNote ? ` ${rowNote}` : ""}
       </div>
+      {footnote && <div className="text-xs text-ink-2 mt-1.5 leading-relaxed">{footnote}</div>}
     </Card>
   );
 }
