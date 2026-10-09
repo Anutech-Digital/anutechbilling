@@ -166,7 +166,7 @@ export async function syncSubscriptionInstalments(args: {
 }
 
 /**
- * public.sync_split_outstanding (migration 20261009230000). Called through the untyped client
+ * public.sync_split_outstanding (migration 20261009235800). Called through the untyped client
  * because database.generated.ts is regenerated from the live schema after the migration is
  * deployed — the argument and result shapes are pinned here instead.
  */

@@ -1,5 +1,5 @@
 -- Regression test: R-527 — an annual commitment billed quarterly owes only the instalments
--- that have fallen due (migration 20261009230000_split_billed_outstanding).
+-- that have fallen due (migration 20261009235800_split_billed_outstanding).
 --
 -- Self-asserting (RAISEs on failure), inside a transaction that ROLLS BACK.
 --

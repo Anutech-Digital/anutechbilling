@@ -1,6 +1,6 @@
 -- deploy-key: splitbilledoutstanding
 -- deploy-peek: to_regprocedure('public.sync_split_outstanding(uuid)') is not null
--- 20261009230000_split_billed_outstanding
+-- 20261009235800_split_billed_outstanding
 --
 -- R-527 (P0, money) — an annual commitment billed quarterly owed the whole YEAR on day one.
 --

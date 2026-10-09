@@ -241,7 +241,7 @@ export function quoteInstalments(args: {
    per-instalment figure is the INVOICE's figure, and the year's GST divided by four is
    not a number any document will ever carry. Every screen that prints a per-instalment
    amount (editor, PDF, preview, customer page, payment dialog) reads it from here; the
-   SQL twin is public.quote_split_due() (migration 20261009230000).
+   SQL twin is public.quote_split_due() (migration 20261009235800).
 
    The year of instalments can therefore differ from quotes.amount by a rupee or two
    (₹30,584 vs ₹30,586 here). quotes.amount is not rewritten: it is the accepted
