@@ -39,6 +39,63 @@ export function buyerStateKnown(b: BuyerPlace | null | undefined): boolean {
   return Boolean((b.state_code ?? "").trim() || stateCodeFromGstin(b.gstin));
 }
 
+/** The place of supply saved on the quote itself (Quote builder → Place of supply). */
+export interface QuotePlace {
+  prospect_state_code?: string | null;
+  prospect_country?: string | null;
+}
+
+/** A quote's own state code as the two digits GST uses ("7" → "07"), or null. */
+export function quoteStateCode(q: QuotePlace | null | undefined): string | null {
+  const raw = (q?.prospect_state_code ?? "").trim();
+  if (!/^\d{1,2}$/.test(raw)) return null;
+  const code = raw.padStart(2, "0");
+  return code === "00" ? null : code;
+}
+
+/**
+ * R-447 (9 Oct 2026): whose place of supply decides "Issue GST invoice now".
+ *
+ * The sheet read the LEAD's state for a lead quote, so a lead with no state on a quote whose
+ * Place of supply was Delhi left the box unticked with "the customer has no state" — false.
+ * generate_invoice reads the CUSTOMER row, so this follows what will be true when it runs:
+ *   1. a customer that already has a state / GSTIN / foreign country — that is what the
+ *      invoice uses, whatever the quote says;
+ *   2. else the quote's own place of supply — the sheet copies it onto the customer's blank
+ *      state just before issuing (quoteStateToFill), so the invoice can use it;
+ *   3. else, for a quote with no customer yet, the lead (record_payment copies the lead's
+ *      state onto the customer it creates or reuses);
+ *   4. else whatever is known (nothing → the box starts unticked, with the hint).
+ */
+export function paymentBuyerPlace(a: {
+  customer?: BuyerPlace | null;
+  quote?: QuotePlace | null;
+  lead?: BuyerPlace | null;
+}): BuyerPlace | null {
+  if (a.customer && buyerStateKnown(a.customer)) return a.customer;
+  const qCode = quoteStateCode(a.quote);
+  if (qCode) return { state_code: qCode, country: a.customer?.country ?? a.quote?.prospect_country ?? null };
+  if (!a.customer && a.quote?.prospect_country && buyerStateKnown({ country: a.quote.prospect_country })) {
+    return { country: a.quote.prospect_country };
+  }
+  if (!a.customer && a.lead && buyerStateKnown(a.lead)) return a.lead;
+  return a.customer ?? a.lead ?? (a.quote ? { state_code: null, country: a.quote.prospect_country ?? null } : null);
+}
+
+/**
+ * The state code to write onto the paid quote's customer before the invoice, or null.
+ * Only when the customer has NO state (and no GSTIN that proves one) and the quote has a
+ * valid one — never overwrites a recorded state, never guesses.
+ */
+export function quoteStateToFill(
+  customer: { state_code?: string | null; gstin?: string | null } | null | undefined,
+  quote: QuotePlace | null | undefined,
+): string | null {
+  if (!customer) return null;
+  if ((customer.state_code ?? "").trim() || stateCodeFromGstin(customer.gstin)) return null;
+  return quoteStateCode(quote);
+}
+
 /** Split billing = invoiced per period, so the quote path is refused. Null/yearly = one invoice. */
 export function isSplitBilled(billingCycle: string | null | undefined): boolean {
   return Boolean(billingCycle) && billingCycle !== "yearly";

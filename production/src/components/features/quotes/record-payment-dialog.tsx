@@ -12,16 +12,27 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { QuoteLine } from "@/lib/subscriptions/orphan-quote";
+import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
+import { useBankAccounts } from "@/lib/queries/bank";
+import {
+  PAYMENT_METHODS,
+  defaultDepositAccountId,
+  depositAccountLabel,
+  depositAccounts,
+  type PaymentMethod,
+} from "@/lib/payments/deposit-accounts";
+import { fillCustomerStateFromQuote, saveDomainAfterPayment } from "@/lib/payments/after-payment-fill";
 import { FeedbackDialog } from "@/components/shared/feedback-dialog";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { recordPaymentConsequences } from "@/lib/payments/record-consequences";
 import { useDocumentSeries, useGenerateInvoice } from "@/lib/queries/invoices";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { paymentToast, cashReference, subscriptionNoteFor, type PaymentToastAction, type SubscriptionNote } from "@/lib/payments/record-payment-toast";
 import {
   invoiceNowOffer,
+  paymentBuyerPlace,
   shouldIssueAfterPayment,
   withIssuedInvoice,
   type BuyerPlace,
@@ -151,7 +162,7 @@ export function RecordPaymentDialog({
   isProspect = false,
   invoiceId = null,
   customerId = null,
-  askDomain: _askDomain = false,
+  askDomain = false,
   defaultDomain = null,
   lineItems,
   onRecorded,
@@ -159,8 +170,24 @@ export function RecordPaymentDialog({
   const qc = useQueryClient();
   /* The receipt-voucher counter, so the sheet can name the number it will consume. */
   const { data: series } = useDocumentSeries();
-  const [method, setMethod] = React.useState("upi");
+  const [method, setMethod] = React.useState<PaymentMethod>("upi");
   const [bankAccountId, setBankAccountId] = React.useState<string>("");
+  /* R-404: "Received in" lists THIS company's own bank / cash accounts (RLS-scoped), never a
+     hard-coded row carrying our own company name. One matching account is pre-picked; several → the
+     operator picks; none → a link to add one. Rules: lib/payments/deposit-accounts.ts. */
+  const { data: allBankAccounts, isLoading: bankAccountsLoading } = useBankAccounts();
+  const receiveAccounts = React.useMemo(() => depositAccounts(allBankAccounts), [allBankAccounts]);
+  const [accountTouched, setAccountTouched] = React.useState(false);
+  React.useEffect(() => {
+    if (!open || accountTouched) return;
+    setBankAccountId(defaultDepositAccountId(receiveAccounts, method));
+  }, [open, accountTouched, receiveAccounts, method]);
+
+  /* R-407: does this quote make a subscription? true / false from its lines (the same rule
+     record_payment uses); null when the caller did not pass the lines. The domain field and
+     the "start the subscription" promise follow it, so a one-time quote promises nothing. */
+  const makesSubscription: boolean | null = lineItems ? lineItems.some((l) => isSubscriptionLine(l)) : null;
+  const showDomain = askDomain && makesSubscription !== false;
   // Optional proof-of-payment file (screenshot / PDF). Uploaded best-effort
   // AFTER record_payment succeeds, so it never blocks the money.
   const [receiptFile, setReceiptFile] = React.useState<File | null>(null);
@@ -221,6 +248,7 @@ export function RecordPaymentDialog({
     defaultValues: {
       amount:       remaining,
       method:       "upi",
+      reference:    "",
       // R-025: `toISOString()` is UTC, so between 00:00 and 05:30 IST this defaulted the
       // payment to YESTERDAY — and reps here work early (AGENTS.md §6).
       receivedDate: istToday(),
@@ -277,19 +305,17 @@ export function RecordPaymentDialog({
         .eq("id", quoteId)
         .maybeSingle();
       if (!q) return;
-      let buyer: BuyerPlace | null = null;
-      if (q.customer_id) {
-        const { data: c } = await supabase
-          .from("customers").select("state_code, gstin, country").eq("id", q.customer_id).maybeSingle();
-        buyer = c ?? null;
-      } else if (q.lead_id) {
-        // record_payment copies the lead's state + GSTIN onto the customer it creates.
-        const { data: l } = await supabase
-          .from("leads").select("state_code, gstin").eq("id", q.lead_id).maybeSingle();
-        buyer = l ?? null;
-      } else {
-        buyer = { state_code: q.prospect_state_code, country: q.prospect_country };
-      }
+      /* R-447: the quote's own Place of supply counts, not only the lead's state — order in
+         paymentBuyerPlace (customer with a state → quote → lead). Before issuing, the sheet
+         copies the quote's state onto a customer that has none (fillCustomerStateFromQuote). */
+      const { data: c } = q.customer_id
+        ? await supabase.from("customers").select("state_code, gstin, country").eq("id", q.customer_id).maybeSingle()
+        : { data: null };
+      // record_payment copies the lead's state + GSTIN onto the customer it creates.
+      const { data: l } = !q.customer_id && q.lead_id
+        ? await supabase.from("leads").select("state_code, gstin").eq("id", q.lead_id).maybeSingle()
+        : { data: null };
+      const buyer: BuyerPlace | null = paymentBuyerPlace({ customer: c ?? null, quote: q, lead: l ?? null });
       if (live) setInvoiceFacts({ billingCycle: q.billing_cycle ?? null, buyer });
     })();
     return () => { live = false; };
@@ -315,12 +341,16 @@ export function RecordPaymentDialog({
       reset();
       setMethod("upi");
       setBankAccountId("");
+      setAccountTouched(false);
       setAmountEdited(false);
       setReceiptFile(null);
     } else {
       reset({
         amount:       remaining,
         method:       "upi",
+        /* R-407: named, so a re-opened sheet never carries the last payment's UTR. */
+        reference:    "",
+        notes:        "",
         receivedDate: istToday(),      // R-025 — same UTC trap as the defaults above.
         tdsDeducted:  false,
         tdsSection:   customerTdsDefaults.section,
@@ -506,7 +536,7 @@ export function RecordPaymentDialog({
       if (r.payment_id && tagPatch) {
         const { error: bankErr } = await supabase
           .from("payments")
-          .update(tagPatch as any)
+          .update(tagPatch)
           .eq("id", r.payment_id);
         if (bankErr) console.error("[record-payment] date/bank tag failed (payment still recorded):", bankErr);
       }
@@ -563,7 +593,9 @@ export function RecordPaymentDialog({
          subscription of the quote gave two rows the same domain, the unique index
          (tenant, quote, lower(domain)) refused it, and NOTHING was stamped — a Workspace +
          Support quote (Q-FBB9-27-0013) kept domain NULL through two payments. */
-      const domainVal = data.domain?.trim();
+      /* R-407: only when the field was shown — a hidden field's pre-filled default is not
+         something the operator entered. */
+      const domainVal = showDomain ? data.domain?.trim() : "";
       if (domainVal) {
         const { data: quoteSubs, error: subsErr } = await supabase
           .from("subscriptions")
@@ -580,6 +612,9 @@ export function RecordPaymentDialog({
             .is("domain", null);
           if (domErr) console.error("[record-payment] domain stamp failed (payment still recorded):", domErr);
         }
+        /* R-407: also onto the customer and the quote's provisioning task (blank ones only),
+           so a typed domain is never lost when the quote made no subscription. */
+        await saveDomainAfterPayment(supabase, { quoteId, domain: domainVal });
       }
 
       // ── 3. TDS receivable — now committed ATOMICALLY inside
@@ -667,6 +702,13 @@ export function RecordPaymentDialog({
         return;
       }
 
+      /* R-407: the payment IS saved. Clear its reference at once, and close the sheet in
+         `finally` — Abhishek (7 Oct) saw the sheet stay open as "Record additional payment"
+         with the same UTR still filled, one click from being submitted again. Whatever the
+         invoice / toast steps below do, a saved payment always ends with the sheet closed. */
+      setValue("reference", "");
+      try {
+
       /* ── ONE result toast (R-248) ──────────────────────────────────────────
          This used to fire a headline toast and then 1–4 more on staggered setTimeouts
          (reminder reset, balance pending, subscription created, excess credit, TDS,
@@ -723,6 +765,9 @@ export function RecordPaymentDialog({
         isReplay: false,
       })) {
         try {
+          /* R-447: generate_invoice reads the CUSTOMER's state. A customer made from a lead
+             with no state gets the quote's Place of supply first (blank state only). */
+          await fillCustomerStateFromQuote(createClient(), quoteId);
           issuedInvoiceId = (await generateInvoice.mutateAsync(quoteId)).invoiceId;
         } catch {
           /* useGenerateInvoice already toasted the reason. */
@@ -760,14 +805,20 @@ export function RecordPaymentDialog({
         cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary) } : undefined,
         classNames: t.lines.length ? { description: "whitespace-pre-line" } : undefined,
       });
-      /* After the toasts, before the sheet closes. Handed the RPC's own result so a
-         caller cannot re-derive "was this fully paid" and get a different answer. */
-      onRecorded?.({
-        isFullyPaid: res.isFullyPaid,
-        subscriptionCreated: res.subscriptionCreated,
-        isFirstPayment: res.isFirstPayment,
-      });
-      onOpenChange(false);
+      } catch (e) {
+        /* The payment is saved — never let a toast / invoice step leave the sheet open. */
+        console.error("[record-payment] after-save step failed (payment is recorded):", e);
+        toast.success(`Payment recorded for ${customerName}`);
+      } finally {
+        /* After the toasts, before the sheet closes. Handed the RPC's own result so a
+           caller cannot re-derive "was this fully paid" and get a different answer. */
+        onRecorded?.({
+          isFullyPaid: res.isFullyPaid,
+          subscriptionCreated: res.subscriptionCreated,
+          isFirstPayment: res.isFirstPayment,
+        });
+        onOpenChange(false);
+      }
     },
     onError: (err) => toast.error((err as Error).message),
   });
@@ -899,20 +950,24 @@ export function RecordPaymentDialog({
           className="flex flex-col flex-1 min-h-0 min-w-0 w-full"
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* 🌐 PRIMARY CUSTOMER DOMAIN — HIGHEST PREFERENCE FOR GOOGLE WORKSPACE / M365 */}
-          <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
-            <FormField label="🌐 Primary Customer Domain" required htmlFor="domain">
-              <Input
-                id="domain"
-                placeholder="e.g. exceltechnologies.in or acme.com"
-                className="font-mono text-sm font-semibold bg-paper"
-                {...register("domain")}
-              />
-            </FormField>
-            <p className="text-2xs text-ink-3">
-              Essential for Google Workspace / M365 provisioning & Partner Sales Console (PSC) tracking.
-            </p>
-          </div>
+          {/* Customer domain — R-407 / R-444 (1): shown only when the quote makes a subscription,
+              and optional (no "*"): Confirm never blocked on it, so the star was a false promise.
+              Saved to the subscription, the customer and the provisioning task (blanks only). */}
+          {showDomain && (
+            <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
+              <FormField label="Customer domain (optional)" htmlFor="domain">
+                <Input
+                  id="domain"
+                  placeholder="e.g. acme.com"
+                  className="font-mono text-sm font-semibold bg-paper"
+                  {...register("domain")}
+                />
+              </FormField>
+              <p className="text-2xs text-ink-3">
+                Needed to set up Google Workspace / Microsoft 365. You can add it later on Subscriptions.
+              </p>
+            </div>
+          )}
 
           {/* Prospect → Customer activation notice — fires on FIRST payment now (advance ok) */}
           {isProspect && !hasPriorPayments && (
@@ -923,13 +978,16 @@ export function RecordPaymentDialog({
                 <ul className="list-disc list-inside mt-1 space-y-0.5">
                   <li>Create a Customer record for <b>{customerName}</b></li>
                   <li>Move the lead to <b>Won</b></li>
-                  <li>Start the 1-year subscription with today's date</li>
+                  {/* R-407: promised only when the quote's lines make one — a one-time quote
+                      creates no subscription, and saying it would is a false promise. */}
+                  {makesSubscription === true && <li>Start the subscription from today</li>}
+                  {makesSubscription === null && <li>Start the quote&apos;s subscription from today, if it has one</li>}
                   <li>Track any outstanding balance separately</li>
                 </ul>
                 {newRunningTotal < expectedAmount && (
                   <p className="mt-1.5">
-                    <b>Service activates with {rupee(expectedAmount - newRunningTotal)} outstanding</b> —
-                    you'll continue to see this in the subscription card until paid.
+                    <b>{rupee(expectedAmount - newRunningTotal)} will still be due</b> — it stays on
+                    this quote until paid.
                   </p>
                 )}
               </div>
@@ -1023,64 +1081,66 @@ export function RecordPaymentDialog({
             <FieldPill check={checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
 
-          {/* ── Unified Payment Mode & Target Account Selector ────── */}
-          <FormField label="Deposit To (Payment Mode & Target Account)" required htmlFor="paymentAccountPreset">
+          {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
+              Was one list of hard-coded rows with our own company name shown to every company,
+              tagging payments with made-up ids the uuid column refused. Now: a plain method
+              list, and this company's own bank / cash accounts. */}
+          <FormField label="Payment method" required htmlFor="paymentMethod">
             <Select
-              value={
-                method === "upi" ? "upi_hdfc" :
-                method === "razorpay" ? "razorpay" :
-                method === "bank_transfer" && bankAccountId === "icici_corp" ? "bank_icici" :
-                method === "bank_transfer" ? "bank_hdfc" :
-                method === "cash" ? "cash" :
-                method === "cheque" ? "cheque" : "other"
-              }
+              value={method}
               onValueChange={(val) => {
-                if (val === "upi_hdfc") {
-                  setMethod("upi");
-                  setBankAccountId("hdfc_primary");
-                  setValue("method", "upi");
-                } else if (val === "razorpay") {
-                  setMethod("razorpay");
-                  setBankAccountId("razorpay_gateway");
-                  setValue("method", "razorpay");
-                } else if (val === "bank_hdfc") {
-                  setMethod("bank_transfer");
-                  setBankAccountId("hdfc_primary");
-                  setValue("method", "bank_transfer");
-                } else if (val === "bank_icici") {
-                  setMethod("bank_transfer");
-                  setBankAccountId("icici_corp");
-                  setValue("method", "bank_transfer");
-                } else if (val === "cash") {
-                  setMethod("cash");
-                  setBankAccountId("cash_box");
-                  setValue("method", "cash");
-                } else if (val === "cheque") {
-                  setMethod("cheque");
-                  setBankAccountId("hdfc_primary");
-                  setValue("method", "cheque");
-                } else {
-                  setMethod("other");
-                  setBankAccountId("");
-                  setValue("method", "other");
-                }
+                const m = val as PaymentMethod;
+                setMethod(m);
+                setValue("method", m);
               }}
             >
-              <SelectTrigger id="paymentAccountPreset">
+              <SelectTrigger id="paymentMethod">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="upi_hdfc">🏦 Anutech Digital — Bank A/c (Direct UPI / QR Code)</SelectItem>
-                <SelectItem value="bank_hdfc">🏦 Anutech Digital — Bank A/c (NEFT / RTGS / IMPS)</SelectItem>
-                <SelectItem value="razorpay">💳 Anutech Digital — Razorpay Gateway</SelectItem>
-                <SelectItem value="cheque">📝 Anutech Digital — Cheque Clearing</SelectItem>
-                <SelectItem value="cash">💵 Anutech Digital — Petty Cash</SelectItem>
+                {PAYMENT_METHODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <input type="hidden" {...register("method")} value={method} />
-            <p className="text-2xs text-ink-3 mt-1">
-              Select company target account & payment mode in 1 click.
-            </p>
+          </FormField>
+
+          <FormField label="Received in" htmlFor="depositAccount">
+            {receiveAccounts.length > 0 ? (
+              <>
+                <Select
+                  value={bankAccountId || "none"}
+                  onValueChange={(val) => {
+                    setAccountTouched(true);
+                    setBankAccountId(val === "none" ? "" : val);
+                  }}
+                >
+                  <SelectTrigger id="depositAccount">
+                    <SelectValue placeholder="Choose the account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not sure yet</SelectItem>
+                    {receiveAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{depositAccountLabel(a)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-2xs text-ink-3 mt-1">
+                  Your account that got this money. Helps match it with the bank statement.
+                </p>
+              </>
+            ) : (
+              <p id="depositAccount" className="text-xs text-ink-3">
+                {bankAccountsLoading ? "Loading your accounts…" : (
+                  <>
+                    No bank account added yet.{" "}
+                    <Link href="/accounting/banking" className="underline text-ink">Add a bank account</Link>{" "}
+                    to tag where money lands. The payment saves without it.
+                  </>
+                )}
+              </p>
+            )}
           </FormField>
 
           {/* Payment Received Date */}
@@ -1111,7 +1171,7 @@ export function RecordPaymentDialog({
               placeholder={
                 method === "upi" ? "e.g. 402312345678 (12-digit UTR)" :
                 method === "razorpay" ? "e.g. pay_P1a2B3c4D5e6F7" :
-                method === "bank_transfer" ? "e.g. HDFCR520240811001234" :
+                method === "bank_transfer" ? "e.g. N281241234567890" :
                 method === "cheque" ? "e.g. Cheque #004521 - SBI Bank" :
                 "e.g. Cash Receipt #CR-102"
               }
@@ -1120,7 +1180,7 @@ export function RecordPaymentDialog({
             />
             <p className="text-2xs text-ink-3 mt-1">
               {
-                method === "upi" ? "12-digit UTR/UPI reference received on GPay, PhonePe, Paytm or HDFC QR." :
+                method === "upi" ? "12-digit UTR/UPI reference from GPay, PhonePe, Paytm or your bank QR." :
                 method === "razorpay" ? "Unique Razorpay payment ID starting with pay_." :
                 method === "bank_transfer" ? "Bank UTR or NEFT/RTGS reference number from bank statement." :
                 method === "cheque" ? "Enter 6-digit cheque number and customer's bank name for clearing." :

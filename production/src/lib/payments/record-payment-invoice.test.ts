@@ -3,6 +3,9 @@ import {
   buyerStateKnown,
   isSplitBilled,
   invoiceNowOffer,
+  paymentBuyerPlace,
+  quoteStateCode,
+  quoteStateToFill,
   shouldIssueAfterPayment,
   withIssuedInvoice,
 } from "./record-payment-invoice";
@@ -82,5 +85,51 @@ describe("withIssuedInvoice", () => {
   it("no receipt button → no secondary", () => {
     const t = withIssuedInvoice({ tone: "success", lines: [], title: "x", primary: { kind: "generate-invoice", label: "g" }, secondary: null }, "I");
     expect(t.secondary).toBeNull();
+  });
+});
+
+/* R-447 (9 Oct 2026): the quote's own Place of supply decides, not only the lead's state. */
+describe("paymentBuyerPlace (R-447)", () => {
+  it("lead with no state + quote Place of supply Delhi → state known, invoice box ticked", () => {
+    const buyer = paymentBuyerPlace({ customer: null, quote: { prospect_state_code: "07" }, lead: { state_code: null, gstin: null } });
+    expect(buyer).toEqual({ state_code: "07", country: null });
+    expect(invoiceNowOffer({ invoiceId: null, billingCycle: "yearly", buyer, completesQuote: true }))
+      .toEqual({ offer: true, defaultOn: true, hint: null });
+  });
+  it("a customer that already has a state wins — that is what generate_invoice uses", () => {
+    expect(paymentBuyerPlace({ customer: { state_code: "06" }, quote: { prospect_state_code: "07" } }))
+      .toEqual({ state_code: "06" });
+  });
+  it("a customer with no state takes the quote's state (it is copied before issuing)", () => {
+    expect(paymentBuyerPlace({ customer: { state_code: null, country: "India" }, quote: { prospect_state_code: "7" } }))
+      .toEqual({ state_code: "07", country: "India" });
+  });
+  it("no state on the quote → the lead's state, as record_payment copies it", () => {
+    expect(paymentBuyerPlace({ quote: { prospect_state_code: null }, lead: { state_code: "29" } })).toEqual({ state_code: "29" });
+  });
+  it("nobody knows the state → still unknown, box unticked with the hint", () => {
+    const buyer = paymentBuyerPlace({ quote: { prospect_state_code: "" }, lead: { state_code: null } });
+    expect(buyerStateKnown(buyer)).toBe(false);
+  });
+  it("a typed-prospect export quote stays export", () => {
+    expect(buyerStateKnown(paymentBuyerPlace({ quote: { prospect_state_code: null, prospect_country: "Singapore" } }))).toBe(true);
+  });
+});
+
+describe("quoteStateCode / quoteStateToFill (R-447)", () => {
+  it.each([["07", "07"], ["7", "07"], [" 29 ", "29"], ["", null], [null, null], ["DL", null], ["00", null], ["123", null]])(
+    "%s → %s", (raw, want) => expect(quoteStateCode({ prospect_state_code: raw as string | null })).toBe(want),
+  );
+  it("fills only a blank customer state from a valid quote state", () => {
+    expect(quoteStateToFill({ state_code: null }, { prospect_state_code: "07" })).toBe("07");
+    expect(quoteStateToFill({ state_code: " " }, { prospect_state_code: "07" })).toBe("07");
+  });
+  it("never overwrites a recorded state, nor one the GSTIN proves", () => {
+    expect(quoteStateToFill({ state_code: "06" }, { prospect_state_code: "07" })).toBeNull();
+    expect(quoteStateToFill({ state_code: null, gstin: DELHI_GSTIN }, { prospect_state_code: "29" })).toBeNull();
+  });
+  it("never guesses: no customer or no quote state → nothing", () => {
+    expect(quoteStateToFill(null, { prospect_state_code: "07" })).toBeNull();
+    expect(quoteStateToFill({ state_code: null }, { prospect_state_code: null })).toBeNull();
   });
 });

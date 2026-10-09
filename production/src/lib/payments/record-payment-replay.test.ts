@@ -17,15 +17,22 @@ describe("isReplayResult", () => {
 });
 
 describe("paymentTagPatch", () => {
+  const BANK = "5b0c1f6e-2a7d-4c1e-9f3a-0d2e4b6a8c10";
   it("replay → no patch, so the earlier payment's date and bank account are never rewritten", () => {
-    expect(paymentTagPatch({ isReplay: true, receivedDate: "2026-10-07", bankAccountId: "bank-2" })).toBeNull();
+    expect(paymentTagPatch({ isReplay: true, receivedDate: "2026-10-07", bankAccountId: BANK })).toBeNull();
   });
   it("new payment → tags the chosen date and bank account (unchanged behaviour)", () => {
-    expect(paymentTagPatch({ isReplay: false, receivedDate: "2026-10-07", bankAccountId: "bank-2" })).toEqual({
+    expect(paymentTagPatch({ isReplay: false, receivedDate: "2026-10-07", bankAccountId: BANK })).toEqual({
       received_at: new Date("2026-10-07").toISOString(),
-      bank_account_id: "bank-2",
+      bank_account_id: BANK,
     });
-    expect(paymentTagPatch({ isReplay: false, receivedDate: "", bankAccountId: "bank-2" })).toEqual({ bank_account_id: "bank-2" });
+    expect(paymentTagPatch({ isReplay: false, receivedDate: "", bankAccountId: BANK })).toEqual({ bank_account_id: BANK });
+  });
+  it("R-404: a made-up account id (hdfc_primary / cash_box) is never sent — the date still is", () => {
+    expect(paymentTagPatch({ isReplay: false, receivedDate: "2026-10-07", bankAccountId: "hdfc_primary" })).toEqual({
+      received_at: new Date("2026-10-07").toISOString(),
+    });
+    expect(paymentTagPatch({ isReplay: false, receivedDate: "", bankAccountId: "cash_box" })).toBeNull();
   });
   it("new payment with nothing to tag → null (no empty update)", () => {
     expect(paymentTagPatch({ isReplay: false, receivedDate: null, bankAccountId: null })).toBeNull();

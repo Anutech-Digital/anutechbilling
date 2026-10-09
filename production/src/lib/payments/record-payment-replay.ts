@@ -17,6 +17,7 @@
  */
 import { rupee } from "@/lib/utils";
 import { formatIstDate } from "@/lib/dates/ist";
+import { isBankAccountId } from "@/lib/payments/deposit-accounts";
 
 /** The RPC result flags that mean "this reference was already recorded, nothing inserted". */
 export function isReplayResult(r: { already_recorded?: boolean | null; idempotent_replay?: boolean | null }): boolean {
@@ -41,7 +42,9 @@ export function paymentTagPatch(a: {
   if (a.isReplay) return null;
   const patch: PaymentTagPatch = {};
   if (a.receivedDate) patch.received_at = new Date(a.receivedDate).toISOString();
-  if (a.bankAccountId) patch.bank_account_id = a.bankAccountId;
+  /* R-404: only a real bank_accounts id. The sheet once sent "hdfc_primary" / "cash_box",
+     the uuid FK refused it, and the whole patch (date included) failed on every payment. */
+  if (isBankAccountId(a.bankAccountId)) patch.bank_account_id = a.bankAccountId.trim();
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
