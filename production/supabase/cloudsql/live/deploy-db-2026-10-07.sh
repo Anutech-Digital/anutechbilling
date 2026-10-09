@@ -70,6 +70,7 @@ MIGS=(
   "leadcountspage|20261009190500_lead_counts_page_pool.sql|resellersos_migration|coalesce(position('page_unassigned' in pg_get_functiondef(to_regprocedure('public.lead_counts(jsonb)'))) > 0, false)"
   "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|coalesce(position('revision_of' in pg_get_functiondef(to_regprocedure('public.tg_quote_accepted_sync_lead()'))) > 0, false)"
   "hierarchysvc|20261009200000_hierarchy_service_role.sql|resellersos_migration|coalesce(position('service_role' in pg_get_functiondef(to_regprocedure('public.hierarchy_sees_all()'))) > 0, false)"
+  "attendancerolewrites|20261009213000_attendance_role_writes.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'attendance_update_hr_roles') and not exists(select 1 from pg_policy where polname = 'tenant isolation write' and polrelid = to_regclass('public.attendance')))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

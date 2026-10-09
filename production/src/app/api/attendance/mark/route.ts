@@ -11,7 +11,7 @@
  * Ab lib/security/rate-limit.ts ka `clientIp` (right se, sirf humari infra ki entry).
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
 
 /* "" (IP nahi mili) purana matlab rakha — "unknown" kabhi allowlist se mel na khaye. */
@@ -75,9 +75,12 @@ export async function POST(request: NextRequest) {
         const path = `${me.tenant_id}/${workDate}/${employeeId}_${slot}.jpg`;
         const up = await supabase.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
         if (!up.error) {
-          await supabase.from("attendance")
+          /* R-601: the kiosk may be signed in as any staff login, and only HR roles may
+             write attendance rows directly now — so the selfie path goes on through the
+             server client, scoped to this tenant + the employee the RPC just marked. */
+          await createAdminClientFor(authData.user.id).from("attendance")
             .update(slot === "in" ? { selfie_in: path } : { selfie_out: path })
-            .eq("employee_id", employeeId).eq("work_date", workDate);
+            .eq("tenant_id", me.tenant_id).eq("employee_id", employeeId).eq("work_date", workDate);
         }
       }
     } catch { /* photo is best-effort; never block attendance */ }

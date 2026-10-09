@@ -14,7 +14,7 @@
  */
 import crypto from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { validateCode } from "@/lib/attendance/presence";
 import { compareFaces } from "@/lib/attendance/face";
 
@@ -42,10 +42,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data: settings } = await supabase
-    .from("attendance_settings")
-    .select("require_selfie, require_presence, presence_secret, require_face_match")
-    .maybeSingle();
+  /* R-601: employees cannot write attendance rows or read presence_secret themselves any
+     more. The mark itself is the SECURITY DEFINER RPC below; the seed read and the
+     selfie / geo / flags patch after it go through the server client, and every one of
+     those calls is scoped to THIS caller's tenant + linked employee in code. */
+  const admin = createAdminClientFor(authData.user.id);
+  const { data: settings } = me.tenant_id
+    ? await admin
+      .from("attendance_settings")
+      .select("require_selfie, require_presence, presence_secret, require_face_match")
+      .eq("tenant_id", me.tenant_id)
+      .maybeSingle()
+    : { data: null };
   const requireSelfie = settings?.require_selfie ?? true;
   const requirePresence = settings?.require_presence ?? false;
   const requireFaceMatch = settings?.require_face_match ?? false;
@@ -153,9 +161,9 @@ export async function POST(request: NextRequest) {
         patch.flags = [...merged];
       }
 
-      if (Object.keys(patch).length) {
-        await supabase.from("attendance").update(patch)
-          .eq("employee_id", me.employee_id).eq("work_date", workDate);
+      if (Object.keys(patch).length && me.tenant_id) {
+        await admin.from("attendance").update(patch)
+          .eq("tenant_id", me.tenant_id).eq("employee_id", me.employee_id).eq("work_date", workDate);
       }
     } catch { /* selfie/geo is best-effort; never block attendance */ }
   }

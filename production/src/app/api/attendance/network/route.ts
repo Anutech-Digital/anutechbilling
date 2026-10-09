@@ -7,7 +7,7 @@
  * network; "remove" drops one; "clear" turns the gate off.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { newPresenceSecret } from "@/lib/attendance/presence";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
 
@@ -56,7 +56,11 @@ export async function POST(request: NextRequest) {
   const action = body?.action as string | undefined;
   const currentIp = clientIp(request);
 
-  const { data: existing } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, presence_secret, selfie_retention_days, require_face_match").maybeSingle();
+  /* R-601: presence_secret is not selectable by `authenticated` any more (it is the seed of
+     the office code), so the owner's settings write goes through the server client, scoped
+     to the owner's tenant here — the owner check above is the gate. */
+  const admin = createAdminClientFor(u.userId);
+  const { data: existing } = await admin.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, presence_secret, selfie_retention_days, require_face_match").eq("tenant_id", u.tenant_id).maybeSingle();
   let allowed: string[] = existing?.allowed_ips ?? [];
   let requireSelfie: boolean = existing?.require_selfie ?? true;
   let requirePresence: boolean = existing?.require_presence ?? false;
@@ -90,7 +94,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const { error } = await admin
     .from("attendance_settings")
     .upsert({ tenant_id: u.tenant_id, allowed_ips: allowed, require_selfie: requireSelfie, require_presence: requirePresence, presence_secret: presenceSecret, selfie_retention_days: retentionDays, require_face_match: requireFaceMatch, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
