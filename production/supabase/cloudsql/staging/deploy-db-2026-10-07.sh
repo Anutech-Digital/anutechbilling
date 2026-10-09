@@ -57,6 +57,13 @@ MIGS=(
   "termsgrant|20261007250000_quote_terms_fn_grant.sql|resellersos_migration|has_function_privilege('authenticated', 'public.quote_line_terms_mixed(jsonb)', 'execute')"
   "invfx|20261007251000_invoice_fx_rate.sql|resellersos_migration|(exists(select 1 from pg_trigger where tgname='trg_invoice_fx_snapshot') and exists(select 1 from pg_trigger where tgname='trg_invoice_fx_freeze') and exists(select 1 from information_schema.columns where table_schema='public' and table_name='quotes' and column_name='fx_source'))"
   "trghelpers|20261007260000_trigger_helper_grants.sql|resellersos_migration|has_function_privilege('authenticated', 'public.ad_channel_guess(text)', 'execute') and has_function_privilege('authenticated', 'public.referral_code_slug(text)', 'execute')"
+  "overduesuspend|20261007281600_overdue_auto_suspend.sql|resellersos_migration|(exists(select 1 from pg_trigger where tgname='trg_invoices_overdue_resume') and exists(select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='overdue_suspend_days') and exists(select 1 from pg_proc where proname='decide_invoice_write_off' and pronamespace='public'::regnamespace))"
+  "tbcustbal|20261007290000_tb_customer_balances.sql|resellersos_migration|exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and prosrc like '%S45-TB%')"
+  "leadsort|20261007300000_lead_list_sort.sql|resellersos_migration|exists(select 1 from pg_proc where proname='list_leads' and pronamespace='public'::regnamespace and prosrc like '%sort_num%')"
+  "quoterevise|20261009120000_quote_revisions.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_quote_revision_sent') and exists(select 1 from pg_trigger where tgname='trg_quote_accepted_sync_lead')"
+  "svcrolegaps|20261009150000_service_role_policy_gaps.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname='public' and tablename='seat_increase_claims' and policyname='zzz_service_role_all') and exists(select 1 from pg_policies where schemaname='public' and tablename='rate_limit_buckets' and policyname='zzz_service_role_all')"
+  "cancelsub|20261009151000_cancel_subscription.sql|resellersos_migration|exists(select 1 from pg_proc where proname='cancel_subscription' and pronamespace='public'::regnamespace)"
+  "leadfollowup|20261009160000_lead_followup_sync.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_leads_won_close_tasks') and exists(select 1 from pg_trigger where tgname='trg_tasks_lead_follow_up')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

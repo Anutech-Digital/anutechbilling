@@ -1,5 +1,5 @@
 -- deploy-peek: exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and prosrc like '%S45-TB%')
--- deploy-key: tb-cust-bal
+-- deploy-key: tbcustbal
 -- S45 slice 1 — Trial Balance: teen roz ke money events ab Dr = Cr rakhte hain.
 --
 -- ─── BUG (supabase/tests/tb_money_events_balanced.test.sql ne naapa) ─────────

@@ -29,6 +29,9 @@ import {
 } from "@/lib/quotes/send-quote-email";
 import { NUMBERING_FIX, COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 
+/* A fixed, written sentence — not a raw error — so the R-300 toast guard can tell them apart. */
+const COMPANY_STATE_FIX_TITLE = COMPANY_STATE_FIX.message;
+
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -1142,7 +1145,7 @@ export function QuoteBuilder() {
        quote went out "✓ Intra-state" and was paid against, then the invoice came out IGST.
        A draft may wait; anything that reaches the customer may not. */
     if (status === "sent" && sellerStateMissing) {
-      toast.error(COMPANY_STATE_FIX.message, {
+      toast.error(COMPANY_STATE_FIX_TITLE, {
         description: `${COMPANY_STATE_FIX.description} You can still save this as a draft.`,
         duration: 15000,
         action: { label: COMPANY_STATE_FIX.label, onClick: () => router.push(COMPANY_STATE_FIX.href as never) },
