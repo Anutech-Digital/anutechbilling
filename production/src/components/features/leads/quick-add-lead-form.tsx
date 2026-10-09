@@ -253,11 +253,14 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
           )}
 
           {/* Paste a WhatsApp message / card text — fills only what it finds,
-              after showing it (smart-paste.tsx). No catalogue: quick add has no plan. */}
+              after showing it (smart-paste.tsx). No catalogue: quick add has no plan.
+              R-491: `lead` also reads the company ("Gupta Traders Pvt Ltd"). */}
           <SmartPaste
             catalogue={[]}
             contactOnly
+            lead
             onFill={(v) => {
+              if (v.company) setValue("company", v.company, { shouldDirty: true });
               if (v.name)  setValue("contact_name",  v.name,  { shouldDirty: true });
               if (v.email) setValue("contact_email", liveEmail(v.email), { shouldDirty: true });
               if (v.phone) setValue("contact_phone", commitPhone(v.phone), { shouldDirty: true });

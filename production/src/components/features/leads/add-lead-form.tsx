@@ -853,8 +853,15 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           {!isEditing && (
             <SmartPaste
               catalogue={PLANS.map((p) => ({ id: p, name: p }))}
+              lead
               onFill={(v) => {
                 if (v.name)  setValue("contact_name",  v.name,  { shouldDirty: true });
+                /* R-491: company / GSTIN / state / billing (lib/leads/smart-paste-lead.ts). State
+                   before GSTIN — a valid GSTIN then confirms it through the effect above. */
+                if (v.company)      setValue("company",       v.company,      { shouldDirty: true });
+                if (v.stateCode)    setValue("state_code",    v.stateCode,    { shouldDirty: true });
+                if (v.gstin)        setValue("gstin",         v.gstin,        { shouldDirty: true });
+                if (v.billingCycle) setValue("billing_cycle", v.billingCycle, { shouldDirty: true });
                 if (v.email) setValue("contact_email", liveEmail(v.email), { shouldDirty: true });
                 if (v.phone) setValue("contact_phone", commitPhone(v.phone), { shouldDirty: true });
                 /* A paste is the user's own input — it arms seats × price like typing does. */
