@@ -69,6 +69,7 @@ MIGS=(
   "wontrialtasks|20261009181000_won_trial_tasks_cancelled.sql|resellersos_migration|exists(select 1 from pg_proc where proname='tg_leads_won_close_tasks' and prosrc like '%R-496%')"
   "leadcountspage|20261009190500_lead_counts_page_pool.sql|resellersos_migration|position('page_unassigned' in pg_get_functiondef('public.lead_counts(jsonb)'::regprocedure)) > 0"
   "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|position('revision_of' in pg_get_functiondef('public.tg_quote_accepted_sync_lead()'::regprocedure)) > 0"
+  "loginlink|20261009200000_login_profile_lookup.sql|resellersos_migration|exists(select 1 from pg_proc where proname='login_profile_id_for_email' and pronamespace='public'::regnamespace)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
