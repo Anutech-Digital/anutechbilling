@@ -39,6 +39,7 @@ import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-suppl
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
+import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
@@ -46,6 +47,7 @@ import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 
@@ -56,7 +58,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const [showSummary, setShowSummary] = React.useState(true);
   const [showPayments, setShowPayments] = React.useState(true);
 
-  const { data: quote } = useQuoteByInvoiceId(invoice.id);
+  const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
   const { data: payments } = usePaymentsByQuote(quote?.id);
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
@@ -118,6 +120,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      printed "No line items recorded on the parent quote." over a correct ₹5,00,000 + GST:
      right money, a document that did not say what was sold (CGST Rule 46(g)). */
   const lineItems = quote?.line_items ?? invoice.line_items ?? [];
+  /* R-445: skeleton while the quote loads — never the "no items" fallback, which looked real. */
+  const itemsView = invoiceLineItemsView(quoteLoading, quote?.line_items, invoice.line_items);
   /* R-066. This used to be `subtotal = quote?.subtotal ?? invoice.amount` and then 18%
      on top — but `invoice.amount` is the GST-INCLUSIVE gross, so a quote-less invoice
      was taxed on tax: ₹5,90,000 showed "Tax Total ₹1,06,200" instead of ₹90,000.
@@ -277,14 +281,19 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               >
                 <div className="flex items-center gap-2">
                   <Icon name="file" size={14} className="text-ink-3" />
-                  <span>Line Items ({lineItems.length > 0 ? lineItems.length : "1"})</span>
+                  <span>Line Items{itemsView.state === "loading" ? "" : ` (${lineItems.length > 0 ? lineItems.length : "1"})`}</span>
                 </div>
                 <Icon name={showItems ? "chevron_up" : "chevron_down"} size={14} className="text-ink-3" />
               </button>
 
               {showItems && (
                 <div className="p-3">
-                  {lineItems.length > 0 ? (
+                  {itemsView.state === "loading" ? (
+                    <div className="space-y-2 p-1" aria-busy="true" aria-label="Loading line items">
+                      <Skeleton className="h-4 w-3/4" />
+                      <Skeleton className="h-4 w-1/2" />
+                    </div>
+                  ) : lineItems.length > 0 ? (
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-hairline text-ink-3 text-3xs uppercase">

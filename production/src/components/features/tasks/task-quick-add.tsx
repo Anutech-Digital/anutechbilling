@@ -20,7 +20,7 @@ import { Icon } from "@/components/ui/icon";
 import { IST_TZ } from "@/lib/dates/ist";
 import { cn } from "@/lib/utils";
 import { parseQuickAdd } from "./quick-add-parse";
-import { quickAddNameGuess, quickAddLinkCandidates, type QuickAddLink } from "./quick-add-link";
+import { quickAddNameGuess, quickAddSurnameGuess, quickAddLinkCandidates, type QuickAddLink } from "./quick-add-link";
 import { relatedToLinkColumns } from "./task-related-picker";
 import { KIND_META } from "./task-row";
 
@@ -32,6 +32,7 @@ export function TaskQuickAdd() {
 
   /* Who is it about — searched a moment after typing stops. */
   const name = React.useMemo(() => (parsed ? quickAddNameGuess(parsed.title) : null), [parsed]);
+  const surname = React.useMemo(() => (parsed ? quickAddSurnameGuess(parsed.title) : null), [parsed]);
   const [searchName, setSearchName] = React.useState<string | null>(null);
   React.useEffect(() => {
     const t = setTimeout(() => setSearchName(name), 300);
@@ -40,8 +41,8 @@ export function TaskQuickAdd() {
   const { data: leads } = useLeadSearch(searchName ?? "", !!searchName);
   const { data: customers } = useCustomers({ enabled: !!searchName });
   const candidates = React.useMemo(
-    () => (searchName ? quickAddLinkCandidates(searchName, leads ?? [], customers ?? []) : []),
-    [searchName, leads, customers],
+    () => (searchName ? quickAddLinkCandidates(searchName, leads ?? [], customers ?? [], surname) : []),
+    [searchName, leads, customers, surname],
   );
   /* undefined = follow the default (the single match); null = the user said "don't link". */
   const [picked, setPicked] = React.useState<QuickAddLink | null | undefined>(undefined);
