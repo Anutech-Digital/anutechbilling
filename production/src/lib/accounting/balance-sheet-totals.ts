@@ -40,8 +40,11 @@ export function balanceSheetTotals(
   const gstCredit = gst < 0 ? -gst : 0;
   const gstPayable = gst > 0 ? gst : 0;
 
-  /* Paisa haath me (bank + mila par bank line se match nahi) — dono current. */
-  const cashLike = (a?.cashAndBank ?? 0) + (a?.undepositedFunds ?? 0);
+  /* Paisa haath me (bank + mila par bank line se match nahi) — dono current.
+     S45 slice 2: cash / UPI se diya kharcha jiski bank line abhi match nahi — paisa ja chuka. */
+  const cashLike = (a?.cashAndBank ?? 0) + (a?.undepositedFunds ?? 0) - (a?.expensesPaidUnbanked ?? 0);
+  /* S45 slice 2: unpaid kharche + salary se kaata "other" — dono current liabilities. */
+  const otherPayables = (a?.expensesPayable ?? 0) + (a?.salaryOtherDeductions ?? 0);
 
   const autoAssets =
     cashLike + (a?.receivables ?? 0) + (a?.projectReceivable ?? 0) + (a?.tdsReceivable ?? 0)
@@ -50,7 +53,7 @@ export function balanceSheetTotals(
   const autoLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)
     + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + (a?.emiLoansPayable ?? 0)
-    + (a?.businessLoansPayable ?? 0) + gstPayable;
+    + (a?.businessLoansPayable ?? 0) + gstPayable + otherPayables;
 
   const manualAssets = sum("asset");
   const manualLiab = sum("liability");
@@ -67,7 +70,7 @@ export function balanceSheetTotals(
     + (a?.tdsReceivable ?? 0) + gstCredit + (a?.advanceTaxPaid ?? 0) + manualAssets;
   const currentLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)
-    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + gstPayable + manualLiab;
+    + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + gstPayable + otherPayables + manualLiab;
 
   return {
     gstCredit, gstPayable, totalAssets, totalLiab, netWorth, retained, currentAssets, currentLiab,

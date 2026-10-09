@@ -54,9 +54,11 @@ begin
   v_gst  := b.gst_output - b.bills_gst
           - coalesce((select sum((x->>'amount')::bigint) from jsonb_array_elements(b.tax_payments) x where x->>'kind' = 'gst'), 0);
   v_assets := b.cash_and_bank + b.undeposited_funds + b.receivables + b.project_receivable + b.tds_receivable
-            + b.employee_loans + b.prepaid_advances + b.emi_unregistered_cost;
+            + b.employee_loans + b.prepaid_advances + b.emi_unregistered_cost
+            - b.expenses_paid_unbanked;   -- S45 slice 2: cash / UPI gone out, bank line not matched yet
   v_liab   := b.credit_card_payable + b.payables + b.advances_from_customers + b.salary_payable + v_dues
-            + b.reimbursements_payable + b.emi_loans_payable + b.business_loans_payable + v_gst;
+            + b.reimbursements_payable + b.emi_loans_payable + b.business_loans_payable + v_gst
+            + b.expenses_payable + b.salary_other_deductions;   -- S45 slice 2
   v_profit := (p.inv_taxable - p.cn_taxable + p.dn_taxable) - p.cogs - p.commissions
             - coalesce((select sum((x->>'amount')::bigint) from jsonb_array_elements(p.expense_groups) x), 0);
   return v_assets - v_liab - v_profit;
@@ -149,9 +151,8 @@ begin
                             1000, 1800, 0, 0, '5e450000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
   g := pg_temp.step('11 salary booked', g);
 
-  /* ── KNOWN GAPS (S45 slice 2: needs a real journal) — measured, printed, not asserted ──
-     They are here so the size of each gap is visible on every run, and so the day one of
-     them is fixed the line can flip to must_balance = true. */
+  /* ── S45 slice 2 (migration 20261009170000) — these were KNOWN GAPS in slice 1, now
+     asserted like the rest. */
 
   -- G1. Razorpay fee: bank line arrives ₹236 short of the receipt and is matched anyway.
   select (public.record_payment('S45Q-8', 11800, 'razorpay', 'pay_S45TEST', null)->>'payment_id')::uuid into v_pay;
@@ -160,17 +161,39 @@ begin
     values (gen_random_uuid(), '5e450000-0000-4000-8000-000000000001', '5e450000-0000-4000-8000-0000000000b1',
             current_date, 'RAZORPAY SETTLEMENT', 0, 11564, 'manual') returning id into v_txn;
   perform public.reconcile_bank_txn(v_txn, 'payment', v_pay::text, 'manual');
-  g := pg_temp.step('G1b razorpay settlement net of fee (KNOWN GAP)', g, false);
+  g := pg_temp.step('G1b razorpay settlement net of fee', g);
 
   -- G2. Expense paid in cash, no bank line: Dr expense, no Cr anywhere.
   insert into public.expenses (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, payment_method, description)
     values ('EXP-S45-1', '5e450000-0000-4000-8000-000000000001', 'Office Supplies', 'S45 Shop', current_date, 500, 0, 'cash', 'S45 cash expense');
-  g := pg_temp.step('G2 cash expense, no bank line (KNOWN GAP)', g, false);
+  g := pg_temp.step('G2 cash expense, no bank line', g);
 
   -- G3. Salary with an "other" deduction: the ₹500 withheld lands in no liability.
   perform public.pay_salary(v_emp, to_char(current_date - 31, 'YYYY-MM'), current_date, 30000, 0, 0, 0, null,
                             0, 0, 0, 500, '5e450000-0000-4000-8000-0000000000b1', null, 0, 0, 0, null);
-  g := pg_temp.step('G3 salary other deduction (KNOWN GAP)', g, false);
+  g := pg_temp.step('G3 salary other deduction', g);
+
+  -- G4. Unpaid expense (bill on credit): Dr expense = Cr expenses payable.
+  insert into public.expenses (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, payment_method, description, paid)
+    values ('EXP-S45-2', '5e450000-0000-4000-8000-000000000001', 'Software', 'S45 Vendor', current_date, 2000, 0, null, 'S45 unpaid expense', false);
+  g := pg_temp.step('G4 unpaid expense', g);
+
+  -- G5. The cash expense of G2 later shows up in the bank and is matched: bank −500,
+  --     "paid, not in bank" −500 → no move (compare before the bank line → after the match).
+  insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source)
+    values (gen_random_uuid(), '5e450000-0000-4000-8000-000000000001', '5e450000-0000-4000-8000-0000000000b1',
+            current_date, 'S45 SHOP', 500, 0, 'manual') returning id into v_txn;
+  perform public.reconcile_bank_txn(v_txn, 'expense', 'EXP-S45-1', 'manual');
+  g := pg_temp.step('G5 cash expense matched to its bank line', g);
+
+  -- G6. Salary expense row (linked by salary_payments.expense_id) is never counted again as
+  --     an unpaid / unbanked expense — its Cr is salary payable + dues. Only G4's ₹2,000
+  --     is payable; G2 is matched, so nothing is "paid, not in bank".
+  if (select b.expenses_payable <> 2000 or b.expenses_paid_unbanked <> 0 from public.report_balance_sheet(null) b) then
+    raise exception 'FAIL G6: expenses payable % (want 2000), paid-not-in-bank % (want 0)',
+      (select b.expenses_payable from public.report_balance_sheet(null) b),
+      (select b.expenses_paid_unbanked from public.report_balance_sheet(null) b);
+  end if;
 end $$;
 
 do $$

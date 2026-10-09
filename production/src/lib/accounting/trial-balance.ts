@@ -22,6 +22,13 @@
  * Isliye ye line abhi bhi zaroori hai — par ab usme sirf opening capital / pichhle saal ka
  * profit / upar ke known gaps hain, roz ke receipts nahi.
  *
+ * S45 slice 2 (9 Oct 2026, migration 20261009170000): wo teen gaps bhi band — Razorpay /
+ * settlement fee ab "Bank Charges" kharcha, unpaid kharche "Expenses payable", cash / UPI
+ * kharche jinki bank line match nahi "Paid, not yet matched in bank" (Cr), salary ka "other"
+ * deduction ek liability. Aur owner CA ke opening capital + retained earnings b/f Balance
+ * Sheet page par bhar sakta hai — bhare hon to wo Equity me aate hain aur Difference me sirf
+ * wahi bachta hai jo sach me kahin record nahi.
+ *
  * ─── EXPENSE HEADS GROSS, ITC ALAG ─────────────────────────────────────────
  * P&L ki category list GST-inclusive `amount` hai, aur P&L ka `expenses` usme se claimable
  * ITC ghata kar. TB dono dikhata hai: category heads gross (Dr) + ek Cr line "ITC inside
@@ -31,7 +38,7 @@
  * Paisa poore rupees (AGENTS.md §1). Negative balance ulte column me jaata hai (overpaid
  * card, GST credit), minus sign ke saath nahi — Tally aisa hi chhapta hai.
  */
-import type { BalanceSheetAuto, BalanceSheetItem } from "@/lib/queries/balance-sheet";
+import type { BalanceSheetAuto, BalanceSheetItem, OpeningBalances } from "@/lib/queries/balance-sheet";
 import type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
 export type TbGroup = "Assets" | "Liabilities" | "Equity" | "Income" | "Expenses" | "Difference";
@@ -59,8 +66,10 @@ export function buildTrialBalance(args: {
   /** FY start → as-of ka P&L. */
   pnl: PnLNumbers;
   items: readonly BalanceSheetItem[];
+  /** CA ke opening balances (owner ne bhare). null / undefined = nahi bhare — Difference jaisa tha. */
+  opening?: OpeningBalances | null;
 }): TrialBalance {
-  const { bs, pnl, items } = args;
+  const { bs, pnl, items, opening } = args;
   const rows: TbRow[] = [];
 
   /* natural = jis column me positive balance baithta hai. */
@@ -74,6 +83,9 @@ export function buildTrialBalance(args: {
 
   // ── Assets ──
   put("Assets", "Cash & bank", bs.cashAndBank, "debit", "Bank accounts: opening + credits − debits");
+  /* Asset ka ulta: paisa ja chuka, bank line abhi match nahi — Cr column me baithta hai. */
+  put("Assets", "Less: expenses paid, not yet matched in bank", -bs.expensesPaidUnbanked, "debit",
+    "Cash / UPI expenses marked paid with no bank line matched yet");
   put("Assets", "Received, not yet in bank", bs.undepositedFunds, "debit", "Customer receipts not matched to any bank line (undeposited funds)");
   put("Assets", "Trade receivables", bs.receivables, "debit", "Pending / overdue invoices (project milestones excluded)");
   put("Assets", "Project receivables", bs.projectReceivable, "debit", "Invoiced project milestones − received");
@@ -91,6 +103,8 @@ export function buildTrialBalance(args: {
   put("Liabilities", "Salary payable", bs.salaryPayable, "credit", "Net salary booked, not yet paid");
   put("Liabilities", "Statutory dues (TDS / PF / ESI)", bs.salaryDuesPayable, "credit", "Withheld + employer share − challans");
   put("Liabilities", "Reimbursements payable", bs.reimbursementsPayable, "credit", "Paid from someone's own pocket, not yet repaid");
+  put("Liabilities", "Expenses payable", bs.expensesPayable, "credit", "Expenses marked unpaid (amount − TDS), no bank line matched");
+  put("Liabilities", "Salary deductions held (other)", bs.salaryOtherDeductions, "credit", "\"Other\" deductions withheld from salary");
   put("Liabilities", "Credit card payable", bs.creditCardPayable, "credit", "Company cards: amount owed");
   put("Liabilities", "EMI / asset loans", bs.emiLoansPayable, "credit", "Financed − principal repaid");
   put("Liabilities", "Business loans", bs.businessLoansPayable, "credit", "Borrowed − principal repaid");
@@ -99,6 +113,10 @@ export function buildTrialBalance(args: {
   for (const it of items.filter((i) => i.section === "liability")) put("Liabilities", it.label, it.amount, "credit", "Balance sheet — manual line");
 
   // ── Equity ──
+  if (opening) {
+    put("Equity", "Owner's capital (opening, from CA)", opening.ownerCapital ?? 0, "credit", `Opening balances as at ${opening.asOf}`);
+    put("Equity", "Retained earnings b/f (from CA)", opening.retainedEarnings ?? 0, "credit", `Earlier years' profit as at ${opening.asOf}`);
+  }
   for (const it of items.filter((i) => i.section === "equity")) put("Equity", it.label, it.amount, "credit", "Balance sheet — manual line");
 
   // ── Income / Expenses (FY to date) ──
@@ -116,8 +134,11 @@ export function buildTrialBalance(args: {
   const dr = rows.reduce((s, r) => s + r.debit, 0);
   const cr = rows.reduce((s, r) => s + r.credit, 0);
   const difference = dr - cr;
-  put("Difference", "Difference — opening capital & retained earnings b/f", difference, "credit",
-    "Derived, not a ledger: what the records alone cannot explain (earlier years' profit, capital, anything unrecorded)");
+  put("Difference", opening ? "Difference — not explained by records or opening balances" : "Difference — opening capital & retained earnings b/f",
+    difference, "credit",
+    opening
+      ? "Derived, not a ledger: what the records and the CA's opening balances still do not explain"
+      : "Derived, not a ledger: what the records alone cannot explain (earlier years' profit, capital, anything unrecorded)");
 
   return {
     rows,

@@ -6984,6 +6984,51 @@ export type Database = {
           },
         ]
       }
+      opening_balances: {
+        Row: {
+          as_of: string
+          notes: string | null
+          owner_capital: number | null
+          retained_earnings: number | null
+          tenant_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          as_of: string
+          notes?: string | null
+          owner_capital?: number | null
+          retained_earnings?: number | null
+          tenant_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          as_of?: string
+          notes?: string | null
+          owner_capital?: number | null
+          retained_earnings?: number | null
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opening_balances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       package_items: {
         Row: {
           created_at: string
@@ -14054,6 +14099,8 @@ export type Database = {
           emi_loans_payable: number
           emi_unregistered_cost: number
           employee_loans: number
+          expenses_paid_unbanked: number
+          expenses_payable: number
           fixed_assets: Json
           fy_label: string
           fy_start_year: number
@@ -14064,6 +14111,7 @@ export type Database = {
           project_receivable: number
           receivables: number
           reimbursements_payable: number
+          salary_other_deductions: number
           salary_payable: number
           tax_payments: Json
           tds_receivable: number
@@ -14071,6 +14119,10 @@ export type Database = {
         }[]
       }
       report_day_book: { Args: { p_from: string; p_to: string }; Returns: Json }
+      report_expense_has_own_credit: {
+        Args: { p_expense_id: string; p_tenant: string }
+        Returns: boolean
+      }
       report_ledger_vendors: { Args: never; Returns: Json }
       report_party_ledger: {
         Args: { p_from: string; p_kind: string; p_party: string; p_to: string }
@@ -14101,6 +14153,15 @@ export type Database = {
       report_pnl_monthly: {
         Args: { p_from: string; p_to: string }
         Returns: Json
+      }
+      report_settlement_shortfalls: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          amount: number
+          payment_id: string
+          reference: string
+          txn_date: string
+        }[]
       }
       reset_tenant_selected_tables: {
         Args: {
@@ -14150,6 +14211,15 @@ export type Database = {
         Returns: undefined
       }
       set_my_employee: { Args: { p_employee_id: string }; Returns: undefined }
+      set_opening_balances: {
+        Args: {
+          p_as_of?: string
+          p_notes?: string
+          p_owner_capital?: number
+          p_retained_earnings?: number
+        }
+        Returns: undefined
+      }
       set_subscription_auto_renew: {
         Args: { p_sub_id: string; p_value: boolean }
         Returns: boolean

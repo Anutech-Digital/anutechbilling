@@ -8,7 +8,8 @@ const bs: BalanceSheetAuto = {
   tdsReceivable: 1500, employeeLoans: 15000, prepaidAdvances: 8000, fixedAssets: 84000,
   payables: 10000, salaryPayable: 20000, salaryDuesPayable: 6450, reimbursementsPayable: 1500,
   creditCardPayable: 8000, emiLoansPayable: 40000, businessLoansPayable: 75000,
-  gstPayable: 10137, gstPaid: 1000, advanceTaxPaid: 5000, fyLabel: "FY 2026-27",
+  gstPayable: 10137, gstPaid: 1000, advanceTaxPaid: 5000,
+  expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel: "FY 2026-27",
 };
 const pnl = {
   revenue: 76873, cogs: 10000, commissions: 2000,
@@ -72,5 +73,44 @@ describe("buildTrialBalance", () => {
     expect(t.rows.some((r) => r.head === "Reimbursements payable")).toBe(false);
     const last = trialBalanceCsvRows(t).at(-1)!;
     expect(last[2]).toBe(last[3]);
+  });
+});
+
+describe("buildTrialBalance — S45 slice 2 heads + CA opening balances", () => {
+  const base = buildTrialBalance({ bs, pnl, items });
+
+  it("unpaid expenses, cash expenses not yet in bank and salary 'other' deductions each shrink the Difference by exactly their amount", () => {
+    const t = buildTrialBalance({
+      bs: { ...bs, expensesPayable: 2000, expensesPaidUnbanked: 500, salaryOtherDeductions: 300 }, pnl, items,
+    });
+    expect(t.rows.find((r) => r.head === "Expenses payable")).toMatchObject({ debit: 0, credit: 2000 });
+    expect(t.rows.find((r) => r.head === "Less: expenses paid, not yet matched in bank")).toMatchObject({ debit: 0, credit: 500 });
+    expect(t.rows.find((r) => r.head === "Salary deductions held (other)")).toMatchObject({ debit: 0, credit: 300 });
+    expect(t.difference).toBe(base.difference - 2800);
+    expect(t.totalDebit).toBe(t.totalCredit);
+  });
+
+  it("no opening balances → no Equity opening rows, Difference label unchanged", () => {
+    const t = buildTrialBalance({ bs, pnl, items, opening: null });
+    expect(t.rows.some((r) => r.head.startsWith("Owner's capital (opening"))).toBe(false);
+    expect(t.rows.some((r) => r.head === "Difference — opening capital & retained earnings b/f")).toBe(true);
+  });
+
+  it("CA's opening balances sit in Equity and take that much out of the Difference", () => {
+    const opening = { asOf: "2026-03-31", ownerCapital: 50000, retainedEarnings: -12000, notes: null };
+    const t = buildTrialBalance({ bs, pnl, items, opening });
+    expect(t.rows.find((r) => r.head === "Owner's capital (opening, from CA)")).toMatchObject({ group: "Equity", credit: 50000 });
+    // a loss b/f flips to the debit column
+    expect(t.rows.find((r) => r.head === "Retained earnings b/f (from CA)")).toMatchObject({ debit: 12000, credit: 0 });
+    expect(t.difference).toBe(base.difference - 50000 + 12000);
+    expect(t.totalDebit).toBe(t.totalCredit);
+    expect(t.rows.some((r) => r.head === "Difference — not explained by records or opening balances")).toBe(t.difference !== 0);
+  });
+
+  it("opening figures that exactly explain the gap leave no Difference line", () => {
+    const opening = { asOf: "2026-03-31", ownerCapital: base.difference, retainedEarnings: null, notes: null };
+    const t = buildTrialBalance({ bs, pnl, items, opening });
+    expect(t.difference).toBe(0);
+    expect(t.rows.some((r) => r.group === "Difference")).toBe(false);
   });
 });

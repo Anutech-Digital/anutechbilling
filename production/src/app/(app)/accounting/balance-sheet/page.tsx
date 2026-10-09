@@ -39,13 +39,17 @@ import {
   useCreateBalanceSheetItem,
   useUpdateBalanceSheetItem,
   useDeleteBalanceSheetItem,
+  useOpeningBalances,
+  useSetOpeningBalances,
   type BalanceSheetItem,
+  type OpeningBalances,
 } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
 import { balanceSheetTotals } from "@/lib/accounting/balance-sheet-totals";
-import { istToday } from "@/lib/dates/ist";
-import { fmtBS } from "./format";
+import { istToday, addDaysISO } from "@/lib/dates/ist";
+import { fyOf } from "@/lib/accounting/ledger";
+import { fmtBS, parseWholeRupees } from "./format";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
@@ -95,9 +99,19 @@ export default function BalanceSheetPage() {
      (27 Sep 2026). The plug above used to be shown AS retained earnings, which hid every
      missing entry inside a number that always looked right. Now the P&L figure is the
      retained earnings, and the gap between the two is printed as what it is. */
-  const cumulative = usePnL({ from: BOOKS_START, to: today });
-  const cumulativeProfit = cumulative.data ? (cumulative.data.model.netProfit ?? cumulative.data.netProfit) : null;
-  const unexplained = cumulativeProfit === null ? null : retained - cumulativeProfit;
+  /* S45 slice 2: CA ke opening balances bhare hon to retained earnings = unke "b/f" + us
+     tareekh ke BAAD ka P&L; warna pehle jaisa — saare periods ka P&L. Opening query aane tak
+     P&L nahi chalta (ek bekaar all-periods aggregation bachti hai). */
+  const openingQ = useOpeningBalances();
+  const opening: OpeningBalances | null = openingQ.data ?? null;
+  const profitFrom = opening ? addDaysISO(opening.asOf, 1) : BOOKS_START;
+  const profitRangeOpen = profitFrom <= today;
+  const cumulative = usePnL({ from: profitRangeOpen ? profitFrom : today, to: today }, openingQ.data !== undefined && profitRangeOpen);
+  const cumulativeProfit = openingQ.data === undefined ? null
+    : !profitRangeOpen ? 0
+    : cumulative.data ? (cumulative.data.model.netProfit ?? cumulative.data.netProfit) : null;
+  const openingEquity = (opening?.ownerCapital ?? 0) + (opening?.retainedEarnings ?? 0);
+  const unexplained = cumulativeProfit === null ? null : retained - openingEquity - cumulativeProfit;
 
 
   // Export the full sheet as a CSV the owner can hand to their CA (mirrors GST/P&L).
@@ -112,6 +126,7 @@ export default function BalanceSheetPage() {
         ["ASSETS", ""],
         ["Cash & bank", auto.cashAndBank ?? 0],
         ["Received, not yet in bank (undeposited funds)", auto.undepositedFunds ?? 0],
+        ["Less: expenses paid, not yet matched in bank", -(auto.expensesPaidUnbanked ?? 0)],
         ["Accounts receivable", auto.receivables ?? 0],
         ["Project receivable", auto.projectReceivable ?? 0],
         ["TDS receivable", auto.tdsReceivable ?? 0],
@@ -129,6 +144,8 @@ export default function BalanceSheetPage() {
         ["Salary payable", auto.salaryPayable ?? 0],
         ["Statutory dues payable", auto.salaryDuesPayable ?? 0],
         ["Reimbursements payable", auto.reimbursementsPayable ?? 0],
+        ["Expenses payable", auto.expensesPayable ?? 0],
+        ["Salary deductions held (other)", auto.salaryOtherDeductions ?? 0],
         ["Credit card payable", auto.creditCardPayable ?? 0],
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
         ["Business loans payable", auto.businessLoansPayable ?? 0],
@@ -138,7 +155,13 @@ export default function BalanceSheetPage() {
         ["", ""],
         ["EQUITY", ""],
         ...manualEqRows.map((r): [string, number] => [r.label, r.amount]),
-        ["Retained earnings (cumulative net profit per P&L)", cumulativeProfit ?? ""],
+        ...(opening ? [
+          [`Owner's capital (opening, from CA, ${opening.asOf})`, opening.ownerCapital ?? 0] as [string, number],
+          [`Retained earnings b/f (from CA, ${opening.asOf})`, opening.retainedEarnings ?? 0] as [string, number],
+          [`Profit since ${opening.asOf} (per P&L)`, cumulativeProfit ?? ""] as [string, number | string],
+        ] : [
+          ["Retained earnings (cumulative net profit per P&L)", cumulativeProfit ?? ""] as [string, number | string],
+        ]),
         ["Unexplained difference (balancing figure)", unexplained ?? retained],
         ["Net worth (total equity)", netWorth],
       ],
@@ -248,6 +271,9 @@ export default function BalanceSheetPage() {
                 {(auto?.undepositedFunds ?? 0) !== 0 && (
                   <BSLine label="Received, not yet in bank" hint="customer receipts not matched to a bank line yet" amount={auto?.undepositedFunds ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
                 )}
+                {(auto?.expensesPaidUnbanked ?? 0) > 0 && (
+                  <BSLine label="Less: expenses paid, not yet in bank" hint="cash / UPI expenses marked paid, no bank line matched yet — match them in Banking" amount={-(auto?.expensesPaidUnbanked ?? 0)} kind="auto" source="Expenses" href="/accounting/banking" />
+                )}
                 <BSLine label="Trade receivables" hint="invoiced but unpaid (excl. projects)" amount={auto?.receivables ?? 0} kind="auto" source="unpaid invoices" href="/invoices" />
                 {(auto?.projectReceivable ?? 0) > 0 && (
                   <BSLine label="Project receivables" hint="one-time / custom project sales, unpaid" amount={auto?.projectReceivable ?? 0} kind="auto" source="project invoices" href="/invoices" />
@@ -292,6 +318,12 @@ export default function BalanceSheetPage() {
                 {(auto?.reimbursementsPayable ?? 0) > 0 && (
                   <BSLine label="Reimbursements payable" hint="expenses paid from someone's own card, not yet repaid" amount={auto?.reimbursementsPayable ?? 0} kind="auto" source="Reimbursements" href="/accounting/reimbursements" />
                 )}
+                {(auto?.expensesPayable ?? 0) > 0 && (
+                  <BSLine label="Expenses payable" hint="expenses marked unpaid (after TDS)" amount={auto?.expensesPayable ?? 0} kind="auto" source="Expenses" href="/accounting/expenses" />
+                )}
+                {(auto?.salaryOtherDeductions ?? 0) > 0 && (
+                  <BSLine label="Salary deductions held" hint={'"other" deductions withheld from salary, owed onward or back'} amount={auto?.salaryOtherDeductions ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
+                )}
                 {(auto?.creditCardPayable ?? 0) > 0 && (
                   <BSLine label="Credit card payable" hint="company credit cards ka owe / udhari" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />
                 )}
@@ -326,9 +358,15 @@ export default function BalanceSheetPage() {
                     onEdit={setEditItem}
                     onDelete={async (r) => { if (await confirm({ title: "Remove line?", body: `Remove "${r.label}" from the balance sheet?`, confirmLabel: "Remove", danger: true })) del.mutate(r.id); }}
                   />
+                  {opening && (opening.ownerCapital ?? 0) !== 0 && (
+                    <BSLine label="Owner's capital (opening)" hint={`from your CA, as at ${formatDate(opening.asOf)}`} amount={opening.ownerCapital ?? 0} kind="manual" source="Opening balances" />
+                  )}
+                  {opening && (opening.retainedEarnings ?? 0) !== 0 && (
+                    <BSLine label="Retained earnings b/f" hint={`earlier years' profit from your CA, as at ${formatDate(opening.asOf)}`} amount={opening.retainedEarnings ?? 0} kind="manual" source="Opening balances" />
+                  )}
                   <BSLine
-                    label="Retained earnings"
-                    hint={cumulativeProfit === null ? "cumulative net profit per P&L — loading…" : "cumulative net profit per P&L, all periods"}
+                    label={opening ? `Profit since ${formatDate(opening.asOf)}` : "Retained earnings"}
+                    hint={cumulativeProfit === null ? "net profit per P&L — loading…" : opening ? "net profit per P&L after the opening date" : "cumulative net profit per P&L, all periods"}
                     amount={cumulativeProfit ?? 0}
                     kind="auto" source="P&L" href="/accounting/pnl"
                   />
@@ -355,7 +393,10 @@ export default function BalanceSheetPage() {
                         <div className="flex justify-between gap-3"><span>Total assets</span><span className="tabular-nums">{fmtBS(totalAssets)}</span></div>
                         <div className="flex justify-between gap-3"><span>− Total liabilities</span><span className="tabular-nums">{fmtBS(totalLiab)}</span></div>
                         <div className="flex justify-between gap-3"><span>− Owner&apos;s capital &amp; other manual equity</span><span className="tabular-nums">{fmtBS(netWorth - retained)}</span></div>
-                        <div className="flex justify-between gap-3"><span>− Retained earnings (P&amp;L, all periods)</span><span className="tabular-nums">{fmtBS(cumulativeProfit ?? 0)}</span></div>
+                        {opening && (
+                          <div className="flex justify-between gap-3"><span>− Opening capital + retained earnings b/f (CA)</span><span className="tabular-nums">{fmtBS(openingEquity)}</span></div>
+                        )}
+                        <div className="flex justify-between gap-3"><span>{opening ? "− Profit since the opening date (P&L)" : "− Retained earnings (P&L, all periods)"}</span><span className="tabular-nums">{fmtBS(cumulativeProfit ?? 0)}</span></div>
                         <div className="flex justify-between gap-3 border-t border-hairline pt-1 font-semibold text-ink"><span>= Unexplained difference</span><span className="tabular-nums">{fmtBS(unexplained ?? retained)}</span></div>
                       </div>
                       <p className="mt-2 text-xs text-ink-3">
@@ -381,6 +422,8 @@ export default function BalanceSheetPage() {
             </Card>
           </div>
 
+          <OpeningBalancesCard opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={`${fyOf(today)}-04-01`} today={today} />
+
           {/* Balance check — always balanced by construction */}
           <Card className="mt-6 p-4 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2">
@@ -403,6 +446,108 @@ export default function BalanceSheetPage() {
 }
 
 // ── Line + total primitives ─────────────────────────────────────────────────
+/* S45 slice 2: CA ke opening balances. Khaali by default — app kabhi khud nahi bharta.
+   Sirf owner badal sakta hai (set_opening_balances bhi yahi jaanchta hai); baaki dekh sakte hain. */
+function OpeningBalancesCard({ opening, loading, failed, fyStart, today }: {
+  opening: OpeningBalances | null; loading: boolean; failed: boolean; fyStart: string; today: string;
+}) {
+  const isOwner = useCurrentUser().data?.role === "owner";
+  const save = useSetOpeningBalances();
+  const confirm = useConfirm();
+  const [editing, setEditing] = React.useState(false);
+  const [asOf, setAsOf] = React.useState("");
+  const [capital, setCapital] = React.useState("");
+  const [reserves, setReserves] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+  const [err, setErr] = React.useState<string | null>(null);
+
+  function startEdit() {
+    setAsOf(opening?.asOf ?? addDaysISO(fyStart, -1));
+    setCapital(opening?.ownerCapital != null ? String(opening.ownerCapital) : "");
+    setReserves(opening?.retainedEarnings != null ? String(opening.retainedEarnings) : "");
+    setNotes(opening?.notes ?? "");
+    setErr(null);
+    setEditing(true);
+  }
+
+  async function submit() {
+    const c = parseWholeRupees(capital);
+    const r = parseWholeRupees(reserves);
+    if (c === "bad" || r === "bad") { setErr("Whole rupees only, e.g. 500000 (no paise)."); return; }
+    if (c !== null && c < 0) { setErr("Owner's capital cannot be negative — add money taken out as a Drawings line."); return; }
+    if (c === null && r === null) { setErr("Enter at least one figure, or use Remove."); return; }
+    if (!asOf || asOf > today) { setErr("Pick the date of your CA's last balance sheet (not a future date)."); return; }
+    await save.mutateAsync({ asOf, ownerCapital: c, retainedEarnings: r, notes: notes.trim() || null });
+    setEditing(false);
+  }
+
+  async function remove() {
+    if (!(await confirm({ title: "Remove opening balances?", body: "The Difference line comes back on the Balance Sheet and Trial Balance.", confirmLabel: "Remove", danger: true }))) return;
+    await save.mutateAsync(null);
+  }
+
+  return (
+    <Card id="opening-balances" className="mt-6 p-5 md:p-6 scroll-mt-20">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <SectionTitle>Opening balances</SectionTitle>
+          <p className="text-xs text-ink-3 mt-1 max-w-xl leading-relaxed">
+            Enter opening balances from your CA to remove the Difference line. Use the figures from your CA&apos;s last
+            balance sheet (usually 31 March). If you already added an Owner&apos;s capital line above, don&apos;t enter it again here.
+          </p>
+        </div>
+        {isOwner && !editing && !loading && !failed && (
+          <div className="flex gap-2">
+            <Button size="sm" variant={opening ? "default" : "primary"} icon={opening ? "edit" : "plus"} onClick={startEdit}>
+              {opening ? "Edit" : "Enter opening balances"}
+            </Button>
+            {opening && <Button size="sm" variant="ghost" onClick={remove} loading={save.isPending}>Remove</Button>}
+          </div>
+        )}
+      </div>
+
+      {failed ? (
+        <p role="alert" className="mt-3 text-sm text-rose">Could not load opening balances. Reload the page.</p>
+      ) : loading ? (
+        <Skeleton className="mt-3 h-10 w-full" />
+      ) : editing ? (
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <FormField label="As at (date of CA's balance sheet)" htmlFor="ob-as-of">
+            <Input id="ob-as-of" name="ob-as-of" type="date" value={asOf} max={today} onChange={(e) => setAsOf(e.target.value)} />
+          </FormField>
+          <FormField label="Owner's capital (₹)" htmlFor="ob-capital">
+            <Input id="ob-capital" name="ob-capital" inputMode="numeric" placeholder="From your CA" value={capital} onChange={(e) => setCapital(e.target.value)} />
+          </FormField>
+          <FormField label="Retained earnings b/f (₹, minus for a loss)" htmlFor="ob-retained">
+            <Input id="ob-retained" name="ob-retained" inputMode="numeric" placeholder="From your CA" value={reserves} onChange={(e) => setReserves(e.target.value)} />
+          </FormField>
+          <div className="sm:col-span-3">
+            <FormField label="Note (optional)" htmlFor="ob-notes">
+              <Input id="ob-notes" name="ob-notes" maxLength={500} placeholder="e.g. As per audited balance sheet FY 2025-26" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </FormField>
+          </div>
+          {err && <p role="alert" className="sm:col-span-3 text-sm text-rose">{err}</p>}
+          <div className="sm:col-span-3 flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+            <Button size="sm" variant="primary" onClick={submit} loading={save.isPending}>Save</Button>
+          </div>
+        </div>
+      ) : opening ? (
+        <div className="mt-3 space-y-1">
+          <div className="text-xs text-ink-3">As at {formatDate(opening.asOf)}</div>
+          <BSLine label="Owner's capital" amount={opening.ownerCapital ?? 0} hint={opening.ownerCapital == null ? "not entered" : undefined} />
+          <BSLine label="Retained earnings b/f" amount={opening.retainedEarnings ?? 0} hint={opening.retainedEarnings == null ? "not entered" : undefined} />
+          {opening.notes && <p className="text-xs text-ink-3">{opening.notes}</p>}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-ink-3">
+          Not entered yet.{!isOwner && " Only the owner can enter these."}
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="text-2xs uppercase tracking-wider text-ink-3 font-semibold border-b border-hairline pb-2">

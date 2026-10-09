@@ -77,6 +77,10 @@ export interface BalanceSheetRpcRow {
   itc_groups: { bill_type: string | null; category: string | null; vendorGstin: string | null; gst_paid: number; n: number }[];
   fixed_assets: (AssetLike & { emi_purchase_id: string | null })[];
   tax_payments: TaxPaymentLike[];
+  /** S45 slice 2 (migration 20261009170000). Migration lagne se pehle column hota hi nahi. */
+  expenses_payable?: number | null;
+  expenses_paid_unbanked?: number | null;
+  salary_other_deductions?: number | null;
 }
 
 export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
@@ -117,6 +121,10 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
     gstPayable,
     gstPaid,
     advanceTaxPaid,
+    /* S45 slice 2: migration se pehle 0 — aaj tak wala number, koi naya galat number nahi. */
+    expensesPayable: r.expenses_payable ?? 0,
+    expensesPaidUnbanked: r.expenses_paid_unbanked ?? 0,
+    salaryOtherDeductions: r.salary_other_deductions ?? 0,
     fyLabel: r.fy_label,
   };
 }

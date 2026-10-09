@@ -18,6 +18,7 @@ const ZERO: BalanceSheetAuto = {
   tdsReceivable: 0, employeeLoans: 0, prepaidAdvances: 0, fixedAssets: 0, payables: 0,
   salaryPayable: 0, salaryDuesPayable: 0, reimbursementsPayable: 0, creditCardPayable: 0,
   emiLoansPayable: 0, businessLoansPayable: 0, gstPayable: 0, gstPaid: 0, advanceTaxPaid: 0,
+  expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0,
   fyLabel: "FY 2026-27",
 };
 const NO_PNL = { revenue: 0, cogs: 0, commissions: 0, expenses: 0, expensesByCategory: [] } as unknown as PnLNumbers;
@@ -91,5 +92,34 @@ describe("R-179 — report_balance_sheet → undepositedFunds", () => {
 
   it("before the migration (no column) it stays 0 — never NaN", () => {
     expect(balanceSheetFromRpc(row({})).undepositedFunds).toBe(0);
+  });
+});
+
+/**
+ * S45 slice 2 — kharche ka Cr side. Asli case (local E2E workspace, 9 Oct): ₹2,500 Software
+ * kharcha "unpaid", aur bank_transfer se "paid" kharche jinki koi bank line hi nahi.
+ */
+describe("S45 slice 2 — expense credits on the Balance Sheet", () => {
+  it("an unpaid expense is a current liability; a cash expense not yet in bank reduces cash-like assets", () => {
+    const t = balanceSheetTotals({ ...ZERO, cashAndBank: 10000, expensesPayable: 2500, expensesPaidUnbanked: 500, salaryOtherDeductions: 300 }, []);
+    expect(t.totalAssets).toBe(10000 - 500);
+    expect(t.totalLiab).toBe(2500 + 300);
+    expect(t.currentAssets).toBe(9500);
+    expect(t.currentLiab).toBe(2800);
+    expect(t.totalAssets).toBe(t.totalLiab + t.netWorth);
+  });
+
+  it("report_balance_sheet columns carry through; before the migration they are 0, never NaN", () => {
+    const base: BalanceSheetRpcRow = {
+      as_of: "2026-10-09", fy_start_year: 2026, fy_label: "FY 2026-27",
+      cash_and_bank: 0, credit_card_payable: 0, receivables: 0, advances_from_customers: 0,
+      project_receivable: 0, tds_receivable: 0, employee_loans: 0, prepaid_advances: 0,
+      emi_unregistered_cost: 0, emi_loans_payable: 0, business_loans_payable: 0, payables: 0,
+      salary_payable: 0, dues_salary_tds: 0, dues_pf: 0, dues_esi: 0, dues_vendor_tds: 0, dues_paid: [],
+      reimbursements_payable: 0, gst_output: 0, bills_gst: 0, itc_groups: [], fixed_assets: [], tax_payments: [],
+    };
+    const bs = balanceSheetFromRpc({ ...base, expenses_payable: 2500, expenses_paid_unbanked: 37614, salary_other_deductions: 500 });
+    expect(bs).toMatchObject({ expensesPayable: 2500, expensesPaidUnbanked: 37614, salaryOtherDeductions: 500 });
+    expect(balanceSheetFromRpc(base)).toMatchObject({ expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0 });
   });
 });

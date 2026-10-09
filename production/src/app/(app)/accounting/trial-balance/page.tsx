@@ -19,7 +19,7 @@ import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fyOf } from "@/lib/accounting/ledger";
-import { useBalanceSheetAuto, useBalanceSheetItems } from "@/lib/queries/balance-sheet";
+import { useBalanceSheetAuto, useBalanceSheetItems, useOpeningBalances } from "@/lib/queries/balance-sheet";
 import { usePnL } from "@/lib/queries/pnl";
 import { buildTrialBalance, trialBalanceCsvRows, type TbGroup } from "@/lib/accounting/trial-balance";
 
@@ -32,13 +32,14 @@ export default function TrialBalancePage() {
   const bsQ = useBalanceSheetAuto();
   const itemsQ = useBalanceSheetItems();
   const pnlQ = usePnL({ from: fyStart, to: today });
+  const openingQ = useOpeningBalances();
 
   const tb = React.useMemo(() => {
-    if (!bsQ.data || !pnlQ.data || !itemsQ.data) return null;
-    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data });
-  }, [bsQ.data, pnlQ.data, itemsQ.data]);
+    if (!bsQ.data || !pnlQ.data || !itemsQ.data || openingQ.data === undefined) return null;
+    return buildTrialBalance({ bs: bsQ.data, pnl: pnlQ.data, items: itemsQ.data, opening: openingQ.data });
+  }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data]);
 
-  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error;
+  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error;
 
   const exportCsv = () => {
     if (!tb) return;
@@ -79,8 +80,11 @@ export default function TrialBalancePage() {
                 <Icon name="alert" size={14} className="inline mr-1.5 align-text-bottom text-amber-ink" />
                 The records alone differ by <b>{rupee(Math.abs(tb.difference))}</b>. ResellerOS keeps single-entry books,
                 so that gap — earlier years&apos; profit, owner&apos;s capital, anything not recorded in the app — is shown on its
-                own line at the bottom, not hidden inside another head. Add capital / reserves as manual lines on the{" "}
-                <Link href="/accounting/balance-sheet" className="underline">Balance Sheet</Link> to shrink it.
+                own line at the bottom, not hidden inside another head.{" "}
+                {openingQ.data
+                  ? <>Opening balances from your CA are already in Equity; what is left is not recorded anywhere in the app.</>
+                  : <>Enter opening balances from your CA on the{" "}
+                      <Link href="/accounting/balance-sheet#opening-balances" className="underline">Balance Sheet</Link> to remove the Difference line.</>}
               </p>
             </Card>
           )}

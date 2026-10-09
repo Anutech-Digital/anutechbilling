@@ -161,7 +161,9 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid, fyLabel };
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
+    /* S45 slice 2 heads (migration 20261009170000) are SQL-only — the old per-row code never had them. */
+    expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel };
 }
 
 /* ═══ P&L ═══════════════════════════════════════════════════════════════════ */
