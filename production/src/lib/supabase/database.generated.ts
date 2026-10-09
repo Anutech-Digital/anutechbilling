@@ -4697,6 +4697,7 @@ export type Database = {
           pf_no: string | null
           phone: string | null
           pin_hash: string | null
+          pin_set: boolean | null
           tenant_id: string
           updated_at: string
         }
@@ -4729,6 +4730,7 @@ export type Database = {
           pf_no?: string | null
           phone?: string | null
           pin_hash?: string | null
+          pin_set?: boolean | null
           tenant_id: string
           updated_at?: string
         }
@@ -4761,6 +4763,7 @@ export type Database = {
           pf_no?: string | null
           phone?: string | null
           pin_hash?: string | null
+          pin_set?: boolean | null
           tenant_id?: string
           updated_at?: string
         }

@@ -56,6 +56,10 @@ import {
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
+import { presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
+import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
+import { useShiftRules } from "@/lib/queries/attendance-shift";
+import { OfficeHoursRow } from "@/components/features/attendance/office-hours-row";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
@@ -886,9 +890,9 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 </Field>
               </div>
 
-              <Field htmlFor="payroll-field" label={<>Attendance Kiosk PIN {employee?.pin_hash ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
+              <Field htmlFor="payroll-field" label={<>Attendance Kiosk PIN {employee?.pin_set ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
                 <Input id="payroll-field" inputMode="numeric" value={pin} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
-                  placeholder={employee?.pin_hash ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
+                  placeholder={employee?.pin_set ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
                 {!pinValid
                   ? <p className="mt-1 text-xs text-rose">PIN must be 4–6 digits.</p>
                   : <p className="mt-1 text-xs text-ink-3">Used at the attendance kiosk to check in / out.</p>}
@@ -967,6 +971,7 @@ export function PayrollTab() {
 
   const attQ = useAttendance(period);
   const holQ = useHolidays();
+  const shiftQ = useShiftRules();
 
   const employees = (empQ.data ?? []).filter((e) => e.is_active);
   const paidByEmp = new Map((payQ.data ?? []).map((p) => [p.employee_id, p]));
@@ -976,9 +981,10 @@ export function PayrollTab() {
   const estimatedMonthly = employees.reduce((s, e) => s + e.monthly_gross, 0);
   const runCount = employees.filter((e) => paidByEmp.has(e.id)).length;
 
-  // Attendance this month: days present (distinct check-ins) vs working days so
-  // far (Sundays + company holidays excluded; from the join date if mid-month).
-  // Same basis payroll uses for loss-of-pay — so it reads consistently.
+  // Attendance this month: days present vs working days so far (Sundays + company
+  // holidays excluded; from the join date if mid-month). A half-day (under the office's
+  // half-day hours, R-604) counts 0.5 — the same presentSummary the LOP suggestion uses,
+  // so the two always read the same.
   const attendanceFor = React.useMemo(() => {
     const [yy, mm] = period.split("-").map(Number);
     const monthStart = new Date(Date.UTC(yy, mm - 1, 1));
@@ -987,11 +993,8 @@ export function PayrollTab() {
     const rangeEnd = todayUTC < monthEnd ? todayUTC : monthEnd;
     const holidaySet = new Set((holQ.data ?? []).map((h) => h.holiday_date));
     nationalHolidaysForYear(yy).forEach((d) => holidaySet.add(d));
-    const presentByEmp = new Map<string, Set<string>>();
-    for (const a of attQ.data ?? []) {
-      if (!a.check_in) continue;
-      (presentByEmp.get(a.employee_id) ?? presentByEmp.set(a.employee_id, new Set()).get(a.employee_id)!).add(a.work_date);
-    }
+    const rows = attQ.data ?? [];
+    const rules = shiftQ.data ?? DEFAULT_SHIFT;
     return (e: Employee): { present: number; expected: number } => {
       const rangeStart = e.joining_date && e.joining_date > `${period}-01`
         ? new Date(e.joining_date + "T00:00:00Z") : monthStart;
@@ -1000,9 +1003,9 @@ export function PayrollTab() {
         const iso = utcDateISO(d);
         if (d.getUTCDay() !== 0 && !holidaySet.has(iso)) expected++;
       }
-      return { present: presentByEmp.get(e.id)?.size ?? 0, expected };
+      return { present: presentSummary(rows, e.id, rules).present, expected };
     };
-  }, [period, attQ.data, holQ.data]);
+  }, [period, attQ.data, holQ.data, shiftQ.data]);
 
   return (
     <>
@@ -1475,6 +1478,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   const attQ = useAttendance(period);
   const leaveQ = useLeaveEntries();
   const holQ = useHolidays();
+  const shiftQ = useShiftRules();
   const pay = usePaySalary();
   const accounts = (accountsQ.data ?? []).filter((a) => a.is_active);
 
@@ -1588,13 +1592,14 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
       else if (holidaySet.has(iso)) holidays++;      // Sunday/holiday clash counts once as Sunday
       else expected++;                                // working day
     }
-    const present = new Set((attQ.data ?? []).filter((a) => a.employee_id === employee.id && a.check_in).map((a) => a.work_date)).size;
+    // R-604: a half-day (Pardeep: "half day par salary kaatni hai") counts 0.5 present.
+    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, shiftQ.data ?? DEFAULT_SHIFT);
     const monthLeaves = (leaveQ.data ?? []).filter((l) => l.employee_id === employee.id && l.from_date <= `${period}-31` && l.to_date >= `${period}-01`);
     const paidLeave = monthLeaves.filter((l) => l.type !== "unpaid").reduce((s, l) => s + l.days, 0);
     const unpaidLeave = monthLeaves.filter((l) => l.type === "unpaid").reduce((s, l) => s + l.days, 0);
-    const absent = Math.max(0, expected - present - paidLeave - unpaidLeave);
-    return { present, absent, unpaidLeave, lopDays: absent + unpaidLeave, workingDays: expected, sundays, holidays };
-  }, [period, employee, attQ.data, leaveQ.data, holQ.data]);
+    const { absent, lopDays } = suggestedLopDays({ expected, present, paidLeave, unpaidLeave });
+    return { present, halfDays, absent, unpaidLeave, lopDays, workingDays: expected, sundays, holidays };
+  }, [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
 
   function applyLopSuggestion() {
     onLopDays(String(lopSuggestion.lopDays));
@@ -1696,7 +1701,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Deductions</div>
             <div className="rounded bg-paper-2/50 px-2.5 py-2 text-xs text-ink-3">
               <div className="flex items-center justify-between gap-2">
-                <span><b className="text-ink-2">{lopSuggestion.workingDays}</b> working days · <b className="text-ink-2">{lopSuggestion.present}</b> present · <b className="text-ink-2">{lopSuggestion.absent}</b> absent · <b className="text-ink-2">{lopSuggestion.unpaidLeave}</b> unpaid leave → LOP <b className="text-ink">{lopSuggestion.lopDays}d</b></span>
+                <span><b className="text-ink-2">{lopSuggestion.workingDays}</b> working days · <b className="text-ink-2">{lopSuggestion.present}</b> present{lopSuggestion.halfDays > 0 ? <> (incl. <b className="text-ink-2">{lopSuggestion.halfDays}</b> half day{lopSuggestion.halfDays === 1 ? "" : "s"})</> : null} · <b className="text-ink-2">{lopSuggestion.absent}</b> absent · <b className="text-ink-2">{lopSuggestion.unpaidLeave}</b> unpaid leave → LOP <b className="text-ink">{lopSuggestion.lopDays}d</b></span>
                 <button type="button" onClick={applyLopSuggestion} className="shrink-0 rounded border border-hairline px-2 py-0.5 font-medium text-ink hover:bg-paper">Apply</button>
               </div>
               <div className="mt-1 text-emerald">
@@ -1706,7 +1711,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="payroll-unpaid-leave-lop-days" className="block text-xs font-medium text-ink-2 mb-1">Unpaid leave (LOP) days</label>
-                <Input id="payroll-unpaid-leave-lop-days" type="number" min={0} value={lopDays} onChange={(e) => onLopDays(e.target.value)} />
+                <Input id="payroll-unpaid-leave-lop-days" type="number" min={0} step={0.5} value={lopDays} onChange={(e) => onLopDays(e.target.value)} />
               </div>
               <div>
                 <label htmlFor="payroll-lop-amount" className="block text-xs font-medium text-ink-2 mb-1">LOP amount (₹)</label>
@@ -2241,6 +2246,8 @@ function NetworkCard() {
         </Button>
       </div>
 
+      <OfficeHoursRow />
+
       <RequireDeviceRow />
     </Card>
   );
@@ -2256,6 +2263,7 @@ export function AttendanceTab() {
   );
   const empQ = useEmployees();
   const attQ = useAttendance(period);
+  const shiftRules = useShiftRules().data ?? DEFAULT_SHIFT;
   const setConsent = useOwnerSetConsent();
   const reviewMut = useMarkAttendanceReviewed();
   const employees = (empQ.data ?? []).filter((e) => e.is_active);
@@ -2292,13 +2300,14 @@ export function AttendanceTab() {
     );
   }
 
+  // Days present uses the same presentSummary as the register and payroll (a half-day = 0.5).
   const byEmp = new Map<string, { present: number; last: string | null }>();
   for (const a of attQ.data ?? []) {
     const cur = byEmp.get(a.employee_id) ?? { present: 0, last: null };
-    if (a.check_in) cur.present += 1;
     if (!cur.last || a.work_date > cur.last) cur.last = a.work_date;
     byEmp.set(a.employee_id, cur);
   }
+  for (const [empId, cur] of byEmp) cur.present = presentSummary(attQ.data ?? [], empId, shiftRules).present;
 
   return (
     <>
@@ -2347,7 +2356,7 @@ export function AttendanceTab() {
                   <tr key={e.id} className="hover:bg-paper-2/40">
                     <td className="px-4 py-3 font-medium text-ink">{e.name}</td>
                     <td className="px-4 py-3">
-                      {e.pin_hash ? <Badge kind="success">Set</Badge> : <Badge kind="warning">Not set</Badge>}
+                      {e.pin_set ? <Badge kind="success">Set</Badge> : <Badge kind="warning">Not set</Badge>}
                     </td>
                     <td className="px-4 py-3">
                       {consented ? (
@@ -2396,6 +2405,8 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
   const canFix = canFixAttendance(useCurrentUser().data?.role);
   const teamQ = useTeamMembers();
   const [fixing, setFixing] = React.useState<{ employee: Employee; date: string; rec: Attendance | undefined } | null>(null);
+  // R-604: office hours → late / half-day marks, and the same present count payroll uses.
+  const rules = useShiftRules().data ?? DEFAULT_SHIFT;
   const editorName = (id: string | null) => {
     const m = (teamQ.data ?? []).find((t) => t.id === id);
     return m ? memberLabel(m) : "a team member";
@@ -2431,7 +2442,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
         <div className="text-3xs font-semibold uppercase tracking-wider text-ink-3">
           Attendance register · {monthLabel} · <span className="text-ink-2">{workingCount} working</span> · {sundayCount} Sundays{holidayDays.length > 0 ? ` · ${holidayDays.length} holiday${holidayDays.length === 1 ? "" : "s"}` : ""}
         </div>
-        <div className="text-xs text-ink-3"><span className="font-semibold text-emerald">P</span> present · – absent · <span className="text-indigo">S</span> Sunday · <span className="text-amber-ink">H</span> holiday</div>
+        <div className="text-xs text-ink-3"><span className="font-semibold text-emerald">P</span> present · <span className="font-semibold text-amber-ink">½</span> half day · <span className="font-semibold text-amber-ink">L</span> late · – absent · <span className="text-indigo">S</span> Sunday · <span className="text-amber-ink">H</span> holiday</div>
       </div>
       <div className="overflow-x-auto">
         <table className="text-sm">
@@ -2457,11 +2468,12 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
                 );
               })}
               <th className="px-3 py-2 text-right">Present</th>
+              <th className="px-3 py-2 text-right" title={`Checked in after ${rules.shiftStart} + ${rules.lateGraceMinutes} min. Shown only — never deducted.`}>Late</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-hairline">
             {employees.map((e) => {
-              const present = dayList.filter((d) => byKey.get(`${e.id}|${dateFor(d)}`)?.check_in).length;
+              const summary = presentSummary(attendance, e.id, rules);
               return (
                 <tr key={e.id} className="hover:bg-paper-2/30">
                   <td className="sticky left-0 z-10 bg-paper px-3 py-2 font-medium text-ink whitespace-nowrap">{e.name}</td>
@@ -2471,11 +2483,19 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
                     const kind = dayKind(d);
                     const future = dateFor(d) > today;
                     const edited = Boolean(rec?.corrected_at);
-                    const timeText = rec?.check_in ? `In ${fmtTimeIST(rec.check_in)}${rec.check_out ? ` · Out ${fmtTimeIST(rec.check_out)}` : ""}` : null;
+                    const st = isPresent && rec ? dayStatus(rec.work_date, rec.check_in, rec.check_out, rules) : null;
+                    const statusText = st ? [
+                      st.late ? `Late ${formatGap(st.lateByMinutes)}` : null,
+                      st.halfDay ? "Half day (counts 0.5)" : null,
+                      st.noCheckOut && dateFor(d) < today ? "No check-out — counted full day" : null,
+                    ].filter(Boolean).join(", ") : "";
+                    const timeText = rec?.check_in ? `In ${fmtTimeIST(rec.check_in)}${rec.check_out ? ` · Out ${fmtTimeIST(rec.check_out)}` : ""}${statusText ? ` · ${statusText}` : ""}` : null;
                     const editText = rec?.corrected_at ? `Edited by ${editorName(rec.corrected_by)}: ${rec.correction_note ?? ""}` : null;
                     const title = [timeText ?? (kind === "holiday" ? holidayMap.get(dateFor(d)) : null), editText].filter(Boolean).join(" · ") || undefined;
                     const mark = isPresent
-                      ? <span className="font-semibold text-emerald">P</span>
+                      ? st?.halfDay
+                        ? <span className="font-semibold text-amber-ink">½</span>
+                        : <span className="font-semibold text-emerald">P</span>
                       : kind === "sunday" ? <span className="text-indigo/50 text-xs">S</span>
                       : kind === "holiday" ? <span className="text-amber-ink/60 text-xs">H</span>
                       : future ? <span className="text-ink-3/25">·</span>
@@ -2483,6 +2503,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
                     const content = (
                       <>
                         {mark}
+                        {st?.late && <span aria-hidden className="ml-px align-super text-xs leading-none font-semibold text-amber-ink">L</span>}
                         {edited && <span aria-hidden className="ml-px align-super text-xs leading-none text-amber-ink">✎</span>}
                       </>
                     );
@@ -2508,7 +2529,8 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
                       </td>
                     );
                   })}
-                  <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{present}</td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{summary.present}</td>
+                  <td className={cn("px-3 py-2 text-right font-mono", summary.lateDays > 0 ? "text-amber-ink" : "text-ink-3")}>{summary.lateDays}</td>
                 </tr>
               );
             })}
