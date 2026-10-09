@@ -35,6 +35,7 @@ import {
   invoiceChip, invoiceChipCounts, invoiceKpis, invoiceInFocus, INVOICE_FOCI, INVOICE_FOCUS_LABEL, type InvoiceFocus,
 } from "@/lib/invoices/kpis";
 import { invoiceMarginMtd } from "@/lib/invoices/margin-mtd";
+import { FillCostsDialog } from "@/components/features/invoices/fill-costs-dialog";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
@@ -90,6 +91,9 @@ function InvoicesPageInner() {
   const canQuotes    = canOpenQuotes(me?.role);
   /* R-255: the accountant reads invoices; issuing, payments and notes stay with the team. */
   const canWrite     = canWriteSales(me?.role);
+  /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
+  const isOwner      = me?.role === "owner";
+  const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
   /** Who the outbound WhatsApp reminders are from — see lib/hooks/useWhatsAppSender. */
   const waSender     = useWhatsAppSender();
   /* R-245: the reminder goes to the customer's phone — from the cached customer list. */
@@ -644,6 +648,17 @@ function InvoicesPageInner() {
                     ? `On ${rupee(marginMtd.costedSales, { compact: true })} of ${rupee(marginMtd.sales, { compact: true })} · cost missing on ${marginMtd.missingLines} line${marginMtd.missingLines === 1 ? "" : "s"}`
                     : `Cost missing on ${marginMtd.missingLines} line${marginMtd.missingLines === 1 ? "" : "s"}`}
             </p>
+            {/* R-487: owner-only, preview-first fill for invoices saved without their quote lines. */}
+            {isOwner && marginMtd.missingLines > 0 && (
+              <button
+                type="button"
+                onClick={() => setFillCostsOpen(true)}
+                className="text-3xs font-semibold text-accent hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+              >
+                Fill missing costs
+              </button>
+            )}
+            {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
           </div>
           {/* Averaged over every paid invoice — the Paid tab is that set. */}
           <button
