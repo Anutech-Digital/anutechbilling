@@ -429,7 +429,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       return NextResponse.json({ success: true, trial: true, leadId: started.leadId, trialEnds: started.trialEnds, confirmationSent: started.confirmationSent });
     }
 
-    // One hosting account per order until several can be provisioned (lib/checkout/hosting-limit.ts).
+    // One hosting account per hosting line — quantity above 1 is refused (lib/checkout/hosting-limit.ts).
     const tooMuchHosting = hostingLimitProblem(lines);
     if (tooMuchHosting) return NextResponse.json({ error: tooMuchHosting, next: "/cart" }, { status: 400 });
 

@@ -202,8 +202,9 @@ carries that domain as `domain` (so `record_payment` gives each plan's subscript
 and `hostingDomain`; `domainsInLines` and `domainSubscriptionsToCreate` skip hosting lines, so a
 hosting domain is never queued for registration; the webhook queues one hosting request per line
 with its own plan, and `cron/provision-hosting` finds a request's line by domain. Only a single
-hosting line with quantity above 1 is still refused (`SEVERAL_HOSTING_PLANS_READY`,
-`lib/checkout/hosting-limit.ts`).
+hosting line with quantity above 1 is still refused (`lib/checkout/hosting-limit.ts`; the
+`SEVERAL_HOSTING_PLANS_READY` switch and its "one hosting account for now" wording were removed
+on 9 Oct 2026).
 
 **Email goes to every recipient, from both apps** (owner, 30 Sep 2026: "Fix this permanently. It
 should remain on by default for both DMS and Reseller OS app"). SMTP (`lib/email/smtp-transport.ts`,

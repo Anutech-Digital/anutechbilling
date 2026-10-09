@@ -2,10 +2,8 @@
  * One domain for each hosting plan (owner, 30 Sep 2026: "A domain for each plan at checkout.
  * Each hosting line in the cart gets its own domain box, and two plans can't share a domain").
  *
- * The switch that lets a second plan into an order, SEVERAL_HOSTING_PLANS_READY, stays off
- * until provisioning queues one hosting request per line (board R-032). This file turns it on
- * for itself only, so the checkout half is proven now and the day R-032 lands is a one-line
- * change. Same mocks as route.test.ts, through the simulation path.
+ * Several plans have been one order since R-032 (1 Oct 2026); the switch this file used to turn
+ * on for itself was removed on 9 Oct 2026. Same mocks as route.test.ts, through the simulation path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -33,14 +31,6 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/crypto/tenant-secrets", () => ({ decryptTenantSecrets: () => null }));
 vi.mock("@/lib/marketing/utm", () => ({ captureFromRequest: () => ({}) }));
 vi.mock("@/lib/hosting/start-trial", () => ({ startHostingTrial: vi.fn() }));
-// The switch, on — for this file only.
-vi.mock("@/lib/checkout/hosting-limit", async (orig) => {
-  const real = await orig<typeof import("@/lib/checkout/hosting-limit")>();
-  return {
-    ...real,
-    hostingLimitProblem: (lines: Parameters<typeof real.hostingLimitProblem>[0]) => real.hostingLimitProblem(lines, true),
-  };
-});
 
 import { POST } from "./route";
 

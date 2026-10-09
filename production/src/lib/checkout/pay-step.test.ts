@@ -16,10 +16,11 @@ const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g,
 
 describe("hostingLimitWarning — the same rule, said before Pay", () => {
   const two = [{ sku: "hosting:standard", qty: 1 }, { sku: "hosting:plus", qty: 1 }];
-  it("with the switch OFF it warned on two hosting plans, in words that fit before paying", () => {
-    const w = hostingLimitWarning(two, false);
-    expect(w).toMatch(/Your cart has 2 hosting plans/);
-    expect(w).not.toMatch(/Nothing was charged/);
+  it("does not warn on two hosting plans — each is its own website", () => {
+    expect(hostingLimitWarning(two)).toBeNull();
+  });
+  it("says it in words that fit before paying", () => {
+    expect(hostingLimitWarning([{ sku: "hosting:starter", qty: 2 }])).not.toMatch(/Nothing was charged/);
   });
   it("warns on one plan with quantity 2", () => {
     expect(hostingLimitWarning([{ sku: "hosting:starter", qty: 2 }])).toMatch(/quantity 2/);
@@ -69,11 +70,8 @@ describe("the payment picker", () => {
   });
 });
 
-describe("the several-plans switch", () => {
-  it("is ON since provisioning queues one request per hosting line (R-032, 1 Oct 2026)", async () => {
-    const { SEVERAL_HOSTING_PLANS_READY } = await import("./hosting-limit");
-    expect(SEVERAL_HOSTING_PLANS_READY).toBe(true);
-    // And the half it waited for is really there: one product per hosting line.
+describe("several plans in one order", () => {
+  it("provisioning queues one request per hosting line (R-032, 1 Oct 2026)", async () => {
     const { provisioningProducts } = await import("@/lib/provisioning/products");
     const p = provisioningProducts({
       vendor: "hosting", domain: "a.in", seats: 0,
@@ -81,10 +79,10 @@ describe("the several-plans switch", () => {
     });
     expect(p.map((x) => [x.vendor, x.domain, x.plan])).toEqual([["hosting", "a.in", "hosting-starter"], ["hosting", "b.in", "hosting-plus"]]);
   });
-  it("on: two plans pass, a quantity above one is still refused", () => {
+  it("two plans pass, a quantity above one is still refused", () => {
     const two = [{ sku: "hosting:starter", qty: 1 }, { sku: "hosting:plus", qty: 1 }];
-    expect(hostingLimitProblem(two, true)).toBeNull();
-    expect(hostingLimitWarning(two, true)).toBeNull();
-    expect(hostingLimitProblem([{ sku: "hosting:starter", qty: 2 }], true)).toMatch(/add the plan once for each website/);
+    expect(hostingLimitProblem(two)).toBeNull();
+    expect(hostingLimitWarning(two)).toBeNull();
+    expect(hostingLimitProblem([{ sku: "hosting:starter", qty: 2 }])).toMatch(/add the plan once for each website/);
   });
 });
