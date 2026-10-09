@@ -12,6 +12,8 @@
 import * as React from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { logoDataUri } from "@/lib/pdf/logo";
+import { toastError } from "@/lib/errors/toast-error";
+import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 
 import {
   Dialog,
@@ -129,6 +131,7 @@ export function ReceiptVoucherDialog({
                   });
                 } catch (err) {
                   console.error("Receipt voucher PDF failed:", err);
+                  toastError(asPdfError(err), { description: PDF_FAILED_DESCRIPTION });
                 } finally {
                   setDownloadingPdf(false);
                 }

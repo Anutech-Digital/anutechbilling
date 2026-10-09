@@ -38,6 +38,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
+import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
+import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
 import { toast } from "sonner";
 import {
@@ -1405,7 +1407,8 @@ async function generatePayslip(employee: Employee, payment: SalaryPayment, me: C
       `Payslip-${safeName}-${periodLabel(payment.period).replace(" ", "-")}.pdf`,
     );
   } catch (err) {
-    toast.error((err as Error).message || "Could not build the payslip");
+    console.error("Payslip PDF failed:", err);
+    toastError(asPdfError(err), { description: PDF_FAILED_DESCRIPTION });
   }
 }
 

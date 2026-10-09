@@ -158,6 +158,11 @@ const nextConfig = {
               /* Google Ads conversion tag (R-139, 4 Oct 2026): loaded only after a landing-page form is
                  sent, and only when GOOGLE_ADS_SEND_TO is set (site/lib/google-ads.ts). */
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://challenges.cloudflare.com https://www.googletagmanager.com https://www.googleadservices.com",
+              /* worker-src (R-525, 9 Oct 2026): without it the browser falls back to script-src,
+                 which has no blob:, so the PDF renderer's blob: worker was refused and quote
+                 "Download PDF" spun forever in the production build. blob: goes on WORKERS only —
+                 never on script-src. Pinned by src/csp-worker-src.test.ts. */
+              "worker-src 'self' blob:",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               `img-src 'self' data: blob: https:${supaImg}`,
               "font-src 'self' data: https://fonts.gstatic.com",

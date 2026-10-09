@@ -10,6 +10,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 
 import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead } from "@/lib/queries/quotes";
 import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise";
@@ -755,7 +756,7 @@ export default function QuoteDetailPage() {
       });
     } catch (err) {
       console.error("Quote PDF failed:", err);
-      toast.error("PDF didn't download — WhatsApp opened; download the PDF separately.");
+      toastError(asPdfError(err), { description: "WhatsApp opened — download the PDF again, then attach it in the chat." });
     } finally {
       setSharingWa(false);
     }
@@ -895,7 +896,8 @@ export default function QuoteDetailPage() {
                 await downloadQuotePdfFile();
                 toast.success(`${quote.id}.pdf downloaded`);
               } catch (err) {
-                toastError(err, { fallback: "PDF generation failed" });
+                /* R-525: a hung or refused render now rejects within 20 s with operator copy. */
+                toastError(asPdfError(err), { description: PDF_FAILED_DESCRIPTION });
               } finally {
                 setDownloadingPdf(false);
               }
