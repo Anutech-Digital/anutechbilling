@@ -709,7 +709,7 @@ export default function CheckoutPage() {
             <div key={l.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{l.label} × {l.qty}</div>
-                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(l.cycle)}</div>
+                <div className="meta" style={{ fontSize: 12 }}>{(l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}</div>
               </div>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{rupee(l.unitPrice * l.qty)}</span>
             </div>

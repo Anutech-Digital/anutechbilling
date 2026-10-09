@@ -14,7 +14,7 @@
  */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { cartTotals, domainTermPrice, isSingleUnit, type CartLine, type CartTotals } from "@/site/lib/money";
+import { applyHostingBundle, cartTotals, domainTermPrice, isSingleUnit, type CartLine, type CartTotals } from "@/site/lib/money";
 
 const STORAGE_KEY = "anutech.cart.v1";
 const NO_DRAWER_ROUTES = ["/cart", "/checkout", "/done"];
@@ -112,7 +112,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
-    setLines(load());
+    setLines(applyHostingBundle(load()));
   }, []);
 
   const add = useCallback<CartApi["add"]>(
@@ -129,8 +129,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         const next = existing
           ? prev.map((l) => (l.key === existing.key ? { ...l, qty: single ? 1 : l.qty + (line.qty ?? 1) } : l))
           : [...prev, { ...line, qty: single ? 1 : line.qty ?? 1, key: `${line.label}-${Date.now()}-${prev.length}` }];
-        save(next);
-        return next;
+        const done = applyHostingBundle(next); // the ₹0-domain bundle follows the cart's contents
+        save(done);
+        return done;
       });
       setJustAdded(line.label);
       if (!NO_DRAWER_ROUTES.includes(pathname)) setDrawerOpen(true);
@@ -142,8 +143,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setLines((prev) => {
       const next = prev
         .map((l) => (l.key === key && !isSingleUnit(l) ? { ...l, qty: Math.max(1, l.qty + delta) } : l));
-      save(next);
-      return next;
+      const done = applyHostingBundle(next); // the ₹0-domain bundle follows the cart's contents
+      save(done);
+      return done;
     });
   }, []);
 
@@ -153,8 +155,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (i < 0) return prev;
       const copy = { ...prev[i], qty: 1, key: `${prev[i].label}-${Date.now()}-${prev.length}` };
       const next = [...prev.slice(0, i + 1), copy, ...prev.slice(i + 1)];
-      save(next);
-      return next;
+      const done = applyHostingBundle(next); // the ₹0-domain bundle follows the cart's contents
+      save(done);
+      return done;
     });
   }, []);
 
@@ -168,16 +171,18 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         const term = `${years} year${years === 1 ? "" : "s"}`;
         return { ...l, years, unitPrice: price, detail: l.detail.replace(/(registration\W+)\d+ years?/i, `$1${term}`) };
       });
-      save(next);
-      return next;
+      const done = applyHostingBundle(next); // the ₹0-domain bundle follows the cart's contents
+      save(done);
+      return done;
     });
   }, []);
 
   const remove = useCallback((key: string) => {
     setLines((prev) => {
       const next = prev.filter((l) => l.key !== key);
-      save(next);
-      return next;
+      const done = applyHostingBundle(next); // the ₹0-domain bundle follows the cart's contents
+      save(done);
+      return done;
     });
   }, []);
 

@@ -11,6 +11,8 @@
  * three copies of this arithmetic is how a drawer total comes to disagree with the checkout
  * button, which on a commerce site is the least-forgivable class of bug.
  */
+import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
+
 export function rupee(n: number): string {
   return "₹" + Math.round(n).toLocaleString("en-IN");
 }
@@ -57,6 +59,47 @@ export function domainTermPrice(yearPrices: Record<string, number> | undefined, 
   if (total === undefined) return null;
   if (!bundleFree) return total;
   return Math.max(0, total - (yearPrices?.["1"] ?? 0));
+}
+
+const BUNDLE_NOTE = " · first year free with yearly hosting";
+
+/** The server's bundle trigger: a yearly hosting plan (not a trial) anywhere in the order. */
+export function hasYearlyHostingLine(lines: readonly Pick<CartLine, "sku" | "cycle">[]): boolean {
+  return lines.some((l) => /^hosting:/i.test(l.sku ?? "") && l.cycle === "yearly");
+}
+
+/**
+ * The ₹0-domain bundle, worked out from what is in the cart — exactly the server's rule
+ * (`lib/checkout/cart-checkout.ts`, "THE bundle rule"): with a yearly hosting plan in the order,
+ * every domain's FIRST year is free (later years charged) and the mailbox is ₹0; without one,
+ * both are charged in full.
+ *
+ * Until 9 Oct 2026 the cart kept the bundle as a flag set when the domain was added. A domain
+ * added on its own, with a yearly plan added later, showed full price and checkout charged
+ * less ("The total has changed from ₹6,594 to ₹5,576"); a bundled domain whose plan was then
+ * removed showed ₹0 and was charged in full. A line whose price for its term is unknown is left
+ * as it is — checkout re-prices it and says so.
+ */
+export function applyHostingBundle(lines: CartLine[]): CartLine[] {
+  const bundled = hasYearlyHostingLine(lines);
+  return lines.map((l) => {
+    const sku = l.sku ?? "";
+    if (/^domain:/i.test(sku)) {
+      // A line saved before term prices existed still knows its own 1-year price.
+      const yearPrices = l.yearPrices ?? (!l.bundleFree && l.unitPrice > 0 ? { "1": l.unitPrice } : undefined);
+      const price = domainTermPrice(yearPrices, l.years ?? 1, bundled);
+      if (price === null) return l;
+      const plain = l.detail.replace(BUNDLE_NOTE, "").replace(/ · free with yearly hosting/i, "");
+      const next = { ...l, yearPrices, unitPrice: price, bundleFree: bundled ? true : undefined, detail: bundled ? `${plain}${BUNDLE_NOTE}` : plain };
+      return next.unitPrice === l.unitPrice && next.detail === l.detail && next.bundleFree === l.bundleFree && next.yearPrices === l.yearPrices ? l : next;
+    }
+    if (sku === "mailbox:anutech") {
+      const unitPrice = bundled ? 0 : MAILBOX_YR;
+      const detail = bundled ? "Free with the yearly plan" : "Anutech Mail · billed yearly";
+      return l.unitPrice === unitPrice && l.detail === detail ? l : { ...l, unitPrice, detail };
+    }
+    return l;
+  });
 }
 
 /*
