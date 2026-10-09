@@ -26,7 +26,10 @@ import type { Quote } from "@/lib/supabase/database.types";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
-type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "payment_amount">;
+type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "payment_amount"> & {
+  /** R-448: set when a revision replaced this quote. Optional so older callers still fit. */
+  superseded_by?: string | null;
+};
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
 export function outstanding(q: Pick<Quote, "amount" | "payment_amount">): number {
@@ -56,7 +59,7 @@ export function unifiedStatus(q: QuoteStatusFields): { label: string; kind: Quot
     case "sent":     return { label: "Out for review", kind: "warning" };
     case "viewed":   return { label: "Viewed", kind: "info" };
     case "rejected": return { label: "Rejected", kind: "danger" };
-    case "expired":  return { label: "Expired", kind: "danger" };
+    case "expired":  return q.superseded_by ? { label: "Replaced", kind: "muted" } : { label: "Expired", kind: "danger" };
     default:         return { label: "Draft", kind: "muted" };
   }
 }

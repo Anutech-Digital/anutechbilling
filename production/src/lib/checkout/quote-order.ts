@@ -69,6 +69,10 @@ export async function startQuotePayment(
   if (quote.status === "rejected") {
     return { status: 400, body: { error: "This quote was rejected — please contact the reseller." } };
   }
+  /* R-448: 'expired' is also a replaced quote (superseded_by) — never take money on it. */
+  if (quote.status === "expired") {
+    return { status: 400, body: { error: "This quote is closed or was replaced — ask the reseller for the latest one." } };
+  }
   // Already settled — never let the customer pay twice.
   if (quote.invoice_id || quote.payment_status === "received" || quote.payment_status === "invoiced") {
     return { status: 409, body: { error: "This quote is already paid." } };

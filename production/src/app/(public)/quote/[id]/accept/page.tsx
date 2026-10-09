@@ -19,6 +19,7 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
+import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
 
@@ -80,6 +81,27 @@ export default async function QuoteAcceptPage(props: Props) {
   // Don't expose draft quotes via public link — they're not meant for customer eyes
   if (quote.status === "draft") {
     notFound();
+  }
+
+  /* R-448: a replaced quote shows "This quote was replaced" + a link to the new one, never
+     the Accept button. Read in its own query so this page keeps working if the column is
+     not there yet (the error is simply ignored). */
+  const { data: rev } = await supabase
+    .from("quotes").select("superseded_by").eq("id", quote.id).maybeSingle();
+  if (rev?.superseded_by) {
+    const [{ data: next }, { data: t }] = await Promise.all([
+      supabase.from("quotes").select("id, status, public_token")
+        .eq("id", rev.superseded_by).eq("tenant_id", quote.tenant_id).maybeSingle(),
+      supabase.from("tenants").select("name").eq("id", quote.tenant_id).maybeSingle(),
+    ]);
+    return (
+      <QuoteReplaced
+        quoteId={quote.id}
+        newId={rev.superseded_by}
+        href={replacementHref(next)}
+        tenantName={t?.name ?? "Your reseller"}
+      />
+    );
   }
 
   /* ── VIEW TRACKING ────────────────────────────────────────────────────────

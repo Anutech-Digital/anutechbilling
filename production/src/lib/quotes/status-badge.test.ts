@@ -50,6 +50,10 @@ describe("a payment is never hidden by the quote's status", () => {
     expect(unifiedStatus(q({ status: "expired" })).label).toBe("Expired");
     expect(unifiedStatus(q({ status: "accepted" })).label).toBe("Accepted");
   });
+
+  it("calls a replaced quote Replaced, not Expired (R-448)", () => {
+    expect(unifiedStatus({ ...q({ status: "expired" }), superseded_by: "Q-1-R2" })).toEqual({ label: "Replaced", kind: "muted" });
+  });
 });
 
 describe("the cash note carries both halves for a part-paid quote", () => {

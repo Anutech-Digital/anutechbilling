@@ -8857,6 +8857,12 @@ export type Database = {
           prospect_state: string | null
           prospect_state_code: string | null
           public_token: string
+          rejected_note: string | null
+          rejected_reason: string | null
+          revision_no: number
+          revision_of: string | null
+          superseded_at: string | null
+          superseded_by: string | null
           seats: number | null
           status: Database["public"]["Enums"]["quote_status"]
           subtotal: number | null
@@ -8916,6 +8922,12 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          rejected_note?: string | null
+          rejected_reason?: string | null
+          revision_no?: number
+          revision_of?: string | null
+          superseded_at?: string | null
+          superseded_by?: string | null
           seats?: number | null
           status?: Database["public"]["Enums"]["quote_status"]
           subtotal?: number | null
@@ -8975,6 +8987,12 @@ export type Database = {
           prospect_state?: string | null
           prospect_state_code?: string | null
           public_token?: string
+          rejected_note?: string | null
+          rejected_reason?: string | null
+          revision_no?: number
+          revision_of?: string | null
+          superseded_at?: string | null
+          superseded_by?: string | null
           seats?: number | null
           status?: Database["public"]["Enums"]["quote_status"]
           subtotal?: number | null

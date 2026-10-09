@@ -67,6 +67,7 @@ import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
+import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -246,32 +247,14 @@ export default function QuotesPage() {
   // enum, derived from payment_status. Truly-done deals (accepted + paid +
   // GST invoice issued) get their own tab; the Accepted tab then surfaces
   // only the still-in-flight ones (accepted but money flow incomplete).
-  const counts = React.useMemo(() => {
-    const map: Record<string, number> = { all: quotesByWorkspace.length, invoiced: 0 };
-    for (const q of quotesByWorkspace) {
-      if (q.payment_status === "invoiced") {
-        map.invoiced += 1;
-        // also count under the underlying status (usually 'accepted') for
-        // tracking, but the Accepted tab excludes invoiced ones below
-        map[q.status] = (map[q.status] ?? 0) + 1;
-      } else {
-        map[q.status] = (map[q.status] ?? 0) + 1;
-      }
-    }
-    return map;
-  }, [quotesByWorkspace]);
-
-  // Accepted-but-not-yet-invoiced count for the tab badge
-  const acceptedActive = (counts.accepted ?? 0) - (counts.invoiced ?? 0);
+  /* R-469: every quote sits in exactly ONE tab (lib/quotes/list-tab.ts), so the tab
+     counts add up to All. Before, an invoiced quote with a balance counted under
+     Accepted/Invoiced AND Awaiting payment, and a rejected one showed under Expired. */
+  const counts = React.useMemo(() => quoteTabCounts(quotesByWorkspace), [quotesByWorkspace]);
 
   // Awaiting payment = money expected but not yet fully received. Includes an
   // INVOICED quote that still has a balance due — else real outstanding cash
   // (invoiced-but-part-paid) would hide from the "chase the cash" worklist.
-  const isAwaitingCash = (q: Quote) =>
-    q.payment_status === "awaiting" ||
-    q.payment_status === "partial" ||
-    (q.payment_status === "invoiced" && (q.amount ?? 0) - (q.payment_amount ?? 0) > 0);
-  const awaitingPayment = quotesByWorkspace.filter(isAwaitingCash).length;
 
   /* ── Quotes waiting on THIS person's approval ─────────────────────────────
      The queue the quote page has been promising. Until this existed, the banner said
@@ -299,10 +282,11 @@ export default function QuotesPage() {
     { id: "draft",    label: "Draft",    count: counts.draft ?? 0, dot: "slate" },
     { id: "sent",     label: "Sent",     count: counts.sent ?? 0, dot: "amber" },
     { id: "viewed",   label: "Viewed",   count: counts.viewed ?? 0, dot: "indigo" },
-    { id: "accepted", label: "Accepted", count: acceptedActive,        dot: "emerald" },
-    { id: "awaiting", label: "Awaiting payment", count: awaitingPayment, dot: "amber" },
-    { id: "invoiced", label: "Invoiced", count: counts.invoiced ?? 0,  dot: "emerald" },
-    { id: "expired",  label: "Expired",  count: (counts.expired ?? 0) + (counts.rejected ?? 0), dot: "rose" },
+    { id: "accepted", label: "Accepted", count: counts.accepted,        dot: "emerald" },
+    { id: "awaiting", label: "Awaiting payment", count: counts.awaiting, dot: "amber" },
+    { id: "invoiced", label: "Invoiced", count: counts.invoiced,  dot: "emerald" },
+    { id: "rejected", label: "Rejected", count: counts.rejected, dot: "rose" },
+    { id: "expired",  label: "Expired",  count: counts.expired, dot: "slate" },
   ];
 
   // Filter
@@ -312,18 +296,7 @@ export default function QuotesPage() {
        an operator who just clicked "Review them" would be shown an empty table. */
     if (onlyMyApprovals && !awaitsMyApproval(q, { id: me?.userId ?? "", role: me?.role })) return false;
     if (focus && !quoteInFocus(q, focus)) return false;   // the tile's own predicate
-    if (tab === "expired") {
-      if (q.status !== "expired" && q.status !== "rejected") return false;
-    } else if (tab === "awaiting") {
-      // Awaiting-payment bucket: money expected but not fully received.
-      if (!isAwaitingCash(q)) return false;
-    } else if (tab === "invoiced") {
-      // Invoiced bucket is defined by payment_status, not quote.status
-      if (q.payment_status !== "invoiced") return false;
-    } else if (tab === "accepted") {
-      // Accepted tab excludes those that have already graduated to invoiced
-      if (q.status !== "accepted" || q.payment_status === "invoiced") return false;
-    } else if (tab !== "all" && q.status !== tab) return false;
+    if (tab !== "all" && quoteListTab(q) !== tab) return false;
     return quoteMatchesSearch(q, leadOf(q), search);
   });
 
@@ -357,22 +330,24 @@ export default function QuotesPage() {
   }, [keys.index]);
 
   // KPIs
-  const totalValue = quotesByWorkspace.reduce((s, q) => s + (q.amount ?? 0), 0);
+  /* R-469: Pipeline = quotes still open (draft, sent, viewed) — not invoiced, rejected or
+     replaced ones. The margin tile below reads the same set. */
+  const pipelineQuotes = quotesByWorkspace.filter(isPipelineQuote);
+  const totalValue = focusValue(quotesByWorkspace, "pipeline");
   const acceptedValue = focusValue(quotesByWorkspace, "accepted");
   const sentValue = focusValue(quotesByWorkspace, "review");
   /* Only quotes whose margin is actually KNOWN are summed, and how many were left
      out is carried alongside — a total that silently drops the unknown ones reads as
      a complete measurement of the pipeline when it is a partial one. */
-  const marginablePipeline = quotesByWorkspace
-    .filter((q) => q.status === "sent" || q.status === "viewed")
-    .map((q) => estimateMarginForQuote(q));
+  const marginablePipeline = pipelineQuotes.map((q) => estimateMarginForQuote(q));
   const pipelineMargin = marginablePipeline.filter((m) => m.known).reduce((s, m) => s + m.margin, 0);
   const pipelineMarginUnknownCount = marginablePipeline.filter((m) => !m.known).length;
-  const acceptedCount = counts.accepted ?? 0;
-  const sentishCount = (counts.sent ?? 0) + (counts.viewed ?? 0);
+  /* Every accepted quote (invoiced ones too) — the same set as the Accepted tile's value. */
+  const acceptedCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "accepted")).length;
+  const sentishCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "review")).length;
   const expiringCount = sentishCount;
   const winRate = quotesByWorkspace.length > 0
-    ? Math.round((acceptedCount / Math.max(1, quotesByWorkspace.length - (counts.draft ?? 0))) * 100)
+    ? Math.round((acceptedCount / Math.max(1, quotesByWorkspace.filter((q) => q.status !== "draft").length)) * 100)
     : 0;
 
   return (
@@ -577,7 +552,8 @@ export default function QuotesPage() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
                     <button
                       type="button"
-                      onClick={() => tabOn("all")}
+                      onClick={() => focusOn("pipeline")}
+                      aria-pressed={focus === "pipeline"}
                       className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer"
                     >
                       <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Pipeline</p>
@@ -1184,7 +1160,7 @@ export default function QuotesPage() {
               </div>
               <div className="flex items-center gap-3">
                 <span>
-                  Pipeline value:{" "}
+                  Total value:{" "}
                   <b className="text-ink tabular-nums">
                     {rupee(filtered.reduce((s, q) => s + (q.amount ?? 0), 0), { compact: true })}
                   </b>

@@ -16,6 +16,7 @@
  *
  * Money is formatted via `pdfRupee()` so Indian lakh/crore grouping is preserved.
  */
+import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
 import {
   Document,
   Page,
@@ -632,7 +633,7 @@ export function QuotePDF(props: QuotePDFProps) {
                       <Text style={s.lineMeta}>Registration for {line.years} years, paid now · HSN 998313</Text>
                     ) : (
                     <Text style={s.lineMeta}>
-                      Per seat{perInvoice ? "" : " per year"} · HSN 998313
+                      {lineUnitLabel(line, Boolean(perInvoice))} · HSN 998313
                       {line.commitment && ` · ${scheduleLabel(line.commitment, effectiveCycle)}`}
                     </Text>
                     )}

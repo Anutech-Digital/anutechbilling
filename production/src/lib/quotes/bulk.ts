@@ -93,3 +93,25 @@ export function splitMrr(pool: number, domains: DomainSeat[]): number[] {
   }
   return out;
 }
+
+/**
+ * R-482 / board R-469 (3): rows the bulk dialog must refuse before adding — a name that is
+ * not a domain ("kapoor global") and the same domain typed twice were both accepted silently
+ * (the duplicate's seats were just added together).
+ */
+const BULK_DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+export function bulkDomainProblems(rows: ReadonlyArray<{ domain: string }>): { invalid: string[]; duplicates: string[] } {
+  const invalid: string[] = [];
+  const duplicates: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const raw = (r.domain ?? "").trim();
+    if (!raw) continue;
+    const d = normDomain(raw);
+    if (!BULK_DOMAIN_RE.test(d)) { invalid.push(raw); continue; }
+    if (seen.has(d)) { if (!duplicates.includes(d)) duplicates.push(d); continue; }
+    seen.add(d);
+  }
+  return { invalid, duplicates };
+}

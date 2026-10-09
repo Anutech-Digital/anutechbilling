@@ -71,6 +71,10 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (quote.status === "rejected") {
     return NextResponse.json({ error: "This quote was rejected — please reach out to the reseller" }, { status: 400 });
   }
+  /* R-448: 'expired' is also a replaced quote (superseded_by) — it can't be accepted. */
+  if (quote.status === "expired") {
+    return NextResponse.json({ error: "This quote is closed or was replaced — please ask the reseller for the latest one" }, { status: 400 });
+  }
   // Expiry judged at END OF DAY IST — a quote "valid until 30 Jun" must accept
   // through all of 30 Jun in India, not lapse at 05:30 IST (UTC midnight). (#20)
   if (isQuoteExpired(quote.expires_date)) {

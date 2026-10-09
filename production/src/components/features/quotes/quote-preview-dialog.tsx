@@ -7,6 +7,7 @@
 "use client";
 
 import * as React from "react";
+import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
 
 import {
   Dialog,
@@ -278,7 +279,7 @@ export function QuotePreviewDialog({
                       <td className="py-3 text-sm">
                         <p className="font-medium text-ink">{line.name}</p>
                         <p className="text-2xs text-ink-3 mt-0.5">
-                          Per seat{showPer ? "" : " per year"} · HSN 998313
+                          {lineUnitLabel(line, showPer)} · HSN 998313
                           {line.commitment && (
                             <> · {scheduleLabel(line.commitment, effectiveCycle)}</>
                           )}
