@@ -1,6 +1,6 @@
 -- deploy-key: attendancecorrections
 -- deploy-peek: to_regprocedure('public.correct_attendance(uuid,date,timestamptz,timestamptz,text)') is not null
--- 20261009214500_attendance_corrections  (R-603, 9 Oct 2026)
+-- 20261009224500_attendance_corrections  (R-603, 9 Oct 2026)
 --
 -- WHAT WAS WRONG
 --   The Attendance Register was read-only. A forgotten checkout or a day the kiosk was down

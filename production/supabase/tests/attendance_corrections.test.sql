@@ -1,4 +1,4 @@
--- R-603 (9 Oct 2026): owner fixes a missed punch. Migration 20261009214500_attendance_corrections.
+-- R-603 (9 Oct 2026): owner fixes a missed punch. Migration 20261009224500_attendance_corrections.
 -- Self-asserting, ONE transaction, rolled back. scripts/test-sql.mjs runs it after the migrations.
 --
 -- Proves:
