@@ -29,6 +29,7 @@ import { renderQuotePDF } from "@/lib/pdf";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import { firstChaseAfterSend } from "@/lib/ai/cadence";
 import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
@@ -136,7 +137,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   /* R-376 (f): a quote raised on a lead has no customer yet — the lead's state is the place
      of supply. Without it the emailed PDF said "Intra-state" for an out-of-state lead. */
   const { data: lead } = !quote.customer_id && quote.lead_id
-    ? await supabase.from("leads").select("state_code, gstin, country").eq("id", quote.lead_id).maybeSingle()
+    ? await supabase.from("leads").select("state_code, gstin, country, contact_name, contact_email, contact_phone").eq("id", quote.lead_id).maybeSingle()
     : { data: null };
   const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
 
@@ -244,9 +245,8 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       tenantAddress: tenant.address,
       quoteId:       quote.id,
       customerName:  quote.customer_name,
-      contactName:   customer?.contact_name ?? null,
-      contactEmail:  customer?.contact_email ?? null,
-      contactPhone:  customer?.contact_phone ?? null,
+      /* R-445 (1): a lead quote's PDF names the lead's person, as the in-app preview does. */
+      ...quoteContact(customer, lead),
       lineItems,
       subtotal,
       discountPct:   quote.discount_pct ?? 0,

@@ -54,6 +54,7 @@ import { ViewDomainsDialog } from "@/components/features/quotes/view-domains-dia
 import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
@@ -765,6 +766,14 @@ export function QuoteBuilder() {
 
   // Derived customer fields
   const customer = customers?.find((c) => c.id === customerId);
+  /* R-445 (1): the preview's Bill To names the person, as the PDF and customer link do —
+     lead mode: the (editable) lead fields; customer: its contact, else the linked lead's;
+     typed prospect: the email/phone typed here. */
+  const previewContact = isLeadMode
+    ? quoteContact({ contact_name: leadContact, contact_email: leadEmail, contact_phone: leadPhone })
+    : customerId
+      ? quoteContact(customer, leadFromQuery)
+      : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
   // still wins (this only re-runs if the selected customer's term changes).
@@ -3050,9 +3059,9 @@ export function QuoteBuilder() {
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
         customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
-        contactName={isLeadMode ? leadContact : null}
-        contactEmail={isLeadMode ? leadEmail : null}
-        contactPhone={isLeadMode ? leadPhone : null}
+        contactName={previewContact.contactName}
+        contactEmail={previewContact.contactEmail}
+        contactPhone={previewContact.contactPhone}
         lineItems={lineItems}
         subtotal={subtotal}
         discountPct={0}

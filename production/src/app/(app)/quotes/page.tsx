@@ -37,6 +37,7 @@ import { computeMargin } from "@/components/features/margin-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -1264,6 +1265,8 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
     seller: { state_code: currentUser?.tenantStateCode, gstin: currentUser?.tenantGstin },
   });
   const interState = pos.interState;
+  /* R-445 (1): Bill To names the person too — customer's contact, else the lead's. */
+  const contact = quoteContact(customer, lead);
 
   return (
     <QuotePreviewDialog
@@ -1276,9 +1279,9 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       tenantAddress={currentUser?.tenantAddress}
       quoteId={quote.id}
       customerName={quote.customer_name}
-      contactName={null}
-      contactEmail={null}
-      contactPhone={null}
+      contactName={contact.contactName}
+      contactEmail={contact.contactEmail}
+      contactPhone={contact.contactPhone}
       lineItems={items}
       subtotal={quote.subtotal}
       discountPct={quote.discount_pct}

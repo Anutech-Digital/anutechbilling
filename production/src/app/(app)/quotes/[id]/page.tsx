@@ -48,6 +48,7 @@ import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { payIntent } from "./pay-intent";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
@@ -131,6 +132,9 @@ export default function QuoteDetailPage() {
     // WhatsApp needs a country code — assume India (+91) for a bare 10-digit number.
     return d.startsWith("91") ? `+${d}` : d.length === 10 ? `+91${d}` : `+${d}`;
   }, [customer?.contact_phone, lead?.contact_phone]);
+  /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
+     the preview, the downloaded PDF and the WhatsApp attachment preview. */
+  const contact = quoteContact(customer, lead);
   const { data: me } = useCurrentUser();
   const qc = useQueryClient();
   const deleteQuote = useDeleteQuote();
@@ -684,9 +688,7 @@ export default function QuoteDetailPage() {
       tenantLogo:    await logoDataUri(me?.tenantLogoUrl),
       quoteId:       quote.id,
       customerName:  quote.customer_name,
-      contactName:   null,
-      contactEmail:  null,
-      contactPhone:  null,
+      ...contact,
       createdDate:   quote.created_at,
       expiresDate:   quote.expires_date,
       validityDays:  quote.expires_date
@@ -1772,9 +1774,9 @@ export default function QuoteDetailPage() {
         tenantAddress={me?.tenantAddress}
         quoteId={quote.id}
         customerName={quote.customer_name}
-        contactName={null}
-        contactEmail={null}
-        contactPhone={null}
+        contactName={contact.contactName}
+        contactEmail={contact.contactEmail}
+        contactPhone={contact.contactPhone}
         lineItems={items}
         subtotal={quote.subtotal}
         discountPct={quote.discount_pct}
@@ -1872,9 +1874,7 @@ export default function QuoteDetailPage() {
               tenantLogo:    await logoDataUri(me?.tenantLogoUrl),
               quoteId:       quote.id,
               customerName:  quote.customer_name,
-              contactName:   customer?.contact_name ?? lead?.contact_name ?? null,
-              contactEmail:  customer?.contact_email ?? lead?.contact_email ?? null,
-              contactPhone:  recipientPhone || null,
+              ...contact,
               createdDate:   quote.created_at,
               expiresDate:   quote.expires_date,
               validityDays:  quote.expires_date
