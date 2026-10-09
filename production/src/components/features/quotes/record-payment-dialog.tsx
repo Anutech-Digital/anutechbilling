@@ -63,6 +63,8 @@ import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
 import { rupee } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
+import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
+import { paymentOutcome } from "@/lib/accounting/tds-receipt";
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
 import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
@@ -295,6 +297,13 @@ export function RecordPaymentDialog({
   const newRunningTotal      = alreadyReceived + settledAgainstQuote;
   const willBePartial        = newRunningTotal < expectedAmount && newRunningTotal > 0;
   const willBeOverpaid       = newRunningTotal > expectedAmount;
+  /* R-523: the ONE sentence about how the quote ends up — the TDS box used to say "fully
+     satisfied" while the partial box said "₹X pending", both on screen at once. */
+  const outcome = paymentOutcome({ expected: expectedAmount, alreadyReceived, settled: settledAgainstQuote });
+  /* R-523: section change sets the rate from the one table (tds-rates.ts); a hand-typed
+     rate that does not fit the section is allowed but warned about. */
+  const tdsSectionValue = watch("tdsSection") ?? "194J";
+  const tdsRateCheck = checkTdsRate(tdsSectionValue, tdsRatePct);
 
   /* ── R-378: "Issue GST invoice now" ─────────────────────────────────────────
      The online path invoices the moment money lands (online-invoice.server.ts); the desk
@@ -648,13 +657,16 @@ export function RecordPaymentDialog({
       let tdsSaved = false;
       if (!isReplay && tdsActive && tdsAmount > 0) {
         tdsSaved = Boolean((r as { tds_saved?: boolean }).tds_saved);
-        // Remember the customer's TAN + TDS defaults for next time — a non-money
-        // UX convenience, safe to keep as a best-effort client update.
-        if (customerId && data.customerTan?.trim()) {
+        // Remember the customer's TDS section/rate (and TAN when typed) for next time —
+        // a non-money UX convenience, safe as a best-effort client update.
+        // R-523: was skipped whenever no TAN was typed, so the profile kept showing
+        // "194J @ 10%" after a 194C @ 2% payment. The drawer says it will do this.
+        if (customerId) {
+          const tan = data.customerTan?.trim();
           await supabase
             .from("customers")
             .update({
-              tan:                  data.customerTan.trim(),
+              ...(tan ? { tan } : {}),
               tds_default_section:  data.tdsSection ?? "194J",
               tds_default_rate_pct: tdsRatePct,
             })
@@ -1009,12 +1021,7 @@ export function RecordPaymentDialog({
                   {makesSubscription === null && <li>Start the quote&apos;s subscription from today, if it has one</li>}
                   <li>Track any outstanding balance separately</li>
                 </ul>
-                {newRunningTotal < expectedAmount && (
-                  <p className="mt-1.5">
-                    <b>{rupee(expectedAmount - newRunningTotal)} will still be due</b> — it stays on
-                    this quote until paid.
-                  </p>
-                )}
+                {/* R-523: what stays due is said once, in the outcome box below. */}
               </div>
             </div>
           )}
@@ -1071,12 +1078,12 @@ export function RecordPaymentDialog({
           )}
 
           {/* Partial-payment status preview */}
-          {willBePartial && (
-            <div className="rounded-md bg-indigo-50 border border-indigo/30 px-3 py-2 text-xs text-indigo flex items-start gap-2">
+          {willBePartial && outcome.kind === "partial" && (
+            <div data-testid="payment-outcome" className="rounded-md bg-indigo-50 border border-indigo/30 px-3 py-2 text-xs text-indigo flex items-start gap-2">
               <Icon name="info" size={13} className="flex-shrink-0 mt-0.5" />
               <span>
-                This payment of <b>{rupee(watchedAmount)}</b> brings total received to <b>{rupee(newRunningTotal)}</b>.
-                Quote will remain <b>partial</b> ({rupee(expectedAmount - newRunningTotal)} pending).
+                This payment brings total settled to <b>{rupee(newRunningTotal)}</b>.{" "}
+                <b>{outcome.sentence}</b>
               </span>
             </div>
           )}
@@ -1241,8 +1248,13 @@ export function RecordPaymentDialog({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <FormField label="Section" required htmlFor="tdsSection">
                     <Select
-                      value={watch("tdsSection") ?? "194J"}
-                      onValueChange={(v) => setValue("tdsSection", v)}
+                      value={tdsSectionValue}
+                      onValueChange={(v) => {
+                        setValue("tdsSection", v);
+                        // R-523: 194J → 194C left the rate at 10 (₹12,960 instead of ₹2,592).
+                        const def = tdsDefaultRatePct(v);
+                        if (def !== null) setValue("tdsRatePct", def, { shouldValidate: true });
+                      }}
                     >
                       <SelectTrigger id="tdsSection">
                         <SelectValue />
@@ -1265,6 +1277,29 @@ export function RecordPaymentDialog({
                     />
                   </FormField>
                 </div>
+                {tdsRateCheck.message && (
+                  <p
+                    role="status"
+                    data-testid="tds-rate-warning"
+                    className={tdsRateCheck.knownVariant
+                      ? "flex items-start gap-1.5 text-2xs text-amber-ink"
+                      : "flex items-start gap-1.5 rounded-md bg-rose-soft border border-rose/30 px-2 py-1.5 text-2xs text-rose-ink"}
+                  >
+                    <Icon name="alert" size={12} className="flex-shrink-0 mt-0.5" />
+                    <span>
+                      {tdsRateCheck.message}{" "}
+                      {tdsRateCheck.defaultPct !== null && (
+                        <button
+                          type="button"
+                          className="underline font-medium"
+                          onClick={() => setValue("tdsRatePct", tdsRateCheck.defaultPct ?? 0, { shouldValidate: true })}
+                        >
+                          Use {tdsRateCheck.defaultPct}%
+                        </button>
+                      )}
+                    </span>
+                  </p>
+                )}
 
                 <FormField label="Customer TAN" htmlFor="customerTan">
                   <Input
@@ -1297,11 +1332,14 @@ export function RecordPaymentDialog({
                   </div>
                   <div className="flex justify-between pt-1.5 border-t border-hairline">
                     <span className="text-ink-3">Net to your bank</span>
-                    <span className="font-mono font-semibold text-emerald">{rupee(expectedAmount - tdsAmount)}</span>
+                    <span className="font-mono font-semibold text-emerald">{rupee(Math.max(0, remaining - tdsAmount - appliedCreditAmount))}</span>
                   </div>
                   <div className="text-3xs text-ink-3 mt-2 leading-relaxed">
                     Adjust &quot;Amount received&quot; above to match what actually hit your bank.
-                    The quote will be marked fully satisfied — {rupee(tdsAmount)} TDS appears as a receivable in <a href="/accounting/tds-receivable" className="underline">/accounting/tds-receivable</a>.
+                    {" "}{rupee(tdsAmount)} TDS appears as a receivable in <a href="/accounting/tds-receivable" className="underline">/accounting/tds-receivable</a>.
+                    {customerId && (
+                      <> Saving also sets this customer&apos;s TDS profile to <b>{tdsSectionValue} @ {tdsRatePct}%</b>.</>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1363,8 +1401,8 @@ export function RecordPaymentDialog({
             <p className="mt-1 text-2xs text-ink-3">JPG / PNG / WEBP / PDF · up to 20 MB · attached after the payment is saved.</p>
           </FormField>
 
-          {newRunningTotal >= expectedAmount && (
-            <div className="bg-emerald-soft border border-emerald/20 rounded-md p-3 text-xs text-emerald flex gap-2 items-start">
+          {(outcome.kind === "full" || outcome.kind === "over") && (
+            <div data-testid="payment-outcome" className="bg-emerald-soft border border-emerald/20 rounded-md p-3 text-xs text-emerald flex gap-2 items-start">
               <Icon name="info" size={14} className="flex-shrink-0 mt-0.5" />
               <span>
                 {invoiceId ? (
@@ -1373,7 +1411,7 @@ export function RecordPaymentDialog({
                   </>
                 ) : (
                   <>
-                    Quote will be marked <b>fully paid</b>.{" "}
+                    <b>{outcome.sentence}</b>{" "}
                     {invoiceOffer.offer && issueInvoice
                       ? "The GST invoice is issued right after the payment is saved."
                       : "You can then generate the GST invoice from the quote detail page."}

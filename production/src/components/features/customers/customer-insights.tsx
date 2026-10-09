@@ -30,6 +30,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatPhone, initials, rupee, daysBetween, cn } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 
 // ════════════════════════════════════════════════════════════════════════
 // Pure logic
@@ -255,12 +256,15 @@ export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[],
 // ════════════════════════════════════════════════════════════════════════
 
 /** 4-KPI answer-bar — health / owed / value in one glance (real numbers). */
-export function CustomerMetricBar({ insights, customerId }: {
+export function CustomerMetricBar({ insights, customerId, lifetimeTds = 0 }: {
   insights: CustomerInsights;
   /** When given, the money tiles link to the records behind them. Optional so the
    *  contacts panel — which derives insights for a company that may have no customer
    *  row — keeps working rather than linking to a filter that would match nothing. */
   customerId?: string;
+  /** R-523: TDS the customer deducted inside Lifetime paid — shown as "Received ₹A +
+   *  TDS ₹B = ₹C" so the bank money can be matched. */
+  lifetimeTds?: number;
 }) {
   const { outstanding, projectReceivable, overdueCount, lifetimePaid, totalMRR, activeSubs, seatsUsed, seatsTotal, nearestRenewal, renewalDays } = insights;
   // Exact figures (not compact lakh) for the money KPIs so they match the
@@ -288,6 +292,7 @@ export function CustomerMetricBar({ insights, customerId }: {
       <MetricCard
         label="Lifetime paid"
         value={lifetimePaid > 0 ? rupee(lifetimePaid) : "—"}
+        hint={receiptSplitLine(lifetimePaid, lifetimeTds) ?? undefined}
         href={customerId && lifetimePaid > 0 ? `/payments?customer=${customerId}` : undefined}
         hrefTitle="See the payments this adds up to"
       />

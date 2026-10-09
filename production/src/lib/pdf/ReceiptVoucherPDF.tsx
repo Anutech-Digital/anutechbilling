@@ -22,7 +22,7 @@ import {
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
-import { pdfRupee } from "./pdf-money";
+import { pdfRupee, pdfSafeMoney } from "./pdf-money";
 import { pdfText } from "./pdf-text";
 import { isRenderableLogo } from "./logo";
 import type { Payment } from "@/lib/supabase/database.types";
@@ -67,6 +67,9 @@ export interface ReceiptVoucherPDFProps {
 
   // Origin context
   quoteId?: string;
+
+  /** R-523: "Received ₹A + TDS ₹B = ₹C" when the customer deducted TDS (receiptSplitLine). */
+  splitLine?: string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -315,6 +318,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     interState = false,
     gstRate = 18,
     quoteId,
+    splitLine,
   } = props;
 
   // GST reverse-out from gross amount (Indian standard)
@@ -441,6 +445,13 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
             <Text style={[s.tdDesc, s.totalLabel]}>Total amount received</Text>
             <Text style={[s.tdAmt, s.totalAmount]}>{pdfRupee(payment.amount)}</Text>
           </View>
+          {splitLine ? (
+            <View style={s.tableRow}>
+              <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
+                {pdfSafeMoney(splitLine)} (TDS deducted by the customer, deposited with the government)
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* ── Amount in words ─────────────────────────────────────── */}

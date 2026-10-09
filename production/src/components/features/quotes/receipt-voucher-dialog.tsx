@@ -21,6 +21,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
+import { useTdsForPayment } from "@/lib/queries/tds-receivable";
+import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 import type { Payment } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -69,6 +71,10 @@ export function ReceiptVoucherDialog({
      me likhi hai. */
   const { data: me } = useCurrentUser();
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
+  /* R-523: payment.amount is the GROSS the payment settles (bank + TDS). When the customer
+     deducted TDS, say so beside the total so the bank amount can be matched. */
+  const { data: tdsOnPayment = 0 } = useTdsForPayment(payment.id, open);
+  const splitLine = receiptSplitLine(payment.amount, tdsOnPayment);
 
   // GST calculation — reverse-out from gross amount (Indian standard)
   // amount received = taxable + GST → taxable = amount × 100 / (100 + rate)
@@ -98,7 +104,7 @@ export function ReceiptVoucherDialog({
               variant="primary"
               icon="whatsapp"
               onClick={() => {
-                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (₹${payment.amount.toLocaleString("en-IN")}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
+                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (${splitLine ?? `₹${payment.amount.toLocaleString("en-IN")}`}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
                 window.open(`https://web.whatsapp.com/send?text=${q}`, "_blank");
               }}
             >
@@ -119,6 +125,7 @@ export function ReceiptVoucherDialog({
                     tenantAddress, tenantState,
                     tenantLogo: await logoDataUri(me?.tenantLogoUrl),
                     interState, gstRate, quoteId,
+                    splitLine,
                   });
                 } catch (err) {
                   console.error("Receipt voucher PDF failed:", err);
@@ -258,6 +265,13 @@ export function ReceiptVoucherDialog({
                     <span className="font-serif text-2xl tabular-nums">{rupee(payment.amount)}</span>
                   </td>
                 </tr>
+                {splitLine && (
+                  <tr data-testid="receipt-tds-split">
+                    <td colSpan={2} className="px-3 pb-3 text-right text-xs text-ink-2 tabular-nums">
+                      {splitLine} <span className="text-ink-3">(TDS deducted by the customer, deposited with the government)</span>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

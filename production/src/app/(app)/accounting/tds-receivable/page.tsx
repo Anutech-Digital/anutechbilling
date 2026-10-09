@@ -36,6 +36,7 @@ import {
   type TdsReceivable,
   type TdsStatus,
 } from "@/lib/queries/tds-receivable";
+import { TdsRateCheckReport } from "./rate-check-report";
 import { TdsDetailDialog } from "@/components/features/accounting/tds-detail-dialog";
 import { Tds26asImport } from "@/components/features/accounting/tds-26as-import";
 import { istToday } from "@/lib/dates/ist";
@@ -184,6 +185,9 @@ export default function TdsReceivablePage() {
           </div>
         </Card>
       )}
+
+      {/* R-523: owner report — entries whose rate does not fit the section (read-only). */}
+      <TdsRateCheckReport onOpen={setSelected} />
 
       {/* Tabs */}
       <div className="mb-5 flex flex-wrap gap-1.5">

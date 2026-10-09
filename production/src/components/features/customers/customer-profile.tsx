@@ -34,6 +34,8 @@ import { CreditSettingsCard } from "@/components/features/customers/credit-setti
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { usePayments, useDeletePayment } from "@/lib/queries/payments";
+import { useTdsReceivables } from "@/lib/queries/tds-receivable";
+import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
@@ -94,6 +96,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: projPay } = useCustomerProjectPayments(params.id);
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   const { data: allPayments } = usePayments();
+  /* R-523: TDS this customer deducted — the statement and Lifetime paid show the bank
+     money and the TDS apart, else the bank reconciliation can never match. */
+  const { data: customerTds } = useTdsReceivables({ customerId: params.id });
 
   /* The ?edit=1 deep link is a ROUTE concern. In the panel there is no URL to read, and
      calling useSearchParams there would also opt the whole /customers page into a
@@ -185,6 +190,12 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     .filter((p) => p.status === "received")
     .reduce((s, p) => s + (p.amount ?? 0), 0);
   const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes, receivedPaymentsTotal);
+  // R-523: TDS inside Lifetime paid — on received quote/invoice payments (tds_receivable by
+  // payment) plus project milestones, where the TDS is its own project payment (method 'tds').
+  const tdsOnPayment = tdsByPayment(customerTds ?? []);
+  const lifetimeTds =
+    customerPayments.filter((p) => p.status === "received").reduce((s, p) => s + (tdsOnPayment[p.id] ?? 0), 0) +
+    (projPay?.payments ?? []).filter((p) => p.method === "tds").reduce((s, p) => s + (p.amount ?? 0), 0);
 
   // Project milestone receipts live in project_payments (not `payments`) — pull
   // them so the customer's Transactions/Statement + a project invoice's status
@@ -264,7 +275,10 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   // payment = credit; positive closing balance = receivable still owed.
   const ledgerRaw = [
     ...allInvoices.map((i) => ({ date: i.invoice_date, desc: `Invoice ${i.id}`, debit: i.amount, credit: 0 })),
-    ...customerPayments.filter((p) => p.status === "received").map((p) => ({ date: p.received_at, desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}`, debit: 0, credit: p.amount })),
+    ...customerPayments.filter((p) => p.status === "received").map((p) => {
+      const split = receiptSplitLine(p.amount, tdsOnPayment[p.id]);
+      return { date: p.received_at, desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`, debit: 0, credit: p.amount };
+    }),
     ...customerPayments.filter((p) => p.status === "refunded").map((p) => ({ date: p.refunded_at ?? p.received_at, desc: `Refund${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}`, debit: p.amount, credit: 0 })),
     // Project milestone receipts credit the ledger against their raised invoices.
     ...projPayments.map((p) => ({ date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`, debit: 0, credit: p.amount })),
@@ -439,7 +453,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       <>
       {/* Answer-bar */}
       <div className="mb-4">
-        <CustomerMetricBar insights={insights} customerId={customer.id} />
+        <CustomerMetricBar insights={insights} customerId={customer.id} lifetimeTds={lifetimeTds} />
       </div>
 
       {/* Advance credit held (from an earlier overpayment) — adjustable against the next bill */}
