@@ -55,6 +55,7 @@ import { LicenseLeakageCard } from "@/components/features/subscriptions/license-
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
 import { AmendmentHistory } from "@/components/features/subscriptions/amendment-history";
+import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { ImportSubscriptionsDialog } from "@/components/features/subscriptions/import-subscriptions-dialog";
@@ -1759,6 +1760,8 @@ export default function SubscriptionsPage() {
                   rep opens this drawer with are "what will they be billed?" and "what
                   changed?". */}
               <AmendmentHistorySection subscription={scheduleSub} />
+              {/* R-530: late fee On/Off for this subscription + charges on its invoices. */}
+              <LateChargesPreview level="subscription" id={scheduleSub.id} />
 
               {/* ── The actions, where the subscription is ────────────────────
                   Moved off the row's ⋯ menu on 19 Sep 2026. They act on this

@@ -30,6 +30,7 @@ import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCr
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
+import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
@@ -497,6 +498,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           {/* R-346: may this customer be activated on credit, and up to how much. */}
           <CreditSettingsCard customer={c} isOwner={me?.role === "owner"} />
 
+          {/* R-530: late fee On/Off for this customer + charges building up. */}
+          <LateChargesPreview level="customer" id={params.id} />
+
           {/* Is customer ke email/phone par aayi LEADS — quotation/invoice ki tarah
              yahan bhi itihaas dikhe (Pardeep, 1 Sep 2026). */}
           <LeadHistoryCard
@@ -680,6 +684,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                     </div>
                   </div>
                 </div>
+                {/* R-530: late charges accrued but not billed yet (they are not in the balance until billed). */}
+                <div className="mb-4"><LateChargesPreview level="customer" id={params.id} /></div>
                 <RecordTable
                   head={["Date", "Details", "Debit", "Credit", "Balance"]}
                   rows={ledger.map((e) => ({

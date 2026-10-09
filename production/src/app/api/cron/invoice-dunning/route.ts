@@ -40,6 +40,9 @@ import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server"
 import { dunningReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { isMissingDbObject } from "@/lib/credit/activate-on-credit";
 import { runOverdueSuspension, type OverdueSuspensionResult } from "@/lib/collections/overdue-suspension.server";
+import { loadLateCharges } from "@/lib/late-charges/load";
+import { lateChargesSentence } from "@/lib/late-charges/charges";
+import { istToday } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,12 +82,14 @@ interface DunningResult {
   escalations: number;
   suspends: number;
   skipped: number;
-  details: { invoice_id: string; step: DunningStep; action: string; days_overdue: number; reason: string }[];
+  details: { invoice_id: string; step: DunningStep; action: string; days_overdue: number; reason: string; late_charges?: string }[];
   errors: { invoice_id: string; message: string }[];
   /** S28 — WhatsApp copy of each step. `disabled` = company ne switch ON nahi kiya (default). */
   whatsapp?: { sent: number; skipped: number; failed: number; disabled: number };
   /** R-116: the per-company "pause after N days overdue" pass (notice first, then pause). */
   overdue_pause?: OverdueSuspensionResult | { error: string };
+  /** R-530: the late-charges line could not be worked out — reminders went without it. */
+  late_charges_error?: string;
 }
 
 async function handle(req: Request): Promise<NextResponse<DunningResult | { error: string }>> {
@@ -199,6 +204,21 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     }
   }
 
+  /* R-530: the late fee + interest building up on each invoice, for one line in the reminder.
+     Only where late charges are ON for that invoice (company/customer/subscription/invoice
+     switch) and something is unbilled. A failure here must not stop the chase: the reminder
+     goes without the line and the run reports why (a missing line is not a wrong number). */
+  const lateLine = new Map<string, string>();
+  try {
+    const rows = await loadLateCharges(supabase, { invoiceIds: invoices.map((i) => i.id) }, istToday(asOf), { subscriptionByQuote });
+    for (const r of rows) {
+      const line = lateChargesSentence(r.view, rupee);
+      if (line) lateLine.set(r.invoiceId, line);
+    }
+  } catch (e) {
+    result.late_charges_error = errorMessage(e);
+  }
+
   /* S28: ek sender poore run ke liye — tenant ka switch/template ek hi baar padha jaata hai. */
   const wa = createReminderSender();
 
@@ -236,6 +256,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     result.details.push({
       invoice_id: inv.id, step: decision.step, action: decision.action,
       days_overdue: decision.daysOverdue, reason: decision.reason,
+      ...(decision.daysOverdue > 0 && lateLine.has(inv.id) ? { late_charges: lateLine.get(inv.id) } : {}),
     });
 
     if (dryRun) continue;
@@ -287,6 +308,8 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
            nudge that fired late on day -1 must say "tomorrow"; "in 3 days" would be a
            false statement about money. Negative daysOverdue is the pre-due case. */
         daysUntilDue: decision.daysOverdue < 0 ? -decision.daysOverdue : null,
+        /* R-530: overdue steps only — dunningMessage ignores it before the due date. */
+        lateCharges: lateLine.get(inv.id) ?? null,
       });
 
       if (to && msg) {

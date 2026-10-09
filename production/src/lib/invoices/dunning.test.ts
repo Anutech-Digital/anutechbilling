@@ -153,6 +153,19 @@ describe("dunningMessage", () => {
     expect(dunningMessage({ ...base, step: "none" })).toBeNull();
   });
 
+  it("R-530: carries the late-charges line on overdue steps only, before the signature", () => {
+    const line = "Late payment charges so far: ₹500 late fee, plus GST.";
+    for (const step of ["reminder", "retry", "grace_warning", "final"] as const) {
+      const t = dunningMessage({ ...base, step, lateCharges: line })!.text;
+      expect(t).toContain(line);
+      expect(t.indexOf(line)).toBeLessThan(t.indexOf("— ANUTECH"));
+      expect(dunningMessage({ ...base, step })!.text).not.toContain("Late payment charges");
+    }
+    for (const step of ["pre_due", "due_today"] as const) {
+      expect(dunningMessage({ ...base, step, lateCharges: line })!.text).not.toContain(line);
+    }
+  });
+
   it("never threatens suspension in the customer-facing copy", () => {
     /* The Day-14 step escalates to the reseller by default, so a message promising
        suspension would be a threat the system does not carry out — which teaches
