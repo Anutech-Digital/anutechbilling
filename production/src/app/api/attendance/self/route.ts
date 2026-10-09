@@ -9,14 +9,23 @@
  *   • Proof     — when require_selfie is on, a live selfie is captured; GPS is
  *                 always stored (soft audit signal) if the phone shares it.
  *
- * Flow: validate presence → mark_self_attendance() → attach selfie + geo to the
- * day's row (best-effort; never blocks the mark once recorded).
+ *   • Device    — R-606: when require_device is on, the check-in must carry a passkey
+ *                 signature (`deviceAssertion`) from an OWNER-APPROVED device of THIS
+ *                 employee. Threat: a colleague who knows the password checks someone in
+ *                 from his own laptop. The passkey's private key never leaves the employee's
+ *                 device (a synced passkey follows only their own Google/Apple account), so
+ *                 another laptop cannot sign. When off: the old soft token + new_device flag.
+ *
+ * Flow: validate presence → device passkey (if required) → mark_self_attendance() → attach
+ * selfie + geo to the day's row (best-effort; never blocks the mark once recorded).
  */
 import crypto from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { validateCode } from "@/lib/attendance/presence";
 import { compareFaces } from "@/lib/attendance/face";
+import { deviceError } from "@/lib/attendance/webauthn";
+import { getCaller, verifyDeviceAssertion } from "../device/_server";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -50,13 +59,14 @@ export async function POST(request: NextRequest) {
   const { data: settings } = me.tenant_id
     ? await admin
       .from("attendance_settings")
-      .select("require_selfie, require_presence, presence_secret, require_face_match")
+      .select("require_selfie, require_presence, presence_secret, require_face_match, require_device")
       .eq("tenant_id", me.tenant_id)
       .maybeSingle()
     : { data: null };
   const requireSelfie = settings?.require_selfie ?? true;
   const requirePresence = settings?.require_presence ?? false;
   const requireFaceMatch = settings?.require_face_match ?? false;
+  const requireDevice = settings?.require_device ?? false;
 
   // Presence gate — must know the current rotating office code.
   if (requirePresence) {
@@ -87,6 +97,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  /* R-606 device gate — the last check before the mark, so the passkey's one-time challenge is
+     only spent once every other check has passed. */
+  let approvedDeviceId: string | null = null;
+  if (requireDevice) {
+    if (!body?.deviceAssertion) return NextResponse.json(deviceError("DEVICE_REQUIRED"), { status: 403 });
+    const caller = await getCaller();
+    if (!caller || caller.employeeId !== me.employee_id) {
+      return NextResponse.json(deviceError("DEVICE_NOT_REGISTERED"), { status: 403 });
+    }
+    const check = await verifyDeviceAssertion(caller, request, body.deviceAssertion);
+    if (!check.ok) return NextResponse.json({ error: check.error, code: check.code }, { status: 403 });
+    approvedDeviceId = check.deviceId;
+  }
+
   const { data, error } = await supabase.rpc("mark_self_attendance");
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const action = data as unknown as string;
@@ -114,14 +138,16 @@ export async function POST(request: NextRequest) {
       if (lat !== null && lng !== null) {
         patch[slot === "in" ? "geo_in" : "geo_out"] = `${lat.toFixed(6)},${lng.toFixed(6)}${accuracy !== null ? `,${Math.round(accuracy)}` : ""}`;
       }
-      if (deviceHash) patch[slot === "in" ? "check_in_device" : "check_out_device"] = deviceHash;
+      // R-606: with a required device, the approved device's id is the record; else the soft hash.
+      const deviceMark = approvedDeviceId ?? deviceHash;
+      if (deviceMark) patch[slot === "in" ? "check_in_device" : "check_out_device"] = deviceMark;
 
       // ── Anomaly flags (honest deterrence — surfaced to the owner, not blocking) ──
       const flags = new Set<string>();
       const hour = istNow.getUTCHours(); // istNow already shifted to IST wall-clock
       if (hour < 5 || hour >= 23) flags.add("odd_hours");
       if (lat === null || lng === null) flags.add("no_location");
-      if (deviceHash) {
+      if (deviceHash && !approvedDeviceId) {
         // "new device" = this soft token never used by this employee before.
         const { data: seen } = await supabase
           .from("attendance")

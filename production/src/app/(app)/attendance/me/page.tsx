@@ -35,6 +35,7 @@ import {
   useSetMyReminderPrefs,
 } from "@/lib/queries/my-attendance";
 import { LeaveRequestDialog } from "@/components/features/attendance/leave-request-dialog";
+import { ThisDeviceCard, useDeviceSignature } from "./device-card";
 import { dayStatus, formatGap, formatWorked, type ShiftRules } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { minutesToTimeValue, parseTimeToMinutes } from "@/lib/attendance/reminders";
@@ -126,6 +127,7 @@ export default function MyAttendancePage() {
             requireSelfie={requireSelfie}
             requirePresence={requirePresence}
           />
+          <ThisDeviceCard />
           <HistoryCard />
           <ReminderSettingsCard />
           {meQ.data.consent_at && (
@@ -421,6 +423,7 @@ function CheckInCard({
 }) {
   const mark = useMarkSelfAttendance();
   const undo = useUndoLastPunch();
+  const device = useDeviceSignature();
   const rulesQ = useShiftRules();
   const state: "out" | "in" | "done" = !checkIn ? "out" : !checkOut ? "in" : "done";
   const pending = state !== "done";
@@ -512,9 +515,12 @@ function CheckInCard({
     return canvas.toDataURL("image/jpeg", 0.6);
   }
 
-  function onMark() {
+  async function onMark() {
     setConfirmQuick(false);
     const photo = requireSelfie && !noCamDetected ? capture() : null;
+    // R-606: when the workspace requires a registered device, the press is signed first.
+    const deviceAssertion = await device.sign();
+    if (deviceAssertion === false) return;
     mark.mutate({
       photo,
       code,
@@ -522,13 +528,14 @@ function CheckInCard({
       lng: coords.current?.lng ?? null,
       accuracy: coords.current?.accuracy ?? null,
       device: noCamDetected ? "desktop_no_webcam" : getDeviceToken(),
+      deviceAssertion,
     });
   }
 
   function onPrimary() {
     // Quick check-out (just checked in) → confirm first, so a stray tap doesn't end the day.
     if (quickCheckout && !confirmQuick) { setConfirmQuick(true); return; }
-    onMark();
+    void onMark();
   }
 
   return (
@@ -643,12 +650,13 @@ function CheckInCard({
             size="lg"
             className="w-full h-14 text-base"
             onClick={onPrimary}
-            disabled={mark.isPending || (requireSelfie && !camOn && !noCamDetected) || (requirePresence && code.length !== 6)}
+            disabled={mark.isPending || device.signing || (requireSelfie && !camOn && !noCamDetected) || (requirePresence && code.length !== 6)}
           >
             <Icon name={state === "out" ? "check" : "logout"} className="h-5 w-5 mr-2" />
-            {mark.isPending ? "…" : state === "out" ? "Check In" : "Check Out"}
+            {mark.isPending || device.signing ? "…" : state === "out" ? "Check In" : "Check Out"}
           </Button>
         )}
+        {device.hint}
 
         {canUndo && !confirmQuick && (
           <button
@@ -666,6 +674,7 @@ function CheckInCard({
           "Google Auth Login",
           noCamDetected ? "desktop mode" : requireSelfie ? "selfie" : null,
           requirePresence ? "office code" : null,
+          device.required ? "registered device" : null,
           pending && geoState === "ok" ? "location" : null,
         ].filter(Boolean).join(" + ")}
         {" — "}

@@ -35,6 +35,7 @@ import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { DeviceApprovals, RequireDeviceRow } from "@/components/features/attendance/device-approvals";
 import { canWriteMoney } from "@/lib/nav";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
@@ -2239,6 +2240,8 @@ function NetworkCard() {
           {d?.requireFaceMatch ? "Turn off" : "Require face match"}
         </Button>
       </div>
+
+      <RequireDeviceRow />
     </Card>
   );
 }
@@ -2300,6 +2303,7 @@ export function AttendanceTab() {
   return (
     <>
       <NetworkCard />
+      <DeviceApprovals />
 
       <ReviewQueue attendance={attQ.data ?? []} employees={employees} onReview={(id) => reviewMut.mutate(id)} reviewing={reviewMut.isPending} />
 

@@ -1700,6 +1700,99 @@ export type Database = {
           },
         ]
       }
+      attendance_devices: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          backed_up: boolean
+          counter: number
+          created_at: string
+          credential_id: string
+          employee_id: string
+          id: string
+          label: string
+          last_used_at: string | null
+          public_key: string
+          revoked_at: string | null
+          status: string
+          tenant_id: string
+          transports: string[]
+          user_id: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          backed_up?: boolean
+          counter?: number
+          created_at?: string
+          credential_id: string
+          employee_id: string
+          id?: string
+          label: string
+          last_used_at?: string | null
+          public_key: string
+          revoked_at?: string | null
+          status?: string
+          tenant_id: string
+          transports?: string[]
+          user_id?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          backed_up?: boolean
+          counter?: number
+          created_at?: string
+          credential_id?: string
+          employee_id?: string
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          public_key?: string
+          revoked_at?: string | null
+          status?: string
+          tenant_id?: string
+          transports?: string[]
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_devices_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_devices_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_devices_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_devices_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_devices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attendance_reminder_log: {
         Row: {
           claimed_at: string
@@ -1764,6 +1857,7 @@ export type Database = {
           half_day_under_hours: number
           late_grace_minutes: number
           presence_secret: string | null
+          require_device: boolean
           require_face_match: boolean
           require_presence: boolean
           require_selfie: boolean
@@ -1778,6 +1872,7 @@ export type Database = {
           half_day_under_hours?: number
           late_grace_minutes?: number
           presence_secret?: string | null
+          require_device?: boolean
           require_face_match?: boolean
           require_presence?: boolean
           require_selfie?: boolean
@@ -1792,6 +1887,7 @@ export type Database = {
           half_day_under_hours?: number
           late_grace_minutes?: number
           presence_secret?: string | null
+          require_device?: boolean
           require_face_match?: boolean
           require_presence?: boolean
           require_selfie?: boolean
@@ -1813,6 +1909,45 @@ export type Database = {
             foreignKeyName: "attendance_settings_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: true
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      attendance_webauthn_challenges: {
+        Row: {
+          challenge: string
+          expires_at: string
+          purpose: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          challenge: string
+          expires_at: string
+          purpose: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          challenge?: string
+          expires_at?: string
+          purpose?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_webauthn_challenges_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendance_webauthn_challenges_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
             referencedRelation: "v_tenant_with_parent"
             referencedColumns: ["id"]
           },
