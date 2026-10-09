@@ -35,7 +35,7 @@ import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useConfirm } from "./confirm-provider";
 import {
-  tabsReducer, forceClose, draftTabs, tabIdFor, emptyTabs, MAX_TABS,
+  tabsReducer, forceClose, tabIdFor, emptyTabs, MAX_TABS,
   type TabsState, type TabsAction, type WorkspaceTab,
 } from "@/lib/workspace/tabs";
 import {
@@ -43,6 +43,7 @@ import {
   type TabHistory,
 } from "@/lib/workspace/history";
 import { recordAddress, urlForTabSwitch } from "@/lib/workspace/address-sync";
+import { hasDirtyForm } from "@/lib/hooks/dirty-forms";
 
 const STORAGE_KEY = "ros.workspace.tabs.v1";
 
@@ -137,6 +138,9 @@ export function WorkspaceTabsProvider({ children }: { children: React.ReactNode 
   React.useEffect(() => {
     const saved = loadPersisted();
     if (saved) {
+      /* R-490: no form survives a reload (useDraftGuard stashes no values), so a restored
+         draft flag would guard nothing and still nag on tab close. Start clean. */
+      saved.tabs = { ...saved.tabs, tabs: saved.tabs.tabs.map((t) => (t.isDraft ? { ...t, isDraft: false, formState: undefined } : t)) };
       setState(saved.tabs);
       setHistories(saved.histories ?? {});
       // The adopt and record effects below run in this same pass and read the refs; left
@@ -300,7 +304,9 @@ export function WorkspaceTabsProvider({ children }: { children: React.ReactNode 
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       // The one guard the in-app prompt cannot provide: closing the BROWSER tab
       // takes every workspace tab with it, drafts included.
-      if (draftTabs(stateRef.current).length === 0) return;
+      // R-490 (R-472): asks the MOUNTED forms, not the saved tab flags — a flag can outlive
+      // its form (sessionStorage, reload), and then "Leave site?" popped on every page.
+      if (!hasDirtyForm()) return;
       e.preventDefault();
       e.returnValue = "";
     };

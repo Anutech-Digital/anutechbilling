@@ -18,7 +18,7 @@ export const LEAD_VIEWS = [
 ] as const;
 export type LeadViewId = (typeof LEAD_VIEWS)[number];
 
-export const QUOTE_TABS = ["all", "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "expired"] as const;
+export const QUOTE_TABS = ["all", "draft", "sent", "viewed", "accepted", "awaiting", "invoiced", "rejected", "expired"] as const;
 export const INVOICE_TABS = ["all", "paid", "partial", "pending", "overdue", "draft", "void"] as const;
 export const SUBSCRIPTION_TABS = ["all", "active", "expiring", "suspended", "ended", "trials"] as const;
 export const TASK_TABS = ["today", "overdue", "upcoming", "done", "all"] as const;
@@ -40,7 +40,7 @@ export const INVOICE_FOCUS = ["", "unpaid", "paid-month"] as const;
 /** /subscriptions ?focus= (lib/subscriptions/focus.ts). */
 export const SUB_FOCUS = ["", "active"] as const;
 /** /quotes ?focus= (lib/quotes/focus.ts). */
-export const QUOTE_FOCUS = ["", "review", "accepted", "partial", "to-invoice"] as const;
+export const QUOTE_FOCUS = ["", "pipeline", "review", "accepted", "partial", "to-invoice"] as const;
 /** /payments ?focus= (lib/payments/focus.ts). */
 export const PAYMENT_FOCUS = ["", "received-month"] as const;
 

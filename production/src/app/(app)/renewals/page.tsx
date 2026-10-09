@@ -8,7 +8,7 @@
  *   - RenewalBucket × 3 (Urgent rose / Upcoming amber / Future emerald)
  *
  * Risk model — REAL signals only (see renewalRisk):
- *   - Seat utilisation (used/seats)
+ *   - Seat utilisation (used/seats) — only when seats were actually checked (R-453)
  *   - Unpaid balance on the current term
  *   - Plan tier (starter churns a little more)
  *   (Fabricated login/tickets/NPS signals were removed — misleading on a money screen.)
@@ -20,7 +20,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { RENEWAL_BUCKETS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { useSubscriptions, useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { renewalForecast } from "@/lib/renewals/forecast";
 import { toast } from "sonner";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -54,67 +54,8 @@ import {
   matchesRenewalSearch,
   readJsonSafe,
 } from "./reminders";
-
-// ─── Risk model ──────────────────────────────────────────────────────────────
-
-interface RiskResult {
-  score: number;
-  level: "high" | "medium" | "low";
-  /** Badge `kind` prop value */
-  badgeKind: "danger" | "warning" | "success";
-  label: string;
-  reasons: string[];
-}
-
-/**
- * Renewal-risk score (0–100) for a subscription, from REAL data only.
- *
- * Was previously inflated with fabricated signals (admin-login / support-tickets /
- * NPS derived from an id hash) that looked like real churn intelligence to the
- * owner — removed, because showing invented reasons on a money screen is
- * misleading. This now scores on what we actually know: how many seats are
- * unused, whether there's an unpaid balance, and the plan tier. When live
- * product-usage / NPS signals exist, add them here.
- */
-function renewalRisk(sub: Subscription): RiskResult {
-  let score = 0;
-  const reasons: string[] = [];
-
-  // Signal 1: Seat utilisation — unused seats are the strongest real churn tell.
-  const utilisation = sub.used / Math.max(1, sub.seats);
-  if (utilisation < 0.7) {
-    score += 40;
-    reasons.push(`Low seat usage (${Math.round(utilisation * 100)}%)`);
-  } else if (utilisation < 0.85) {
-    score += 20;
-    reasons.push(`Moderate seat usage (${Math.round(utilisation * 100)}%)`);
-  }
-
-  // Signal 2: Unpaid balance on the current term — a customer already behind on
-  // payment is far more likely to lapse at renewal.
-  if (sub.outstanding_amount > 0) {
-    score += 35;
-    reasons.push(`Unpaid balance (${rupee(sub.outstanding_amount, { compact: true })})`);
-  }
-
-  // Signal 3: Plan tier — lower tiers churn a little more.
-  const plan = sub.plan.toLowerCase();
-  if (plan.includes("starter")) {
-    score += 15;
-    reasons.push("Lower-tier plan (Starter)");
-  }
-
-  score = Math.min(100, score);
-
-  const level: RiskResult["level"] =
-    score >= 55 ? "high" : score >= 25 ? "medium" : "low";
-  const badgeKind: RiskResult["badgeKind"] =
-    level === "high" ? "danger" : level === "medium" ? "warning" : "success";
-  const label =
-    level === "high" ? "HIGH RISK" : level === "medium" ? "Medium" : "Healthy";
-
-  return { score, level, badgeKind, label, reasons };
-}
+import { renewalRisk } from "./risk";
+import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -610,6 +551,9 @@ function RenewalBucket({
 
 export default function RenewalsPage() {
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
+  /* R-453: an open renewal quote whose link-back is missing still shows "Open quote". */
+  const { data: openRenewals } = useOpenRenewalQuotes();
+  const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
   const qc = useQueryClient();
   const router = useRouter();
@@ -684,7 +628,7 @@ export default function RenewalsPage() {
   const enriched = all
     .filter((s) => s.renewal_date !== null && s.status !== "cancelled")
     .map((s) => ({
-      sub: s,
+      sub: withRenewalQuote(s, openRenewalMap),
       daysUntil: daysBetween(today, s.renewal_date!),
     }));
 

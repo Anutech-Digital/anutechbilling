@@ -78,3 +78,29 @@ describe("R-389 (F9): gstHeadLabel", () => {
     expect(gstHeadLabel({ ratePct: 18, interState: pos.interState, isExport: pos.isExport })).toBe("IGST 18%");
   });
 });
+
+describe("R-431 (board R-406): company state empty", () => {
+  it("does not print the intra-state guess when the seller has no state", () => {
+    const pos = quotePlaceOfSupply({ customer: { state_code: "06" }, seller: { state_code: null } });
+    expect(pos.head.kind).toBe("seller_state_missing");
+    expect(pos.label).toBe("Haryana (06) · GST head pending (company state not set)");
+    expect(pos.label).not.toMatch(/CGST/);
+  });
+
+  it("the company GSTIN alone does not clear it — generate_invoice reads tenants.state_code only", () => {
+    const pos = quotePlaceOfSupply({ customer: { state_code: "06" }, seller: { state_code: null, gstin: "07AAACR5055K1Z5" } });
+    expect(pos.head.kind).toBe("seller_state_missing");
+  });
+
+  it("customer with no state → buyer_state_missing", () => {
+    const pos = quotePlaceOfSupply({ customer: { state_code: null }, seller: { state_code: "07" } });
+    expect(pos.head.kind).toBe("buyer_state_missing");
+  });
+
+  it("same state → intra_state; different state → inter_state", () => {
+    expect(quotePlaceOfSupply({ customer: { state_code: "07" }, seller: { state_code: "07" } }).head.kind).toBe("intra_state");
+    const inter = quotePlaceOfSupply({ customer: { state_code: "06" }, seller: { state_code: "07" } });
+    expect(inter.head.kind).toBe("inter_state");
+    expect(inter.label).toBe("Haryana (06) · IGST");
+  });
+});

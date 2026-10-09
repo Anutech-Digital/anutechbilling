@@ -1,4 +1,5 @@
-import { isExportSupply, isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
+import { isExportSupply, isInterStateSupply, placeOfSupplyLabel, supplyHead, type SupplyHead } from "@/lib/gst/place-of-supply";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { resolveStateCode } from "@/lib/gst/gstin-state";
 
 /**
@@ -33,6 +34,8 @@ export interface QuotePlace {
   isExport: boolean;
   /** "Haryana (06) · IGST", "Delhi (07) · CGST + SGST", or the old wording when no state is known. */
   label: string;
+  /** R-431: whether the head is decidable — "seller_state_missing" / "buyer_state_missing" block issue. */
+  head: SupplyHead;
 }
 
 export function quotePlaceOfSupply(a: {
@@ -54,12 +57,14 @@ export function quotePlaceOfSupply(a: {
   // A hand-typed "6" is Haryana too — pad so the name lookup finds it.
   const posCode = raw && /^\d{1,2}$/.test(raw) ? raw.padStart(2, "0") : raw;
   const interState = !isExport && isInterStateSupply(posCode, a.seller.state_code, { sellerGstin: a.seller.gstin });
-  return {
-    posCode,
-    interState,
-    isExport,
-    label: placeOfSupplyLabel({ posCode, interState, isExport, country: buyer?.country }),
-  };
+  const head = supplyHead({ isExport, buyerStateCode: posCode, sellerStateCode: a.seller.state_code });
+  /* R-431: with the company's own state unknown the head is unknown too — never print the
+     intra-state guess ("· CGST + SGST") as if it were decided. */
+  const posName = posCode ? GST_STATE_BY_CODE[posCode] : undefined;
+  const label = head.kind === "seller_state_missing"
+    ? `${posName ? `${posName} (${posCode}) · ` : ""}GST head pending (company state not set)`
+    : placeOfSupplyLabel({ posCode, interState, isExport, country: buyer?.country });
+  return { posCode, interState, isExport, label, head };
 }
 
 /**

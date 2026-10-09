@@ -25,6 +25,7 @@ import {
   useReferralCommissions, useCancelCommission, type CommissionWithPartner,
 } from "@/lib/queries/referral-commissions";
 import { PayCommissionDialog } from "@/components/features/referrals/pay-commission-dialog";
+import { AddPartnerDialog } from "@/components/features/referrals/add-partner-dialog";
 
 type View = "commissions" | "partners";
 
@@ -42,6 +43,8 @@ export default function ReferralsPage() {
   const leadCounts = useReferralLeadCounts((partners ?? []).map((p) => p.code).filter((c): c is string => !!c));
 
   const [payTarget, setPayTarget] = React.useState<CommissionWithPartner | null>(null);
+  /* R-472: a partner can be added here, not only from a customer's "Add referral". */
+  const [addPartnerOpen, setAddPartnerOpen] = React.useState(false);
 
   const rows = commissions ?? [];
   const owed = rows.filter((c) => c.status === "earned").reduce((s, c) => s + c.net_payable, 0);
@@ -51,13 +54,16 @@ export default function ReferralsPage() {
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
       {/* Header */}
-      <div className="mb-6">
-        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
-        <h1 className="font-serif text-3xl md:text-4xl leading-tight">Referrals & Commission</h1>
-        <p className="text-sm text-ink-3 mt-1">
-          Commission for people who refer or help close deals. To tag a partner on a deal, open the{" "}
-          <Link href="/customers" className="text-amber hover:underline">customer</Link> → “Add referral”.
-        </p>
+      <div className="mb-6 flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
+          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Referrals & Commission</h1>
+          <p className="text-sm text-ink-3 mt-1">
+            Commission for people who refer or help close deals. To tag a partner on a deal, open the{" "}
+            <Link href="/customers" className="text-amber hover:underline">customer</Link> → “Add referral”.
+          </p>
+        </div>
+        <Button variant="primary" size="sm" icon="plus" onClick={() => setAddPartnerOpen(true)}>Add partner</Button>
       </div>
 
       {/* KPI strip */}
@@ -88,7 +94,7 @@ export default function ReferralsPage() {
               view === v ? "bg-paper text-ink shadow-sm font-medium" : "text-ink-3 hover:text-ink"
             }`}
           >
-            {v === "commissions" ? "Commissions" : "Partners"}
+            {v === "commissions" ? "Commissions" : "Referral partners"}
           </button>
         ))}
       </div>
@@ -105,6 +111,8 @@ export default function ReferralsPage() {
               icon="award"
               title="No commissions yet"
               body="Tag a referral partner on a customer's deal (customer → Add referral). When that customer pays, the commission shows up here automatically."
+              action={<Button asChild variant="primary" size="sm"><Link href="/customers">Open customers</Link></Button>}
+              secondary={<Button variant="ghost" size="sm" onClick={() => setAddPartnerOpen(true)}>Add partner</Button>}
             />
           </Card>
         ) : (
@@ -193,7 +201,8 @@ export default function ReferralsPage() {
             <EmptyState
               icon="users"
               title="No partners yet"
-              body="A partner is created when you add a referral on a customer's deal (customer → Add referral). You can also create a new partner inline there."
+              body="Add the people who bring you customers. Then tag them on a deal from the customer page (customer → Add referral)."
+              action={<Button variant="primary" size="sm" icon="plus" onClick={() => setAddPartnerOpen(true)}>Add partner</Button>}
             />
           </Card>
         ) : (
@@ -218,6 +227,7 @@ export default function ReferralsPage() {
         )
       )}
 
+      <AddPartnerDialog open={addPartnerOpen} onOpenChange={setAddPartnerOpen} />
       <PayCommissionDialog open={!!payTarget} onOpenChange={(o) => !o && setPayTarget(null)} commission={payTarget} />
     </div>
   );

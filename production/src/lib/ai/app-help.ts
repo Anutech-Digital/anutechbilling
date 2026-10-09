@@ -72,12 +72,17 @@ const SEVERITIES: readonly FeedbackSeverity[] = ["low", "medium", "high", "criti
 /** What the app is, in a few lines, so answers are about THIS app and not a generic CRM. */
 const APP_FACTS = [
   "ResellerOS is Anutech Digital's own business app (Indian reseller of Google Workspace, Microsoft 365, Zoho, domains, hosting; also builds custom software).",
-  "Main areas: Today/Dashboard; Sales & Pipeline (leads, deals Kanban, enquiries, tasks, quotes); Customers; Billing (invoices with GST, payments, renewals, subscriptions, online orders); Products (subscriptions and one-time products as two tabs, packages); Accounting (books, bank, advances, expenses); Employees & Users (staff, attendance, payroll, Academy for apprentices); Marketing Hub (campaigns, ads landing pages); Projects (custom software); Settings and Integrations (Razorpay, Gemini, email).",
+  "Main areas: Today/Dashboard; Sales & Pipeline (leads, deals Kanban, enquiries, tasks, quotes); Customers (all customers, plus Parent Accounts and Contacts — every person across leads and customers — in the Customers submenu); Billing (invoices with GST, payments, renewals, subscriptions, online orders); Products (subscriptions and one-time products as two tabs, packages); Accounting (books, bank, advances, expenses); Employees & Users (staff, attendance, payroll, Academy for apprentices); Marketing Hub (campaigns, ads landing pages); Projects (custom software); Settings and Integrations (Razorpay, Gemini, email).",
   "Money rules: amounts in ₹, GST 18% (CGST+SGST inside the state, IGST outside), quotes become invoices on payment, renewals raise quotes before the renewal date.",
   "The top bar has one Help button with two tabs: 'Ask' (this AI chat) and 'Report a problem' (a plain report form; Ctrl+Shift+B opens it). Reports go to Admin → Feedback, where an AI triages them.",
 ];
 
-export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null; testHistory?: string | null }): string {
+/**
+ * dataTools (R-421): the data-tool section from lib/ai/help-data-tools — the tool list on
+ * the first chat pass (the model may ask for live numbers), or the answer-from-results rule
+ * on the second. Passed as text so this file (also used by the panel) stays free of DB code.
+ */
+export function helpSystemPrompt(ctx: { pagePath: string | null; userName: string | null; role: string | null; mode?: HelpMode; pagePurpose?: string | null; testHistory?: string | null; dataTools?: string | null }): string {
   const mode = ctx.mode ?? "chat";
   return [
     "You are AI Help inside ResellerOS. The person is testing the app and may be confused or may have found a bug.",
@@ -108,6 +113,7 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
     ...(ctx.testHistory
       ? [`PREVIOUS TESTS on this page (already run in a browser; the checklist must build on these, not repeat them):\n${ctx.testHistory}`]
       : []),
+    ...(ctx.dataTools ? [ctx.dataTools] : []),
     'Answer ONLY as JSON: {"reply": string, "checklist": string[], "actions": [], "followUps": string[], "bugDraft": null | {"title": string, "type": string, "severity": string, "actual": string, "expected": string, "steps": string[], "chatSummary": string}}',
   ].join("\n");
 }
@@ -118,7 +124,7 @@ export function helpSystemPrompt(ctx: { pagePath: string | null; userName: strin
  */
 export function helpUserTurn(
   messages: readonly HelpMessage[],
-  extra: { trail?: string | null; findings?: string | null; outline?: string | null; facts?: string | null } = {},
+  extra: { trail?: string | null; findings?: string | null; outline?: string | null; facts?: string | null; toolResults?: string | null } = {},
 ): string {
   const chat = messages
     .slice(-HELP_MAX_MESSAGES)
@@ -129,6 +135,7 @@ export function helpUserTurn(
   if (extra.findings) blocks.push(`AUTOMATIC FINDINGS on this page:\n${extra.findings.slice(0, 5000)}`);
   if (extra.outline) blocks.push(`PAGE OUTLINE:\n${extra.outline.slice(0, 1500)}`);
   if (extra.facts) blocks.push(`WORKSPACE FACTS (this company's own setup, read just now):\n${extra.facts.slice(0, 3000)}`);
+  if (extra.toolResults) blocks.push(`DATA TOOL RESULTS (read just now with the person's own login):\n${extra.toolResults.slice(0, 4000)}`);
   return blocks.join("\n\n---\n\n");
 }
 

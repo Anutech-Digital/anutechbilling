@@ -153,6 +153,111 @@ export function useDeleteSubscription() {
   });
 }
 
+/**
+ * R-455: END a real subscription (customer left) — cancel_subscription RPC. Not delete:
+ * the subscription, quote, payments and invoices all stay; it leaves MRR and renewals.
+ * `clearDue` closes what is still shown as due (e.g. the payment was refunded).
+ */
+export function useCancelSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: string; lastDay: string; reason: string; clearDue: boolean }) => {
+      const supabase = createClient();
+      // R-489: typed straight from database.generated.ts (regenerated after 20261009151000).
+      const { data, error } = await supabase.rpc("cancel_subscription", {
+        p_subscription_id: args.id,
+        p_last_day:        args.lastDay,
+        p_reason:          args.reason,
+        p_clear_due:       args.clearDue,
+      });
+      if (error) throw new Error(error.message);
+      return data as { due_cleared: number; last_day: string };
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      toast.success("Subscription cancelled", {
+        description: r.due_cleared > 0
+          ? `Out of MRR and renewals. ₹${r.due_cleared.toLocaleString("en-IN")} due cleared.`
+          : "Out of MRR and renewals. Nothing was deleted.",
+      });
+    },
+    onError: (err) => toastError(err, { fallback: "Could not cancel the subscription." }),
+  });
+}
+
+/**
+ * R-451: the tax invoices behind a subscription's Billing schedule — the sale quote's
+ * whole-term invoice and the per-period instalment invoices — so the schedule can say
+ * "Invoiced · INV-… · paid" instead of calling a paid term the "next" bill.
+ */
+export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> | null) {
+  return useQuery({
+    queryKey: ["subscriptions", "schedule-invoices", sub?.id, sub?.quote_id],
+    enabled: !!sub?.id,
+    queryFn: async () => {
+      const supabase = createClient();
+      let sale: { invoiceId: string; status: string } | null = null;
+      if (sub!.quote_id) {
+        const { data: q, error: qErr } = await supabase
+          .from("quotes").select("invoice_id").eq("id", sub!.quote_id).maybeSingle();
+        if (qErr) throw new Error(qErr.message);
+        if (q?.invoice_id) {
+          const { data: inv, error: iErr } = await supabase
+            .from("invoices").select("id, status").eq("id", q.invoice_id).maybeSingle();
+          if (iErr) throw new Error(iErr.message);
+          if (inv && inv.status !== "void") sale = { invoiceId: inv.id, status: inv.status };
+        }
+      }
+      const { data: rows, error: bErr } = await supabase
+        .from("subscription_billings")
+        .select("term_start, period_index, invoice_id")
+        .eq("subscription_id", sub!.id);
+      if (bErr) throw new Error(bErr.message);
+      const ids = Array.from(new Set((rows ?? []).map((r) => r.invoice_id).filter((x): x is string => !!x)));
+      const statusById = new Map<string, string>();
+      if (ids.length > 0) {
+        const { data: invs, error: sErr } = await supabase.from("invoices").select("id, status").in("id", ids);
+        if (sErr) throw new Error(sErr.message);
+        for (const i of invs ?? []) statusById.set(i.id, i.status);
+      }
+      return {
+        sale,
+        instalments: (rows ?? []).map((r) => ({
+          term_start: r.term_start,
+          period_index: r.period_index,
+          invoice_id: r.invoice_id,
+          invoice_status: r.invoice_id ? statusById.get(r.invoice_id) ?? null : null,
+        })),
+      };
+    },
+  });
+}
+
+/**
+ * R-453: renewal quotes that are still open (not paid yet) — id + notes, which name the
+ * subscription. The Renewals page uses it so a row never offers "Generate quote" for a
+ * subscription that already has one (app/(app)/renewals/open-renewal-quotes.ts).
+ */
+export function useOpenRenewalQuotes() {
+  return useQuery({
+    queryKey: ["quotes", "open-renewal"],
+    queryFn: async (): Promise<Array<{ id: string; notes: string | null }>> => {
+      const supabase = createClient();
+      return fetchAllRows((from, to) => supabase
+        .from("quotes")
+        .select("id, notes")
+        .eq("is_renewal", true)
+        .in("status", ["draft", "sent", "viewed", "accepted"])
+        .in("payment_status", ["none", "awaiting", "partial"])
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
+    },
+  });
+}
+
 /** Filter subscriptions for a specific customer */
 export function useCustomerSubscriptions(customerId: string | undefined) {
   return useQuery({

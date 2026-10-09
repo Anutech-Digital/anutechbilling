@@ -293,3 +293,28 @@ export function companyDomainFromEmail(email: string | null | undefined): string
   if (!domain || !domain.includes(".")) return null;
   return FREE_MAIL.has(domain) ? null : domain;
 }
+
+/* ── Payment reference (R-449) ─────────────────────────────────────────────── */
+
+/**
+ * The reference a payment method's own format allows, or null when it fits.
+ * - UPI: the UTR / UPI ref is exactly 12 digits (GPay, PhonePe, Paytm, bank QR all show it).
+ * - Bank transfer: IMPS 12, NEFT 16, RTGS 22 — letters and digits, 12 to 22 long.
+ * Spaces and hyphens from copy-paste are ignored. Other methods: no format rule here.
+ * A 5-digit "12345" used to save as a UPI payment (Abhishek, 8 Oct 2026).
+ */
+export function paymentRefProblem(method: string, raw: string): string | null {
+  const ref = raw.replace(/[\s-]/g, "");
+  if (method === "upi") {
+    if (/^\d{12}$/.test(ref)) return null;
+    const digits = ref.replace(/\D/g, "").length;
+    return /\D/.test(ref)
+      ? "A UPI reference is 12 digits, numbers only."
+      : `A UPI reference is 12 digits — this has ${digits}.`;
+  }
+  if (method === "bank_transfer") {
+    if (/^[A-Za-z0-9]{12,22}$/.test(ref)) return null;
+    return "A bank UTR is 12 to 22 letters and digits (IMPS 12, NEFT 16, RTGS 22).";
+  }
+  return null;
+}

@@ -22,7 +22,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { rupee, cn } from "@/lib/utils";
-import { buildBulkLine, dedupeDomains, type DomainSeat } from "@/lib/quotes/bulk";
+import { buildBulkLine, dedupeDomains, bulkDomainProblems, type DomainSeat } from "@/lib/quotes/bulk";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -170,6 +170,21 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
         description: "Type the yearly price per seat in the Rate box, before GST.",
       });
       return;
+    }
+    if (tab !== "pick") {
+      const bad = bulkDomainProblems(manual);
+      if (bad.invalid.length > 0) {
+        toast.error(`"${bad.invalid[0]}" is not a domain`, {
+          description: "Type it like example.com — no spaces.",
+        });
+        return;
+      }
+      if (bad.duplicates.length > 0) {
+        toast.error(`${bad.duplicates[0]} is entered twice`, {
+          description: "Keep one row for it and put all its seats there.",
+        });
+        return;
+      }
     }
     if (domains.length === 0 || totalSeats <= 0) {
       toast.error("Add domains with seats first.", {

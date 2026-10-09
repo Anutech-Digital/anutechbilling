@@ -12,9 +12,20 @@ describe("R-354 task groups by IST day", () => {
     expect(taskGroupOf(t("b", "2026-10-07T18:31:00Z"), NOW)).toBe("upcoming");
   });
 
-  it("23:59 IST yesterday is Overdue, 00:01 IST today is Today (even when that is a past UTC date)", () => {
+  it("23:59 IST yesterday is Overdue, later today is Today (even when that is a past UTC date)", () => {
     expect(taskGroupOf(t("a", "2026-10-06T18:29:00Z"), NOW)).toBe("overdue");
-    expect(taskGroupOf(t("b", "2026-10-06T18:31:00Z"), NOW)).toBe("today");
+    const earlyMorning = new Date("2026-10-06T18:35:00Z"); // 7 Oct 00:05 IST — still 6 Oct in UTC
+    expect(taskGroupOf(t("b", "2026-10-06T18:31:00Z"), earlyMorning)).toBe("overdue");
+    expect(taskGroupOf(t("c", "2026-10-07T03:30:00Z"), earlyMorning)).toBe("today");
+  });
+
+  it("R-471: a task due earlier today is Overdue, not Today (the row already said ⚠ Overdue)", () => {
+    const noon = new Date("2026-10-09T06:30:00Z"); // 9 Oct 12:00 IST
+    expect(taskGroupOf(t("call", "2026-10-09T04:30:00Z"), noon)).toBe("overdue"); // 10:00 IST
+    expect(taskGroupOf(t("later", "2026-10-09T09:30:00Z"), noon)).toBe("today"); // 15:00 IST
+    const groups = groupTasks([t("call", "2026-10-09T04:30:00Z")], noon);
+    expect(groups.find((g) => g.id === "overdue")!.tasks.map((x) => x.id)).toEqual(["call"]);
+    expect(groups.find((g) => g.id === "today")!.tasks).toEqual([]);
   });
 
   it("just after IST midnight the boundary moves with it", () => {

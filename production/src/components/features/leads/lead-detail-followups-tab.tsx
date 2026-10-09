@@ -4,21 +4,53 @@ import * as React from "react";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { IST_TZ } from "@/lib/dates/ist";
+import { IST_TZ, toIstDate, formatIstDate, istToday, istDayStartUtc } from "@/lib/dates/ist";
 import type { useTasksForLead, useCompleteTask, useSnoozeTask, useDeleteTask } from "@/lib/queries/tasks";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { snoozeChoices, useSnoozeTaskTo } from "@/components/features/tasks/task-snooze";
 
 type TaskRow = NonNullable<ReturnType<typeof useTasksForLead>["data"]>[number];
 
+/**
+ * R-459: the lead's own follow-up date (set by "Call tomorrow" / "No answer" and shown in
+ * the list) when no open task already covers that day. The tab used to say "No follow-ups
+ * scheduled" right beside a list row reading FOLLOW-UP 10 Oct.
+ */
+export function leadDateFollowUp(
+  followUpDate: string | null | undefined,
+  openTasks: readonly Pick<TaskRow, "due_at">[],
+  today: string = istToday(),
+): { label: string; overdue: boolean } | null {
+  if (!followUpDate) return null;
+  const day = followUpDate.slice(0, 10);
+  if (openTasks.some((t) => toIstDate(t.due_at) === day)) return null;
+  return { label: formatIstDate(day), overdue: day < today };
+}
+
 export interface LeadFollowupsTabProps {
+  /** leads.follow_up_date — null on won / lost leads. */
+  followUpDate?: string | null;
   openTasks: TaskRow[];
   doneTasks: TaskRow[];
   setAddTaskOpen: (open: boolean) => void;
   completeTask: ReturnType<typeof useCompleteTask>;
-  snoozeTask: ReturnType<typeof useSnoozeTask>;
+  /** Kept for the callers' shape; R-489 snoozes through the /tasks menu (useSnoozeTaskTo). */
+  snoozeTask?: ReturnType<typeof useSnoozeTask>;
   deleteTask: ReturnType<typeof useDeleteTask>;
 }
 
-export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, completeTask, snoozeTask, deleteTask }: LeadFollowupsTabProps) {
+/** 10 AM IST on a picked date — the same hour the menu's "Tomorrow" and "Monday" use. */
+export function snoozeAtPickedDate(dateISO: string): Date {
+  return new Date(istDayStartUtc(dateISO).getTime() + 10 * 60 * 60_000);
+}
+
+export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTaskOpen, completeTask, deleteTask }: LeadFollowupsTabProps) {
+  const dated = leadDateFollowUp(followUpDate, openTasks);
+  /* R-471 (via R-489): the same Snooze menu as /tasks — was a blind "+1 day". */
+  const snoozeTo = useSnoozeTaskTo();
+  const [pickFor, setPickFor] = React.useState<string | null>(null);
   return (
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -36,7 +68,21 @@ export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, complet
               </Button>
             </div>
 
-            {openTasks.length === 0 && doneTasks.length === 0 ? (
+            {dated && (
+              <div
+                data-testid="lead-date-followup"
+                className={cn(
+                  "mb-1.5 rounded-md border px-3 py-2 text-sm flex items-center gap-2",
+                  dated.overdue ? "border-rose/40 bg-rose-soft/40" : "border-hairline bg-paper-2/30",
+                )}
+              >
+                <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
+                <span className={cn("tabular-nums", dated.overdue ? "text-rose font-medium" : "text-ink")}>
+                  {dated.overdue ? "Overdue · " : ""}Follow up on {dated.label}
+                </span>
+              </div>
+            )}
+            {!dated && openTasks.length === 0 && doneTasks.length === 0 ? (
               <p className="text-[12px] text-ink-3 italic">
                 No follow-ups scheduled.
               </p>
@@ -75,16 +121,44 @@ export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, complet
                         {t.notes && (
                           <p className="text-xs text-ink-3 mt-1 line-clamp-2">{t.notes}</p>
                         )}
+                        {pickFor === t.id && (
+                          <label className="mt-1.5 flex items-center gap-2 text-xs text-ink-2">
+                            Snooze to
+                            <input
+                              type="date"
+                              autoFocus
+                              min={istToday()}
+                              aria-label={`Snooze ${t.title} to a date`}
+                              className="rounded border border-hairline bg-paper px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-amber"
+                              onChange={(e) => {
+                                if (!e.target.value) return;
+                                snoozeTo.mutate(
+                                  { id: t.id, at: snoozeAtPickedDate(e.target.value), snoozeCount: t.snooze_count ?? 0 },
+                                  { onSuccess: () => setPickFor(null) },
+                                );
+                              }}
+                            />
+                            <span className="text-ink-3">10 AM</span>
+                            <button type="button" className="text-ink-3 hover:text-ink underline" onClick={() => setPickFor(null)}>Cancel</button>
+                          </label>
+                        )}
                       </div>
                       <div className="flex gap-0.5 shrink-0">
-                        <IconButton
-                          icon="clock"
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Snooze 1 day"
-                          title="Snooze 1 day"
-                          onClick={() => snoozeTask.mutate({ id: t.id })}
-                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze" title="Snooze" disabled={snoozeTo.isPending} />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[200px]">
+                            <DropdownMenuLabel>Snooze until</DropdownMenuLabel>
+                            {snoozeChoices().map((c) => (
+                              <DropdownMenuItem key={c.key} onSelect={() => snoozeTo.mutate({ id: t.id, at: c.at, snoozeCount: t.snooze_count ?? 0 })}>
+                                {c.label}
+                              </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onSelect={() => setPickFor(t.id)}>Pick a date…</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <IconButton
                           icon="trash"
                           size="sm"

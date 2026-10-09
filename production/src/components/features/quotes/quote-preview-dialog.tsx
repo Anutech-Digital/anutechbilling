@@ -7,6 +7,8 @@
 "use client";
 
 import * as React from "react";
+import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
+import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 
 import {
   Dialog,
@@ -273,16 +275,24 @@ export function QuotePreviewDialog({
                   const showPer  = lineN > 1;
                   const rate     = showPer ? Math.round(line.rate / lineDiv) : line.rate;
                   const amount   = line.qty * rate;
+                  /* R-495: list price, discount (₹ and %) and final rate, in the same unit as
+                     the Rate column — only when the line has a list price above its rate. */
+                  const breakdown = linePriceBreakdown(line, (n) => (showPer ? Math.round(n / lineDiv) : n));
                   return (
                     <tr key={line.id} className="border-b border-hairline">
                       <td className="py-3 text-sm">
                         <p className="font-medium text-ink">{line.name}</p>
                         <p className="text-2xs text-ink-3 mt-0.5">
-                          Per seat{showPer ? "" : " per year"} · HSN 998313
+                          {lineUnitLabel(line, showPer)} · HSN 998313
                           {line.commitment && (
                             <> · {scheduleLabel(line.commitment, effectiveCycle)}</>
                           )}
                         </p>
+                        {breakdown && (
+                          <p className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-price-breakdown">
+                            {linePriceBreakdownText(breakdown, (n) => `${money(n)}${showPer ? lineUnit : ""}`)}
+                          </p>
+                        )}
                         {line.bulk && line.domains && line.domains.length > 0 && (
                           <p className="text-2xs text-ink-3 mt-0.5">
                             Covering {line.domains.length} domains: {line.domains.map((d) => `${d.domain} (${d.seats})`).join(", ")}

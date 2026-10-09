@@ -49,18 +49,21 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { LeadListFilters, LeadListRow } from "@/lib/leads/list-page";
 import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
 import { DEAL_STAGES, filterStagesFor } from "@/lib/leads/stage-meta";
-import { boardServerTotals, everythingCountForPage, folderShownOnPage, scopeFiltersForPage, stageShownOnPage } from "@/lib/leads/page-scope";
+import { boardServerTotals, everythingCountForPage, folderShownOnPage, openKpiForPage, scopeFiltersForPage, stageShownOnPage } from "@/lib/leads/page-scope";
 import {
-  boardCut, folderForView, inWorkspace, listCut, searchLeads, type SortCol,
+  boardCut, folderForView, inWorkspace, listCut, nextSort, searchLeads, type SortCol,
 } from "@/lib/leads/list-selectors";
 import { toastError } from "@/lib/errors/toast-error";
 import { LeadListView } from "@/components/features/leads/lead-list-view";
 import { LeadDetailSheet } from "@/components/features/leads/lead-detail-sheet";
 import { LeadsToolbar } from "@/components/features/leads/leads-toolbar";
+import {
+  DEFAULT_LEAD_SORT, LEAD_SORT_PARAM, LEAD_SORTS, listHeaderSortFor, serverSortFor, sortBoardLeads, type LeadSort,
+} from "@/lib/leads/lead-sort";
 import { LeadsKpiDrawer } from "@/components/features/leads/leads-kpi-drawer";
 import { LeadsHotCard } from "@/components/features/leads/leads-hot-card";
 import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board";
-import { LeadsNoResults, LeadsStatusStates } from "@/components/features/leads/leads-empty-states";
+import { LeadsNoResults, LeadsStatusStates, hasActiveLeadFilters } from "@/components/features/leads/leads-empty-states";
 import { LeadsHeaderBar } from "@/components/features/leads/leads-header-bar";
 import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
@@ -69,6 +72,9 @@ import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
 
 /* Brief mark on the row a deep link opened (R-208) — design tokens only, so it follows the theme. */
+/** R-489: the team toggle's two values, as the ?who= URL choice accepts them. */
+const TEAM_VIEW_MODES: readonly TeamViewMode[] = ["team", "mine"];
+
 const JUST_OPENED_ROW = ["ring-2", "ring-inset", "ring-primary", "bg-primary-soft"];
 
 const PRIORITY_IDS = ["low", "medium", "high"] as const;
@@ -241,8 +247,15 @@ function LeadsPageInner() {
      upar), jiska nateeja ye tha ki teen din se ruki hui lead teesre panne par chali jati
      thi. Research isi ko galat kehti hai: default order me wo cheez pehle honi chahiye
      jispar kaam BAAKI hai. */
-  const [sortBy, setSortBy] = React.useState<SortCol>("wait");
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+  /* R-420 (Pardeep, 7 Oct): the Sort menu — Newest first (default), Oldest, Value, Next
+     follow-up, Name, Stage, Waiting for reply. In the URL (?sort=), so a reload, Back and a
+     shared link keep it; the list orders and pages by it on the server, the Kanban sorts
+     each column by it (lib/leads/lead-sort.ts). A column-header click re-sorts the loaded
+     rows on top (headerSort); picking from the menu again hands the order back to it. */
+  const [leadSort, setLeadSort] = useUrlChoice<LeadSort>(LEAD_SORT_PARAM, LEAD_SORTS, DEFAULT_LEAD_SORT);
+  const [headerSort, setHeaderSort] = React.useState<{ sortBy: SortCol; sortDir: "asc" | "desc" } | null>(null);
+  React.useEffect(() => { setHeaderSort(null); }, [leadSort]);
+  const { sortBy, sortDir } = headerSort ?? listHeaderSortFor(leadSort);
   const [kpiOpen, setKpiOpen] = React.useState(false);
 
   // ── Deep-link: open the drawer for the lead in ?lead=<id> ──
@@ -371,7 +384,9 @@ function LeadsPageInner() {
     () => leadTeam.find((u) => u.id === currentUser?.userId) ?? null,
     [leadTeam, currentUser?.userId],
   );
-  const [leadTeamMode, setLeadTeamMode] = React.useState<TeamViewMode>("team");
+  /* R-489 (R-457 leftover): "My assigned" lives in the URL (?who=mine) like sort and view,
+     so a reload or a shared link keeps it. */
+  const [leadTeamMode, setLeadTeamMode] = useUrlChoice<TeamViewMode>("who", TEAM_VIEW_MODES, "team");
 
   /* The team toggle's cut, as owner ids: listed owners OR unowned (lib/team/visibility.ts,
      list-selectors.ts#inWorkspace). null = no narrowing. Sent to the server as owner_ids. */
@@ -423,10 +438,10 @@ function LeadsPageInner() {
     sources: sourceFilter,
     smart_view: smartView,
     folder: folderForView(folder, smartView),
-    /* The default "wait" order (lib/leads/waiting.ts) is worked out by the server, so the
-       lead that has waited longest is on page 1 even if it arrived months ago. */
-    sort: sortBy === "wait" ? "wait" : "created",
-  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, sourceFilter, smartView, folder, sortBy, isDealsPage]);
+    /* R-420: every Sort-menu order is worked out by the server (migration
+       20261007300000), so page 2 continues the same order — never just the loaded page. */
+    sort: serverSortFor(leadSort),
+  }, isDealsPage), [teamIds, debouncedSearch, stageFilter, priorityFilter, ownerFilter, sourceFilter, smartView, folder, leadSort, isDealsPage]);
 
   const countsQ = useLeadCounts(listFilters);
   const counts  = countsQ.data;
@@ -437,7 +452,7 @@ function LeadsPageInner() {
      only while the board is on screen. Its chips are server counts like the list's. */
   /* Only this page's columns — /deals has no New / Contacted (lib/leads/page-scope.ts). */
   const boardStages = React.useMemo(() => BOARD_STAGES.filter((s) => stageShownOnPage(s, isDealsPage)), [isDealsPage]);
-  const boardQ  = useLeadsBoard(viewKnown && !isList, { ownerIds: teamIds, junk: smartView === "junk", stages: boardStages });
+  const boardQ  = useLeadsBoard(viewKnown && !isList, { ownerIds: teamIds, junk: smartView === "junk", stages: boardStages, sort: leadSort });
   /* The call queue and the loss card read their own small slices. */
   const dueQ    = useDueLeads(teamIds, search.trim() === "");
   const lostQ   = useLostLeads(teamIds, isDealsPage);
@@ -480,8 +495,9 @@ function LeadsPageInner() {
        Won is also the board's DROP TARGET. So the board's base is every non-junk, non-lost
        lead; picking a folder hands control back to the list cut (list-selectors#boardCut). */
     const cutFolder = folderForView(folder, smartView);
-    return boardCut(searched, listCut(searched, cutFolder, smartView, folderToday), cutFolder, smartView);
-  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, folder, folderToday]);
+    /* R-420: the board keeps this order inside each column. */
+    return sortBoardLeads(boardCut(searched, listCut(searched, cutFolder, smartView, folderToday), cutFolder, smartView), leadSort);
+  }, [isList, isDealsPage, boardQ.data, teamIds, search, stageFilter, priorityFilter, ownerFilter, sourceFilter, ownerNames, smartView, currentUser, folder, folderToday, leadSort]);
 
   /** The rows the current view is showing — what `filtered` was. */
   const shownRows = isList ? listRows : boardLeads;
@@ -489,6 +505,21 @@ function LeadsPageInner() {
   const shownCount = isList ? (counts?.list.matching ?? listRows.length) : boardLeads.length;
 
   const activeFilterCount = stageFilter.length + priorityFilter.length + ownerFilter.length + sourceFilter.length;
+  /* R-432: anything narrowing the rows — the "nothing matches" state offers to clear it. */
+  const filtersActive = hasActiveLeadFilters({
+    search, stages: stageFilter, priorities: priorityFilter, owners: ownerFilter, sources: sourceFilter,
+    who: leadTeamMode, folder,
+  });
+  /** R-432: one tap back to every lead — search, Filter menu, "My assigned", folder. Sort stays. */
+  const clearAllFilters = React.useCallback(() => {
+    setSearch("");
+    setStageFilter([]);
+    setPriorityFilter([]);
+    setOwnerFilter([]);
+    setSourceFilter([]);
+    setLeadTeamMode("team");
+    setFolder("all");
+  }, [setSearch, setStageFilter, setPriorityFilter, setOwnerFilter, setSourceFilter, setLeadTeamMode]);
 
   /* ── The folder chips are the filter ──────────────────────────────────────
      "Inbox" and "Qualified Deals" used to switch between the two halves of the old
@@ -560,6 +591,8 @@ function LeadsPageInner() {
      Win rate over DECIDED deals only — won ÷ (won + lost); see lib/leads/forecast.ts. */
   const kpi = counts?.kpi;
   const wonCount = kpi?.won ?? 0;
+  /* R-470: page-scoped open count + pipeline (lib/leads/page-scope.ts#openKpiForPage). */
+  const openKpi = counts ? openKpiForPage(counts, isDealsPage) : null;
   const decidedCount = (kpi?.won ?? 0) + (kpi?.lost ?? 0);
   const conversion = decidedCount > 0 ? Math.round((wonCount * 100) / decidedCount) : null;
 
@@ -573,12 +606,15 @@ function LeadsPageInner() {
       {/* Expanded Intelligence Drawer */}
       {kpiOpen && !isLoading && counts && (totalLeads ?? 0) > 0 && (
         <LeadsKpiDrawer
-          totalValue={counts.kpi.open_value}
+          /* R-470: on /deals, Open deals + Pipeline come from the same page-scoped stage
+             totals the list and board read (quote / demo / trial) — kpi counted a Contacted
+             lead that /deals never shows. /leads is unchanged. No project split on /deals. */
+          totalValue={openKpi?.openValue ?? 0}
           pipelineByType={{
-            subscription: counts.kpi.open_value - counts.kpi.open_value_project,
-            project: counts.kpi.open_value_project,
+            subscription: (openKpi?.openValue ?? 0) - (openKpi?.openValueProject ?? 0),
+            project: openKpi?.openValueProject ?? 0,
           }}
-          openCount={counts.kpi.open_count}
+          openCount={openKpi?.openCount ?? 0}
           highPriority={counts.pool.high_priority}
           totalInquiries={counts.pool.total}
           wonCount={wonCount}
@@ -709,6 +745,8 @@ function LeadsPageInner() {
             setOwnerFilter={setOwnerFilter}
             sourceFilter={sourceFilter}
             setSourceFilter={setSourceFilter}
+            leadSort={leadSort}
+            setLeadSort={setLeadSort}
             isSales={isSales}
             kpiOpen={kpiOpen}
             setKpiOpen={setKpiOpen}
@@ -734,6 +772,8 @@ function LeadsPageInner() {
         setAddOpen={setAddOpen}
         setCsvImportOpen={setCsvImportOpen}
         setSmartView={setSmartView}
+        filtersActive={filtersActive}
+        onClearFilters={clearAllFilters}
       />
 
       {/* Kanban — only shows on Deals tab (raw leads in the Leads tab have
@@ -741,7 +781,18 @@ function LeadsPageInner() {
           flex-1 + min-h-0 lets the grid stretch to fill remaining viewport
           height (page wrapper is min-h-[calc(100vh-3.5rem)] flex-col), so
           columns visually fill instead of bottom cream area showing. */}
-      {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "kanban" && (
+      {/* R-470: the board has no Lost column, so Stage → Lost on Kanban read "0" with an
+          empty board while the List showed them. Say where they are, one click away. */}
+      {!isLoading && !error && effectiveView === "kanban" && stageFilter.includes("lost") && (
+        <div data-testid="kanban-lost-note" className="mb-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-paper-2/40 px-3 py-2 text-sm text-ink-2">
+          <span>Lost {isDealsPage ? "deals" : "leads"} are not on the board — they show in List view.</span>
+          <button type="button" onClick={() => setView("list")} className="shrink-0 font-semibold text-amber-ink underline underline-offset-2">
+            Show list
+          </button>
+        </div>
+      )}
+      {/* R-432: no columns of nothing — when the filters leave no card, LeadsNoResults speaks. */}
+      {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "kanban" && boardLeads.length > 0 && (
         <LeadsKanbanBoard
           boardLeads={boardLeads}
           columnTotals={boardQ.data?.totals}
@@ -765,10 +816,9 @@ function LeadsPageInner() {
         <div className="flex-1 min-h-[480px] flex flex-col">
         <LeadListView
           leads={listRows}
-          /* S40: the list is PAGED. The server already ordered it for "wait" and "created"
-             (newest first); any other column sorts the rows loaded so far, and the footer
-             says so. */
-          serverSorted={sortDir === "desc" && (sortBy === "wait" || sortBy === "created")}
+          /* S40: the list is PAGED. The server orders it by the Sort menu (R-420); a
+             column-header click sorts the rows loaded so far, and the footer says so. */
+          serverSorted={headerSort === null}
           paging={{
             total: counts?.list.matching ?? listRows.length,
             hasMore: Boolean(pagesQ.hasNextPage),
@@ -777,10 +827,7 @@ function LeadsPageInner() {
           }}
           sortBy={sortBy}
           sortDir={sortDir}
-          onSort={(col) => {
-            if (sortBy === col) setSortDir(sortDir === "asc" ? "desc" : "asc");
-            else { setSortBy(col); setSortDir(col === "company" ? "asc" : "desc"); }
-          }}
+          onSort={(col) => setHeaderSort(nextSort({ sortBy, sortDir }, col))}
           // Both Leads + Deals rows open the rich drawer now (consistency): a
           // raw lead's first move is to CONTACT (call/WhatsApp/email/follow-up/
           // send-quote) — all live in the drawer. Qualifying is still one click
@@ -801,10 +848,10 @@ function LeadsPageInner() {
         totalLeads={totalLeads}
         shownCount={shownCount}
         smartView={smartView}
+        isDealsPage={isDealsPage}
         search={search}
-        setSearch={setSearch}
-        setStageFilter={setStageFilter}
-        setPriorityFilter={setPriorityFilter}
+        filtersActive={filtersActive}
+        onClearFilters={clearAllFilters}
       />
 
         </div>{/* /flex-1 main column */}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeTradeReceivables, computeCustomerAdvances } from "./balance-sheet";
+import { computeTradeReceivables, computeCustomerAdvances, computeOwedBackToCustomers } from "./balance-sheet";
 
 /**
  * These two figures were both WRONG on the live Balance Sheet until 2026-08-12,
@@ -77,5 +77,39 @@ describe("computeCustomerAdvances — money banked before invoicing is a LIABILI
 
   it("is zero when nothing has been paid", () => {
     expect(computeCustomerAdvances([], quotes)).toBe(0);
+  });
+});
+
+/**
+ * S45 — each money event must keep Dr = Cr. Dr − Cr deltas measured on local DB by
+ * supabase/tests/tb_money_events_balanced.test.sql before the fix: part payment +5,000,
+ * TDS +1,000, overpayment +1,000, credit note on a paid invoice +1,180.
+ */
+describe("S45 — part payment: receivable is net_payable − paid_amount", () => {
+  it("₹11,800 invoice with ₹5,000 received leaves ₹6,800 receivable (not ₹11,800)", () => {
+    expect(computeTradeReceivables([{ id: "INV-1", amount: 11_800, net_payable: 11_800, paid_amount: 5_000 }], new Set())).toBe(6_800);
+  });
+  it("Dr side moves by 0: receivable −5,000 + money received +5,000", () => {
+    const before = computeTradeReceivables([{ id: "INV-1", amount: 11_800, net_payable: 11_800, paid_amount: 0 }], new Set());
+    const after = computeTradeReceivables([{ id: "INV-1", amount: 11_800, net_payable: 11_800, paid_amount: 5_000 }], new Set());
+    expect(after - before + 5_000).toBe(0);
+  });
+  it("never goes negative when a credit note brings net_payable below what was paid", () => {
+    expect(computeTradeReceivables([{ id: "INV-1", amount: 11_800, net_payable: 4_000, paid_amount: 5_000 }], new Set())).toBe(0);
+  });
+});
+
+describe("S45 — money owed back to the customer after the invoice", () => {
+  it("overpayment: ₹12,800 on a ₹11,800 invoice → ₹1,000 liability", () => {
+    expect(computeOwedBackToCustomers([{ received: 12_800, invoice_amount: 11_800, credit_notes: 0, debit_notes: 0 }])).toBe(1_000);
+  });
+  it("credit note ₹1,180 on a fully paid invoice → ₹1,180 liability", () => {
+    expect(computeOwedBackToCustomers([{ received: 11_800, invoice_amount: 11_800, credit_notes: 1_180, debit_notes: 0 }])).toBe(1_180);
+  });
+  it("TDS-settled invoice (payment amount includes the TDS) owes nothing back", () => {
+    expect(computeOwedBackToCustomers([{ received: 11_800, invoice_amount: 11_800, credit_notes: 0, debit_notes: 0 }])).toBe(0);
+  });
+  it("part-paid invoice is a receivable, never a negative liability", () => {
+    expect(computeOwedBackToCustomers([{ received: 5_000, invoice_amount: 11_800, credit_notes: 0, debit_notes: 590 }])).toBe(0);
   });
 });

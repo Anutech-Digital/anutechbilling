@@ -13,6 +13,22 @@ import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
+import { COMPANY_STATE_FIX, isCompanyStateMissingError } from "@/lib/onboarding/setup-links";
+
+/**
+ * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
+ * toast used to vanish in ~4 s with no button; now it stays and opens Settings → Company.
+ */
+function toastInvoiceIssueError(err: unknown): void {
+  if (isCompanyStateMissingError(err)) {
+    toastError(err, {
+      duration: 15000,
+      action: { label: COMPANY_STATE_FIX.label, onClick: () => window.location.assign(COMPANY_STATE_FIX.href) },
+    });
+    return;
+  }
+  toastError(err);
+}
 
 // ============================================================
 // List
@@ -241,7 +257,7 @@ export function useGenerateInvoice() {
         toast.success(`Invoice ${invoiceId} generated · ₹${netPayable.toLocaleString("en-IN")} payable`);
       }
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastInvoiceIssueError(err),
   });
 }
 
@@ -293,7 +309,7 @@ export function useCreateDirectInvoice() {
       const lutWarn = lutMissingWarning({ taxRate: res.tax_rate, lutNumber: me.data?.tenantLutNumber });
       if (lutWarn) toast.warning(lutWarn, { duration: 12_000 });
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastInvoiceIssueError(err),
   });
 }
 

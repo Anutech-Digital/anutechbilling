@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-import { fmtBS } from "./format";
+import { fmtBS, parseWholeRupees } from "./format";
 
 describe("fmtBS — one way to write a Balance Sheet amount (R-180)", () => {
   it("puts a negative in parentheses, full and compact", () => {
@@ -22,5 +22,22 @@ describe("fmtBS — one way to write a Balance Sheet amount (R-180)", () => {
     for (const v of ["netWorth", "totalAssets", "totalLiab", "totalLiab + netWorth"]) {
       expect(src, `rupee(${v}…) on the Balance Sheet`).not.toContain(`rupee(${v}`);
     }
+  });
+});
+
+describe("parseWholeRupees — opening balances input (S45 slice 2)", () => {
+  it("empty = not given (null), never 0", () => {
+    expect(parseWholeRupees("")).toBeNull();
+    expect(parseWholeRupees("  ")).toBeNull();
+  });
+  it("accepts Indian grouping, ₹ and a leading minus (loss)", () => {
+    expect(parseWholeRupees("5,00,000")).toBe(500000);
+    expect(parseWholeRupees("₹ 1,250")).toBe(1250);
+    expect(parseWholeRupees("-25000")).toBe(-25000);
+  });
+  it("rejects paise and text", () => {
+    expect(parseWholeRupees("1.5")).toBe("bad");
+    expect(parseWholeRupees("abc")).toBe("bad");
+    expect(parseWholeRupees("10-5")).toBe("bad");
   });
 });

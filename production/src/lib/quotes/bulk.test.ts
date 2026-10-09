@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildBulkLine, dedupeDomains, splitMrr, normDomain } from "./bulk";
+import { buildBulkLine, dedupeDomains, splitMrr, normDomain, bulkDomainProblems } from "./bulk";
 
 describe("dedupeDomains", () => {
   it("lowercases, trims, drops blanks", () => {
@@ -98,5 +98,17 @@ describe("splitMrr — money-correctness (sum must equal pool exactly)", () => {
     expect(splitMrr(1000, [])).toEqual([]);
     // zero total seats → no divide-by-zero, all zeros
     expect(splitMrr(1000, [{ domain: "a", seats: 0 }])).toEqual([0]);
+  });
+});
+
+describe("bulkDomainProblems (R-469 (3))", () => {
+  it("refuses a name that is not a domain", () => {
+    expect(bulkDomainProblems([{ domain: "kapoor global" }, { domain: "kapoor.com" }]).invalid).toEqual(["kapoor global"]);
+  });
+  it("flags the same domain typed twice", () => {
+    expect(bulkDomainProblems([{ domain: "kapoor.com" }, { domain: "https://www.Kapoor.com/" }]).duplicates).toEqual(["kapoor.com"]);
+  });
+  it("passes clean rows and ignores empty ones", () => {
+    expect(bulkDomainProblems([{ domain: "a.in" }, { domain: "b.co.in" }, { domain: " " }])).toEqual({ invalid: [], duplicates: [] });
   });
 });

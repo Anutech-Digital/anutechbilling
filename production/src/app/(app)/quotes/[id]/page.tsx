@@ -11,14 +11,21 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
-import { useQuote, useDeleteQuote, quoteDeleteBlockReason } from "@/lib/queries/quotes";
+import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead } from "@/lib/queries/quotes";
+import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise";
+import { istToday } from "@/lib/dates/ist";
+import { withInvoiceIssued, leadStageNow, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
+import type { LossReasonCode } from "@/lib/leads/loss-reasons";
+import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { quoteMoneyActions } from "@/lib/quotes/money-stage";
+import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
+import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -41,6 +48,7 @@ import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { payIntent } from "./pay-intent";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
@@ -124,6 +132,9 @@ export default function QuoteDetailPage() {
     // WhatsApp needs a country code — assume India (+91) for a bare 10-digit number.
     return d.startsWith("91") ? `+${d}` : d.length === 10 ? `+91${d}` : `+${d}`;
   }, [customer?.contact_phone, lead?.contact_phone]);
+  /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
+     the preview, the downloaded PDF and the WhatsApp attachment preview. */
+  const contact = quoteContact(customer, lead);
   const { data: me } = useCurrentUser();
   const qc = useQueryClient();
   const deleteQuote = useDeleteQuote();
@@ -305,6 +316,17 @@ export default function QuoteDetailPage() {
     seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
   });
   const interState = pos.interState;
+  /* R-431 (board R-406): before an invoice exists, an unknown head blocks it — the company's
+     own state first (one click to Settings), then the customer's. generate_invoice refuses
+     both server-side; this says so BEFORE the click, with the fix one tap away. An issued
+     invoice keeps its frozen head and is never re-decided here. */
+  const gstBlock: null | { title: string; body: string; href: string; label: string } =
+    !quote || quote.invoice_id || !me ? null
+    : pos.head.kind === "seller_state_missing"
+      ? { title: COMPANY_STATE_FIX.message, body: `${COMPANY_STATE_FIX.description} Until then the GST invoice can't be issued.`, href: COMPANY_STATE_FIX.href, label: COMPANY_STATE_FIX.label }
+      : pos.head.kind === "buyer_state_missing" && quote.customer_id
+        ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }
+        : null;
 
   // Delete — blocked for quotes with a recorded payment (cascade would wipe the
   // ledger). On success, navigate back to the list since this record is gone.
@@ -331,6 +353,8 @@ export default function QuoteDetailPage() {
   };
 
   // ────────── Mutations ──────────
+  /** The page's lead query — may still be loading when a button is pressed (R-443). */
+  const cachedLead = lead;
   /**
    * "Mark as sent" — THE FOURTH SEND PATH, and the likeliest one behind Darshan's report.
    *
@@ -359,7 +383,14 @@ export default function QuoteDetailPage() {
 
       /* Forward-only, same single rule as the other three senders. Runs through
          useUpdateLeadStage rather than a raw update so the lost-reason hygiene and the
-         no-rows-matched throw come along with it. */
+         no-rows-matched throw come along with it.
+         R-443: the stage is read from the database NOW. The page's lead query may not have
+         loaded yet (pressed right after opening the page) — that undefined stage read as
+         "the lead has no stage recorded" and the lead stayed in Contacted. */
+      const sentLeadId = quote?.lead_id;
+      const lead = sentLeadId
+        ? { stage: await leadStageNow(() => supabase.from("leads").select("stage").eq("id", sentLeadId).maybeSingle(), cachedLead?.stage) }
+        : cachedLead;
       const move = stageAfterQuoteSent(lead?.stage);
       if (quote?.lead_id && move.nextStage) {
         await updateLeadStage.mutateAsync({ id: quote.lead_id, stage: move.nextStage });
@@ -432,16 +463,92 @@ export default function QuoteDetailPage() {
     onError: (e) => toastError(e),
   });
 
+  /* R-448: "Revise" — copy this sent quote into the next family version (Q-…-R2) as a DRAFT
+     and open it in the draft editor. Nothing changes for the customer until that draft is
+     SENT; then the database marks this quote replaced (trg_quote_revision_sent). */
+  const startRevision = useMutation({
+    mutationFn: async () => {
+      if (!quote) throw new Error("The quote is still loading.");
+      const supabase = createClient();
+      const root = quote.revision_of || quote.id;
+      const { data: fam, error: famErr } = await supabase
+        .from("quotes").select("revision_no").eq("revision_of", root)
+        .order("revision_no", { ascending: false }).limit(1);
+      if (famErr) throw famErr;
+      const highest = Math.max(quote.revision_no ?? 1, fam?.[0]?.revision_no ?? 1);
+      const next = nextRevision({ id: root, revision_of: root, revision_no: highest });
+      const { data, error } = await supabase
+        .from("quotes")
+        .insert(revisionDraft(quote, next, istToday()))
+        .select("id").single();
+      if (error) throw error;
+      return data.id;
+    },
+    onSuccess: (newId) => {
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      toast.success(`Revision ${newId} created as a draft`, {
+        description: "Change what you need and send it. The old quote is replaced when this one is sent.",
+      });
+      router.push(`/quotes/${newId}/edit` as never);
+    },
+    onError: (e) => toastError(e, { fallback: "Couldn't start the revision." }),
+  });
+
+  /* R-452: "Mark rejected" asks why (same reasons as a lost lead) and, when this was the
+     lead's last open quote, offers to mark the lead Lost in the same step — before, the
+     lead sat in Quote Sent and its value stayed in the pipeline. */
+  const [rejectOpen, setRejectOpen] = React.useState(false);
+  const { data: leadQuotes } = useQuotesByLead(quote?.lead_id ?? undefined);
+  const leadOffer = rejectLeadOffer({ quoteId: params.id, lead: quote?.lead_id ? (lead ?? null) : null, leadQuotes: leadQuotes ?? [] });
   const markRejected = useMutation({
+    mutationFn: async (input: { reason: LossReasonCode; note: string | null; markLeadLost: boolean }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("quotes")
+        .update({ status: "rejected", rejected_reason: input.reason, rejected_note: input.note })
+        .eq("id", params.id)
+        .select("id");
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error("The quote was not updated — reopen this page and try again.");
+      if (input.markLeadLost && quote?.lead_id) {
+        await updateLeadStage.mutateAsync({ id: quote.lead_id, stage: "lost", lostReason: input.reason, lostNote: input.note });
+        try {
+          await logActivity.mutateAsync({ leadId: quote.lead_id, kind: "stage", detail: lostActivityDetail(params.id, input.reason, input.note) });
+        } catch {
+          /* The quote and lead are already updated; the hook shows its own toast. */
+        }
+      }
+      return input;
+    },
+    onSuccess: (input) => {
+      qc.invalidateQueries({ queryKey: ["quotes"] });
+      qc.invalidateQueries({ queryKey: ["quotes", params.id] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      setRejectOpen(false);
+      toast.success(input.markLeadLost ? "Quote rejected · lead marked Lost" : "Quote marked as rejected");
+    },
+    onError: (e) => toastError(e),
+  });
+
+  /* R-452: a rejected quote can be reopened (the old copy promised a Reopen button and
+     had none). The lead is not touched — if it was marked Lost, reopening it is a choice
+     made on the lead. */
+  const reopenRejected = useMutation({
     mutationFn: async () => {
       const supabase = createClient();
-      const { error } = await supabase.from("quotes").update({ status: "rejected" }).eq("id", params.id);
+      const { data, error } = await supabase
+        .from("quotes")
+        .update({ status: "sent", rejected_reason: null, rejected_note: null })
+        .eq("id", params.id)
+        .eq("status", "rejected")
+        .select("id");
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error("The quote was not updated — reopen this page and try again.");
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", params.id] });
-      toast("Quote marked as rejected");
+      toast.success("Quote reopened — moved back to Sent");
     },
     onError: (e) => toastError(e),
   });
@@ -496,7 +603,9 @@ export default function QuoteDetailPage() {
   }
 
   // ────────── Derived ──────────
-  const status = STATUS_META[quote.status];
+  /* R-448: a replaced quote reads "Replaced", not "Expired". */
+  const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[quote.status];
+  const revise = canReviseQuote(quote, totalReceivedSoFar);
   const payment = PAYMENT_META[quote.payment_status];
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
@@ -507,6 +616,12 @@ export default function QuoteDetailPage() {
   /* What can be DONE with the money right now — one tested decision instead of three
      inline conditions that between them left `payment_status = 'none'` (the column
      default) with no action at all. See lib/quotes/money-stage.ts. */
+  /* R-446: same test the database trigger uses — any subscription of this quote that is not
+     yearly (or the quote's own cycle, before the subscription exists). */
+  const splitCycle = splitBilledCycleOf(
+    quote.billing_cycle,
+    (allSubs ?? []).filter((s) => s.quote_id === quote.id).map((s) => s.billing_cycle),
+  );
   const money = quoteMoneyActions(
     {
       status:        quote.status,
@@ -514,6 +629,9 @@ export default function QuoteDetailPage() {
       invoiceId:     quote.invoice_id,
       total,
       received:      totalReceivedSoFar,
+      /* R-446: same test the database trigger uses — any subscription of this quote that
+         is not yearly (or the quote's own cycle, before the subscription exists). */
+      splitBilledCycle: splitCycle,
     },
     rupee,
   );
@@ -570,9 +688,7 @@ export default function QuoteDetailPage() {
       tenantLogo:    await logoDataUri(me?.tenantLogoUrl),
       quoteId:       quote.id,
       customerName:  quote.customer_name,
-      contactName:   null,
-      contactEmail:  null,
-      contactPhone:  null,
+      ...contact,
       createdDate:   quote.created_at,
       expiresDate:   quote.expires_date,
       validityDays:  quote.expires_date
@@ -713,6 +829,14 @@ export default function QuoteDetailPage() {
               </span>
               <span>·</span>
               <Badge kind={status.kind} dot>{status.label}</Badge>
+              {quote.revision_no > 1 && quote.revision_of && (
+                <>
+                  <span>·</span>
+                  <span>Revision {quote.revision_no} of{" "}
+                    <Link href={`/quotes/${quote.revision_of}` as never} className="hover:text-amber-ink hover:underline">{quote.revision_of}</Link>
+                  </span>
+                </>
+              )}
               {approvalPill && (
                 <>
                   <span>·</span>
@@ -809,6 +933,14 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="whatsapp" size={15} /> Send via WhatsApp automation (Cloud API)
               </DropdownMenuItem>
+              {revise.ok && (
+                <DropdownMenuItem
+                  className="gap-2.5 py-2 cursor-pointer"
+                  onClick={() => startRevision.mutate()}
+                >
+                  <Icon name="edit" size={15} /> Revise (replaces this quote)
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => {
@@ -816,7 +948,7 @@ export default function QuoteDetailPage() {
                   router.push(duplicateQuoteHref(quote) as never);
                 }}
               >
-                <Icon name="copy" size={15} /> Duplicate & edit
+                <Icon name="copy" size={15} /> {revise.ok ? "Duplicate as a new quote" : "Duplicate & edit"}
               </DropdownMenuItem>
               {/* R-282: only an accepted quote with no money in. A running trial still shows
                   the item, and says why it cannot start a second one. */}
@@ -987,7 +1119,7 @@ export default function QuoteDetailPage() {
             )}
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm text-ink-3">This is a draft. Send it to the customer when ready.</div>
+              <div className="text-sm text-ink-3">This is a draft. Send it to the customer when ready.{quote.revision_of ? " Once sent, it replaces the earlier version." : ""}</div>
               <div className="flex gap-2">
                 {/* This block only renders for a draft, and a draft is what the in-place
                     editor accepts — so "Edit" means edit here, and the route now exists.
@@ -1032,7 +1164,7 @@ export default function QuoteDetailPage() {
               {daysLeft !== null && daysLeft > 0 && (
                 <>Expires in <b>{daysLeft} days</b> · </>
               )}
-              Customer accepted? Mark accepted to convert the lead into a customer.
+              {acceptHint(quote)}
               {" "}
               {/* What this sentence used to say, unconditionally: "Payment can land later —
                   record it when received." On Q-ADPL-2026-27-0024 that was printed under a
@@ -1048,9 +1180,15 @@ export default function QuoteDetailPage() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
-              <Button variant="ghost" loading={markRejected.isPending} onClick={() => markRejected.mutate()}>
+              <Button variant="ghost" loading={markRejected.isPending} onClick={() => setRejectOpen(true)}>
                 Mark rejected
               </Button>
+              {/* R-448: change a sent quote without leaving the old one acceptable. */}
+              {revise.ok && (
+                <Button variant="default" icon="edit" loading={startRevision.isPending} onClick={() => startRevision.mutate()}>
+                  Revise
+                </Button>
+              )}
               {/* This row owns the STATUS decision only. The payment button that used to
                   sit here has moved to the money row below, which is now the single
                   place that decides what can be done with the money — leaving it here
@@ -1107,7 +1245,64 @@ export default function QuoteDetailPage() {
           </div>
         )}
 
-        {(money.canRecordPayment || money.canGenerateInvoice || money.note) && (
+        {gstBlock && money.canGenerateInvoice && (
+          <div role="alert" className="flex items-start justify-between gap-3 flex-wrap rounded-md border border-amber/40 bg-amber-soft/40 p-3">
+            <div className="text-sm text-ink-2 min-w-0">
+              <div className="font-semibold text-amber-ink">⚠ {gstBlock.title}</div>
+              <div className="text-xs mt-0.5">{gstBlock.body}</div>
+            </div>
+            <Button asChild variant="primary" icon="settings">
+              <Link href={gstBlock.href as never}>{gstBlock.label}</Link>
+            </Button>
+          </div>
+        )}
+
+        {/* R-452 / R-448: one line for a closed quote, with the action it needs. */}
+        {money.stage === "closed" && (
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm text-ink-2">
+              {quote.superseded_by ? (
+                <>Replaced by{" "}
+                  <Link href={`/quotes/${quote.superseded_by}` as never} className="font-semibold text-ink hover:text-amber-ink hover:underline">
+                    {quote.superseded_by}
+                  </Link>
+                  . The customer&apos;s old link now shows that this quote was replaced.
+                </>
+              ) : quote.status === "rejected" ? (
+                <>Rejected{lossLabel(quote.rejected_reason) ? <> · <b>{lossLabel(quote.rejected_reason)}</b></> : null}
+                  {quote.rejected_note ? <> — {quote.rejected_note}</> : null}. Reopen it if the customer comes back.
+                </>
+              ) : (
+                <>This quote has expired. Duplicate it to send a fresh one.</>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {quote.status === "rejected" && !quote.superseded_by && (
+                <Button
+                  variant="default"
+                  icon="arrow_left"
+                  loading={reopenRejected.isPending}
+                  onClick={() => setConfirm({
+                    title: `Reopen quote ${quote.id}?`,
+                    body: "It moves back to Sent. The lead is not changed — if it was marked Lost, reopen it on the lead.",
+                    confirmLabel: "Reopen quote",
+                    icon: "arrow_left",
+                    onConfirm: () => reopenRejected.mutate(),
+                  })}
+                >
+                  Reopen
+                </Button>
+              )}
+              {!quote.superseded_by && (
+                <Button asChild variant="default" icon="copy">
+                  <Link href={duplicateQuoteHref(quote) as never}>Duplicate</Link>
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {money.stage !== "closed" && (money.canRecordPayment || money.canGenerateInvoice || money.note) && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-2">{money.note}</div>
             <div className="flex gap-2 flex-wrap">
@@ -1140,11 +1335,31 @@ export default function QuoteDetailPage() {
                   variant={money.canRecordPayment ? "default" : "primary"}
                   icon="receipt"
                   loading={generateInvoice.isPending}
-                  onClick={() => generateInvoice.mutate(params.id)}
+                  disabled={!!gstBlock}
+                  title={gstBlock ? gstBlock.title : undefined}
+                  onClick={() => generateInvoice.mutate(params.id, {
+                    /* R-409: show the issued invoice at once — button gone, "Invoiced"
+                       ticked, "View invoice" link — instead of waiting for a reload. */
+                    onSuccess: ({ invoiceId }) => {
+                      qc.setQueryData<Quote | null>(["quotes", params.id], (prev) => (prev ? withInvoiceIssued(prev, invoiceId) : prev));
+                      void qc.refetchQueries({ queryKey: ["quotes", params.id], exact: true });
+                      void qc.invalidateQueries({ queryKey: ["payments"] });
+                    },
+                  })}
                 >
                   {money.outstanding > 0 && money.outstanding === total
                     ? "Invoice now (before payment)"
                     : "Generate GST Invoice"}
+                </Button>
+              )}
+
+              {/* R-446: per-period plan — no whole-term invoice button; the way to its
+                  invoices is the subscription's billing schedule. */}
+              {splitCycle && !money.canGenerateInvoice && (
+                <Button asChild variant="default" icon="calendar">
+                  <Link href={subscriptionHref({ domain: quoteSubs[0]?.domain, customer_name: quote.customer_name }) as never}>
+                    Billing schedule
+                  </Link>
                 </Button>
               )}
 
@@ -1231,11 +1446,6 @@ export default function QuoteDetailPage() {
           );
         })()}
 
-        {(quote.status === "rejected" || quote.status === "expired") && (
-          <div className="text-sm text-ink-3">
-            This quote is {quote.status}. You can duplicate and re-send if needed.
-          </div>
-        )}
       </Card>
 
       {/* Line items */}
@@ -1536,6 +1746,7 @@ export default function QuoteDetailPage() {
            operator to guess — which is exactly what a tester hit twice on 22 Aug. */
         lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
         askDomain={!quote.is_one_off}
+        isRenewal={!!quote.is_renewal}
         /* The QUOTE first — it is the record being paid and the one the operator typed
            the domain into. Leaving it out is what made the field open empty on a quote
            that had the answer written on it (reported 22 Aug from Q-TEST-2026-27-0009). */
@@ -1563,9 +1774,9 @@ export default function QuoteDetailPage() {
         tenantAddress={me?.tenantAddress}
         quoteId={quote.id}
         customerName={quote.customer_name}
-        contactName={null}
-        contactEmail={null}
-        contactPhone={null}
+        contactName={contact.contactName}
+        contactEmail={contact.contactEmail}
+        contactPhone={contact.contactPhone}
         lineItems={items}
         subtotal={quote.subtotal}
         discountPct={quote.discount_pct}
@@ -1663,9 +1874,7 @@ export default function QuoteDetailPage() {
               tenantLogo:    await logoDataUri(me?.tenantLogoUrl),
               quoteId:       quote.id,
               customerName:  quote.customer_name,
-              contactName:   customer?.contact_name ?? lead?.contact_name ?? null,
-              contactEmail:  customer?.contact_email ?? lead?.contact_email ?? null,
-              contactPhone:  recipientPhone || null,
+              ...contact,
               createdDate:   quote.created_at,
               expiresDate:   quote.expires_date,
               validityDays:  quote.expires_date
@@ -1754,6 +1963,15 @@ export default function QuoteDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <RejectQuoteDialog
+        open={rejectOpen}
+        onOpenChange={setRejectOpen}
+        quoteId={quote.id}
+        leadOffer={leadOffer}
+        pending={markRejected.isPending}
+        onConfirm={(input) => markRejected.mutate(input)}
+      />
 
       {/* Reusable confirm dialog (replaces native window.confirm, which is
           suppressed in some embeds and silently returns false). */}

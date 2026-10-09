@@ -25,7 +25,8 @@ describe("stage tables", () => {
   });
 
   it("the Filter menu offers only the stages that can appear on the page", () => {
-    expect(filterStagesFor(false).map((s) => s.id)).toEqual(["new", "contact"]);
+    // R-489: /leads shows every stage but Won (page-scope.ts), so the filter offers them all — Lost included.
+    expect(filterStagesFor(false).map((s) => s.id)).toEqual(["new", "contact", "quote", "demo", "trial", "lost"]);
     expect(filterStagesFor(true).map((s) => s.id)).toEqual(["quote", "demo", "trial", "won", "lost"]);
   });
 });

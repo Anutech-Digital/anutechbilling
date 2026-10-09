@@ -25,7 +25,10 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath } from "@/lib/nav-apps";
+import { buildSidebarApps, appForPath, withoutDistributorOnly } from "@/lib/nav-apps";
+import { useQuery } from "@tanstack/react-query";
+import { createClient } from "@/lib/supabase/client";
+import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { useNavBadges } from "@/lib/hooks/useNavBadges";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
@@ -50,7 +53,23 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
      see lib/nav-apps.ts. The app follows the page you are on; clicking another app peeks
      it until you navigate. A role with a short menu gets every row at once, no switcher. */
   const role = me?.role as UserRole | undefined;
-  const model = React.useMemo(() => buildSidebarApps(role), [role]);
+  /* R-472: Partners only for a distributor tenant — same query (and cache key) as /partners. */
+  const { data: hierarchy } = useQuery({
+    enabled: Boolean(me?.tenantId),
+    queryKey: ["tenant", "hierarchy", "partners-page"],
+    queryFn: async (): Promise<TenantWithParent | null> => {
+      const supabase = createClient();
+      const { data } = await supabase.rpc("get_my_tenant_with_parent");
+      const row = Array.isArray(data) ? data[0] : data;
+      return (row as TenantWithParent | undefined) ?? null;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const isDistributor = hierarchy === undefined ? undefined : hierarchy?.tier === "distributor";
+  const model = React.useMemo(
+    () => withoutDistributorOnly(buildSidebarApps(role), role, isDistributor),
+    [role, isDistributor],
+  );
   const routeApp = appForPath(model, pathname);
   const [pickedApp, setPickedApp] = React.useState<string | null>(null);
   // The last app the route pointed at — so a pinned page (/dashboard) or a page outside the
@@ -84,7 +103,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         )}
         aria-current={isActive ? "page" : undefined}
       >
-        {child
+        {child && !collapsed
           ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", isActive ? "bg-amber" : "bg-ink-3/40")} />
           : <Icon name={it.icon} size={15} className={cn("flex-shrink-0", isActive ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />}
         {!collapsed && <span className="flex-1 truncate" title={it.label}>{it.label}</span>}
@@ -108,8 +127,34 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   // A group item — accordion parent (has children, e.g. Reports) or plain link.
   const renderItem = (item: NavItem) => {
     const active = pathname === item.href;
+    /* R-497: a heading-only row (the role may open some children, not the row itself — a
+       sales user's Customers → Contacts). Expanded: a toggle button, open by default.
+       Collapsed: just the children it holds, as icon rows. Never a link to the parent. */
+    if (item.headerOnly && item.children?.length) {
+      if (collapsed) return <React.Fragment key={item.id}>{item.children.map((c) => renderLink(c))}</React.Fragment>;
+      const isOpen = openMenus[item.id] ?? true;
+      return (
+        <div key={item.id}>
+          <button
+            type="button"
+            onClick={() => setOpenMenus((m) => ({ ...m, [item.id]: !isOpen }))}
+            aria-expanded={isOpen}
+            className="group w-full flex items-center gap-2.5 rounded-md text-sm transition-colors px-3 py-1.5 text-ink-2 hover:bg-paper-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+          >
+            <Icon name={item.icon} size={15} className="flex-shrink-0 text-ink-3 group-hover:text-ink-2" />
+            <span className="flex-1 truncate text-left" title={item.label}>{item.label}</span>
+            <Icon name={isOpen ? "chevron_up" : "chevron_down"} size={14} className="flex-shrink-0 text-ink-3" />
+          </button>
+          {isOpen && (
+            <div className="mt-0.5 space-y-0.5">
+              {item.children.map((c) => renderLink(c, true))}
+            </div>
+          )}
+        </div>
+      );
+    }
     if (item.children?.length && !collapsed) {
-      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href));
+      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
       return (
         <div key={item.id}>
           <div className="flex items-center">
@@ -140,6 +185,17 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
               {item.children!.map((c) => renderLink(c, true))}
             </div>
           )}
+        </div>
+      );
+    }
+    /* R-497: the collapsed rail has no accordion, so its children (Customers → Contacts) were
+       unreachable there. Show them as icon rows under the parent while you are inside it —
+       click Customers, and Parent Accounts + Contacts appear below it. */
+    if (item.children?.length && collapsed && (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")))) {
+      return (
+        <div key={item.id} className="space-y-0.5">
+          {renderLink(item)}
+          {item.children.map((c) => renderLink(c, true))}
         </div>
       );
     }

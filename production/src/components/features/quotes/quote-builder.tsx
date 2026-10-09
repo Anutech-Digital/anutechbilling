@@ -21,7 +21,16 @@ import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
+import { canSend, requiredApproval } from "@/lib/quotes/approval";
+import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import {
+  sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
+  quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
+} from "@/lib/quotes/send-quote-email";
+import { NUMBERING_FIX, COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
+
+/* A fixed, written sentence — not a raw error — so the R-300 toast guard can tell them apart. */
+const COMPANY_STATE_FIX_TITLE = COMPANY_STATE_FIX.message;
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,16 +54,21 @@ import { ViewDomainsDialog } from "@/components/features/quotes/view-domains-dia
 import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
+import { quoteContact } from "@/lib/quotes/quote-contact";
 import { useCustomers } from "@/lib/queries/customers";
 import { CustomerCombobox } from "@/components/features/customers/customer-combobox";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { useUpdateLead, useLeads } from "@/lib/queries/leads";
+import { useUpdateLead, useLeads, useCreateLead } from "@/lib/queries/leads";
+import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
+import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
+import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -68,6 +82,7 @@ import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/li
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
@@ -76,12 +91,20 @@ import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { leadLinePrice } from "./lead-line-commitment";
 import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
 import { canEditSupportCatalog } from "@/lib/support/catalog-row";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
+import Link from "next/link";
+
+/** R-408: a new quote has no approval record yet — canSend() then judges by the lines alone. */
+const NO_APPROVAL_ROW = {
+  approval_status: "not_required" as const, approval_tier: null, approval_requested_by: null, approved_by: null,
+  approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
+};
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
  *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
@@ -131,6 +154,9 @@ export function QuoteBuilder() {
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
   const updateLead = useUpdateLead();
+  const createLead = useCreateLead({ quiet: true });
+  /* R-468 (2): the customer's live subscriptions — to warn before a second one to the same product. */
+  const { data: allSubscriptions } = useSubscriptions();
 
   // Lead pre-fill context (when navigated from Lead Detail → Send Quote).
   // When leadId is present, we're in "lead mode" — quote belongs to a prospect,
@@ -200,7 +226,7 @@ export function QuoteBuilder() {
    *      source only when `editOf`), producing exactly the orphan quotes that started this
    *      whole investigation — a quote for a lead, attached to no lead.
    */
-  const { data: allLeads } = useLeads();
+  const { data: allLeads, isPending: leadsPending } = useLeads();
   const linkedLeadId = leadId ?? sourceQuote?.lead_id ?? null;
   const leadFromQuery = React.useMemo(() => {
     if (!linkedLeadId || !allLeads) return null;
@@ -212,6 +238,8 @@ export function QuoteBuilder() {
   const leadCompanyInit = urlCompany || leadFromQuery?.company || "";
   const leadPlan        = urlPlan    || leadFromQuery?.plan    || null;
   const leadSeats       = urlSeats   || (leadFromQuery?.seats != null ? String(leadFromQuery.seats) : null);
+  /* R-446: the lead's billing cycle decides the first line's commitment (monthly flex vs annual). */
+  const leadCycle       = leadFromQuery?.billing_cycle ?? null;
   const leadContactInit = urlContact || leadFromQuery?.contact_name  || "";
   const leadEmailInit   = urlEmail   || leadFromQuery?.contact_email || "";
   const leadPhoneInit   = urlPhone   || leadFromQuery?.contact_phone || "";
@@ -268,6 +296,12 @@ export function QuoteBuilder() {
   // gets created later when record_payment fires (lead → customer cascade).
   // This unblocks the "no customers yet" dead-end the picker had.
   const [prospectName, setProspectName] = React.useState<string>("");
+  /* R-469 (6): where the quote goes and who to call. Saved on a lead made for this prospect
+     (lib/quotes/prospect-contact.ts) — quotes have no contact columns of their own. */
+  const [prospectEmail, setProspectEmail] = React.useState<string>("");
+  const [prospectPhone, setProspectPhone] = React.useState<string>("");
+  /** The lead made for a typed prospect on an earlier save of this screen — never two. */
+  const prospectLeadRef = React.useRef<string | null>(null);
   // Customer-entry mode — a clean either/or toggle (was two inputs shown at once,
   // which read ambiguous). "existing" = pick from the book; "prospect" = type a
   // new one. The underlying resolution (customer_id vs typed name) is unchanged.
@@ -425,7 +459,12 @@ export function QuoteBuilder() {
   // where somebody typed one character into a search box is not work worth
   // interrupting them to protect, and a prompt that fires when it should not
   // is one users learn to click through, including when it is right.
-  useDraftGuard(lineItems.length > 0 || customerId !== "" || prospectName.trim() !== "");
+  // R-472: what the builder filled by itself (from a lead, a duplicate) is the BASELINE,
+  // taken at the user's first click or key press; only a change after that is dirty.
+  const draftSnapshot = JSON.stringify({ lineItems, customerId, prospectName, prospectEmail, prospectPhone });
+  const [draftBaseline, setDraftBaseline] = React.useState<string | null>(null);
+  const markTouched = () => { if (draftBaseline === null) setDraftBaseline(draftSnapshot); };
+  useDraftGuard(builderIsDirty(draftBaseline, draftSnapshot));
 
   // For a foreign (USD) quote: which price basis to bill on when an item has BOTH
   // a ₹ price and a real foreign price. "international" = use the item's catalog
@@ -519,6 +558,10 @@ export function QuoteBuilder() {
        Workspace line's ₹7,440 cost was lost for good. If the query FAILS we go on with
        the fallback; the backfill effect below fills the cost when a retry succeeds. */
     if (catalogPending) return;
+    /* R-446: and for the lead row, when there is one — its billing cycle picks the line's
+       commitment. URL params can make leadCompany ready before the lead loads; prefilling
+       then would always build an annual line. A FAILED leads query goes on (annual). */
+    if (linkedLeadId && leadsPending) return;
 
     prefilledRef.current = true;
 
@@ -575,7 +618,9 @@ export function QuoteBuilder() {
       const lineId = `line-${Date.now()}`;
       /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
          fills it the moment the catalogue can answer (until the user types one). */
-      if (cost <= 0) costPendingRef.current.add(lineId);
+      /* R-446: a Monthly lead gets a Monthly flex line (₹/seat/month), not Annual. */
+      const priced = leadLinePrice({ cycle: leadCycle, annualRate: rate, annualCost: cost, prices: catalogItem?.prices });
+      if (priced.cost <= 0) costPendingRef.current.add(lineId);
       setLineItems([
         {
           id:         lineId,
@@ -583,16 +628,16 @@ export function QuoteBuilder() {
           // Use the full catalog name when matched (so "Starter" → "Google Workspace Business Starter")
           name:       catalogItem?.name ?? leadPlan,
           qty:        seatsNum,
-          rate,
-          list_rate:  rate,
-          cost,
-          commitment: "annual_yearly",
+          rate:       priced.rate,
+          list_rate:  priced.rate,
+          cost:       priced.cost,
+          commitment: priced.commitment,
           start_date: todayISO,
         },
       ]);
       if (source === "catalog") {
         toast.success(
-          `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${rate}/seat/yr`,
+          `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${priced.rate}/seat/${priced.unit}${priced.unit === "mo" ? " (monthly, as on the lead)" : ""}`,
           bandLabel ? { description: `Volume band applied: ${bandLabel}.` } : undefined,
         );
       } else {
@@ -600,7 +645,7 @@ export function QuoteBuilder() {
            "using fallback", which reads as "handled" rather than "your margin is
            not real". */
         toast.warning(`${leadPlan} is not in your catalogue — cost is unknown`, {
-          description: `Priced at the standard ₹${rate}/seat/yr, but margin cannot be worked out until this plan has a catalogue row. Add it, or type the cost on the line.`,
+          description: `Priced at the standard ₹${priced.rate}/seat/${priced.unit}, but margin cannot be worked out until this plan has a catalogue row. Add it, or type the cost on the line.`,
           action: { label: "Open catalogue", onClick: () => router.push("/items" as any) },
           duration: 10_000,
         });
@@ -615,7 +660,7 @@ export function QuoteBuilder() {
       (leadContact ? `Attn: ${leadContact}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending]);
+  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row
@@ -721,6 +766,14 @@ export function QuoteBuilder() {
 
   // Derived customer fields
   const customer = customers?.find((c) => c.id === customerId);
+  /* R-445 (1): the preview's Bill To names the person, as the PDF and customer link do —
+     lead mode: the (editable) lead fields; customer: its contact, else the linked lead's;
+     typed prospect: the email/phone typed here. */
+  const previewContact = isLeadMode
+    ? quoteContact({ contact_name: leadContact, contact_email: leadEmail, contact_phone: leadPhone })
+    : customerId
+      ? quoteContact(customer, leadFromQuery)
+      : quoteContact({ contact_email: prospectEmail, contact_phone: prospectPhone });
   // Invoice mode: pre-fill the payment terms from the customer's default (0164).
   // Fires when a customer with a saved term is selected; a manual Terms change
   // still wins (this only re-runs if the selected customer's term changes).
@@ -774,7 +827,15 @@ export function QuoteBuilder() {
   // here — mark the customer as export once created. (Phase 1c: lead country.)
   const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
   /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
-  const placeOfSupply     = placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
+  /* R-431 (board R-406): the company's OWN state decides the head as much as the buyer's.
+     Empty → isInterStateSupply() answered intra-state and this screen printed
+     "✓ Intra-state → CGST + SGST" off that guess; payment was taken against it and the
+     invoice later came out IGST. Read only once the user has loaded (no flash). */
+  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode });
+  const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
+  const placeOfSupply     = sellerStateMissing
+    ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
+    : placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
   // USD (books still record in ₹) so the operator doesn't have to remember to
@@ -932,6 +993,39 @@ export function QuoteBuilder() {
   const updateRate = (id: string, rate: number) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, rate: Math.max(0, rate) } : l)));
   };
+  /* R-449 (4)(5): a bad Qty / Rate stays on screen with its message; the line keeps its last
+     good number and Save refuses until the box is fixed (lib/quotes/line-input.ts). Keyed
+     `<lineId>:qty` / `<lineId>:rate`. */
+  const [lineDrafts, setLineDrafts] = React.useState<Record<string, { raw: string; problem: string }>>({});
+  const setLineDraft = (key: string, raw: string, problem: string | null) => {
+    setLineDrafts((d) => {
+      if (!problem) {
+        if (!(key in d)) return d;
+        const next = { ...d };
+        delete next[key];
+        return next;
+      }
+      return { ...d, [key]: { raw, problem } };
+    });
+  };
+  const onQtyInput = (id: string, raw: string) => {
+    const r = parseLineQty(raw);
+    setLineDraft(`${id}:qty`, raw, r.ok ? null : r.problem);
+    if (r.ok) updateQty(id, r.value);
+  };
+  /** `apply` turns the box's number (₹ or $, per invoice period) into the stored rate. */
+  const onRateInput = (id: string, raw: string, apply: (v: number) => void) => {
+    const r = parseLineRate(raw);
+    setLineDraft(`${id}:rate`, raw, r.ok ? null : r.problem);
+    if (r.ok) apply(r.value);
+  };
+  const lineInputProblem = firstLineInputProblem(
+    Object.fromEntries(
+      Object.entries(lineDrafts)
+        .filter(([k]) => lineItems.some((l) => k.startsWith(`${l.id}:`)))
+        .map(([k, v]) => [k, v.problem]),
+    ),
+  );
   const updateCost = (id: string, cost: number) => {
     /* R-388: a typed cost is the user's — no catalogue load may replace it. */
     costTypedRef.current.add(id);
@@ -1037,11 +1131,55 @@ export function QuoteBuilder() {
   // Same rule the three send buttons always used — named once so the menu matches them.
   const sendDisabled = !isLeadMode && !customerId && !prospectName.trim();
 
+  /* R-408: "Save & send quote" used to only set status = 'sent' — no email went, and the
+     owner believed the customer had it. Now it emails through the same call as the
+     "Send via email" sheet (lib/quotes/send-quote-email.ts), when there is an address and
+     the discount/margin needs nobody's sign-off. With no address the button says
+     "Save & mark sent" and the toast says plainly that no email went. */
+  // R-469 (6): a typed prospect's own email counts too.
+  const sendRecipient = quoteRecipient(isLeadMode ? leadEmail : customerId ? customer?.contact_email : prospectEmail);
+  const sendAllowed = React.useMemo(() => canSend(
+    quoteApprovalRecord(editOf && sourceQuote ? sourceQuote : NO_APPROVAL_ROW),
+    requiredApproval(lineEconomics(lineItems)),
+  ).allowed, [editOf, sourceQuote, lineItems]);
+  const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
+  const [emailing, setEmailing] = React.useState(false);
+  const sendLabel = saveAndSendLabel(sendPlan);
+
+  /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
+  const emailSavedQuote = async (id: string, to: string): Promise<boolean> => {
+    let out;
+    setEmailing(true);
+    try {
+      out = quoteEmailOutcome(await sendQuoteEmail(id, { to }), { quoteId: id });
+    } catch (err) {
+      out = quoteEmailErrorOutcome(err);
+    } finally {
+      setEmailing(false);
+    }
+    if (out.ok) {
+      toast.success(out.title, out.description ? { description: out.description } : undefined);
+      return true;
+    }
+    toast.error(out.title, {
+      description: out.description,
+      duration: 15000,
+      action: {
+        label: "Try again",
+        onClick: () => {
+          void emailSavedQuote(id, to).then((ok) => { if (ok) router.push(`/quotes/${id}` as never); });
+        },
+      },
+    });
+    return false;
+  };
+
   // Submit
   // afterAction lets the caller request a follow-up on the detail page
   // (open the email or WhatsApp dialog as soon as we land). The detail
   // page reads `?send=whatsapp` / `?send=email` from the URL.
-  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp") => {
+  // "send-now" = the main "Save & send" button (R-408): save, then email right here.
+  const handleSubmit = async (status: "draft" | "sent", afterAction?: "email" | "whatsapp" | "send-now") => {
     // In lead mode, customer is NOT required (lead = potential customer).
     // A real customer record gets created only after payment.
     // In customer mode, accept EITHER an existing customer pick OR a typed
@@ -1053,10 +1191,21 @@ export function QuoteBuilder() {
       });
       return;
     }
+    const typedProspect = !isLeadMode && !customerId && !isInvoiceMode;
+    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) : null;
+    if (contactProblem) {
+      toast.error("Check the prospect's contact", { description: contactProblem });
+      return;
+    }
     if (lineItems.length === 0) {
       toast.error("Add at least one line item", {
         description: "Use Add item (Alt+A) to put a product or service on the quote.",
       });
+      return;
+    }
+    // R-449: a Qty / Rate box with a bad value — say which, save nothing.
+    if (lineInputProblem) {
+      toast.error("Fix the line marked in red", { description: lineInputProblem });
       return;
     }
     // R-381: an older mixed draft opened for editing can't be saved as it is.
@@ -1065,6 +1214,17 @@ export function QuoteBuilder() {
        draft may wait for the state, a quote that goes to the customer may not. Only for a
        lead or typed prospect, where the state field is on this screen; an existing
        customer without one keeps the amber note (their record is fixed on /customers). */
+    /* R-431 (board R-406): the company's own state is the other half of the head. Empty, the
+       quote went out "✓ Intra-state" and was paid against, then the invoice came out IGST.
+       A draft may wait; anything that reaches the customer may not. */
+    if (status === "sent" && sellerStateMissing) {
+      toast.error(COMPANY_STATE_FIX_TITLE, {
+        description: `${COMPANY_STATE_FIX.description} You can still save this as a draft.`,
+        duration: 15000,
+        action: { label: COMPANY_STATE_FIX.label, onClick: () => router.push(COMPANY_STATE_FIX.href as never) },
+      });
+      return;
+    }
     if (status === "sent" && !customerId && supplyStateMissing({ isExport, buyerStateCode })) {
       toast.error("Pick the customer's state first", {
         description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
@@ -1072,6 +1232,22 @@ export function QuoteBuilder() {
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
       return;
     }
+    /* R-431: an existing customer with no state (and no GSTIN to prove one) is the same
+       unknown head — generate_invoice refuses it later, after the customer has paid. */
+    if (status === "sent" && customerId && supplyStateMissing({ isExport, buyerStateCode })) {
+      toast.error(`${customer?.name ?? "This customer"} has no state on record`, {
+        description: "The state decides CGST+SGST or IGST. Add it on the customer, then send. You can still save this as a draft.",
+        duration: 15000,
+        action: { label: "Open customer", onClick: () => router.push(`/customers/${customerId}` as never) },
+      });
+      return;
+    }
+
+    /* R-408: when emailing (or held for approval) the row is saved as a DRAFT and the send
+       route flips it to 'sent' only after the mail went — so a failed email never shows
+       as sent. With no address it is saved as 'sent' and the toast says no email went. */
+    const plan = afterAction === "send-now" ? sendPlan : null;
+    const saveStatus: "draft" | "sent" = plan === "email" || plan === "needs-approval" ? "draft" : status;
 
     try {
       // Allocate the sequential quote ID via the central numbering RPC.
@@ -1114,6 +1290,28 @@ export function QuoteBuilder() {
         || (editOf ? (sourceQuote?.customer_name?.trim() ?? "") : "")
         || PLACEHOLDER_QUOTE_NAME;
 
+      /* R-469 (6): a typed prospect with an email or phone becomes a lead, and the quote is
+         linked to it — the contact then lives where Send, Record payment and the pipeline
+         already read it. Made once per screen (the ref), never for a picked customer. */
+      let prospectLeadId: string | null = prospectLeadRef.current;
+      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone })) {
+        const seats = quoteSeatCount(lineItems) ?? 0;
+        const row = prospectLeadRow({
+          name: resolvedCustomerName,
+          contact: { email: prospectEmail, phone: prospectPhone },
+          stateCode: prospectStateCode || null,
+          stateName: prospectStateCode ? (GST_STATE_BY_CODE[prospectStateCode] ?? null) : null,
+          country: prospectCountry,
+          sent: saveStatus === "sent" || plan === "email",
+          plan: lineItems[0]?.name ?? null,
+          seats,
+          value: total,
+        });
+        const created = await createLead.mutateAsync({ id: "L-" + Date.now().toString(36).toUpperCase(), ...row });
+        prospectLeadId = created.id;
+        prospectLeadRef.current = created.id;
+      }
+
       const quote = await createQuote.mutateAsync({
         id: idToUse,
         customer_id:   isLeadMode ? null : (customerId || null),
@@ -1126,7 +1324,7 @@ export function QuoteBuilder() {
            of the row while `leadId` was null, and `isLeadMode ? leadId : …` therefore still
            resolved to null. An untouched Save would have detached the draft from its lead.
            Found by running it, not by reading it. */
-        lead_id:       linkedLeadId,
+        lead_id:       linkedLeadId ?? prospectLeadId,
         // Quote-level domain = the first line's domain (the primary subscription).
         // record_payment stamps this on the subscription it creates today; per-line
         // domains also live on each line_item for the coming multi-sub fan-out.
@@ -1147,7 +1345,7 @@ export function QuoteBuilder() {
         // Invoice payment terms → generate_invoice stamps the due date (0163).
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
         terms_conditions:   termsConditions.trim() || null,
-        status,
+        status:        saveStatus,
         notes:         notes || null,
         expires_date:  addDaysISO(istToday(), validityDays),
         /* R-389 (F7): licence lines only — support / one-time services are not seats
@@ -1168,6 +1366,13 @@ export function QuoteBuilder() {
         prospect_country:    (!isLeadMode && !customerId) ? (prospectCountry.trim() || "India") : null,
       });
 
+      let wentOut = saveStatus === "sent";
+      let emailFailed = false;
+      if (plan === "email" && sendRecipient) {
+        wentOut = await emailSavedQuote(quote.id, sendRecipient);
+        emailFailed = !wentOut;
+      }
+
       // If created from a lead AND quote actually went out (not just saved as
       // draft), graduate the lead from "raw" (Leads tab) to "qualified"
       // (Deals tab) AND advance its stage to "quote". We pull plan/seats/value
@@ -1175,7 +1380,7 @@ export function QuoteBuilder() {
       // is actually being quoted — otherwise a raw lead would end up in
       // stage='quote' with plan=NULL, looking like a Quote Sent lead in the
       // Leads (raw) tab forever.
-      if (isLeadMode && linkedLeadId && status === "sent") {
+      if (isLeadMode && linkedLeadId && status === "sent" && wentOut) {
         try {
           const totalSeats = quoteSeatCount(lineItems) ?? 0;   // R-389 (F7): licence lines only
           // Forward-only, through the same rule the two server-side send paths use. This line
@@ -1208,7 +1413,7 @@ export function QuoteBuilder() {
         } catch {
           // Don't block the redirect if stage update fails; quote is saved.
         }
-      } else if (isLeadMode && linkedLeadId && status === "draft") {
+      } else if ((isLeadMode && linkedLeadId && status === "draft") || (isLeadMode && linkedLeadId && !wentOut)) {
         // For drafts: still persist contact-info edits to the lead so they
         // don't get lost when the user comes back. Stage stays as-is.
         const contactPatch = {
@@ -1244,7 +1449,17 @@ export function QuoteBuilder() {
         return;
       }
 
-      const suffix = afterAction ? `?send=${afterAction}` : "";
+      // Email failed: stay here — the toast's "Try again" and this button both retry.
+      if (emailFailed) return;
+      if (plan === "mark-sent") {
+        const out = markedSentOutcome(quote.id);
+        toast.warning(out.title, { description: out.description, duration: 10000 });
+      } else if (plan === "needs-approval") {
+        const out = needsApprovalOutcome(quote.id);
+        toast.warning(out.title, { description: out.description, duration: 10000 });
+      }
+
+      const suffix = afterAction && afterAction !== "send-now" ? `?send=${afterAction}` : "";
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1261,12 +1476,16 @@ export function QuoteBuilder() {
      send a quote the button refuses to send is a shortcut that bypasses a guard — here,
      the one stopping a quote going out with no customer on it. */
   const canSendNow = isLeadMode || !!customerId || !!prospectName.trim();
+  /* R-408: the listener below is bound once per canSendNow change, so it must call the
+     LATEST handleSubmit — a captured one carried old line items and an old send plan. */
+  const handleSubmitRef = React.useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         if (!canSendNow || createQuote.isPending) return;
         e.preventDefault();
-        void handleSubmit("sent");
+        void handleSubmitRef.current("sent", "send-now");
         return;
       }
       if (e.altKey && e.key.toLowerCase() === "a") {
@@ -1280,7 +1499,7 @@ export function QuoteBuilder() {
   }, [canSendNow, createQuote.isPending]);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4" onPointerDownCapture={markTouched} onKeyDownCapture={markTouched}>
       {/* Page head */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
@@ -1478,6 +1697,8 @@ export function QuoteBuilder() {
                 <p className="text-2xs flex items-start gap-1 -mt-1 text-indigo-ink">
                   🌍 Export ({leadCountry}) → zero-rated under LUT, no GST
                 </p>
+              ) : sellerStateMissing ? (
+                <p className="text-2xs flex items-center gap-1 -mt-1"><CompanyStateFix /></p>
               ) : leadStateCode && (
                 <p className="text-2xs flex items-center gap-1 -mt-1">
                   {interState
@@ -1547,6 +1768,19 @@ export function QuoteBuilder() {
                   {leadMatchNote && customerId && (
                     <p className="mt-1 text-3xs leading-snug text-emerald">{leadMatchNote}</p>
                   )}
+                  {/* R-468 (2): warn — not block — before a second subscription to a product
+                      this customer already has (lib/quotes/same-product.ts). */}
+                  {!isInvoiceMode && sameProductSubscriptions(customerId, lineItems, allSubscriptions ?? []).slice(0, 1).map((s) => (
+                    <div key={s.id} role="status" className="mt-2 flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/50 px-3 py-2">
+                      <Icon name="alert" size={14} className="mt-0.5 shrink-0 text-amber-ink" />
+                      <div className="min-w-0 text-2xs leading-snug text-ink-2">
+                        {sameProductNote(s, s.renewal_date ? formatDate(s.renewal_date) : null)}{" "}
+                        <Link href={subscriptionHref(s) as never} className="font-semibold text-amber-ink underline underline-offset-2">
+                          Open subscription
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
                 </FormField>
               )}
 
@@ -1565,6 +1799,41 @@ export function QuoteBuilder() {
                   A new prospect who hasn&apos;t paid yet — we&apos;ll auto-create the customer record when they pay.
                 </p>
               </FormField>
+              )}
+              {!isInvoiceMode && custMode === "prospect" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField label="Email" htmlFor="prospectEmail">
+                    <Input
+                      id="prospectEmail"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="off"
+                      placeholder="name@company.com"
+                      value={prospectEmail}
+                      onChange={(e) => setProspectEmail(e.target.value)}
+                    />
+                  </FormField>
+                  <FormField label="Phone" htmlFor="prospectPhone">
+                    <Input
+                      id="prospectPhone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="off"
+                      placeholder="98765 43210"
+                      value={prospectPhone}
+                      onChange={(e) => setProspectPhone(e.target.value)}
+                    />
+                  </FormField>
+                  {prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) ? (
+                    <p role="alert" className="sm:col-span-2 -mt-1 text-3xs text-rose">
+                      {prospectContactProblem({ email: prospectEmail, phone: prospectPhone })}
+                    </p>
+                  ) : (
+                    <p className="sm:col-span-2 -mt-1 text-3xs text-ink-3">
+                      Optional. With an email, &quot;Save &amp; send&quot; emails the quote. Saved as a lead in Sales &amp; Pipeline.
+                    </p>
+                  )}
+                </div>
               )}
 
               {/* Existing customer → a clean read-only summary of their billing
@@ -1590,6 +1859,8 @@ export function QuoteBuilder() {
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({customer?.country}) → zero-rated under LUT, no GST</span>
+                      ) : sellerStateMissing ? (
+                        <CompanyStateFix />
                       ) : !buyerStateCode ? (
                         /* A picked customer is not the same as a KNOWN state: 36 of 41
                            customers carrying a GSTIN have no state_code on file. Without
@@ -1641,6 +1912,8 @@ export function QuoteBuilder() {
                     <p className="text-2xs flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({prospectCountry}) → zero-rated under LUT, no GST</span>
+                      ) : sellerStateMissing ? (
+                        <CompanyStateFix />
                       ) : !prospectStateCode ? (
                         <span className="text-ink-3">Pick the customer&apos;s state so GST (CGST+SGST vs IGST) is correct.</span>
                       ) : !buyerStateCode ? (
@@ -1890,21 +2163,37 @@ export function QuoteBuilder() {
                       {line.bulk ? (
                         <div className="mt-0.5 px-2 py-1.5 text-sm tabular-nums text-ink border border-hairline rounded bg-paper-2/40">{line.qty}</div>
                       ) : (
-                        <input
-                          type="number" min={1} value={line.qty}
-                          onChange={(e) => updateQty(line.id, parseInt(e.target.value) || 0)}
-                          className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
-                        />
+                        <>
+                          <input
+                            type="number" min={1} value={lineDrafts[`${line.id}:qty`]?.raw ?? line.qty}
+                            aria-invalid={!!lineDrafts[`${line.id}:qty`]}
+                            onChange={(e) => onQtyInput(line.id, e.target.value)}
+                            className={cn(
+                              "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                              lineDrafts[`${line.id}:qty`] ? "border-rose" : "border-hairline",
+                            )}
+                          />
+                          {lineDrafts[`${line.id}:qty`] && (
+                            <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                        </>
                       )}
                     </label>
                     <label className="block">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Rate {isUsdBill ? "$" : "₹"}{unitLabel}</span>
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
-                        value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
-                        className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                        aria-invalid={!!lineDrafts[`${line.id}:rate`]}
+                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv))}
+                        className={cn(
+                          "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                          lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
+                        )}
                       />
+                      {lineDrafts[`${line.id}:rate`] && (
+                        <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:rate`]!.problem}</span>
+                      )}
                     </label>
                     <label className="block col-span-2">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
@@ -2136,14 +2425,23 @@ export function QuoteBuilder() {
                         // Bulk: qty = Σ domain seats (read-only — edit domains, not qty).
                         <span className="inline-block w-20 px-2 py-1 text-sm text-right tabular-nums text-ink" title="Total seats across all domains">{line.qty}</span>
                       ) : (
-                        <input
-                          aria-label={`Quantity for ${line.name}`}
-                          type="number"
-                          min={1}
-                          value={line.qty}
-                          onChange={(e) => updateQty(line.id, parseInt(e.target.value) || 0)}
-                          className="w-20 px-2 py-1 text-sm text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
-                        />
+                        <>
+                          <input
+                            aria-label={`Quantity for ${line.name}`}
+                            type="number"
+                            min={1}
+                            value={lineDrafts[`${line.id}:qty`]?.raw ?? line.qty}
+                            aria-invalid={!!lineDrafts[`${line.id}:qty`]}
+                            onChange={(e) => onQtyInput(line.id, e.target.value)}
+                            className={cn(
+                              "w-20 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                              lineDrafts[`${line.id}:qty`] ? "border-rose" : "border-hairline",
+                            )}
+                          />
+                          {lineDrafts[`${line.id}:qty`] && (
+                            <span role="alert" className="mt-0.5 block max-w-[10rem] text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="p-2 text-right">
@@ -2154,15 +2452,19 @@ export function QuoteBuilder() {
                           type="number"
                           min={0}
                           step={isUsdBill ? "0.01" : "1"}
-                          value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value) || 0;
-                            handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v));
-                          }}
-                          className="w-24 px-2 py-1 text-sm text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                          aria-invalid={!!lineDrafts[`${line.id}:rate`]}
+                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v)))}
+                          className={cn(
+                            "w-24 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                            lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
+                          )}
                         />
                         <span className="text-3xs text-ink-3 ml-0.5">{unitLabel}</span>
                       </div>
+                      {lineDrafts[`${line.id}:rate`] && (
+                        <span role="alert" className="mt-0.5 block text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:rate`]!.problem}</span>
+                      )}
                     </td>
                     <td className="p-3 text-right tabular-nums text-sm font-medium">
                       {isPerInvoice ? (
@@ -2271,7 +2573,9 @@ export function QuoteBuilder() {
                       helper a few fields up correctly said the head was still unknown.
                       Two labels on one screen, one of them wrong, is worse than either
                       alone: the operator believes the confident one. */}
-                  {!buyerStateCode
+                  {sellerStateMissing
+                    ? `Set your company's state to fix the GST head — the ${taxRate}% total is the same either way`
+                    : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : interState
                       ? `Different state → IGST applicable @ ${taxRate}%`
@@ -2416,7 +2720,7 @@ export function QuoteBuilder() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
-                      : hsnSummary(buyerStateCode ? interState : null)}
+                      : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
                     className={isExport ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
@@ -2441,7 +2745,11 @@ export function QuoteBuilder() {
                 </div>
               )}
 
-              {isExport ? null : interState ? (
+              {/* R-431: an unknown head (company or customer state empty) is one GST line,
+                  never a guessed CGST + SGST split. The amount is the same either way. */}
+              {isExport ? null : (sellerStateMissing || !buyerStateCode) ? (
+                <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
+              ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : (
                 <>
@@ -2645,12 +2953,13 @@ export function QuoteBuilder() {
           <Button
             variant="primary"
             icon="send"
-            onClick={() => handleSubmit("sent")}
-            loading={createQuote.isPending}
+            onClick={() => handleSubmit("sent", "send-now")}
+            loading={createQuote.isPending || emailing}
             disabled={sendDisabled}
+            title={sendPlan === "email" && sendRecipient ? `Saves and emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — marks it sent without emailing" : undefined}
           >
-            <span className="md:hidden">Save &amp; send</span>
-            <span className="hidden md:inline">Save &amp; send quote</span>
+            <span className="md:hidden">{sendLabel.short}</span>
+            <span className="hidden md:inline">{sendLabel.full}</span>
             <Kbd keys={["Ctrl", "Enter"]} className="ml-1.5 hidden sm:inline-flex" />
           </Button>
           </div>
@@ -2750,9 +3059,9 @@ export function QuoteBuilder() {
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
         customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
-        contactName={isLeadMode ? leadContact : null}
-        contactEmail={isLeadMode ? leadEmail : null}
-        contactPhone={isLeadMode ? leadPhone : null}
+        contactName={previewContact.contactName}
+        contactEmail={previewContact.contactEmail}
+        contactPhone={previewContact.contactPhone}
         lineItems={lineItems}
         subtotal={subtotal}
         discountPct={0}
@@ -2911,5 +3220,24 @@ function LineSupportToggle({ line, catalog, lineItems, onAdd }: {
     >
       <Icon name="plus" size={11} /> Add support · {rupee(price)}/yr
     </button>
+  );
+}
+
+/**
+ * R-431 (board R-406): shown in place of "✓ Intra-state" when the company's own state is
+ * empty — a one-click link to the S31 setup spot that fixes it (Settings → Company).
+ * Inline (span) so it sits inside the existing status <p> lines.
+ */
+function CompanyStateFix() {
+  return (
+    <span className="text-amber-ink" role="alert">
+      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.{" "}
+      <Link
+        href={COMPANY_STATE_FIX.href as never}
+        className="font-semibold underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 rounded-sm"
+      >
+        {COMPANY_STATE_FIX.label} →
+      </Link>
+    </span>
   );
 }

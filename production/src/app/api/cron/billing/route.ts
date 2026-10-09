@@ -41,6 +41,8 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { plannedInstalments, instalmentSkip, instalmentsDue } from "@/lib/billing/instalments";
+import { billingTermStart } from "@/lib/billing/subscription-schedule";
+import { addDaysISO } from "@/lib/dates/ist";
 import { reportCron } from "@/lib/ops/cron-report";
 
 export const dynamic = "force-dynamic";
@@ -166,7 +168,19 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
         continue;
       }
 
-      const termStart = planned[0].termStart;
+      /* R-451: the corrected term start can be one day earlier than the key this term's
+         instalments were already filed under — keep that key, or they are made twice. */
+      const correctedStart = planned[0].termStart;
+      const { data: termRows, error: tsErr } = await supabase
+        .from("subscription_billings")
+        .select("term_start")
+        .eq("subscription_id", sub.id)
+        .in("term_start", [correctedStart, addDaysISO(correctedStart, 1)]);
+      if (tsErr) throw new Error(tsErr.message);
+      const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start));
+      if (termStart !== correctedStart) {
+        for (const p of planned) p.termStart = termStart;
+      }
 
       const { data: existing, error: exErr } = await supabase
         .from("subscription_billings")

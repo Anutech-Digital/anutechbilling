@@ -18,7 +18,7 @@ import { downloadCSV } from "@/lib/csv";
 import { LEADS_CSV_HEADERS, leadsCsvRows } from "@/lib/export/crm-csv";
 import { fetchLeadsForExport } from "@/lib/queries/leads";
 import { toastError } from "@/lib/errors/toast-error";
-import type { LeadCounts } from "@/lib/leads/list-page";
+import { teamNoteCounts, type LeadCounts } from "@/lib/leads/list-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -40,6 +40,7 @@ import { istToday } from "@/lib/dates/ist";
 import { UNASSIGNED } from "@/lib/leads/list-selectors";
 import { useTeamMembers } from "@/lib/queries/team";
 import { sourceFilterOptions, sourceLabel } from "@/lib/leads/lead-sources";
+import { DEFAULT_LEAD_SORT, LEAD_SORT_LABELS, LEAD_SORTS, type LeadSort } from "@/lib/leads/lead-sort";
 
 /** R-056: why the Kanban button does nothing on a phone. */
 export const KANBAN_MOBILE_HINT = "Kanban needs a larger screen";
@@ -88,6 +89,9 @@ export interface LeadsToolbarProps {
   /** R-392: canonical source keys (lead-sources.ts); empty = every source. */
   sourceFilter: string[];
   setSourceFilter: React.Dispatch<React.SetStateAction<string[]>>;
+  /** R-420: the Sort menu's choice (?sort=) — the list and the Kanban both follow it. */
+  leadSort: LeadSort;
+  setLeadSort: (s: LeadSort) => void;
   isSales: boolean;
   kpiOpen: boolean;
   setKpiOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -101,7 +105,7 @@ export function LeadsToolbar({
   pool, leadMeMember, leadTeam, leadTeamMode, setLeadTeamMode, search, setSearch, viewCounts,
   everythingCount, isDealsPage = false, currentUser, duplicateCountForTab, junkCount, junkSuspectCount, smartView,
   selectSmartView, folderRows, folder, selectFolder, effectiveView, setView, isMobile = false, activeFilterCount,
-  filterStages, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, ownerFilter, setOwnerFilter, sourceFilter, setSourceFilter, isSales, kpiOpen,
+  filterStages, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, ownerFilter, setOwnerFilter, sourceFilter, setSourceFilter, leadSort, setLeadSort, isSales, kpiOpen,
   setKpiOpen, setCsvImportOpen, setCampaignOpen, setGoogleImportOpen, setShareOpen,
 }: LeadsToolbarProps) {
   // Names for the "Kiska" filter — the reporting tree (leadTeam) carries ids and roles only.
@@ -145,10 +149,7 @@ export function LeadsToolbar({
       /* Counted BEFORE the toggle narrows anything — the note describes the pool being
          filtered, not the result. Unowned rows show in both halves, so without this the
          note claims "only records assigned to you" over rows assigned to nobody. */
-      counts={{
-        total: pool.total,
-        unassigned: pool.unassigned,
-      }}
+      counts={teamNoteCounts(pool)}
     />
 
     <div className="shrink-0 mb-3 flex items-center gap-2 flex-wrap">
@@ -177,7 +178,7 @@ export function LeadsToolbar({
         onFolder={(id) => selectFolder(id as typeof folder)}
       />
 
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap">
         {/* View Switcher: Kanban vs List */}
         <div className="inline-flex rounded-md border border-hairline overflow-hidden">
           <button
@@ -336,6 +337,33 @@ export function LeadsToolbar({
                 </DropdownMenuItem>
               </>
             )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* R-420: Sort — one choice for the list and the Kanban, kept in the URL (?sort=).
+            On a phone the button is the icon alone (plus a dot when it is not the default),
+            so the row still fits 375px; the menu names every order. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button icon="sort" size="sm" aria-label={`Sort: ${LEAD_SORT_LABELS[leadSort]}`} title="Sort">
+              <span className="hidden sm:inline">{LEAD_SORT_LABELS[leadSort]}</span>
+              {leadSort !== DEFAULT_LEAD_SORT && (
+                <span aria-hidden className="sm:hidden ml-0.5 inline-block w-1.5 h-1.5 rounded-full bg-amber" />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Sort by</DropdownMenuLabel>
+            {LEAD_SORTS.map((s) => (
+              <DropdownMenuCheckboxItem
+                key={s}
+                checked={leadSort === s}
+                onCheckedChange={() => setLeadSort(s)}
+                className="text-sm"
+              >
+                {LEAD_SORT_LABELS[s]}
+              </DropdownMenuCheckboxItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
 

@@ -35,6 +35,7 @@ import type { Subscription } from "@/lib/supabase/database.types";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
+import { addSeatsErrorMessage, type AddSeatsOk } from "./add-seats-error";
 
 interface Props {
   sub:          Subscription;
@@ -61,6 +62,11 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     if (open) setSeatsStr(String(initialSeats ?? 1));
   }, [open, initialSeats, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
+  /* R-450: a failed add used to show only a toast, easy to miss behind the open dialog
+     ("nothing happens"). The reason now also stays in the dialog, next to the button,
+     until the operator changes something or tries again. */
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+  React.useEffect(() => { setSubmitError(null); }, [open, sub.id, seatsStr]);
 
   const additionalSeats = Math.max(0, Math.min(5000, Math.round(Number(seatsStr) || 0)));
 
@@ -117,30 +123,35 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     }
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
     setSubmitting(true);
+    setSubmitError(null);
     try {
       const res  = await fetch(`/api/subscriptions/${sub.id}/add-seats`, {
         method:  "POST",
         headers: { "content-type": "application/json" },
         body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current }),
       });
-      const json = await res.json();
+      const json: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        toast.error(json.error ?? "Could not add seats.", { description: "No seats were added and no quote was made. Try again." });
+        const msg = addSeatsErrorMessage(res.status, json);
+        setSubmitError(msg);
+        toast.error(msg, { description: "No seats were added and no quote was made." });
         return;
       }
+      const ok = json as AddSeatsOk;
       toast.success(
         /* A replay says so. Claiming "+N seats added" a second time would tell the
            operator two expansions happened when one did — the exact confusion the key
            exists to prevent, moved from the database into their head. */
-        json.replayed
-          ? `Already added · Quote ${json.quoteId} (${rupee(json.amount)}) — opening it now`
-          : `+${additionalSeats} seats added · Quote ${json.quoteId} (${rupee(json.amount)})${
-              json.poId ? ` · PO ${json.poId} drafted` : ""
+        ok.replayed
+          ? `Already added · Quote ${ok.quoteId} (${rupee(ok.amount)}) — opening it now`
+          : `+${additionalSeats} seats added · Quote ${ok.quoteId} (${rupee(ok.amount)})${
+              ok.poId ? ` · PO ${ok.poId} drafted` : ""
             }`,
       );
       onOpenChange(false);
-      router.push(`/quotes/${json.quoteId}`);
+      router.push(`/quotes/${ok.quoteId}`);
     } catch (err) {
+      setSubmitError("Seats not added — could not reach the server. Check your connection, then try again.");
       toastError(err, { fallback: "Could not add seats.", description: "Check your connection, then try again — pressing again will not add the seats twice." });
     } finally {
       setSubmitting(false);
@@ -250,6 +261,12 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
               the remaining <Badge size="sm" kind="muted">{daysRemaining} days</Badge>.
             </p>
           </>
+        )}
+
+        {submitError && (
+          <p role="alert" className="mt-3 rounded-md border border-rose/40 bg-rose/5 px-3 py-2 text-xs text-rose">
+            {submitError}
+          </p>
         )}
 
         <DialogFooter>

@@ -60,7 +60,17 @@ function daysSinceTouch(lastActivityAt: string | null | undefined, now: Date): n
 
 type HealthLead = Pick<Lead, "stage" | "follow_up_date"> & {
   stage_changed_at?: string | null;
+  /** When the lead arrived — a lead under a day old gets the grace below. */
+  created_at?: string | null;
 };
+
+/** Under 24 h since the lead arrived (R-490). A future stamp (clock skew) counts as new. */
+export function isFirstDay(createdAt: string | null | undefined, now: Date = new Date()): boolean {
+  if (!createdAt) return false;
+  const t = new Date(createdAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return now.getTime() - t < 86_400_000;
+}
 
 export interface HealthInput {
   lead: HealthLead;
@@ -82,11 +92,18 @@ export function dealHealth(input: HealthInput, now: Date = new Date()): DealHeal
   const { lead } = input;
   const issues: string[] = [];
   let incomplete = false;
+  /* R-490 (Abhishek, R-456): a 2-minute-old website lead read "At risk of going cold".
+     Nobody can have called, moved or heard back from a lead that just arrived, so on its
+     first day those three are not held against it. The follow-up check stays — booking
+     the next step is the one thing that should happen on day one. */
+  const firstDay = isFirstDay(lead.created_at, now);
 
   // 1. Recent touch — full marks inside a week, nothing after a fortnight.
   const touchDays = daysSinceTouch(input.lastActivityAt, now);
   let recentTouch: number;
-  if (touchDays === null) {
+  if (touchDays === null && firstDay) {
+    recentTouch = HEALTH_WEIGHT.recentTouch;
+  } else if (touchDays === null) {
     recentTouch = 0;
     incomplete = true;
     issues.push("Nobody has logged a call, WhatsApp or email on this deal.");
@@ -103,7 +120,9 @@ export function dealHealth(input: HealthInput, now: Date = new Date()): DealHeal
   // 2. Movement — is it advancing, or parked in one stage?
   const stageDays = daysInStage(lead, now);
   let movement: number;
-  if (stageDays === null) {
+  if (stageDays === null && firstDay) {
+    movement = HEALTH_WEIGHT.movement;
+  } else if (stageDays === null) {
     movement = 0;
     incomplete = true;
     issues.push("No stage-change date recorded yet, so movement cannot be judged.");
@@ -129,7 +148,7 @@ export function dealHealth(input: HealthInput, now: Date = new Date()): DealHeal
   }
 
   // 4. Has the customer engaged back at all?
-  const responded = input.customerResponded ? HEALTH_WEIGHT.responded : 0;
+  const responded = input.customerResponded || firstDay ? HEALTH_WEIGHT.responded : 0;
   if (responded === 0) issues.push("No reply from the customer yet.");
 
   const score = recentTouch + movement + nextStep + responded;

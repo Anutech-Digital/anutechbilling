@@ -18,6 +18,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { buildBillingSchedule, upcomingBillings, nextTermStart, type BillingPeriod } from "./schedule";
+import { addDaysISO } from "@/lib/dates/ist";
 
 /** How far ahead the renewal cron shows what is coming. Matches the T-30 heads-up. */
 export const BILLING_LOOKAHEAD_DAYS = 30;
@@ -48,7 +49,7 @@ export function subscriptionSchedule(sub: ScheduleFields): BillingPeriod[] {
 
   let start: string | null = null;
   if (sub.renewal_date) {
-    start = addMonths(nextTermStart(sub.renewal_date), -termMonths);
+    start = addMonths(followingTermStart(sub), -termMonths);
   } else if (sub.start_date) {
     start = sub.start_date.slice(0, 10);
   }
@@ -70,11 +71,63 @@ export function nextTermSchedule(sub: ScheduleFields): BillingPeriod[] {
   const termAmount = Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
   if (termAmount <= 0) return [];
   return buildBillingSchedule({
-    startDate: nextTermStart(sub.renewal_date),
+    startDate: followingTermStart(sub),
     termMonths,
     cycle: sub.billing_cycle ?? "yearly",
     termAmount,
   });
+}
+
+/**
+ * R-451 (9 Oct 2026): the first day of the term AFTER the current one.
+ *
+ * Two shapes of `renewal_date` are in the table today, and the schedule must read both:
+ *   - INCLUSIVE last day (the rule since 11 Sep 2026; "Correct details", imports):
+ *       start 20 Oct 2025 → renewal 19 Oct 2026 → next term starts 20 Oct 2026.
+ *   - ANNIVERSARY (what record_payment still writes for a sale paid through a quote):
+ *       start 8 Oct 2026 → renewal 8 Oct 2027 → next term starts 8 Oct 2027.
+ * Reading an anniversary row as inclusive moved every date one day later — Abhishek's
+ * Scenario 7: "THIS TERM 9 Oct 2026" for a subscription that started on 8 Oct.
+ *
+ * A row is an anniversary row when its renewal_date is exactly a whole number of terms
+ * after its start_date. An inclusive row is always one day short of that, so the two
+ * cannot be confused. With no start_date the stored rule (inclusive) is used.
+ */
+export function followingTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string {
+  const renewal = (sub.renewal_date ?? "").slice(0, 10);
+  if (isAnniversaryRenewal(sub)) return renewal;
+  return nextTermStart(renewal);
+}
+
+/**
+ * R-451: which term_start the billing cron must file this term's instalments under.
+ *
+ * Before R-451 an anniversary row's term was read as starting ONE DAY LATER, and the
+ * cron may already have written that term's instalments under that later term_start.
+ * term_start is part of the unique key, so switching to the corrected date would insert
+ * a second set of instalments for the same term — a customer invoiced twice. When rows
+ * exist under the old (one-day-later) key and none under the corrected one, keep the old
+ * key for this term; the next term is filed under the corrected date.
+ */
+export function billingTermStart(corrected: string, existingTermStarts: readonly string[]): string {
+  if (existingTermStarts.includes(corrected)) return corrected;
+  const legacy = addDaysISO(corrected, 1);
+  return existingTermStarts.includes(legacy) ? legacy : corrected;
+}
+
+/** renewal_date = start_date + N whole terms (N ≥ 1) — see followingTermStart. */
+export function isAnniversaryRenewal(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): boolean {
+  if (!sub.start_date || !sub.renewal_date) return false;
+  const start = sub.start_date.slice(0, 10);
+  const renewal = sub.renewal_date.slice(0, 10);
+  if (renewal <= start) return false;
+  const termMonths = Math.max(1, sub.term_months ?? 12);
+  for (let n = 1; n <= 100; n++) {
+    const d = addMonths(start, n * termMonths);
+    if (d === renewal) return true;
+    if (d > renewal) return false;
+  }
+  return false;
 }
 
 /**

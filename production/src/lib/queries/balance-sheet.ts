@@ -51,6 +51,10 @@ export interface BalanceSheetAuto {
   gstPayable:      number;   // net GST this FY (output − input − GST paid for this FY's returns); may be negative (credit)
   gstPaid:         number;   // GST paid for this FY's return months (already inside gstPayable)
   advanceTaxPaid:  number;   // advance + self-assessment income tax paid for this FY (an asset)
+  /* S45 slice 2 (migration 20261009170000) — expenses whose Cr side was nowhere before. */
+  expensesPayable: number;   // unpaid expenses (amount − TDS), no bank line matched — a liability
+  expensesPaidUnbanked: number; // "paid" expenses (cash / UPI) not matched to any bank line — money already gone; reduces cash-like assets
+  salaryOtherDeductions: number; // "other" deductions withheld from salary — held by the company, owed onward / back (a liability)
   fyLabel:         string;   // e.g. "FY 2026-27" for the GST caveat
 }
 
@@ -65,14 +69,34 @@ export interface BalanceSheetAuto {
  * `net_payable` is preferred over `amount` because migration 0005 freezes the
  * advance adjustment into it (CGST Rule 53) — using `amount` would re-count an
  * advance that was already applied.
+ *
+ * S45 (7 Oct 2026): minus `paid_amount` (record_payment writes it on every part payment,
+ * R-015; Aging reads the same). Counting the whole net_payable while the part payment is
+ * also money received put that amount on the Dr side twice — the Trial Balance moved by it.
  */
 export function computeTradeReceivables(
-  openInvoices: ReadonlyArray<{ id: string; amount?: number | null; net_payable?: number | null }>,
+  openInvoices: ReadonlyArray<{ id: string; amount?: number | null; net_payable?: number | null; paid_amount?: number | null }>,
   projectInvoiceIds: ReadonlySet<string>,
 ): number {
   return openInvoices
     .filter((i) => !projectInvoiceIds.has(i.id))
-    .reduce((s, i) => s + (i.net_payable ?? i.amount ?? 0), 0);
+    .reduce((s, i) => s + Math.max(0, (i.net_payable ?? i.amount ?? 0) - (i.paid_amount ?? 0)), 0);
+}
+
+/**
+ * S45 (7 Oct 2026): money owed BACK to customers after the invoice — overpayment, or a
+ * credit note on an invoice already paid. Per invoiced quote: received − (invoice − credit
+ * notes + debit notes), when positive. Before this it was nowhere: the money sat in cash /
+ * undeposited funds with no liability against it, and the Trial Balance moved by it.
+ * Only a quote's single, non-project invoice (split billing / milestones have their own
+ * arithmetic). Mirrors report_balance_sheet (migration 20261007290000); it is added to
+ * `advancesFromCustomers`.
+ */
+export function computeOwedBackToCustomers(
+  invoicedQuotes: ReadonlyArray<{ received: number; invoice_amount: number; credit_notes: number; debit_notes: number }>,
+): number {
+  return invoicedQuotes.reduce(
+    (s, q) => s + Math.max(0, q.received - (q.invoice_amount - q.credit_notes + q.debit_notes)), 0);
 }
 
 /**
@@ -114,6 +138,60 @@ export function useBalanceSheetAuto() {
       return balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet"));
     },
     staleTime: 30_000,
+  });
+}
+
+// ── Opening balances (S45 slice 2, migration 20261009170000) ────────────────
+/**
+ * CA ke diye opening capital + pichhle saalon ka profit (retained earnings b/f), `as_of`
+ * tareekh par. Khaali by default — app kabhi khud nahi ghadta (AGENTS.md: opening balances
+ * kabhi invent nahi). Bhare hon to Trial Balance aur Balance Sheet "Difference" ki jagah
+ * inhe Equity me dikhate hain. Sirf owner likhta hai (`set_opening_balances`).
+ */
+export interface OpeningBalances {
+  asOf: string;
+  /** null = CA ne ye aankda nahi diya. */
+  ownerCapital: number | null;
+  /** Negative = pichhle saalon ka loss. */
+  retainedEarnings: number | null;
+  notes: string | null;
+}
+
+export function useOpeningBalances() {
+  return useQuery({
+    queryKey: ["balance-sheet", "opening"],
+    queryFn: async (): Promise<OpeningBalances | null> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("opening_balances")
+        .select("as_of, owner_capital, retained_earnings, notes")
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      return { asOf: data.as_of, ownerCapital: data.owner_capital, retainedEarnings: data.retained_earnings, notes: data.notes };
+    },
+  });
+}
+
+/** `null` = dono aankde hatao (Difference line wapas). */
+export function useSetOpeningBalances() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: OpeningBalances | null) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("set_opening_balances", input === null ? {} : {
+        p_as_of: input.asOf,
+        ...(input.ownerCapital !== null ? { p_owner_capital: input.ownerCapital } : {}),
+        ...(input.retainedEarnings !== null ? { p_retained_earnings: input.retainedEarnings } : {}),
+        ...(input.notes ? { p_notes: input.notes } : {}),
+      });
+      if (error) throw error;
+    },
+    onSuccess: (_d, input) => {
+      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+      toast.success(input === null ? "Opening balances removed" : "Opening balances saved");
+    },
+    onError: (err) => toastError(err),
   });
 }
 

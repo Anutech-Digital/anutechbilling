@@ -32,6 +32,8 @@ import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { MsmePayablesCard } from "@/components/features/accounting/msme-payables-card";
+import { OverduePauseCard } from "@/components/features/collections/overdue-pause-card";
+import { WriteOffSuggestionsCard } from "@/components/features/collections/write-off-suggestions-card";
 import { useCreditSummary } from "@/lib/credit/queries";
 
 // ────────────────────────────────────────────────────────────────
@@ -375,6 +377,9 @@ export default function AgingPage() {
       )}
 
       {/* Payables side: MSME vendors ka 45-din (s.43B(h)) flag — S33. */}
+      {/* R-116: pause on overdue (per company) + write-off suggestions (draft, owner confirms). */}
+      <OverduePauseCard />
+      <WriteOffSuggestionsCard />
       <MsmePayablesCard />
     </div>
   );

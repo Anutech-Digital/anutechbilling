@@ -98,7 +98,14 @@ export default function TasksPage() {
                             tasks.filter((t) => t.owner_id === assignee),
     [tasks, assignee, me?.userId],
   );
-  const groups = React.useMemo(() => groupTasks(mineOrTheirs), [mineOrTheirs]);
+  /* R-471: a task moves to Overdue the minute its time passes — re-group once a minute so
+     the page does not wait for a reload to agree with the row's "⚠ Overdue". */
+  const [now, setNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const groups = React.useMemo(() => groupTasks(mineOrTheirs, now), [mineOrTheirs, now]);
   const count = (id: TaskGroupId) => groups.find((g) => g.id === id)?.tasks.length ?? 0;
   const openCount = count("overdue") + count("today") + count("upcoming") + count("nodate");
 

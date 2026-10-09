@@ -14,6 +14,8 @@
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
   "src/lib/a11y/a11y-ratchet.test.tsx",
+  "tests/gen-deploy-db.test.ts",
+  "src/lib/errors/toast-error-r300.test.ts",
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
   "src/lib/a11y/billing-screens-a11y.test.ts",
@@ -25,6 +27,7 @@ export const PUSH_GUARD_SUITES = [
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",
   "src/lib/security/invoker-function-grants.test.ts", // R-401: Cloud SQL gives no PUBLIC EXECUTE
+  "src/lib/security/service-role-policies.test.ts", // R-450: Cloud SQL gives service_role no BYPASSRLS
   // ── repo-source scans (readdirSync / glob over src) ──
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",

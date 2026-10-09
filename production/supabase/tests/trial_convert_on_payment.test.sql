@@ -4,7 +4,8 @@
 -- Proves:
 --   1. record_payment on an accepted quote (customer already set, lead at stage 'trial')
 --      stamps leads.trial_converted_at and moves the lead trial → won.
---   2. The lead's open "Trial…" tasks become 'cancelled'; an unrelated task stays pending.
+--   2. The lead's open "Trial…" tasks become 'cancelled' (not done — R-496); its other open task
+--      becomes 'done' (R-483 Won rule); another lead's trial task and stage stay untouched.
 --   3. A second payment changes nothing (trial_converted_at keeps the first stamp).
 -- Fails before migration 20261007010000_trial_convert_on_payment.sql (lead stays 'trial',
 -- trial_converted_at null).
@@ -28,6 +29,14 @@ insert into public.tasks (tenant_id, title, kind, due_at, lead_id, quote_id, sta
   ('eeeeeeee-0000-0000-0000-000000000282','Trial: send payment link · Acme Trial','followup', now() + interval '7 days', 'L-TR-282',null,'pending'),
   ('eeeeeeee-0000-0000-0000-000000000282','Trial ends today: extend, stop or convert · Acme Trial','followup', now() + interval '11 days', 'L-TR-282',null,'pending'),
   ('eeeeeeee-0000-0000-0000-000000000282','Call about renewal','call', now() + interval '2 days', 'L-TR-282',null,'pending');
+-- R-496: a second, still-open lead in the same tenant. Its own "Trial…" task must not move when
+-- L-TR-282 converts — the trial conversion is scoped to the paid quote's lead only.
+insert into public.leads (id, tenant_id, company, contact_name, contact_email, contact_phone, stage, source, priority,
+                          trial_started_at, trial_expires_at)
+  values ('L-TR-282B','eeeeeeee-0000-0000-0000-000000000282','Other Trial','Neha','neha@other-trial.in','+919800000283','trial','manual','medium',
+          now() - interval '1 day', now() + interval '13 days');
+insert into public.tasks (tenant_id, title, kind, due_at, lead_id, quote_id, status) values
+  ('eeeeeeee-0000-0000-0000-000000000282','Trial: send payment link · Other Trial','followup', now() + interval '5 days', 'L-TR-282B',null,'pending');
 
 do $$
 declare
@@ -47,8 +56,16 @@ begin
 
   select status::text into v_done from public.tasks where lead_id = 'L-TR-282' and title like 'Trial setup%';
   if v_done <> 'done' then raise exception 'FAIL: finished setup task rewritten to %', v_done; end if;
+  -- R-496: this used to expect 'pending'. Since R-483 (20261009160000_lead_followup_sync) a lead
+  -- going Won closes ALL its open tasks as 'done' — a deliberate product rule (Abhishek's audit:
+  -- Today/Tasks kept nagging about a closed sale). Only the "Trial…" reminders are 'cancelled'.
   select status::text into v_other from public.tasks where lead_id = 'L-TR-282' and title = 'Call about renewal';
-  if v_other <> 'pending' then raise exception 'FAIL: unrelated task changed to %', v_other; end if;
+  if v_other <> 'done' then raise exception 'FAIL: non-trial open task on the won lead expected done (R-483), got %', v_other; end if;
+  -- The "unrelated stays untouched" guarantee now lives on another lead: its trial task must not move.
+  select status::text into v_other from public.tasks where lead_id = 'L-TR-282B';
+  if v_other <> 'pending' then raise exception 'FAIL: another lead''s trial task changed to %', v_other; end if;
+  select stage::text into v_other from public.leads where id = 'L-TR-282B';
+  if v_other <> 'trial' then raise exception 'FAIL: another lead''s stage changed to %', v_other; end if;
 
   -- second payment (the balance): nothing moves
   perform pg_sleep(0.01);
@@ -56,6 +73,6 @@ begin
   select trial_converted_at into v_conv2 from public.leads where id = 'L-TR-282';
   if v_conv2 <> v_conv then raise exception 'FAIL: trial_converted_at re-stamped (% → %)', v_conv, v_conv2; end if;
 
-  raise notice 'PASS trial-convert-on-payment: lead trial→won + converted, 2 trial tasks cancelled, others untouched, idempotent';
+  raise notice 'PASS trial-convert-on-payment: lead trial→won + converted, 2 trial tasks cancelled, other open task done (R-483), other lead untouched, idempotent';
 end $$;
 rollback;

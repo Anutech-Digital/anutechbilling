@@ -13,7 +13,6 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Lead } from "@/lib/supabase/database.types";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 
@@ -31,10 +30,13 @@ export interface LeadsStatusStatesProps {
   setAddOpen: (open: boolean) => void;
   setCsvImportOpen: (open: boolean) => void;
   setSmartView: (v: SmartView) => void;
+  /** R-432: filters narrow this view too — offer to clear them alongside "Show all". */
+  filtersActive?: boolean;
+  onClearFilters?: () => void;
 }
 
 export function LeadsStatusStates({
-  error, refetch, isLoading, totalLeads, isDealsPage, isSales, shownCount, smartView, setAddOpen, setCsvImportOpen, setSmartView,
+  error, refetch, isLoading, totalLeads, isDealsPage, isSales, shownCount, smartView, setAddOpen, setCsvImportOpen, setSmartView, filtersActive, onClearFilters,
 }: LeadsStatusStatesProps) {
   return (
     <>
@@ -121,10 +123,46 @@ export function LeadsStatusStates({
               Show all leads
             </Button>
           }
+          secondary={filtersActive && onClearFilters ? <Button icon="x" onClick={onClearFilters}>Clear filters</Button> : undefined}
         />
       )}
     </>
   );
+}
+
+/** R-432: what is narrowing the list right now — search, the Filter menu (stage, priority,
+ *  owner, source), "My assigned" (?who=mine) or a folder. Sort and the smart view are not
+ *  what "Clear filters" resets. Pure, for tests. */
+export interface LeadFilterState {
+  search: string;
+  stages: readonly string[];
+  priorities: readonly string[];
+  owners: readonly string[];
+  sources: readonly string[];
+  who: string;
+  folder: string;
+}
+
+export function hasActiveLeadFilters(f: LeadFilterState): boolean {
+  return (
+    f.search.trim() !== "" ||
+    f.stages.length > 0 ||
+    f.priorities.length > 0 ||
+    f.owners.length > 0 ||
+    f.sources.length > 0 ||
+    f.who === "mine" ||
+    f.folder !== "all"
+  );
+}
+
+/** Show the "nothing matches" state? Only when the workspace HAS leads (an empty workspace
+ *  keeps the first-lead state in LeadsStatusStates) and the current view holds none. The
+ *  other smart views (Today, Hot, …) have their own message there. Pure, for tests. */
+export function showNoMatch(p: {
+  isLoading: boolean; error: Error | null; totalLeads: number | undefined; shownCount: number; smartView: SmartView;
+}): boolean {
+  return !p.isLoading && !p.error && (p.totalLeads ?? 0) > 0 && p.shownCount === 0
+    && (p.smartView === "all" || p.smartView === "everything");
 }
 
 export interface LeadsNoResultsProps {
@@ -133,45 +171,49 @@ export interface LeadsNoResultsProps {
   totalLeads: number | undefined;
   shownCount: number;
   smartView: SmartView;
+  isDealsPage: boolean;
   search: string;
-  setSearch: (v: string) => void;
-  setStageFilter: (v: Lead["stage"][]) => void;
-  setPriorityFilter: (v: Array<"low" | "medium" | "high">) => void;
+  /** Any search / filter / who=mine / folder narrowing the list (hasActiveLeadFilters). */
+  filtersActive: boolean;
+  /** Resets search, stage, priority, owner, source, who and folder — sort stays. */
+  onClearFilters: () => void;
 }
 
+/**
+ * R-432 (staging 7 Oct): /leads?source=website with no website lead showed a blank page —
+ * no rows, no words. Under the "Everything" view (the default) the old hint never fired,
+ * and the Kanban drew empty columns. A blank page after a filter reads as "my data is
+ * gone". Now List and Kanban (and the phone, which is always List) say what happened and
+ * give one button that brings every lead back.
+ */
 export function LeadsNoResults({
-  isLoading, error, totalLeads, shownCount, smartView, search, setSearch, setStageFilter, setPriorityFilter,
+  isLoading, error, totalLeads, shownCount, smartView, isDealsPage, search, filtersActive, onClearFilters,
 }: LeadsNoResultsProps) {
+  if (!showNoMatch({ isLoading, error, totalLeads, shownCount, smartView })) return null;
+  const noun = isDealsPage ? "deals" : "leads";
+  const q = search.trim();
   return (
-    <>
-      {/* No results from search OR tab cross-over hint.
-          The split is BY STAGE, not by plan — see isRaw() above. /leads is stage
-          `new` or `contact`; /deals is demo / trial / quote / won / lost. The old
-          wording here ("no plan picked" / "plan set") was wrong and misled a reader
-          into an inverted picture of where the pipeline actually sits.
-          When the tenant has plenty of data but the current tab is empty, point the
-          operator at the right place instead of a generic "no results". */}
-      {!isLoading && !error && (totalLeads ?? 0) > 0 && shownCount === 0 && smartView === "all" && (
-        <div className="mt-6">
-          {search.trim() ? (
-            <EmptyState
-              icon="search"
-              title="No leads match"
-              body={`No results for "${search}". Try a different search term.`}
-              action={<Button icon="x" onClick={() => setSearch("")}>Clear search</Button>}
-              compact
-            />
-          ) : (
-            <EmptyState
-              icon="search"
-              title="No leads match"
-              body="No results match the active filters. Try clearing filters or stage selection."
-              action={<Button icon="x" onClick={() => { setStageFilter([]); setPriorityFilter([]); }}>Clear filters</Button>}
-              compact
-            />
-          )}
-        </div>
+    <div className="mt-6" data-testid="leads-no-match">
+      {filtersActive ? (
+        <EmptyState
+          icon="search"
+          title={`No ${noun} match these filters`}
+          body={
+            q
+              ? `Nothing matches "${q}" with the current filters. Your ${noun} are still here — clear the filters to see them.`
+              : `Your ${noun} are still here — the filters hide all of them. Clear the filters to see them.`
+          }
+          action={<Button variant="primary" icon="x" onClick={onClearFilters}>Clear filters</Button>}
+          compact
+        />
+      ) : (
+        <EmptyState
+          icon="search"
+          title={`No ${noun} in this view`}
+          body={isDealsPage ? "Deals show here once a lead reaches Demo, Trial or Quote." : "Won leads are on the Deals page."}
+          compact
+        />
       )}
-    </>
+    </div>
   );
 }

@@ -93,3 +93,38 @@ export function boardServerTotals(
     Object.entries(counts.stage_totals).filter(([stage]) => stage !== "lost"),
   ) as LeadCounts["stage_totals"];
 }
+
+/**
+ * R-470 — "Open deals" / "Pipeline" in "Show the numbers", for this page.
+ *
+ * lead_counts().kpi is over EVERY non-junk lead, whatever its stage. On /deals that read
+ * "Open deals 1 · Pipeline ₹64.8K" for a lead in Contacted — a stage /deals does not show —
+ * while Quote Sent, Demo Done and Trial Active were all empty. The tile counted a deal the
+ * page could not list.
+ *
+ * On /deals the open numbers now come from stage_totals — the same scoped set the list and
+ * the board read — over the open deal stages (quote / demo / trial). The subscription /
+ * project split is not in stage_totals, so `openValueProject` is null there and the caller
+ * shows the total alone. /leads keeps kpi, and so does /deals on a server that predates
+ * stage_totals (it cannot do better).
+ */
+export interface OpenKpi { openCount: number; openValue: number; openValueProject: number | null }
+
+const OPEN_DEAL_STAGES: readonly Lead["stage"][] = ["quote", "demo", "trial"];
+
+export function openKpiForPage(
+  counts: Pick<LeadCounts, "kpi" | "stage_totals">, isDealsPage: boolean,
+): OpenKpi {
+  const k = counts.kpi;
+  if (!isDealsPage || !counts.stage_totals) {
+    return { openCount: k.open_count, openValue: k.open_value, openValueProject: k.open_value_project };
+  }
+  let openCount = 0, openValue = 0;
+  for (const s of OPEN_DEAL_STAGES) {
+    const t = counts.stage_totals[s];
+    if (!t) continue;
+    openCount += t.count;
+    openValue += t.value;
+  }
+  return { openCount, openValue, openValueProject: null };
+}

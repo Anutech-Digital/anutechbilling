@@ -72,6 +72,7 @@ import { WORKSPACE_LIST_PRICE_PM } from "@/lib/catalog/workspace-floor";
 import { STAGE_META } from "@/lib/leads/stage-meta";
 import { leadStatePatch, stateFromLeadGstin, stateLabel } from "@/lib/leads/lead-state";
 import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
+import { blankLeadValues, ownerForSave, phoneProblem, priceProblem } from "./add-lead-rules";
 
 /* R-249: the same funnel order and labels as the board (lib/leads/stage-meta). */
 const STAGES: { value: Lead["stage"]; label: string }[] = STAGE_META.map((s) => ({ value: s.id, label: s.label }));
@@ -197,7 +198,7 @@ const PRIORITY_OPTIONS: { value: LeadPriority; label: string; dot: string }[] = 
 // NaN as undefined. Raw leads leave seats / value blank; without this
 // preprocess, Zod's `coerce.number()` turns "" into NaN and fails validation
 // even though the field is .optional().
-const optionalIntField = (max: number) =>
+const optionalIntField = (max: number, min = 0, minMessage?: string) =>
   z.preprocess(
     (v) => {
       if (v === "" || v === null || v === undefined) return undefined;
@@ -213,7 +214,7 @@ const optionalIntField = (max: number) =>
       }
       return v;
     },
-    z.coerce.number().int().min(0).max(max).optional(),
+    z.coerce.number().int().min(min, minMessage).max(max).optional(),
   );
 
 /* ── Contact ZAROORI, company nahi (29 Aug 2026) ─────────────────────────────
@@ -232,7 +233,12 @@ const schema = z.object({
   company:       z.string().optional().or(z.literal("")),
   contact_name:  z.string().min(2, "Contact name is required"),
   contact_email: z.string().email("Invalid email").optional().or(z.literal("")),
-  contact_phone: z.string().optional(),
+  /* R-449: same rule as Quick add — a phone, when given, has 10+ digits. It used to show
+     "5 more digits" and save "12345" anyway. */
+  contact_phone: z.string().optional().superRefine((v, ctx) => {
+    const problem = phoneProblem(v);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  }),
   gstin:         z.string().optional().or(z.literal("")),
   /* R-376 (a): GST state code ("06"). Optional — a valid GSTIN fills it by itself. */
   state_code:    z.string().optional().or(z.literal("")),
@@ -240,8 +246,9 @@ const schema = z.object({
   requirement:   z.string().optional().or(z.literal("")),
   project_timeline: z.string().optional().or(z.literal("")),
   plan:          z.string().optional().or(z.literal("")),
-  seats:         optionalIntField(10000),
-  value:         optionalIntField(100_000_000),
+  /* R-449: 0 seats used to pass here and then be dropped in silence on save. */
+  seats:         optionalIntField(10000, 1, "Seats must be 1 or more."),
+  value:         optionalIntField(100_000_000, 0, "Deal value can't be negative."),
   stage:         z.enum(["new", "contact", "quote", "demo", "trial", "won", "lost"]),
   source:        z.string(),
   priority:      z.enum(["low", "medium", "high"]),
@@ -370,22 +377,24 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           current_provider: editingLead.current_provider ?? "",
           notes:          editingLead.notes         ?? "",
         }
-      : {
-          enquiry_type: "subscription",
-          stage:    defaultStage ?? "new",
-          source:   "manual",
-          priority: "medium",
-          // Seats/value intentionally left blank for raw leads. They get
-          // pre-filled with sensible defaults (10 seats + auto-calc) only
-          // when the user picks a plan — see the useEffect below.
-        },
+      // Seats/value intentionally left blank for raw leads. They get
+      // pre-filled with sensible defaults (10 seats + auto-calc) only
+      // when the user picks a plan — see the useEffect below.
+      : blankLeadValues<FormData["stage"]>(defaultStage),
   });
 
   // Flags the workspace tab while this form holds unsaved input, so closing
   // it asks first and the 8-tab limit cannot evict it silently. isDirty is
   // React Hook Form's own comparison against defaultValues, so re-typing the
   // original value correctly counts as clean.
-  useDraftGuard(isDirty && !isSubmitting);
+  /* R-410 / R-444 / R-468: only while the sheet is OPEN. The form stays mounted when the
+     sheet closes, so a value set behind a closed sheet could leave the tab flagged and the
+     browser asked "Leave site?" on pages where nothing had been typed. */
+  useDraftGuard(open && isDirty && !isSubmitting);
+
+  /* R-442: true once the user picks in the Owner box — "Unassigned" on purpose stays
+     unassigned; untouched means "me" (ownerForSave). */
+  const ownerPicked = React.useRef(false);
 
   /* ── Progressive disclosure ──────────────────────────────────────────────
      Steps are for CREATING a lead only. Somebody who opened this sheet to correct one
@@ -577,9 +586,12 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
     autoCalcArmed.current = false;
     valueTyped.current = false;
     if (!open) {
-      reset();
+      /* Blank, not a bare reset(): that goes back to the FIRST mount's values, which are a
+         lead's when Edit was opened first — Add lead then came up pre-filled with it. */
+      reset(blankLeadValues<FormData["stage"]>(defaultStage));
+      ownerPicked.current = false;
       setPriceText("");
-      setStage("new");
+      setStage(defaultStage ?? "new");
       setSource("manual");
       setPlan("");
       setPriority("medium");
@@ -633,10 +645,10 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
       setForCustomer(Boolean(editingLead.customer_id));
       setCustomerId(editingLead.customer_id ?? "");
     } else {
-      // New-lead default: owner = current user.
-      setOwnerId(me?.userId ?? "");
+      // New-lead default: owner = current user — unless the user already picked one.
+      if (!ownerPicked.current) setOwnerId(me?.userId ?? "");
     }
-  }, [open, editingLead, reset, me?.userId]);
+  }, [open, editingLead, reset, me?.userId, defaultStage]);
 
   /**
    * ─── MISTAKE-PROOFING ONE REGISTERED FIELD ────────────────────────────────
@@ -672,6 +684,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
   const onSubmit = async (data: FormData) => {
     /* Edit has no steps, so this is the only place its deal rules run. */
     if (!checkDealRules()) return;
+    if (priceProblem(priceText)) return;     // shown under the price box
     try {
       // Normalize empties → null so the DB row honors "not qualified yet".
       // A raw lead (no plan/seats/value) lives in Inbox; once these get set,
@@ -708,7 +721,9 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         priority:       data.priority,
         follow_up_date: data.follow_up_date || null,
         expected_close_date: data.expected_close_date || null,
-        owner_id:       data.owner_id       || null,
+        /* R-442: from the Owner box's own state — RHF only knew the value once step 2's
+           hidden input had registered, so most new leads went in with no owner. */
+        owner_id:       ownerForSave({ ownerId, picked: ownerPicked.current, isEditing }),
         subscription_type: project ? null : (data.subscription_type || null),
         billing_cycle:  project ? null : toBillingCycle(data.billing_cycle),
         current_provider: project ? null : (data.current_provider?.trim() || null),
@@ -838,8 +853,15 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           {!isEditing && (
             <SmartPaste
               catalogue={PLANS.map((p) => ({ id: p, name: p }))}
+              lead
               onFill={(v) => {
                 if (v.name)  setValue("contact_name",  v.name,  { shouldDirty: true });
+                /* R-491: company / GSTIN / state / billing (lib/leads/smart-paste-lead.ts). State
+                   before GSTIN — a valid GSTIN then confirms it through the effect above. */
+                if (v.company)      setValue("company",       v.company,      { shouldDirty: true });
+                if (v.stateCode)    setValue("state_code",    v.stateCode,    { shouldDirty: true });
+                if (v.gstin)        setValue("gstin",         v.gstin,        { shouldDirty: true });
+                if (v.billingCycle) setValue("billing_cycle", v.billingCycle, { shouldDirty: true });
                 if (v.email) setValue("contact_email", liveEmail(v.email), { shouldDirty: true });
                 if (v.phone) setValue("contact_phone", commitPhone(v.phone), { shouldDirty: true });
                 /* A paste is the user's own input — it arms seats × price like typing does. */
@@ -976,6 +998,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 id="contact_phone"
                 inputMode="numeric"
                 placeholder="e.g. +91 98765 43210"
+                error={errors.contact_phone?.message}
                 {...smart("contact_phone", { live: livePhone, commit: commitPhone })}
               />
               {/* Catches the ten-digit landline, which looks perfect right up until
@@ -1175,6 +1198,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 value={priceText}
                 onChange={(e) => { armAutoCalc(); setPriceText(liveMoney(e.target.value)); }}
                 onBlur={() => setPriceText((t) => commitMoney(t))}
+                error={priceProblem(priceText) ?? undefined}
               />
               {(() => {
                 /* R-387: say where the starting price came from. A plan this tenant does not
@@ -1407,6 +1431,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                 onValueChange={(v) => {
                   const nextId = v === "__unassigned" ? "" : v;
                   setOwnerId(nextId);
+                  ownerPicked.current = true;
                   (register("owner_id") as any).onChange({ target: { value: nextId, name: "owner_id" } });
                 }}
               >
@@ -1517,6 +1542,8 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                      were built to stop. */
                   const ok = await trigger(step === 1 ? STEP_FIELDS[0] : STEP_FIELDS[1]);
                   /* Step 2 also runs the deal rules (plan / company / close date / Won value). */
+                  /* R-449: a negative price per seat stops here, with its message under the box. */
+                  if (step === 2 && priceProblem(priceText)) return;
                   if (ok && (step !== 2 || checkDealRules())) setStep(step + 1);
                 }}
               >

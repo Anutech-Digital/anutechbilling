@@ -14,6 +14,11 @@
  * Gemini through geminiJson (timeout + circuit breaker, null on every failure). With no
  * key or a failed call it says so plainly and points at the Help panel's Report a problem tab — the chat is
  * a help, never the only way to report.
+ *
+ * R-421 (7 Oct 2026): data questions ("kitne subscription chal rahe hai") get the real number.
+ * In chat the model may ask for read-only data tools (lib/ai/help-data-tools.ts) — they read
+ * with the person's own client (RLS), gated by role — and is asked again with the results;
+ * the answer carries a link button to the page each number came from.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -24,7 +29,8 @@ import { maskPII } from "@/lib/ux/signals";
 import { pagePurpose } from "@/lib/ai/page-purpose";
 import { helpFacts } from "@/lib/ai/help-facts";
 import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
-import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES } from "@/lib/ai/app-help";
+import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES, type HelpAnswer } from "@/lib/ai/app-help";
+import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, toolResultsForPrompt, toolFallbackAnswer, withToolLinks } from "@/lib/ai/help-data-tools";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
 
 const bodySchema = z.object({
@@ -105,16 +111,23 @@ export async function POST(request: NextRequest) {
     : null;
   const testHistory = testHistoryForPrompt(lastRun, process.env.BUILD_SHA?.trim() || "dev");
 
+  /* R-421: in chat the model may first ask for live numbers ({"tools": [...]}) instead of
+     answering; the tools read with THIS person's client (RLS + tenant filter, role-gated)
+     and the model is asked once more with the results. Same model, same call helper. */
+  const tenantId = me?.tenant_id ?? null;
+  const offerTools = mode === "chat" && !!tenantId;
+  const apiKey = gemini.apiKey;
   let failure = "";
-  const raw = await geminiJson<unknown>({
-    apiKey: gemini.apiKey,
+  const ask = (dataTools: string | null, toolResults: string | null) => geminiJson<unknown>({
+    apiKey,
     model: gemini.model,
-    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory }),
+    system: helpSystemPrompt({ pagePath: pagePath ?? null, userName: me?.full_name ?? null, role: me?.role ?? null, mode, pagePurpose: pagePurpose(pagePath), testHistory, dataTools }),
     user: helpUserTurn(messages, {
       trail: trail.length ? trailForPrompt(trail) : null,
       findings: mode === "scan" ? findingsForPrompt(findings) : null,
       outline: mode === "scan" && outline ? maskPII(outline, 1500) : null,
       facts: facts?.text ?? null,
+      toolResults,
     }),
     temperature: 0.3,
     timeoutMs: image ? 40_000 : 25_000,
@@ -122,7 +135,17 @@ export async function POST(request: NextRequest) {
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });
-  const answer = parseHelpAnswer(raw, facts?.customerIds);
+  const raw = await ask(offerTools ? helpDataToolsPrompt() : null, null);
+  const wanted = offerTools ? parseToolRequest(raw) : [];
+  let answer: HelpAnswer | null;
+  if (wanted.length && tenantId) {
+    const results = await runHelpDataTools(supabase, { tenantId, role: me?.role ?? null }, wanted);
+    const second = await ask(HELP_TOOL_RESULTS_RULE, toolResultsForPrompt(results));
+    /* A second call that fails still answers with the numbers — they were read already. */
+    answer = withToolLinks(parseHelpAnswer(second, facts?.customerIds) ?? toolFallbackAnswer(results), results);
+  } else {
+    answer = parseHelpAnswer(raw, facts?.customerIds);
+  }
   if (!answer) {
     if (failure) console.error("[ai/help] no answer:", failure);
     return NextResponse.json({ reply: UNAVAILABLE, bugDraft: null, checklist: [], followUps: [], ai: false });
@@ -131,6 +154,7 @@ export async function POST(request: NextRequest) {
   // Same bug already open in this workspace? RLS limits the read to the caller's tenant.
   let similar: { id: string; title: string }[] = [];
   if (answer.bugDraft && me?.tenant_id) {
+    const draftTitle = answer.bugDraft.title;
     const { data: open } = await supabase
       .from("feedback")
       .select("id, title, page_path")
@@ -139,7 +163,7 @@ export async function POST(request: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(100);
     similar = (open ?? [])
-      .filter((r) => looksLikeSameBug({ title: answer.bugDraft!.title, pagePath: pagePath ?? null }, r))
+      .filter((r) => looksLikeSameBug({ title: draftTitle, pagePath: pagePath ?? null }, r))
       .slice(0, 3)
       .map((r) => ({ id: r.id, title: r.title }));
   }

@@ -165,3 +165,37 @@ describe("healthBadge", () => {
     expect(healthBadge(h)).toEqual({ label: "—", kind: "muted" });
   });
 });
+
+describe("a brand-new lead is never 'going cold' (R-490 / R-456)", () => {
+  const fresh = (minutesOld: number, over: Partial<Lead> = {}) => ({
+    lead: {
+      stage: "new", follow_up_date: null, stage_changed_at: null,
+      created_at: new Date(NOW.getTime() - minutesOld * 60_000).toISOString(), ...over,
+    } as Lead,
+    lastActivityAt: null,
+    customerResponded: false,
+    today: TODAY,
+  });
+
+  it("2 minutes old, nothing logged: not at risk, only the follow-up is asked for", () => {
+    const h = dealHealth(fresh(2), NOW);
+    expect(h.band).toBe("healthy");
+    expect(h.issues).toEqual(["No follow-up booked."]);
+    expect(h.incomplete).toBe(false);
+  });
+
+  it("23 hours old still gets the grace", () => {
+    expect(dealHealth(fresh(23 * 60), NOW).band).not.toBe("at_risk");
+  });
+
+  it("after a day the same untouched lead is at risk again", () => {
+    const h = dealHealth(fresh(25 * 60), NOW);
+    expect(h.band).toBe("at_risk");
+    expect(h.issues).toContain("No reply from the customer yet.");
+  });
+
+  it("a lead with no created_at is scored as before", () => {
+    const h = dealHealth({ ...fresh(2), lead: { stage: "new", follow_up_date: null, stage_changed_at: null } as Lead }, NOW);
+    expect(h.band).toBe("at_risk");
+  });
+});

@@ -33,7 +33,8 @@ function useCustomerHasSubscription(customerId: string | null | undefined, enabl
 export interface LeadDetailFooterProps {
   lead: Lead;
   onEdit: (lead: Lead) => void;
-  handleArchive: () => void;
+  /** Mark lost (asks why first). Named "archive" for history; there is no archive. */
+  handleArchive: () => void | Promise<void>;
   handleDelete: () => void;
   deletePending: boolean;
   handleEmail: () => void;
@@ -64,13 +65,17 @@ export function LeadDetailFooter({
               >
                 Edit
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleArchive}
-              >
-                Archive
-              </Button>
+              {/* R-459: it always marked the lead Lost — now it says so. Hidden where Lost
+                  is not a move (already lost, or won with money behind it). */}
+              {lead.stage !== "lost" && lead.stage !== "won" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleArchive}
+                >
+                  Mark lost
+                </Button>
+              )}
             </div>
             <Button
               size="sm"

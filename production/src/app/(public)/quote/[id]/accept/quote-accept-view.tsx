@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
+import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
 import { loadRazorpayCheckout } from "@/lib/razorpay/checkout-client";
 import type { LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
@@ -45,6 +46,8 @@ export type PublicLine = {
   name: string;
   qty: number;
   rate: number;
+  /** R-495: list price the line was priced from (same unit as `rate`); absent → show only final. */
+  list_rate?: number;
   commitment?: LineCommitment;
   /* What the RESELLER decided the customer may change. Still only a hint to the UI —
      the server re-checks every one of these before it prices anything, because the
@@ -654,7 +657,10 @@ export function QuoteAcceptView({
                     max: line.max_seats ?? Math.max(line.qty * 3, line.qty + 50),
                   }
                 : null;
-              return { line, live, qty, rowUnit, rowAmount, included, bounds };
+              /* R-495: list → discount → final, in the Rate column's unit. Hidden once the
+                 server re-priced the row (a new seat band) — the list figure would be stale. */
+              const breakdown = live?.rePriced ? null : linePriceBreakdown(line, toDisp);
+              return { line, live, qty, rowUnit, rowAmount, included, bounds, breakdown };
             });
 
             const includeBox = (r: (typeof rowData)[number]) =>
@@ -700,6 +706,11 @@ export function QuoteAcceptView({
                         {r.line.commitment && (
                           <p className="text-2xs text-ink-3 mt-0.5">{scheduleLabel(r.line.commitment, effectiveCycle)}</p>
                         )}
+                        {r.breakdown && r.included && (
+                          <p className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-price-breakdown">
+                            {linePriceBreakdownText(r.breakdown, fmtInv)}
+                          </p>
+                        )}
                         {r.live?.rePriced && r.live.bandLabel && (
                           <p className="mt-0.5 text-2xs font-medium text-emerald">
                             {r.qty} seats reaches the {r.live.bandLabel} price
@@ -730,7 +741,7 @@ export function QuoteAcceptView({
             </thead>
             <tbody>
               {rowData.map((r) => {
-                const { line, live, qty, rowUnit, rowAmount, included, bounds } = r;
+                const { line, live, qty, rowUnit, rowAmount, included, bounds, breakdown } = r;
 
                 return (
                   <tr key={line.id} className={cn("border-b border-hairline", !included && "opacity-45")}>
@@ -753,6 +764,11 @@ export function QuoteAcceptView({
                           {line.commitment && (
                             <p className="text-2xs text-ink-3 mt-0.5">
                               {scheduleLabel(line.commitment, effectiveCycle)}
+                            </p>
+                          )}
+                          {breakdown && included && (
+                            <p className="text-2xs text-ink-3 mt-0.5 tabular-nums" data-testid="line-price-breakdown">
+                              {linePriceBreakdownText(breakdown, fmtInv)}
                             </p>
                           )}
                           {live?.rePriced && live.bandLabel && (

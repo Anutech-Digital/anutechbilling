@@ -73,13 +73,18 @@ export const STAGE_META: StageMeta[] = [
 /**
  * Filter offers only the stages that can actually appear on THIS page (else filtering
  * e.g. "Won" on the raw Leads inbox always yields 0 rows). Mirrors the inline row
- * dropdown: raw inbox = New/Contacted; deals = the deal stages.
+ * dropdown: deals = the deal stages.
+ *
+ * R-489 (R-457 leftover): /leads holds every stage except Won (lib/leads/page-scope.ts,
+ * R-057). Quote Sent, Demo, Trial and Lost rows were in the list but not in the filter, so
+ * Lost could not be picked at all. Same set as stageShownOnPage(s, false), written out here
+ * because page-scope imports this file.
  */
 export function filterStagesFor(isDealsPage: boolean): StageMeta[] {
   return STAGE_META.filter((s) =>
     isDealsPage
       ? s.id === "quote" || s.id === "demo" || s.id === "trial" || s.id === "won" || s.id === "lost"
-      : s.id === "new" || s.id === "contact",
+      : s.id !== "won",
   );
 }
 

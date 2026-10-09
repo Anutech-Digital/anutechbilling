@@ -16,6 +16,8 @@
  *
  * Money is formatted via `pdfRupee()` so Indian lakh/crore grouping is preserved.
  */
+import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
+import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 import {
   Document,
   Page,
@@ -621,6 +623,9 @@ export function QuotePDF(props: QuotePDFProps) {
               const unit        = toDisp(line.rate);            // per seat / year
               const grossAnnual = dRound(line.qty * unit);
               const netAnnual   = dRound(grossAnnual * (1 - lineDiscountPct / 100));
+              /* R-495: list price, discount (₹ and %) and final rate — only when the line
+                 carries a list price above its rate; never invented. */
+              const breakdown   = linePriceBreakdown(line, toDisp);
               return (
                 <View key={line.id} style={s.tr} wrap={false}>
                   <View style={s.tdDesc}>
@@ -632,9 +637,12 @@ export function QuotePDF(props: QuotePDFProps) {
                       <Text style={s.lineMeta}>Registration for {line.years} years, paid now · HSN 998313</Text>
                     ) : (
                     <Text style={s.lineMeta}>
-                      Per seat{perInvoice ? "" : " per year"} · HSN 998313
+                      {lineUnitLabel(line, Boolean(perInvoice))} · HSN 998313
                       {line.commitment && ` · ${scheduleLabel(line.commitment, effectiveCycle)}`}
                     </Text>
+                    )}
+                    {breakdown && (
+                      <Text style={s.lineMeta}>{linePriceBreakdownText(breakdown, fmtInv)}</Text>
                     )}
                     {lineDiscountPct > 0 && (
                       <Text style={s.lineMeta}>

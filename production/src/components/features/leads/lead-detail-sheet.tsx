@@ -276,7 +276,7 @@ export function LeadDetailSheet({
     if (block) {
       toast.error("This can't be deleted", {
         description: block,
-        action: lead.stage !== "lost" && lead.stage !== "won" ? { label: "Mark lost", onClick: () => handleArchive() } : undefined,
+        action: lead.stage !== "lost" && lead.stage !== "won" ? { label: "Mark lost", onClick: () => { void handleArchive(); } } : undefined,
       });
       return;
     }
@@ -337,9 +337,14 @@ export function LeadDetailSheet({
     setEmailComposerOpen(true);
   };
 
-  const handleArchive = () => {
-    void changeStage(lead, "lost");
-    toast.success(`${leadTitle(lead).label} archived`);
+  /* R-459: this button said "Archive", toasted "archived" at once, and only THEN asked
+     "Why was this lost?" — Cancel left the lead where it was under a toast that said
+     otherwise. There is no archive; it is Mark lost, and it speaks only once it happened. */
+  const handleArchive = async () => {
+    const label = leadTitle(lead).label;
+    const moved = await changeStage(lead, "lost");
+    if (!moved) return;
+    toast.success(`${label} marked lost`);
     onClose();
   };
 
@@ -673,6 +678,7 @@ export function LeadDetailSheet({
               rose so they pull the eye. */}
           {drawerTab === "followups" && (
             <LeadFollowupsTab
+              followUpDate={lead.stage === "won" || lead.stage === "lost" ? null : lead.follow_up_date}
               openTasks={openTasks}
               doneTasks={doneTasks}
               setAddTaskOpen={setAddTaskOpen}

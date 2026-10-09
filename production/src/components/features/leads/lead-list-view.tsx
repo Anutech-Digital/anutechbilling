@@ -35,6 +35,7 @@ import {
 import { useLeadListColumns } from "@/components/features/leads/use-lead-list-columns";
 import { LeadListRow } from "@/components/features/leads/lead-list-row";
 import { LeadListFooter } from "@/components/features/leads/lead-list-footer";
+import { planBulkStage } from "@/components/features/leads/bulk-stage";
 
 export type { SortCol };
 
@@ -163,9 +164,17 @@ export function LeadListView({
   /** Bulk-mutate stage on all selected leads. Routed through changeStageBulk so
    *  a bulk move to Lost asks for the reason ONCE, not once per row. */
   const bulkChangeStage = async (stage: Lead["stage"]) => {
-    const picked = sorted.filter((l) => selectedIds.has(l.id));
+    /* R-457: same gate as the board — Won never in bulk (it needs a paid quote), and no
+       jumping the quote-first gate. Refused leads stay put and the toast says why. */
+    const plan = planBulkStage(sorted.filter((l) => selectedIds.has(l.id)), stage);
+    if (plan.reason) {
+      toast.error(plan.move.length ? `${plan.refused.length} lead${plan.refused.length === 1 ? "" : "s"} not moved — ${plan.reason.title}` : plan.reason.title, {
+        description: plan.reason.description,
+      });
+    }
+    if (plan.move.length === 0) return;
     try {
-      const moved = await changeStageBulk(picked, stage);
+      const moved = await changeStageBulk(plan.move, stage);
       if (moved === 0) return;                      // dismissed, or nothing to do
       toast.success(`Moved ${moved} lead${moved === 1 ? "" : "s"} to ${STAGE_LABEL[stage]}`);
     } catch {

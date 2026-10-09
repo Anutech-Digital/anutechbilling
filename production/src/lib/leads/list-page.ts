@@ -49,7 +49,9 @@ export type LeadListRow = Pick<Lead, (typeof LEAD_LIST_COLUMNS)[number]> & { is_
  */
 export type LeadListCursor =
   | { created_at: string; id: string }
-  | { wait_key: string; id: string };
+  | { wait_key: string; id: string }
+  /* R-420 (migration 20261007300000): oldest / value / followup / name / stage. */
+  | { sort_num: string; sort_txt: string; id: string };
 
 export interface LeadListPage {
   rows: LeadListRow[];
@@ -76,8 +78,9 @@ export interface LeadListFilters {
   smart_view?: SmartView;
   /** The folder cut — applied only together with smart_view. */
   folder?: SalesFolder | "all";
-  /** 'created' (newest first) or 'wait' (lib/leads/waiting.ts#waitPriority). */
-  sort?: "created" | "wait";
+  /** 'created' (newest first), 'wait' (lib/leads/waiting.ts#waitPriority), or an R-420 order
+      (lib/leads/lead-sort.ts: oldest, value, followup, name, stage). */
+  sort?: "created" | "wait" | "oldest" | "value" | "followup" | "name" | "stage";
   /** Only the OTHER leads that duplicate this one (the merge dialog's cluster). */
   dup_of?: string;
   /** Leads that a lead being TYPED would duplicate (the Add-lead form's warning). */
@@ -157,7 +160,10 @@ export interface LeadCounts {
   pool: { total: number; unassigned: number; high_priority: number; by_owner: Record<string, number>;
     /** R-392: leads per canonical source key (public.lead_source_key) — the Source filter's
         options. Optional: absent until migration 20261007190000 is applied. */
-    by_source?: Record<string, number> };
+    by_source?: Record<string, number>;
+    /** R-489: the pool cut to the stages THIS page shows, junk left out — what the team note
+        counts. Optional: absent until migration 20261009190500 is applied. */
+    page_total?: number; page_unassigned?: number };
   /** The team cut only: "All leads", the Junk entry. */
   workspace: { junk: number; everything: number; suspects: number };
   /** Open leads in the workspace: the View menu. */
@@ -197,4 +203,17 @@ export function toLeadCountsFilters(input: LeadListFilters): LeadListFilters {
   delete f.dup_like;
   if (input.page_stages && input.page_stages.length > 0) f.page_stages = [...input.page_stages].sort();
   return f;
+}
+
+/**
+ * R-489 (R-457 leftover): the counts behind the team-toggle note ("Plus 2 unassigned…").
+ * pool.unassigned counted every lead in the tenant — a WON lead /leads never shows was in it.
+ * The page-scoped numbers win; before migration 20261009190500 is applied they are absent
+ * and the old numbers are used, so nothing breaks in between.
+ */
+export function teamNoteCounts(pool: LeadCounts["pool"]): { total: number; unassigned: number } {
+  if (typeof pool.page_total === "number" && typeof pool.page_unassigned === "number") {
+    return { total: pool.page_total, unassigned: pool.page_unassigned };
+  }
+  return { total: pool.total, unassigned: pool.unassigned };
 }

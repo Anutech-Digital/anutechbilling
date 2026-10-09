@@ -6,6 +6,7 @@
  */
 "use client";
 
+import { boardOrderFor, DEFAULT_LEAD_SORT, type LeadSort } from "@/lib/leads/lead-sort";
 import * as React from "react";
 import {
   keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey,
@@ -197,13 +198,16 @@ export interface BoardData {
    Contacted, so it does not read them at all. */
 export function useLeadsBoard(
   enabled: boolean,
-  opts: { ownerIds?: readonly string[] | null; junk?: boolean; stages?: readonly BoardStage[] } = {},
+  opts: { ownerIds?: readonly string[] | null; junk?: boolean; stages?: readonly BoardStage[]; sort?: LeadSort } = {},
 ) {
   const ownerIds = opts.ownerIds ?? null;
   const junk = opts.junk ?? false;
   const stages = opts.stages ?? BOARD_STAGES;
+  /* R-420: a column over BOARD_COLUMN_CAP loads the top of the CHOSEN order, not just the
+     newest. Keyed by the order terms, so sorts that read the same cards share one cache. */
+  const order = boardOrderFor(opts.sort ?? DEFAULT_LEAD_SORT);
   return useQuery({
-    queryKey: ["leads", "board", ownerIds, junk, stages],
+    queryKey: ["leads", "board", ownerIds, junk, stages, order],
     enabled,
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<BoardData> => {
@@ -214,9 +218,8 @@ export function useLeadsBoard(
           .eq("stage", stage)
           .eq("is_junk", junk);
         if (ownerIds) q = q.or(ownerOr(ownerIds));
-        return q
-          .order("created_at", { ascending: false }).order("id", { ascending: false })
-          .limit(BOARD_COLUMN_CAP);
+        for (const t of order) q = q.order(t.column, { ascending: t.ascending, nullsFirst: t.nullsFirst });
+        return q.limit(BOARD_COLUMN_CAP);
       }));
       const rows: LeadListRow[] = [];
       const totals = {} as BoardData["totals"];
@@ -682,9 +685,11 @@ export function useUpdateLeadStage() {
         description: "The card went back to its previous stage — nothing was saved.",
       });
     },
-    onSuccess: () => {
+    onSuccess: (_row, { stage }) => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      /* Won closes the lead's open tasks in the database (migration 20261009160000). */
+      if (stage === "won") qc.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 }
@@ -777,6 +782,24 @@ export function useClassifyJunk() {
 type LeadInsert = Database["public"]["Tables"]["leads"]["Insert"];
 type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
 
+/**
+ * R-442: a lead typed in by a person belongs to that person unless they chose otherwise.
+ * `owner_id` / `created_by` left out (undefined) → the signed-in user. An explicit null
+ * ("Unassigned" picked on purpose) is kept, and the round-robin trigger may then assign it.
+ * Before this, Add lead and Quick add both saved owner_id = null whenever the form had not
+ * yet learnt who was signed in, and the lead never showed in "My assigned".
+ */
+export function withCreatorAsOwner<T extends { owner_id?: string | null; created_by?: string | null }>(
+  lead: T, userId: string | null | undefined,
+): T {
+  if (!userId) return lead;
+  return {
+    ...lead,
+    owner_id: lead.owner_id === undefined ? userId : lead.owner_id,
+    created_by: lead.created_by ?? userId,
+  };
+}
+
 /** @param opts.quiet no "Lead created" toast — for a form that confirms the save itself (Quick add, R-099). */
 export function useCreateLead(opts: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
@@ -791,10 +814,11 @@ export function useCreateLead(opts: { quiet?: boolean } = {}) {
          company, or not land at all while the toast said "Lead created". Refuse instead;
          onError shows the reason. */
       const tenantId = await requireTenantId(supabase);
+      const { data: session } = await supabase.auth.getSession();
 
       const { data, error } = await supabase
         .from("leads")
-        .insert({ ...lead, tenant_id: tenantId })
+        .insert({ ...withCreatorAsOwner(lead, session.session?.user.id), tenant_id: tenantId })
         .select()
         .single();
 

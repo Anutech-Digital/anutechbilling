@@ -61,7 +61,10 @@ export function LeadsBulkBar({
 }: LeadsBulkBarProps) {
   return (
     <BulkActionBar count={count} noun="lead" onClear={onDeselectAll}>
-      <DropdownMenu>
+      {/* modal={false} (R-457): a modal menu that opens the "Why was this lost?" dialog left
+          `pointer-events: none` on the page when both closed, so no checkbox could be ticked
+          until a reload. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-paper/10 focus-visible:bg-paper/10 focus-visible:outline-none">
           <Icon name="target" size={13} />
           Change stage
@@ -72,12 +75,18 @@ export function LeadsBulkBar({
             Move {count} lead{count === 1 ? "" : "s"} to…
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {LEAD_STAGES.map((s) => (
+          {/* R-457: no Won here — a lead is won by paying its quote, which also makes the
+              customer (bulk-stage.ts). */}
+          {LEAD_STAGES.filter((s) => s.id !== "won").map((s) => (
             <DropdownMenuItem key={s.id} onSelect={() => onChangeStage(s.id)} className="text-sm">
               <span className={cn("mr-2 h-2 w-2 rounded-full", s.dot)} />
               {s.label}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <p className="px-2 py-1.5 text-2xs text-ink-3 max-w-[220px]">
+            Won: open the lead and record payment on its quote.
+          </p>
         </DropdownMenuContent>
       </DropdownMenu>
 

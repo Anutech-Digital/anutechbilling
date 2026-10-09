@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { catalogCostCoverage } from "@/lib/catalog/cost-coverage";
 import { workspaceListPriceGap, type ListPriceGap } from "@/lib/catalog/workspace-floor";
 import { headlinePrice, isOwnService } from "@/lib/catalog/headline-price";
+import { displaySku, avgMarginPerSeat } from "@/lib/catalog/item-display";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -187,10 +188,9 @@ export default function ItemsPage() {
      showing ₹736 for a product every quote prices at ₹1,080. Named, with both numbers, so the
      owner fixes the row — the app never rewrites a stored price itself. */
   const listGaps = active.map((i) => workspaceListPriceGap(i)).filter((g): g is ListPriceGap => g !== null);
-  const totalMrr =
-    active.length > 0
-      ? Math.round(active.reduce((s, i) => s + (i.msrp - i.wholesale), 0) / active.length)
-      : 0;
+  /* R-472: over the same priced rows as "Avg margin %" — support (₹/yr, own service)
+     used to be averaged in as ₹0 and halved this. */
+  const totalMrr = avgMarginPerSeat(priced);
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto space-y-6">
@@ -437,7 +437,7 @@ export default function ItemsPage() {
                 <div className="flex items-start justify-between gap-3 mb-1.5">
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-ink truncate">{it.name}</p>
-                    <p className="font-mono text-2xs text-ink-3 mt-0.5">{it.id}</p>
+                    <p className="font-mono text-2xs text-ink-3 mt-0.5" title={it.id}>{displaySku(it.id)}</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="font-serif text-base tabular-nums text-ink">
@@ -472,7 +472,7 @@ export default function ItemsPage() {
                 <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Type</th>
                 <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Vendor</th>
                 <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">HSN</th>
-                <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">MSRP <span className="font-normal text-ink-3 normal-case">(/seat/mo)</span></th>
+                <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Price</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Cost <span className="font-normal text-ink-3 normal-case">(/seat/mo)</span></th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Margin</th>
                 <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Status</th>
@@ -493,7 +493,7 @@ export default function ItemsPage() {
                       !it.is_active && "opacity-50"
                     )}
                   >
-                    <td className="p-3 font-mono text-xs">{it.id}</td>
+                    <td className="p-3 font-mono text-xs" title={it.id}>{displaySku(it.id)}</td>
                     <td className="p-3 font-medium text-sm">{it.name}</td>
                     <td className="p-3 text-sm">
                       {it.kind === "main" ? (
@@ -510,7 +510,8 @@ export default function ItemsPage() {
                     <td className="p-3 font-mono text-xs text-ink-2">{it.hsn ?? "—"}</td>
                     <td className="p-3 text-right tabular-nums text-sm">
                       {rupee(headlinePrice(it).amount)}
-                      {headlinePrice(it).unit === "yr" && <span className="text-3xs text-ink-3">/yr</span>}
+                      {/* R-472: the unit sits on each row — support is priced per year. */}
+                      <span className="text-3xs text-ink-3">{headlinePrice(it).unit === "yr" ? "/yr" : "/seat/mo"}</span>
                     </td>
                     <td className="p-3 text-right tabular-nums text-sm text-ink-3">
                       {/* "₹0" reads as a free product. It almost always means nobody has
@@ -828,8 +829,17 @@ function PublicBuyPagesCard({ items }: { items: Item[] }) {
                   </Button>
                 </div>
               ) : (
-                <div className="text-2xs text-ink-3 italic">
-                  Build this landing page in the next sprint.
+                /* R-472: was a developer to-do note shown to the tenant; now a next step. */
+                <div className="space-y-2">
+                  <p className="text-2xs text-ink-3">
+                    This buy page is not ready yet. Until it is, send these customers your enquiry form.
+                  </p>
+                  <Button asChild variant="default" size="sm" className="w-full justify-center">
+                    <Link href="/enquiry" target="_blank" rel="noopener noreferrer">
+                      <Icon name="external" size={12} className="mr-1.5" />
+                      Open enquiry form
+                    </Link>
+                  </Button>
                 </div>
               )}
             </div>

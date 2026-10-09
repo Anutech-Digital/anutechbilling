@@ -12,7 +12,7 @@
  * aur tab yahan wahi badlaav jaan-boojh kar, test ke saath, kiya jaata hai. Warna parity
  * test ek aisi cheez se milata rahega jo kabhi chali hi nahi.
  */
-import { computeCustomerAdvances, computeTradeReceivables, type BalanceSheetAuto } from "@/lib/queries/balance-sheet";
+import { computeCustomerAdvances, computeOwedBackToCustomers, computeTradeReceivables, type BalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import type { LedgerEntry } from "@/lib/accounting/ledger";
 import type { LedgerVendor } from "@/lib/queries/ledger";
 import { incomeTaxPaidForFy, type TaxPaymentLike } from "@/lib/accounting/tax-payments";
@@ -34,12 +34,15 @@ export interface BsRawRows {
   /** bank_account_current_balance(id) har account ka — purana N+1. */
   balanceOf: Record<string, number | null>;
   /** R-179: received payments jin par koi bank line match nahi, aur project payments bina bank_txn_id. */
-  unbankedPays: { amount: N }[];
+  /** S45: `tds` = tds_receivable.tds_amount on that payment (never cash). */
+  unbankedPays: { amount: N; tds?: N }[];
   unbankedProjPays: { amount: N }[];
-  openInv: { id: string; amount: N; net_payable: N; status: string }[];
+  openInv: { id: string; amount: N; net_payable: N; paid_amount?: N; status: string }[];
   msInv: { invoice_id: string | null }[];
   recdPays: { quote_id: string | null; amount: N; status: string }[];
   quoteInv: { id: string; invoice_id: string | null }[];
+  /** S45: each quote's single, non-project invoice — received vs invoice ± notes. */
+  invoicedQuotes?: { received: number; invoice_amount: number; credit_notes: number; debit_notes: number }[];
   projs: { id: string }[];
   ms: { project_id: string; total_amount: N; invoice_id: string | null }[];
   projPays: { project_id: string; amount: N }[];
@@ -83,12 +86,16 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
 
   /* R-179 — jaan-boojh kar badlaav (migration 20261006140000): mila paisa jo bank line se
      match nahi hua, asset. Pehle ye kahin nahi gina jaata tha. */
-  const undepositedFunds = r.unbankedPays.reduce((s, p) => s + (p.amount ?? 0), 0)
+  /* S45 — jaan-boojh kar badlaav (migration 20261007290000): payment ka TDS cash nahi
+     (tds_receivable me hai); part payment receivable ghatata hai; invoice ke baad customer
+     ka bakaaya (overpayment / paid invoice par credit note) liability. */
+  const undepositedFunds = r.unbankedPays.reduce((s, p) => s + (p.amount ?? 0) - (p.tds ?? 0), 0)
                          + r.unbankedProjPays.reduce((s, p) => s + (p.amount ?? 0), 0);
 
   const projectInvoiceIds = new Set(r.msInv.map((m) => m.invoice_id as string));
   const receivables = computeTradeReceivables(r.openInv, projectInvoiceIds);
-  const advancesFromCustomers = computeCustomerAdvances(r.recdPays, r.quoteInv);
+  const advancesFromCustomers = computeCustomerAdvances(r.recdPays, r.quoteInv)
+                              + computeOwedBackToCustomers(r.invoicedQuotes ?? []);
 
   const projIds = r.projs.map((p) => p.id);
   let projectReceivable = 0;
@@ -154,7 +161,9 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid, fyLabel };
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
+    /* S45 slice 2 heads (migration 20261009170000) are SQL-only — the old per-row code never had them. */
+    expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel };
 }
 
 /* ═══ P&L ═══════════════════════════════════════════════════════════════════ */

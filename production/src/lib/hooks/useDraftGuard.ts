@@ -25,9 +25,18 @@
 
 import * as React from "react";
 import { useWorkspaceTabs } from "@/components/providers/workspace-tabs-provider";
+import { setFormDirty } from "./dirty-forms";
 
 export function useDraftGuard(isDirty: boolean): void {
   const { activeId, setDraft } = useWorkspaceTabs();
+
+  const token = React.useRef<symbol>(Symbol("draft"));
+  React.useEffect(() => {
+    const t = token.current;
+    // R-490: what the browser close warning reads (dirty-forms.ts).
+    setFormDirty(t, isDirty);
+    return () => setFormDirty(t, false);
+  }, [isDirty]);
 
   React.useEffect(() => {
     if (!activeId) return;

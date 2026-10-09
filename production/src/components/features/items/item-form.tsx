@@ -19,6 +19,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { TierPriceInput } from "./tier-price-input";
 import { FormField } from "@/components/ui/label";
 import {
   Select,
@@ -396,28 +397,27 @@ export function ItemForm({ open, onOpenChange, item }: ItemFormProps) {
                     <div className="text-2xs text-ink-3">{row.hint}</div>
                   </div>
                   <div>
-                    <Input
-                      type="number"
+                    {/* R-441: TierPriceInput keeps what is typed while the box has focus. */}
+                    <TierPriceInput
                       min={0}
                       step="any"
                       prefix="₹"
                       suffix={row.unit === "yr" ? "/yr" : "/mo"}
                       aria-label={`${row.label} customer price`}
-                      value={displayMsrp || ""}
-                      onChange={(e) => handleEdit("msrp", parseFloat(e.target.value) || 0)}
+                      value={displayMsrp}
+                      onValue={(n) => handleEdit("msrp", n)}
                       className="text-right tabular-nums"
                     />
                   </div>
                   <div>
-                    <Input
-                      type="number"
+                    <TierPriceInput
                       min={0}
                       step="any"
                       prefix="₹"
                       suffix={row.unit === "yr" ? "/yr" : "/mo"}
                       aria-label={`${row.label} cost price`}
-                      value={displayWholesale || ""}
-                      onChange={(e) => handleEdit("wholesale", parseFloat(e.target.value) || 0)}
+                      value={displayWholesale}
+                      onValue={(n) => handleEdit("wholesale", n)}
                       className="text-right tabular-nums"
                     />
                   </div>

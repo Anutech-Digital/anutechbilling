@@ -13,6 +13,8 @@ import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { cn } from "@/lib/utils";
 import { leadTitle } from "@/lib/leads/display-name";
+import { useItems } from "@/lib/queries/items";
+import { leadPlanDisplay } from "@/lib/leads/lead-plan-display";
 
 interface LeadCardProps {
   lead: LeadListRow;
@@ -31,6 +33,10 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
   const ownerInitials = lead.contact_name ? initials(lead.contact_name) : "—";
   const age = formatDate(lead.created_at, "relative");
   const isHighValue = isHighValueLead(lead);
+  /* R-456: catalogue plan name + seats × rate when the lead has no value of its own
+     (lib/leads/lead-plan-display.ts). One cached items query for the whole board. */
+  const { data: catalogItems } = useItems();
+  const planShow = leadPlanDisplay(lead, catalogItems);
 
   // Intent + staleness come from lib/leads/heat — the SAME helpers the list view
   // and the mobile card use. This card used to carry its own third definition
@@ -120,8 +126,8 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
       </div>
 
       {/* Seats · plan */}
-      <div className="text-xs text-ink-3 mt-1.5 truncate" title={`${lead.seats ?? "—"} seats · ${lead.plan ?? "—"}`}>
-        {lead.seats ?? "—"} seats · {lead.plan ?? "—"}
+      <div className="text-xs text-ink-3 mt-1.5 truncate" title={`${lead.seats ?? "—"} seats · ${planShow.name ?? "—"}`}>
+        {lead.seats ?? "—"} seats · {planShow.name ?? "—"}
       </div>
 
       {/* Bottom row: Value (serif) | Age & Stale Indicator */}
@@ -156,7 +162,8 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
       <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-hairline">
         <span className={cn("font-serif tabular-nums text-sm font-bold inline-flex items-center gap-1", isHighValue ? "text-emerald" : "text-amber-ink")}>
           {isHighValue && <span aria-hidden className="text-xs">★</span>}
-          {lead.value !== null ? rupee(lead.value, { compact: true }) : "—"}
+          {planShow.value !== null ? rupee(planShow.value, { compact: true }) : "—"}
+          {planShow.estimated && <span className="text-3xs font-sans font-normal text-ink-3" title="Seats × catalogue rate, before GST">est.</span>}
         </span>
 
         {/* The stale badge lives next to the company name above (one per card).

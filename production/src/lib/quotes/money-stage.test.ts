@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moneyStage, quoteMoneyActions, type QuoteMoneyInput } from "./money-stage";
+import { moneyStage, quoteMoneyActions, splitBilledCycleOf, type QuoteMoneyInput } from "./money-stage";
 import { rupee } from "@/lib/utils";
 
 const q = (over: Partial<QuoteMoneyInput> = {}): QuoteMoneyInput => ({
@@ -187,5 +187,36 @@ describe("a payment is not hidden by an unmoved status label", () => {
     expect(moneyStage({ total: 100, received: 0, status: "draft", paymentStatus: "none", invoiceId: null })).toBe("draft");
     expect(moneyStage({ total: 100, received: 0, status: "sent", paymentStatus: "none", invoiceId: null })).toBe("open");
     expect(moneyStage({ total: 100, received: 0, status: "accepted", paymentStatus: "none", invoiceId: null })).toBe("unpaid");
+  });
+});
+
+describe("R-446: a per-period plan never offers a whole-term GST invoice", () => {
+  it("paid monthly quote: no Generate button, the note says each period is invoiced", () => {
+    const a = quoteMoneyActions(q({ received: 45360, paymentStatus: "received", splitBilledCycle: "monthly" }), rupee);
+    expect(a.canGenerateInvoice).toBe(false);
+    expect(a.note).toContain("Billed monthly: each period gets its own GST invoice");
+    expect(a.note).not.toContain("Raise the GST invoice");
+  });
+  it("unpaid / part-paid still take payment, without the invoice button", () => {
+    const u = quoteMoneyActions(q({ splitBilledCycle: "quarterly" }), rupee);
+    expect([u.canRecordPayment, u.canGenerateInvoice]).toEqual([true, false]);
+    const p = quoteMoneyActions(q({ received: 1000, splitBilledCycle: "half_yearly" }), rupee);
+    expect([p.canRecordPayment, p.canGenerateInvoice, p.recordLabel]).toEqual([true, false, "Record balance payment"]);
+    expect(p.note).toContain("half-yearly");
+  });
+  it("yearly is unchanged", () => {
+    expect(quoteMoneyActions(q({ received: 45360, splitBilledCycle: null }), rupee).canGenerateInvoice).toBe(true);
+  });
+  it("splitBilledCycleOf: subscriptions win, then the quote's own cycle", () => {
+    expect(splitBilledCycleOf("yearly", ["monthly"])).toBe("monthly");
+    expect(splitBilledCycleOf("monthly", ["yearly"])).toBeNull();
+    expect(splitBilledCycleOf("monthly", [])).toBe("monthly");
+    expect(splitBilledCycleOf(null, [])).toBeNull();
+  });
+});
+
+describe("R-444 (2): the draft sentence shows once", () => {
+  it("the money row has no draft note (the draft row already says it)", () => {
+    expect(quoteMoneyActions(q({ status: "draft" }), rupee).note).toBe("");
   });
 });
