@@ -6341,6 +6341,175 @@ export type Database = {
           },
         ]
       }
+      late_charge_bills: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          debit_note_id: string
+          fee_amount: number
+          gross_amount: number
+          id: string
+          interest_amount: number
+          interest_from: string | null
+          interest_to: string | null
+          invoice_id: string
+          tax_rate: number
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          debit_note_id: string
+          fee_amount: number
+          gross_amount: number
+          id?: string
+          interest_amount: number
+          interest_from?: string | null
+          interest_to?: string | null
+          invoice_id: string
+          tax_rate: number
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          debit_note_id?: string
+          fee_amount?: number
+          gross_amount?: number
+          id?: string
+          interest_amount?: number
+          interest_from?: string | null
+          interest_to?: string | null
+          invoice_id?: string
+          tax_rate?: number
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "late_charge_bills_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "late_charge_bills_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "late_charge_bills_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      late_fee_audit: {
+        Row: {
+          action: string
+          actor: string | null
+          after: Json | null
+          before: Json | null
+          created_at: string
+          entity_id: string
+          entity_type: string
+          id: string
+          reason: string | null
+          tenant_id: string
+        }
+        Insert: {
+          action: string
+          actor?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          entity_id: string
+          entity_type: string
+          id?: string
+          reason?: string | null
+          tenant_id: string
+        }
+        Update: {
+          action?: string
+          actor?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          entity_id?: string
+          entity_type?: string
+          id?: string
+          reason?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "late_fee_audit_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "late_fee_audit_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      late_fee_overrides: {
+        Row: {
+          entity_id: string
+          entity_type: string
+          mode: string
+          tenant_id: string
+          updated_at: string
+          updated_by: string | null
+          waive_reason: string | null
+          waived: boolean
+        }
+        Insert: {
+          entity_id: string
+          entity_type: string
+          mode: string
+          tenant_id: string
+          updated_at?: string
+          updated_by?: string | null
+          waive_reason?: string | null
+          waived?: boolean
+        }
+        Update: {
+          entity_id?: string
+          entity_type?: string
+          mode?: string
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          waive_reason?: string | null
+          waived?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "late_fee_overrides_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "late_fee_overrides_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lead_activities: {
         Row: {
           created_at: string
@@ -11959,6 +12128,12 @@ export type Database = {
           gstin_verification: Json | null
           gstin_verified_at: string | null
           id: string
+          late_fee_enabled: boolean
+          late_fee_enabled_at: string | null
+          late_fee_flat: number
+          late_fee_grace_days: number
+          late_interest_pct: number
+          late_interest_registered_only: boolean
           logo_url: string | null
           lut_number: string | null
           lut_valid_upto: string | null
@@ -12005,6 +12180,12 @@ export type Database = {
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
           id?: string
+          late_fee_enabled?: boolean
+          late_fee_enabled_at?: string | null
+          late_fee_flat?: number
+          late_fee_grace_days?: number
+          late_interest_pct?: number
+          late_interest_registered_only?: boolean
           logo_url?: string | null
           lut_number?: string | null
           lut_valid_upto?: string | null
@@ -12051,6 +12232,12 @@ export type Database = {
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
           id?: string
+          late_fee_enabled?: boolean
+          late_fee_enabled_at?: string | null
+          late_fee_flat?: number
+          late_fee_grace_days?: number
+          late_interest_pct?: number
+          late_interest_registered_only?: boolean
           logo_url?: string | null
           lut_number?: string | null
           lut_valid_upto?: string | null
@@ -13555,6 +13742,16 @@ export type Database = {
         Args: { p_account_id: string }
         Returns: number
       }
+      bill_late_charges: {
+        Args: {
+          p_fee: number
+          p_interest: number
+          p_interest_from: string
+          p_interest_to: string
+          p_invoice_id: string
+        }
+        Returns: Json
+      }
       book_bank_advance: {
         Args: {
           p_counterparty: string
@@ -14085,6 +14282,7 @@ export type Database = {
         Returns: Json
       }
       ist_today: { Args: never; Returns: string }
+      late_fee_effective: { Args: { p_invoice_id: string }; Returns: Json }
       lead_counts: { Args: { p_filters?: Json }; Returns: Json }
       lead_looks_like_junk: {
         Args: {
@@ -14409,6 +14607,10 @@ export type Database = {
       portal_touch_login: { Args: never; Returns: undefined }
       purge_ux_events: { Args: never; Returns: number }
       quote_line_terms_mixed: { Args: { p_lines: Json }; Returns: boolean }
+      quote_split_due: {
+        Args: { p_as_of: string; p_quote_id: string; p_term_start: string }
+        Returns: number
+      }
       raise_project_milestone_invoice: {
         Args: { p_milestone_id: string }
         Returns: string
@@ -14766,6 +14968,20 @@ export type Database = {
         Args: { p_employee_id: string; p_pin: string }
         Returns: undefined
       }
+      set_late_fee_mode: {
+        Args: { p_entity_id: string; p_entity_type: string; p_mode: string }
+        Returns: string
+      }
+      set_late_fee_settings: {
+        Args: {
+          p_enabled: boolean
+          p_flat_fee: number
+          p_grace_days: number
+          p_interest_pct: number
+          p_registered_only: boolean
+        }
+        Returns: Json
+      }
       set_my_employee: { Args: { p_employee_id: string }; Returns: undefined }
       set_opening_balances: {
         Args: {
@@ -14799,6 +15015,10 @@ export type Database = {
       settle_reimbursement: {
         Args: { p_id: string; p_notes: string; p_settled_on: string }
         Returns: undefined
+      }
+      split_outstanding_for: {
+        Args: { p_quote_id: string; p_term_start: string }
+        Returns: number
       }
       split_project_milestone: {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
@@ -14847,6 +15067,10 @@ export type Database = {
             }
             Returns: string
           }
+      sync_split_outstanding: {
+        Args: { p_subscription_id: string }
+        Returns: number
+      }
       tds_mark_26as_verified: {
         Args: { p_ids: string[]; p_seen_on: string }
         Returns: number
@@ -14922,6 +15146,10 @@ export type Database = {
         Returns: number
       }
       visible_owner_ids: { Args: never; Returns: string[] }
+      waive_late_charges: {
+        Args: { p_invoice_id: string; p_reason: string }
+        Returns: string
+      }
       whatsapp_reminder_status_rank: { Args: { p: string }; Returns: number }
     }
     Enums: {
