@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import {
   DEMO_SESSION_MINUTES, DEMO_VISITOR_EMAIL, DEMO_SEEDER_EMAIL,
   demoCookieLive, demoCookieValue, demoEnabled, demoExitTarget, demoHomePath, demoRequestVerdict,
-  isDemoVisitor, isReadOnlyRefusal,
+  hasAuthCookie, isDemoVisitor, isReadOnlyRefusal,
 } from "./demo-account";
 
 describe("demoEnabled — owner switch, default OFF", () => {
@@ -86,6 +86,16 @@ describe("demoExitTarget / demoHomePath — never an open redirect", () => {
   it("homepage is / on the product host, /reselleros elsewhere", () => {
     expect(demoHomePath("reselleros.anutech.in")).toBe("/");
     expect(demoHomePath("localhost:3000")).toBe("/reselleros");
+  });
+});
+
+describe("hasAuthCookie", () => {
+  it("sees a Supabase sign-in cookie, chunked or not, and nothing else", () => {
+    expect(hasAuthCookie("a=1; sb-abc-auth-token=xyz")).toBe(true);
+    expect(hasAuthCookie("sb-abc-auth-token.0=xyz")).toBe(true);
+    expect(hasAuthCookie("sb-abc-auth-token=")).toBe(false);
+    expect(hasAuthCookie("ros_demo=1")).toBe(false);
+    expect(hasAuthCookie(null)).toBe(false);
   });
 });
 

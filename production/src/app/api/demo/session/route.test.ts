@@ -6,7 +6,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const st = vi.hoisted(() => ({
-  current: null as null | { id: string; email: string },
   demo: { tenant_id: "t-demo", visitor_user_id: "v1", seeder_user_id: "s1" } as null | { tenant_id: string; visitor_user_id: string; seeder_user_id: string },
   signedAs: "v1" as string | null,
   wall: true,
@@ -15,7 +14,7 @@ const st = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: () => ({ auth: { getUser: async () => ({ data: { user: st.current } }), signOut: st.signOut } }),
+  createClient: () => ({ auth: { signOut: st.signOut } }),
   createAdminClient: () => ({}),
 }));
 vi.mock("@/lib/security/rate-limit", () => ({
@@ -30,18 +29,24 @@ vi.mock("@/lib/demo/demo-account.server", () => ({
 
 import { POST } from "./route";
 
-const call = () => POST(new Request("https://reselleros.anutech.in/api/demo/session", {
-  method: "POST", headers: { host: "reselleros.anutech.in", "x-forwarded-proto": "https" },
+const call = (cookie = "") => POST(new Request("https://reselleros.anutech.in/api/demo/session", {
+  method: "POST", headers: { host: "reselleros.anutech.in", "x-forwarded-proto": "https", ...(cookie ? { cookie } : {}) },
 }));
 
 beforeEach(() => {
   process.env.DEMO_ENABLED = "1";
-  Object.assign(st, { current: null, demo: { tenant_id: "t-demo", visitor_user_id: "v1", seeder_user_id: "s1" }, signedAs: "v1", wall: true, rateOk: true });
+  Object.assign(st, { demo: { tenant_id: "t-demo", visitor_user_id: "v1", seeder_user_id: "s1" }, signedAs: "v1", wall: true, rateOk: true });
   st.signOut.mockClear();
 });
 afterEach(() => { delete process.env.DEMO_ENABLED; });
 
 describe("POST /api/demo/session", () => {
+  it("a demo visitor whose window is still open may re-enter", async () => {
+    const r = await call(`sb-abc-auth-token=xyz; ros_demo=${Date.now() + 60_000}`);
+    expect(r.headers.get("location")).toBe("https://reselleros.anutech.in/dashboard");
+    expect(r.headers.get("set-cookie")).toMatch(/ros_demo=\d+/);
+  });
+
   it("opens the demo: 303 to /dashboard with a short-lived ros_demo cookie", async () => {
     const r = await call();
     expect(r.status).toBe(303);
@@ -78,8 +83,7 @@ describe("POST /api/demo/session", () => {
   });
 
   it("never swaps a real signed-in user's session", async () => {
-    st.current = { id: "u1", email: "owner@anutech.in" };
-    const r = await call();
+    const r = await call("sb-abc-auth-token=xyz");
     expect(r.headers.get("location")).toBe("https://reselleros.anutech.in/dashboard");
     expect(r.headers.get("set-cookie") ?? "").not.toMatch(/ros_demo=/);
   });

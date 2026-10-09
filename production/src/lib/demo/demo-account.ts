@@ -120,3 +120,8 @@ export function publicOrigin(headers: Headers, requestUrl: string): string {
 export function demoHomePath(host: string | null | undefined): "/" | "/reselleros" {
   return siteKindForHost(host) === "product" ? "/" : PRODUCT_HOME_ROUTE;
 }
+
+/** Does this Cookie header carry a Supabase sign-in (sb-<ref>-auth-token, possibly chunked)? */
+export function hasAuthCookie(cookieHeader: string | null | undefined): boolean {
+  return (cookieHeader ?? "").split(";").some((c) => /^sb-[^=]*-auth-token(\.\d+)?=./.test(c.trim()));
+}
