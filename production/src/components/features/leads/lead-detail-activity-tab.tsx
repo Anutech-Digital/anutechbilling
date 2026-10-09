@@ -17,7 +17,7 @@ export interface LeadActivityTabProps {
   setNoteDraft: (v: string) => void;
   logActivity: ReturnType<typeof useLogLeadActivity>;
   /** useCallLog(runOutcome) from the drawer — the ONE "Call log" popup. */
-  callLog: { run: (outcome: Parameters<ReturnType<typeof useLeadOutcome>>[0], lead: Lead) => void; dialog: React.ReactNode };
+  callLog: { run: (outcome: Parameters<ReturnType<typeof useLeadOutcome>>[0], lead: Lead, carry?: { note: string; onSaved?: () => void }) => void; dialog: React.ReactNode };
   runOutcome: ReturnType<typeof useLeadOutcome>;
   timeline: ReturnType<typeof buildTimeline>;
 }
@@ -119,7 +119,7 @@ export function LeadActivityTab({ lead, noteDraft, setNoteDraft, logActivity, ca
                     aur "Call log" naam wahi kehta hai jo ye karta hai. */}
                 <button
                   type="button"
-                  onClick={() => callLog.run("talked", lead)}
+                  onClick={() => callLog.run("talked", lead, { note: noteDraft, onSaved: () => setNoteDraft("") })}
                   title="Log a call by voice or text. First call moves the lead to Contacted."
                   className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-amber/50 bg-paper text-xs font-semibold text-amber-ink transition-colors hover:bg-amber-soft/50"
                 >

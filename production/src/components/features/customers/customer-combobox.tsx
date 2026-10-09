@@ -10,7 +10,8 @@
 "use client";
 
 import * as React from "react";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { useCustomers } from "@/lib/queries/customers";
@@ -31,6 +32,16 @@ export function CustomerCombobox({
   const { data: customers = [], isLoading } = useCustomers();
   const [open, setOpen] = React.useState(false);
   const [q, setQ] = React.useState("");
+  /* R-468: inside a Sheet (Add lead → Existing customer) the list was portalled to <body>,
+     OUTSIDE the sheet's focus trap — clicking an option or the search box pulled focus
+     back into the sheet and the list closed with nothing picked. The list now portals into
+     the dialog it sits in (body when there is none, e.g. the quote builder). */
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [container, setContainer] = React.useState<HTMLElement | null>(null);
+  const onOpenChange = (next: boolean) => {
+    if (next) setContainer(triggerRef.current?.closest<HTMLElement>("[role=dialog]") ?? null);
+    setOpen(next);
+  };
 
   const selected = customers.find((c) => c.id === value) ?? null;
 
@@ -52,9 +63,10 @@ export function CustomerCombobox({
     c.contact_email || c.domain || c.state || "—";
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild disabled={disabled}>
         <button
+          ref={triggerRef}
           id={id}
           type="button"
           className={cn(
@@ -94,7 +106,12 @@ export function CustomerCombobox({
         </button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+      <PopoverPrimitive.Portal container={container ?? undefined}>
+      <PopoverPrimitive.Content
+        align="start"
+        sideOffset={4}
+        className="z-50 w-[var(--radix-popover-trigger-width)] rounded-lg border border-hairline bg-paper p-0 shadow-md outline-none"
+      >
         {/* Search */}
         <div className="p-2 border-b border-hairline">
           <div className="flex items-center gap-2 rounded-md border border-hairline px-2.5 py-1.5">
@@ -153,7 +170,8 @@ export function CustomerCombobox({
             <Icon name="plus" size={15} /> New customer
           </button>
         )}
-      </PopoverContent>
+      </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
     </Popover>
   );
 }

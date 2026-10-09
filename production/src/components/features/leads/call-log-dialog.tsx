@@ -35,18 +35,20 @@ import { leadTitle } from "@/lib/leads/display-name";
 export interface CallLogDialogProps {
   /** Kis lead ka call — `null` matlab popup band. */
   companyName: string | null;
+  /** R-444 (3): text already typed in the drawer's note box — the popup starts with it. */
+  initialNote?: string;
   onClose: () => void;
   /** Popup ka text, jaisa hai waisa. Khaali bhi ho sakta hai. */
   onSave: (note: string) => void;
 }
 
-export function CallLogDialog({ companyName, onClose, onSave }: CallLogDialogProps) {
+export function CallLogDialog({ companyName, initialNote = "", onClose, onSave }: CallLogDialogProps) {
   const [note, setNote] = React.useState("");
   const dictation = useDictation(setNote, () => note);
 
   /* Naya lead khulne par purana likha hua saaf. Bina iske ek lead ka note doosre ke
      popup me pada milta hai — aur wo galat lead par darj ho jata. */
-  React.useEffect(() => { if (companyName) setNote(""); }, [companyName]);
+  React.useEffect(() => { if (companyName) setNote(initialNote); }, [companyName, initialNote]);
 
   const close = () => {
     /* Mic band, warna popup band hone ke baad bhi Chrome ka recording indicator jalta
@@ -193,12 +195,15 @@ export function useCallLog<T extends { company: string }>(
   runOutcome: (outcome: LeadOutcome, lead: T, note?: string) => Promise<void>,
 ) {
   const [pending, setPending] = React.useState<T | null>(null);
+  /* R-444 (3): the drawer's typed note rides into the popup, and is cleared there only
+     once the call is saved — Cancel keeps it in the box. */
+  const [draft, setDraft] = React.useState<{ note: string; onSaved?: () => void }>({ note: "" });
 
   const run = React.useCallback(
-    (outcome: LeadOutcome, lead: T) => {
+    (outcome: LeadOutcome, lead: T, carry?: { note: string; onSaved?: () => void }) => {
       /* Sirf `talked` rukta hai — kyunki wahi ek outcome hai jiske paas kehne layak kuch
          hota hai. "No answer" par popup kholna user se khaali form bharwana hai. */
-      if (outcome === "talked") { setPending(lead); return; }
+      if (outcome === "talked") { setDraft(carry ?? { note: "" }); setPending(lead); return; }
       void runOutcome(outcome, lead);
     },
     [runOutcome],
@@ -207,8 +212,9 @@ export function useCallLog<T extends { company: string }>(
   const dialog = (
     <CallLogDialog
       companyName={pending ? leadTitle(pending).label : null}
+      initialNote={draft.note}
       onClose={() => setPending(null)}
-      onSave={(note) => { if (pending) void runOutcome("talked", pending, note); }}
+      onSave={(note) => { if (pending) { void runOutcome("talked", pending, note); draft.onSaved?.(); } }}
     />
   );
 

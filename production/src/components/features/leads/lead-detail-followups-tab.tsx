@@ -4,12 +4,30 @@ import * as React from "react";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { IST_TZ } from "@/lib/dates/ist";
+import { IST_TZ, toIstDate, formatIstDate, istToday } from "@/lib/dates/ist";
 import type { useTasksForLead, useCompleteTask, useSnoozeTask, useDeleteTask } from "@/lib/queries/tasks";
 
 type TaskRow = NonNullable<ReturnType<typeof useTasksForLead>["data"]>[number];
 
+/**
+ * R-459: the lead's own follow-up date (set by "Call tomorrow" / "No answer" and shown in
+ * the list) when no open task already covers that day. The tab used to say "No follow-ups
+ * scheduled" right beside a list row reading FOLLOW-UP 10 Oct.
+ */
+export function leadDateFollowUp(
+  followUpDate: string | null | undefined,
+  openTasks: readonly Pick<TaskRow, "due_at">[],
+  today: string = istToday(),
+): { label: string; overdue: boolean } | null {
+  if (!followUpDate) return null;
+  const day = followUpDate.slice(0, 10);
+  if (openTasks.some((t) => toIstDate(t.due_at) === day)) return null;
+  return { label: formatIstDate(day), overdue: day < today };
+}
+
 export interface LeadFollowupsTabProps {
+  /** leads.follow_up_date — null on won / lost leads. */
+  followUpDate?: string | null;
   openTasks: TaskRow[];
   doneTasks: TaskRow[];
   setAddTaskOpen: (open: boolean) => void;
@@ -18,7 +36,8 @@ export interface LeadFollowupsTabProps {
   deleteTask: ReturnType<typeof useDeleteTask>;
 }
 
-export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, completeTask, snoozeTask, deleteTask }: LeadFollowupsTabProps) {
+export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTaskOpen, completeTask, snoozeTask, deleteTask }: LeadFollowupsTabProps) {
+  const dated = leadDateFollowUp(followUpDate, openTasks);
   return (
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -36,7 +55,21 @@ export function LeadFollowupsTab({ openTasks, doneTasks, setAddTaskOpen, complet
               </Button>
             </div>
 
-            {openTasks.length === 0 && doneTasks.length === 0 ? (
+            {dated && (
+              <div
+                data-testid="lead-date-followup"
+                className={cn(
+                  "mb-1.5 rounded-md border px-3 py-2 text-sm flex items-center gap-2",
+                  dated.overdue ? "border-rose/40 bg-rose-soft/40" : "border-hairline bg-paper-2/30",
+                )}
+              >
+                <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
+                <span className={cn("tabular-nums", dated.overdue ? "text-rose font-medium" : "text-ink")}>
+                  {dated.overdue ? "Overdue · " : ""}Follow up on {dated.label}
+                </span>
+              </div>
+            )}
+            {!dated && openTasks.length === 0 && doneTasks.length === 0 ? (
               <p className="text-[12px] text-ink-3 italic">
                 No follow-ups scheduled.
               </p>

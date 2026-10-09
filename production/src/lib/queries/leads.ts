@@ -685,9 +685,11 @@ export function useUpdateLeadStage() {
         description: "The card went back to its previous stage — nothing was saved.",
       });
     },
-    onSuccess: () => {
+    onSuccess: (_row, { stage }) => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      /* Won closes the lead's open tasks in the database (migration 20261009160000). */
+      if (stage === "won") qc.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 }
@@ -780,6 +782,24 @@ export function useClassifyJunk() {
 type LeadInsert = Database["public"]["Tables"]["leads"]["Insert"];
 type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
 
+/**
+ * R-442: a lead typed in by a person belongs to that person unless they chose otherwise.
+ * `owner_id` / `created_by` left out (undefined) → the signed-in user. An explicit null
+ * ("Unassigned" picked on purpose) is kept, and the round-robin trigger may then assign it.
+ * Before this, Add lead and Quick add both saved owner_id = null whenever the form had not
+ * yet learnt who was signed in, and the lead never showed in "My assigned".
+ */
+export function withCreatorAsOwner<T extends { owner_id?: string | null; created_by?: string | null }>(
+  lead: T, userId: string | null | undefined,
+): T {
+  if (!userId) return lead;
+  return {
+    ...lead,
+    owner_id: lead.owner_id === undefined ? userId : lead.owner_id,
+    created_by: lead.created_by ?? userId,
+  };
+}
+
 /** @param opts.quiet no "Lead created" toast — for a form that confirms the save itself (Quick add, R-099). */
 export function useCreateLead(opts: { quiet?: boolean } = {}) {
   const qc = useQueryClient();
@@ -794,10 +814,11 @@ export function useCreateLead(opts: { quiet?: boolean } = {}) {
          company, or not land at all while the toast said "Lead created". Refuse instead;
          onError shows the reason. */
       const tenantId = await requireTenantId(supabase);
+      const { data: session } = await supabase.auth.getSession();
 
       const { data, error } = await supabase
         .from("leads")
-        .insert({ ...lead, tenant_id: tenantId })
+        .insert({ ...withCreatorAsOwner(lead, session.session?.user.id), tenant_id: tenantId })
         .select()
         .single();
 

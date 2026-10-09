@@ -248,8 +248,10 @@ export function useCreateTask() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (row) => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
+      /* A lead task now sets the lead's follow_up_date (migration 20261009160000). */
+      if (row?.lead_id) qc.invalidateQueries({ queryKey: ["leads"] });
       toast.success("Follow-up scheduled");
     },
     onError: (err) => toastError(err),

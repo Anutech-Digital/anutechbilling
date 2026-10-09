@@ -173,7 +173,9 @@ export function QuickAddLeadForm({ open, onOpenChange }: QuickAddLeadFormProps) 
         stage:          "new",
         source:         "manual",
         priority:       "medium",
-        owner_id:       me?.userId || null,
+        /* R-442: undefined (not null) when the user is not loaded yet, so useCreateLead
+           fills in whoever is signed in — null would mean "Unassigned on purpose". */
+        owner_id:       me?.userId || undefined,
         /* WHO ADDED IT, which owner_id stops answering the moment somebody reassigns. */
         created_by:     me?.userId || null,
       });

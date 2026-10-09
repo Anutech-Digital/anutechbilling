@@ -50,7 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/components/ui/label";
 import { FieldPill } from "@/components/ui/field-pill";
-import { checkMoney } from "@/lib/forms/poka-yoke";
+import { checkMoney, paymentRefProblem } from "@/lib/forms/poka-yoke";
 import {
   Select,
   SelectContent,
@@ -68,7 +68,9 @@ import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
 import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
 
 const schema = z.object({
-  amount:       z.coerce.number().int().min(1, "Amount received required"),
+  /* R-449: ₹0 used to stop the form with no message — the browser's own min=1 check
+     fired silently. The form is noValidate now and this says it. */
+  amount:       z.coerce.number({ invalid_type_error: "Enter the amount received." }).int("Whole rupees only — no paise.").min(1, "Amount must be more than ₹0."),
   method:       z.string().min(1, "Method required"),
   // R-248: cash may be left blank — it is saved as cashReference() (date + IST time).
   reference:    z.string(),
@@ -88,6 +90,12 @@ const schema = z.object({
   const ref = d.reference.trim();
   const digital = d.method !== "cash" && d.method !== "other";
   if (d.method === "cash") return;
+  /* R-449: UPI = 12 digits, bank UTR = 12–22 letters/digits (lib/forms/poka-yoke.ts). */
+  const formatProblem = paymentRefProblem(d.method, ref);
+  if (ref && formatProblem) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reference"], message: formatProblem });
+    return;
+  }
   if (digital && (ref.length < 4 || !/\d/.test(ref))) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -370,6 +378,19 @@ export function RecordPaymentDialog({
     if (!open || !defaultDomain) return;
     if (!(getValues("domain") ?? "").trim()) setValue("domain", defaultDomain);
   }, [open, defaultDomain, getValues, setValue]);
+
+  /* R-468 (3): no domain from the page → use the customer's own (customers.domain), so a
+     repeat buyer is not asked again. Same rule: never overwrites what was typed. */
+  React.useEffect(() => {
+    if (!open || defaultDomain || !customerId) return;
+    let live = true;
+    (async () => {
+      const { data } = await createClient().from("customers").select("domain").eq("id", customerId).maybeSingle();
+      const d = data?.domain?.trim();
+      if (live && d && !(getValues("domain") ?? "").trim()) setValue("domain", d);
+    })();
+    return () => { live = false; };
+  }, [open, defaultDomain, customerId, getValues, setValue]);
 
   // Keep the bank amount locked to (remaining − TDS) until the user hand-edits
   // it, so net + TDS always settles the quote EXACTLY — no accidental ₹-few
@@ -948,6 +969,7 @@ export function RecordPaymentDialog({
             },
           )}
           className="flex flex-col flex-1 min-h-0 min-w-0 w-full"
+          noValidate
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
           {/* Customer domain — R-407 / R-444 (1): shown only when the quote makes a subscription,
@@ -1078,7 +1100,9 @@ export function RecordPaymentDialog({
             />
             {/* Reports a decimal BEFORE submit, and says what it would be saved as —
                 rounding somebody's money without telling them is not a kindness. */}
-            <FieldPill check={checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
+            <FieldPill check={watch("amount") === 0
+              ? { tone: "error", message: "Amount must be more than ₹0." }
+              : checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
 
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
@@ -1156,12 +1180,12 @@ export function RecordPaymentDialog({
           {/* Transaction Reference Number — Dynamic prompts per payment mode */}
           <FormField
             label={
-              method === "upi" ? "UPI Transaction Ref ID (12 digits) *" :
-              method === "razorpay" ? "Razorpay Payment ID *" :
-              method === "bank_transfer" ? "Bank UTR / Transaction Ref No. *" :
-              method === "cheque" ? "Cheque No. & Issuing Bank *" :
+              method === "upi" ? "UPI Transaction Ref ID (12 digits)" :
+              method === "razorpay" ? "Razorpay Payment ID" :
+              method === "bank_transfer" ? "Bank UTR / Transaction Ref No." :
+              method === "cheque" ? "Cheque No. & Issuing Bank" :
               method === "cash" ? "Cash Voucher / Receipt Ref (Optional)" :
-              "Transaction Reference *"
+              "Transaction Reference"
             }
             required={method !== "cash"}
             htmlFor="reference"

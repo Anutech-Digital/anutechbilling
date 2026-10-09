@@ -49,7 +49,7 @@ import type { Lead } from "@/lib/supabase/database.types";
 import type { LeadListFilters, LeadListRow } from "@/lib/leads/list-page";
 import { useBreakpoint } from "@/lib/hooks/useBreakpoint";
 import { DEAL_STAGES, filterStagesFor } from "@/lib/leads/stage-meta";
-import { boardServerTotals, everythingCountForPage, folderShownOnPage, scopeFiltersForPage, stageShownOnPage } from "@/lib/leads/page-scope";
+import { boardServerTotals, everythingCountForPage, folderShownOnPage, openKpiForPage, scopeFiltersForPage, stageShownOnPage } from "@/lib/leads/page-scope";
 import {
   boardCut, folderForView, inWorkspace, listCut, nextSort, searchLeads, type SortCol,
 } from "@/lib/leads/list-selectors";
@@ -571,6 +571,8 @@ function LeadsPageInner() {
      Win rate over DECIDED deals only — won ÷ (won + lost); see lib/leads/forecast.ts. */
   const kpi = counts?.kpi;
   const wonCount = kpi?.won ?? 0;
+  /* R-470: page-scoped open count + pipeline (lib/leads/page-scope.ts#openKpiForPage). */
+  const openKpi = counts ? openKpiForPage(counts, isDealsPage) : null;
   const decidedCount = (kpi?.won ?? 0) + (kpi?.lost ?? 0);
   const conversion = decidedCount > 0 ? Math.round((wonCount * 100) / decidedCount) : null;
 
@@ -584,12 +586,15 @@ function LeadsPageInner() {
       {/* Expanded Intelligence Drawer */}
       {kpiOpen && !isLoading && counts && (totalLeads ?? 0) > 0 && (
         <LeadsKpiDrawer
-          totalValue={counts.kpi.open_value}
+          /* R-470: on /deals, Open deals + Pipeline come from the same page-scoped stage
+             totals the list and board read (quote / demo / trial) — kpi counted a Contacted
+             lead that /deals never shows. /leads is unchanged. No project split on /deals. */
+          totalValue={openKpi?.openValue ?? 0}
           pipelineByType={{
-            subscription: counts.kpi.open_value - counts.kpi.open_value_project,
-            project: counts.kpi.open_value_project,
+            subscription: (openKpi?.openValue ?? 0) - (openKpi?.openValueProject ?? 0),
+            project: openKpi?.openValueProject ?? 0,
           }}
-          openCount={counts.kpi.open_count}
+          openCount={openKpi?.openCount ?? 0}
           highPriority={counts.pool.high_priority}
           totalInquiries={counts.pool.total}
           wonCount={wonCount}
@@ -754,6 +759,16 @@ function LeadsPageInner() {
           flex-1 + min-h-0 lets the grid stretch to fill remaining viewport
           height (page wrapper is min-h-[calc(100vh-3.5rem)] flex-col), so
           columns visually fill instead of bottom cream area showing. */}
+      {/* R-470: the board has no Lost column, so Stage → Lost on Kanban read "0" with an
+          empty board while the List showed them. Say where they are, one click away. */}
+      {!isLoading && !error && effectiveView === "kanban" && stageFilter.includes("lost") && (
+        <div data-testid="kanban-lost-note" className="mb-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-paper-2/40 px-3 py-2 text-sm text-ink-2">
+          <span>Lost {isDealsPage ? "deals" : "leads"} are not on the board — they show in List view.</span>
+          <button type="button" onClick={() => setView("list")} className="shrink-0 font-semibold text-amber-ink underline underline-offset-2">
+            Show list
+          </button>
+        </div>
+      )}
       {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "kanban" && (
         <LeadsKanbanBoard
           boardLeads={boardLeads}
