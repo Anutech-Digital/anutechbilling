@@ -42,6 +42,10 @@ export interface QuoteMoneyInput {
   total: number;
   /** ₹ received so far, across every recorded payment. */
   received: number;
+  /** R-446: the cycle when the deal is billed per period (monthly / quarterly / half-yearly).
+   *  The database refuses a whole-term invoice then (trigger
+   *  invoices_reject_full_term_when_split_billed), so the page must not offer one. */
+  splitBilledCycle?: string | null;
 }
 
 export type MoneyStage =
@@ -78,11 +82,35 @@ export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => str
   const outstanding = Math.max(0, q.total - q.received);
   const stage = moneyStage(q);
 
+  /* R-446: a per-period plan is invoiced by the billing run, one period at a time. Offering
+     "Generate GST Invoice" there only led to a red refusal. Same money stages, no invoice
+     button, and the sentence says where the invoice comes from. */
+  const cycle = q.splitBilledCycle ? q.splitBilledCycle.replace(/_/g, "-") : null;
+  if (cycle && (stage === "unpaid" || stage === "partial" || stage === "paid")) {
+    const each = `Billed ${cycle}: each period gets its own GST invoice on its date.`;
+    if (stage === "unpaid") {
+      return base(stage, outstanding, {
+        note: `Accepted. ${rupees(q.total)} to collect — record the payment when it arrives. ${each}`,
+        canRecordPayment: true,
+      });
+    }
+    if (stage === "partial") {
+      return base(stage, outstanding, {
+        note: `${rupees(q.received)} of ${rupees(q.total)} received · ${rupees(outstanding)} still outstanding. ${each}`,
+        canRecordPayment: true,
+        recordLabel: "Record balance payment",
+      });
+    }
+    return base(stage, outstanding, {
+      note: `Paid in full — ${rupees(q.received || q.total)} received. ${each}`,
+    });
+  }
+
   switch (stage) {
     case "draft":
-      return base(stage, outstanding, {
-        note: "This is a draft. Send it to the customer before any money can be recorded against it.",
-      });
+      /* R-444: no sentence here. The draft row just above the money row already says
+         "This is a draft. Send it to the customer when ready." — the page showed it twice. */
+      return base(stage, outstanding, {});
 
     case "open":
       return base(stage, outstanding, {
@@ -142,6 +170,21 @@ function base(
     note: "",
     ...over,
   };
+}
+
+/**
+ * R-446: the per-period cycle of a deal, or null when it is invoiced once (yearly / unknown).
+ * The subscriptions win — they are what the database trigger reads — and the quote's own
+ * cycle covers the time before a subscription exists.
+ */
+export function splitBilledCycleOf(
+  quoteCycle: string | null | undefined,
+  subscriptionCycles: ReadonlyArray<string | null | undefined>,
+): string | null {
+  const fromSubs = subscriptionCycles.find((c) => Boolean(c) && c !== "yearly");
+  if (fromSubs) return fromSubs;
+  if (subscriptionCycles.some((c) => c === "yearly")) return null;
+  return quoteCycle && quoteCycle !== "yearly" ? quoteCycle : null;
 }
 
 export function moneyStage(q: QuoteMoneyInput): MoneyStage {

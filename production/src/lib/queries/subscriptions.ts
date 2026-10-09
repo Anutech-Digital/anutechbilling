@@ -163,14 +163,8 @@ export function useCancelSubscription() {
   return useMutation({
     mutationFn: async (args: { id: string; lastDay: string; reason: string; clearDue: boolean }) => {
       const supabase = createClient();
-      /* cancel_subscription (20261009151000) is not in database.generated.ts yet — that file
-         was locked by another worker (R-482) when this shipped. Narrow, explicit signature
-         instead of `any`; drop it after `node scripts/check-db-types.mjs --write`. */
-      const rpc = supabase.rpc.bind(supabase) as unknown as (
-        fn: "cancel_subscription",
-        params: { p_subscription_id: string; p_last_day: string; p_reason: string; p_clear_due: boolean },
-      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      const { data, error } = await rpc("cancel_subscription", {
+      // R-489: typed straight from database.generated.ts (regenerated after 20261009151000).
+      const { data, error } = await supabase.rpc("cancel_subscription", {
         p_subscription_id: args.id,
         p_last_day:        args.lastDay,
         p_reason:          args.reason,

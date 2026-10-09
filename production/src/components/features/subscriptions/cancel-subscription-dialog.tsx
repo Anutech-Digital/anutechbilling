@@ -23,12 +23,9 @@ import { istToday } from "@/lib/dates/ist";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { useCancelSubscription } from "@/lib/queries/subscriptions";
 
-/** Columns added by 20261009151000 — not in database.generated.ts yet (locked by R-482 at ship time). */
-type CancelFields = { cancelled_at?: string | null; cancel_reason?: string | null; cancel_due_cleared?: number | null };
-
-/** "Cancelled on 9 Oct 2026 — Refunded, customer left · ₹956 due cleared" for the panel. */
-export function cancelNote(sub: Subscription): string {
-  const c = sub as Subscription & CancelFields;
+/** "Cancelled on 9 Oct 2026 — Refunded, customer left · ₹956 due cleared" for the panel.
+ *  R-489: the cancel columns (20261009151000) are typed in database.generated.ts now. */
+export function cancelNote(c: Subscription): string {
   return "Cancelled"
     + (c.cancelled_at ? ` on ${formatDate(c.cancelled_at)}` : "")
     + (c.cancel_reason ? ` — ${c.cancel_reason}` : "")

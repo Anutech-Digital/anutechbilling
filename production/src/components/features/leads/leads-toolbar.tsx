@@ -18,7 +18,7 @@ import { downloadCSV } from "@/lib/csv";
 import { LEADS_CSV_HEADERS, leadsCsvRows } from "@/lib/export/crm-csv";
 import { fetchLeadsForExport } from "@/lib/queries/leads";
 import { toastError } from "@/lib/errors/toast-error";
-import type { LeadCounts } from "@/lib/leads/list-page";
+import { teamNoteCounts, type LeadCounts } from "@/lib/leads/list-page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -149,10 +149,7 @@ export function LeadsToolbar({
       /* Counted BEFORE the toggle narrows anything — the note describes the pool being
          filtered, not the result. Unowned rows show in both halves, so without this the
          note claims "only records assigned to you" over rows assigned to nobody. */
-      counts={{
-        total: pool.total,
-        unassigned: pool.unassigned,
-      }}
+      counts={teamNoteCounts(pool)}
     />
 
     <div className="shrink-0 mb-3 flex items-center gap-2 flex-wrap">

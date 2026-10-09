@@ -14,13 +14,14 @@ import { toastError } from "@/lib/errors/toast-error";
 import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead } from "@/lib/queries/quotes";
 import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise";
 import { istToday } from "@/lib/dates/ist";
-import { withInvoiceIssued, leadStageNow, rejectLeadOffer, lostActivityDetail, lossLabel } from "@/lib/quotes/quote-page-actions";
+import { withInvoiceIssued, leadStageNow, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { quoteMoneyActions } from "@/lib/quotes/money-stage";
+import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
+import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
@@ -611,6 +612,12 @@ export default function QuoteDetailPage() {
   /* What can be DONE with the money right now — one tested decision instead of three
      inline conditions that between them left `payment_status = 'none'` (the column
      default) with no action at all. See lib/quotes/money-stage.ts. */
+  /* R-446: same test the database trigger uses — any subscription of this quote that is not
+     yearly (or the quote's own cycle, before the subscription exists). */
+  const splitCycle = splitBilledCycleOf(
+    quote.billing_cycle,
+    (allSubs ?? []).filter((s) => s.quote_id === quote.id).map((s) => s.billing_cycle),
+  );
   const money = quoteMoneyActions(
     {
       status:        quote.status,
@@ -618,6 +625,9 @@ export default function QuoteDetailPage() {
       invoiceId:     quote.invoice_id,
       total,
       received:      totalReceivedSoFar,
+      /* R-446: same test the database trigger uses — any subscription of this quote that
+         is not yearly (or the quote's own cycle, before the subscription exists). */
+      splitBilledCycle: splitCycle,
     },
     rupee,
   );
@@ -1152,7 +1162,7 @@ export default function QuoteDetailPage() {
               {daysLeft !== null && daysLeft > 0 && (
                 <>Expires in <b>{daysLeft} days</b> · </>
               )}
-              Customer accepted? Mark accepted to convert the lead into a customer.
+              {acceptHint(quote)}
               {" "}
               {/* What this sentence used to say, unconditionally: "Payment can land later —
                   record it when received." On Q-ADPL-2026-27-0024 that was printed under a
@@ -1338,6 +1348,16 @@ export default function QuoteDetailPage() {
                   {money.outstanding > 0 && money.outstanding === total
                     ? "Invoice now (before payment)"
                     : "Generate GST Invoice"}
+                </Button>
+              )}
+
+              {/* R-446: per-period plan — no whole-term invoice button; the way to its
+                  invoices is the subscription's billing schedule. */}
+              {splitCycle && !money.canGenerateInvoice && (
+                <Button asChild variant="default" icon="calendar">
+                  <Link href={subscriptionHref({ domain: quoteSubs[0]?.domain, customer_name: quote.customer_name }) as never}>
+                    Billing schedule
+                  </Link>
                 </Button>
               )}
 
@@ -1724,6 +1744,7 @@ export default function QuoteDetailPage() {
            operator to guess — which is exactly what a tester hit twice on 22 Aug. */
         lineItems={Array.isArray(quote.line_items) ? quote.line_items : null}
         askDomain={!quote.is_one_off}
+        isRenewal={!!quote.is_renewal}
         /* The QUOTE first — it is the record being paid and the one the operator typed
            the domain into. Leaving it out is what made the field open empty on a quote
            that had the answer written on it (reported 22 Aug from Q-TEST-2026-27-0009). */

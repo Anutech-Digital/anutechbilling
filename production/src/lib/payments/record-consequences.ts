@@ -39,6 +39,9 @@ export interface PaymentToRecord {
   createsSubscription: boolean;
   /** The plan a subscription would be created for, when there is one. */
   planLabel: string | null;
+  /** R-453: a renewal quote — record_payment moves the EXISTING subscription on by a term
+   *  instead of creating one. Optional; absent means a normal quote. */
+  renewsSubscription?: boolean;
 }
 
 export function recordPaymentConsequences(args: {
@@ -103,7 +106,14 @@ export function recordPaymentConsequences(args: {
     });
   }
 
-  if (!p.createsSubscription) {
+  if (p.renewsSubscription) {
+    /* R-453: "Creates a recurring subscription" on a renewal made the owner think a second
+       subscription would appear. It does not — the same one gets a new renewal date. */
+    out.push({
+      tone: "fact",
+      text: "Renews the existing subscription — the same subscription moves to its next renewal date. No new subscription is created.",
+    });
+  } else if (!p.createsSubscription) {
     /* Stated POSITIVELY. An operator expecting a renewal should learn here that none is
        coming, not from one that never arrives. Phrased by OUTCOME rather than cause: the
        caller knows whether a subscription will be created, not why — guard 0157 (one-off)

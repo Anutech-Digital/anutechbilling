@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import type { Quote } from "@/lib/supabase/database.types";
 import { acceptedToast } from "@/lib/quotes/accepted-toast";
+import { acceptHint } from "@/lib/quotes/quote-page-actions";
 
 interface QuoteActionBarProps {
   quote: Quote;
@@ -136,7 +137,7 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
                 className="justify-center"
                 loading={markAccepted.isPending}
                 onClick={() => markAccepted.mutate()}
-                title="Convert the lead into a customer now — payment can be recorded later"
+                title={acceptHint(quote)}
               >
                 Mark accepted
               </Button>
@@ -181,6 +182,7 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
         isProspect={isProspect}
         invoiceId={quote.invoice_id}
         customerId={quote.customer_id}
+        isRenewal={!!quote.is_renewal}
       />
     </div>
   );

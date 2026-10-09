@@ -59,7 +59,11 @@ import { CustomerCombobox } from "@/components/features/customers/customer-combo
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { useUpdateLead, useLeads } from "@/lib/queries/leads";
+import { useUpdateLead, useLeads, useCreateLead } from "@/lib/queries/leads";
+import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
+import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
+import { useSubscriptions } from "@/lib/queries/subscriptions";
+import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -77,6 +81,7 @@ import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/li
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
@@ -148,6 +153,9 @@ export function QuoteBuilder() {
   const createQuote     = useCreateQuote();
   const generateInvoice = useGenerateInvoice();
   const updateLead = useUpdateLead();
+  const createLead = useCreateLead({ quiet: true });
+  /* R-468 (2): the customer's live subscriptions — to warn before a second one to the same product. */
+  const { data: allSubscriptions } = useSubscriptions();
 
   // Lead pre-fill context (when navigated from Lead Detail → Send Quote).
   // When leadId is present, we're in "lead mode" — quote belongs to a prospect,
@@ -287,6 +295,12 @@ export function QuoteBuilder() {
   // gets created later when record_payment fires (lead → customer cascade).
   // This unblocks the "no customers yet" dead-end the picker had.
   const [prospectName, setProspectName] = React.useState<string>("");
+  /* R-469 (6): where the quote goes and who to call. Saved on a lead made for this prospect
+     (lib/quotes/prospect-contact.ts) — quotes have no contact columns of their own. */
+  const [prospectEmail, setProspectEmail] = React.useState<string>("");
+  const [prospectPhone, setProspectPhone] = React.useState<string>("");
+  /** The lead made for a typed prospect on an earlier save of this screen — never two. */
+  const prospectLeadRef = React.useRef<string | null>(null);
   // Customer-entry mode — a clean either/or toggle (was two inputs shown at once,
   // which read ambiguous). "existing" = pick from the book; "prospect" = type a
   // new one. The underlying resolution (customer_id vs typed name) is unchanged.
@@ -444,7 +458,12 @@ export function QuoteBuilder() {
   // where somebody typed one character into a search box is not work worth
   // interrupting them to protect, and a prompt that fires when it should not
   // is one users learn to click through, including when it is right.
-  useDraftGuard(lineItems.length > 0 || customerId !== "" || prospectName.trim() !== "");
+  // R-472: what the builder filled by itself (from a lead, a duplicate) is the BASELINE,
+  // taken at the user's first click or key press; only a change after that is dirty.
+  const draftSnapshot = JSON.stringify({ lineItems, customerId, prospectName, prospectEmail, prospectPhone });
+  const [draftBaseline, setDraftBaseline] = React.useState<string | null>(null);
+  const markTouched = () => { if (draftBaseline === null) setDraftBaseline(draftSnapshot); };
+  useDraftGuard(builderIsDirty(draftBaseline, draftSnapshot));
 
   // For a foreign (USD) quote: which price basis to bill on when an item has BOTH
   // a ₹ price and a real foreign price. "international" = use the item's catalog
@@ -965,6 +984,39 @@ export function QuoteBuilder() {
   const updateRate = (id: string, rate: number) => {
     setLineItems((s) => s.map((l) => (l.id === id ? { ...l, rate: Math.max(0, rate) } : l)));
   };
+  /* R-449 (4)(5): a bad Qty / Rate stays on screen with its message; the line keeps its last
+     good number and Save refuses until the box is fixed (lib/quotes/line-input.ts). Keyed
+     `<lineId>:qty` / `<lineId>:rate`. */
+  const [lineDrafts, setLineDrafts] = React.useState<Record<string, { raw: string; problem: string }>>({});
+  const setLineDraft = (key: string, raw: string, problem: string | null) => {
+    setLineDrafts((d) => {
+      if (!problem) {
+        if (!(key in d)) return d;
+        const next = { ...d };
+        delete next[key];
+        return next;
+      }
+      return { ...d, [key]: { raw, problem } };
+    });
+  };
+  const onQtyInput = (id: string, raw: string) => {
+    const r = parseLineQty(raw);
+    setLineDraft(`${id}:qty`, raw, r.ok ? null : r.problem);
+    if (r.ok) updateQty(id, r.value);
+  };
+  /** `apply` turns the box's number (₹ or $, per invoice period) into the stored rate. */
+  const onRateInput = (id: string, raw: string, apply: (v: number) => void) => {
+    const r = parseLineRate(raw);
+    setLineDraft(`${id}:rate`, raw, r.ok ? null : r.problem);
+    if (r.ok) apply(r.value);
+  };
+  const lineInputProblem = firstLineInputProblem(
+    Object.fromEntries(
+      Object.entries(lineDrafts)
+        .filter(([k]) => lineItems.some((l) => k.startsWith(`${l.id}:`)))
+        .map(([k, v]) => [k, v.problem]),
+    ),
+  );
   const updateCost = (id: string, cost: number) => {
     /* R-388: a typed cost is the user's — no catalogue load may replace it. */
     costTypedRef.current.add(id);
@@ -1075,7 +1127,8 @@ export function QuoteBuilder() {
      "Send via email" sheet (lib/quotes/send-quote-email.ts), when there is an address and
      the discount/margin needs nobody's sign-off. With no address the button says
      "Save & mark sent" and the toast says plainly that no email went. */
-  const sendRecipient = quoteRecipient(isLeadMode ? leadEmail : customer?.contact_email);
+  // R-469 (6): a typed prospect's own email counts too.
+  const sendRecipient = quoteRecipient(isLeadMode ? leadEmail : customerId ? customer?.contact_email : prospectEmail);
   const sendAllowed = React.useMemo(() => canSend(
     quoteApprovalRecord(editOf && sourceQuote ? sourceQuote : NO_APPROVAL_ROW),
     requiredApproval(lineEconomics(lineItems)),
@@ -1129,10 +1182,21 @@ export function QuoteBuilder() {
       });
       return;
     }
+    const typedProspect = !isLeadMode && !customerId && !isInvoiceMode;
+    const contactProblem = typedProspect ? prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) : null;
+    if (contactProblem) {
+      toast.error("Check the prospect's contact", { description: contactProblem });
+      return;
+    }
     if (lineItems.length === 0) {
       toast.error("Add at least one line item", {
         description: "Use Add item (Alt+A) to put a product or service on the quote.",
       });
+      return;
+    }
+    // R-449: a Qty / Rate box with a bad value — say which, save nothing.
+    if (lineInputProblem) {
+      toast.error("Fix the line marked in red", { description: lineInputProblem });
       return;
     }
     // R-381: an older mixed draft opened for editing can't be saved as it is.
@@ -1217,6 +1281,28 @@ export function QuoteBuilder() {
         || (editOf ? (sourceQuote?.customer_name?.trim() ?? "") : "")
         || PLACEHOLDER_QUOTE_NAME;
 
+      /* R-469 (6): a typed prospect with an email or phone becomes a lead, and the quote is
+         linked to it — the contact then lives where Send, Record payment and the pipeline
+         already read it. Made once per screen (the ref), never for a picked customer. */
+      let prospectLeadId: string | null = prospectLeadRef.current;
+      if (typedProspect && !linkedLeadId && !prospectLeadId && hasProspectContact({ email: prospectEmail, phone: prospectPhone })) {
+        const seats = quoteSeatCount(lineItems) ?? 0;
+        const row = prospectLeadRow({
+          name: resolvedCustomerName,
+          contact: { email: prospectEmail, phone: prospectPhone },
+          stateCode: prospectStateCode || null,
+          stateName: prospectStateCode ? (GST_STATE_BY_CODE[prospectStateCode] ?? null) : null,
+          country: prospectCountry,
+          sent: saveStatus === "sent" || plan === "email",
+          plan: lineItems[0]?.name ?? null,
+          seats,
+          value: total,
+        });
+        const created = await createLead.mutateAsync({ id: "L-" + Date.now().toString(36).toUpperCase(), ...row });
+        prospectLeadId = created.id;
+        prospectLeadRef.current = created.id;
+      }
+
       const quote = await createQuote.mutateAsync({
         id: idToUse,
         customer_id:   isLeadMode ? null : (customerId || null),
@@ -1229,7 +1315,7 @@ export function QuoteBuilder() {
            of the row while `leadId` was null, and `isLeadMode ? leadId : …` therefore still
            resolved to null. An untouched Save would have detached the draft from its lead.
            Found by running it, not by reading it. */
-        lead_id:       linkedLeadId,
+        lead_id:       linkedLeadId ?? prospectLeadId,
         // Quote-level domain = the first line's domain (the primary subscription).
         // record_payment stamps this on the subscription it creates today; per-line
         // domains also live on each line_item for the coming multi-sub fan-out.
@@ -1404,7 +1490,7 @@ export function QuoteBuilder() {
   }, [canSendNow, createQuote.isPending]);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4" onPointerDownCapture={markTouched} onKeyDownCapture={markTouched}>
       {/* Page head */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
@@ -1673,6 +1759,19 @@ export function QuoteBuilder() {
                   {leadMatchNote && customerId && (
                     <p className="mt-1 text-3xs leading-snug text-emerald">{leadMatchNote}</p>
                   )}
+                  {/* R-468 (2): warn — not block — before a second subscription to a product
+                      this customer already has (lib/quotes/same-product.ts). */}
+                  {!isInvoiceMode && sameProductSubscriptions(customerId, lineItems, allSubscriptions ?? []).slice(0, 1).map((s) => (
+                    <div key={s.id} role="status" className="mt-2 flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/50 px-3 py-2">
+                      <Icon name="alert" size={14} className="mt-0.5 shrink-0 text-amber-ink" />
+                      <div className="min-w-0 text-2xs leading-snug text-ink-2">
+                        {sameProductNote(s, s.renewal_date ? formatDate(s.renewal_date) : null)}{" "}
+                        <Link href={subscriptionHref(s) as never} className="font-semibold text-amber-ink underline underline-offset-2">
+                          Open subscription
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
                 </FormField>
               )}
 
@@ -1691,6 +1790,41 @@ export function QuoteBuilder() {
                   A new prospect who hasn&apos;t paid yet — we&apos;ll auto-create the customer record when they pay.
                 </p>
               </FormField>
+              )}
+              {!isInvoiceMode && custMode === "prospect" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField label="Email" htmlFor="prospectEmail">
+                    <Input
+                      id="prospectEmail"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="off"
+                      placeholder="name@company.com"
+                      value={prospectEmail}
+                      onChange={(e) => setProspectEmail(e.target.value)}
+                    />
+                  </FormField>
+                  <FormField label="Phone" htmlFor="prospectPhone">
+                    <Input
+                      id="prospectPhone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="off"
+                      placeholder="98765 43210"
+                      value={prospectPhone}
+                      onChange={(e) => setProspectPhone(e.target.value)}
+                    />
+                  </FormField>
+                  {prospectContactProblem({ email: prospectEmail, phone: prospectPhone }) ? (
+                    <p role="alert" className="sm:col-span-2 -mt-1 text-3xs text-rose">
+                      {prospectContactProblem({ email: prospectEmail, phone: prospectPhone })}
+                    </p>
+                  ) : (
+                    <p className="sm:col-span-2 -mt-1 text-3xs text-ink-3">
+                      Optional. With an email, &quot;Save &amp; send&quot; emails the quote. Saved as a lead in Sales &amp; Pipeline.
+                    </p>
+                  )}
+                </div>
               )}
 
               {/* Existing customer → a clean read-only summary of their billing
@@ -2020,21 +2154,37 @@ export function QuoteBuilder() {
                       {line.bulk ? (
                         <div className="mt-0.5 px-2 py-1.5 text-sm tabular-nums text-ink border border-hairline rounded bg-paper-2/40">{line.qty}</div>
                       ) : (
-                        <input
-                          type="number" min={1} value={line.qty}
-                          onChange={(e) => updateQty(line.id, parseInt(e.target.value) || 0)}
-                          className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
-                        />
+                        <>
+                          <input
+                            type="number" min={1} value={lineDrafts[`${line.id}:qty`]?.raw ?? line.qty}
+                            aria-invalid={!!lineDrafts[`${line.id}:qty`]}
+                            onChange={(e) => onQtyInput(line.id, e.target.value)}
+                            className={cn(
+                              "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                              lineDrafts[`${line.id}:qty`] ? "border-rose" : "border-hairline",
+                            )}
+                          />
+                          {lineDrafts[`${line.id}:qty`] && (
+                            <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                        </>
                       )}
                     </label>
                     <label className="block">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Rate {isUsdBill ? "$" : "₹"}{unitLabel}</span>
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
-                        value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv); }}
-                        className="mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                        aria-invalid={!!lineDrafts[`${line.id}:rate`]}
+                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv))}
+                        className={cn(
+                          "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                          lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
+                        )}
                       />
+                      {lineDrafts[`${line.id}:rate`] && (
+                        <span role="alert" className="mt-0.5 block text-3xs text-rose">{lineDrafts[`${line.id}:rate`]!.problem}</span>
+                      )}
                     </label>
                     <label className="block col-span-2">
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Commit</span>
@@ -2266,14 +2416,23 @@ export function QuoteBuilder() {
                         // Bulk: qty = Σ domain seats (read-only — edit domains, not qty).
                         <span className="inline-block w-20 px-2 py-1 text-sm text-right tabular-nums text-ink" title="Total seats across all domains">{line.qty}</span>
                       ) : (
-                        <input
-                          aria-label={`Quantity for ${line.name}`}
-                          type="number"
-                          min={1}
-                          value={line.qty}
-                          onChange={(e) => updateQty(line.id, parseInt(e.target.value) || 0)}
-                          className="w-20 px-2 py-1 text-sm text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
-                        />
+                        <>
+                          <input
+                            aria-label={`Quantity for ${line.name}`}
+                            type="number"
+                            min={1}
+                            value={lineDrafts[`${line.id}:qty`]?.raw ?? line.qty}
+                            aria-invalid={!!lineDrafts[`${line.id}:qty`]}
+                            onChange={(e) => onQtyInput(line.id, e.target.value)}
+                            className={cn(
+                              "w-20 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                              lineDrafts[`${line.id}:qty`] ? "border-rose" : "border-hairline",
+                            )}
+                          />
+                          {lineDrafts[`${line.id}:qty`] && (
+                            <span role="alert" className="mt-0.5 block max-w-[10rem] text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:qty`]!.problem}</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="p-2 text-right">
@@ -2284,15 +2443,19 @@ export function QuoteBuilder() {
                           type="number"
                           min={0}
                           step={isUsdBill ? "0.01" : "1"}
-                          value={isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value) || 0;
-                            handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v));
-                          }}
-                          className="w-24 px-2 py-1 text-sm text-right tabular-nums border border-hairline rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
+                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                          aria-invalid={!!lineDrafts[`${line.id}:rate`]}
+                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v)))}
+                          className={cn(
+                            "w-24 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
+                            lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
+                          )}
                         />
                         <span className="text-3xs text-ink-3 ml-0.5">{unitLabel}</span>
                       </div>
+                      {lineDrafts[`${line.id}:rate`] && (
+                        <span role="alert" className="mt-0.5 block text-3xs leading-snug text-rose">{lineDrafts[`${line.id}:rate`]!.problem}</span>
+                      )}
                     </td>
                     <td className="p-3 text-right tabular-nums text-sm font-medium">
                       {isPerInvoice ? (

@@ -72,6 +72,9 @@ import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
    lib/leads/list-selectors.ts (S35, 28 Sep 2026 — this file was 5,125 lines). */
 
 /* Brief mark on the row a deep link opened (R-208) — design tokens only, so it follows the theme. */
+/** R-489: the team toggle's two values, as the ?who= URL choice accepts them. */
+const TEAM_VIEW_MODES: readonly TeamViewMode[] = ["team", "mine"];
+
 const JUST_OPENED_ROW = ["ring-2", "ring-inset", "ring-primary", "bg-primary-soft"];
 
 const PRIORITY_IDS = ["low", "medium", "high"] as const;
@@ -381,7 +384,9 @@ function LeadsPageInner() {
     () => leadTeam.find((u) => u.id === currentUser?.userId) ?? null,
     [leadTeam, currentUser?.userId],
   );
-  const [leadTeamMode, setLeadTeamMode] = React.useState<TeamViewMode>("team");
+  /* R-489 (R-457 leftover): "My assigned" lives in the URL (?who=mine) like sort and view,
+     so a reload or a shared link keeps it. */
+  const [leadTeamMode, setLeadTeamMode] = useUrlChoice<TeamViewMode>("who", TEAM_VIEW_MODES, "team");
 
   /* The team toggle's cut, as owner ids: listed owners OR unowned (lib/team/visibility.ts,
      list-selectors.ts#inWorkspace). null = no narrowing. Sent to the server as owner_ids. */

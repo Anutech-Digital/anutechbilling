@@ -4,8 +4,12 @@ import * as React from "react";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import { IST_TZ, toIstDate, formatIstDate, istToday } from "@/lib/dates/ist";
+import { IST_TZ, toIstDate, formatIstDate, istToday, istDayStartUtc } from "@/lib/dates/ist";
 import type { useTasksForLead, useCompleteTask, useSnoozeTask, useDeleteTask } from "@/lib/queries/tasks";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { snoozeChoices, useSnoozeTaskTo } from "@/components/features/tasks/task-snooze";
 
 type TaskRow = NonNullable<ReturnType<typeof useTasksForLead>["data"]>[number];
 
@@ -32,12 +36,21 @@ export interface LeadFollowupsTabProps {
   doneTasks: TaskRow[];
   setAddTaskOpen: (open: boolean) => void;
   completeTask: ReturnType<typeof useCompleteTask>;
-  snoozeTask: ReturnType<typeof useSnoozeTask>;
+  /** Kept for the callers' shape; R-489 snoozes through the /tasks menu (useSnoozeTaskTo). */
+  snoozeTask?: ReturnType<typeof useSnoozeTask>;
   deleteTask: ReturnType<typeof useDeleteTask>;
 }
 
-export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTaskOpen, completeTask, snoozeTask, deleteTask }: LeadFollowupsTabProps) {
+/** 10 AM IST on a picked date — the same hour the menu's "Tomorrow" and "Monday" use. */
+export function snoozeAtPickedDate(dateISO: string): Date {
+  return new Date(istDayStartUtc(dateISO).getTime() + 10 * 60 * 60_000);
+}
+
+export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTaskOpen, completeTask, deleteTask }: LeadFollowupsTabProps) {
   const dated = leadDateFollowUp(followUpDate, openTasks);
+  /* R-471 (via R-489): the same Snooze menu as /tasks — was a blind "+1 day". */
+  const snoozeTo = useSnoozeTaskTo();
+  const [pickFor, setPickFor] = React.useState<string | null>(null);
   return (
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -108,16 +121,44 @@ export function LeadFollowupsTab({ followUpDate, openTasks, doneTasks, setAddTas
                         {t.notes && (
                           <p className="text-xs text-ink-3 mt-1 line-clamp-2">{t.notes}</p>
                         )}
+                        {pickFor === t.id && (
+                          <label className="mt-1.5 flex items-center gap-2 text-xs text-ink-2">
+                            Snooze to
+                            <input
+                              type="date"
+                              autoFocus
+                              min={istToday()}
+                              aria-label={`Snooze ${t.title} to a date`}
+                              className="rounded border border-hairline bg-paper px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-amber"
+                              onChange={(e) => {
+                                if (!e.target.value) return;
+                                snoozeTo.mutate(
+                                  { id: t.id, at: snoozeAtPickedDate(e.target.value), snoozeCount: t.snooze_count ?? 0 },
+                                  { onSuccess: () => setPickFor(null) },
+                                );
+                              }}
+                            />
+                            <span className="text-ink-3">10 AM</span>
+                            <button type="button" className="text-ink-3 hover:text-ink underline" onClick={() => setPickFor(null)}>Cancel</button>
+                          </label>
+                        )}
                       </div>
                       <div className="flex gap-0.5 shrink-0">
-                        <IconButton
-                          icon="clock"
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Snooze 1 day"
-                          title="Snooze 1 day"
-                          onClick={() => snoozeTask.mutate({ id: t.id })}
-                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze" title="Snooze" disabled={snoozeTo.isPending} />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[200px]">
+                            <DropdownMenuLabel>Snooze until</DropdownMenuLabel>
+                            {snoozeChoices().map((c) => (
+                              <DropdownMenuItem key={c.key} onSelect={() => snoozeTo.mutate({ id: t.id, at: c.at, snoozeCount: t.snooze_count ?? 0 })}>
+                                {c.label}
+                              </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onSelect={() => setPickFor(t.id)}>Pick a date…</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <IconButton
                           icon="trash"
                           size="sm"

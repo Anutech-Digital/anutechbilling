@@ -160,7 +160,7 @@ describe("quote builder wiring (R-388)", () => {
     expect(src).not.toMatch(/if \(!catalog\) return;/);
   });
   it("a prefilled line with no cost is marked pending and backfilled when the catalogue arrives", () => {
-    expect(src).toMatch(/if \(cost <= 0\) costPendingRef\.current\.add\(lineId\)/);
+    expect(src).toMatch(/if \((?:priced\.)?cost <= 0\) costPendingRef\.current\.add\(lineId\)/);
     expect(src).toMatch(/fillUnknownCosts\(/);
   });
   it("a typed cost is protected from catalogue reloads", () => {

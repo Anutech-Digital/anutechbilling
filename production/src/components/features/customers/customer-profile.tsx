@@ -713,12 +713,20 @@ function RecordTable({ head, rows }: { head: string[]; rows: { cells: React.Reac
       <ul className="md:hidden space-y-2">
         {rows.map((r, i) => (
           <li key={i}>
-            <button
-              type="button"
+            {/* R-468 (7): a div with role="button", not a button element — the cells hold their own
+                buttons (expand chevron, delete payment), and a button inside a button is
+                invalid HTML: React logged a hydration error on every Transactions open. */}
+            <div
+              role={r.onClick ? "button" : undefined}
+              tabIndex={r.onClick ? 0 : undefined}
               onClick={r.onClick}
+              onKeyDown={r.onClick ? (e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); r.onClick?.(); }
+              } : undefined}
               className={cn(
                 "w-full text-left rounded-md border border-hairline bg-paper p-3 space-y-1.5",
-                r.onClick ? "cursor-pointer hover:bg-paper-2/40" : "cursor-default",
+                r.onClick ? "cursor-pointer hover:bg-paper-2/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" : "cursor-default",
               )}
             >
               {r.cells.map((cell, j) => (
@@ -727,7 +735,7 @@ function RecordTable({ head, rows }: { head: string[]; rows: { cells: React.Reac
                   <span className="text-sm text-ink-2 text-right min-w-0">{cell}</span>
                 </div>
               ))}
-            </button>
+            </div>
           </li>
         ))}
       </ul>

@@ -85,3 +85,14 @@ export function lostActivityDetail(quoteId: string, code: string, note: string |
   const label = lossLabel(code) ?? code;
   return `Lost — ${label}. Quote ${quoteId} rejected${note ? ` · ${note}` : ""}`;
 }
+
+/**
+ * R-468 (5) / R-453 (2): the sentence beside "Mark accepted" on a sent quote. It used to say
+ * "convert the lead into a customer" on every quote — wrong on a renewal (the customer and
+ * the subscription already exist) and on a new quote for an existing customer (no lead).
+ */
+export function acceptHint(q: { is_renewal?: boolean | null; customer_id?: string | null }): string {
+  if (q.is_renewal) return "Customer accepted? Mark accepted. Their subscription is renewed when the payment is recorded.";
+  if (q.customer_id) return "Customer accepted? Mark accepted to confirm the order.";
+  return "Customer accepted? Mark accepted to convert the lead into a customer.";
+}

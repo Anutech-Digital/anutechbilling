@@ -142,6 +142,8 @@ interface RecordPaymentDialogProps {
   /** Show the optional Domain field (subscription quotes only — Google Workspace /
    *  M365 need the customer domain). Hidden for one-off / direct invoices. */
   askDomain?: boolean;
+  /** R-453: a renewal quote — the sheet says the existing subscription is renewed. */
+  isRenewal?: boolean;
   /** Pre-fill the domain field (e.g. from the customer/lead's known domain). */
   defaultDomain?: string | null;
   /**
@@ -172,6 +174,7 @@ export function RecordPaymentDialog({
   customerId = null,
   askDomain = false,
   defaultDomain = null,
+  isRenewal = false,
   lineItems,
   onRecorded,
 }: RecordPaymentDialogProps) {
@@ -1430,6 +1433,7 @@ export function RecordPaymentDialog({
                       (l) => typeof l?.commitment === "string" && l.commitment.trim() !== "",
                     ),
                     planLabel: (lineItems ?? [])[0]?.name ?? null,
+                    renewsSubscription: isRenewal,
                   },
                   /* Null once an invoice already exists — a post-invoice payment issues no
                      new receipt voucher, and claiming a number would be wrong. */

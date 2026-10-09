@@ -240,7 +240,8 @@ describe("a quote for a lead stays attached to that lead", () => {
     /* The old expression fell back to the source only when `editOf` — so DUPLICATE dropped
        the link while EDIT kept it, which is why the same operator action produced an orphan
        on one route and not the other. */
-    expect(BUILDER_SRC).toMatch(/lead_id:\s+linkedLeadId,/);
+    // R-489: a typed prospect with a contact falls back to its own new lead (prospectLeadId).
+    expect(BUILDER_SRC).toMatch(/lead_id:\s+linkedLeadId(?: \?\? prospectLeadId)?,/);
     expect(BUILDER_SRC).not.toMatch(/lead_id:\s+leadId \?\? \(editOf/);
   });
 

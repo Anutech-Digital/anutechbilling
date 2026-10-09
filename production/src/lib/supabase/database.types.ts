@@ -407,7 +407,9 @@ type MrrSnapshotRow = Tables<"mrr_snapshots">;
  * them as writable would offer the app a door Postgres has already bricked up.
  * See migration 20260816170000.
  */
-type ContractAmendmentRow = Tables<"contract_amendments">;
+/* R-489: actor_label (20261007040000) is in the generated Row now; kept OPTIONAL here so a
+   reader written for a DB without the column (lib/subscriptions/amendments.ts) still types. */
+type ContractAmendmentRow = Omit<Tables<"contract_amendments">, "actor_label"> & { actor_label?: string | null };
 
 /**
  * A customer's standing permission to be debited (UPI Autopay / e-NACH).
