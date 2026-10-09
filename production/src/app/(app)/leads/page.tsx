@@ -63,7 +63,7 @@ import {
 import { LeadsKpiDrawer } from "@/components/features/leads/leads-kpi-drawer";
 import { LeadsHotCard } from "@/components/features/leads/leads-hot-card";
 import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board";
-import { LeadsNoResults, LeadsStatusStates } from "@/components/features/leads/leads-empty-states";
+import { LeadsNoResults, LeadsStatusStates, hasActiveLeadFilters } from "@/components/features/leads/leads-empty-states";
 import { LeadsHeaderBar } from "@/components/features/leads/leads-header-bar";
 import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
@@ -505,6 +505,21 @@ function LeadsPageInner() {
   const shownCount = isList ? (counts?.list.matching ?? listRows.length) : boardLeads.length;
 
   const activeFilterCount = stageFilter.length + priorityFilter.length + ownerFilter.length + sourceFilter.length;
+  /* R-432: anything narrowing the rows — the "nothing matches" state offers to clear it. */
+  const filtersActive = hasActiveLeadFilters({
+    search, stages: stageFilter, priorities: priorityFilter, owners: ownerFilter, sources: sourceFilter,
+    who: leadTeamMode, folder,
+  });
+  /** R-432: one tap back to every lead — search, Filter menu, "My assigned", folder. Sort stays. */
+  const clearAllFilters = React.useCallback(() => {
+    setSearch("");
+    setStageFilter([]);
+    setPriorityFilter([]);
+    setOwnerFilter([]);
+    setSourceFilter([]);
+    setLeadTeamMode("team");
+    setFolder("all");
+  }, [setSearch, setStageFilter, setPriorityFilter, setOwnerFilter, setSourceFilter, setLeadTeamMode]);
 
   /* ── The folder chips are the filter ──────────────────────────────────────
      "Inbox" and "Qualified Deals" used to switch between the two halves of the old
@@ -757,6 +772,8 @@ function LeadsPageInner() {
         setAddOpen={setAddOpen}
         setCsvImportOpen={setCsvImportOpen}
         setSmartView={setSmartView}
+        filtersActive={filtersActive}
+        onClearFilters={clearAllFilters}
       />
 
       {/* Kanban — only shows on Deals tab (raw leads in the Leads tab have
@@ -774,7 +791,8 @@ function LeadsPageInner() {
           </button>
         </div>
       )}
-      {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "kanban" && (
+      {/* R-432: no columns of nothing — when the filters leave no card, LeadsNoResults speaks. */}
+      {!isLoading && !error && (totalLeads ?? 0) > 0 && effectiveView === "kanban" && boardLeads.length > 0 && (
         <LeadsKanbanBoard
           boardLeads={boardLeads}
           columnTotals={boardQ.data?.totals}
@@ -830,10 +848,10 @@ function LeadsPageInner() {
         totalLeads={totalLeads}
         shownCount={shownCount}
         smartView={smartView}
+        isDealsPage={isDealsPage}
         search={search}
-        setSearch={setSearch}
-        setStageFilter={setStageFilter}
-        setPriorityFilter={setPriorityFilter}
+        filtersActive={filtersActive}
+        onClearFilters={clearAllFilters}
       />
 
         </div>{/* /flex-1 main column */}
