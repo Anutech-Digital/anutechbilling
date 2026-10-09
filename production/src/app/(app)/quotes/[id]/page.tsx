@@ -19,6 +19,7 @@ import { quoteMoneyActions } from "@/lib/quotes/money-stage";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -305,6 +306,17 @@ export default function QuoteDetailPage() {
     seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
   });
   const interState = pos.interState;
+  /* R-431 (board R-406): before an invoice exists, an unknown head blocks it — the company's
+     own state first (one click to Settings), then the customer's. generate_invoice refuses
+     both server-side; this says so BEFORE the click, with the fix one tap away. An issued
+     invoice keeps its frozen head and is never re-decided here. */
+  const gstBlock: null | { title: string; body: string; href: string; label: string } =
+    !quote || quote.invoice_id || !me ? null
+    : pos.head.kind === "seller_state_missing"
+      ? { title: COMPANY_STATE_FIX.message, body: `${COMPANY_STATE_FIX.description} Until then the GST invoice can't be issued.`, href: COMPANY_STATE_FIX.href, label: COMPANY_STATE_FIX.label }
+      : pos.head.kind === "buyer_state_missing" && quote.customer_id
+        ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }
+        : null;
 
   // Delete — blocked for quotes with a recorded payment (cascade would wipe the
   // ledger). On success, navigate back to the list since this record is gone.
@@ -1107,6 +1119,18 @@ export default function QuoteDetailPage() {
           </div>
         )}
 
+        {gstBlock && money.canGenerateInvoice && (
+          <div role="alert" className="flex items-start justify-between gap-3 flex-wrap rounded-md border border-amber/40 bg-amber-soft/40 p-3">
+            <div className="text-sm text-ink-2 min-w-0">
+              <div className="font-semibold text-amber-ink">⚠ {gstBlock.title}</div>
+              <div className="text-xs mt-0.5">{gstBlock.body}</div>
+            </div>
+            <Button asChild variant="primary" icon="settings">
+              <Link href={gstBlock.href as never}>{gstBlock.label}</Link>
+            </Button>
+          </div>
+        )}
+
         {(money.canRecordPayment || money.canGenerateInvoice || money.note) && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-ink-2">{money.note}</div>
@@ -1140,6 +1164,8 @@ export default function QuoteDetailPage() {
                   variant={money.canRecordPayment ? "default" : "primary"}
                   icon="receipt"
                   loading={generateInvoice.isPending}
+                  disabled={!!gstBlock}
+                  title={gstBlock ? gstBlock.title : undefined}
                   onClick={() => generateInvoice.mutate(params.id)}
                 >
                   {money.outstanding > 0 && money.outstanding === total

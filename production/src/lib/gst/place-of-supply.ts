@@ -137,3 +137,48 @@ export function frozenParty(
     country,
   };
 }
+
+/**
+ * R-431 (board R-406, 7 Oct 2026) — can this supply's GST head be decided at all?
+ *
+ * isInterStateSupply() answers `false` (intra-state) when either state is missing — a safe
+ * DEFAULT for arithmetic, but printed as "✓ Intra-state → CGST + SGST" it became a fact the
+ * customer paid against. Abhishek (local test): a workspace with no company state quoted a
+ * Haryana customer as CGST+SGST, took ₹38,232, then generate_invoice refused; once Delhi
+ * was set the invoice came out IGST — quote and invoice disagreed.
+ *
+ * The SELLER side reads only the company's saved `state_code`, never its GSTIN prefix —
+ * exactly what generate_invoice reads (tenants.state_code). Accepting the GSTIN here would
+ * clear the quote while the invoice is still refused, the same split this fixes.
+ * The BUYER side is the place of supply the caller already resolved (state code, else the
+ * GSTIN prefix — generate_invoice does the same since R-373).
+ *
+ * Order: export (no Indian place of supply) → company state → customer state → compare.
+ * The company check comes first because it is one click to fix and blocks every quote.
+ *
+ * @example supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: null }).kind  // "seller_state_missing"
+ * @example supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: "07" }).kind  // "inter_state"
+ */
+export type SupplyHeadKind = "export" | "seller_state_missing" | "buyer_state_missing" | "intra_state" | "inter_state";
+
+export interface SupplyHead {
+  kind: SupplyHeadKind;
+  /** True only when the head is KNOWN to be CGST+SGST or IGST (or the supply is an export). */
+  known: boolean;
+  /** True only when the head is known AND it is IGST. Never true off a guess. */
+  interState: boolean;
+}
+
+export function supplyHead(a: {
+  isExport: boolean;
+  buyerStateCode: string | null | undefined;
+  sellerStateCode: string | null | undefined;
+}): SupplyHead {
+  if (a.isExport) return { kind: "export", known: true, interState: false };
+  const seller = (a.sellerStateCode ?? "").trim();
+  if (!seller) return { kind: "seller_state_missing", known: false, interState: false };
+  const buyer = (a.buyerStateCode ?? "").trim();
+  if (!buyer) return { kind: "buyer_state_missing", known: false, interState: false };
+  const inter = Number(buyer) !== Number(seller);
+  return { kind: inter ? "inter_state" : "intra_state", known: true, interState: inter };
+}

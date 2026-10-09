@@ -147,7 +147,7 @@ export function describeError(err: unknown, fallback?: string): DescribedError {
  */
 export function toastError(
   err: unknown,
-  opts: { description?: string; action?: ToastErrorAction; fallback?: string } = {}
+  opts: { description?: string; action?: ToastErrorAction; fallback?: string; duration?: number } = {}
 ): void {
   const d = describeError(err, opts.fallback);
 
@@ -160,5 +160,7 @@ export function toastError(
   toast.error(d.message, {
     description: opts.description ?? d.description,
     action: opts.action ? { label: opts.action.label, onClick: opts.action.onClick } : undefined,
+    // R-431: an error with a fix button must stay long enough to press it (default ~4 s).
+    ...(opts.duration ? { duration: opts.duration } : {}),
   });
 }

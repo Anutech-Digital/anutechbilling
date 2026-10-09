@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isInterStateSupply, isExportSupply, gstTreatment, placeOfSupplyLabel, frozenParty } from "./place-of-supply";
+import { isInterStateSupply, isExportSupply, gstTreatment, placeOfSupplyLabel, frozenParty, supplyHead } from "./place-of-supply";
 
 describe("isInterStateSupply", () => {
   it("intra-state: same state code → false (CGST + SGST)", () => {
@@ -149,5 +149,51 @@ describe("frozenParty (R-043 — GSTR-1 reads the invoice, not today's customer)
   it("no snapshot → today's customer, as before", () => {
     expect(frozenParty({ customer_gstin: null }, live)).toEqual(live);
     expect(frozenParty(null, live)).toEqual(live);
+  });
+});
+
+/* R-431 (board R-406): Abhishek's local test — a workspace with NO company state quoted a
+   Haryana customer "✓ Intra-state → CGST + SGST", took the payment, and the invoice later
+   came out IGST. An unknown state on EITHER side is "unknown", never intra-state. */
+describe("supplyHead — never assume intra-state (R-431)", () => {
+  it("seller (company) state empty → seller_state_missing, not intra-state", () => {
+    const h = supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: null });
+    expect(h.kind).toBe("seller_state_missing");
+    expect(h.known).toBe(false);
+    expect(h.interState).toBe(false);
+    // isInterStateSupply's arithmetic default is exactly the guess this replaces
+    expect(isInterStateSupply("06", null)).toBe(false);
+  });
+
+  it("blank / whitespace company state counts as empty", () => {
+    expect(supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: "  " }).kind).toBe("seller_state_missing");
+  });
+
+  it("customer state empty → buyer_state_missing", () => {
+    const h = supplyHead({ isExport: false, buyerStateCode: null, sellerStateCode: "07" });
+    expect(h.kind).toBe("buyer_state_missing");
+    expect(h.known).toBe(false);
+  });
+
+  it("both empty → the company state is asked for first (one click to fix)", () => {
+    expect(supplyHead({ isExport: false, buyerStateCode: "", sellerStateCode: "" }).kind).toBe("seller_state_missing");
+  });
+
+  it("same state → intra_state (CGST + SGST)", () => {
+    const h = supplyHead({ isExport: false, buyerStateCode: "07", sellerStateCode: "07" });
+    expect(h).toEqual({ kind: "intra_state", known: true, interState: false });
+  });
+
+  it("same state, unpadded code → still intra_state", () => {
+    expect(supplyHead({ isExport: false, buyerStateCode: "7", sellerStateCode: "07" }).kind).toBe("intra_state");
+  });
+
+  it("different state → inter_state (IGST)", () => {
+    const h = supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: "07" });
+    expect(h).toEqual({ kind: "inter_state", known: true, interState: true });
+  });
+
+  it("export needs no Indian state on either side", () => {
+    expect(supplyHead({ isExport: true, buyerStateCode: null, sellerStateCode: null }).kind).toBe("export");
   });
 });

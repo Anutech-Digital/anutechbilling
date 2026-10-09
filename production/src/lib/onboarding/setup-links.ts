@@ -25,3 +25,21 @@ export const NUMBERING_FIX = {
   href: SETUP_HREF.series,
   description: "Nothing was saved and no number was used. Check your invoice numbering, then try again.",
 } as const;
+
+/**
+ * R-431 (board R-406): the "go fix it" button when the company's own state is empty.
+ * Without it GST cannot choose CGST+SGST vs IGST, so quotes may not be sent and
+ * generate_invoice refuses ("your own company has no state on record").
+ */
+export const COMPANY_STATE_FIX = {
+  label: "Set company state",
+  href: SETUP_HREF.company,
+  message: "Your company's state is not set",
+  description: "GST needs it to choose CGST + SGST or IGST. Set it once in Settings → Company — nothing on this quote is lost.",
+} as const;
+
+/** True when a thrown error is generate_invoice refusing for a missing company state. */
+export function isCompanyStateMissingError(err: unknown): boolean {
+  const m = err && typeof err === "object" ? (err as { message?: unknown }).message : err;
+  return typeof m === "string" && /own company has no state on record/i.test(m);
+}

@@ -27,7 +27,7 @@ import {
   sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
 } from "@/lib/quotes/send-quote-email";
-import { NUMBERING_FIX } from "@/lib/onboarding/setup-links";
+import { NUMBERING_FIX, COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,7 +60,7 @@ import { useUpdateLead, useLeads } from "@/lib/queries/leads";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -88,6 +88,7 @@ import { SolutionPackagePicker } from "@/components/features/quotes/solution-pac
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
 import { canEditSupportCatalog } from "@/lib/support/catalog-row";
 import { WORKSPACE_LIST_PRICE_PM, floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
+import Link from "next/link";
 
 /** R-408: a new quote has no approval record yet — canSend() then judges by the lines alone. */
 const NO_APPROVAL_ROW = {
@@ -786,7 +787,15 @@ export function QuoteBuilder() {
   // here — mark the customer as export once created. (Phase 1c: lead country.)
   const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
   /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
-  const placeOfSupply     = placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
+  /* R-431 (board R-406): the company's OWN state decides the head as much as the buyer's.
+     Empty → isInterStateSupply() answered intra-state and this screen printed
+     "✓ Intra-state → CGST + SGST" off that guess; payment was taken against it and the
+     invoice later came out IGST. Read only once the user has loaded (no flash). */
+  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode });
+  const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
+  const placeOfSupply     = sellerStateMissing
+    ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
+    : placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
   // USD (books still record in ₹) so the operator doesn't have to remember to
@@ -1120,11 +1129,32 @@ export function QuoteBuilder() {
        draft may wait for the state, a quote that goes to the customer may not. Only for a
        lead or typed prospect, where the state field is on this screen; an existing
        customer without one keeps the amber note (their record is fixed on /customers). */
+    /* R-431 (board R-406): the company's own state is the other half of the head. Empty, the
+       quote went out "✓ Intra-state" and was paid against, then the invoice came out IGST.
+       A draft may wait; anything that reaches the customer may not. */
+    if (status === "sent" && sellerStateMissing) {
+      toast.error(COMPANY_STATE_FIX.message, {
+        description: `${COMPANY_STATE_FIX.description} You can still save this as a draft.`,
+        duration: 15000,
+        action: { label: COMPANY_STATE_FIX.label, onClick: () => router.push(COMPANY_STATE_FIX.href as never) },
+      });
+      return;
+    }
     if (status === "sent" && !customerId && supplyStateMissing({ isExport, buyerStateCode })) {
       toast.error("Pick the customer's state first", {
         description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
       });
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
+      return;
+    }
+    /* R-431: an existing customer with no state (and no GSTIN to prove one) is the same
+       unknown head — generate_invoice refuses it later, after the customer has paid. */
+    if (status === "sent" && customerId && supplyStateMissing({ isExport, buyerStateCode })) {
+      toast.error(`${customer?.name ?? "This customer"} has no state on record`, {
+        description: "The state decides CGST+SGST or IGST. Add it on the customer, then send. You can still save this as a draft.",
+        duration: 15000,
+        action: { label: "Open customer", onClick: () => router.push(`/customers/${customerId}` as never) },
+      });
       return;
     }
 
@@ -1560,6 +1590,8 @@ export function QuoteBuilder() {
                 <p className="text-2xs flex items-start gap-1 -mt-1 text-indigo-ink">
                   🌍 Export ({leadCountry}) → zero-rated under LUT, no GST
                 </p>
+              ) : sellerStateMissing ? (
+                <p className="text-2xs flex items-center gap-1 -mt-1"><CompanyStateFix /></p>
               ) : leadStateCode && (
                 <p className="text-2xs flex items-center gap-1 -mt-1">
                   {interState
@@ -1672,6 +1704,8 @@ export function QuoteBuilder() {
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({customer?.country}) → zero-rated under LUT, no GST</span>
+                      ) : sellerStateMissing ? (
+                        <CompanyStateFix />
                       ) : !buyerStateCode ? (
                         /* A picked customer is not the same as a KNOWN state: 36 of 41
                            customers carrying a GSTIN have no state_code on file. Without
@@ -1723,6 +1757,8 @@ export function QuoteBuilder() {
                     <p className="text-2xs flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({prospectCountry}) → zero-rated under LUT, no GST</span>
+                      ) : sellerStateMissing ? (
+                        <CompanyStateFix />
                       ) : !prospectStateCode ? (
                         <span className="text-ink-3">Pick the customer&apos;s state so GST (CGST+SGST vs IGST) is correct.</span>
                       ) : !buyerStateCode ? (
@@ -2353,7 +2389,9 @@ export function QuoteBuilder() {
                       helper a few fields up correctly said the head was still unknown.
                       Two labels on one screen, one of them wrong, is worse than either
                       alone: the operator believes the confident one. */}
-                  {!buyerStateCode
+                  {sellerStateMissing
+                    ? `Set your company's state to fix the GST head — the ${taxRate}% total is the same either way`
+                    : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : interState
                       ? `Different state → IGST applicable @ ${taxRate}%`
@@ -2498,7 +2536,7 @@ export function QuoteBuilder() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
-                      : hsnSummary(buyerStateCode ? interState : null)}
+                      : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
                     className={isExport ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
@@ -2523,7 +2561,11 @@ export function QuoteBuilder() {
                 </div>
               )}
 
-              {isExport ? null : interState ? (
+              {/* R-431: an unknown head (company or customer state empty) is one GST line,
+                  never a guessed CGST + SGST split. The amount is the same either way. */}
+              {isExport ? null : (sellerStateMissing || !buyerStateCode) ? (
+                <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
+              ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : (
                 <>
@@ -2994,5 +3036,24 @@ function LineSupportToggle({ line, catalog, lineItems, onAdd }: {
     >
       <Icon name="plus" size={11} /> Add support · {rupee(price)}/yr
     </button>
+  );
+}
+
+/**
+ * R-431 (board R-406): shown in place of "✓ Intra-state" when the company's own state is
+ * empty — a one-click link to the S31 setup spot that fixes it (Settings → Company).
+ * Inline (span) so it sits inside the existing status <p> lines.
+ */
+function CompanyStateFix() {
+  return (
+    <span className="text-amber-ink" role="alert">
+      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.{" "}
+      <Link
+        href={COMPANY_STATE_FIX.href as never}
+        className="font-semibold underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 rounded-sm"
+      >
+        {COMPANY_STATE_FIX.label} →
+      </Link>
+    </span>
   );
 }
