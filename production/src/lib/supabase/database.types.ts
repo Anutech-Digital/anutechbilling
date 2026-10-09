@@ -1201,6 +1201,7 @@ type ArgNullable = {
   consume_prepaid_fifo: "p_note" | "p_attachment" | "p_vendor_id" | "p_bill_no" | "p_igst" | "p_cgst" | "p_sgst" | "p_tds_section";
   book_bank_txn_as_prepaid: "p_notes";
   create_tenant_backup: "p_label";
+  correct_attendance: "p_check_in" | "p_check_out";
   list_leads: "p_limit";
   list_whatsapp_threads: "p_limit";
   log_activity: "p_entity_id" | "p_label";

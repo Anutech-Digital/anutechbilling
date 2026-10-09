@@ -590,6 +590,39 @@ export function useAttendance(period?: string) {
   });
 }
 
+export type AttendanceCorrection = {
+  employeeId: string;
+  workDate: string;          // YYYY-MM-DD (IST day)
+  checkIn: string | null;    // ISO instant; both null = mark absent
+  checkOut: string | null;
+  note: string;
+};
+
+/** R-603: owner/manager/accountant/billing fix one employee-day (missed punch, forgotten
+ *  checkout, or mark absent). The RPC checks role, tenant, note, times and date again. */
+export function useCorrectAttendance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: AttendanceCorrection): Promise<string> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("correct_attendance", {
+        p_employee_id: v.employeeId,
+        p_work_date: v.workDate,
+        p_check_in: v.checkIn,
+        p_check_out: v.checkOut,
+        p_note: v.note.trim(),
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (result) => {
+      toast.success(result === "absent" ? "Marked absent" : "Attendance saved");
+      void qc.invalidateQueries({ queryKey: ["attendance"] });
+    },
+    onError: (err: unknown) => toastError(err, { fallback: "Could not fix attendance." }),
+  });
+}
+
 /** Short-lived signed URL for an attendance selfie (tenant-scoped by storage RLS). */
 export async function getSelfieUrl(path: string): Promise<string | null> {
   const supabase = createClient();

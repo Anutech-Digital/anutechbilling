@@ -48,11 +48,13 @@ import {
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory,
   useStatutoryDues, usePayStatutoryDues,
-  useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl,
+  useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
   type Employee, type LeaveKind, type Attendance, type SalaryPayment,
 } from "@/lib/queries/payroll";
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
+import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
@@ -2386,6 +2388,14 @@ export function AttendanceTab() {
 /** Monthly attendance register (muster): employees × days, P = present. */
 function AttendanceRegister({ period, employees, attendance }: { period: string; employees: Employee[]; attendance: Attendance[] }) {
   const holQ = useHolidays();
+  // R-603: these roles can fix a missed punch / forgotten checkout (the RPC checks again).
+  const canFix = canFixAttendance(useCurrentUser().data?.role);
+  const teamQ = useTeamMembers();
+  const [fixing, setFixing] = React.useState<{ employee: Employee; date: string; rec: Attendance | undefined } | null>(null);
+  const editorName = (id: string | null) => {
+    const m = (teamQ.data ?? []).find((t) => t.id === id);
+    return m ? memberLabel(m) : "a team member";
+  };
   const [yy, mm] = period.split("-").map(Number);
   if (!yy || !mm) return null;
   const days = new Date(yy, mm, 0).getDate();          // last day of this month
@@ -2456,18 +2466,41 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
                     const isPresent = Boolean(rec?.check_in);
                     const kind = dayKind(d);
                     const future = dateFor(d) > today;
+                    const edited = Boolean(rec?.corrected_at);
+                    const timeText = rec?.check_in ? `In ${fmtTimeIST(rec.check_in)}${rec.check_out ? ` · Out ${fmtTimeIST(rec.check_out)}` : ""}` : null;
+                    const editText = rec?.corrected_at ? `Edited by ${editorName(rec.corrected_by)}: ${rec.correction_note ?? ""}` : null;
+                    const title = [timeText ?? (kind === "holiday" ? holidayMap.get(dateFor(d)) : null), editText].filter(Boolean).join(" · ") || undefined;
+                    const mark = isPresent
+                      ? <span className="font-semibold text-emerald">P</span>
+                      : kind === "sunday" ? <span className="text-indigo/50 text-xs">S</span>
+                      : kind === "holiday" ? <span className="text-amber-ink/60 text-xs">H</span>
+                      : future ? <span className="text-ink-3/25">·</span>
+                      : <span className="text-ink-3/40">–</span>;
+                    const content = (
+                      <>
+                        {mark}
+                        {edited && <span aria-hidden className="ml-px align-super text-xs leading-none text-amber-ink">✎</span>}
+                      </>
+                    );
+                    const dayLabel = `${toTitleCase(e.name)}, ${d} ${monthLabel}: ${isPresent ? "present" : "absent"}${timeText ? `, ${timeText}` : ""}${editText ? `. ${editText}` : ""}`;
                     return (
                       <td
                         key={d}
-                        className={cn("px-1.5 py-2 text-center", kind === "sunday" && "bg-indigo/5", kind === "holiday" && "bg-amber-soft/40")}
-                        title={isPresent ? `In ${fmtTimeIST(rec!.check_in)}${rec!.check_out ? ` · Out ${fmtTimeIST(rec!.check_out)}` : ""}` : kind === "holiday" ? holidayMap.get(dateFor(d)) : undefined}
+                        className={cn("px-0.5 py-1 text-center", kind === "sunday" && "bg-indigo/5", kind === "holiday" && "bg-amber-soft/40")}
+                        title={title}
                       >
-                        {isPresent
-                          ? <span className="font-semibold text-emerald">P</span>
-                          : kind === "sunday" ? <span className="text-indigo/50 text-xs">S</span>
-                          : kind === "holiday" ? <span className="text-amber-ink/60 text-xs">H</span>
-                          : future ? <span className="text-ink-3/25">·</span>
-                          : <span className="text-ink-3/40">–</span>}
+                        {canFix && !future ? (
+                          <button
+                            type="button"
+                            onClick={() => setFixing({ employee: e, date: dateFor(d), rec })}
+                            aria-label={`Fix attendance — ${dayLabel}`}
+                            className="min-h-[28px] min-w-[28px] rounded px-1 hover:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                          >
+                            {content}
+                          </button>
+                        ) : (
+                          <span className="inline-block px-1 py-1">{content}</span>
+                        )}
                       </td>
                     );
                   })}
@@ -2484,7 +2517,89 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
           {holidayDays.map((d) => `${d} ${monthLabel.split(" ")[0]} — ${holidayMap.get(dateFor(d))}`).join(" · ")}
         </div>
       )}
+      {canFix && (
+        <div className="border-t border-hairline px-4 py-2 text-xs text-ink-3">
+          Click a day to fix a missed punch. <span aria-hidden className="text-amber-ink">✎</span> = edited by hand.
+        </div>
+      )}
+      {fixing && (
+        <FixAttendanceDialog
+          employee={fixing.employee}
+          date={fixing.date}
+          rec={fixing.rec}
+          onClose={() => setFixing(null)}
+        />
+      )}
     </Card>
+  );
+}
+
+const ATTENDANCE_FIX_ROLES = new Set(["owner", "manager", "accountant", "billing"]);
+function canFixAttendance(role: string | null | undefined): boolean {
+  return Boolean(role && ATTENDANCE_FIX_ROLES.has(role));
+}
+
+/** R-603: fix one employee-day — times are IST (HH:mm), sent with an explicit +05:30. */
+function FixAttendanceDialog({ employee, date, rec, onClose }: {
+  employee: Employee; date: string; rec: Attendance | undefined; onClose: () => void;
+}) {
+  const fix = useCorrectAttendance();
+  const [inT, setInT] = React.useState(isoToIstHhmm(rec?.check_in));
+  const [outT, setOutT] = React.useState(isoToIstHhmm(rec?.check_out));
+  const [note, setNote] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  function submit(mode: "save" | "absent") {
+    const c = buildCorrection(mode, date, inT, outT, note);
+    if (!c.ok) { setError(c.error); return; }
+    setError(null);
+    fix.mutate(
+      { employeeId: employee.id, workDate: date, checkIn: c.checkIn, checkOut: c.checkOut, note },
+      { onSuccess: onClose },
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v && !fix.isPending) onClose(); }}>
+      <DialogContent className="md:!max-w-md">
+        <DialogHeader>
+          <DialogTitle>Fix attendance</DialogTitle>
+          <DialogDescription>{toTitleCase(employee.name)} · {formatDate(date)} · times in IST</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {rec?.corrected_at && (
+            <div className="rounded-md bg-paper-2/50 px-3 py-2 text-xs text-ink-2">
+              Last edit note: {rec.correction_note ?? "—"}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Check in" htmlFor="att-fix-in">
+              <Input id="att-fix-in" type="time" value={inT} onChange={(ev) => setInT(ev.target.value)} />
+            </Field>
+            <Field label="Check out" htmlFor="att-fix-out">
+              <Input id="att-fix-out" type="time" value={outT} onChange={(ev) => setOutT(ev.target.value)} />
+            </Field>
+          </div>
+          <Field label="Note" required htmlFor="att-fix-note">
+            <Input
+              id="att-fix-note"
+              value={note}
+              onChange={(ev) => setNote(ev.target.value)}
+              placeholder="e.g. Forgot to check out"
+              aria-required
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "att-fix-error" : undefined}
+            />
+          </Field>
+          {error && <p id="att-fix-error" role="alert" className="text-xs text-rose-ink">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={fix.isPending}>Cancel</Button>
+          <Button variant="danger" onClick={() => submit("absent")} disabled={fix.isPending}>Mark absent</Button>
+          <Button variant="primary" loading={fix.isPending} onClick={() => submit("save")}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1598,6 +1598,9 @@ export type Database = {
           check_in_device: string | null
           check_out: string | null
           check_out_device: string | null
+          corrected_at: string | null
+          corrected_by: string | null
+          correction_note: string | null
           created_at: string
           employee_id: string
           flags: string[]
@@ -1618,6 +1621,9 @@ export type Database = {
           check_in_device?: string | null
           check_out?: string | null
           check_out_device?: string | null
+          corrected_at?: string | null
+          corrected_by?: string | null
+          correction_note?: string | null
           created_at?: string
           employee_id: string
           flags?: string[]
@@ -1638,6 +1644,9 @@ export type Database = {
           check_in_device?: string | null
           check_out?: string | null
           check_out_device?: string | null
+          corrected_at?: string | null
+          corrected_by?: string | null
+          correction_note?: string | null
           created_at?: string
           employee_id?: string
           flags?: string[]
@@ -1654,6 +1663,13 @@ export type Database = {
           work_date?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "attendance_corrected_by_fkey"
+            columns: ["corrected_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "attendance_employee_id_fkey"
             columns: ["employee_id"]
@@ -13472,6 +13488,16 @@ export type Database = {
         Returns: number
       }
       convert_inbound_email_to_lead: { Args: { p_id: string }; Returns: string }
+      correct_attendance: {
+        Args: {
+          p_check_in: string
+          p_check_out: string
+          p_employee_id: string
+          p_note: string
+          p_work_date: string
+        }
+        Returns: string
+      }
       create_direct_invoice: {
         Args: {
           p_customer_id: string
