@@ -2,6 +2,9 @@
  * Biometric-attendance setup hooks — read/regenerate the tenant's ingest key and
  * map employees to their device user number (biometric_id). The office bridge
  * uses the key to POST punches to /api/attendance/punch. (migration 0215)
+ *
+ * R-607: the key is read and rotated through /api/attendance/ingest-key (owner only). It
+ * used to be read straight off the tenants row, which every member can read.
  */
 "use client";
 
@@ -17,11 +20,10 @@ export function useAttendanceIngest() {
   return useQuery({
     queryKey: KEY,
     queryFn: async (): Promise<{ tenantId: string; key: string | null }> => {
-      const supabase = createClient();
-      // RLS returns only the caller's tenant row.
-      const { data, error } = await supabase.from("tenants").select("id, attendance_ingest_key").limit(1).maybeSingle();
-      if (error) throw error;
-      return { tenantId: (data?.id as string) ?? "", key: (data?.attendance_ingest_key as string | null) ?? null };
+      const res = await fetch("/api/attendance/ingest-key");
+      const json = (await res.json().catch(() => ({}))) as { tenantId?: string; key?: string | null; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Could not load the device key");
+      return { tenantId: json.tenantId ?? "", key: json.key ?? null };
     },
   });
 }
@@ -29,12 +31,13 @@ export function useAttendanceIngest() {
 export function useRegenerateIngestKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (tenantId: string) => {
-      const supabase = createClient();
-      const fresh = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.round(Math.random() * 1e9)}`).replace(/-/g, "");
-      const { error } = await supabase.from("tenants").update({ attendance_ingest_key: fresh }).eq("id", tenantId);
-      if (error) throw error;
-      return fresh;
+    /* The server always uses the owner's own tenant; the argument stays for existing callers. */
+    mutationFn: async (_tenantId: string) => {
+      void _tenantId;
+      const res = await fetch("/api/attendance/ingest-key", { method: "POST" });
+      const json = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
+      if (!res.ok || !json.key) throw new Error(json.error ?? "Could not make a new key");
+      return json.key;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("New key generated — update it in the bridge."); },
     onError: (e) => toastError(e),

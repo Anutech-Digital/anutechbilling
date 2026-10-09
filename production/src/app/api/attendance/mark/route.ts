@@ -62,6 +62,16 @@ export async function POST(request: NextRequest) {
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const action = data as string;
+  /* R-607: the RPC RETURNS these instead of raising, so its attempt counter survives. */
+  if (action === "wrong_pin") {
+    return NextResponse.json({ error: "Wrong PIN. After 5 wrong tries this PIN is locked for 15 minutes." }, { status: 400 });
+  }
+  if (action === "pin_locked") {
+    return NextResponse.json(
+      { error: "Too many wrong PINs — this PIN is locked for 15 minutes. Try again later, or ask the owner to set a new PIN." },
+      { status: 429 },
+    );
+  }
 
   // Attach the selfie (best-effort — attendance is already recorded).
   if (photo && (action === "checked_in" || action === "checked_out")) {

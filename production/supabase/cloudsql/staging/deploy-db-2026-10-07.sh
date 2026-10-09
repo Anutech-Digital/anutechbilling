@@ -78,6 +78,7 @@ MIGS=(
   "latecharges|20261009233000_late_payment_charges.sql|resellersos_migration|(to_regclass('public.late_charge_bills') is not null and to_regprocedure('public.bill_late_charges(text,integer,integer,date,date)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='late_fee_enabled'))"
   "attendancedevices|20261009235000_attendance_devices.sql|resellersos_migration|(to_regclass('public.attendance_devices') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'require_device'))"
   "splitbilledoutstanding|20261009235800_split_billed_outstanding.sql|resellersos_migration|to_regprocedure('public.sync_split_outstanding(uuid)') is not null"
+  "attendancepiningestlock|20261010000000_attendance_pin_ingest_lock.sql|resellersos_migration|(to_regclass('public.employee_pin_attempts') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'ingest_key'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

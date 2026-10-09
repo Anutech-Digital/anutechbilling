@@ -120,7 +120,8 @@ describe("in-app API routes jo service_role use karte hain, wo login maangte hai
   it("chhoot pane wala route apni chaabi khud maangta hai", () => {
     const punch = inApp.find((r) => r.name === "attendance/punch/route.ts")!;
     expect(/x-ingest-key/.test(punch.src)).toBe(true);
-    expect(/attendance_ingest_key/.test(punch.src)).toBe(true);
+    /* R-607: the key moved from tenants.attendance_ingest_key to attendance_settings.ingest_key. */
+    expect(punch.src.includes('.eq("ingest_key", key)')).toBe(true);
     expect(/401/.test(punch.src)).toBe(true);
   });
 

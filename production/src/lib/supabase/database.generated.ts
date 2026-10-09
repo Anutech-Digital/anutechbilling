@@ -1855,6 +1855,7 @@ export type Database = {
         Row: {
           allowed_ips: string[]
           half_day_under_hours: number
+          ingest_key: string | null
           late_grace_minutes: number
           presence_secret: string | null
           require_device: boolean
@@ -1870,6 +1871,7 @@ export type Database = {
         Insert: {
           allowed_ips?: string[]
           half_day_under_hours?: number
+          ingest_key?: string | null
           late_grace_minutes?: number
           presence_secret?: string | null
           require_device?: boolean
@@ -1885,6 +1887,7 @@ export type Database = {
         Update: {
           allowed_ips?: string[]
           half_day_under_hours?: number
+          ingest_key?: string | null
           late_grace_minutes?: number
           presence_secret?: string | null
           require_device?: boolean
@@ -4611,6 +4614,52 @@ export type Database = {
           },
           {
             foreignKeyName: "employee_loans_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employee_pin_attempts: {
+        Row: {
+          employee_id: string
+          failed: number
+          locked_until: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          employee_id: string
+          failed?: number
+          locked_until?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          employee_id?: string
+          failed?: number
+          locked_until?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_pin_attempts_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: true
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_pin_attempts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_pin_attempts_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "v_tenant_with_parent"
