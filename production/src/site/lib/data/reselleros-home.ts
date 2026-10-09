@@ -52,7 +52,7 @@ export const HOME = {
   ctaFeatures: "See features",
   ctaDemo: "Try the demo",
   demoNote: "Read-only sample workspace · no signup",
-  /** One line per ?demo=<reason> that /api/demo/session or the middleware sends back. */
+  /** One line per ?demo=<reason> that /api/public/demo-session or the middleware sends back. */
   demoMessages: {
     off: "The demo is not open yet. Get started free instead — it takes a minute.",
     busy: "Too many demo starts from your network. Please try again in a few minutes.",

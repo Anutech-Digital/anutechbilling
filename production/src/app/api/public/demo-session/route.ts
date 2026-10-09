@@ -1,5 +1,5 @@
 /**
- * POST /api/demo/session — "Try the demo" (R-524). Opens the READ-ONLY sample workspace for a
+ * POST /api/public/demo-session — "Try the demo" (R-524). Opens the READ-ONLY sample workspace for a
  * visitor, no signup. The homepage button is a plain form POST to here (works without JS, and a
  * link prefetch can never mint a session).
  *

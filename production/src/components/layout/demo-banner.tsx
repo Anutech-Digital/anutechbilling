@@ -4,7 +4,7 @@
  * R-524: the strip a "Try the demo" visitor sees on every app page, and the friendly message
  * when they try to change something.
  *
- * Renders nothing unless the ros_demo cookie is there (set only by /api/demo/session). The
+ * Renders nothing unless the ros_demo cookie is there (set only by /api/public/demo-session). The
  * cookie is NOT what keeps the demo read-only — the database and the middleware do that
  * (lib/demo/demo-account.ts). This only explains it: a refused request (403 with
  * x-demo-readonly from the middleware, or PostgREST's 25006 "read-only transaction") shows

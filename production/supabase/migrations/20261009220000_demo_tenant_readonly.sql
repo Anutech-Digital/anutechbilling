@@ -36,7 +36,7 @@
 -- Data isolation: the visitor is an ordinary public.users row in the demo tenant, so every
 -- existing RLS policy (current_tenant_id()) already keeps other tenants' rows out of reach.
 --
--- Until 20261009220100 is applied the wall is NOT up — and /api/demo/session refuses to open
+-- Until 20261009220100 is applied the wall is NOT up — and /api/public/demo-session refuses to open
 -- the demo (it checks demo_readonly_probe() = 'on'), so nothing is ever writable. Idempotent.
 
 begin;

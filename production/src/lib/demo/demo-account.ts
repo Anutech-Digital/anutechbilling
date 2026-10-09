@@ -7,7 +7,7 @@
  *     db_pre_request (public.demo_pre_request, migration 20261009220000) turns every request of
  *     that login into a READ ONLY transaction, so Postgres refuses every insert, update, delete —
  *     inside RPCs and triggers too. Storage refuses uploads with restrictive policies.
- *  2. FAIL CLOSED. /api/demo/session asks the database (demo_readonly_probe) right after signing
+ *  2. FAIL CLOSED. /api/public/demo-session asks the database (demo_readonly_probe) right after signing
  *     the visitor in, and hands out NO session unless the answer is 'on'.
  *  3. APP ROUTES. The middleware refuses every non-GET request (API routes, server actions) and
  *     every export/download for a demo visitor — that covers routes that write with the

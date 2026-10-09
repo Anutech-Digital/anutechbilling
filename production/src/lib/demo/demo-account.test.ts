@@ -41,7 +41,7 @@ describe("demoRequestVerdict — what a demo visitor may do", () => {
     for (const [m, p] of [
       ["POST", "/api/invoices"], ["PUT", "/api/customers/1"], ["PATCH", "/api/settings"], ["DELETE", "/api/quotes/Q-1"],
       ["POST", "/quotes/new"], ["POST", "/api/team/invite"], ["POST", "/api/payments/razorpay/order"],
-      ["POST", "/api/campaigns/send"], ["POST", "/api/marketing/whatsapp/broadcast"], ["POST", "/api/demo/session"],
+      ["POST", "/api/campaigns/send"], ["POST", "/api/marketing/whatsapp/broadcast"], ["POST", "/api/public/demo-session"],
       ["POST", "/api/demo-data"], ["POST", "/api/upload"],
     ] as const) {
       expect(demoRequestVerdict(m, p), `${m} ${p}`).toBe("refuse");

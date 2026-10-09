@@ -9,7 +9,7 @@
  *  - resetDemoData: nightly — clear the sample rows, add a fresh set. Runs as the SEEDER login,
  *    so RLS keeps every write inside the demo tenant; the service role never writes sample rows.
  *
- * Only the cron route and /api/demo/session call this file.
+ * Only the cron route and /api/public/demo-session call this file.
  */
 import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";

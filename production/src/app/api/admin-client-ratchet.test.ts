@@ -76,7 +76,7 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "auth/signup": "signup itself; Turnstile + verified-domain rules, grants nothing unverified",
   "auth/resend-verification": "same answer for every email; rate-limited per IP and per address",
   "auth/verify-email": "one-time verification token is the credential; rate-limited per IP",
-  "demo/session": "R-524 Try the demo: anonymous by design (DEMO_ENABLED, per-IP limit); service role only reads demo_tenants + mints a one-time token for the fixed read-only visitor login, and the session is refused unless the DB confirms read-only",
+  "public/demo-session": "R-524 Try the demo: anonymous by design (DEMO_ENABLED, per-IP limit); service role only reads demo_tenants + mints a one-time token for the fixed read-only visitor login, and the session is refused unless the DB confirms read-only",
   "public/agent/chat": "website sales chat; capped messages, model sees only public facts",
   "public/assessment/[token]": "read scoped to the unguessable assessment share token",
   "public/assessment/[token]/submit": "write scoped to the unguessable assessment share token",

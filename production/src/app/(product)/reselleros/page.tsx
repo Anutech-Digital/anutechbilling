@@ -5,7 +5,7 @@
  * Every word comes from site/lib/data/reselleros-home.ts (owner decisions listed there).
  *
  * R-524: "Free during beta", no price figure, "Try the demo" (a plain form POST to
- * /api/demo/session — shown only when DEMO_ENABLED=1) and screenshot slots that appear once the
+ * /api/public/demo-session — shown only when DEMO_ENABLED=1) and screenshot slots that appear once the
  * image file is in public/site/screens/.
  * Phone-first: one column at 390px, two/three columns from sm/md up. App tokens, so the
  * light and dark themes both work.
@@ -85,7 +85,7 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         <div className="mt-7 flex flex-col gap-3 sm:flex-row">
           <Link href="/signup" className={primaryBtn}>{HOME.ctaPrimary}</Link>
           {showDemo && (
-            <form action="/api/demo/session" method="post">
+            <form action="/api/public/demo-session" method="post">
               <button type="submit" className={`${quietBtn} w-full sm:w-auto`} data-testid="try-demo">{HOME.ctaDemo}</button>
             </form>
           )}

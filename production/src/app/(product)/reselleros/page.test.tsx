@@ -100,13 +100,13 @@ describe("ResellerOS homepage", () => {
   it("R-524: no demo button while DEMO_ENABLED is off (the default)", async () => {
     const html = await render();
     expect(html).not.toContain(HOME.ctaDemo);
-    expect(html).not.toContain("/api/demo/session");
+    expect(html).not.toContain("/api/public/demo-session");
   });
 
-  it("R-524: with DEMO_ENABLED=1, Try the demo is a POST form to /api/demo/session", async () => {
+  it("R-524: with DEMO_ENABLED=1, Try the demo is a POST form to /api/public/demo-session", async () => {
     process.env.DEMO_ENABLED = "1";
     const html = await render();
-    expect(html).toMatch(/<form action="\/api\/demo\/session" method="post"><button type="submit"[^>]*>Try the demo<\/button><\/form>/);
+    expect(html).toMatch(/<form action="\/api\/public\/demo-session" method="post"><button type="submit"[^>]*>Try the demo<\/button><\/form>/);
     expect(html).toContain(HOME.demoNote);
   });
 

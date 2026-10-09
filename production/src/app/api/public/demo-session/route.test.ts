@@ -1,5 +1,5 @@
 /**
- * R-524: /api/demo/session — off by default, rate-limited, never swaps a real user's session,
+ * R-524: /api/public/demo-session — off by default, rate-limited, never swaps a real user's session,
  * and FAILS CLOSED: if the database does not confirm the session is read-only, the visitor is
  * signed straight out and no demo cookie is set.
  */
@@ -29,7 +29,7 @@ vi.mock("@/lib/demo/demo-account.server", () => ({
 
 import { POST } from "./route";
 
-const call = (cookie = "") => POST(new Request("https://reselleros.anutech.in/api/demo/session", {
+const call = (cookie = "") => POST(new Request("https://reselleros.anutech.in/api/public/demo-session", {
   method: "POST", headers: { host: "reselleros.anutech.in", "x-forwarded-proto": "https", ...(cookie ? { cookie } : {}) },
 }));
 
@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 afterEach(() => { delete process.env.DEMO_ENABLED; });
 
-describe("POST /api/demo/session", () => {
+describe("POST /api/public/demo-session", () => {
   it("a demo visitor whose window is still open may re-enter", async () => {
     const r = await call(`sb-abc-auth-token=xyz; ros_demo=${Date.now() + 60_000}`);
     expect(r.headers.get("location")).toBe("https://reselleros.anutech.in/dashboard");
