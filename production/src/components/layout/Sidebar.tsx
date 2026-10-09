@@ -103,7 +103,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         )}
         aria-current={isActive ? "page" : undefined}
       >
-        {child
+        {child && !collapsed
           ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", isActive ? "bg-amber" : "bg-ink-3/40")} />
           : <Icon name={it.icon} size={15} className={cn("flex-shrink-0", isActive ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />}
         {!collapsed && <span className="flex-1 truncate" title={it.label}>{it.label}</span>}
@@ -128,7 +128,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   const renderItem = (item: NavItem) => {
     const active = pathname === item.href;
     if (item.children?.length && !collapsed) {
-      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href));
+      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
       return (
         <div key={item.id}>
           <div className="flex items-center">
@@ -159,6 +159,17 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
               {item.children!.map((c) => renderLink(c, true))}
             </div>
           )}
+        </div>
+      );
+    }
+    /* R-497: the collapsed rail has no accordion, so its children (Customers → Contacts) were
+       unreachable there. Show them as icon rows under the parent while you are inside it —
+       click Customers, and Parent Accounts + Contacts appear below it. */
+    if (item.children?.length && collapsed && (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")))) {
+      return (
+        <div key={item.id} className="space-y-0.5">
+          {renderLink(item)}
+          {item.children.map((c) => renderLink(c, true))}
         </div>
       );
     }

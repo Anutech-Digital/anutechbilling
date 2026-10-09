@@ -70,7 +70,9 @@ const DEALS_ROLES = ["owner", "manager", "sales", "sales_senior"];
  *  Not a snapshot drift: it had been removed from the menu on purpose on 10 Sep and the
  *  guard bounced sales users. */
 const ADDED_7OCT_CONTACTS = ["/contacts"];
-const CONTACTS_ROLES = ["owner", "manager", "sales", "sales_senior"];
+/** R-497 (9 Oct 2026, Pardeep): Contacts moved under Customers (Bill) — a child of a row sales
+ *  cannot see, so owner / manager only now. */
+const CONTACTS_ROLES = ["owner", "manager"];
 /** 3 Oct 2026 — "koi bhi hidden link nahi rahna chahiye" (Pardeep): pages that existed but
  *  had no menu row, plus AI Entry / Packages / UX & UI Insights. Each at the roles the page
  *  was already built for. Real route grants (not only menu rows): billing → /ai-entry and
@@ -233,7 +235,25 @@ describe("2. structure", () => {
     // 47 since R-382 (7 Oct 2026): Contacts back in Sell — owner decision, one named row only.
     expect(rows).toBeLessThanOrEqual(47);
     // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
+    // R-497 (9 Oct): Contacts moved into the Customers accordion, so Sell is one row lighter.
     for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
+  });
+
+  it("R-497 (9 Oct 2026): Contacts sits in the Customers accordion, not in Sell", () => {
+    const customers = APP_NAV.find((s) => s.section === "Bill")!.items.find((i) => i.id === "customers")!;
+    expect(customers.children?.map((c) => [c.label, c.href])).toEqual([
+      ["Parent Accounts", "/customers/groups"],
+      ["Contacts", "/contacts"],
+    ]);
+    const sell = APP_NAV.find((s) => s.section === "Sell")!;
+    expect(sell.items.some((i) => i.href === "/contacts")).toBe(false);
+    expect(flat.filter((e) => e.item.href === "/contacts").map((e) => e.via)).toEqual(["child"]);
+    expect(getCrumb("/contacts")).toEqual(["Billing", "Contacts"]);
+    expect(getCrumb("/contacts/abc")).toEqual(["Billing", "Contacts", "Profile"]);
+    for (const r of ["owner", "manager"] as UserRole[]) {
+      expect(isRouteAllowed(r, "/contacts"), r).toBe(true);
+      expect(isRouteAllowed(r, "/contacts/abc"), r).toBe(true);
+    }
   });
 
   it("R-384 (7 Oct 2026): one 'Products' row for the catalog, Packages its only child, both tabs still open", () => {

@@ -37,7 +37,7 @@ export const PINNED_ITEM_IDS = ["today", "dashboard", "ai-entry"] as const;
 export const NAV_APPS: NavAppDef[] = [
   {
     id: "sales", label: "Sales", icon: "target",
-    itemIds: ["leads", "deals", "enquiries", "online-orders", "tasks", "contacts", "quotes", "customers", "items", "marketing-hub", "referrals", "partners"],
+    itemIds: ["leads", "deals", "enquiries", "online-orders", "tasks", "quotes", "customers", "items", "marketing-hub", "referrals", "partners"],
   },
   {
     /* Money in and money out: what the customer pays, what we pay vendors. */

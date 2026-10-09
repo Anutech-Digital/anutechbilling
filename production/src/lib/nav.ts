@@ -368,6 +368,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",
+  "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -409,12 +410,7 @@ export const APP_NAV: NavSection[] = [
          paid order's money already reaches Payments Received on its own. Same href, roles, hint. */
       { id: "online-orders",   href: "/online-orders",    label: "Orders (website)", icon: "cart", roles: OMB, hint: "All website orders — cart, checkout, trial" },
       { id: "tasks",           href: "/tasks",            label: "Tasks",         icon: "clock",  roles: ["owner", "manager", "sales"] },
-      /* Contacts — back in the menu 7 Oct 2026 (R-382, Pardeep: "contact page ko sales tab
-         me show karo"). Removed 10 Sep (people live on the customer or the lead), but the
-         page stayed and holds the Google Contacts sync, so it was reachable only by URL.
-         Same roles as Tasks (sales_senior sees what sales sees); the "/contacts" row
-         admits /contacts/[id] by prefix. */
-      { id: "contacts",        href: "/contacts",         label: "Contacts",      icon: "user",   roles: ["owner", "manager", "sales"], hint: "Every person across leads and customers" },
+      /* Contacts was here 7–9 Oct 2026 (R-382). R-497 moved it under Customers (Bill). */
       {
         /* Marketing answers "where do leads come from and what does each cost" — owner/
            manager only, it shows ad spend and CAC. Fifteen sidebar rows became one: the
@@ -460,6 +456,12 @@ export const APP_NAV: NavSection[] = [
         id: "customers",       href: "/customers",        label: "Customers",       icon: "users",   roles: SALES_READ,
         children: [
           { id: "customer-groups", href: "/customers/groups", label: "Parent Accounts", icon: "layout",  roles: OM },
+          /* R-497 (9 Oct 2026, Pardeep: "contact bhi customer ke under aaye"): Contacts left
+             Sell (where R-382 put it on 7 Oct) for this accordion. Removed 10 Sep, back 7 Oct —
+             the page holds the Google Contacts sync. A child's roles must sit inside its
+             parent's and Customers is not a sales row, so Contacts is owner / manager now.
+             The "/contacts" row admits /contacts/[id] by prefix. */
+          { id: "contacts",        href: "/contacts",         label: "Contacts",        icon: "user",    roles: OM, hint: "Every person across leads and customers" },
         ],
       },
       { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"] },
@@ -714,8 +716,8 @@ export const APP_NAV: NavSection[] = [
 const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   // NB: /deals is an APP_NAV entry again (30 Sep 2026), so its crumb comes from the nav
   //     ("Sell / Deals") — an entry here would override that with a stale title.
-  "/contacts":               { tail: ["Contacts"], under: "/leads" },
-  "/contacts/[id]":          { tail: ["Contacts", "Profile"], under: "/leads" },
+  // R-497: /contacts is a Customers accordion row, so its crumb comes from the nav.
+  "/contacts/[id]":          { tail: ["Profile"] },
   "/customers/groups/[id]":  { tail: ["Detail"] },
   "/customers/new":          { tail: ["New"] },
   "/customers/[id]":         { tail: ["Profile"] },
