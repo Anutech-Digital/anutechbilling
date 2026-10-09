@@ -175,6 +175,9 @@ export default async function QuoteAcceptPage(props: Props) {
   };
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
+    /* R-495: the list price the line was priced from, so the customer sees list →
+       discount → final. A selling price the reseller shows on the PDF anyway — not cost. */
+    ...(typeof l.list_rate === "number" ? { list_rate: l.list_rate } : {}),
     // What the reseller marked adjustable. Cost and margin are still dropped.
     optional: l.optional, included_by_default: l.included_by_default,
     seats_adjustable: l.seats_adjustable, min_seats: l.min_seats, max_seats: l.max_seats,

@@ -6,7 +6,8 @@
 --   2. When the revision is sent, the old sent quote becomes 'expired' + superseded_by.
 --   3. The replaced quote can never be accepted again.
 --   4. Accepting the revision sets the lead's seats/value from it (ex-GST subtotal).
---   5. Accepting closes the lead's OLDER open quotes too (deal won).
+--   5. Accepting does NOT close the lead's other (non-family) open quote — R-495 decision 2B
+--      (20261009191000_quote_accept_family_only; see quote_accept_family_only.test.sql).
 
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -41,7 +42,7 @@ begin
   if v_seats <> 12 or v_value <> 38880 then raise exception 'FAIL 4: lead is % seats / ₹%', v_seats, v_value; end if;
 
   select status::text, superseded_by into v_status, v_by from public.quotes where id = 'Q-QR-0004';
-  if v_status <> 'expired' or v_by is distinct from 'Q-QR-0005-R2' then raise exception 'FAIL 5: older open quote still open (% / %)', v_status, v_by; end if;
+  if v_status <> 'sent' or v_by is not null then raise exception 'FAIL 5: other quote on the lead was closed (% / %)', v_status, v_by; end if;
 
   raise notice 'PASS quote_revisions';
 end $$;
