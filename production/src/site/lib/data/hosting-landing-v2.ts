@@ -114,7 +114,7 @@ export const HOSTING_MATRIX: readonly { k: string; a: string; b: string; c: stri
 ];
 
 export const HOSTING_TIMELINE: readonly { d: string; t: string; b: string }[] = [
-  { d: "DAY 1", t: "Account opens", b: "cPanel access with the full plan. No card asked for, so nothing can be charged." },
+  { d: "DAY 1", t: "Account opens", b: "DirectAdmin access with the full plan. No card asked for, so nothing can be charged." },
   { d: "DAY 2–3", t: "We migrate, you review", b: "Send your current hosting details; our team copies the site over while your old host stays live." },
   { d: "BEFORE IT ENDS", t: "You hear from us", b: "Support checks in with what's left to do — the end date never arrives as a surprise." },
   { d: `DAY ${TRIAL_DAYS}`, t: "You decide", b: "Pick a plan and everything continues untouched, or let the account close. Both are one click." },
@@ -135,11 +135,11 @@ export const MIGRATION_WEDO: readonly string[] = [
 
 export const HOSTING_WORRIES: readonly { q: string; a: string }[] = [
   { q: "Will my site go down during the move?", a: "No. The migrated copy is tested on our servers first and DNS is switched only after you approve it, so your live site keeps serving throughout." },
-  { q: "Will it actually be faster?", a: "The platform is Google Cloud with NVMe SSD storage and LiteSpeed. You have the whole trial to measure your own pages before paying anything." },
+  { q: "Will it actually be faster?", a: "The platform is Google Cloud in Mumbai, with NVMe SSD storage. You have the whole trial to measure your own pages before paying anything." },
   { q: "What if support disappears after I pay?", a: `Support is on phone, WhatsApp and email, ${SLA.hours}, with a first reply ${SLA.firstReply}; Plus adds a priority queue. Test it during the trial — that is the point of the trial.` },
   { q: "What if I lose data?", a: "Automatic daily backups are included on every plan and are restorable. Ask support and they will walk a restore through with you." },
   { q: "Will the price jump at renewal?", a: "The renewal figure is printed on every plan card and matches the signup price. Yearly plans also carry a 30-day money-back guarantee." },
-  { q: "Am I locked in?", a: "No lock-in: cancel any time, and because it is standard cPanel your site is portable. We'd rather earn the renewal." },
+  { q: "Am I locked in?", a: "No lock-in: cancel any time, and your site is portable — download its files and databases from DirectAdmin whenever you like. We'd rather earn the renewal." },
 ];
 
 /** Proof cards — PARTNERSHIP ("Premier Partner since 2014") removed until verified. */
@@ -172,7 +172,7 @@ export const HOSTING_CHANNELS: readonly { t: string; d: string; a: string; href:
 ];
 
 export const HOSTING_FAQS_V2: readonly { q: string; a: string }[] = [
-  { q: `How does the ${TRIAL_DAYS}-day free trial work?`, a: "The trial is on the Starter plan, monthly or yearly — Standard and Plus are bought, not trialled. You get a real Starter cPanel account with full access to every feature — storage, unlimited free SSL, one-click WordPress and support. Nothing is throttled. Before the trial ends you choose a plan to keep everything as it is (moving up to Standard or Plus carries the site over), or simply let it close." },
+  { q: `How does the ${TRIAL_DAYS}-day free trial work?`, a: "The trial is on the Starter plan, monthly or yearly — Standard and Plus are bought, not trialled. You get a real Starter hosting account with full access to every feature — storage, unlimited free SSL, one-click WordPress and support. Nothing is throttled. Before the trial ends you choose a plan to keep everything as it is (moving up to Standard or Plus carries the site over), or simply let it close." },
   { q: "Do I need a credit card to start?", a: "No. The trial asks for no card, which is also why nothing can be auto-charged when it ends. You reach a payment page only when you decide to buy." },
   { q: "Can you move my existing website for free?", a: "Yes, free website migration is included on every plan and on the trial. Share your current hosting login and our team moves the site for you. Your old host keeps serving traffic until you have checked the copy and approved the switch." },
   { q: "What happens after the trial if I don't buy?", a: "The account closes and you are never charged, because we never held a card. If you want your files first, ask support and we'll help you take them." },

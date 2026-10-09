@@ -12,8 +12,8 @@ export const KB_ARTICLES = [
   { title: "Setting up SPF, DKIM and DMARC correctly", cat: "EMAIL" },
   { title: "Migrating mailboxes from Google Workspace", cat: "EMAIL" },
   { title: "Restoring a site from a daily backup", cat: "HOSTING" },
-  { title: "Forcing HTTPS on a cPanel site", cat: "HOSTING" },
-  { title: "Creating a cPanel account for a client in WHM", cat: "RESELLER" },
+  { title: "Forcing HTTPS on a DirectAdmin site", cat: "HOSTING" },
+  { title: "Creating a hosting account for a client in DirectAdmin", cat: "RESELLER" },
   { title: "Reading your GST invoice and claiming input credit", cat: "BILLING" },
   { title: "What happens if a domain expires", cat: "BILLING" },
 ] as const;
@@ -69,7 +69,7 @@ export const DASH_INVOICES = [
 ] as const;
 
 export const DASH_TICKETS = [
-  { subject: "Move nirvaanclinics.co.in to the Bengaluru node", meta: "WhatsApp · replied 14 minutes ago" },
+  { subject: "Move nirvaanclinics.co.in to a bigger plan", meta: "WhatsApp · replied 14 minutes ago" },
   { subject: "Add 6 mailboxes for the new sales team", meta: "Email · awaiting your confirmation" },
 ] as const;
 

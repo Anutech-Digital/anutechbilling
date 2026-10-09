@@ -9,7 +9,7 @@ import type { CartLine } from "@/site/lib/money";
 export function paidHostingLine(p: Pick<HostingTier, "name" | "storage" | "bandwidth" | "monthly" | "yearlyTotal">, yearly: boolean): Omit<CartLine, "key" | "qty"> {
   return {
     label: `${p.name} hosting`,
-    detail: `${p.storage} · ${p.bandwidth} · cPanel on Google Cloud`,
+    detail: `${p.storage} · ${p.bandwidth} · DirectAdmin on Google Cloud`,
     /* Whole rupees, exactly as the checkout API charges (Math.round of the
        same figure) — ₹599.88 here against ₹600 there made the shown total
        and the charged total disagree. */

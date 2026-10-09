@@ -13,7 +13,7 @@ const MIGRATION_CHIP = SLA.migration.replace(/^usually\s+/i, "").split(",")[0].t
 
 export const CATALOGUE = [
   { name: "Domains", from: "from ₹249/yr", body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
-  { name: "Web hosting", from: "from ₹49.99/mo", body: "cPanel and LiteSpeed on NVMe, in Mumbai and Bengaluru.", chips: ["CPANEL", "LITESPEED", "99.9% SLA"], href: "/hosting" },
+  { name: "Web hosting", from: "from ₹49.99/mo", body: "DirectAdmin on Google Cloud, in Mumbai.", chips: ["DIRECTADMIN", "GOOGLE CLOUD", "99.9% SLA"], href: "/hosting" },
   { name: "Business email", from: "from ₹79/mo", body: "Anutech Mail, Google Workspace or Microsoft 365 — quoted side by side.", chips: ["NO SEAT MINIMUM", "FREE MIGRATION"], href: "/email" },
   { name: "SSL & security", from: "from ₹0", body: "Free DV on every site, wildcard and OV when a client needs the paperwork.", chips: ["DV", "OV", "WILDCARD"], href: "/ssl" },
   { name: "Reseller program", from: "₹0 to join", body: "Published wholesale rates with no slabs and no advance deposit.", chips: ["NO DEPOSIT", "ONE RATE", "WHITE LABEL"], href: "/reseller" },
@@ -55,7 +55,7 @@ export const COMPARE_ROWS = [
   { label: "Migration", us: "Free, done by us", them: "A documentation article" },
   { label: "Support", us: "WhatsApp, answered by a person", them: "Ticket queue, chatbot first" },
   { label: "Who answers", us: "Someone who can change your account", them: "Tier-one, then escalation" },
-  { label: "Datacentre", us: "Mumbai and Bengaluru", them: "Usually US, India optional" },
+  { label: "Datacentre", us: "Mumbai (Google Cloud)", them: "Usually US, India optional" },
   { label: "Contract", us: "Monthly or yearly, cancel any time", them: "Tenure-locked promo pricing" },
 ] as const;
 
@@ -85,7 +85,7 @@ export const SECURITY_FEATURES = [
   { title: "When you do not need a paid cert", body: "A brochure site or a WordPress blog is fine on free DV. We will say so rather than sell you one." },
   { title: "Anti-spam both ways", body: "Inbound filtering plus outbound reputation monitoring, so a compromised mailbox does not burn your domain." },
   { title: "Weekly malware scan", body: "Every hosted site scanned weekly. If something is found we clean it and tell you how it got in." },
-  { title: "Backups you can restore", body: "Daily to hourly depending on plan, restorable by you from cPanel or by us on WhatsApp." },
+  { title: "Backups you can restore", body: "Daily to hourly depending on plan, restorable by you from DirectAdmin or by us on WhatsApp." },
   { title: "Registrar lock by default", body: "Domains cannot be moved out without an authorisation you personally approve." },
   { title: "Two-factor on the panel", body: "TOTP on client accounts, and reseller sub-accounts scoped per client." },
 ] as const;

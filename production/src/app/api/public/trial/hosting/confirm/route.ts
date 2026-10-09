@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
   const ownerStep = !trialPlanOk
     ? `They asked to trial ${pkg} hosting, which no longer has a free trial (only Starter does). Offer a Starter trial or a paid ${pkg} plan; do not provision ${pkg} free.`
     : domain
-      ? "Provision the Starter cPanel account and send the login."
+      ? "Provision the Starter hosting account in DirectAdmin and send the login."
       : "They still need a domain — help them register one, then provision.";
   const email = lead.contact_email || "";
 

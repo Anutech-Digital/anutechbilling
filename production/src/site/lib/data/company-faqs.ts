@@ -27,6 +27,6 @@ export const COMPANY_FAQS: readonly { q: string; a: string }[] = [
   },
   {
     q: "Do you also provide business email, domains and hosting?",
-    a: "Yes. We have sold Google Workspace, Microsoft 365 and Zoho since 2014 as a Google Premier Partner, along with domains, cPanel hosting and SSL — published prices, free email migration, and support from the same team.",
+    a: "Yes. We have sold Google Workspace, Microsoft 365 and Zoho since 2014 as a Google Premier Partner, along with domains, web hosting and SSL — published prices, free email migration, and support from the same team.",
   },
 ];

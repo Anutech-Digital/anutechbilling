@@ -104,7 +104,7 @@ export const TRUSTED_LOGOS = ["travelizo", "Crafto.", "TechSolution", "Brilliant
 
 export const HOSTING_FEATURES = [
   { icon: "cloud",      title: "Google Cloud Infrastructure", body: "Enterprise-grade infrastructure for maximum speed, security & reliability.", tint: "bg-blue-50 text-blue-500" },
-  { icon: "zap",        title: "Lightning Fast Performance",  body: "NVMe SSD storage, LiteSpeed servers and an optimized stack for ultra-fast websites.", tint: "bg-violet-50 text-violet-500" },
+  { icon: "zap",        title: "Lightning Fast Performance",  body: "NVMe SSD storage on Google Cloud in Mumbai and an optimised stack for fast websites.", tint: "bg-violet-50 text-violet-500" },
   { icon: "lock",       title: "Free SSL Certificate",        body: "Secure your website with a free SSL certificate + HTTPS activation.", tint: "bg-green-50 text-green-500" },
   { icon: "refresh",    title: "Daily Backups",               body: "Automatic daily backups keep your data safe and restorable.", tint: "bg-sky-50 text-sky-500" },
   { icon: "rocket",     title: "Free Website Migration",      body: "We'll move your website to Anutech for FREE. No technical hassle.", tint: "bg-rose-50 text-rose-500" },

@@ -80,7 +80,7 @@ const domains: QuoteProduct[] = [
 /* Same tiers, names and ₹ as /hosting and /rates: billed yearly → annual, billed monthly → flexible. */
 const hosting: QuoteProduct[] = HOSTING_TIERS.map((h) => ({
   name: `Hosting ${h.name}`, label: `Web hosting — ${h.name}`, vendor: "Web hosting",
-  tags: `cpanel nvme ssl backups hosting website ${h.name.toLowerCase()}`,
+  tags: `directadmin control panel nvme ssl backups hosting website ${h.name.toLowerCase()}`,
   note: `${h.storage} · ${h.sites} site${h.sites === "1" ? "" : "s"} · ${h.bandwidth} bandwidth`,
   annual: h.yearlyMo, monthly: h.monthly, per: "site", cycle: "mo",
 }));

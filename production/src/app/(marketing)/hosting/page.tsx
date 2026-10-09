@@ -28,9 +28,9 @@ const PAGE_URL = `${SITE_URL}/hosting`;
 export const metadata: Metadata = {
   title: "Web hosting on Google Cloud — 15-day free trial, no credit card | Anutech Digital",
   description:
-    "cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
+    "Web hosting on Google Cloud in Mumbai, with the DirectAdmin control panel, from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
   keywords: [
-    "web hosting India", "cPanel hosting", "Google Cloud hosting", "free website migration",
+    "web hosting India", "DirectAdmin hosting", "Google Cloud hosting", "free website migration",
     "WordPress hosting India", "GST invoice hosting", "15-day free trial hosting", "Anutech Digital",
   ],
   alternates: { canonical: PAGE_URL },
@@ -41,12 +41,12 @@ export const metadata: Metadata = {
     siteName: "Anutech Digital",
     title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
     description:
-      "cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
+      "Web hosting on Google Cloud with DirectAdmin. Free SSL, daily backups, free migration, real-person support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
   },
   twitter: {
     card: "summary_large_image",
     title: "Web hosting on Google Cloud — 15-day free trial",
-    description: "cPanel hosting from Anutech Digital. Free migration, GST invoice, no-card trial.",
+    description: "DirectAdmin hosting from Anutech Digital. Free migration, GST invoice, no-card trial.",
   },
 };
 
@@ -71,7 +71,7 @@ function structuredData() {
     "@type": "Product",
     name: "Web hosting on Google Cloud",
     description:
-      "cPanel web hosting on Google Cloud with free SSL, automatic daily backups, free website migration and real-person support. Three plans: Starter, Standard and Plus.",
+      "Web hosting on Google Cloud with the DirectAdmin control panel, free SSL, automatic daily backups, free website migration and real-person support. Three plans: Starter, Standard and Plus.",
     brand: { "@type": "Brand", name: "Anutech Digital" },
     category: "Web hosting",
     offers: {

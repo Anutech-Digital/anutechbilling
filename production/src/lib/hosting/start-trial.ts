@@ -8,7 +8,7 @@
  *
  * Unchanged from the route it came from: it CAPTURES the request as a qualified
  * lead (stage='trial'), emails the customer a confirmation
- * link, and schedules follow-up tasks. It does NOT create a cPanel account —
+ * link, and schedules follow-up tasks. It does NOT create the hosting account —
  * that happens only after the customer confirms their email
  * (api/public/trial/hosting/confirm), behind HOSTING_TRIAL_LIVE.
  *
@@ -190,7 +190,7 @@ export async function startHostingTrial(
 
   const notes = [
     `HOSTING TRIAL REQUEST · ${TRIAL_DAYS}-day free trial (no card)`,
-    `Plan to trial: ${tierName} hosting (cPanel on Google Cloud)`,
+    `Plan to trial: ${tierName} hosting (DirectAdmin on Google Cloud)`,
     `After the trial: ${tierName} billed ${cycle}`,
     domainStatus === "need"
       ? `Domain: needs a new domain`
@@ -200,9 +200,9 @@ export async function startHostingTrial(
     `Submitted via the site cart checkout`,
     ``,
     `NEXT STEPS (provisioning is gated — do this to start the trial):`,
-    `  1. Create the ${tierName} cPanel account in DirectAdmin`,
+    `  1. Create the ${tierName} hosting account in DirectAdmin`,
     `  2. ${domainStatus === "need" ? "Help the customer register a domain" : `Set up ${cleanDomain || "their domain"} / offer free migration`}`,
-    `  3. Send cPanel login to ${email} + WhatsApp ${phone}`,
+    `  3. Send the DirectAdmin login to ${email} + WhatsApp ${phone}`,
     `  4. Day 12: conversion outreach; Day ${TRIAL_DAYS}: convert to paid or close`,
   ].filter(Boolean).join("\n");
 
@@ -270,7 +270,7 @@ export async function startHostingTrial(
       {
         tenant_id: BUY_PAGE_TENANT_ID,
         title: `Provision hosting trial: ${companyName} (${tierName})`,
-        notes: `New ${TRIAL_DAYS}-day hosting trial. Create the ${tierName} cPanel account and send login to ${email}.`,
+        notes: `New ${TRIAL_DAYS}-day hosting trial. Create the ${tierName} hosting account in DirectAdmin and send the login to ${email}.`,
         kind: "followup",
         due_at: trialStartedAt.toISOString(),
         lead_id: leadId,
@@ -329,7 +329,7 @@ confirm this is your email by opening the link below:
 
 ${confirmUrl}
 
-As soon as you do${domainStatus === "need" ? ", we'll be in touch to help you pick a domain and set the account up" : `, we set up your ${tierName} cPanel account${cleanDomain ? ` for ${cleanDomain}` : ""} and email your login`}.
+As soon as you do${domainStatus === "need" ? ", we'll be in touch to help you pick a domain and set the account up" : `, we set up your ${tierName} hosting account${cleanDomain ? ` for ${cleanDomain}` : ""} and email your login`}.
 No credit card, ${TRIAL_DAYS} days fully free. The link is valid for 48 hours.
 
 If you didn't request this, you can ignore this email — nothing happens without
@@ -339,7 +339,7 @@ ${signOff}`
     : `Hi ${firstName},
 
 Thanks for starting a ${tierName} hosting trial${ownerTenant?.name?.trim() ? ` with ${ownerTenant.name.trim()}` : ""}. We'll set up your
-cPanel account and email your login within a few hours. No credit card, ${TRIAL_DAYS}
+hosting account and email your login within a few hours. No credit card, ${TRIAL_DAYS}
 days fully free. Trial ends ${trialEndsFmt}.
 
 ${signOff}`;

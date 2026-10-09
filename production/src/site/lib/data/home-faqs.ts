@@ -17,7 +17,7 @@ export const HOME_FAQS: readonly { q: string; a: string }[] = [
   },
   {
     q: "Where is my data stored?",
-    a: "Google Workspace and Microsoft 365 data sits in each vendor's India region where the plan supports it; our own hosting runs from Mumbai and Bengaluru. Domain and mail routing is set up by us so nothing is misconfigured.",
+    a: "Google Workspace and Microsoft 365 data sits in each vendor's India region where the plan supports it; our own hosting runs on Google Cloud in Mumbai. Domain and mail routing is set up by us so nothing is misconfigured.",
   },
   {
     q: "When am I charged?",

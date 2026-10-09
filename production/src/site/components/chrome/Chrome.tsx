@@ -43,7 +43,7 @@ export function UtilityBar() {
 /** "Home / <page title>" on every route except home. The map is the handoff's crumb map. */
 const CRUMBS: Record<string, string> = {
   "/domains": "Domain registration & transfer",
-  "/hosting": "cPanel web hosting",
+  "/hosting": "DirectAdmin web hosting",
   "/email": "Business email & productivity",
   "/email/compare-editions": "Compare editions",
   "/google-workspace/pricing": "Google Workspace pricing",
