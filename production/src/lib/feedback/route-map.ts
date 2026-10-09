@@ -177,6 +177,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/reports", file: "src/app/(app)/reports/page.tsx" },
   { route: "/reports/profit", file: "src/app/(app)/reports/profit/page.tsx" },
   { route: "/reports/purchases", file: "src/app/(app)/reports/purchases/page.tsx" },
+  { route: "/reselleros", file: "src/app/(product)/reselleros/page.tsx" }, // R-520: the ResellerOS homepage ("/" on reselleros.anutech.in)
   { route: "/reset-password", file: "src/app/(auth)/reset-password/page.tsx" },
   { route: "/scorecard", file: "src/app/(app)/scorecard/page.tsx" },
   { route: "/settings", file: "src/app/(app)/settings/page.tsx" },

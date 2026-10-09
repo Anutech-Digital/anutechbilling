@@ -18,17 +18,16 @@ export const RESELLEROS_URL =
   "https://reselleros.anutech.in";
 
 /**
- * The public marketing site's CANONICAL origin (Pardeep, 7 Sep 2026: app+site
- * moved to the product subdomain; anutech.in 301s here, so canonical follows).
- * Every canonical link, OpenGraph URL, sitemap entry, robots host and JSON-LD
- * @id uses this — so search engines and AI crawlers treat reselleros.anutech.in
- * as the one true home, regardless of which Cloud Run host actually serves the
- * bytes today. Override per environment with NEXT_PUBLIC_SITE_URL. No trailing
- * slash. (This is the marketing brand's domain — distinct from RESELLEROS_URL,
- * the app service, and DOMAINS_APP_URL, the domains/hosting platform.)
+ * The COMPANY site's canonical origin — anutech.in (R-520, 9 Oct 2026: Pardeep split the
+ * sites; anutech.in = company, reselleros.anutech.in = ResellerOS only. Before that, 7 Sep,
+ * the company pages lived on the product subdomain and canonical pointed there).
+ * Every canonical link, OpenGraph URL and JSON-LD @id on the company pages uses this.
+ * The per-domain maps (redirects, sitemaps) are site/lib/site-split.ts. Override per
+ * environment with NEXT_PUBLIC_SITE_URL. No trailing slash. (Distinct from RESELLEROS_URL,
+ * the app/product, and DOMAINS_APP_URL, the domains/hosting platform.)
  */
 export const SITE_URL =
-  (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://reselleros.anutech.in").replace(/\/+$/, "");
+  (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://anutech.in").replace(/\/+$/, "");
 
 /**
  * The domains + hosting platform (app.anutech.in / DMS). Merge Phase-1: the

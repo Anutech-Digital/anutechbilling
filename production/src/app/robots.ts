@@ -1,17 +1,19 @@
 import type { MetadataRoute } from "next";
-import { SITE_URL } from "@/site/lib/config";
+import { headers } from "next/headers";
+import { sitemapFor } from "@/site/lib/site-split";
 
 /**
- * /robots.txt — lets the public marketing site be crawled and indexed, while
- * keeping the authenticated app, the API, and the transactional flow out of the
- * index. AI crawlers (GPTBot, Google-Extended, PerplexityBot, ClaudeBot …) are
- * NOT singled out — they follow the "*" rules, so they may read the public pages
- * and cite Anutech Digital; that is the intent (Pardeep: rank on Google AND be
- * quoted by ChatGPT/Gemini).
+ * /robots.txt — lets the public pages be crawled and indexed, while keeping the
+ * authenticated app, the API, and the transactional flow out of the index. AI crawlers
+ * (GPTBot, Google-Extended, PerplexityBot, ClaudeBot …) are NOT singled out — they follow
+ * the "*" rules, so they may read the public pages and cite Anutech Digital / ResellerOS.
  *
- * `host` and `sitemap` both point at SITE_URL (anutech.in), the canonical origin.
+ * R-520: `host` and `sitemap` point at the domain that was asked (anutech.in or
+ * reselleros.anutech.in) — each domain has its own sitemap.
  */
-export default function robots(): MetadataRoute.Robots {
+export default async function robots(): Promise<MetadataRoute.Robots> {
+  const h = await headers();
+  const { origin } = sitemapFor(h.get("x-forwarded-host") ?? h.get("host"));
   return {
     rules: [
       {
@@ -39,7 +41,7 @@ export default function robots(): MetadataRoute.Robots {
         ],
       },
     ],
-    sitemap: `${SITE_URL}/sitemap.xml`,
-    host: SITE_URL,
+    sitemap: `${origin}/sitemap.xml`,
+    host: origin,
   };
 }

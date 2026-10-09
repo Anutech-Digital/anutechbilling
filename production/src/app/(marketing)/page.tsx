@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { headers } from "next/headers";
+import { siteKindForHost } from "@/site/lib/site-split";
 import { HomeCompany } from "@/site/components/home/HomeCompany";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { COMPANY, SITE_URL } from "@/site/lib/config";
@@ -12,8 +14,9 @@ import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/liv
  * domains, hosting and SSL follow as "IT for your office". The old email-first home
  * (HomeV2) is now the Business Email category page at /email, with its Product JSON-LD.
  *
- * A signed-in operator hitting "/" is sent to their workspace; "?preview=1" keeps them on
- * the marketing page (the logo links there so it never bounces).
+ * On dev/staging hosts a signed-in operator hitting "/" is sent to their workspace ("?preview=1"
+ * keeps them here). On anutech.in (R-520) the company home never bounces: the company site is
+ * not the app, so the logo can link to plain "/" (R-465).
  */
 
 export const metadata: Metadata = {
@@ -51,8 +54,11 @@ export default async function HomePage(
 ) {
   const searchParams = await props.searchParams;
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user && searchParams.preview !== "1") redirect("/dashboard");
+  const h = await headers();
+  if (siteKindForHost(h.get("x-forwarded-host") ?? h.get("host")) !== "company") {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user && searchParams.preview !== "1") redirect("/dashboard");
+  }
 
   // "Business email from ₹…" on the IT card: the cheapest of the live licence rates and
   // the Anutech Mail mailbox, so the card never undercuts or overstates /email.

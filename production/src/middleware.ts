@@ -12,6 +12,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
+import { decideSite } from "@/site/lib/site-split";
 
 // Routes that require authentication (the entire app shell).
 // Keep this in sync with APP_NAV in src/lib/nav.ts — any new section's
@@ -118,6 +119,26 @@ export async function middleware(request: NextRequest) {
     if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEV_PAGES !== "1") {
       return new NextResponse(null, { status: 404 });
     }
+  }
+
+  /* ─── R-520: two sites on one service ─────────────────────────────────────
+     anutech.in = company, reselleros.anutech.in = ResellerOS. Company pages asked for on the
+     product host 301 to anutech.in (and ResellerOS pages on anutech.in 301 back); the product
+     host's "/" renders the ResellerOS homepage. GET/HEAD only, listed paths only, the two real
+     hosts only — the map, and why each exception exists, is site/lib/site-split.ts. */
+  const site = decideSite(
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host"),
+    pathname,
+    request.nextUrl.search,
+    request.method,
+  );
+  if (site.action === "redirect") {
+    return NextResponse.redirect(site.location, 301);
+  }
+  if (site.action === "rewrite") {
+    const url = request.nextUrl.clone();
+    url.pathname = site.pathname;
+    return NextResponse.rewrite(url);
   }
 
   /* ─── Rate limit: unauthenticated public surface (audit A3, 1 Sep 2026) ────

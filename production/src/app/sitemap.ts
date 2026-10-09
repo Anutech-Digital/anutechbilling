@@ -1,50 +1,24 @@
 import type { MetadataRoute } from "next";
-import { SITE_URL } from "@/site/lib/config";
+import { headers } from "next/headers";
+import { sitemapFor } from "@/site/lib/site-split";
 
 /**
- * /sitemap.xml — the crawl map for Google and for AI crawlers (GPTBot,
- * Google-Extended, PerplexityBot …). Only the PUBLIC marketing pages are listed;
- * the authenticated app, the API, and the transactional cart/checkout flow are
- * left out (and blocked in robots.ts) — they carry nothing to rank and should
- * never surface in a search result or an AI answer.
+ * /sitemap.xml — one per domain (R-520, 9 Oct 2026). The same service answers for
+ * anutech.in (company pages) and reselleros.anutech.in (ResellerOS pages), so the list is
+ * picked from the Host header; both lists and their origins live in site/lib/site-split.ts.
  *
- * URLs are built from SITE_URL (anutech.in, the canonical origin), so the
- * sitemap agrees with every page's canonical link. `priority` ranks the money
- * pages above the policy pages; it's a hint, not a guarantee.
+ * Only PUBLIC pages are listed; the app, the API and the transactional cart/checkout flow
+ * are left out (and blocked in robots.ts). Every URL is on the origin that serves the page
+ * without a redirect, so it agrees with that page's canonical link.
  */
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const h = await headers();
+  const { origin, pages } = sitemapFor(h.get("x-forwarded-host") ?? h.get("host"));
   const now = new Date();
-  const page = (
-    path: string,
-    priority: number,
-    changeFrequency: "weekly" | "monthly",
-  ): MetadataRoute.Sitemap[number] => ({
-    url: `${SITE_URL}${path}`,
+  return pages.map((p) => ({
+    url: `${origin}${p.path}`,
     lastModified: now,
-    changeFrequency,
-    priority,
-  });
-
-  return [
-    page("/", 1.0, "weekly"),
-    // The money pages
-    page("/domains", 0.9, "weekly"),
-    page("/hosting", 0.9, "weekly"),
-    page("/email", 0.9, "weekly"),
-    page("/email/compare-editions", 0.7, "weekly"),
-    page("/google-workspace/pricing", 0.9, "weekly"),
-    page("/ssl", 0.7, "weekly"),
-    // R-232: the online Workspace checkout and the rate card were missing from the map.
-    page("/buy/workspace", 0.8, "weekly"),
-    page("/rates", 0.6, "weekly"),
-    // Reseller side
-    page("/reselleros", 0.8, "weekly"),
-    page("/reseller", 0.8, "weekly"),
-    // Supporting
-    page("/quote", 0.6, "monthly"),
-    page("/why-us", 0.6, "monthly"),
-    page("/contact", 0.5, "monthly"),
-    page("/status", 0.3, "monthly"),
-    page("/refund", 0.3, "monthly"),
-  ];
+    changeFrequency: p.changeFrequency,
+    priority: p.priority,
+  }));
 }
