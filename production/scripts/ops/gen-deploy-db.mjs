@@ -66,6 +66,9 @@ export function parseDeployHeaders(sql, file) {
   if (!/^[a-z0-9]+$/i.test(out.key)) throw new Error(`${file}: deploy-key "${out.key}" must be letters/digits only.`);
   if (!/^[a-z_][a-z0-9_]*$/i.test(out.user)) throw new Error(`${file}: deploy-user "${out.user}" is not a db user name.`);
   if (BAD_CHARS.test(out.peek)) throw new Error(`${file}: deploy-peek may not contain | " $ or a backtick (it sits inside a bash "…|…" line).`);
+  /* 9 Oct 2026: a peek that casts with ::regprocedure / ::regclass errors when the object is not
+     there yet, and one error blanks the WHOLE peek line — the staging run stopped at step 2. */
+  if (/::\s*reg(procedure|proc|class|type)\b/i.test(out.peek)) throw new Error(`${file}: deploy-peek must not cast with ::regprocedure/::regclass — use to_regprocedure(...)/to_regclass(...) so a missing object reads as false, not an error.`);
   return out;
 }
 

@@ -67,8 +67,8 @@ MIGS=(
   "tbslice2|20261009170000_tb_slice2_expense_credits.sql|resellersos_migration|exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and prosrc like '%S45-SLICE2%') and exists(select 1 from pg_proc where proname='set_opening_balances' and pronamespace='public'::regnamespace)"
   "invlinecosts|20261009180000_invoice_line_costs.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_invoice_copy_quote_lines') and exists(select 1 from pg_proc where proname='invoice_cost_fill_apply' and pronamespace='public'::regnamespace)"
   "wontrialtasks|20261009181000_won_trial_tasks_cancelled.sql|resellersos_migration|exists(select 1 from pg_proc where proname='tg_leads_won_close_tasks' and prosrc like '%R-496%')"
-  "leadcountspage|20261009190500_lead_counts_page_pool.sql|resellersos_migration|position('page_unassigned' in pg_get_functiondef('public.lead_counts(jsonb)'::regprocedure)) > 0"
-  "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|position('revision_of' in pg_get_functiondef('public.tg_quote_accepted_sync_lead()'::regprocedure)) > 0"
+  "leadcountspage|20261009190500_lead_counts_page_pool.sql|resellersos_migration|coalesce(position('page_unassigned' in pg_get_functiondef(to_regprocedure('public.lead_counts(jsonb)'))) > 0, false)"
+  "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|coalesce(position('revision_of' in pg_get_functiondef(to_regprocedure('public.tg_quote_accepted_sync_lead()'))) > 0, false)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
