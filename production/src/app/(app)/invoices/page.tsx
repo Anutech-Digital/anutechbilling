@@ -34,6 +34,7 @@ import { invoiceStatusBadge } from "./invoice-status";
 import {
   invoiceChip, invoiceChipCounts, invoiceKpis, invoiceInFocus, INVOICE_FOCI, INVOICE_FOCUS_LABEL, type InvoiceFocus,
 } from "@/lib/invoices/kpis";
+import { invoiceMarginMtd } from "@/lib/invoices/margin-mtd";
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
@@ -295,7 +296,9 @@ function InvoicesPageInner() {
   const focusOn = (f: InvoiceFocus) => { setView("all"); setDateRange("all"); setTab("all"); setFocus(f); };
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const overdueCount = counts.overdue ?? 0;
-  const marginMTD = Math.round(collectedMTD * 0.17); // 17% avg estimate
+  /* R-405: was collectedMTD × 0.17, shown as fact. Now from each line's own cost, and a
+     line with no cost is named, not guessed — lib/invoices/margin-mtd.ts. */
+  const marginMtd = React.useMemo(() => invoiceMarginMtd(invoices ?? []), [invoices]);
   const paidInvoices = (invoices ?? []).filter((i) => i.status === "paid" && i.paid_date);
   const avgCollection = paidInvoices.length > 0
     ? Math.round(paidInvoices.reduce((s, i) => s + daysBetween(i.invoice_date, i.paid_date!), 0) / paidInvoices.length)
@@ -629,7 +632,18 @@ function InvoicesPageInner() {
           </button>
           <div className="bg-paper border border-hairline rounded-lg p-3 text-left">
             <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Margin MTD</p>
-            <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(marginMTD, { compact: true })}</p>
+            <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">
+              {marginMtd.costedSales > 0 || marginMtd.missingLines === 0 ? rupee(marginMtd.margin, { compact: true }) : "—"}
+            </p>
+            <p className="text-3xs text-ink-3 mt-0.5">
+              {marginMtd.invoiceCount === 0
+                ? "No invoices this month"
+                : marginMtd.missingLines === 0
+                  ? `On ${rupee(marginMtd.sales, { compact: true })} invoiced`
+                  : marginMtd.costedSales > 0
+                    ? `On ${rupee(marginMtd.costedSales, { compact: true })} of ${rupee(marginMtd.sales, { compact: true })} · cost missing on ${marginMtd.missingLines} line${marginMtd.missingLines === 1 ? "" : "s"}`
+                    : `Cost missing on ${marginMtd.missingLines} line${marginMtd.missingLines === 1 ? "" : "s"}`}
+            </p>
           </div>
           {/* Averaged over every paid invoice — the Paid tab is that set. */}
           <button

@@ -183,6 +183,10 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
 
   const watchedKind = watch("kind");
   const watchedAssignee = watch("assignee");
+  /* R-471: a past due time used to save silently and land straight in Overdue. Say so
+     (it is allowed — logging a missed call is real), and offer "in 1 hour". */
+  const watchedDue = watch("due_at");
+  const dueIsPast = !!watchedDue && Date.parse(watchedDue) < Date.now() && (!task || watchedDue !== toLocalInputValue(new Date(task.due_at)));
 
   const onSubmit = async (data: FormData) => {
     // Local datetime → ISO UTC
@@ -284,6 +288,19 @@ export function AddTaskDialog({ open, onOpenChange, linkLabel, linkTo, task }: A
               />
             </FormField>
           </div>
+
+          {dueIsPast && (
+            <p role="status" className="text-xs text-amber-ink -mt-2">
+              This time has already passed — the task will show as Overdue.{" "}
+              <button
+                type="button"
+                className="underline font-medium"
+                onClick={() => setValue("due_at", toLocalInputValue(computeQuickDue(60)), { shouldValidate: true })}
+              >
+                Use in 1 hour
+              </button>
+            </p>
+          )}
 
           {/* Quick-pick due chips */}
           <div className="flex flex-wrap gap-1.5">

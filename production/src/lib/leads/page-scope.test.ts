@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  boardServerTotals, everythingCountForPage, folderShownOnPage, pageStages, scopeFiltersForPage, stageShownOnPage,
+  boardServerTotals, everythingCountForPage, folderShownOnPage, openKpiForPage, pageStages, scopeFiltersForPage, stageShownOnPage,
 } from "@/lib/leads/page-scope";
 import { toLeadCountsFilters, toListLeadsFilters, type LeadListFilters } from "@/lib/leads/list-page";
 
@@ -136,5 +136,31 @@ describe("R-070 — boardServerTotals", () => {
   it("none before the counts arrive or from a server without the migration — the board then says ≈", () => {
     expect(boardServerTotals(undefined, "all", "everything")).toBeUndefined();
     expect(boardServerTotals({}, "all", "everything")).toBeUndefined();
+  });
+});
+
+describe("R-470 openKpiForPage — Open deals counts only what /deals can list", () => {
+  const kpi = { open_count: 1, open_value: 64800, open_value_project: 0, won: 6, lost: 2 };
+  // Gupta Traders sits in Contacted: in kpi, not in any /deals stage.
+  const stage_totals = {
+    won: { count: 6, value: 155520, weighted: 155520 },
+    lost: { count: 2, value: 25900, weighted: 0 },
+  };
+
+  it("/deals with no open quote / demo / trial reads 0 and ₹0, not the Contacted lead", () => {
+    expect(openKpiForPage({ kpi, stage_totals }, true)).toEqual({ openCount: 0, openValue: 0, openValueProject: null });
+  });
+
+  it("/deals sums quote + demo + trial only", () => {
+    const st = { ...stage_totals, quote: { count: 2, value: 40000, weighted: 20000 }, trial: { count: 1, value: 9000, weighted: 6000 } };
+    expect(openKpiForPage({ kpi, stage_totals: st }, true)).toEqual({ openCount: 3, openValue: 49000, openValueProject: null });
+  });
+
+  it("/leads keeps the workspace kpi", () => {
+    expect(openKpiForPage({ kpi, stage_totals }, false)).toEqual({ openCount: 1, openValue: 64800, openValueProject: 0 });
+  });
+
+  it("a server without stage_totals falls back to kpi", () => {
+    expect(openKpiForPage({ kpi }, true).openCount).toBe(1);
   });
 });

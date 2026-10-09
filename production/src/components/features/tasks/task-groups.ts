@@ -1,7 +1,8 @@
 /**
  * R-354 — /tasks list groups by the IST calendar day: Overdue, Today, Upcoming, No date,
  * Done. A task due at 23:59 IST today is Today; one due at 00:01 IST tomorrow is Upcoming —
- * whatever zone the browser is in (lib/dates/ist).
+ * whatever zone the browser is in (lib/dates/ist). R-471: a task whose due time has
+ * already passed is Overdue, even if that time was earlier today.
  */
 import { toIstDate } from "@/lib/dates/ist";
 import type { Task } from "@/lib/supabase/database.types";
@@ -25,9 +26,13 @@ export function taskGroupOf(task: Groupable, now: Date = new Date()): TaskGroupI
   if (task.status === "done") return "done";
   if (task.status === "cancelled") return null;
   if (!task.due_at) return "nodate";
+  /* R-471: past the due moment = Overdue, even earlier today. Grouping by day alone left a
+     10 am call in Today at noon while its row said "⚠ Overdue" and the Overdue tab said
+     "Inbox zero". Today = the rest of today (IST). */
+  if (Date.parse(task.due_at) < now.getTime()) return "overdue";
   const day = toIstDate(task.due_at);
   const today = toIstDate(now);
-  return day < today ? "overdue" : day === today ? "today" : "upcoming";
+  return day <= today ? "today" : "upcoming";
 }
 
 export interface TaskGroup<T> {
