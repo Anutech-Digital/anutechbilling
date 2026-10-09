@@ -76,6 +76,7 @@ MIGS=(
   "attendancecorrections|20261009224500_attendance_corrections.sql|resellersos_migration|to_regprocedure('public.correct_attendance(uuid,date,timestamptz,timestamptz,text)') is not null"
   "attendanceshift|20261009230000_attendance_shift.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'half_day_under_hours')"
   "latecharges|20261009233000_late_payment_charges.sql|resellersos_migration|(to_regclass('public.late_charge_bills') is not null and to_regprocedure('public.bill_late_charges(text,integer,integer,date,date)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='late_fee_enabled'))"
+  "splitbilledoutstanding|20261009235800_split_billed_outstanding.sql|resellersos_migration|to_regprocedure('public.sync_split_outstanding(uuid)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
