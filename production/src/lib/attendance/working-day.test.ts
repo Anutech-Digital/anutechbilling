@@ -121,3 +121,34 @@ describe("isWorkingDay — fails closed", () => {
     }
   });
 });
+
+describe("isWorkingDay — national gazetted holidays (R-602)", () => {
+  /* Payroll has always treated 26 Jan / 15 Aug / 2 Oct as paid holidays
+     (lib/payroll/holidays-india.ts), but the reminder path only knew weekly offs and the
+     tenant's own `holidays` rows — so the "check in" nudge fired on Gandhi Jayanti.
+     2 Oct 2026 is a Friday: an ordinary working weekday apart from the holiday. */
+  const off = SIX_DAY_WEEK_SUNDAY_OFF;
+
+  it("2 Oct 2026 (a Friday) is not a working day, with no company holiday row", () => {
+    expect(isoDowOf("2026-10-02")).toBe(5);
+    const r = isWorkingDay({ date: "2026-10-02", weeklyOffDows: off });
+    expect(r.working).toBe(false);
+    expect(r.reason).toContain("Gandhi Jayanti");
+  });
+
+  it("26 Jan and 15 Aug are skipped too, in any year", () => {
+    for (const d of ["2026-01-26", "2027-08-15", "2030-01-26"]) {
+      expect(isWorkingDay({ date: d, weeklyOffDows: off }).working, d).toBe(false);
+    }
+  });
+
+  it("the day after a national holiday is still a working day", () => {
+    expect(isWorkingDay({ date: "2026-10-03", weeklyOffDows: off }).working).toBe(true);
+  });
+
+  it("a company holiday on the same date reads as the company holiday", () => {
+    const r = isWorkingDay({ date: "2026-10-02", weeklyOffDows: off, holidayDates: ["2026-10-02"] });
+    expect(r.working).toBe(false);
+    expect(r.reason).toContain("company holiday");
+  });
+});

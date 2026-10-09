@@ -24,6 +24,8 @@
  * explicitly is the point.
  */
 
+import { FIXED_NATIONAL_HOLIDAYS } from "@/lib/payroll/holidays-india";
+
 /** ISO day-of-week: 1 = Monday … 7 = Sunday. */
 export type IsoDow = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -38,7 +40,13 @@ export interface WorkingDayInput {
    * a day they are working, and the caller always knows which the tenant is.
    */
   weeklyOffDows: readonly IsoDow[];
-  /** `holidays.holiday_date` for this tenant, as YYYY-MM-DD strings. */
+  /**
+   * `holidays.holiday_date` for this tenant, as YYYY-MM-DD strings.
+   *
+   * The fixed national gazetted holidays (26 Jan / 15 Aug / 2 Oct) are ALWAYS off on top
+   * of these. They come from `lib/payroll/holidays-india.ts`, the same list payroll uses,
+   * so the reminder and the salary cannot disagree about them (R-602).
+   */
   holidayDates?: readonly string[];
 }
 
@@ -90,11 +98,24 @@ export function isWorkingDay(input: WorkingDayInput): WorkingDayResult {
     return { working: false, reason: `${input.date} is a company holiday.` };
   }
 
+  /* R-602: payroll never docks 26 Jan / 15 Aug / 2 Oct, so nobody is expected to check in
+     on them either. Read from the payroll list, not a copy of it. */
+  const national = nationalHolidayName(input.date);
+  if (national) {
+    return { working: false, reason: `${input.date} is ${national}, a national holiday.` };
+  }
+
   if (input.weeklyOffDows.includes(dow)) {
     return { working: false, reason: `${DOW_NAME[dow]} is a weekly off.` };
   }
 
   return { working: true, reason: null };
+}
+
+/** Name of the fixed national gazetted holiday on this YYYY-MM-DD date, or null. */
+export function nationalHolidayName(date: string): string | null {
+  const md = date.slice(5);
+  return FIXED_NATIONAL_HOLIDAYS.find((h) => h.md === md)?.name ?? null;
 }
 
 /**
