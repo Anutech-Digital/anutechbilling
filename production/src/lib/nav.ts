@@ -74,9 +74,13 @@ export interface NavItem {
    */
   roles?: UserRole[];
   /** Sub-links rendered as an accordion under this item (e.g. Customers → Parent Accounts).
-   *  A child's roles must be a subset of its parent's — a child of a row you cannot see is
-   *  a row you cannot reach (nav-s30.test.ts checks this). */
+   *  A child may admit a role its parent does not (R-497: Contacts for sales under
+   *  Customers): for that role filterNavForRole keeps the parent as a heading-only row
+   *  (`headerOnly`) holding just the children it may open (nav-s30.test.ts checks this). */
   children?: NavItem[];
+  /** Set ONLY by filterNavForRole (R-497): the role cannot open this row, only some of its
+   *  children. Rendered as a heading, not a link; never a route, never in the palette. */
+  headerOnly?: boolean;
   /**
    * Pages listed on THIS item's landing page by <NavDirectory parentId={id} />, not in the
    * sidebar (S30). They are still part of the route guard, the command palette and the
@@ -172,18 +176,29 @@ export function filterNavForRole(
     ...(i.children ? { children: i.children.filter(sees) } : {}),
     ...(i.directory ? { directory: i.directory.filter(sees) } : {}),
   });
+  /* R-497: a row the role cannot open, but with children it can (Customers → Contacts for
+     sales), stays as a heading: no link, no route, only the allowed children. */
+  const asHeading = (i: NavItem): NavItem | null => {
+    const kids = (i.children ?? []).filter(sees);
+    if (!kids.length) return null;
+    const { directory: _dir, ...rest } = i;
+    return { ...rest, headerOnly: true, children: kids };
+  };
   return nav
     .filter((s) => !s.roles || s.roles.includes(visRole))
     .map((s) => ({
       ...s,
-      items: s.items.filter(sees).map(prune),
+      items: s.items
+        .map((i) => (sees(i) ? prune(i) : asHeading(i)))
+        .filter((i): i is NavItem => i !== null),
     }))
     .filter((s) => s.items.length > 0);
 }
 
-/** An item and everything reachable through it: accordion children, then directory rows. */
+/** An item and everything reachable through it: accordion children, then directory rows.
+ *  A heading-only row (R-497) is not itself reachable, so it is left out. */
 export function itemWithDescendants(item: NavItem): NavItem[] {
-  return [item, ...(item.children ?? []), ...(item.directory ?? [])];
+  return [...(item.headerOnly ? [] : [item]), ...(item.children ?? []), ...(item.directory ?? [])];
 }
 
 /**
@@ -201,7 +216,8 @@ export interface FlatNavEntry {
 export function flattenNav(nav: NavSection[]): FlatNavEntry[] {
   return nav.flatMap((section) =>
     section.items.flatMap((item): FlatNavEntry[] => [
-      { item, section, via: "sidebar" },
+      /* A heading-only row (R-497) is not a page: no palette entry, no route grant. */
+      ...(item.headerOnly ? [] : [{ item, section, via: "sidebar" as const }]),
       ...(item.children ?? []).map((c): FlatNavEntry => ({ item: c, section, parent: item, via: "child" })),
       ...(item.directory ?? []).map((d): FlatNavEntry => ({ item: d, section, parent: item, via: "directory" })),
     ]),
@@ -458,10 +474,12 @@ export const APP_NAV: NavSection[] = [
           { id: "customer-groups", href: "/customers/groups", label: "Parent Accounts", icon: "layout",  roles: OM },
           /* R-497 (9 Oct 2026, Pardeep: "contact bhi customer ke under aaye"): Contacts left
              Sell (where R-382 put it on 7 Oct) for this accordion. Removed 10 Sep, back 7 Oct —
-             the page holds the Google Contacts sync. A child's roles must sit inside its
-             parent's and Customers is not a sales row, so Contacts is owner / manager now.
-             The "/contacts" row admits /contacts/[id] by prefix. */
-          { id: "contacts",        href: "/contacts",         label: "Contacts",        icon: "user",    roles: OM, hint: "Every person across leads and customers" },
+             the page holds the Google Contacts sync. Same roles as R-382 gave it (sales keeps
+             it; sales_senior sees what sales sees). Customers is not a sales row, so a sales
+             user gets "Customers" as a heading-only row holding just Contacts (headerOnly,
+             filterNavForRole) — /customers stays closed to sales. The "/contacts" row admits
+             /contacts/[id] by prefix. */
+          { id: "contacts",        href: "/contacts",         label: "Contacts",        icon: "user",    roles: ["owner", "manager", "sales"], hint: "Every person across leads and customers" },
         ],
       },
       { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"] },

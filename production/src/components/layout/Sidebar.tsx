@@ -127,6 +127,32 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   // A group item — accordion parent (has children, e.g. Reports) or plain link.
   const renderItem = (item: NavItem) => {
     const active = pathname === item.href;
+    /* R-497: a heading-only row (the role may open some children, not the row itself — a
+       sales user's Customers → Contacts). Expanded: a toggle button, open by default.
+       Collapsed: just the children it holds, as icon rows. Never a link to the parent. */
+    if (item.headerOnly && item.children?.length) {
+      if (collapsed) return <React.Fragment key={item.id}>{item.children.map((c) => renderLink(c))}</React.Fragment>;
+      const isOpen = openMenus[item.id] ?? true;
+      return (
+        <div key={item.id}>
+          <button
+            type="button"
+            onClick={() => setOpenMenus((m) => ({ ...m, [item.id]: !isOpen }))}
+            aria-expanded={isOpen}
+            className="group w-full flex items-center gap-2.5 rounded-md text-sm transition-colors px-3 py-1.5 text-ink-2 hover:bg-paper-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+          >
+            <Icon name={item.icon} size={15} className="flex-shrink-0 text-ink-3 group-hover:text-ink-2" />
+            <span className="flex-1 truncate text-left" title={item.label}>{item.label}</span>
+            <Icon name={isOpen ? "chevron_up" : "chevron_down"} size={14} className="flex-shrink-0 text-ink-3" />
+          </button>
+          {isOpen && (
+            <div className="mt-0.5 space-y-0.5">
+              {item.children.map((c) => renderLink(c, true))}
+            </div>
+          )}
+        </div>
+      );
+    }
     if (item.children?.length && !collapsed) {
       const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
       return (

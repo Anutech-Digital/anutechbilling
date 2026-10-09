@@ -70,9 +70,9 @@ const DEALS_ROLES = ["owner", "manager", "sales", "sales_senior"];
  *  Not a snapshot drift: it had been removed from the menu on purpose on 10 Sep and the
  *  guard bounced sales users. */
 const ADDED_7OCT_CONTACTS = ["/contacts"];
-/** R-497 (9 Oct 2026, Pardeep): Contacts moved under Customers (Bill) — a child of a row sales
- *  cannot see, so owner / manager only now. */
-const CONTACTS_ROLES = ["owner", "manager"];
+/** R-497 (9 Oct 2026): Contacts moved under Customers (Bill) — same roles as before; sales gets
+ *  Customers as a heading-only row holding just Contacts. */
+const CONTACTS_ROLES = ["owner", "manager", "sales", "sales_senior"];
 /** 3 Oct 2026 — "koi bhi hidden link nahi rahna chahiye" (Pardeep): pages that existed but
  *  had no menu row, plus AI Entry / Packages / UX & UI Insights. Each at the roles the page
  *  was already built for. Real route grants (not only menu rows): billing → /ai-entry and
@@ -250,10 +250,27 @@ describe("2. structure", () => {
     expect(flat.filter((e) => e.item.href === "/contacts").map((e) => e.via)).toEqual(["child"]);
     expect(getCrumb("/contacts")).toEqual(["Billing", "Contacts"]);
     expect(getCrumb("/contacts/abc")).toEqual(["Billing", "Contacts", "Profile"]);
-    for (const r of ["owner", "manager"] as UserRole[]) {
+    for (const r of ["owner", "manager", "sales", "sales_senior"] as UserRole[]) {
       expect(isRouteAllowed(r, "/contacts"), r).toBe(true);
       expect(isRouteAllowed(r, "/contacts/abc"), r).toBe(true);
     }
+  });
+
+  it("R-497: a sales user sees Customers as a heading with only Contacts, and cannot open /customers", () => {
+    for (const r of ["sales", "sales_senior"] as UserRole[]) {
+      const nav = filterNavForRole(APP_NAV, r);
+      const customers = nav.flatMap((s) => s.items).find((i) => i.id === "customers")!;
+      expect(customers.headerOnly, r).toBe(true);
+      expect(customers.children?.map((c) => c.label), r).toEqual(["Contacts"]);
+      expect(clickable(r).has("/contacts"), r).toBe(true);
+      expect(clickable(r).has("/customers"), r).toBe(false);
+      expect(isRouteAllowed(r, "/customers"), r).toBe(false);
+      expect(isRouteAllowed(r, "/customers/groups"), r).toBe(false);
+    }
+    // Owner gets the real row: a link, with both children.
+    const owner = filterNavForRole(APP_NAV, "owner").flatMap((s) => s.items).find((i) => i.id === "customers")!;
+    expect(owner.headerOnly).toBeUndefined();
+    expect(owner.children?.map((c) => c.label)).toEqual(["Parent Accounts", "Contacts"]);
   });
 
   it("R-384 (7 Oct 2026): one 'Products' row for the catalog, Packages its only child, both tabs still open", () => {
@@ -293,11 +310,24 @@ describe("2. structure", () => {
     expect(flat.filter((e) => !e.item.roles?.length).map((e) => e.item.href)).toEqual([]);
   });
 
-  it("never nests a row under a parent with fewer roles (it would be unreachable for the rest)", () => {
+  it("never nests a DIRECTORY row under a parent with fewer roles (it would be unreachable for the rest)", () => {
     const bad = flat
-      .filter((e) => e.parent)
+      .filter((e) => e.parent && e.via === "directory")
       .flatMap((e) => (e.item.roles ?? []).filter((r) => !(e.parent!.roles ?? []).includes(r)).map((r) => `${e.item.href} (${r}) under ${e.parent!.href}`));
     expect(bad).toEqual([]);
+  });
+
+  it("R-497: an accordion child with a role its parent lacks is reachable through a heading-only parent", () => {
+    const wider = flat.filter((e) => e.parent && e.via === "child").flatMap((e) =>
+      (e.item.roles ?? []).filter((r) => !(e.parent!.roles ?? []).includes(r)).map((r) => ({ e, r: r as UserRole })));
+    expect(wider.map(({ e, r }) => `${e.item.href} (${r})`)).toEqual(["/contacts (sales)"]);
+    for (const { e, r } of wider) {
+      const parent = filterNavForRole(APP_NAV, r).flatMap((s) => s.items).find((i) => i.id === e.parent!.id);
+      expect(parent?.headerOnly, `${r}: ${e.parent!.href} should be a heading`).toBe(true);
+      expect(parent?.children?.map((c) => c.href)).toContain(e.item.href);
+      expect(isRouteAllowed(r, e.item.href), `${r} opens ${e.item.href}`).toBe(true);
+      expect(isRouteAllowed(r, e.parent!.href), `${r} must not open ${e.parent!.href}`).toBe(false);
+    }
   });
 
   it("renders every directory on its landing page", () => {
