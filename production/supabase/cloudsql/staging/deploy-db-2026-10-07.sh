@@ -64,6 +64,9 @@ MIGS=(
   "svcrolegaps|20261009150000_service_role_policy_gaps.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname='public' and tablename='seat_increase_claims' and policyname='zzz_service_role_all') and exists(select 1 from pg_policies where schemaname='public' and tablename='rate_limit_buckets' and policyname='zzz_service_role_all')"
   "cancelsub|20261009151000_cancel_subscription.sql|resellersos_migration|exists(select 1 from pg_proc where proname='cancel_subscription' and pronamespace='public'::regnamespace)"
   "leadfollowup|20261009160000_lead_followup_sync.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_leads_won_close_tasks') and exists(select 1 from pg_trigger where tgname='trg_tasks_lead_follow_up')"
+  "tbslice2|20261009170000_tb_slice2_expense_credits.sql|resellersos_migration|exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and prosrc like '%S45-SLICE2%') and exists(select 1 from pg_proc where proname='set_opening_balances' and pronamespace='public'::regnamespace)"
+  "invlinecosts|20261009180000_invoice_line_costs.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname='trg_invoice_copy_quote_lines') and exists(select 1 from pg_proc where proname='invoice_cost_fill_apply' and pronamespace='public'::regnamespace)"
+  "wontrialtasks|20261009181000_won_trial_tasks_cancelled.sql|resellersos_migration|exists(select 1 from pg_proc where proname='tg_leads_won_close_tasks' and prosrc like '%R-496%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

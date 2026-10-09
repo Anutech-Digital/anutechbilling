@@ -1,5 +1,5 @@
 -- deploy-peek: exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and prosrc like '%S45-SLICE2%') and exists(select 1 from pg_proc where proname='set_opening_balances' and pronamespace='public'::regnamespace)
--- deploy-key: tb-slice2
+-- deploy-key: tbslice2
 -- S45 slice 2 — Trial Balance: kharche ka Cr side, salary "other" deduction, settlement fee,
 -- aur CA ke opening balances.
 --

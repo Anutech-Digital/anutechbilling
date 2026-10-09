@@ -14,6 +14,8 @@
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
   "src/lib/a11y/a11y-ratchet.test.tsx",
+  "tests/gen-deploy-db.test.ts",
+  "src/lib/errors/toast-error-r300.test.ts",
   "src/lib/a11y/a11y-r303.test.ts",
   "src/lib/a11y/a11y-r309.test.ts",
   "src/lib/a11y/billing-screens-a11y.test.ts",

@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where proname='tg_leads_won_close_tasks' and prosrc like '%R-496%')
 -- deploy-key: wontrialtasks
--- 20261009180000_won_trial_tasks_cancelled
+-- 20261009181000_won_trial_tasks_cancelled
 --
 -- R-496: `node scripts/test-sql.mjs --local` went 135/136 on 9 Oct — trial_convert_on_payment
 -- failed with "expected 2 cancelled trial tasks, got 0".

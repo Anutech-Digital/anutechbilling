@@ -126,3 +126,15 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+describe("migration versions", () => {
+  it("no two migration files share a version (9 Oct: two workers both picked 20261009180000)", () => {
+    const seen = new Map<string, string>();
+    const clashes: string[] = [];
+    for (const f of fs.readdirSync(path.join(supabaseDir, "migrations")).filter((x) => /^\d{14}_.*\.sql$/.test(x))) {
+      const v = f.slice(0, 14);
+      if (seen.has(v)) clashes.push(`${seen.get(v)} + ${f}`); else seen.set(v, f);
+    }
+    expect(clashes).toEqual([]);
+  });
+});
