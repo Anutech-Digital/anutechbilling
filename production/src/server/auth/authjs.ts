@@ -6,8 +6,11 @@
  *
  *   email + password  → Credentials provider → ./accounts.checkPassword (bcrypt, GoTrue hashes)
  *                       unconfirmed email is refused (R-048 part 1)
- *   Google            → Google provider → account found or created by verified email;
- *                       its access token is kept for Contacts / Reseller import (provider_token)
+ *   Google            → Google provider → linked to the EXISTING account (R-529: Google identity,
+ *                       then the public.users profile for the verified email, then auth.users
+ *                       by email) — created only when the address is new. Unverified → refused.
+ *                       Its access token stays in the encrypted cookie for Contacts / Reseller
+ *                       import and is read on the server only (R-528: never in the session JSON).
  *   two-step (R-048)  → after password, a session with a verified factor is aal1; the /mfa
  *                       page calls update({ mfaCode }) and the code is checked HERE, server-side,
  *                       before the session becomes aal2. Nothing the browser sends is trusted.
@@ -18,6 +21,7 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { checkPassword, ensureOAuthUser, recordSignIn } from "./accounts";
 import { hasVerifiedFactor, verifyCode } from "./mfa";
+import { publicSession } from "./session-public";
 
 class LoginError extends CredentialsSignin {
   constructor(code: string) {
@@ -30,8 +34,7 @@ declare module "next-auth" {
   interface Session {
     aal: "aal1" | "aal2";
     mfaEnrolled: boolean;
-    provider_token?: string;
-    user: { id: string; email: string; name?: string | null };
+    user: { id: string; email: string; name?: string | null; image?: string | null };
   }
 }
 
@@ -86,8 +89,15 @@ export const authConfig: NextAuthConfig = {
     async jwt({ token, user, account, profile, trigger, session }) {
       const t = token as Token;
       if (account?.provider === "google" && typeof profile?.email === "string") {
-        const u = await ensureOAuthUser(profile.email, (profile.name as string | undefined) ?? null, "google");
-        if (!u) throw new LoginError("banned");
+        const r = await ensureOAuthUser({
+          email: profile.email,
+          emailVerified: profile.email_verified === true,
+          name: (profile.name as string | undefined) ?? null,
+          provider: "google",
+          subject: typeof profile.sub === "string" ? profile.sub : account.providerAccountId,
+        });
+        if (!r.ok) throw new LoginError(r.reason);
+        const u = r.user;
         await recordSignIn(u.id);
         t.uid = u.id;
         t.email = u.email;
@@ -116,12 +126,8 @@ export const authConfig: NextAuthConfig = {
       return t;
     },
     async session({ session, token }) {
-      const t = token as Token;
-      session.user = { ...session.user, id: t.uid ?? "", email: t.email ?? "" };
-      session.aal = t.aal ?? "aal1";
-      session.mfaEnrolled = Boolean(t.mfa);
-      if (t.gat) session.provider_token = t.gat;
-      return session;
+      // R-528: an allow-list, never the token — Google tokens (gat/grt) must not reach the browser.
+      return publicSession(session, token) as unknown as typeof session;
     },
   },
 };

@@ -144,7 +144,8 @@ describe("customerSearchOr — the search box as one PostgREST or=()", () => {
   it("every searched column, quoted, case-insensitive, plus person-matched ids", () => {
     expect(customerSearchOr(" Doodh, Sang ", ["c2", "c1", "c2"])).toBe(
       'name.ilike."%doodh, sang%",display_name.ilike."%doodh, sang%",domain.ilike."%doodh, sang%",'
-      + 'contact_name.ilike."%doodh, sang%",contact_email.ilike."%doodh, sang%",id.in.(c2,c1)',
+      + 'contact_name.ilike."%doodh, sang%",contact_email.ilike."%doodh, sang%",contact_phone.ilike."%doodh, sang%",'
+      + 'id.in.(c2,c1)',
     );
   });
   it("drops wildcard and quote characters instead of passing them through", () => {

@@ -3,6 +3,9 @@
  * the format GoTrue used to issue, so the browser's supabase-js keeps reaching the data gateway
  * and Storage unchanged (src/server/auth/supabase-jwt.ts). Same-origin only (no CORS headers);
  * signed out → { access_token: null }.
+ *
+ * R-528: never the Google provider token — this answer is read by the browser. Routes that call
+ * Google read it server-side (compat.ts currentProviderToken via supabase.auth.getSession()).
  */
 import { authjsOff, noStore } from "@/server/auth/http";
 import { currentAuthUser } from "@/server/auth/compat";
@@ -19,6 +22,6 @@ export async function GET() {
   const { token, expiresAt } = mintSupabaseJwt({ userId: me.user.id, email: me.user.email, aal: me.aal });
   return noStore({
     access_token: token, expires_at: expiresAt, user: me.user,
-    aal: me.aal, mfa_enrolled: me.mfaEnrolled, provider_token: me.providerToken ?? null,
+    aal: me.aal, mfa_enrolled: me.mfaEnrolled,
   });
 }

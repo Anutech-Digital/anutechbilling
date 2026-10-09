@@ -116,16 +116,20 @@ export interface Logic {
 }
 export type Filter = Condition | Logic;
 
-/** "not.eq.5" → { negate, op, value }. */
-export function parseOpValue(column: string, raw: string): Condition {
+/** "not.eq.5" → { negate, op, value }. `inLogic`: the condition sits inside or()/and(). */
+export function parseOpValue(column: string, raw: string, inLogic = false): Condition {
   let s = raw;
   let negate = false;
   if (s.startsWith("not.")) { negate = true; s = s.slice(4); }
   const dot = s.indexOf(".");
   if (dot < 0) throw bad(`"failed to parse filter (${raw})"`, `filter for ${column}`);
   const op = s.slice(0, dot) as Operator;
-  const rest = s.slice(dot + 1);
+  const raw2 = s.slice(dot + 1);
   if (!(OPERATORS as readonly string[]).includes(op)) throw bad(`unsupported operator "${op}"`, `filter for ${column}`);
+  // Inside or()/and() a whole value may be "double-quoted" (so it can hold , . ( ) ); like
+  // PostgREST, the quotes are syntax and \" \\ inside are unescaped. R-467: without this,
+  // or=(name.ilike."%sharma%") searched for the text WITH the quotes and found nothing.
+  const rest = inLogic && op !== "in" ? unquote(raw2) : raw2;
   if (op === "in") {
     if (!rest.startsWith("(") || !rest.endsWith(")")) throw bad("in() needs a parenthesised list", raw);
     const body = rest.slice(1, -1);
@@ -183,7 +187,7 @@ export function parseLogic(op: "and" | "or", negate: boolean, raw: string): Logi
     if (dot < 0) throw bad("bad condition in logic tree", part);
     const column = part.slice(0, dot);
     if (!IDENT.test(column)) throw bad("bad column in logic tree", part);
-    return parseOpValue(column, unquote(part.slice(dot + 1)));
+    return parseOpValue(column, part.slice(dot + 1), true);
   });
   return { kind: "logic", op, negate, items };
 }

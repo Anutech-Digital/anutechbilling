@@ -316,6 +316,7 @@ export default function CustomersPage() {
       (c.domain?.toLowerCase().includes(s) ?? false) ||
       (c.contact_name?.toLowerCase().includes(s) ?? false) ||
       (c.contact_email?.toLowerCase().includes(s) ?? false) ||
+      (c.contact_phone?.toLowerCase().includes(s) ?? false) || // R-467: the box says "phone"
       /* ── SEARCH BY THE PERSON YOU DEAL WITH ──────────────────────────────
          The two clauses above read `customers.contact_*`, which hold only the
          customer's FIRST contact. Since 18 Sep 2026 one person can serve several

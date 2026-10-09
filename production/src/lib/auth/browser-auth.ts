@@ -15,7 +15,6 @@ interface TokenReply {
   expires_at?: number;
   user: Record<string, unknown> | null;
   aal?: string;
-  provider_token?: string | null;
 }
 
 const missing: Err = { name: "AuthSessionMissingError", message: "Auth session missing!", status: 400, code: "session_not_found" };
@@ -73,7 +72,7 @@ export function browserAuth() {
         data: {
           session: {
             access_token: t.access_token, token_type: "bearer", expires_at: t.expires_at, refresh_token: "",
-            user: t.user, provider_token: t.provider_token ?? null, provider_refresh_token: null,
+            user: t.user, provider_token: null, provider_refresh_token: null, // R-528: Google token stays on the server
           },
         },
         error: null,

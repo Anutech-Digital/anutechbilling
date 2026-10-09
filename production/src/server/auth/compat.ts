@@ -6,6 +6,8 @@
  */
 import "server-only";
 import { cache } from "react";
+import { cookies } from "next/headers";
+import { getToken } from "next-auth/jwt";
 import { auth, signOut as authSignOut } from "./authjs";
 import {
   AuthError, createUser, deleteUser, getUserById, listUsers, updateUser,
@@ -25,12 +27,34 @@ const unsupported = (method: string) => async () => ({
 });
 
 /** The signed-in Auth.js user as a supabase-js User — once per request. */
-export const currentAuthUser = cache(async (): Promise<{ user: AuthUser; aal: "aal1" | "aal2"; mfaEnrolled: boolean; providerToken?: string } | null> => {
+export const currentAuthUser = cache(async (): Promise<{ user: AuthUser; aal: "aal1" | "aal2"; mfaEnrolled: boolean } | null> => {
   const s = await auth();
   if (!s?.user?.id) return null;
   const user = await getUserById(s.user.id);
   if (!user) return null;
-  return { user, aal: s.aal, mfaEnrolled: s.mfaEnrolled, providerToken: s.provider_token };
+  return { user, aal: s.aal, mfaEnrolled: s.mfaEnrolled };
+});
+
+/**
+ * R-528: the Google access token, read SERVER-SIDE from the encrypted Auth.js cookie — it is
+ * never in the session object (GET /api/auth/session reaches the browser). Only for the user the
+ * session belongs to, and only while Google says it is still valid.
+ */
+export const currentProviderToken = cache(async (userId: string): Promise<string | undefined> => {
+  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+  if (!secret) return undefined;
+  const cookie = (await cookies()).toString();
+  if (!cookie) return undefined;
+  // Cookie name differs on https (__Secure-) and http; only the cookie header is passed, so a
+  // Bearer header can never be decoded here.
+  for (const secureCookie of [true, false]) {
+    const t = await getToken({ req: { headers: { cookie } }, secret, secureCookie }).catch(() => null);
+    if (!t) continue;
+    if (t.uid !== userId || typeof t.gat !== "string") return undefined;
+    if (typeof t.gexp === "number" && t.gexp * 1000 <= Date.now()) return undefined;
+    return t.gat;
+  }
+  return undefined;
 });
 
 /** Access token for supabase-js requests (gateway, Storage): minted for the session user, or the anon key. */
@@ -54,7 +78,7 @@ export function serverAuth() {
         data: {
           session: {
             access_token: token, token_type: "bearer", expires_at: expiresAt, expires_in: expiresAt - Math.floor(Date.now() / 1000),
-            refresh_token: "", user: me.user, provider_token: me.providerToken ?? null, provider_refresh_token: null,
+            refresh_token: "", user: me.user, provider_token: (await currentProviderToken(me.user.id)) ?? null, provider_refresh_token: null,
           },
         },
         error: null,

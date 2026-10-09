@@ -127,8 +127,10 @@ export interface CreateUserInput {
   app_metadata?: Record<string, unknown>;
 }
 
-export async function createUser(input: CreateUserInput): Promise<AuthUser> {
+/** `id` is only for linking a login to an existing public.users profile (linkOAuthUser). */
+export async function createUser(input: CreateUserInput, id?: string): Promise<AuthUser> {
   const email = normalise(input.email);
+  if (id !== undefined && !/^[0-9a-f-]{36}$/i.test(id)) throw new AuthError("invalid user id", "validation_failed", 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AuthError("Unable to validate email address: invalid format", "email_address_invalid", 400);
   const hash = input.password ? await bcrypt.hash(input.password, BCRYPT_COST) : null;
   return withAuthStore(async (tx) => {
@@ -140,7 +142,7 @@ export async function createUser(input: CreateUserInput): Promise<AuthUser> {
                                raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous)
        values ($1::uuid, $2::uuid, 'authenticated', 'authenticated', $3, $4, $5::timestamptz, $6::jsonb, $7::jsonb, now(), now(), false, false)
        returning ${COLS}`,
-      GOTRUE_INSTANCE, randomUUID(), email, hash, input.email_confirm ? new Date().toISOString() : null,
+      GOTRUE_INSTANCE, id ?? randomUUID(), email, hash, input.email_confirm ? new Date().toISOString() : null,
       JSON.stringify({ provider, providers: [provider], ...(input.app_metadata ?? {}) }),
       JSON.stringify(input.user_metadata ?? {}),
     );
@@ -186,19 +188,136 @@ export async function deleteUser(id: string): Promise<void> {
   await withAuthStore((tx) => tx.$executeRawUnsafe(`delete from auth.users where id = $1::uuid`, id));
 }
 
-/** Google (or another OAuth provider) proved this address: find the account, or create a confirmed one. */
-export async function ensureOAuthUser(email: string, name: string | null, provider: string): Promise<AuthUser | null> {
-  const found = await getUserByEmail(email);
-  if (found) {
-    if (isBanned(found)) return null;
-    if (!found.email_confirmed_at) return updateUser(found.id, { email_confirm: true });
-    return found;
+/* ── OAuth sign-in → the EXISTING account (R-529) ────────────────────────────────────────
+   9 Oct 2026, staging: Pardeep signed in with Google and got a brand-new auth.users id, not
+   linked to his public.users row — no tenant, "Loading…", every list empty. The old code only
+   looked in auth.users by email and created a row when that missed. GoTrue linked a Google
+   login by its IDENTITY first (auth.identities: provider + Google `sub`), and the app's data
+   hangs off public.users.id — so those are what decide the id now, in this order:
+
+     1. auth.identities (provider, sub)    — exactly the link GoTrue used
+     2. public.users with this email       — the profile that carries tenant_id + role
+                                             (via public.login_profile_id_for_email; app_auth
+                                             cannot read public tables directly)
+     3. auth.users with this email
+     4. none of these → a new account (no tenant; the normal join/onboarding flow follows)
+
+   Never a second account for an address that already has one; an unverified address is
+   refused before any lookup. */
+
+export type OAuthLink =
+  | { ok: true; user: AuthUser; how: "identity" | "profile" | "email" | "created" }
+  | { ok: false; reason: "unverified" | "banned" | "conflict" };
+
+export interface OAuthLinkInput {
+  email: string;
+  emailVerified: boolean;
+  name: string | null;
+  provider: string;
+  /** The provider's stable account id (Google `sub`). */
+  subject?: string | null;
+}
+
+/** The lookups linkOAuthUser needs — the real ones talk to the database, tests pass fakes. */
+export interface OAuthStore {
+  userIdForIdentity(provider: string, subject: string): Promise<string | null>;
+  profileIdForEmail(email: string): Promise<string | null>;
+  byEmail(email: string): Promise<AuthUser | null>;
+  byId(id: string): Promise<AuthUser | null>;
+  create(input: CreateUserInput, id?: string): Promise<AuthUser>;
+  /** Confirm the address. A password set before it was ever confirmed is dropped (pre-hijack). */
+  confirm(id: string): Promise<AuthUser>;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export async function linkOAuthUser(input: OAuthLinkInput, store: OAuthStore): Promise<OAuthLink> {
+  const email = normalise(input.email ?? "");
+  if (input.emailVerified !== true || !EMAIL_RE.test(email)) return { ok: false, reason: "unverified" };
+
+  const finish = async (u: AuthUser, how: "identity" | "profile" | "email"): Promise<OAuthLink> => {
+    if (isBanned(u)) return { ok: false, reason: "banned" };
+    return { ok: true, user: u.email_confirmed_at ? u : await store.confirm(u.id), how };
+  };
+
+  if (input.subject) {
+    const id = await store.userIdForIdentity(input.provider, input.subject);
+    const u = id ? await store.byId(id) : null;
+    if (u) return finish(u, "identity");
   }
-  return createUser({
+
+  const profileId = await store.profileIdForEmail(email);
+  const byEmail = await store.byEmail(email);
+  const fresh = (): CreateUserInput => ({
     email, email_confirm: true,
-    user_metadata: name ? { full_name: name, name } : {},
-    app_metadata: { provider },
+    user_metadata: input.name ? { full_name: input.name, name: input.name } : {},
+    app_metadata: { provider: input.provider },
   });
+
+  if (profileId) {
+    const owner = await store.byId(profileId);
+    if (owner) return finish(owner, "profile");
+    // The profile has no login row, and a DIFFERENT login holds the address: refuse rather
+    // than fork the account. db/ops/22-r529-merge-duplicate-google-login.sql repairs this.
+    if (byEmail) return { ok: false, reason: "conflict" };
+    return { ok: true, user: await store.create(fresh(), profileId), how: "created" };
+  }
+  if (byEmail) return finish(byEmail, "email");
+  return { ok: true, user: await store.create(fresh()), how: "created" };
+}
+
+/** A lookup the login role may not be granted yet (db/ops/21) — treated as "no match", loudly. */
+async function optionalLookup<T>(what: string, fn: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    if (/permission denied|does not exist|42501|42883|42P01/i.test(msg)) {
+      console.warn(`[auth] ${what} unavailable (run db/ops/21-auth-login-link.sql): ${msg.slice(0, 160)}`);
+      return null;
+    }
+    throw e;
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const dbOAuthStore: OAuthStore = {
+  userIdForIdentity: (provider, subject) => optionalLookup("auth.identities", async () => {
+    const rows = await withAuthStore((tx) => tx.$queryRawUnsafe<{ id: string }[]>(
+      `select i.user_id::text as id from auth.identities i
+         join auth.users u on u.id = i.user_id and u.deleted_at is null
+        where i.provider = $1 and i.provider_id = $2 limit 1`, provider, subject));
+    return rows[0]?.id ?? null;
+  }),
+  profileIdForEmail: (email) => optionalLookup("public.login_profile_id_for_email", async () => {
+    const rows = await withAuthStore((tx) => tx.$queryRawUnsafe<{ id: string | null }[]>(
+      `select public.login_profile_id_for_email($1)::text as id`, email));
+    const id = rows[0]?.id ?? null;
+    return id && UUID_RE.test(id) ? id : null;
+  }),
+  async byEmail(email) {
+    const rows = await withAuthStore((tx) => tx.$queryRawUnsafe<Row[]>(
+      `select ${COLS} from auth.users where lower(email) = $1 and deleted_at is null order by created_at limit 1`, normalise(email)));
+    return rows[0] ? toUser(rows[0]) : null;
+  },
+  byId: getUserById,
+  create: (input, id) => createUser(input, id),
+  async confirm(id) {
+    const rows = await withAuthStore((tx) => tx.$queryRawUnsafe<Row[]>(
+      `update auth.users
+          set encrypted_password = case when email_confirmed_at is null then null else encrypted_password end,
+              email_confirmed_at = coalesce(email_confirmed_at, now()),
+              updated_at = now()
+        where id = $1::uuid returning ${COLS}`, id));
+    if (!rows[0]) throw new AuthError("User not found", "user_not_found", 404);
+    return toUser(rows[0]);
+  },
+};
+
+/** Google (or another OAuth provider) proved this address: the existing account, or a new confirmed one. */
+export function ensureOAuthUser(input: OAuthLinkInput): Promise<OAuthLink> {
+  return linkOAuthUser(input, dbOAuthStore);
 }
 
 export class AuthError extends Error {
