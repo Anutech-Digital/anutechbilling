@@ -153,9 +153,10 @@ export function cartTotals(lines: readonly CartLine[], couponRate: number): Cart
  * A line that is always exactly one: a free hosting trial (one per customer — a
  * "5 ×" trial is meaningless), a domain (one name is one registration; the
  * checkout already refuses a quantity above one) and a hosting plan (one plan is
- * one account on one domain; checkout sets up one hosting account per order, see
- * lib/checkout/hosting-limit.ts). No stepper is shown for these, adding one again
- * never bumps it, and a stored quantity is put back to 1.
+ * one account on one website). Their quantity stays 1 and a stored quantity is put back
+ * to 1. A second website's hosting is a second LINE, not quantity 2 (R-032): the hosting
+ * line's "+" adds another line of the same plan (addsAnotherLine, CartProvider.addAnother),
+ * and each line gets its own domain at checkout.
  */
 export function isSingleUnit(line: Pick<CartLine, "sku">): boolean {
   const sku = (line.sku ?? "").toLowerCase();
@@ -170,9 +171,30 @@ export function isSingleUnit(line: Pick<CartLine, "sku">): boolean {
 export function singleUnitNote(line: Pick<CartLine, "sku">): string | null {
   const sku = (line.sku ?? "").toLowerCase();
   if (sku.startsWith("hosting-trial:")) return "1 per customer";
-  if (sku.startsWith("hosting:")) return "1 per order";
+  if (sku.startsWith("hosting:")) return "1 per website";
   if (sku.startsWith("domain:")) return "1 per domain";
   return null;
+}
+
+/**
+ * A hosting plan's "+" adds another plan for another website — a new line, not quantity 2
+ * (9 Oct 2026, Pawan: "why can't user buy more than one hosting in sidebar cart?"). The
+ * stepper used to be locked with "1 per order", which read as "only one", though several
+ * plans in one order have worked since R-032 (1 Oct 2026).
+ */
+export function addsAnotherLine(line: Pick<CartLine, "sku">): boolean {
+  return (line.sku ?? "").toLowerCase().startsWith("hosting:");
+}
+
+/**
+ * "Standard hosting · 2" when the cart holds several of the same plan, so two lines do not
+ * look like a mistake — the same numbering the checkout uses for their domain boxes.
+ */
+export function lineDisplayLabel(lines: readonly Pick<CartLine, "key" | "label" | "sku">[], line: Pick<CartLine, "key" | "label" | "sku">): string {
+  if (!addsAnotherLine(line)) return line.label;
+  const same = lines.filter((l) => l.sku === line.sku);
+  if (same.length < 2) return line.label;
+  return `${line.label} · ${same.findIndex((l) => l.key === line.key) + 1}`;
 }
 
 export function isTrialLine(line: Pick<CartLine, "sku">): boolean {

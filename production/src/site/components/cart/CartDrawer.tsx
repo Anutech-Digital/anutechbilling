@@ -9,7 +9,7 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "./CartProvider";
-import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, cycleLabel, addsAnotherLine, isSingleUnit, isTrialLine, lineDisplayLabel, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
@@ -63,7 +63,7 @@ export function CartDrawer() {
           {cart.lines.map((l) => (
             <div key={l.key} style={{ padding: "14px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{l.label}</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{lineDisplayLabel(cart.lines, l)}</div>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{rupee(l.unitPrice * l.qty)}</div>
               </div>
               <div className="meta" style={{ margin: "3px 0 8px" }}>{l.detail}</div>
@@ -76,20 +76,21 @@ export function CartDrawer() {
                 {/* Locked at 1 for a single-unit line, with the reason beside it (see cart page). */}
                 {(() => {
                   const locked = isSingleUnit(l);
+                  const another = addsAnotherLine(l); // hosting: "+" adds another plan for another website
                   return (
                     <>
                       {locked && <span className="meta" style={{ fontSize: 12 }}>{singleUnitNote(l)}</span>}
                       <span style={{ display: "inline-flex", border: "1px solid var(--border-strong)", borderRadius: 6 }}>
                         <button onClick={() => cart.setQty(l.key, -1)} disabled={locked} aria-label={`Fewer ${l.label}`} style={locked ? stepBtnLocked : stepBtn}>−</button>
                         <span style={{ padding: "4px 10px", fontSize: 14, minWidth: 26, textAlign: "center" }}>{locked ? 1 : l.qty}</span>
-                        <button onClick={() => cart.setQty(l.key, 1)} disabled={locked} aria-label={`More ${l.label}`} style={locked ? stepBtnLocked : stepBtn}>+</button>
+                        <button onClick={() => (another ? cart.addAnother(l.key) : cart.setQty(l.key, 1))} disabled={locked && !another} aria-label={another ? `Add another ${l.label} for another website` : `More ${l.label}`} title={another ? "Add another — for another website" : undefined} style={locked && !another ? stepBtnLocked : stepBtn}>+</button>
                       </span>
                     </>
                   );
                 })()}
                 <button
                   onClick={() => cart.remove(l.key)}
-                  style={{ background: "none", border: "none", color: "var(--danger)", fontSize: 13, cursor: "pointer" }}
+                  style={{ background: "none", border: "none", color: "var(--danger)", fontSize: 13, cursor: "pointer", minHeight: 44, padding: "0 6px" }}
                 >
                   Remove
                 </button>
@@ -145,11 +146,13 @@ export function CartDrawer() {
   );
 }
 
+// 44px tap targets (CLAUDE.md §20, 9 Oct 2026) — the drawer's stepper was 28px wide.
 const stepBtn: React.CSSProperties = {
   background: "none",
   border: "none",
-  width: 28,
-  fontSize: 15,
+  width: 44,
+  minHeight: 44,
+  fontSize: 17,
   cursor: "pointer",
   color: "var(--text-secondary)",
 };

@@ -71,7 +71,7 @@ describe("cycle ke shabd", () => {
 describe("singleUnitNote — why a line's quantity is locked at 1 (30 Sep 2026)", () => {
   it("names the reason for each single-unit kind", () => {
     expect(singleUnitNote({ sku: "hosting-trial:starter" })).toBe("1 per customer");
-    expect(singleUnitNote({ sku: "hosting:plus" })).toBe("1 per order");
+    expect(singleUnitNote({ sku: "hosting:plus" })).toBe("1 per website"); // 9 Oct 2026: several plans per order (R-032)
     expect(singleUnitNote({ sku: "domain:in" })).toBe("1 per domain");
   });
   it("is null for a line whose quantity can change, and every single-unit line has a note", () => {

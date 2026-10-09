@@ -48,6 +48,12 @@ const ALLOWED: Record<string, string> = {
     "a single-unit line's quantity stepper, locked at 1 — singleUnitNote() prints why under it",
   "src/site/components/cart/CartDrawer.tsx|locked":
     "same locked stepper in the cart drawer, with singleUnitNote() beside it",
+  /* 9 Oct 2026: the "+" on a hosting line is live (adds another plan for another website); it
+     is disabled only on a domain or trial line, which singleUnitNote() explains beside it. */
+  "src/app/(marketing)/cart/page.tsx|locked && !another":
+    "the + of a domain/trial line, locked at 1 — singleUnitNote() prints why under it; a hosting line's + adds another plan",
+  "src/site/components/cart/CartDrawer.tsx|locked && !another":
+    "the drawer's + for a domain/trial line, locked — singleUnitNote() beside it; a hosting line's + adds another plan",
   "src/site/components/quote/QuoteBuilder.tsx|off":
     "Flexible monthly while an annual-only plan is picked — #annual-only-note right below names the plan and says to remove it (aria-describedby)",
   "src/site/components/quote/QuoteBuilder.tsx|locked":

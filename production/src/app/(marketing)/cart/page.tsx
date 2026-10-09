@@ -9,7 +9,7 @@
 import Link from "@/site/components/ui/SiteLink";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
+import { rupee, cycleLabel, addsAnotherLine, isSingleUnit, isTrialLine, lineDisplayLabel, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
@@ -44,7 +44,7 @@ export default function CartPage() {
           {cart.lines.map((l) => (
             <div key={l.key} style={{ display: "flex", gap: 16, padding: "18px 0", borderBottom: "1px solid var(--border-hairline)", flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 240px" }}>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{l.label}</div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>{lineDisplayLabel(cart.lines, l)}</div>
                 <div className="meta" style={{ margin: "2px 0" }}>{l.detail}</div>
                 {!isTrialLine(l) && (
                   (l.years ?? 1) > 1
@@ -61,12 +61,13 @@ export default function CartPage() {
                   silent-disabled shape guarded by src/site/silent-disabled-buttons.test.ts). */}
               {(() => {
                 const locked = isSingleUnit(l);
+                const another = addsAnotherLine(l); // hosting: "+" adds another plan for another website
                 return (
                   <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", alignSelf: "center", gap: 3 }}>
                     <span style={{ display: "inline-flex", border: "1px solid var(--border-strong)", borderRadius: 6, background: locked ? "var(--surface-muted, #F4F6F8)" : undefined }}>
                       <button onClick={() => cart.setQty(l.key, -1)} disabled={locked} aria-label={`Fewer ${l.label}`} style={locked ? stepLocked : step}>−</button>
                       <span style={{ padding: "6px 12px", fontSize: 15, minWidth: 30, textAlign: "center" }}>{locked ? 1 : l.qty}</span>
-                      <button onClick={() => cart.setQty(l.key, 1)} disabled={locked} aria-label={`More ${l.label}`} style={locked ? stepLocked : step}>+</button>
+                      <button onClick={() => (another ? cart.addAnother(l.key) : cart.setQty(l.key, 1))} disabled={locked && !another} aria-label={another ? `Add another ${l.label} for another website` : `More ${l.label}`} title={another ? "Add another — for another website" : undefined} style={locked && !another ? stepLocked : step}>+</button>
                     </span>
                     {locked && <span className="meta" style={{ fontSize: 12 }}>{singleUnitNote(l)}</span>}
                   </span>

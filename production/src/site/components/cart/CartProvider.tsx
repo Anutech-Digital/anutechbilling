@@ -37,6 +37,8 @@ interface CartApi {
   /** Adds (or bumps qty of an identical line) and opens the drawer. */
   add: (line: Omit<CartLine, "key" | "qty"> & { qty?: number }) => void;
   setQty: (key: string, delta: number) => void;
+  /** Hosting: another of the same plan, as its own line right below (another website). */
+  addAnother: (key: string) => void;
   /** Domain lines (R-156): pick the registration term; the price follows the search's totals. */
   setYears: (key: string, years: number) => void;
   remove: (key: string) => void;
@@ -146,6 +148,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const addAnother = useCallback((key: string) => {
+    setLines((prev) => {
+      const i = prev.findIndex((l) => l.key === key);
+      if (i < 0) return prev;
+      const copy = { ...prev[i], qty: 1, key: `${prev[i].label}-${Date.now()}-${prev.length}` };
+      const next = [...prev.slice(0, i + 1), copy, ...prev.slice(i + 1)];
+      save(next);
+      return next;
+    });
+  }, []);
+
   const setYears = useCallback((key: string, years: number) => {
     setLines((prev) => {
       const next = prev.map((l) => {
@@ -221,6 +234,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       couponStatus,
       add,
       setQty,
+      addAnother,
       setYears,
       remove,
       clear,
@@ -228,7 +242,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       closeDrawer: () => setDrawerOpen(false),
       justAdded,
     }),
-    [lines, totals, coupon, couponStatus, add, setQty, setYears, remove, clear, drawerOpen, justAdded],
+    [lines, totals, coupon, couponStatus, add, setQty, addAnother, setYears, remove, clear, drawerOpen, justAdded],
   );
 
   return (
