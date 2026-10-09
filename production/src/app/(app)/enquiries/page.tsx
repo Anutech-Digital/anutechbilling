@@ -565,9 +565,12 @@ export default function EnquiriesPage() {
                     mail gets here and where to set it up, instead of bare text. */}
                 {isEmptySearch(parsed) && folder === "inbox" && (
                   <p data-testid="enquiries-empty-guidance" className="mx-auto mt-2 max-w-md text-center text-xs leading-relaxed text-ink-3">
-                    Enquiries arrive here when a customer emails your sales address or fills in your
-                    buy-page form. Use the folder list (Starred, Snoozed, Converted Leads, Sent,
-                    Done) to sort them once they do.
+                    {/* R-456: website form enquiries never came here — they become leads directly. */}
+                    Enquiries arrive here when a customer emails your sales address. Website form
+                    enquiries go straight to{" "}
+                    <Link href="/leads" className="text-amber-ink underline">Leads</Link>.
+                    Use the folder list (Starred, Snoozed, Converted Leads, Sent, Done) to sort
+                    emails once they arrive.
                   </p>
                 )}
                 {olderMail}

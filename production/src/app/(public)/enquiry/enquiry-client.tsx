@@ -20,6 +20,7 @@ import { BusyPanel } from "@/components/ui/busy-panel";
 import { Icon } from "@/components/ui/icon";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { cn } from "@/lib/utils";
+import { ENQUIRY_STATES, enquiryThanksText } from "./enquiry-outcome";
 
 const schema = z.object({
   fullName:    z.string().min(2, "Please enter your name"),
@@ -31,6 +32,9 @@ const schema = z.object({
   seats:       z.coerce.number().int().min(1).max(100000).optional()
                  .or(z.literal("").transform(() => undefined)),
   subscriptionType: z.enum(["fresh", "switch"]).optional()
+                 .or(z.literal("").transform(() => undefined)),
+  /* R-456: optional — the quote needs it for GST, so ask once here instead of later. */
+  stateCode:   z.string().regex(/^\d{2}$/).optional()
                  .or(z.literal("").transform(() => undefined)),
   message:     z.string().min(5, "Tell us a bit about what you need"),
 });
@@ -54,6 +58,8 @@ export function EnquiryClient({
 }) {
   const [embed, setEmbed]     = React.useState(false);
   const [done, setDone]       = React.useState(false);
+  /* R-456: true only when the server says the customer's copy was really emailed. */
+  const [ackSent, setAckSent] = React.useState(false);
   const [serverError, setErr] = React.useState<string | null>(null);
   const ts = useTurnstile(); // R-020
 
@@ -81,6 +87,7 @@ export function EnquiryClient({
         setErr(json.error ?? "Something went wrong. Please try again.");
         return;
       }
+      setAckSent(json.ackSent === true);
       setDone(true);
     } catch {
       setErr("Network error. Please check your connection and try again.");
@@ -115,9 +122,8 @@ export function EnquiryClient({
                 <Icon name="check" size={28} className="text-emerald" />
               </div>
               <h1 className="font-serif text-2xl text-ink">Thank you!</h1>
-              <p className="mx-auto mt-2 max-w-sm text-sm text-ink-2">
-                We&apos;ve got your requirement and someone from {brandName} will get back to
-                you shortly. A confirmation is on its way to your inbox.
+              <p className="mx-auto mt-2 max-w-sm text-sm text-ink-2" data-testid="enquiry-thanks">
+                {enquiryThanksText(brandName, ackSent)}
               </p>
               {brandPhone && (
                 <p className="mt-4 text-xs text-ink-3">
@@ -179,6 +185,21 @@ export function EnquiryClient({
                   </FormField>
                 </div>
 
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField label="State" htmlFor="stateCode">
+                  <select
+                    id="stateCode"
+                    defaultValue=""
+                    autoComplete="address-level1"
+                    {...register("stateCode")}
+                    className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+                  >
+                    <option value="">Select (optional)</option>
+                    {ENQUIRY_STATES.map((st) => (
+                      <option key={st.code} value={st.code}>{st.name}</option>
+                    ))}
+                  </select>
+                </FormField>
                 <FormField label="New or switching?" htmlFor="subscriptionType">
                   <select
                     id="subscriptionType"
@@ -191,6 +212,7 @@ export function EnquiryClient({
                     <option value="switch">Already have it — switching provider to you</option>
                   </select>
                 </FormField>
+                </div>
 
                 <FormField label="What do you need?" required htmlFor="message">
                   <textarea

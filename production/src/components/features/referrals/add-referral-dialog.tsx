@@ -18,6 +18,7 @@ import { rupee } from "@/lib/utils";
 import {
   useReferralPartners, useCreatePartner, useCreateAgreement,
 } from "@/lib/queries/referral-partners";
+import { panProblem, normalisePan, commissionPercentProblem } from "@/lib/referrals/partner-fields";
 
 interface Props {
   open: boolean;
@@ -44,7 +45,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
 
   // Terms
   const [basis, setBasis] = React.useState<"percent" | "fixed">("percent");
-  const [percent, setPercent] = React.useState("10");
+  const [percent, setPercent] = React.useState("");
   const [fixedAmount, setFixedAmount] = React.useState("");
   const [scope, setScope] = React.useState<"one_time" | "recurring">("one_time");
   const [deductTds, setDeductTds] = React.useState(false);
@@ -54,7 +55,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
     if (open) {
       setPartnerId((partners && partners.length > 0) ? partners[0].id : NEW);
       setNewName(""); setNewPhone(""); setNewPan("");
-      setBasis("percent"); setPercent("10"); setFixedAmount("");
+      setBasis("percent"); setPercent(""); setFixedAmount("");
       setScope("one_time"); setDeductTds(false); setLabel("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,11 +72,15 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
   const isNewPartner = partnerId === NEW;
   const pctNum = Number(percent) || 0;
   const fixedNum = Math.round(Number(fixedAmount) || 0);
+  /* R-472: PAN is checked (TDS 194H needs a real one); blank is still allowed. */
+  const panErr = panProblem(newPan);
 
   async function submit() {
     // Validate
     if (isNewPartner && !newName.trim()) { toast.error("Enter the partner's name.", { description: "A new partner needs a name before the referral can be saved." }); return; }
-    if (basis === "percent" && (pctNum <= 0 || pctNum > 100)) { toast.error("Percent must be between 0 and 100.", { description: "Enter the partner's share, e.g. 10 for 10%." }); return; }
+    if (isNewPartner && panErr) { toast.error("Check the partner's PAN.", { description: panErr }); return; }
+    const pctErr = basis === "percent" ? commissionPercentProblem(percent) : null;
+    if (pctErr) { toast.error("Check the commission percent.", { description: pctErr }); return; }
     if (basis === "fixed" && fixedNum <= 0) { toast.error("Fixed amount must be more than ₹0.", { description: "Enter the rupees the partner earns for this referral." }); return; }
 
     try {
@@ -84,7 +89,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
         const created = await createPartner.mutateAsync({
           name: newName.trim(),
           phone: newPhone.trim() || null,
-          pan: newPan.trim() || null,
+          pan: normalisePan(newPan) || null,
           deduct_tds: deductTds,
         });
         usePartnerId = created.id;
@@ -135,7 +140,8 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
                   <Input id="ref_new_phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="+91…" />
                 </FormField>
                 <FormField label="PAN (for TDS)" htmlFor="ref_new_pan">
-                  <Input id="ref_new_pan" value={newPan} onChange={(e) => setNewPan(e.target.value.toUpperCase())} placeholder="e.g. ABCDE1234F" />
+                  <Input id="ref_new_pan" value={newPan} onChange={(e) => setNewPan(e.target.value.toUpperCase())} placeholder="e.g. ABCDE1234F" maxLength={12}
+                         error={newPan.trim().length >= 10 ? panErr ?? undefined : undefined} />
                 </FormField>
               </div>
             </div>
@@ -181,7 +187,7 @@ export function AddReferralDialog({ open, onOpenChange, customerId, customerName
 
           <div className="rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2 text-xs text-amber-ink leading-relaxed">
             {basis === "percent"
-              ? <>Har {scope === "recurring" ? "payment" : "pehli payment"} par <b>{pctNum}%</b> commission banegi{deductTds ? " (− 2% TDS)" : ""}. Manually approve karke pay karoge.</>
+              ? <>Har {scope === "recurring" ? "payment" : "pehli payment"} par <b>{percent.trim() ? `${pctNum}%` : "…%"}</b> commission banegi{deductTds ? " (− 2% TDS)" : ""}. Manually approve karke pay karoge.</>
               : <>Har {scope === "recurring" ? "payment" : "pehli payment"} par <b>{rupee(fixedNum)}</b> commission banegi{deductTds ? " (− 2% TDS)" : ""}.</>}
           </div>
         </div>

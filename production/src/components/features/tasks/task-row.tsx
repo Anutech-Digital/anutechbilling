@@ -9,7 +9,11 @@ import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { toast } from "sonner";
-import { useCompleteTask, useSnoozeTask, useDeleteTask, type TaskWithLink } from "@/lib/queries/tasks";
+import { useCompleteTask, useDeleteTask, type TaskWithLink } from "@/lib/queries/tasks";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { snoozeChoices, useSnoozeTaskTo } from "./task-snooze";
 import { memberLabel, type TeamMember } from "@/lib/queries/team";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +48,7 @@ const contactBtn =
 
 export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null }) {
   const completeTask = useCompleteTask();
-  const snoozeTask   = useSnoozeTask();
+  const snoozeTask   = useSnoozeTaskTo();
   const deleteTask   = useDeleteTask();
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
@@ -193,7 +197,22 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
       {!isDone && (
         <div className="flex gap-0.5 shrink-0">
           <IconButton icon="edit" size="sm" variant="ghost" aria-label="Edit task" title="Edit task" onClick={() => onEdit(task)} />
-          <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze 1 day" title="Snooze 1 day" onClick={() => snoozeTask.mutate({ id: task.id })} />
+          {/* R-471: Snooze offers choices (was a blind +1 day from the old due time). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <IconButton icon="clock" size="sm" variant="ghost" aria-label="Snooze" title="Snooze" disabled={snoozeTask.isPending} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[200px]">
+              <DropdownMenuLabel>Snooze until</DropdownMenuLabel>
+              {snoozeChoices().map((c) => (
+                <DropdownMenuItem key={c.key} onSelect={() => snoozeTask.mutate({ id: task.id, at: c.at, snoozeCount: task.snooze_count ?? 0 })}>
+                  {c.label}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => onEdit(task)}>Pick a date…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <IconButton icon="trash" size="sm" variant="ghost" aria-label="Delete" title="Delete" onClick={() => setConfirmOpen(true)} />
         </div>
       )}

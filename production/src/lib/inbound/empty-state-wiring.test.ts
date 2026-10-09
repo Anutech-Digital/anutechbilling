@@ -29,5 +29,8 @@ describe("/enquiries empty Inbox", () => {
   it("explains how enquiries arrive and names the folders", () => {
     expect(PAGE).toMatch(/enquiries-empty-guidance/);
     expect(PAGE).toMatch(/Enquiries arrive here when/);
+    // R-456: the website form makes a lead, not an enquiry — say so and link Leads.
+    expect(PAGE).toMatch(/Website form\s+enquiries go straight to/);
+    expect(PAGE).not.toMatch(/fills in your\s+buy-page form/);
   });
 });

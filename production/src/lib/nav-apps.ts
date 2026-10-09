@@ -143,3 +143,30 @@ export function appLabelForHref(model: SidebarModel, href: string): string | nul
 export function paletteHrefs(role: UserRole | undefined, nav: NavSection[] = APP_NAV): string[] {
   return [...new Set(flattenNav(filterNavForRole(nav, role)).map((e) => e.item.href))];
 }
+
+/**
+ * R-472 — rows that only mean something to a DISTRIBUTOR (a tenant with sub-resellers).
+ * Partners showed every ordinary reseller a dead end ("a distributor feature … currently a
+ * DB-only setting") in the Sales menu. The route stays open (a link or bookmark still lands
+ * on a page that explains and points to Referrals); only the menu row is hidden.
+ */
+export const DISTRIBUTOR_ONLY_ITEM_IDS: readonly string[] = ["partners"];
+
+/**
+ * Drop distributor-only rows unless the tenant is a distributor. `isDistributor` undefined
+ * (still loading) hides them too, so the row never flashes in and out. A partner_agent keeps
+ * Partners: it is that role's home page (ROLE_HOME) and almost its only row.
+ */
+export function withoutDistributorOnly(
+  model: SidebarModel,
+  role: UserRole | undefined,
+  isDistributor: boolean | undefined,
+): SidebarModel {
+  if (isDistributor === true || role === "partner_agent") return model;
+  const keep = (i: NavItem) => !DISTRIBUTOR_ONLY_ITEM_IDS.includes(i.id);
+  const apps = model.apps
+    .map((a) => ({ ...a, items: a.items.filter(keep) }))
+    .filter((a) => a.items.length > 0);
+  const rows = apps.reduce((n, a) => n + a.items.length, 0);
+  return { pinned: model.pinned.filter(keep), apps, flat: apps.length <= 1 || rows <= FLAT_MENU_MAX_ROWS };
+}

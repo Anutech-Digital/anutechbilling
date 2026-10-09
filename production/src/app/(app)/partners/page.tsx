@@ -27,6 +27,10 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { KPI } from "@/components/shared/kpi";
 import type { PartnerMetricsRow, TenantWithParent } from "@/lib/supabase/database.types";
 
+/** What a plain reseller reads here: what the page is, why it is empty, where to go instead. */
+const NOT_DISTRIBUTOR_BODY =
+  "This page shows the resellers who sell under you. Your company sells directly to customers, so there is nothing here. To pay someone who brings you a customer, use Referrals.";
+
 export default function PartnersPage() {
   // First check if caller is a distributor — otherwise show explainer
   const { data: hierarchy, isLoading: hierLoading } = useQuery({
@@ -73,19 +77,23 @@ export default function PartnersPage() {
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto space-y-6">
       {/* Header */}
       <div>
-        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
+        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Partners</h1>
         <p className="text-sm text-ink-3 mt-1">
           Your sub-reseller channel · aggregated metrics, no end-customer leak
         </p>
       </div>
 
-      {/* Non-distributor: explainer */}
+      {/* Non-distributor: explainer + next step (R-472). It used to send owners to a
+          "Reseller tier" setting that has no screen in the app. The
+          menu row is now hidden for them (lib/nav-apps.ts); this covers links and bookmarks. */}
       {!hierLoading && !isDistributor && (
         <EmptyState
           icon="link"
-          title="Partners is a distributor feature"
-          body="This page appears once your tenant's tier is 'distributor' — i.e. you have sub-reseller children. Set the tier under Settings → Company → Reseller tier (currently a DB-only setting)."
+          title="Partners is for distributors"
+          body={NOT_DISTRIBUTOR_BODY}
+          action={<Button asChild variant="primary" size="sm"><Link href="/referrals">Open Referrals</Link></Button>}
+          secondary={<Button asChild variant="ghost" size="sm"><Link href="/dashboard">Back to Dashboard</Link></Button>}
         />
       )}
 

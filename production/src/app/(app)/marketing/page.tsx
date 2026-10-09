@@ -35,6 +35,7 @@ import {
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { COPY } from "@/lib/copy";
 import { NavDirectory } from "@/components/layout/nav-directory";
+import { budgetProblem, budgetToSave } from "@/lib/marketing/tool-budget";
 
 const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
 
@@ -190,13 +191,15 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
   const [budget, setBudget] = React.useState(r.state.monthly_budget ? String(r.state.monthly_budget) : "");
   const [notes, setNotes] = React.useState(r.state.notes ?? "");
   const urlBad = url.trim() !== "" && !/^https?:\/\/\S+$/i.test(url.trim());
+  /* R-472: −5000 used to save as ₹0 in silence. Only checked when the box is in use. */
+  const budgetErr = r.channel ? budgetProblem(budget) : null;
 
   async function submit() {
-    if (urlBad) return;
+    if (urlBad || budgetErr) return;
     await save.mutateAsync({
       tool_key: r.key, name: r.name, status,
       account_url: url.trim() || null, owner_name: owner.trim() || null,
-      monthly_budget: Number(budget) || 0, notes: notes.trim() || null,
+      monthly_budget: budgetToSave(budget), notes: notes.trim() || null,
     });
     onClose();
   }
@@ -227,9 +230,10 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
             </FormField>
             <FormField label="Monthly budget (₹)" htmlFor="mt_budget">
               <Input id="mt_budget" type="number" min={0} prefix="₹" value={budget} onChange={(e) => setBudget(e.target.value)}
-                     disabled={!r.channel} />
+                     disabled={!r.channel} aria-invalid={budgetErr ? true : undefined} aria-describedby={budgetErr ? "mt_budget_err" : undefined} />
             </FormField>
           </div>
+          {budgetErr && <p id="mt_budget_err" role="alert" className="text-xs text-red-600 -mt-1">{budgetErr}</p>}
           {!r.channel && <p className="text-xs text-ink-3 -mt-1">This tool's spend is not linked to a channel, so it has no budget.</p>}
           <FormField label="Note" htmlFor="mt_notes">
             <Input id="mt_notes" placeholder="e.g. login via the owner's Gmail" value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -238,7 +242,7 @@ function EditTool({ r, onClose }: { r: ToolRow; onClose: () => void }) {
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={save.isPending || urlBad}>{save.isPending ? "Saving…" : "Save"}</Button>
+          <Button onClick={submit} disabled={save.isPending || urlBad || !!budgetErr}>{save.isPending ? "Saving…" : "Save"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

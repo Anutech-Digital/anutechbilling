@@ -10,6 +10,7 @@ import { USER_ROLES } from "./auth/roles";
 import {
   FLAT_MENU_MAX_ROWS, NAV_APPS, PINNED_ITEM_IDS,
   appForPath, buildSidebarApps, paletteHrefs, sidebarHrefs,
+  DISTRIBUTOR_ONLY_ITEM_IDS, withoutDistributorOnly,
 } from "./nav-apps";
 
 const sorted = (a: string[]) => [...new Set(a)].sort();
@@ -129,5 +130,26 @@ describe("appLabelForHref (Ctrl+K labels match the sidebar)", () => {
   });
   it("null for a page outside every app", () => {
     expect(appLabelForHref(model, "/no-such-page")).toBeNull();
+  });
+});
+
+/* R-472: Partners is a dead end for a plain reseller — the menu row shows only to a
+   distributor (and to partner_agent, whose home page it is). */
+describe("distributor-only rows", () => {
+  const ids = (m: ReturnType<typeof buildSidebarApps>) => m.apps.flatMap((a) => a.items.map((i) => i.id));
+  it("hides Partners from a reseller owner, and while the tier is still loading", () => {
+    const owner = buildSidebarApps("owner");
+    expect(ids(owner)).toContain("partners");
+    expect(ids(withoutDistributorOnly(owner, "owner", false))).not.toContain("partners");
+    expect(ids(withoutDistributorOnly(owner, "owner", undefined))).not.toContain("partners");
+    expect(ids(withoutDistributorOnly(owner, "owner", false))).toContain("referrals");
+  });
+  it("keeps Partners for a distributor and for partner_agent", () => {
+    expect(ids(withoutDistributorOnly(buildSidebarApps("owner"), "owner", true))).toContain("partners");
+    expect(ids(withoutDistributorOnly(buildSidebarApps("partner_agent"), "partner_agent", false))).toContain("partners");
+  });
+  it("lists only real nav ids", () => {
+    const all = new Set(APP_NAV.flatMap((s) => s.items.map((i) => i.id)));
+    for (const id of DISTRIBUTOR_ONLY_ITEM_IDS) expect(all.has(id)).toBe(true);
   });
 });

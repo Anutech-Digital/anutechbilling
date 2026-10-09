@@ -25,6 +25,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { sendEmail } from "@/lib/email/send";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
+import { enquiryStateName } from "@/app/(public)/enquiry/enquiry-outcome";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const APP_URL    = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
@@ -51,6 +52,8 @@ const enquirySchema = z.object({
   product:     z.enum(["google-workspace", "microsoft-365", "zoho", "other"]).optional(),
   seats:       z.coerce.number().int().min(1).max(100000).optional(),
   subscriptionType: z.enum(["fresh", "switch"]).optional(),
+  /** R-456: optional two-digit GST state code from the form's State field. */
+  stateCode:   z.string().regex(/^\d{2}$/).optional(),
   message:     z.string().min(5, "Please describe what you need").max(2000),
   /** A free-trial request from the site's trial form: no owner alert (owner, 30 Sep 2026). */
   trial:       z.boolean().optional(),
@@ -71,7 +74,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { fullName, companyName, email, phone, product, seats, subscriptionType, message, trial } = parsed.data;
+    const { fullName, companyName, email, phone, product, seats, subscriptionType, stateCode, message, trial } = parsed.data;
+    const stateName = enquiryStateName(stateCode);
 
     const admin = createAdminClient();
     const tenantId = BUY_PAGE_TENANT_ID;
@@ -86,6 +90,7 @@ export async function POST(request: NextRequest) {
       productLabel ? `Interested in: ${productLabel}` : null,
       seats ? `Approx users: ${seats}` : null,
       subLabel ? `New/switching: ${subLabel}` : null,
+      stateName ? `State: ${stateName}` : null,
       `Requirement: ${message}`,
     ].filter(Boolean).join("\n");
 
@@ -99,6 +104,8 @@ export async function POST(request: NextRequest) {
       plan:          product ?? null,
       seats:         seats ?? null,
       subscription_type: subscriptionType ?? null,
+      state:         stateName,
+      state_code:    stateName ? stateCode ?? null : null,
       stage:         "new",
       source:        "enquiry-form",
       // Migration 0232 — inbound attribution. Nulls when nothing was captured.

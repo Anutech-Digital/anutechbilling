@@ -25,7 +25,10 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath } from "@/lib/nav-apps";
+import { buildSidebarApps, appForPath, withoutDistributorOnly } from "@/lib/nav-apps";
+import { useQuery } from "@tanstack/react-query";
+import { createClient } from "@/lib/supabase/client";
+import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { useNavBadges } from "@/lib/hooks/useNavBadges";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
@@ -50,7 +53,23 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
      see lib/nav-apps.ts. The app follows the page you are on; clicking another app peeks
      it until you navigate. A role with a short menu gets every row at once, no switcher. */
   const role = me?.role as UserRole | undefined;
-  const model = React.useMemo(() => buildSidebarApps(role), [role]);
+  /* R-472: Partners only for a distributor tenant — same query (and cache key) as /partners. */
+  const { data: hierarchy } = useQuery({
+    enabled: Boolean(me?.tenantId),
+    queryKey: ["tenant", "hierarchy", "partners-page"],
+    queryFn: async (): Promise<TenantWithParent | null> => {
+      const supabase = createClient();
+      const { data } = await supabase.rpc("get_my_tenant_with_parent");
+      const row = Array.isArray(data) ? data[0] : data;
+      return (row as TenantWithParent | undefined) ?? null;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const isDistributor = hierarchy === undefined ? undefined : hierarchy?.tier === "distributor";
+  const model = React.useMemo(
+    () => withoutDistributorOnly(buildSidebarApps(role), role, isDistributor),
+    [role, isDistributor],
+  );
   const routeApp = appForPath(model, pathname);
   const [pickedApp, setPickedApp] = React.useState<string | null>(null);
   // The last app the route pointed at — so a pinned page (/dashboard) or a page outside the
