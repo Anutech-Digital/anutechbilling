@@ -48,6 +48,7 @@ interface PendingPaymentHandoff {
 }
 import { EditSubscriptionDialog } from "@/components/features/subscriptions/edit-subscription-dialog";
 import { BillingScheduleCard } from "@/components/features/subscriptions/billing-schedule-card";
+import { CancelSubscriptionDialog, cancelNote } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { useItems } from "@/lib/queries/items";
 import { subscriptionCogs, cogsBadge, cogsTotals } from "@/lib/vendor/cogs";
 import { LicenseLeakageCard } from "@/components/features/subscriptions/license-leakage-card";
@@ -272,11 +273,13 @@ export default function SubscriptionsPage() {
     setAddSeatsSub(sub);
   };
   const [editSub,     setEditSub]     = React.useState<Subscription | null>(null);
+  /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
+  const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
   const delSub = useDeleteSubscription();
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
-      + `It's for correcting a wrong / duplicate entry.\n\n`
+      + `Only for a wrong or duplicate entry. If the customer is leaving, use Cancel subscription instead — it keeps the record.\n\n`
       + `Blocked if it came from a paid quote — in that case delete the payment in Payments instead (that unwinds it cleanly).`;
     if (await confirm({
       title: `Delete ${s.customer_name}'s "${s.plan}" subscription?`,
@@ -1751,7 +1754,7 @@ export default function SubscriptionsPage() {
                   </div>
                 ))}
               </dl>
-              <BillingScheduleCard subscription={scheduleSub} todayISO={localDateISO(new Date())} />
+              <BillingScheduleCard subscription={scheduleSub} todayISO={todayIST()} />
               {/* The contract's own history, next to its schedule — the two questions a
                   rep opens this drawer with are "what will they be billed?" and "what
                   changed?". */}
@@ -1822,20 +1825,44 @@ export default function SubscriptionsPage() {
                     the easiest one to reach is the wrong way round. It sits last, below
                     a rule, visually apart from the five above, and still asks for
                     confirmation naming the customer and the plan. */}
-                <div className="mt-4 pt-3 border-t border-hairline">
+                <div className="mt-4 pt-3 border-t border-hairline space-y-2">
+                  {/* R-455: two different things, two buttons. Cancel = the customer is
+                      leaving (keeps the record, leaves MRR/renewals). Delete = this entry
+                      should never have existed. The old single "Cancel / delete" button only
+                      deleted, and was blocked for every paid sale. */}
+                  {scheduleSub.status === "cancelled" ? (
+                    <p className="text-2xs text-ink-3">{cancelNote(scheduleSub)}</p>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      icon="x"
+                      className="w-full"
+                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); setCancelSub(sub); }}
+                    >
+                      Cancel subscription
+                    </Button>
+                  )}
                   <Button
-                    variant="danger"
+                    variant="ghost"
                     icon="trash"
-                    className="w-full"
+                    className="w-full text-rose"
                     onClick={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
                   >
-                    Cancel / delete subscription
+                    Delete (wrong entry)
                   </Button>
                 </div>
               </div>
             </div>
           </SheetContent>
         </Sheet>
+      )}
+
+      {cancelSub && (
+        <CancelSubscriptionDialog
+          sub={cancelSub}
+          open={!!cancelSub}
+          onOpenChange={(v) => { if (!v) setCancelSub(null); }}
+        />
       )}
 
       {/* Correct subscription details */}

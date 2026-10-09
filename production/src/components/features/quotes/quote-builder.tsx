@@ -82,6 +82,7 @@ import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { leadLinePrice } from "./lead-line-commitment";
 import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
@@ -213,7 +214,7 @@ export function QuoteBuilder() {
    *      source only when `editOf`), producing exactly the orphan quotes that started this
    *      whole investigation — a quote for a lead, attached to no lead.
    */
-  const { data: allLeads } = useLeads();
+  const { data: allLeads, isPending: leadsPending } = useLeads();
   const linkedLeadId = leadId ?? sourceQuote?.lead_id ?? null;
   const leadFromQuery = React.useMemo(() => {
     if (!linkedLeadId || !allLeads) return null;
@@ -225,6 +226,8 @@ export function QuoteBuilder() {
   const leadCompanyInit = urlCompany || leadFromQuery?.company || "";
   const leadPlan        = urlPlan    || leadFromQuery?.plan    || null;
   const leadSeats       = urlSeats   || (leadFromQuery?.seats != null ? String(leadFromQuery.seats) : null);
+  /* R-446: the lead's billing cycle decides the first line's commitment (monthly flex vs annual). */
+  const leadCycle       = leadFromQuery?.billing_cycle ?? null;
   const leadContactInit = urlContact || leadFromQuery?.contact_name  || "";
   const leadEmailInit   = urlEmail   || leadFromQuery?.contact_email || "";
   const leadPhoneInit   = urlPhone   || leadFromQuery?.contact_phone || "";
@@ -532,6 +535,10 @@ export function QuoteBuilder() {
        Workspace line's ₹7,440 cost was lost for good. If the query FAILS we go on with
        the fallback; the backfill effect below fills the cost when a retry succeeds. */
     if (catalogPending) return;
+    /* R-446: and for the lead row, when there is one — its billing cycle picks the line's
+       commitment. URL params can make leadCompany ready before the lead loads; prefilling
+       then would always build an annual line. A FAILED leads query goes on (annual). */
+    if (linkedLeadId && leadsPending) return;
 
     prefilledRef.current = true;
 
@@ -588,7 +595,9 @@ export function QuoteBuilder() {
       const lineId = `line-${Date.now()}`;
       /* R-388: no cost from the catalogue = UNKNOWN, not zero. Mark it so the backfill
          fills it the moment the catalogue can answer (until the user types one). */
-      if (cost <= 0) costPendingRef.current.add(lineId);
+      /* R-446: a Monthly lead gets a Monthly flex line (₹/seat/month), not Annual. */
+      const priced = leadLinePrice({ cycle: leadCycle, annualRate: rate, annualCost: cost, prices: catalogItem?.prices });
+      if (priced.cost <= 0) costPendingRef.current.add(lineId);
       setLineItems([
         {
           id:         lineId,
@@ -596,16 +605,16 @@ export function QuoteBuilder() {
           // Use the full catalog name when matched (so "Starter" → "Google Workspace Business Starter")
           name:       catalogItem?.name ?? leadPlan,
           qty:        seatsNum,
-          rate,
-          list_rate:  rate,
-          cost,
-          commitment: "annual_yearly",
+          rate:       priced.rate,
+          list_rate:  priced.rate,
+          cost:       priced.cost,
+          commitment: priced.commitment,
           start_date: todayISO,
         },
       ]);
       if (source === "catalog") {
         toast.success(
-          `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${rate}/seat/yr`,
+          `Pre-filled from catalog: ${seatsNum} × ${leadPlan} @ ₹${priced.rate}/seat/${priced.unit}${priced.unit === "mo" ? " (monthly, as on the lead)" : ""}`,
           bandLabel ? { description: `Volume band applied: ${bandLabel}.` } : undefined,
         );
       } else {
@@ -613,7 +622,7 @@ export function QuoteBuilder() {
            "using fallback", which reads as "handled" rather than "your margin is
            not real". */
         toast.warning(`${leadPlan} is not in your catalogue — cost is unknown`, {
-          description: `Priced at the standard ₹${rate}/seat/yr, but margin cannot be worked out until this plan has a catalogue row. Add it, or type the cost on the line.`,
+          description: `Priced at the standard ₹${priced.rate}/seat/${priced.unit}, but margin cannot be worked out until this plan has a catalogue row. Add it, or type the cost on the line.`,
           action: { label: "Open catalogue", onClick: () => router.push("/items" as any) },
           duration: 10_000,
         });
@@ -628,7 +637,7 @@ export function QuoteBuilder() {
       (leadContact ? `Attn: ${leadContact}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending]);
+  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row

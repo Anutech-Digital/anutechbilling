@@ -143,7 +143,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
          this whole mechanism exists to prevent. */
       console.error("[add-seats] claim insert failed:", claimErr);
       return NextResponse.json({
-        error: "Could not start this seat change safely — try again in a moment. If it keeps failing, tell your admin the seat_increase_claims table is unreachable.",
+        /* R-450: plain words — an operator cannot act on a table name. Nothing was written,
+           so a retry is safe; if it keeps failing it is a setup problem for support. */
+        error: "Seats not added — the server could not save this change. Nothing was changed and no quote was made. Try again in a minute; if it still fails, use Report a problem.",
         code:  "claim_failed",
       }, { status: 503 });
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { subscriptionSchedule, nextTermSchedule, upcomingForSubscription } from "./subscription-schedule";
+import { subscriptionSchedule, nextTermSchedule, upcomingForSubscription, followingTermStart, isAnniversaryRenewal, billingTermStart } from "./subscription-schedule";
 import { scheduleTotal } from "./schedule";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -107,5 +107,59 @@ describe("upcomingForSubscription — the T-30 window", () => {
   it("does not duplicate the boundary instalment across the two terms", () => {
     const up = upcomingForSubscription(sub(), "2027-03-05", 60);
     expect(new Set(up.map((p) => p.billOn)).size).toBe(up.length);
+  });
+});
+
+/* ── R-451 (9 Oct 2026): rows record_payment wrote with the ANNIVERSARY date ─────────── */
+
+describe("R-451: a paid-quote subscription (renewal = start + 1 year) is not shifted a day", () => {
+  /* Abhishek, Scenario 7: Sharma Traders, start 8 Oct 2026, renewal 8 Oct 2027. The panel
+     said "THIS TERM 9 Oct 2026 … covers 9 Oct 2026 – 8 Oct 2027", "NEXT TERM 9 Oct 2027". */
+  const sharma = sub({ start_date: "2026-10-08", renewal_date: "2027-10-08", mrr: 2_700 });
+
+  it("this term starts on the start date", () => {
+    const s = subscriptionSchedule(sharma);
+    expect(s[0].billOn).toBe("2026-10-08");
+    expect(s[0].periodStart).toBe("2026-10-08");
+    expect(s[0].periodEnd).toBe("2027-10-08");   // exclusive end → covers to 7 Oct 2027
+  });
+
+  it("next term starts on the renewal date", () => {
+    expect(nextTermSchedule(sharma)[0].billOn).toBe("2027-10-08");
+  });
+
+  it("a monthly paid-quote subscription bills on the same day each month", () => {
+    const m = sub({ start_date: "2026-10-08", renewal_date: "2026-11-08", term_months: 1, billing_cycle: "monthly", mrr: 810 });
+    expect(subscriptionSchedule(m)[0].billOn).toBe("2026-10-08");
+    expect(nextTermSchedule(m)[0].billOn).toBe("2026-11-08");
+  });
+
+  it("an inclusive row (start + 1 year − 1 day) is read exactly as before", () => {
+    const gupta = sub({ start_date: "2025-10-20", renewal_date: "2026-10-19" });
+    expect(isAnniversaryRenewal(gupta)).toBe(false);
+    expect(followingTermStart(gupta)).toBe("2026-10-20");
+    expect(subscriptionSchedule(gupta)[0].billOn).toBe("2025-10-20");
+  });
+
+  it("an anniversary row renewed twice is still read as anniversary", () => {
+    const twice = sub({ start_date: "2024-10-08", renewal_date: "2026-10-08" });
+    expect(isAnniversaryRenewal(twice)).toBe(true);
+    expect(subscriptionSchedule(twice)[0].billOn).toBe("2025-10-08");
+  });
+
+  it("with no start date the stored rule (inclusive) is used", () => {
+    expect(followingTermStart(sub({ start_date: null, renewal_date: "2027-10-08" }))).toBe("2027-10-09");
+  });
+});
+
+describe("R-451: the billing cron keeps an already-filed term's key", () => {
+  it("uses the corrected start when nothing is filed yet", () => {
+    expect(billingTermStart("2026-10-08", [])).toBe("2026-10-08");
+  });
+  it("keeps the old one-day-later key when this term was filed under it — no second set", () => {
+    expect(billingTermStart("2026-10-08", ["2026-10-09"])).toBe("2026-10-09");
+  });
+  it("prefers the corrected key when it exists", () => {
+    expect(billingTermStart("2026-10-08", ["2026-10-08", "2026-10-09"])).toBe("2026-10-08");
   });
 });

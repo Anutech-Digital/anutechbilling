@@ -79,6 +79,10 @@ import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
 import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
 import { paymentFeeView } from "@/lib/razorpay/fee-expense";
+import { createClient } from "@/lib/supabase/client";
+import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
+import type { Subscription } from "@/lib/supabase/database.types";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -1060,8 +1064,41 @@ function PaymentRowView({
       }),
   });
   const askText = useAskText();
+  /* R-455: after a refund, the customer is often leaving. Offer to END the subscription
+     from here (with the now-unreal due cleared) instead of leaving it active, in MRR and
+     renewals, showing "₹956 due" for someone who has been paid back. */
+  const [cancelAfterRefund, setCancelAfterRefund] = React.useState<{ sub: Subscription; reason: string } | null>(null);
+  const offerCancel = async (reason: string) => {
+    const { data } = await createClient()
+      .from("subscriptions")
+      .select("*")
+      .eq("quote_id", p.quote_id)
+      .neq("status", "cancelled")
+      .limit(1);
+    const sub = data?.[0];
+    if (!sub) return;
+    if (await confirm({
+      title: "Is the customer leaving?",
+      body: `${sub.customer_name}'s ${sub.plan} subscription is still active — it stays in MRR and renewals` +
+        ((sub.outstanding_amount ?? 0) > 0 ? ` and shows ${rupee(sub.outstanding_amount ?? 0)} due` : "") +
+        ". Cancel it too?",
+      confirmLabel: "Cancel subscription",
+      cancelLabel: "Keep it active",
+    })) setCancelAfterRefund({ sub, reason });
+  };
 
   const handleRefund = async () => {
+    /* R-455: a payment whose quote has a GST invoice cannot be refunded until a credit note
+       exists (refund_payment refuses). Say so BEFORE the reason box, with the way there —
+       not after the operator has typed a reason and pressed Book refund. */
+    if (ctx?.invoiceId) {
+      if (await confirm({
+        title: "Make a credit note first",
+        body: `This payment's quote has GST invoice ${ctx.invoiceId}. Make a credit note on that invoice, then come back and book the refund here.`,
+        confirmLabel: "Open invoice",
+      })) router.push(invoiceHref(ctx.invoiceId) as never);
+      return;
+    }
     /* In-app box, not window.prompt — that returned null in the desktop app, so Refund
        did nothing (R-052). */
     const reason = await askText({
@@ -1082,7 +1119,7 @@ function PaymentRowView({
         "and any credit from this payment is closed.\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
       confirmLabel: "Book refund",
       danger: true,
-    })) refund.mutate({ id: p.id, reason: reason.trim() });
+    })) refund.mutate({ id: p.id, reason: reason.trim() }, { onSuccess: () => { void offerCancel(reason.trim()); } });
   };
 
   // Delete = correct a wrong entry. Explains the reversal, then reverses via RPC
@@ -1224,7 +1261,7 @@ function PaymentRowView({
               <DropdownMenuSeparator />
               {p.status === "received" && (
                 <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleRefund}>
-                  <Icon name="rupee" size={16} /> Refund payment
+                  <Icon name="rupee" size={16} /> {ctx?.invoiceId ? "Refund (credit note first)" : "Refund payment"}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleDelete}>
@@ -1250,6 +1287,15 @@ function PaymentRowView({
             tenantState={me.tenantState}
             interState={interState}
             quoteId={p.quote_id}
+          />
+        )}
+        {cancelAfterRefund && (
+          <CancelSubscriptionDialog
+            sub={cancelAfterRefund.sub}
+            open={!!cancelAfterRefund}
+            onOpenChange={(v) => { if (!v) setCancelAfterRefund(null); }}
+            clearDueDefault
+            defaultReason={cancelAfterRefund.reason}
           />
         )}
       </td>

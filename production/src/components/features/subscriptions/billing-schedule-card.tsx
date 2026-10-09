@@ -4,14 +4,15 @@
  * When this subscription will be invoiced, and for how much.
  *
  * ─── IT SHOWS A SCHEDULE, NOT DOCUMENTS ─────────────────────────────────────
- * Nothing on this card exists in the invoices table. Creating an invoice takes a
- * number out of the tenant's GST series (CLAUDE.md §17a), and issuing those numbers
- * ahead of the supply breaks the consecutive series CGST Rule 46 requires — a
- * renewal that lapses would leave an issued number needing a credit note to cancel.
+ * Nothing on this card creates an invoice. Creating an invoice takes a number out of
+ * the tenant's GST series (CLAUDE.md §17a), and issuing those numbers ahead of the
+ * supply breaks the consecutive series CGST Rule 46 requires — a renewal that lapses
+ * would leave an issued number needing a credit note to cancel.
  *
- * So this is the forecast: every future billing date and amount, visible as far ahead
- * as you like, with the actual invoice raised on its own date. The wording says
- * "will be invoiced" for exactly that reason.
+ * So this is the forecast: every future billing date and amount, with the actual
+ * invoice raised on its own date. R-451: a row whose invoice ALREADY exists says so
+ * ("Invoiced · INV-… · paid") — a paid first year used to be labelled the "next" bill,
+ * which reads as "a second bill is still to be raised".
  *
  * ─── THE TOTAL IS SHOWN SO THE SPLIT CAN BE CHECKED ─────────────────────────
  * A quarterly ₹1,00,001 term is three instalments of ₹25,000 and one of ₹25,001. That
@@ -25,6 +26,8 @@ import type { Subscription } from "@/lib/supabase/database.types";
 import { subscriptionSchedule, nextTermSchedule } from "@/lib/billing/subscription-schedule";
 import { scheduleTotal, periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
+import { useScheduleInvoices } from "@/lib/queries/subscriptions";
+import { scheduleInvoices, nextUninvoiced, type ScheduleInvoice } from "./schedule-invoices";
 
 export function BillingScheduleCard({ subscription, todayISO }: {
   subscription: Subscription;
@@ -32,6 +35,13 @@ export function BillingScheduleCard({ subscription, todayISO }: {
 }) {
   const current = React.useMemo(() => subscriptionSchedule(subscription), [subscription]);
   const next    = React.useMemo(() => nextTermSchedule(subscription), [subscription]);
+  const { data: inv } = useScheduleInvoices(subscription);
+  const invoiced = React.useMemo(() => scheduleInvoices({
+    periods: current,
+    startDate: subscription.start_date,
+    saleInvoice: inv?.sale ?? null,
+    instalments: inv?.instalments ?? [],
+  }), [current, subscription.start_date, inv]);
 
   if (current.length === 0) {
     return (
@@ -56,29 +66,33 @@ export function BillingScheduleCard({ subscription, todayISO }: {
       title="Billing schedule"
       sub={`${termLabel} term · ${cycleScheduleLabel(subscription.billing_cycle)}`}
     >
-      <ScheduleTable rows={current} todayISO={todayISO} label="This term" />
+      <ScheduleTable rows={current} todayISO={todayISO} label="This term" invoiced={invoiced} />
 
       {next.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-4">
-          <ScheduleTable rows={next} todayISO={todayISO} label="Next term (on renewal)" muted />
+          <ScheduleTable rows={next} todayISO={todayISO} label="Next term (on renewal)" muted invoiced={EMPTY} />
         </div>
       )}
 
       <p className="mt-3 text-2xs leading-snug text-ink-3">
-        These are scheduled amounts, not invoices. Each tax invoice is raised on its own
-        billing date and takes its GST number then.
+        Amounts without an invoice number are scheduled, not invoiced yet. Each tax invoice
+        is raised on its own billing date and takes its GST number then.
       </p>
     </Card>
   );
 }
 
-function ScheduleTable({ rows, todayISO, label, muted }: {
+const EMPTY = new Map<number, ScheduleInvoice>();
+
+function ScheduleTable({ rows, todayISO, label, muted, invoiced }: {
   rows: ReturnType<typeof subscriptionSchedule>;
   todayISO: string;
   label: string;
   muted?: boolean;
+  invoiced: Map<number, ScheduleInvoice>;
 }) {
   const total = scheduleTotal(rows);
+  const nextIndex = nextUninvoiced(rows, invoiced, todayISO);
   return (
     <div className={cn(muted && "opacity-75")}>
       <div className="mb-1.5 flex items-baseline justify-between">
@@ -93,21 +107,28 @@ function ScheduleTable({ rows, todayISO, label, muted }: {
       </div>
       <ul className="divide-y divide-hairline">
         {rows.map((p) => {
-          const done = p.billOn < todayISO;
-          const isNext = !done && rows.find((r) => r.billOn >= todayISO)?.index === p.index;
+          const inv = invoiced.get(p.index);
+          const past = !inv && p.billOn < todayISO;
+          const isNext = p.index === nextIndex;
+          const dim = !!inv || past;
           return (
             <li key={`${label}-${p.index}`} className="flex items-center justify-between gap-3 py-2">
               <div className="min-w-0">
-                <p className={cn("text-sm", done ? "text-ink-3" : "text-ink")}>
+                <p className={cn("text-sm", dim ? "text-ink-3" : "text-ink")}>
                   {formatDate(p.billOn)}
                   {isNext && <Badge kind="warning" size="sm" className="ml-2">next</Badge>}
-                  {done && <span className="ml-2 text-3xs uppercase tracking-wider text-ink-3">billed</span>}
+                  {inv && (
+                    <Badge kind={inv.status === "paid" ? "success" : "muted"} size="sm" className="ml-2">
+                      Invoiced · {inv.invoiceId}{inv.status === "paid" ? " · paid" : ""}
+                    </Badge>
+                  )}
+                  {past && <span className="ml-2 text-3xs uppercase tracking-wider text-ink-3">date passed</span>}
                 </p>
                 <p className="text-2xs text-ink-3">
                   covers {formatDate(p.periodStart)} – {formatDate(periodLastDay(p.periodEnd))}
                 </p>
               </div>
-              <span className={cn("shrink-0 text-sm tabular-nums", done ? "text-ink-3" : "font-medium text-ink")}>
+              <span className={cn("shrink-0 text-sm tabular-nums", dim ? "text-ink-3" : "font-medium text-ink")}>
                 {rupee(p.amount)}
               </span>
             </li>
