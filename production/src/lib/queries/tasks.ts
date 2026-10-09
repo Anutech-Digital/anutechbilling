@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Task } from "@/lib/supabase/database.types";
+import { snoozeByMinutes, snoozedMessage } from "@/lib/tasks/snooze";
 
 type TaskInsert = Database["public"]["Tables"]["tasks"]["Insert"];
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
@@ -374,7 +375,12 @@ export function useCompleteTask() {
   });
 }
 
-/** Push the due_at forward by N minutes (default 24h) and bump snooze_count. */
+/**
+ * Push the due_at forward by N minutes (default 24h) and bump snooze_count.
+ * R-490: counted from NOW when the task is already overdue (it used to add 24 h to the old
+ * due time, so a 3-day-old task stayed overdue), and toasts in the app format via
+ * lib/tasks/snooze.ts — same as the /tasks menu.
+ */
 export function useSnoozeTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -385,7 +391,7 @@ export function useSnoozeTask() {
         .from("tasks").select("due_at, snooze_count").eq("id", id).single();
       if (rErr || !cur) throw rErr ?? new Error("Task not found");
 
-      const newDue = new Date(new Date(cur.due_at).getTime() + minutes * 60_000);
+      const newDue = snoozeByMinutes(cur.due_at, minutes);
 
       const { data, error } = await supabase
         .from("tasks")
@@ -401,7 +407,7 @@ export function useSnoozeTask() {
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
-      toast(`Snoozed to ${new Date(data.due_at).toLocaleString("en-IN")}`);
+      toast(snoozedMessage(data.due_at));
     },
     onError: (err) => toastError(err),
   });
