@@ -71,6 +71,8 @@ MIGS=(
   "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|coalesce(position('revision_of' in pg_get_functiondef(to_regprocedure('public.tg_quote_accepted_sync_lead()'))) > 0, false)"
   "hierarchysvc|20261009200000_hierarchy_service_role.sql|resellersos_migration|coalesce(position('service_role' in pg_get_functiondef(to_regprocedure('public.hierarchy_sees_all()'))) > 0, false)"
   "attendancerolewrites|20261009213000_attendance_role_writes.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'attendance_update_hr_roles') and not exists(select 1 from pg_policy where polname = 'tenant isolation write' and polrelid = to_regclass('public.attendance')))"
+  "demotenant|20261009220000_demo_tenant_readonly.sql|resellersos_migration|(to_regclass('public.demo_tenants') is not null and to_regprocedure('public.demo_pre_request()') is not null and to_regprocedure('public.demo_readonly_probe()') is not null)"
+  "demowiring|20261009220100_demo_readonly_wiring.sql|postgres|(exists(select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='demo visitor no insert') and exists(select 1 from pg_db_role_setting s join pg_roles r on r.oid = s.setrole where r.rolname='authenticator' and array_to_string(s.setconfig, ',') like '%demo_pre_request%'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

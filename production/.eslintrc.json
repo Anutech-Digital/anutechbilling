@@ -102,6 +102,7 @@
         "src/app/api/cron/attendance-retention/**",
         "src/app/api/cron/backup/**",
         "src/app/api/cron/billing/**",
+        "src/app/api/cron/demo-reset/**",
         "src/app/api/cron/birthday-greetings/**",
         "src/app/api/cron/compliance-reminders/**",
         "src/app/api/cron/gbp-sync/**",

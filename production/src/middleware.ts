@@ -13,6 +13,10 @@ import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { decideSite } from "@/site/lib/site-split";
+import {
+  DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
+  demoCookieLive, demoEnabled, demoHomePath, demoRequestVerdict, isDemoVisitor,
+} from "@/lib/demo/demo-account";
 
 // Routes that require authentication (the entire app shell).
 // Keep this in sync with APP_NAV in src/lib/nav.ts — any new section's
@@ -178,6 +182,32 @@ export async function middleware(request: NextRequest) {
   const isAuthed = !!user;
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   const isAuthPage = AUTH_PREFIXES.some((p) => pathname.startsWith(p));
+
+  /* ─── R-524: "Try the demo" visitor — READ-ONLY, short-lived ──────────────
+     The database already refuses every write for this login (demo_pre_request → read-only
+     transaction). This is the app-route half: routes that write with the service role, send
+     mail/WhatsApp, take payments, invite or export never run for a demo visitor
+     (lib/demo/demo-account.ts). And the session ends when the ros_demo window closes or
+     DEMO_ENABLED is switched off. */
+  if (isAuthed && isDemoVisitor(user)) {
+    const live = demoEnabled() && demoCookieLive(request.cookies.get(DEMO_COOKIE)?.value, Date.now());
+    if (!live) {
+      const home = demoHomePath(request.headers.get("x-forwarded-host") ?? request.headers.get("host"));
+      const ended = pathname.startsWith("/api/")
+        ? NextResponse.json({ error: "The demo has ended. Open it again from the homepage." }, { status: 401 })
+        : NextResponse.redirect(new URL(`${home}?demo=ended`, request.url));
+      for (const c of request.cookies.getAll()) {
+        if (c.name.startsWith("sb-") || c.name === DEMO_COOKIE) ended.cookies.set(c.name, "", { path: "/", maxAge: 0 });
+      }
+      return ended;
+    }
+    if (demoRequestVerdict(request.method, pathname) === "refuse") {
+      return NextResponse.json(
+        { error: DEMO_REFUSAL, demo: true },
+        { status: 403, headers: { [DEMO_REFUSAL_HEADER]: "1" } },
+      );
+    }
+  }
 
   // Not logged in → block protected routes
   if (!isAuthed && isProtected) {
