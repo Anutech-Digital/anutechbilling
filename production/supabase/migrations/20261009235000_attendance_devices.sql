@@ -110,7 +110,9 @@ create trigger trg_attendance_devices_limit
 
 -- ── attendance_webauthn_challenges (server only) ──────────────────────────────
 create table if not exists public.attendance_webauthn_challenges (
-  user_id    uuid primary key references auth.users(id) on delete cascade,
+  -- public.users, not auth.users: the Cloud SQL migration role has no REFERENCES on auth.users
+  -- (10 Oct staging run stopped here with "permission denied for table users").
+  user_id    uuid primary key references public.users(id) on delete cascade,
   tenant_id  uuid not null references public.tenants(id) on delete cascade,
   challenge  text not null,
   purpose    text not null check (purpose in ('register', 'auth')),
