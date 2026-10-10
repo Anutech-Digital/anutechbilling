@@ -28,7 +28,8 @@ import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
 import { seatIncreaseQuote } from "./seat-increase-charge";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
-import { istToday, utcDateISO } from "@/lib/dates/ist";
+import { istToday } from "@/lib/dates/ist";
+import { addSeatsQuoteExpiry } from "@/lib/quotes/quote-validity";
 import { addSeatsCustomerNote, composeQuoteNotes } from "@/lib/quotes/customer-notes";
 
 type SupabaseAdmin = SupabaseClient<Database>;
@@ -149,7 +150,7 @@ export interface AddSeatsInput {
   currentMrr:         number;     // ₹/month per existing sub
   additionalSeats:    number;     // N
   renewalDate:        string;     // ISO / YYYY-MM-DD — drives pro-rata
-  graceDays:          number;     // tenant.grace_period_days
+  graceDays:          number;     // tenant.grace_period_days — no longer the quote expiry (R-814)
   /**
    * GST percent for THIS customer. 18 domestic, 0 for a zero-rated export.
    *
@@ -350,8 +351,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     commitment: "annual_yearly",
   }];
 
-  const renewalAt   = new Date(input.renewalDate);
-  const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 7) * 86400000);
+  /* R-814: the normal quote validity (30 days), capped at the last day this quote charges
+     for — not renewal + grace, which left a pro-rata price open for up to a year. */
+  const expiresDate = addSeatsQuoteExpiry(today, chargeTo);
 
   const { error: insertErr } = await input.supabase.from("quotes").insert({
     id:               newQuoteId,
@@ -364,10 +366,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     status:           "sent",
     payment_status:   "awaiting",
     owner_id:         null,
-    /* R-025 — same UTC trap as the renewal and extension quotes beside it. `validUntil`
-       is built from a YYYY-MM-DD at UTC midnight plus whole days, so no shift there. */
+    /* R-025 — same UTC trap as the renewal and extension quotes beside it. `expiresDate`
+       is calendar-day arithmetic on YYYY-MM-DD strings, so no shift there. */
     created_date:     istToday(),
-    expires_date:     utcDateISO(validUntil),
+    expires_date:     expiresDate,
     line_items:       lineItems,
     subtotal:         subtotalExGst,
     total_cost:       (wholesalePerSeat + prevWholesalePerSeat) * input.additionalSeats,
