@@ -36,6 +36,7 @@ import { logoDataUri } from "@/lib/pdf/logo";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -257,7 +258,7 @@ export async function POST(req: Request) {
         discount:      0,
         taxable:       renewalQuote.subtotal ?? renewalQuote.amount,
         taxRate:       renewalQuote.tax_rate ?? 18,
-        tax:           Math.round((renewalQuote.subtotal ?? renewalQuote.amount) * 0.18),
+        tax:           quoteDisplayTax(renewalQuote.subtotal ?? renewalQuote.amount, renewalQuote.tax_rate ?? 18, renewalQuote.amount), // R-804
         total:         renewalQuote.amount,
         interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
         validityDays:  30,

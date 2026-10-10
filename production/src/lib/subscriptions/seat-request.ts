@@ -20,7 +20,7 @@
  * permitted at all. Those are routed to a human with the reason stated instead of
  * being approved into a code path that would silently do nothing.
  */
-import { prorate, rupeesToPaise, paiseToRupees } from "./proration";
+import { seatIncreaseCharge } from "./seat-increase-charge";
 
 export type SeatRequestStatus = "pending" | "approved" | "rejected" | "withdrawn";
 
@@ -119,9 +119,16 @@ export interface ChargePreview {
   seatsToAdd: number;
   remainingDays: number;
   termDays: number;
+  /** Ex-GST, whole rupees — what the quote's subtotal will say. */
   exGst: number;
+  /** GST, whole rupees — always total − exGst, as the quote and the invoice show it. */
   tax: number;
+  /** Incl. GST, whole rupees — what the quote's amount will say. */
   total: number;
+  /** Pro-rata rate per added seat, for display. */
+  perSeat: number;
+  /** ₹/seat/year the added seats are priced at. */
+  annualPerSeat: number;
   /** ₹/month the subscription will bill AFTER the change. */
   newMrr: number;
 }
@@ -129,8 +136,8 @@ export interface ChargePreview {
 /**
  * What the change costs if approved today.
  *
- * Goes through the shared `prorate()` — one expression, one rounding, integer paise —
- * rather than a second proration. `annualPerSeat` is derived from the CURRENT mrr and
+ * Goes through seatIncreaseCharge() — the function addSeats() uses to write the quote —
+ * rather than a second calculation. `annualPerSeat` is derived from the CURRENT mrr and
  * seat count so the added seats are priced at what this customer actually pays, not
  * at list.
  */
@@ -145,25 +152,23 @@ export function previewCharge(args: {
   const { currentSeats, currentMrr, seatsToAdd, remainingDays, termDays, taxRatePct } = args;
   if (seatsToAdd < 1 || currentSeats < 1 || termDays <= 0) return null;
 
-  const perSeatMonth = currentMrr / currentSeats;
-  const annualPerSeatPaise = Math.round(rupeesToPaise(perSeatMonth) * 12);
-
-  const r = prorate({
-    annualPerSeatPaise,
-    seats: seatsToAdd,
-    remainingDays,
-    termDays,
-    taxRatePct,
+  /* R-803: exactly the server's calculation (addSeats calls the same function), so the
+     preview matches the quote to the rupee. It used to keep the per-seat price in paise
+     and round the GST on its own, which could land ₹1 away from the quote. */
+  const c = seatIncreaseCharge({
+    currentSeats, currentMrr, additionalSeats: seatsToAdd, remainingDays, termDays, taxRatePct,
   });
 
   return {
     seatsToAdd,
-    remainingDays: r.chargedDays,
+    remainingDays: c.proration.chargedDays,
     termDays,
-    exGst: paiseToRupees(r.subtotalPaise),
-    tax:   paiseToRupees(r.taxPaise),
-    total: paiseToRupees(r.totalPaise),
-    newMrr: Math.round(perSeatMonth * (currentSeats + seatsToAdd)),
+    exGst: c.subtotal,
+    tax:   c.tax,
+    total: c.total,
+    perSeat: c.perSeat,
+    annualPerSeat: c.annualPerSeat,
+    newMrr: c.newMrr,
   };
 }
 

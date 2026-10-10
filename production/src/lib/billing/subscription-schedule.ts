@@ -71,6 +71,18 @@ export function currentTermStart(sub: Pick<ScheduleFields, "term_months" | "star
 }
 
 /**
+ * R-543 (10 Oct 2026): the first day of the PREVIOUS term — the current term start minus
+ * term_months. Seats can be backdated into it (Add seats → Effective date). Null without a
+ * renewal date. Says nothing about whether the subscription existed then — callers clamp
+ * to start_date.
+ */
+export function previousTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (!sub.renewal_date) return null;
+  const current = currentTermStart(sub);
+  return current ? addMonths(current, -Math.max(1, sub.term_months ?? 12)) : null;
+}
+
+/**
  * The NEXT term — what the customer is being asked to renew into.
  *
  * Begins the day AFTER the stored date. Passing `renewal_date` in as the start would

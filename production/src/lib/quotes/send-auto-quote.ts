@@ -39,6 +39,7 @@ import { replySubject } from "@/lib/email/reply-subject";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 export interface SendAutoQuoteArgs {
   tenantId: string;
@@ -163,7 +164,7 @@ export async function sendAutoQuote(
   const discount    = Math.round(subtotal * (discountPct / 100));
   const taxable     = subtotal - discount;
   const taxRate     = quote.tax_rate ?? 18;
-  const tax         = Math.round(taxable * (taxRate / 100));
+  const tax         = quoteDisplayTax(taxable, taxRate, quote.amount); // R-804
   /* The STORED total, not a recompute. quote.amount is what the draft committed to and what
      the operator would see in the app — a PDF that disagrees with the row by a rupee is a
      conversation nobody wants to have with a customer. */

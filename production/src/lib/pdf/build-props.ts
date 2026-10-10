@@ -19,6 +19,7 @@ import type { QuotePDFProps } from "./QuotePDF";
 import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 /**
  * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
@@ -99,7 +100,8 @@ export function quoteAmounts(quote: Pick<Quote, "subtotal" | "discount_pct" | "t
   const discount    = Math.round(subtotal * (discountPct / 100));
   const taxable     = subtotal - discount;
   const taxRate     = quote.tax_rate ?? 18;
-  const tax         = Math.round(taxable * (taxRate / 100));
+  /* R-804: GST = stored total − taxable (rounding gap only), so the lines add up. */
+  const tax         = quoteDisplayTax(taxable, taxRate, quote.amount);
   const total       = quote.amount ?? (taxable + tax);
   return { subtotal, discountPct, discount, taxable, taxRate, tax, total };
 }

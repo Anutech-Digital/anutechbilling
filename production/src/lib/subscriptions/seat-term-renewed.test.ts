@@ -41,12 +41,15 @@ describe("renewed multi-year row — the current term, not start_date → renewa
       expect(rupees(106, 1096)).toBe(313);
     });
 
-    it(`${label}: Effective date can't reach into an earlier term`, () => {
-      expect(seatEffectiveBounds(sub, TODAY)).toEqual({ min: "2025-09-15", max: TODAY });
+    /* R-543 (10 Oct 2026, Pardeep: haan) widened this from the current term to the PREVIOUS
+       term — still never 2023/2024 (two terms back). seat-previous-term.test.ts has the charge. */
+    it(`${label}: Effective date can reach the previous term, never further`, () => {
+      expect(seatEffectiveBounds(sub, TODAY)).toEqual({ min: "2024-09-15", max: TODAY });
       expect(checkSeatEffectiveDate("2025-09-15", sub, TODAY).ok).toBe(true);
-      const r = checkSeatEffectiveDate("2025-09-14", sub, TODAY);
+      expect(checkSeatEffectiveDate("2025-09-14", sub, TODAY).ok).toBe(true);
+      const r = checkSeatEffectiveDate("2024-09-14", sub, TODAY);
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.message).toMatch(/before this term started/);
+      if (!r.ok) expect(r.message).toMatch(/before the previous term started/);
       expect(checkSeatEffectiveDate("2024-01-01", sub, TODAY).ok).toBe(false);
     });
   }
@@ -62,7 +65,7 @@ describe("renewed multi-year row — the current term, not start_date → renewa
     const sub = { ...RENEWED_INCLUSIVE, term_months: null as unknown as number };
     expect(seatTermDays(sub)).toBe(365);
     expect(resolveTermDays(sub)).toBe(365);
-    expect(seatEffectiveBounds(sub, TODAY)!.min).toBe("2025-09-15");
+    expect(seatEffectiveBounds(sub, TODAY)!.min).toBe("2024-09-15"); // R-543: previous term start
     expect(seatChargeWindow(sub, TODAY)!.termDays).toBe(365);
   });
 
@@ -70,7 +73,8 @@ describe("renewed multi-year row — the current term, not start_date → renewa
     const sub = { ...RENEWED_INCLUSIVE, term_months: 24, start_date: "2022-04-01", renewal_date: "2026-03-31" };
     expect(seatTermStart(sub)).toBe("2024-04-01");
     expect(seatTermDays(sub)).toBe(730);
-    expect(seatEffectiveBounds(sub, "2026-01-10")!.min).toBe("2024-04-01");
+    /* R-543: the previous 24-month term began 1 Apr 2022 — the sale itself. */
+    expect(seatEffectiveBounds(sub, "2026-01-10")!.min).toBe("2022-04-01");
   });
 });
 

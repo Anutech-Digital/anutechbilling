@@ -69,6 +69,7 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -1251,7 +1252,7 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? (quote.line_items as QuoteLineItem[]) : [];
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
   const taxable  = quote.subtotal - discount;
-  const tax      = Math.round(taxable * (quote.tax_rate / 100));
+  const tax      = quoteDisplayTax(taxable, quote.tax_rate, quote.amount); // R-804
   const total    = quote.amount ?? taxable + tax;
   const validity = quote.expires_date
     ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))

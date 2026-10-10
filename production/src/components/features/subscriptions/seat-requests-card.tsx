@@ -30,6 +30,48 @@ import { assessRequest, previewCharge, requestBadge } from "@/lib/subscriptions/
 import { localDateISO } from "@/lib/leads/outcomes";
 import { seatChargeWindow, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
 import { istToday } from "@/lib/dates/ist";
+import { useCustomer } from "@/lib/queries/customers";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+
+/**
+ * R-803: the amount approving will charge — the same calculation and the same tax rule the
+ * server applies (applySeatIncrease → addSeats → seatIncreaseCharge), so it equals the quote.
+ * Was a flat 18% here, while the server zero-rates an export customer.
+ */
+function SeatChargePreview({ sub, seatsToAdd }: { sub: Subscription; seatsToAdd: number }) {
+  const { data: customer } = useCustomer(sub.customer_id ?? undefined);
+  const { data: me } = useCurrentUser();
+  /* R-527: the same window the server charges — the current instalment on a split-billed
+     subscription, else the rest of the term. Approval charges from today. */
+  const window = sub.renewal_date ? seatChargeWindow(sub, istToday()) : null;
+  if (!window) return null;
+  const pos = quotePlaceOfSupply({
+    customer: customer ?? null,
+    seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
+  });
+  const preview = previewCharge({
+    currentSeats: sub.seats,
+    currentMrr: sub.mrr,
+    seatsToAdd,
+    remainingDays: Math.max(0, window.remainingDays),
+    termDays: window.termDays,
+    taxRatePct: pos.isExport ? 0 : 18,
+  });
+  if (!preview) return null;
+  return (
+    <>
+      <p className="font-serif text-lg font-semibold tabular-nums text-ink">
+        {rupee(preview.total)}
+      </p>
+      <p className="text-3xs leading-snug text-ink-3">
+        {pos.isExport ? "no GST (export)" : "incl. GST"} · {preview.remainingDays} days
+        <br />
+        then {rupee(preview.newMrr)}/mo
+      </p>
+    </>
+  );
+}
 
 export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
   requests: SeatRequest[];
@@ -97,19 +139,6 @@ export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
             today,
           });
 
-          /* R-527: the same window the server charges — the current instalment on a
-             split-billed subscription, else the rest of the term. */
-          const window = verdict.canApprove && sub?.renewal_date ? seatChargeWindow(sub, istToday()) : null;
-          const preview = verdict.canApprove && window && sub
-            ? previewCharge({
-                currentSeats: sub.seats,
-                currentMrr: sub.mrr,
-                seatsToAdd: verdict.seatsToAdd,
-                remainingDays: Math.max(0, window.remainingDays),
-                termDays: window.termDays,
-                taxRatePct: 18,
-              })
-            : null;
 
           const badge = requestBadge(r.status);
           const delta = r.requested_seats - r.current_seats;
@@ -145,18 +174,7 @@ export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
                 </div>
 
                 <div className="shrink-0 text-right">
-                  {preview && (
-                    <>
-                      <p className="font-serif text-lg font-semibold tabular-nums text-ink">
-                        {rupee(preview.total)}
-                      </p>
-                      <p className="text-3xs leading-snug text-ink-3">
-                        incl. GST · {preview.remainingDays} days
-                        <br />
-                        then {rupee(preview.newMrr)}/mo
-                      </p>
-                    </>
-                  )}
+                  {verdict.canApprove && sub && <SeatChargePreview sub={sub} seatsToAdd={verdict.seatsToAdd} />}
                   <div className="mt-2 flex gap-1.5">
                     <Button
                       size="sm"

@@ -22,7 +22,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
-import { seatChargeWindow, seatTermEnd, seatTermDays } from "./seat-charge-window";
+import { seatChargePlan, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
@@ -118,7 +118,11 @@ export async function applySeatIncrease(args: {
   const today = istToday();
   const eff = checkSeatEffectiveDate(args.effectiveDate, sub, today);
   if (!eff.ok) return { ok: false, code: "invalid_effective_date", message: eff.message };
-  const window = isSplitBilled(sub.billing_cycle) ? seatChargeWindow(sub, today, eff.date) : null;
+  /* R-543: an effective date in the PREVIOUS term → plan.previous (its own quote line) and the
+     current-term window measured from the current term start. Else plan.current is exactly
+     seatChargeWindow(sub, today, eff.date), as before. */
+  const plan = seatChargePlan(sub, today, eff.date);
+  const window = isSplitBilled(sub.billing_cycle) ? (plan?.current ?? null) : null;
   if (window?.instalmentPeriod) {
     try {
       await syncSubscriptionInstalments({
@@ -155,6 +159,10 @@ export async function applySeatIncrease(args: {
     chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
+    previousTerm:   plan?.previous
+      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
+      : null,
+    currentTermStart: plan?.previous ? plan.current.from : null,
     todayISO:       today,
   });
 }

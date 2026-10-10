@@ -26,6 +26,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
+import { seatIncreaseQuote } from "./seat-increase-charge";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
 import { istToday, utcDateISO } from "@/lib/dates/ist";
 
@@ -189,6 +190,15 @@ export interface AddSeatsInput {
   effectiveDate?:     string;
   /** R-800: who chose a backdated effective date — written into the quote note. */
   effectiveDateSetBy?: string | null;
+  /**
+   * R-543: the effective date is in the PREVIOUS term (seatChargePlan().previous). The quote
+   * then has two lines: this part (effective date → `to`, over the previous term's length) and
+   * the current term from `currentTermStart`. With a chargeWindow, the caller has measured its
+   * remainingDays from `currentTermStart`. Absent = one line, as before.
+   */
+  previousTerm?:      { to: string; remainingDays: number; termDays: number } | null;
+  /** R-543: first day of the current term — required with previousTerm. */
+  currentTermStart?:  string | null;
   /** Today (IST, YYYY-MM-DD). Injected for tests; defaults to istToday(). */
   todayISO?:          string;
 }
@@ -235,37 +245,43 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   if (effective > today) {
     return { ok: false, code: "invalid_effective_date", message: "Effective date can't be in the future." };
   }
+  /* R-543: a previous-term effective date — the current-term part runs from the term start. */
+  const prev = input.previousTerm ?? null;
+  const currentFrom = prev ? (input.currentTermStart ?? "").slice(0, 10) : effective;
+  if (prev && !(currentFrom && effective < currentFrom && prev.remainingDays > 0)) {
+    return { ok: false, code: "invalid_effective_date", message: "Effective date is not in the previous term." };
+  }
   /* R-800: the seats were in use from `effective`, so the remaining term — and the vendor
-     commitment on the draft PO — runs from there. */
+     commitment on the draft PO — runs from there (R-543: across both terms). */
   const days = daysBetweenDates(effective, termEnd);
   /* R-527: days the CUSTOMER is charged for now — the current instalment on a split-billed
-     subscription, else the rest of the term. Both measured from the effective date. */
-  const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : days;
+     subscription, else the rest of the term. Both measured from the effective date
+     (R-543: from the current term start when the date is in the previous term). */
+  const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : daysBetweenDates(currentFrom, termEnd);
   const chargeTo   = input.chargeWindow?.chargeTo ?? input.renewalDate;
 
-  // annual rate per seat (₹) from current MRR
-  // currentMrr = ₹/month for the whole subscription (all currentSeats together)
-  // annual per seat = (currentMrr × 12) / currentSeats
-  const annualPerSeat = input.currentSeats > 0
-    ? Math.round((input.currentMrr * 12) / input.currentSeats)
-    : 0;
-
-  /* Pro-rata now comes from proration.ts: one expression in integer paise, rounded
-     ONCE, with the tax rate and the term length passed in. What changed in rupees
-     is pinned case by case in add-seats-before-after.test.ts. */
-  const charge = prorate({
-    annualPerSeatPaise: rupeesToPaise(annualPerSeat),
-    seats:              input.additionalSeats,
-    remainingDays:      chargeDays,
-    termDays:           input.termDays,
-    taxRatePct:         input.taxRatePct,
+  /* R-803: the charge comes from seatIncreaseCharge() — the same function every preview
+     (Add seats dialog, seat-requests card) calls, so a preview cannot disagree with this
+     quote. Annual per seat = round(currentMrr × 12 ÷ currentSeats); pro-rata via prorate()
+     in integer paise, rounded ONCE, with the tax rate and the term length passed in. What
+     changed in rupees is pinned case by case in add-seats-before-after.test.ts.
+     R-543: seatIncreaseQuote() adds the previous-term part (if any) the same way. */
+  const quoted = seatIncreaseQuote({
+    currentSeats:    input.currentSeats,
+    currentMrr:      input.currentMrr,
+    additionalSeats: input.additionalSeats,
+    taxRatePct:      input.taxRatePct,
+    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays } : null,
+    current:         { remainingDays: chargeDays, termDays: input.termDays },
   });
-
-  const subtotalExGst = paiseToRupees(charge.subtotalPaise);
-  const totalInclGst  = paiseToRupees(charge.totalPaise);
+  const priced        = quoted.current;
+  const annualPerSeat = quoted.annualPerSeat;
+  const charge        = priced.proration;
+  const subtotalExGst = quoted.subtotal;
+  const totalInclGst  = quoted.total;
   // Per-seat rate for the quote LINE only — the subtotal above is never derived
   // from it. That multiplication is exactly the bug this replaced.
-  const proRataPerSeat = paiseToRupees(charge.perSeatPaise);
+  const proRataPerSeat = priced.perSeat;
 
   /* The real vendor cost, resolved ONCE and used by both the quote line and the draft
      PO below. Those two used to disagree: the quote line was always `× 0.83` while the
@@ -280,15 +296,18 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   /* Pro-rata the cost over the same remaining days as the charge, so the quote line's
      cost and rate cover the same period. Cost is ₹/seat/MONTH, so × 12 for the year
      before pro-rating — getting this wrong is a silent 12× on every margin. */
-  const wholesalePerSeat = paiseToRupees(
+  const costFor = (remainingDays: number, termDays: number) => paiseToRupees(
     prorate({
       annualPerSeatPaise: rupeesToPaise(seatCost.costPerSeatMonth * 12),
       seats:              1,
-      remainingDays:      chargeDays,
-      termDays:           input.termDays,
+      remainingDays,
+      termDays,
       taxRatePct:         0,
     }).subtotalPaise,
   );
+  const wholesalePerSeat = costFor(chargeDays, input.termDays);
+  /* R-543: the previous-term line carries the cost of its own days. */
+  const prevWholesalePerSeat = prev ? costFor(prev.remainingDays, prev.termDays) : 0;
 
   // Allocate quote number
   const { data: nextNumber, error: numErr } = await input.supabase.rpc("next_document_number", {
@@ -300,7 +319,26 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   }
   const newQuoteId = nextNumber as unknown as string;
 
-  const lineItems: QuoteLineItem[] = [{
+  const lineItems: QuoteLineItem[] = prev && quoted.previous ? [
+    /* R-543: an effective date in the previous term — the rest of that term, then the current
+       term from its start. Both lines name their dates so the invoice says what is billed. */
+    {
+      id:         "add-seats-prev",
+      name:       `${input.plan} · +${input.additionalSeats} seats (previous term, pro-rata from ${effective} to ${prev.to})`,
+      qty:        input.additionalSeats,
+      rate:       quoted.previous.perSeat,
+      cost:       prevWholesalePerSeat,
+      commitment: "annual_yearly",
+    },
+    {
+      id:         "add-seats-1",
+      name:       `${input.plan} · +${input.additionalSeats} seats (current term ${currentFrom} to ${chargeTo})`,
+      qty:        input.additionalSeats,
+      rate:       proRataPerSeat,
+      cost:       wholesalePerSeat,
+      commitment: "annual_yearly",
+    },
+  ] : [{
     id:         "add-seats-1",
     /* R-800: the line names the period charged, so the invoice built from this quote says
        which dates the seats are billed for — "from" is the effective date. */
@@ -331,7 +369,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     expires_date:     utcDateISO(validUntil),
     line_items:       lineItems,
     subtotal:         subtotalExGst,
-    total_cost:       wholesalePerSeat * input.additionalSeats,
+    total_cost:       (wholesalePerSeat + prevWholesalePerSeat) * input.additionalSeats,
     discount_pct:     0,
     // The customer's actual rate, not a hardcoded 18 — a zero-rated export quote
     // must SAY zero, or the PDF and the GST return disagree with the amount.
@@ -343,7 +381,11 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     // fraction charged instead of a rounded float that cannot be reconciled.
     notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
       effective < today ? ` (backdated${input.effectiveDateSetBy ? ` by ${input.effectiveDateSetBy}` : ""} on ${today})` : ""
-    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
+    }${
+      prev && quoted.previous
+        ? `. Crosses a term: ${quoted.previous.proration.chargedDays} of ${prev.termDays} days of the previous term (to ${prev.to}) + current term from ${currentFrom}`
+        : ""
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
@@ -352,7 +394,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   // Update subscription seats + MRR immediately — operator has decided
   // to provision the additional seats now. Customer pays via normal quote flow.
   const newSeats = input.currentSeats + input.additionalSeats;
-  const newMrr   = Math.round((annualPerSeat * newSeats) / 12);
+  const newMrr   = priced.newMrr;
 
   const { error: subErr } = await input.supabase
     .from("subscriptions")

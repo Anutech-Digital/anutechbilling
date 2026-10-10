@@ -7,6 +7,12 @@
  * the seats really started; the pro-rata charge (prorate(), integer paise) runs from that date.
  *
  * Allowed range, both ends inclusive:
+ *   R-543 (10 Oct 2026, Abhishek): earliest = the start of the PREVIOUS term (current term start
+ *              minus term_months) when the subscription already existed then, else its own
+ *              start_date. A date in the previous term bills the rest of that term AND the whole
+ *              current term — two lines on one quote (seatChargePlan + seatIncreaseQuote). With
+ *              no start_date the subscription can't be shown to have existed, so the current
+ *              term start stays the limit. Before R-543 it was always:
  *   earliest = the start of the CURRENT term — R-802: currentTermStart() (exclusive term end
  *              minus term_months, the billing schedule's rule and the same start resolveTermDays
  *              measures the term from, so the two agree). Never the stored start_date on its
@@ -19,7 +25,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { formatDate } from "@/lib/utils";
-import { currentTermStart } from "@/lib/billing/subscription-schedule";
+import { currentTermStart, previousTermStart } from "@/lib/billing/subscription-schedule";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -31,7 +37,7 @@ export interface SeatDateSub {
 }
 
 export interface SeatEffectiveBounds {
-  /** Earliest allowed effective date — the current term's start. */
+  /** Earliest allowed effective date — the previous term's start (R-543), never before start_date. */
   min: string;
   /** Latest allowed effective date — today. */
   max: string;
@@ -40,11 +46,24 @@ export interface SeatEffectiveBounds {
 export function seatEffectiveBounds(sub: SeatDateSub, todayISO: string): SeatEffectiveBounds | null {
   if (!sub.renewal_date) return null;
   const today = todayISO.slice(0, 10);
+  const earliest = earliestEffective(sub, today);
+  /* A term that starts in the future (pre-dated renewal) leaves only today to choose. */
+  return { min: earliest.date < today ? earliest.date : today, max: today };
+}
+
+/**
+ * R-543: the earliest effective date and WHY it is the earliest (for the red message).
+ *   - previous-term — the subscription existed before the current term: the previous term's start.
+ *   - subscription  — it was sold after the previous term started: its own start_date.
+ *   - term          — no start_date (cannot prove it existed earlier), or sold in this term.
+ */
+function earliestEffective(sub: SeatDateSub, today: string): { date: string; reason: "previous-term" | "subscription" | "term" } {
   const termStart = currentTermStart(sub) ?? today;
   const sold = sub.start_date ? sub.start_date.slice(0, 10) : null;
-  const earliest = sold && sold > termStart ? sold : termStart;
-  /* A term that starts in the future (pre-dated renewal) leaves only today to choose. */
-  return { min: earliest < today ? earliest : today, max: today };
+  if (!sold) return { date: termStart, reason: "term" };
+  if (sold >= termStart) return { date: sold, reason: "term" };
+  const prev = previousTermStart(sub) ?? termStart;
+  return sold > prev ? { date: sold, reason: "subscription" } : { date: prev, reason: "previous-term" };
 }
 
 export type SeatEffectiveCheck =
@@ -74,7 +93,11 @@ export function checkSeatEffectiveDate(
     return { ok: false, message: "Effective date can't be in the future. Pick today or an earlier date." };
   }
   if (value < bounds.min) {
-    return { ok: false, message: `Effective date can't be before this term started (${formatDate(bounds.min)}).` };
+    const why = earliestEffective(sub, today).reason;
+    const what = why === "previous-term" ? "the previous term started"
+      : why === "subscription" ? "this subscription started"
+      : "this term started";
+    return { ok: false, message: `Effective date can't be before ${what} (${formatDate(bounds.min)}).` };
   }
   return { ok: true, date: value, backdated: value < today };
 }

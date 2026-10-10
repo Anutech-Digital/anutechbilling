@@ -88,6 +88,7 @@ import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { FeeNetLine } from "@/app/(app)/payments/gateway-fee";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 // ============================================================
 // Status meta
@@ -618,7 +619,8 @@ export default function QuoteDetailPage() {
     addSeatsQuote || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
   const taxable = quote.subtotal - discount;
-  const tax = Math.round(taxable * (quote.tax_rate / 100));
+  /* R-804: GST shown = stored total − taxable, so Subtotal + GST = Total (₹853 + ₹153 = ₹1,006). */
+  const tax = quoteDisplayTax(taxable, quote.tax_rate, quote.amount);
   const total = quote.amount ?? taxable + tax;
 
   /* What can be DONE with the money right now — one tested decision instead of three

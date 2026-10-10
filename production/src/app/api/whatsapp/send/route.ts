@@ -29,6 +29,7 @@ import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteAmountDue } from "@/lib/payments/amount-due";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
       const discount = Math.round(subtotal * ((quote.discount_pct ?? 0) / 100));
       const taxable  = subtotal - discount;
       const taxRate  = quote.tax_rate ?? 18;
-      const tax      = Math.round(taxable * (taxRate / 100));
+      const tax      = quoteDisplayTax(taxable, taxRate, quote.amount); // R-804
       const total    = quote.amount ?? taxable + tax;
       const lineItems = (quote.line_items ?? []) as QuoteLineItem[];
 
