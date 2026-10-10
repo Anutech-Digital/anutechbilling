@@ -61,6 +61,7 @@ import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { Switch } from "@/components/ui/switch";
 import { OfficeHoursRow } from "@/components/features/attendance/office-hours-row";
+import { AttendanceChanges } from "@/components/features/attendance/attendance-changes";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
@@ -2410,6 +2411,8 @@ export function AttendanceTab() {
       )}
 
       <TodayCheckins attendance={attQ.data ?? []} employees={employees} />
+
+      <AttendanceChanges />
     </>
   );
 }
