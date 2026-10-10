@@ -39,6 +39,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { decideCadence, CADENCE_TRIGGERS } from "@/lib/renewals/cadence";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { renderQuotePDF } from "@/lib/pdf";
@@ -69,7 +70,8 @@ function readRenewableSubs(supabase: ReturnType<typeof createAdminClient>) {
     .from("subscriptions")
     .select(`
       id, tenant_id, customer_id, customer_name, plan, item_id, vendor, seats, mrr,
-      renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, domain
+      renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, domain,
+      billing_cycle, start_date
     `)
     .eq("status", "active")
     .eq("auto_renew", true)
@@ -88,6 +90,8 @@ interface CronResult {
   suspends:         number;
   /** RN-24: subscriptions lapsed to 'expired' because they're not renewing and the term ended. */
   lapsed:           number;
+  /** R-808: split-billed subscriptions whose term rolled on this run (no renewal quote). */
+  split_rolled?:    number;
   errors:           { subscription_id: string; message: string }[];
   details:          { subscription_id: string; customer: string; step: string; daysUntil: number; emailStatus?: string }[];
   /** S28 — WhatsApp copy of each reminder. `disabled` = switch OFF (the default). */
@@ -260,6 +264,54 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
       const ingestBoxes = ingestByTenant.get(sub.tenant_id) ?? [];
 
       if (!tenant) return;
+
+      /* ── R-808: billed in parts → no whole-term renewal quote, the term rolls itself ──
+         A monthly/quarterly/half-yearly subscription pays by instalment. A whole-year renewal
+         quote on top was proven (local DB) to bill the renewed year twice: once as the paid
+         quote's whole-year invoice, again as four PENDING instalment invoices. So no quote,
+         no reminder ladder and no grace suspension here (unpaid instalments are chased by
+         collections). On the new term's first day renewal_date moves one term on and the
+         billing cron invoices the new term's parts on their dates. lib/renewals/split-billed-renewal.ts */
+      const split = splitBilledRenewalStep(
+        { billing_cycle: sub.billing_cycle, term_months: sub.term_months, start_date: sub.start_date,
+          renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id },
+        todayIso,
+      );
+      if (split.kind !== "not_split_billed") {
+        if (split.kind === "held_open_quote") {
+          result.errors.push({
+            subscription_id: sub.id,
+            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so the term was not rolled. Cancel or unlink that quote; the next run rolls the term.`,
+          });
+        } else if (split.kind === "roll") {
+          /* Guarded on the date read: two overlapping runs roll once, not twice. */
+          const { data: rolled, error: rollErr } = await supabase
+            .from("subscriptions")
+            .update({
+              renewal_date:  split.newRenewalDate,
+              renewal_state: "renewed",
+              reminder_count: 0,
+              last_reminder_sent_at_v2: null,
+            })
+            .eq("id", sub.id)
+            .eq("status", "active")
+            .eq("renewal_date", sub.renewal_date!)
+            .is("renewal_quote_id", null)
+            .select("id");
+          if (rollErr) {
+            result.errors.push({ subscription_id: sub.id, message: `Could not roll the term: ${rollErr.message}` });
+          } else if ((rolled ?? []).length > 0) {
+            result.split_rolled = (result.split_rolled ?? 0) + 1;
+            result.details.push({
+              subscription_id: sub.id,
+              customer:        sub.customer_name,
+              step:            `renewed (billed in parts) → ${split.newRenewalDate}`,
+              daysUntil:       0,
+            });
+          }
+        }
+        return;
+      }
 
       // ── Per-customer info — need email to actually send ──
       const customer = sub.customer_id ? customerById.get(sub.customer_id) ?? null : null;
@@ -664,7 +716,7 @@ async function planOnly(
      paged now, and the look-ups read 200 ids a request. */
   const eligible = (await fetchAllRows((from, to) => supabase
     .from("subscriptions")
-    .select("id, tenant_id, customer_id, customer_name, renewal_date, status, renewal_state, auto_renew, term_months")
+    .select("id, tenant_id, customer_id, customer_name, renewal_date, status, renewal_state, auto_renew, term_months, billing_cycle, start_date, renewal_quote_id")
     .eq("status", "active")
     .eq("auto_renew", true)
     .not("renewal_date", "is", null)
@@ -692,7 +744,16 @@ async function planOnly(
   let blockedNoEmail = 0;
   let nextActionOn: string | null = null;
 
+  let splitRolls = 0;
+  let splitHeld = 0;
   for (const sub of eligible) {
+    /* R-808: billed in parts → no reminder, no quote; the term rolls on its first day. */
+    const split = splitBilledRenewalStep(sub, toIstDate(asOf));
+    if (split.kind !== "not_split_billed") {
+      if (split.kind === "roll") splitRolls += 1;
+      if (split.kind === "held_open_quote") splitHeld += 1;
+      continue;
+    }
     const decision = decideCadence({
       renewalDate:  sub.renewal_date!,
       graceDays:    graceByTenant.get(sub.tenant_id) ?? 0,
@@ -730,6 +791,12 @@ async function planOnly(
   }
 
   const notes: string[] = [];
+  if (splitRolls > 0) {
+    notes.push(`${splitRolls} subscription(s) billed in parts would renew today: the term rolls on and the billing cron invoices the next parts. No renewal quote.`);
+  }
+  if (splitHeld > 0) {
+    notes.push(`${splitHeld} subscription(s) billed in parts are due to renew but still have an open renewal quote. They would not roll until a person cancels or unlinks that quote.`);
+  }
   if (!isEmailConfigured()) {
     notes.push("Email is in STUB mode — a real run would log to renewal_email_log without delivering anything.");
   }

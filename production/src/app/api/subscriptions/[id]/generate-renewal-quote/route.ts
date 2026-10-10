@@ -26,6 +26,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,7 +55,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, billing_cycle`
     )
     .eq("id", params.id)
     .single();
@@ -66,6 +67,12 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date set" }, { status: 400 });
+  }
+  /* R-808: billed in parts → no whole-term renewal quote (it was proven to bill the renewed
+     year twice). The renewals cron rolls the term and the instalments keep coming. */
+  const splitReason = renewalQuoteBlockedReason(sub.billing_cycle);
+  if (splitReason) {
+    return NextResponse.json({ error: splitReason, code: "split_billed" }, { status: 400 });
   }
   if (sub.status !== "active") {
     return NextResponse.json(
