@@ -9,9 +9,15 @@
  * that changes the code.
  *
  * Read-only on purpose. It returns only what a card needs (the directive and triage summary,
- * page, severity) — no reporter name or email, no screenshot — and never changes a row, so
- * a leaked token reads a work list and nothing else. Its own token, not CRON_SECRET: that
- * one can run every cron job; this one cannot run anything.
+ * page, severity, and — R-539 — who filed it) — no email, phone, user id or full name, no
+ * screenshot — and never changes a row, so a leaked token reads a work list and nothing else.
+ * Its own token, not CRON_SECRET: that one can run every cron job; this one cannot run anything.
+ *
+ * R-539 (Pardeep, 10 Oct 2026): board cards must carry the reporter, so the manager AI can put
+ * the card under that person's name at once. This used to say "no reporter name or email";
+ * now each item has `reporter` = the lowercased FIRST name only (letters only, e.g.
+ * "abhishek"; null when unknown) and `workspace` = the tenant's name (or null). Still no
+ * email, and reported_by / tenant_id themselves are never returned.
  *
  * Fails closed: no AGENT_QUEUE_TOKEN configured → 503.
  */
@@ -28,7 +34,17 @@ const LIMIT = 50;
 /** Read more than LIMIT so claimed rows filtered out below do not shorten the list. */
 const FETCH = 200;
 const COLS =
-  "id, title, problem_summary, directive, reported_type, inferred_type, reported_severity, severity_score, page_path, target_files, dispatched_at, created_at, filed_via";
+  "id, title, problem_summary, directive, reported_type, inferred_type, reported_severity, severity_score, page_path, target_files, dispatched_at, created_at, filed_via, reported_by, tenant_id";
+
+/** R-539: "Abhishek Kumar" → "abhishek". First word, letters only, lowercased; else null. */
+function reporterFirstName(fullName: unknown): string | null {
+  if (typeof fullName !== "string") return null;
+  const first = fullName.trim().split(/\s+/)[0] ?? "";
+  return first.replace(/[^\p{L}]/gu, "").toLowerCase() || null;
+}
+
+const distinctIds = (rows: Array<Record<string, unknown>>, col: string) =>
+  [...new Set(rows.map((r) => r[col]).filter((v): v is string => typeof v === "string" && v.length > 0))];
 
 export async function GET(req: Request) {
   const expected = process.env.AGENT_QUEUE_TOKEN?.trim();
@@ -58,15 +74,36 @@ export async function GET(req: Request) {
   if (res.error && isMissingColumnError(res.error)) res = await read(COLS, false);
   if (res.error) return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
 
-  const items = urgentFirst(res.rows.filter((r) => !r[AGENT_CLAIMED_AT_COLUMN]))
-    .slice(0, LIMIT)
-    .map((r) => {
-      const urgent = isUrgent(r);
-      const out: Record<string, unknown> = { ...r };
-      delete out[AGENT_CLAIMED_AT_COLUMN];
-      delete out[URGENT_AT_COLUMN];
-      return urgent ? { ...out, urgent: true } : out;
-    });
+  const picked = urgentFirst(res.rows.filter((r) => !r[AGENT_CLAIMED_AT_COLUMN])).slice(0, LIMIT);
+
+  /* R-539: who filed it — one users read and one tenants read for the whole list (no N+1).
+     A failed lookup only blanks the names; the work list itself still goes out. */
+  const userIds = distinctIds(picked, "reported_by");
+  const tenantIds = distinctIds(picked, "tenant_id");
+  const [users, tenants] = await Promise.all([
+    userIds.length ? admin.from("users").select("id, full_name").in("id", userIds) : null,
+    tenantIds.length ? admin.from("tenants").select("id, name").in("id", tenantIds) : null,
+  ]);
+  const firstNameById = new Map<string, string | null>();
+  for (const u of (users?.data ?? []) as Array<{ id: string; full_name: unknown }>) {
+    firstNameById.set(u.id, reporterFirstName(u.full_name));
+  }
+  const tenantNameById = new Map<string, string>();
+  for (const t of (tenants?.data ?? []) as Array<{ id: string; name: unknown }>) {
+    if (typeof t.name === "string" && t.name.trim()) tenantNameById.set(t.id, t.name.trim());
+  }
+
+  const items = picked.map((r) => {
+    const urgent = isUrgent(r);
+    const out: Record<string, unknown> = { ...r };
+    delete out[AGENT_CLAIMED_AT_COLUMN];
+    delete out[URGENT_AT_COLUMN];
+    delete out.reported_by;
+    delete out.tenant_id;
+    out.reporter = typeof r.reported_by === "string" ? firstNameById.get(r.reported_by) ?? null : null;
+    out.workspace = typeof r.tenant_id === "string" ? tenantNameById.get(r.tenant_id) ?? null : null;
+    return urgent ? { ...out, urgent: true } : out;
+  });
 
   return NextResponse.json({ env: process.env.NEXT_PUBLIC_APP_ENV || "production", items });
 }
