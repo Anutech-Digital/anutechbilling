@@ -42,7 +42,15 @@ export interface PaymentToRecord {
   /** R-453: a renewal quote — record_payment moves the EXISTING subscription on by a term
    *  instead of creating one. Optional; absent means a normal quote. */
   renewsSubscription?: boolean;
+  /** R-542: an add-seats quote (quotes.is_add_seats) — the seats were already added to the
+   *  EXISTING subscription by Manage seats → Add Seats, and record_payment creates no
+   *  subscription for it. Optional; absent means a normal quote. */
+  addsSeats?: boolean;
 }
+
+/** R-542: what recording a payment on an add-seats quote does to the subscription. */
+export const ADD_SEATS_CONSEQUENCE =
+  "Adds the seats to the existing subscription — no new subscription is created. The next renewal bills the new seat count.";
 
 export function recordPaymentConsequences(args: {
   payment: PaymentToRecord;
@@ -113,6 +121,11 @@ export function recordPaymentConsequences(args: {
       tone: "fact",
       text: "Renews the existing subscription — the same subscription moves to its next renewal date. No new subscription is created.",
     });
+  } else if (p.addsSeats) {
+    /* R-542: the add-seats line carries a billing commitment, so it used to fall through to
+       "Creates a recurring subscription" — the owner read that as double billing.
+       record_payment skips subscription creation for is_add_seats quotes. */
+    out.push({ tone: "fact", text: ADD_SEATS_CONSEQUENCE });
   } else if (!p.createsSubscription) {
     /* Stated POSITIVELY. An operator expecting a renewal should learn here that none is
        coming, not from one that never arrives. Phrased by OUTCOME rather than cause: the

@@ -236,6 +236,22 @@ export function RecordPaymentDialog({
   }, [open, quoteId, invoiceId, alreadyReceived]);
   const expectedAmount = split ? split.expected : quoteTotal;
 
+  /* R-542: an add-seats quote (Manage seats → Add Seats) already put its seats on the
+     EXISTING subscription, and record_payment creates no subscription for it — but its line
+     carries a billing commitment, so "What this does" promised a new recurring subscription
+     and the owner read it as double billing. Read the flag once when the sheet opens.
+     select("*") so a database without the is_add_seats column still loads (flag = false). */
+  const [isAddSeatsQuote, setIsAddSeatsQuote] = React.useState(false);
+  React.useEffect(() => {
+    if (!open) { setIsAddSeatsQuote(false); return; }
+    let live = true;
+    (async () => {
+      const { data: q } = await createClient().from("quotes").select("*").eq("id", quoteId).maybeSingle();
+      if (live) setIsAddSeatsQuote((q as { is_add_seats?: boolean | null } | null)?.is_add_seats === true);
+    })();
+    return () => { live = false; };
+  }, [open, quoteId]);
+
   const remaining = Math.max(0, expectedAmount - alreadyReceived);
   const hasPriorPayments = alreadyReceived > 0;
 
@@ -1559,6 +1575,7 @@ export function RecordPaymentDialog({
                     ),
                     planLabel: (lineItems ?? [])[0]?.name ?? null,
                     renewsSubscription: isRenewal,
+                    addsSeats: isAddSeatsQuote,
                   },
                   /* Null once an invoice already exists — a post-invoice payment issues no
                      new receipt voucher, and claiming a number would be wrong. */

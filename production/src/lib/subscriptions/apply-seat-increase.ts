@@ -20,10 +20,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
-import { daysBetweenDates } from "./proration";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
-import { seatChargeWindow } from "./seat-charge-window";
+import { seatChargeWindow, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
@@ -54,11 +53,13 @@ export interface SeatIncreaseSubject {
 /**
  * The length of THIS term, not an assumed year.
  *
- * Falls back to 365 when start_date is missing — guessing 730 would over-charge, and
- * over-charging silently is the worse failure of the two.
+ * R-802: the CURRENT term, from renewal_date and term_months (seatTermDays) — not from
+ * start_date, which stays at the first sale across renewals: a 12-month row sold in Sep 2023
+ * and renewed twice was a 1,096-day "term" and a +1 seat charge a third of the right amount.
+ * 365 without a renewal date (applySeatIncrease refuses that case before charging).
  */
-export function resolveTermDays(startDate: string | null, renewalDate: string): number {
-  return startDate ? Math.max(1, daysBetweenDates(startDate, renewalDate)) : 365;
+export function resolveTermDays(sub: Pick<SeatIncreaseSubject, "start_date" | "renewal_date" | "term_months">): number {
+  return seatTermDays(sub);
 }
 
 /**
@@ -108,7 +109,7 @@ export async function applySeatIncrease(args: {
   }
 
   const { taxRatePct, taxLabel } = await resolveSeatTax(supabase, sub.customer_id, sub.tenant_id);
-  const termDays = resolveTermDays(sub.start_date, sub.renewal_date);
+  const termDays = resolveTermDays(sub);
 
   /* R-527: split-billed → charge the new seats to the end of the CURRENT instalment; the later
      instalments pick them up when the billing run re-syncs them to the new MRR. The current
@@ -150,6 +151,7 @@ export async function applySeatIncrease(args: {
     taxRatePct,
     taxLabel,
     termDays,
+    termEnd:        seatTermEnd(sub),
     chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,

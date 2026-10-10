@@ -29,6 +29,7 @@ import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
 import { assessRequest } from "@/lib/subscriptions/seat-request";
+import { seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
 import { localDateISO } from "@/lib/leads/outcomes";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +93,7 @@ export const POST = withRoute(
     liveSeats: sub.seats,
     subscriptionStatus: sub.status as "active" | "paused" | "expired" | "cancelled",
     renewalDate: sub.renewal_date,
+    termEnd: seatTermEnd(sub),
     today: localDateISO(new Date()),
   });
 

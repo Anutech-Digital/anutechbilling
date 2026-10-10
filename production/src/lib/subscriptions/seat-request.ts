@@ -34,6 +34,11 @@ export interface SeatRequestFacts {
   /** Subscription status right now. */
   subscriptionStatus: "active" | "paused" | "expired" | "cancelled";
   renewalDate: string | null;
+  /**
+   * R-801: EXCLUSIVE term end (seatTermEnd) — renewal_date is the inclusive last covered day on
+   * newer rows, so the renewal day itself is still inside the term. Absent = renewalDate.
+   */
+  termEnd?: string | null;
   /** Today, YYYY-MM-DD (IST) — pass localDateISO(new Date()). */
   today: string;
 }
@@ -99,7 +104,7 @@ export function assessRequest(f: SeatRequestFacts): SeatRequestVerdict {
       nextStep: "Set the renewal date on the subscription, then approve.",
     };
   }
-  if (f.renewalDate <= f.today) {
+  if ((f.termEnd ?? f.renewalDate) <= f.today) {
     return {
       canApprove: false,
       reason: "The term has already ended.",

@@ -17,7 +17,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule } from "@/lib/billing/subscription-schedule";
+import { subscriptionSchedule, followingTermStart, currentTermStart } from "@/lib/billing/subscription-schedule";
 import { periodLastDay } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
@@ -51,8 +51,11 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
   if (!sub.renewal_date) return null;
   const today = todayISO.slice(0, 10);
   const from = (effectiveISO ?? todayISO).slice(0, 10);
+  /* chargeTo stays the stored renewal date — the inclusive last covered day on the quote line. */
   const renewal = sub.renewal_date.slice(0, 10);
-  const termDays = sub.start_date ? Math.max(1, daysBetweenDates(sub.start_date, renewal)) : 365;
+  /* R-801: days are counted to the EXCLUSIVE term end, never to renewal_date directly. */
+  const termEnd = followingTermStart(sub);
+  const termDays = seatTermDays(sub);
 
   if (isSplitBilled(sub.billing_cycle)) {
     const period = subscriptionSchedule(sub).find((p) => p.periodStart <= today && today < p.periodEnd);
@@ -65,5 +68,42 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
       };
     }
   }
-  return { remainingDays: daysBetweenDates(from, renewal), termDays, chargeTo: renewal, instalmentPeriod: false };
+  return { remainingDays: daysBetweenDates(from, termEnd), termDays, chargeTo: renewal, instalmentPeriod: false };
+}
+
+/**
+ * R-801: the EXCLUSIVE end of the current term — the first day the customer has NOT paid for.
+ *
+ * Since 11 Sep 2026 `renewal_date` is the inclusive last covered day (1 Apr 2026 → 31 Mar
+ * 2027), but older rows paid through a quote still hold the anniversary (8 Oct 2026 → 8 Oct
+ * 2027). Counting days straight to renewal_date made an inclusive-end year 364 days and never
+ * charged its last day: 25 Sep 2026 on a 1 Apr–31 Mar term was 187/364 instead of 188/365,
+ * and on the renewal day itself nothing at all. followingTermStart reads both shapes.
+ * The add-seats server path and the seat-request verdict use this for "has the term ended".
+ */
+export function seatTermEnd(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (!sub.renewal_date) return null;
+  return followingTermStart(sub);
+}
+
+/**
+ * R-802: the first day of the CURRENT term — currentTermStart() from the billing schedule
+ * (exclusive term end minus term_months), never the stored start_date. start_date is the
+ * day the subscription was first sold and stays put across renewals, so on a row renewed
+ * twice it is three years back. Null without a renewal date.
+ */
+export function seatTermStart(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (!sub.renewal_date) return null;
+  return currentTermStart(sub);
+}
+
+/**
+ * R-802: length of the CURRENT term in days — prorate()'s denominator. 365 (366 across a
+ * 29 Feb) for a 12-month term however many times it has been renewed, 730/731 for 24 months.
+ * 365 when there is no renewal date (nothing can be charged then anyway).
+ */
+export function seatTermDays(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): number {
+  const start = seatTermStart(sub);
+  const end = seatTermEnd(sub);
+  return start && end ? Math.max(1, daysBetweenDates(start, end)) : 365;
 }

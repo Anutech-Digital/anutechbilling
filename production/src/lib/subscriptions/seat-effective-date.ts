@@ -7,20 +7,27 @@
  * the seats really started; the pro-rata charge (prorate(), integer paise) runs from that date.
  *
  * Allowed range, both ends inclusive:
- *   earliest = the start of the CURRENT term (start_date; without one, renewal − 365 days —
- *              the same fallback resolveTermDays uses for the term length, so the two agree)
+ *   earliest = the start of the CURRENT term — R-802: currentTermStart() (exclusive term end
+ *              minus term_months, the billing schedule's rule and the same start resolveTermDays
+ *              measures the term from, so the two agree). Never the stored start_date on its
+ *              own: that is the FIRST sale and stays put across renewals, so on a row renewed
+ *              twice it let the admin backdate into a term that ended in 2024. Also never
+ *              before start_date itself (a short first term cannot be backdated before the sale).
  *   latest   = today (IST). A future date would bill days that have not been provisioned.
  *
  * Pure: the dialog uses it for the date picker's min/max, the route re-checks the body with it.
  */
-import { addDaysISO } from "@/lib/dates/ist";
+import type { Subscription } from "@/lib/supabase/database.types";
 import { formatDate } from "@/lib/utils";
+import { currentTermStart } from "@/lib/billing/subscription-schedule";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface SeatDateSub {
   start_date: string | null;
   renewal_date: string | null;
+  /** R-802: required — the current term is renewal_date minus term_months (missing = 12). */
+  term_months: Subscription["term_months"];
 }
 
 export interface SeatEffectiveBounds {
@@ -33,9 +40,11 @@ export interface SeatEffectiveBounds {
 export function seatEffectiveBounds(sub: SeatDateSub, todayISO: string): SeatEffectiveBounds | null {
   if (!sub.renewal_date) return null;
   const today = todayISO.slice(0, 10);
-  const termStart = sub.start_date ? sub.start_date.slice(0, 10) : addDaysISO(sub.renewal_date, -365);
+  const termStart = currentTermStart(sub) ?? today;
+  const sold = sub.start_date ? sub.start_date.slice(0, 10) : null;
+  const earliest = sold && sold > termStart ? sold : termStart;
   /* A term that starts in the future (pre-dated renewal) leaves only today to choose. */
-  return { min: termStart < today ? termStart : today, max: today };
+  return { min: earliest < today ? earliest : today, max: today };
 }
 
 export type SeatEffectiveCheck =
