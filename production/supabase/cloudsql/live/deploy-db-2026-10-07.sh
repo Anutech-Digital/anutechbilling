@@ -88,11 +88,14 @@ MIGS=(
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
+# R-545 (10 Oct): the staging branch (R-161) moves applied migrations to prisma/migrations/<name>/migration.sql,
+# so look there too — the staging DB run stopped at "Missing file" on 20261006130000.
+migsrc() { if [ -f "$HERE/migrations/$1" ]; then echo "$HERE/migrations/$1"; elif [ -f "$HERE/../prisma/migrations/${1%.sql}/migration.sql" ]; then echo "$HERE/../prisma/migrations/${1%.sql}/migration.sql"; fi; }
 # Fail before touching anything if a listed file is missing or a key repeats.
 seen=" "
 for m in "${MIGS[@]}"; do
   k="$(field "$m" 1)"; f="$(field "$m" 2)"
-  [ -f "$HERE/migrations/$f" ] || { echo "Missing file: migrations/$f — nothing changed. Send Claude this screen."; exit 1; }
+  [ -n "$(migsrc "$f")" ] || { echo "Missing file: migrations/$f — nothing changed. Send Claude this screen."; exit 1; }
   case "$seen" in *" $k "*) echo "Key '$k' twice in MIGS — nothing changed."; exit 1;; esac
   seen="$seen$k "
 done
@@ -133,7 +136,7 @@ echo "$BEFORE"
 [ -n "$BEFORE" ] || { echo "Could not read live — nothing changed. Send Claude a screenshot."; exit 1; }
 
 apply() { # $1 = migration file name, $2 = db user
-  local f="$HERE/migrations/$1"
+  local f; f="$(migsrc "$1")"
   echo "-- applying $1 as $2"
   gcloud storage cp "$f" "$B/$1" --project="$P" -q >/dev/null
   if ! gcloud sql import sql "$I" "$B/$1" --database="$DB" --user="$2" --project="$P" --quiet; then
