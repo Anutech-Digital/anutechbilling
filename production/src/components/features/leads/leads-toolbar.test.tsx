@@ -24,7 +24,9 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   return {
     DropdownMenu: Pass,
     DropdownMenuTrigger: Pass,
-    DropdownMenuContent: ({ children }: P) => <div role="menu">{children}</div>,
+    DropdownMenuContent: ({ children, className }: P & { className?: string }) => (
+      <div role="menu" className={className}>{children}</div>
+    ),
     DropdownMenuLabel: ({ children }: P) => <div>{children}</div>,
     DropdownMenuSeparator: () => <hr />,
     DropdownMenuItem: ({ children, onSelect }: P & { onSelect?: () => void }) => (
@@ -38,7 +40,7 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   };
 });
 
-import { LeadsToolbar, type LeadsToolbarProps } from "./leads-toolbar";
+import { LeadsToolbar, FILTER_MENU_CLASS, type LeadsToolbarProps } from "./leads-toolbar";
 
 afterEach(() => {
   cleanup();
@@ -191,5 +193,57 @@ describe("R-420: Sort", () => {
   it("the button names the order for screen readers (icon-only on a phone)", () => {
     render(<LeadsToolbar {...props({ leadSort: "name" })} />);
     expect(screen.getByRole("button", { name: "Sort: Name A–Z" })).toBeTruthy();
+  });
+});
+
+/* R-816 (Abhishek, 10 Oct): the Filter menu ran past the bottom of the window, so the
+   Source section could not be seen or clicked. The toolbar's own `max-h-[70vh]` was
+   replacing the base menu's "space left on screen" limit. */
+describe("R-816: the Filter menu fits the window and scrolls", () => {
+  const filterMenu = () => screen.getByText("Source").closest("[role=menu]") as HTMLElement;
+
+  it("is height-limited by the space Radix measures, not a bare 70vh, and scrolls itself", () => {
+    render(<LeadsToolbar {...props({
+      pool: { total: 3, unassigned: 0, high_priority: 0, by_owner: {}, by_source: { "google-ads": 3 } },
+    })} />);
+    const cls = filterMenu().className.split(/\s+/);
+    expect(cls).toContain("max-h-[min(70vh,var(--radix-dropdown-menu-content-available-height))]");
+    expect(cls).not.toContain("max-h-[70vh]");
+    expect(cls).toContain("overflow-y-auto");
+    // Source and Stage live in that same scrolling box, so scrolling reaches Source.
+    expect(filterMenu().textContent).toMatch(/Stage[\s\S]*Priority[\s\S]*Source/);
+  });
+
+  it("survives the real DropdownMenuContent's class merge (one max-h, ours, and it scrolls)", async () => {
+    const real = await vi.importActual<typeof import("@/components/ui/dropdown-menu")>("@/components/ui/dropdown-menu");
+    const g = globalThis as unknown as { ResizeObserver?: unknown };
+    g.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+    render(
+      <real.DropdownMenu defaultOpen modal={false}>
+        <real.DropdownMenuTrigger>Filter</real.DropdownMenuTrigger>
+        <real.DropdownMenuContent align="end" className={FILTER_MENU_CLASS}>
+          <real.DropdownMenuLabel>Stage</real.DropdownMenuLabel>
+          <real.DropdownMenuLabel>Source</real.DropdownMenuLabel>
+        </real.DropdownMenuContent>
+      </real.DropdownMenu>,
+    );
+    const menu = (await screen.findByText("Source")).closest("[role=menu]") as HTMLElement;
+    const cls = menu.className.split(/\s+/);
+    expect(cls.filter((c) => c.startsWith("max-h-"))).toEqual([
+      "max-h-[min(70vh,var(--radix-dropdown-menu-content-available-height))]",
+    ]);
+    expect(cls).toContain("overflow-y-auto");
+    expect(cls).not.toContain("overflow-hidden");
+  });
+
+  it("picking a Source hands it to the page's filter", () => {
+    const setSourceFilter = vi.fn();
+    render(<LeadsToolbar {...props({
+      pool: { total: 5, unassigned: 0, high_priority: 0, by_owner: {}, by_source: { "google-ads": 3, "meta-ads": 2 } },
+      setSourceFilter,
+    })} />);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Facebook \/ Instagram Ads/ }));
+    const update = setSourceFilter.mock.calls[0][0] as (prev: string[]) => string[];
+    expect(update(["google-ads"])).toEqual(["google-ads", "meta-ads"]);
   });
 });

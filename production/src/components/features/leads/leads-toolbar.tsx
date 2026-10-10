@@ -45,6 +45,15 @@ import { DEFAULT_LEAD_SORT, LEAD_SORT_LABELS, LEAD_SORTS, type LeadSort } from "
 /** R-056: why the Kanban button does nothing on a phone. */
 export const KANBAN_MOBILE_HINT = "Kanban needs a larger screen";
 
+/** R-816 (Abhishek, 10 Oct): the Filter menu ran off the bottom of the screen and its
+    Source section could not be reached. The old `max-h-[70vh]` here REPLACED (via
+    tailwind-merge) the base menu's `max-h-[var(--radix-dropdown-menu-content-available-height)]`,
+    so the menu was 70vh tall no matter how little room was left below the button. Keep
+    both limits: never taller than 70vh, never taller than the space Radix measures between
+    the trigger and the window edge (minus collisionPadding) — the rest scrolls inside. */
+export const FILTER_MENU_CLASS =
+  "w-56 max-h-[min(70vh,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto overscroll-contain";
+
 type TeamMember = NonNullable<ReturnType<typeof useTeamTree>["data"]>[number];
 type Priority = "low" | "medium" | "high";
 
@@ -233,7 +242,7 @@ export function LeadsToolbar({
               )}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56 max-h-[70vh] overflow-y-auto">
+          <DropdownMenuContent align="end" className={FILTER_MENU_CLASS}>
             <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Stage</DropdownMenuLabel>
             {filterStages.map((s) => (
               <DropdownMenuCheckboxItem
