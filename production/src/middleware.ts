@@ -13,6 +13,7 @@ import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
+import { AUTH_OUTAGE_HTML, AUTH_OUTAGE_MESSAGE, authOutageVerdict } from "@/lib/supabase/auth-outage";
 import { decideSite } from "@/site/lib/site-split";
 import {
   DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
@@ -179,10 +180,44 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const { response, user, role, canViewDeals, needsMfa } = await updateSession(request);
-  const isAuthed = !!user;
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   const isAuthPage = AUTH_PREFIXES.some((p) => pathname.startsWith(p));
+
+  /* ─── R-710: the auth server did not answer ─────────────────────────────────
+     9 Oct 2026, 12:03–12:06 IST: api.anutech.in stopped answering for three minutes and this
+     middleware threw on every request — 65 × 5xx, public pages included. Now a public page
+     (homepage, buy page, quote link, login) renders signed-out, and the routes that never use
+     the session (public API, webhooks, cron, health) run as usual. An app page or a session
+     API gets a short "try again" answer instead of a bounce to /login: the person IS signed
+     in, and sending them to a login form that cannot reach the same server helps nobody. */
+  let session: Awaited<ReturnType<typeof updateSession>>;
+  try {
+    session = await updateSession(request);
+  } catch (e) {
+    console.error(`[middleware] session check threw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
+    session = {
+      response: NextResponse.next({ request }), user: null, role: null,
+      canViewDeals: false, needsMfa: false, authUnreachable: true,
+    };
+  }
+  if (session.authUnreachable) {
+    const verdict = authOutageVerdict(pathname, isProtected);
+    if (verdict === "retry-page") {
+      return new NextResponse(AUTH_OUTAGE_HTML, {
+        status: 503,
+        headers: { "Content-Type": "text/html; charset=utf-8", "Retry-After": "5", "Cache-Control": "no-store" },
+      });
+    }
+    if (verdict === "retry-json") {
+      return NextResponse.json(
+        { error: AUTH_OUTAGE_MESSAGE, retryable: true },
+        { status: 503, headers: { "Retry-After": "5", "Cache-Control": "no-store" } },
+      );
+    }
+    return NextResponse.next({ request });
+  }
+  const { response, user, role, canViewDeals, needsMfa } = session;
+  const isAuthed = !!user;
 
   /* ─── R-524: "Try the demo" visitor — READ-ONLY, short-lived ──────────────
      The database already refuses every write for this login (demo_pre_request → read-only

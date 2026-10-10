@@ -19,6 +19,15 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "./database.types";
 import { actorHeaders } from "./admin-actor";
+import { resilientFetch } from "./resilient-fetch";
+
+/* R-710: one retry when api.anutech.in drops a connection (see resilient-fetch.ts). */
+const serverFetch = resilientFetch({ label: "supabase-server" });
+const adminFetch = resilientFetch({
+  label: "supabase-admin",
+  baseFetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+    fetch(input, { ...init, cache: "no-store" })) as typeof fetch,
+});
 
 /* Next 15: cookies() returns a Promise. createClient() stays SYNCHRONOUS (≈390 call sites
    use `const supabase = createClient()`), and the await moves into the cookie callbacks —
@@ -47,6 +56,7 @@ export function createClient() {
           }
         },
       },
+      global: { fetch: serverFetch },
     },
   );
 }
@@ -93,8 +103,7 @@ function adminClient(headers: Record<string, string>) {
       // queries must always hit the DB — never cache them.
       global: {
         headers,
-        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-          fetch(input, { ...init, cache: "no-store" }),
+        fetch: adminFetch,
       },
     },
   );
