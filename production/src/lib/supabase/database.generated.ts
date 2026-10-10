@@ -6469,6 +6469,7 @@ export type Database = {
           decided_by: string | null
           email: string
           full_name: string | null
+          granted_role: Database["public"]["Enums"]["user_role"] | null
           id: string
           matched_by: string
           note: string | null
@@ -6483,6 +6484,7 @@ export type Database = {
           decided_by?: string | null
           email: string
           full_name?: string | null
+          granted_role?: Database["public"]["Enums"]["user_role"] | null
           id?: string
           matched_by: string
           note?: string | null
@@ -6497,6 +6499,7 @@ export type Database = {
           decided_by?: string | null
           email?: string
           full_name?: string | null
+          granted_role?: Database["public"]["Enums"]["user_role"] | null
           id?: string
           matched_by?: string
           note?: string | null
