@@ -229,7 +229,7 @@ export function CommandPalette({
     { icon: "receipt", label: "Create invoice",         meta: "Direct GST tax invoice",                      href: "/quotes/new?invoice=1" },
     /* R-243: the invoices still owed (pending, partial, overdue), not the whole list. */
     { icon: "rupee",   label: "Record a payment",       meta: "Invoices still owed — pick one to record what you received", href: "/invoices?focus=unpaid" },
-    { icon: "users",   label: "Add new customer",       meta: "Open new customer form",                      href: "/customers/new" },
+    { icon: "users",   label: "Add new company",        meta: "Open new company (customer) form",           href: "/customers/new" },
     { icon: "send",    label: "Launch new campaign",    meta: "Email or WhatsApp blast",                     href: "/campaigns" },
     { icon: "mail",    label: "Send renewal reminders", meta: "Go to Renewals",                              href: "/renewals" },
   ];
@@ -294,7 +294,7 @@ export function CommandPalette({
 
               {/* Customers — real, tenant-scoped */}
               {fCustomers.length > 0 && (
-                <Command.Group heading={`Customers · ${count(fCustomers, customers)}`}>
+                <Command.Group heading={`Companies · ${count(fCustomers, customers)}`}>
                   {fCustomers.map((c) => {
                     const meta = [c.contact_name, c.contact_email, c.domain].filter(Boolean).join(" · ");
                     return (

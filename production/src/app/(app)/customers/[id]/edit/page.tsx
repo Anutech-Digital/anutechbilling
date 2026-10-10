@@ -40,7 +40,7 @@ export default function EditCustomerPage() {
           body={error?.message ?? "This customer does not exist in your tenant."}
           action={
             <Button asChild variant="primary" icon="users">
-              <Link href={"/customers" as never}>Back to customers</Link>
+              <Link href={"/customers" as never}>Back to companies</Link>
             </Button>
           }
         />

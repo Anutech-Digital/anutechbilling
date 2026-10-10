@@ -9,14 +9,14 @@ describe("getCrumb", () => {
        10 Sep 2026 — a customer is a company you bill, so it sits beside the
        quotes, invoices and payments about it. Sales & CRM keeps the prospect
        half (leads, enquiries, referrals). */
-    expect(getCrumb("/customers")).toEqual(["Billing", "Customers"]);
+    expect(getCrumb("/customers")).toEqual(["Billing", "Companies"]);
     expect(getCrumb("/quotes/new")).toEqual(["Billing", "Quotes", "New"]);
   });
 
   it("resolves dynamic detail routes via the [id] placeholder (not 'Dashboard')", () => {
     // The bug this fixes: exact lookup missed dynamic ids → everything fell back
     // to the Dashboard crumb. A real customer id is a uuid.
-    expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647")).toEqual(["Billing", "Customers", "Profile"]);
+    expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647")).toEqual(["Billing", "Companies", "Profile"]);
     // Quote ids are prefixed text, not uuids.
     expect(getCrumb("/quotes/Q-ET-2026-27-0010")).toEqual(["Billing", "Quotes", "Detail"]);
     expect(getCrumb("/invoices/INV-ET-2026-27-0006")).toEqual(["Billing", "Invoices", "Detail"]);
@@ -25,7 +25,7 @@ describe("getCrumb", () => {
   it("resolves a mid-path id so a sub-page keeps its own crumb", () => {
     expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647/edit")).toEqual([
       "Billing",
-      "Customers",
+      "Companies",
       "Edit",
     ]);
   });
@@ -415,7 +415,7 @@ describe("R-255: the accountant / CA menu (manager's call, 7 Oct 2026)", () => {
     expect(pay).toContain('{!canWrite && <ViewOnlyNote what="record, edit or refund payments" />}');
     expect(pay).toContain("open={!!editPayment && canWrite}");
     const cust = fs.readFileSync(path.join(app, "customers/page.tsx"), "utf8");
-    expect(cust).toContain('{!canWrite && <ViewOnlyNote what="add, import or edit customers" />}');
+    expect(cust).toContain('{!canWrite && <ViewOnlyNote what="add, import or edit companies" />}');
     expect(cust).toContain("readOnly={!canWrite}");
     const prof = fs.readFileSync(path.join(__dirname, "../components/features/customers/customer-profile.tsx"), "utf8");
     expect(prof).toContain('{!canWrite && <ViewOnlyNote what="edit, invoice or archive customers" />}');

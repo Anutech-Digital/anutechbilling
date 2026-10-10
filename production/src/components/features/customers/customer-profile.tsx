@@ -173,7 +173,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           body={error?.message ?? "This customer does not exist in your tenant."}
           action={
             <Button asChild variant="primary" icon="users">
-              <Link href={"/customers" as any}>Back to customers</Link>
+              <Link href={"/customers" as any}>Back to companies</Link>
             </Button>
           }
         />

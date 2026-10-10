@@ -389,10 +389,14 @@ describe("3. breadcrumbs come from the nav", () => {
   });
 
   it("keeps every Billing page's crumb exactly as it was (Abhishek's pages)", () => {
-    for (const h of ["/customers", "/customers/groups", "/quotes", "/subscriptions", "/renewals", "/invoices", "/payments", "/projects"]) {
+    /* R-538 (10 Oct 2026, Pardeep "haan"): the menu says "Companies" where it said
+       "Customers" — the one deliberate change to these crumbs; the route is still /customers. */
+    expect(OLD_CRUMBS["/customers"]).toEqual(["Billing", "Customers"]);
+    expect(getCrumb("/customers")).toEqual(["Billing", "Companies"]);
+    for (const h of ["/customers/groups", "/quotes", "/subscriptions", "/renewals", "/invoices", "/payments", "/projects"]) {
       expect(getCrumb(h), h).toEqual(OLD_CRUMBS[h]);
     }
-    expect(getCrumb("/customers/abc/edit")).toEqual(["Billing", "Customers", "Edit"]);
+    expect(getCrumb("/customers/abc/edit")).toEqual(["Billing", "Companies", "Edit"]);
     // /online-orders left Billing on 6 Oct 2026 (R-204) — see block 5 below.
   });
 

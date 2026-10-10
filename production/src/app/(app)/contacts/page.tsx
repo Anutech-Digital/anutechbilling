@@ -37,7 +37,7 @@ import { useUrlState } from "@/lib/hooks/use-url-state";
 // are standalone contacts classified by their `relationship` field.
 const KIND_META: Record<ContactKind, { label: string; dot: TabBarItem["dot"]; badge: "success" | "warning" | "info" | "muted" }> = {
   lead:     { label: "Leads",     dot: "amber",   badge: "warning" },
-  customer: { label: "Customers", dot: "emerald", badge: "success" },
+  customer: { label: "Companies", dot: "emerald", badge: "success" },
   partner:  { label: "Partners",  dot: "indigo",  badge: "info"    },
   vendor:   { label: "Vendors",   dot: "slate",   badge: "muted"   },
   employee: { label: "Employees", dot: "emerald", badge: "success" },
@@ -47,7 +47,7 @@ const KIND_META: Record<ContactKind, { label: string; dot: TabBarItem["dot"]; ba
 const KIND_ORDER: ContactKind[] = ["lead", "customer", "partner", "vendor", "employee", "personal", "other"];
 // Singular label for the per-row badge.
 const KIND_BADGE_LABEL: Record<ContactKind, string> = {
-  lead: "Lead", customer: "Customer", partner: "Partner", vendor: "Vendor", employee: "Employee", personal: "Personal", other: "Not decided",
+  lead: "Lead", customer: "Company", partner: "Partner", vendor: "Vendor", employee: "Employee", personal: "Personal", other: "Not decided",
 };
 
 const CONTACT_COL_ORDER = ["select", "name", "company", "email", "phone", "source", "action"];
@@ -259,7 +259,7 @@ export default function ContactsPage() {
           </p>
           <h1 className="font-serif text-2xl md:text-3xl leading-tight">Contacts</h1>
           <p className="text-sm text-ink-3 mt-0.5">
-            All people across leads & customers · run targeted campaigns
+            All people across leads & companies · run targeted campaigns
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -298,7 +298,7 @@ export default function ContactsPage() {
           <StatDivider />
           <StatItem value={totalPhones} label="with phone" hint="WhatsApp reachable" icon="whatsapp" />
           <StatDivider />
-          <StatItem value={counts.customer ?? 0} label="customers" hint={`${counts.lead ?? 0} prospects too`} />
+          <StatItem value={counts.customer ?? 0} label="companies" hint={`${counts.lead ?? 0} prospects too`} />
         </div>
       )}
 
@@ -359,8 +359,8 @@ export default function ContactsPage() {
         <EmptyState
           icon="users"
           title="Nothing here"
-          body="This directory just reflects your leads and customers. A customer's people are managed on the customer's own page; anybody who is not a customer yet belongs in Sales & Pipeline."
-          action={<Button variant="primary" icon="users" onClick={() => router.push("/customers")}>Open Customers</Button>}
+          body="This directory just reflects your leads and companies. A company's people are managed on the company's own page; anybody who is not a customer yet belongs in Sales & Pipeline."
+          action={<Button variant="primary" icon="users" onClick={() => router.push("/customers")}>Open Companies</Button>}
           secondary={<Button icon="target" onClick={() => router.push("/leads" as Route)}>Open Sales &amp; Pipeline</Button>}
         />
       )}

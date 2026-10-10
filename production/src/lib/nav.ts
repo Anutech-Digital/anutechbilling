@@ -376,7 +376,7 @@ const STAFF: UserRole[] = ["owner", "manager", "sales", "sales_senior", "account
  */
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
-  "/customers/new": "Opened by Add customer on Customers",
+  "/customers/new": "Opened by Add company on Companies",
   "/setup": "First-run wizard; reached from onboarding and Settings",
   "/mobile": "Install-as-app guide; linked from the account menu",
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
@@ -471,7 +471,7 @@ export const APP_NAV: NavSection[] = [
     icon: "rupee",
     items: [
       {
-        id: "customers",       href: "/customers",        label: "Customers",       icon: "users",   roles: SALES_READ,
+        id: "customers",       href: "/customers",        label: "Companies",       icon: "users",   roles: SALES_READ,
         children: [
           { id: "customer-groups", href: "/customers/groups", label: "Parent Accounts", icon: "layout",  roles: OM },
           /* R-497 (9 Oct 2026, Pardeep: "contact bhi customer ke under aaye"): Contacts left

@@ -39,8 +39,8 @@ test.describe("Role gating — Sales role restrictions", () => {
     await expect(sidebar.getByText("Leads", { exact: true })).toBeVisible();
     await expect(sidebar.getByText(/Deal Pipeline/i)).toBeVisible();
     await expect(sidebar.getByText("Tasks", { exact: true })).toBeVisible();
-    // Customers / Items / Revenue / Accounting MUST NOT appear.
-    await expect(sidebar.getByText("Customers", { exact: true })).not.toBeVisible();
+    // Companies / Items / Revenue / Accounting MUST NOT appear.
+    await expect(sidebar.getByText("Companies", { exact: true })).not.toBeVisible();
     await expect(sidebar.getByText("Quotes",    { exact: true })).not.toBeVisible();
     await expect(sidebar.getByText("Invoices",  { exact: true })).not.toBeVisible();
     await expect(sidebar.getByText(/Accounting|Revenue/i)).not.toBeVisible();
@@ -85,7 +85,7 @@ test.describe("Role gating — Owner has full access", () => {
     await page.goto("/dashboard");
     const sidebar = page.locator('aside.md\\:flex').first();
     await expect(sidebar.getByText("Dashboard", { exact: true })).toBeVisible();
-    await expect(sidebar.getByText("Customers",  { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("Companies",  { exact: true })).toBeVisible();
     await expect(sidebar.getByText("Quotes",     { exact: true })).toBeVisible();
     await expect(sidebar.getByText("Invoices",   { exact: true })).toBeVisible();
     // Section headers (sticky labels in the sidebar)
