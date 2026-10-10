@@ -27,6 +27,8 @@
 import { addMonthsClamped, addDaysISO } from "@/lib/billing/schedule";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { grossAmount } from "@/lib/quotes/amounts";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 import { seatIncreaseCharge } from "@/lib/subscriptions/seat-increase-charge";
 
 /** Quick picks in the dialog. Any whole number 1–11 is allowed through "Custom". */
@@ -36,6 +38,27 @@ export const MAX_EXTENSION_MONTHS = 11;
 export const MAX_EXTENSION_YEARS = 5;
 
 export type ExtensionLength = { unit: "years"; count: number } | { unit: "months"; count: number };
+
+/**
+ * R-807 (10 Oct 2026): why this subscription cannot be extended at all — or null when it can.
+ *
+ * A subscription billed monthly / quarterly / half-yearly is invoiced per period by the
+ * billing cron (subscription_billings, keyed by the CURRENT term = renewal_date − term).
+ * Proven on the local DB (quarterly, 8 seats): the +1 year extension quote was paid
+ * ₹30,586 and invoiced as one whole-year PAID invoice, then the cron laid the extended
+ * year's four quarters and raised them as PENDING ₹7,646 each — raise_subscription_billing
+ * only credits payments on the ORIGINAL quote, so ₹30,584 was demanded a second time.
+ * And because paying moved renewal_date a year on, the cron's "current term" jumped to
+ * the extended year, so the current year's unbilled quarters were never invoiced.
+ *
+ * Years were allowed after R-805 refused months; both are refused now. Server (extend
+ * route) and dialog read this one function.
+ */
+export function extensionBlockedReason(cycle: BillingCycle | null | undefined): string | null {
+  if (!isSplitBilled(cycle)) return null;
+  const how = cycle === "half_yearly" ? "half-yearly" : cycle;
+  return `This subscription is billed ${how}, so each part gets its own invoice on its date. An extension quote would bill the same months twice, so it cannot be extended.`;
+}
 
 /** Months the extension adds — what the quote stores as extension_months. */
 export function extensionMonths(len: ExtensionLength): number {

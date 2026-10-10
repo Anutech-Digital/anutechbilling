@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   extensionCharge, extensionRenewalDate, extensionMonths, extensionLengthError, extensionLabel,
+  extensionBlockedReason,
 } from "./extension-term";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { isQuoteAmountConsistent, grossAmount } from "@/lib/quotes/amounts";
@@ -160,4 +161,43 @@ describe("renewal schedule follows the new end date", () => {
       expect(plannedInstalments(after)).toEqual([]);
     });
   }
+});
+
+/* ─── R-807: no extension at all on a subscription billed in parts ─────────────────────
+   Proof (local DB, rolled back, 10 Oct 2026): quarterly, 8 seats, mrr ₹2,160, Q1 paid.
+   +1 year extension quote paid ₹30,586 → one whole-year PAID invoice. The cron then laid the
+   extended year's four quarters and raise_subscription_billing issued them PENDING, ₹7,646
+   each (it credits only payments on the ORIGINAL quote) = ₹30,584 demanded twice. The pure
+   half of that is pinned below: after the paid extension rolls renewal_date a year, the
+   cron's plan IS the extended year — the year the extension quote already charged — and the
+   current year's remaining quarters drop out of the plan. */
+describe("extensionBlockedReason (R-807)", () => {
+  const quarterly = {
+    start_date: "2026-10-10", renewal_date: "2027-10-10", term_months: 12,
+    mrr: 2160, billing_cycle: "quarterly" as const,
+  };
+
+  it("PROOF: a paid +1 year extension makes the cron plan the extended year's 4 quarters", () => {
+    expect(plannedInstalments(quarterly)[0].termStart).toBe("2026-10-10");
+    const after = { ...quarterly, renewal_date: extensionRenewalDate(quarterly, { unit: "years", count: 1 }) };
+    expect(after.renewal_date).toBe("2028-10-10");
+    const plan = plannedInstalments(after);
+    expect(plan.map((p) => p.billOn)).toEqual(["2027-10-10", "2028-01-10", "2028-04-10", "2028-07-10"]);
+    // The same ₹25,920 ex-GST the extension quote charged — a second bill for that year.
+    expect(plan.reduce((s, p) => s + p.taxableAmount, 0)).toBe(extensionCharge({ seats: 8, mrr: 2160, len: { unit: "years", count: 1 } }).subtotal);
+    // …and nothing of the current year (Q2–Q4 from 10 Jan 2027) is in the plan any more.
+    expect(plan.some((p) => p.billOn < "2027-10-10")).toBe(false);
+  });
+
+  it.each([
+    ["monthly", "monthly"], ["quarterly", "quarterly"], ["half_yearly", "half-yearly"],
+  ] as const)("billed %s → refused with the reason", (cycle, word) => {
+    expect(extensionBlockedReason(cycle)).toBe(
+      `This subscription is billed ${word}, so each part gets its own invoice on its date. An extension quote would bill the same months twice, so it cannot be extended.`,
+    );
+  });
+
+  it.each(["yearly", null, undefined] as const)("billed %s → allowed", (cycle) => {
+    expect(extensionBlockedReason(cycle)).toBeNull();
+  });
 });

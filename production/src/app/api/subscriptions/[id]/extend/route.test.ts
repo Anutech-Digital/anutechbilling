@@ -129,12 +129,25 @@ describe("subscriptions extend — months (R-805)", () => {
     expect(quote.create).not.toHaveBeenCalled();
   });
 
-  it.each(["monthly", "quarterly", "half_yearly"])("billed %s (in parts) → months refused, years still allowed", async (cycle) => {
+  /* R-807: years were still allowed here and double-billed the extended year (proof in
+     extension-term.ts → extensionBlockedReason). Both are refused now; no quote is made. */
+  it.each([
+    ["monthly", "monthly"], ["quarterly", "quarterly"], ["half_yearly", "half-yearly"],
+  ])("billed %s (in parts) → months AND years refused, no quote", async (cycle, word) => {
     (db.rows.subscriptions as Record<string, unknown>).billing_cycle = cycle;
-    const res = await call({ months: 3 });
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("This subscription is billed in parts. Extend it by whole years.");
+    for (const body of [{ months: 3 }, { years: 1 }, { years: 3 }]) {
+      const res = await call(body);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("split_billed");
+      expect(json.error).toBe(`This subscription is billed ${word}, so each part gets its own invoice on its date. An extension quote would bill the same months twice, so it cannot be extended.`);
+    }
     expect(quote.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["yearly", null])("billed %s → years and months still allowed", async (cycle) => {
+    (db.rows.subscriptions as Record<string, unknown>).billing_cycle = cycle;
     expect((await call({ years: 1 })).status).toBe(200);
+    expect((await call({ months: 3 })).status).toBe(200);
   });
 });

@@ -27,10 +27,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
-import { isSplitBilled } from "@/lib/billing/instalments";
 import {
   EXTENSION_MONTH_PRESETS, MAX_EXTENSION_MONTHS,
-  extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
+  extensionBlockedReason, extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
 } from "@/lib/renewals/extension-term";
 
@@ -56,9 +55,10 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
   const [customMonths, setCustomMonths] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
-  /* R-805: months are not offered on a subscription billed in parts — its instalments are
-     laid out per term, and a part-year move would shift them (the API refuses it too). */
-  const monthsBlocked = isSplitBilled(sub.billing_cycle);
+  /* R-807: a subscription billed in parts (monthly / quarterly / half-yearly) cannot be
+     extended at all — the extension quote and the billing cron would both bill the same
+     year. The API refuses it too; the dialog says why instead of offering a choice. */
+  const blocked = extensionBlockedReason(sub.billing_cycle);
   const isCustom = unit === "months" && customMonths !== "";
   const len: ExtensionLength = unit === "years"
     ? { unit: "years", count: years }
@@ -75,7 +75,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
 
   // Term preview — the date record_payment will write
   const currentRenewal = sub.renewal_date ? sub.renewal_date.slice(0, 10) : null;
-  const newRenewal = lenError ? null : extensionRenewalDate(sub, len);
+  const newRenewal = lenError || blocked ? null : extensionRenewalDate(sub, len);
   const addedMonths = lenError ? 0 : extensionMonths(len);
 
   const onSubmit = async () => {
@@ -132,6 +132,11 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
           </div>
         </div>
 
+        {blocked ? (
+          <p role="alert" className="text-sm text-ink-2 bg-amber-soft border border-amber rounded-md p-3 mb-4 leading-relaxed">
+            {blocked}
+          </p>
+        ) : (<>
         {/* Length chooser — Years or Months (R-805) */}
         <div className="flex items-center justify-between gap-2 mb-2">
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold">
@@ -144,7 +149,6 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
                 type="button"
                 role="radio"
                 aria-checked={unit === u}
-                disabled={u === "months" && monthsBlocked}
                 onClick={() => setUnit(u)}
                 className={cn(
                   "px-3 py-1 text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
@@ -156,9 +160,6 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
             ))}
           </div>
         </div>
-        {monthsBlocked && (
-          <p className="text-2xs text-ink-3 mb-2">Billed in parts — extend by whole years.</p>
-        )}
         {unit === "years" ? (
           <div className="grid grid-cols-3 gap-2 mb-4">
             {PRESETS.map((p) => (
@@ -248,12 +249,13 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
           1-year invoice stays untouched. When the customer pays, the renewal date will
           advance by <Badge size="sm" kind="muted">{addedMonths} months</Badge>.
         </p>
+        </>)}
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
+            {blocked ? "Close" : "Cancel"}
           </Button>
-          <Button variant="primary" icon="file" onClick={onSubmit} disabled={submitting || !!lenError}>
+          <Button variant="primary" icon="file" onClick={onSubmit} disabled={submitting || !!lenError || !!blocked}>
             {submitting ? "Creating quote…" : `Create extension quote`}
           </Button>
         </DialogFooter>

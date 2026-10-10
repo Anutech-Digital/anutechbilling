@@ -26,8 +26,7 @@ import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute } from "@/lib/api/with-route";
 import { createExtensionQuote } from "@/lib/renewals/create-extension-quote";
-import { isSplitBilled } from "@/lib/billing/instalments";
-import { MAX_EXTENSION_MONTHS, MAX_EXTENSION_YEARS } from "@/lib/renewals/extension-term";
+import { MAX_EXTENSION_MONTHS, MAX_EXTENSION_YEARS, extensionBlockedReason } from "@/lib/renewals/extension-term";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -78,14 +77,13 @@ export const POST = withRoute(
     return NextResponse.json({ error: "subscription has no renewal_date" }, { status: 400 });
   }
 
-  /* R-805: a monthly / quarterly / half-yearly billed subscription is invoiced per period
-     from its term (subscription_billings, keyed by term start). Moving the end by part of a
-     year shifts that term and would invoice periods the customer already has. */
-  if (months != null && isSplitBilled(sub.billing_cycle)) {
-    return NextResponse.json(
-      { error: "This subscription is billed in parts. Extend it by whole years." },
-      { status: 400 },
-    );
+  /* R-807 (was R-805 months-only): a monthly / quarterly / half-yearly billed subscription is
+     invoiced per period by the billing cron. A paid extension quote — years OR months — is
+     invoiced in full AND the cron raises the same year's instalments again as unpaid (proven
+     on the local DB, see extensionBlockedReason). So no extension at all on these. */
+  const blocked = extensionBlockedReason(sub.billing_cycle);
+  if (blocked) {
+    return NextResponse.json({ error: blocked, code: "split_billed" }, { status: 400 });
   }
 
   // 4. Tenant grace days for quote expiry
