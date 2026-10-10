@@ -4,7 +4,7 @@ import { publicSession } from "./session-public";
 describe("R-528: the session the browser sees carries no token", () => {
   const token = {
     uid: "11111111-1111-4111-8111-111111111111", email: "owner@example.test", aal: "aal2", mfa: true,
-    gat: "ya29.secret-google-access", grt: "1//refresh", gexp: 9999999999, id_token: "eyJ.id", access_token: "x",
+    gat: "ya29.secret-google-access", grt: "1//refresh", gexp: 9999999999, gscope: "openid https://www.googleapis.com/auth/apps.order", id_token: "eyJ.id", access_token: "x",
     refresh_token: "y", provider_token: "z", sub: "google-sub", jti: "j",
   };
   const session = {
@@ -22,7 +22,7 @@ describe("R-528: the session the browser sees carries no token", () => {
     };
     walk(out);
     expect(keys.filter((k) => /token/i.test(k))).toEqual([]);
-    for (const secret of ["ya29", "1//refresh", "eyJ.id", "leak"]) expect(json).not.toContain(secret);
+    for (const secret of ["ya29", "1//refresh", "eyJ.id", "leak", "apps.order"]) expect(json).not.toContain(secret);
   });
 
   it("keeps exactly what the UI needs", () => {

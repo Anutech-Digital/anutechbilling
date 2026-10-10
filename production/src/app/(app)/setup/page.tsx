@@ -412,7 +412,7 @@ function StepCsp() {
         </div>
         <ul className="ml-4 list-disc space-y-1 text-sm text-ink-3">
           <li>Needs a Google Workspace reseller account</li>
-          <li>Enable the Reseller API in Google Cloud, then log in with your reseller-admin Google account</li>
+          <li>Turn on the Reseller API in Google Cloud, then connect your reseller-admin Google account in Settings → Integrations</li>
         </ul>
       </div>
 
@@ -420,8 +420,9 @@ function StepCsp() {
         status={isLoading ? "checking" : g?.connected ? "done" : "todo"}
         text={isLoading ? "Checking…"
           : g?.connected ? "Connected"
-          : g?.code === "api_disabled" ? "Reseller API not enabled in Google Cloud"
-          : g?.code === "needs_reauth" ? "Log in with your reseller-admin Google account"
+          : g?.code === "api_disabled" ? "The Reseller API is turned off in Google Cloud"
+          : g?.code === "needs_reauth" ? "Google needs you to sign in again"
+          : g?.code === "not_connected" || g?.code === "missing_scope" ? "Connect Google Reseller in Settings → Integrations"
           : "Not connected"}
       />
       <p className="text-sm text-ink-3">

@@ -2,7 +2,7 @@
  * GET /api/contacts/google-fetch
  *
  * Fetches contacts from the signed-in user's Google account via the People API.
- * Uses the provider_token from the Supabase OAuth session.
+ * Token: getGoogleAccessToken("contacts") — saved connection, else the sign-in session (R-824).
  *
  * Setup required:
  *   1. Supabase Dashboard → Auth → Providers → Google → enable + add scope:
@@ -19,6 +19,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { CONTACT_IMPORT_RETIRED, contactImportRetired } from "@/lib/contacts/retired";
+import { classifyGoogleApiError, getGoogleAccessToken, googleReasonMessage } from "@/server/auth/google-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,27 +73,18 @@ export async function GET() {
   if (CONTACT_IMPORT_RETIRED) return contactImportRetired();
 
   const supabase = createClient();
-  /* Pehchan getUser() se — wo JWT ko SERVER par verify karta hai; getSession()
-     cookie par bharosa karta hai (middleware.ts:47 isi wajah se getUser hai —
-     audit C8 ne yahan do chhoote hue pakde). provider_token phir bhi session
-     se hi milta hai, isliye dono call hain: getUser = darwaza, getSession =
-     Google ka token. */
+  /* Pehchan getUser() se — wo JWT ko SERVER par verify karta hai (audit C8). Google ka
+     token getGoogleAccessToken() server par hi dhoondta hai (R-824, R-528). */
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const { data: { session } } = await supabase.auth.getSession();
 
-  const accessToken = session?.provider_token;
-  if (!accessToken) {
-    return NextResponse.json(
-      {
-        error: "Google access token unavailable — connect Google Contacts first",
-        code:  "needs_reauth",
-      },
-      { status: 403 },
-    );
+  const got = await getGoogleAccessToken("contacts", user.id);
+  if (!got.ok) {
+    return NextResponse.json({ error: googleReasonMessage("contacts", got.reason), code: got.reason }, { status: 403 });
   }
+  const accessToken = got.token;
 
   // ── Paginated fetch from People API ─────────────────────────────
   const all: FetchedContact[] = [];
@@ -112,13 +104,10 @@ export async function GET() {
 
       if (res.status === 401 || res.status === 403) {
         const txt = await res.text().catch(() => "");
-        // Token expired or scope missing
+        // Token refused, permission missing, or the People API is off.
+        const why = classifyGoogleApiError(res.status, txt) ?? "needs_reauth";
         return NextResponse.json(
-          {
-            error: "Google rejected the token. Re-connect to grant the contacts scope.",
-            code:  "needs_reauth",
-            detail: txt.slice(0, 300),
-          },
+          { error: googleReasonMessage("contacts", why), code: why, detail: txt.slice(0, 300) },
           { status: 403 },
         );
       }

@@ -37,6 +37,10 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
 import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { contactsCardState } from "@/lib/google/contacts-card-state";
+import {
+  CONNECT_GOOGLE_RESELLER_PATH, RESELLER_OAUTH_MESSAGES, RESELLER_STATUS_PARAM, resellerCardState,
+} from "@/lib/google/reseller-connect";
+import { mayDo } from "@/lib/auth/action-roles";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
 import WhatsAppConfigureDialog from "@/components/features/integrations/whatsapp-configure-dialog";
@@ -846,10 +850,12 @@ function GeminiIntegrationCard() {
 
 /**
  * Google Reseller API — REAL status. Probes the Reseller API (1 row) and shows
- * the honest state: connected, API-not-enabled, or needs-relogin. No fake
- * "Connected" badge — the truth, so Pardeep knows exactly what to fix.
+ * the honest state in plain English (R-824): connected, connect needed, sign in
+ * again, or API turned off. Owner / manager get the "Connect Google Reseller"
+ * button (company-wide account, S19); others are told whom to ask.
  */
 function GoogleResellerIntegrationCard() {
+  const { data: me } = useCurrentUser();
   const { data: status, isLoading } = useQuery({
     queryKey: ["integrations", "google-reseller"],
     queryFn: async () => {
@@ -860,12 +866,23 @@ function GoogleResellerIntegrationCard() {
     staleTime: 60_000,
   });
 
-  const connected = Boolean(status?.connected);
+  /* Google's redirect lands here with ?greseller=<status>; say it once and clean the URL. */
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    const p = url.searchParams.get(RESELLER_STATUS_PARAM);
+    if (!p) return;
+    const m = RESELLER_OAUTH_MESSAGES[p];
+    if (m) (m.ok ? toast.success : toast.error)(m.text);
+    url.searchParams.delete(RESELLER_STATUS_PARAM);
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }, []);
+
+  const card = resellerCardState(status);
+  const connected = card.connected;
+  const canConnect = mayDo(me?.role, "integration.company");
   const sub = isLoading ? "Checking…"
-    : connected ? "Connected · live sync ready"
-    : status?.code === "api_disabled" ? "Enable the Reseller API in Google Cloud"
-    : status?.code === "needs_reauth" ? "Re-login with reseller-admin Google account"
-    : "Not connected — set up to sync subscriptions";
+    : card.showConnect && !canConnect ? `${card.text} · ask an owner or manager`
+    : card.text;
 
   return (
     <div className="flex items-center justify-between rounded-lg border border-hairline p-3">
@@ -883,9 +900,16 @@ function GoogleResellerIntegrationCard() {
           <p className="text-xs text-ink-3 truncate">{sub}</p>
         </div>
       </div>
-      <Button asChild variant={connected ? "ghost" : "primary"} size="sm">
-        <a href="/subscriptions">{connected ? "Sync" : "Set up"}</a>
-      </Button>
+      {!isLoading && card.showConnect && canConnect ? (
+        /* A full-page redirect to Google's consent screen — not a fetch. */
+        <Button asChild variant="primary" size="sm">
+          <a href={CONNECT_GOOGLE_RESELLER_PATH}>{card.connectLabel}</a>
+        </Button>
+      ) : connected ? (
+        <Button asChild variant="ghost" size="sm">
+          <a href="/subscriptions">Sync</a>
+        </Button>
+      ) : null}
     </div>
   );
 }

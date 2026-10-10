@@ -42,6 +42,10 @@ export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export const GBP_SCOPE = "https://www.googleapis.com/auth/business.manage";
 /** Google Ads — iske bina spend sync 403 deta hai. */
 export const GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
+/** Google Workspace Reseller (R-824) — iske bina subscriptions.list 403 deta hai. */
+export const RESELLER_SCOPE = "https://www.googleapis.com/auth/apps.order";
+/** Read-only variant — older tokens may carry it; enough for subscriptions.list. */
+export const RESELLER_READONLY_SCOPE = "https://www.googleapis.com/auth/apps.order.readonly";
 
 const split = (s: string | null | undefined): string[] =>
   (s ?? "").split(/\s+/).map((x) => x.trim()).filter(Boolean);
@@ -74,7 +78,7 @@ export function scopesLost(
 ): string[] {
   const had = split(before);
   const has = split(after);
-  return [CONTACTS_SCOPE, GMAIL_SEND_SCOPE, GBP_SCOPE, GOOGLE_ADS_SCOPE].filter(
+  return [CONTACTS_SCOPE, GMAIL_SEND_SCOPE, GBP_SCOPE, GOOGLE_ADS_SCOPE, RESELLER_SCOPE].filter(
     (s) => had.includes(s) && !has.includes(s),
   );
 }
@@ -86,7 +90,7 @@ export function scopesLost(
 export function scopeLossMessage(lost: readonly string[]): string | null {
   if (lost.length === 0) return null;
   const names = lost.map((s) =>
-    s === CONTACTS_SCOPE ? "Google Contacts sync" : s === GBP_SCOPE ? "Google Business Profile sync" : s === GOOGLE_ADS_SCOPE ? "Google Ads spend sync" : "Gmail se bhejna",
+    s === CONTACTS_SCOPE ? "Google Contacts sync" : s === RESELLER_SCOPE ? "Google Reseller sync" : s === GBP_SCOPE ? "Google Business Profile sync" : s === GOOGLE_ADS_SCOPE ? "Google Ads spend sync" : "Gmail se bhejna",
   );
   return (
     `Ye connection ne ${names.join(" aur ")} ki permission hata di. ` +
@@ -115,6 +119,12 @@ export function hasContactsScope(scopes: string | null | undefined): boolean {
 /** Wahi sawaal bhejne ke liye. `lib/email/provider` ka `canSendWithScopes` isi ka jodidar hai. */
 export function hasGoogleAdsScope(scopes: string | null | undefined): boolean {
   return split(scopes).includes(GOOGLE_ADS_SCOPE);
+}
+
+/** R-824: either Reseller scope lets us read subscriptions. */
+export function hasResellerScope(scopes: string | null | undefined): boolean {
+  const have = split(scopes);
+  return have.includes(RESELLER_SCOPE) || have.includes(RESELLER_READONLY_SCOPE);
 }
 
 export function hasGbpScope(scopes: string | null | undefined): boolean {

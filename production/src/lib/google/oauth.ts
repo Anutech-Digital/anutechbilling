@@ -29,6 +29,18 @@ export const GOOGLE_ADS_SCOPES = [
   "https://www.googleapis.com/auth/adwords",
 ].join(" ");
 
+/**
+ * Google Workspace Reseller (R-824) — read the reseller's subscriptions. Its own consent, like
+ * the others: the button says "Connect Google Reseller" and the screen asks for exactly that.
+ * `apps.order` (10 Oct decision) so later seat/renewal work needs no second consent; today the
+ * app only READS with it.
+ */
+export const GOOGLE_RESELLER_SCOPES = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/apps.order",
+].join(" ");
+
 export const GBP_SCOPES = [
   "openid",
   "email",
@@ -140,6 +152,11 @@ export function contactsRedirectUri(origin: string): string {
  */
 export function googleAdsRedirectUri(origin: string): string {
   return `${origin}/api/integrations/google-ads/callback`;
+}
+
+/** R-824: its own callback — a second authorised redirect URI to register in Google Cloud. */
+export function googleResellerRedirectUri(origin: string): string {
+  return `${origin}/api/integrations/google-reseller/callback`;
 }
 
 export function gbpRedirectUri(origin: string): string {

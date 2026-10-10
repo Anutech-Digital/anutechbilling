@@ -76,7 +76,7 @@ describe("R-260 Done checklist is data-backed", () => {
   });
 
   it("Google probe codes give the actionable note", () => {
-    expect(byId({ ...empty, googleReseller: { connected: false, code: "api_disabled" } }).google.note).toMatch(/Enable the Reseller API/);
+    expect(byId({ ...empty, googleReseller: { connected: false, code: "api_disabled" } }).google.note).toMatch(/Reseller API is turned off/);
   });
 
   it("tenant fields drive GSTIN / state / payment / customers / catalog", () => {
