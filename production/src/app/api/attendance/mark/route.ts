@@ -13,6 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
 
 /* "" (IP nahi mili) purana matlab rakha — "unknown" kabhi allowlist se mel na khaye. */
 function clientIp(req: NextRequest): string {
@@ -33,18 +34,16 @@ export async function POST(request: NextRequest) {
 
   const ip = clientIp(request);
 
-  // Office-network gate (opt-in) + selfie requirement (anti buddy-punching).
+  // Office-network gate + selfie requirement (anti buddy-punching).
   const { data: settings } = await supabase
     .from("attendance_settings")
     .select("allowed_ips, require_selfie")
     .maybeSingle();
-  const allowed = settings?.allowed_ips ?? [];
-  if (allowed.length > 0 && !allowed.includes(ip)) {
-    return NextResponse.json(
-      { error: "You're not on the office network — attendance can only be marked at the office." },
-      { status: 403 },
-    );
-  }
+  /* R-605 (Pardeep 10 Oct: "kiosk sirf office wifi par"): the kiosk is no longer opt-in —
+     with no office network locked it refuses and tells the owner how to lock one. Before,
+     an unlocked workspace let anyone with a colleague's PIN mark them from anywhere. */
+  const net = officeNetworkDecision({ purpose: "kiosk", allowedIps: settings?.allowed_ips ?? [], ip });
+  if (!net.ok) return NextResponse.json({ error: net.error, code: net.code }, { status: net.status });
   // Selfie required (default): a PIN alone can't mark — every mark needs a photo
   // of who did it, so knowing someone else's PIN isn't enough to punch them in.
   const requireSelfie = settings?.require_selfie ?? true;

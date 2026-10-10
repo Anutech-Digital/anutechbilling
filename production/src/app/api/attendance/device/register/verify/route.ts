@@ -10,7 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyRegistrationResponse, type RegistrationResponseJSON } from "@simplewebauthn/server";
 import { canRegisterAnother, cleanLabel, deviceError, initialStatus } from "@/lib/attendance/webauthn";
-import { employeeDevices, getCaller, rpFor, takeChallenge } from "../../_server";
+import { employeeDevices, getCaller, rpFor, takeChallenge, registerNetworkRefusal } from "../../_server";
 
 function isRegistration(v: unknown): v is RegistrationResponseJSON {
   if (!v || typeof v !== "object") return false;
@@ -22,6 +22,8 @@ export async function POST(request: NextRequest) {
   const c = await getCaller();
   if (!c) return NextResponse.json({ error: "Not signed in. Sign in again, then register this device." }, { status: 401 });
   if (!c.employeeId) return NextResponse.json(deviceError("NOT_LINKED"), { status: 400 });
+  const offSite = await registerNetworkRefusal(c, request);
+  if (offSite) return NextResponse.json({ error: offSite.error, code: offSite.code }, { status: offSite.status });
 
   const body = await request.json().catch(() => null);
   if (!isRegistration(body?.response)) {

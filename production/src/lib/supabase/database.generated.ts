@@ -4670,6 +4670,7 @@ export type Database = {
       employees: {
         Row: {
           address: string | null
+          attendance_anywhere: boolean
           attendance_consent_at: string | null
           attendance_consent_source: string | null
           basic_monthly: number | null
@@ -4703,6 +4704,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          attendance_anywhere?: boolean
           attendance_consent_at?: string | null
           attendance_consent_source?: string | null
           basic_monthly?: number | null
@@ -4736,6 +4738,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          attendance_anywhere?: boolean
           attendance_consent_at?: string | null
           attendance_consent_source?: string | null
           basic_monthly?: number | null

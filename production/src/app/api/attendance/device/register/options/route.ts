@@ -11,12 +11,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { generateRegistrationOptions, type AuthenticatorTransportFuture } from "@simplewebauthn/server";
 import { canRegisterAnother, deviceError, employeeIdBytes, liveDevices } from "@/lib/attendance/webauthn";
-import { employeeDevices, getCaller, rpFor, saveChallenge } from "../../_server";
+import { employeeDevices, getCaller, rpFor, saveChallenge, registerNetworkRefusal } from "../../_server";
 
 export async function POST(request: NextRequest) {
   const c = await getCaller();
   if (!c) return NextResponse.json({ error: "Not signed in. Sign in again, then register this device." }, { status: 401 });
   if (!c.employeeId) return NextResponse.json(deviceError("NOT_LINKED"), { status: 400 });
+  const offSite = await registerNetworkRefusal(c, request);
+  if (offSite) return NextResponse.json({ error: offSite.error, code: offSite.code }, { status: offSite.status });
 
   const devices = await employeeDevices(c, c.employeeId);
   if (!canRegisterAnother(devices)) return NextResponse.json(deviceError("DEVICE_LIMIT"), { status: 409 });

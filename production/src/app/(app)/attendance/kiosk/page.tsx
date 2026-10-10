@@ -57,7 +57,11 @@ export default function AttendanceKioskPage() {
               {offNetwork ? "Not on the office network — marking is blocked here" : "Locked to office network"}
             </span>
           ) : (
-            <span className="text-ink-3">Network lock off</span>
+            /* R-605: the kiosk refuses every mark until an office network is locked. */
+            <span className="inline-flex items-center gap-1 text-rose">
+              <Icon name="alert" size={12} />
+              Kiosk is off — owner: open Attendance on the office Wi-Fi and press &quot;Lock to this network&quot;
+            </span>
           )}
           <span className="inline-flex items-center gap-1 text-ink-3">
             <Icon name="eye" size={12} /> Selfie taken at check-in

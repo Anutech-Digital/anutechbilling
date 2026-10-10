@@ -49,7 +49,7 @@ import {
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory,
   useStatutoryDues, usePayStatutoryDues,
-  useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useCorrectAttendance,
+  useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
   type Employee, type LeaveKind, type Attendance, type SalaryPayment,
 } from "@/lib/queries/payroll";
@@ -59,6 +59,7 @@ import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
 import { presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
+import { Switch } from "@/components/ui/switch";
 import { OfficeHoursRow } from "@/components/features/attendance/office-hours-row";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
@@ -2265,6 +2266,8 @@ export function AttendanceTab() {
   const attQ = useAttendance(period);
   const shiftRules = useShiftRules().data ?? DEFAULT_SHIFT;
   const setConsent = useOwnerSetConsent();
+  const setAnywhere = useSetAttendanceAnywhere();
+  const isOwner = useCurrentUser().data?.role === "owner";
   const reviewMut = useMarkAttendanceReviewed();
   const employees = (empQ.data ?? []).filter((e) => e.is_active);
   const focusEmp = focusId ? (empQ.data ?? []).find((e) => e.id === focusId) ?? null : null;
@@ -2344,6 +2347,7 @@ export function AttendanceTab() {
                 <th className="text-left px-4 py-3">Employee</th>
                 <th className="text-left px-4 py-3">PIN</th>
                 <th className="text-left px-4 py-3">Selfie consent</th>
+                <th className="text-left px-4 py-3" title="Can mark attendance from outside the office Wi-Fi. Those days are flagged 'Outside office' for review.">Outside office</th>
                 <th className="text-right px-4 py-3">Days present</th>
                 <th className="text-left px-4 py-3">Last seen</th>
               </tr>
@@ -2377,6 +2381,18 @@ export function AttendanceTab() {
                           <Badge kind="warning">Pending</Badge>
                           <span className="text-xs text-ink-3 hover:text-amber-ink">mark given</span>
                         </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isOwner ? (
+                        <Switch
+                          checked={e.attendance_anywhere}
+                          disabled={setAnywhere.isPending}
+                          onCheckedChange={(v) => setAnywhere.mutate({ employeeId: e.id, value: v })}
+                          aria-label={`${e.name} can mark attendance from outside the office`}
+                        />
+                      ) : (
+                        <span className="text-xs text-ink-2">{e.attendance_anywhere ? "Allowed" : "Office only"}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono">{s?.present ?? 0}</td>
@@ -2661,6 +2677,7 @@ function AttendanceRegisterDialog({ employee, initialPeriod, onClose }: {
 const FLAG_LABEL: Record<string, string> = {
   odd_hours:         "Odd hours",
   no_location:       "No location",
+  outside_office:    "Outside office",
   new_device:        "New device",
   face_review:       "Face — review",
   face_mismatch:     "Face mismatch",

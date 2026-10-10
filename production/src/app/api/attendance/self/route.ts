@@ -24,6 +24,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { validateCode } from "@/lib/attendance/presence";
 import { compareFaces } from "@/lib/attendance/face";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
+import { requestIp } from "@/lib/attendance/request-ip";
 import { deviceError } from "@/lib/attendance/webauthn";
 import { getCaller, verifyDeviceAssertion } from "../device/_server";
 
@@ -59,7 +61,7 @@ export async function POST(request: NextRequest) {
   const { data: settings } = me.tenant_id
     ? await admin
       .from("attendance_settings")
-      .select("require_selfie, require_presence, presence_secret, require_face_match, require_device")
+      .select("require_selfie, require_presence, presence_secret, require_face_match, require_device, allowed_ips")
       .eq("tenant_id", me.tenant_id)
       .maybeSingle()
     : { data: null };
@@ -67,6 +69,20 @@ export async function POST(request: NextRequest) {
   const requirePresence = settings?.require_presence ?? false;
   const requireFaceMatch = settings?.require_face_match ?? false;
   const requireDevice = settings?.require_device ?? false;
+
+  /* R-605 — office Wi-Fi. Until 10 Oct only the kiosk checked allowed_ips, so My Attendance
+     worked from home even with the office network locked. Checked before anything is
+     recorded; "Can mark from outside office" staff pass and the day is flagged. */
+  const { data: empNet } = await admin
+    .from("employees").select("attendance_anywhere")
+    .eq("id", me.employee_id).eq("tenant_id", me.tenant_id ?? "").maybeSingle();
+  const net = officeNetworkDecision({
+    purpose: "self",
+    allowedIps: settings?.allowed_ips ?? [],
+    ip: requestIp(request),
+    anywhere: empNet?.attendance_anywhere ?? false,
+  });
+  if (!net.ok) return NextResponse.json({ error: net.error, code: net.code }, { status: net.status });
 
   // Presence gate — must know the current rotating office code.
   if (requirePresence) {
@@ -144,6 +160,7 @@ export async function POST(request: NextRequest) {
 
       // ── Anomaly flags (honest deterrence — surfaced to the owner, not blocking) ──
       const flags = new Set<string>();
+      if (net.flag) flags.add(net.flag);
       const hour = istNow.getUTCHours(); // istNow already shifted to IST wall-clock
       if (hour < 5 || hour >= 23) flags.add("odd_hours");
       if (lat === null || lng === null) flags.add("no_location");

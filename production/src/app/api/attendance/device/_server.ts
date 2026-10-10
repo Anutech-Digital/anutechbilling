@@ -18,6 +18,8 @@ import {
   type AuthenticatorTransportFuture,
 } from "@simplewebauthn/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
+import { requestIp } from "@/lib/attendance/request-ip";
 import { CHALLENGE_TTL_MS, deviceError, relyingParty, type DeviceErrorCode } from "@/lib/attendance/webauthn";
 
 export type AdminClient = ReturnType<typeof createAdminClientFor>;
@@ -186,4 +188,30 @@ export async function countEmployeesWithoutDevice(admin: AdminClient, tenantId: 
   const withDevice = new Set((devices ?? []).map((d) => d.employee_id));
   const linked = new Set((users ?? []).map((u) => u.employee_id).filter((id): id is string => !!id && active.has(id)));
   return [...linked].filter((id) => !withDevice.has(id)).length;
+}
+
+/**
+ * R-605: a new device is registered on the office Wi-Fi, so nobody can sign in as a colleague
+ * at home and enrol their OWN laptop under that colleague's name. The owner, and staff the
+ * owner allowed to mark from outside the office, may register anywhere (the device still
+ * waits for the owner's approval). Returns the refusal, or null to carry on.
+ */
+export async function registerNetworkRefusal(
+  c: Caller,
+  request: NextRequest,
+): Promise<{ error: string; code: string; status: 403 } | null> {
+  const [{ data: settings }, { data: emp }] = await Promise.all([
+    c.admin.from("attendance_settings").select("allowed_ips").eq("tenant_id", c.tenantId).maybeSingle(),
+    c.employeeId
+      ? c.admin.from("employees").select("attendance_anywhere").eq("id", c.employeeId).eq("tenant_id", c.tenantId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const d = officeNetworkDecision({
+    purpose: "register_device",
+    allowedIps: settings?.allowed_ips ?? [],
+    ip: requestIp(request),
+    anywhere: emp?.attendance_anywhere ?? false,
+    isOwner: c.role === "owner",
+  });
+  return d.ok ? null : { error: d.error, code: d.code, status: d.status };
 }

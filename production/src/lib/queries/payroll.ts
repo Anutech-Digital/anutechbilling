@@ -22,7 +22,7 @@ export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "p
 
 /** Every employees column a member may read: all but pin_hash. Kept explicit because
  *  `select("*")` now fails with "permission denied" (column grants). */
-const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set";
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -681,9 +681,30 @@ export function useAttendanceNetwork() {
     queryFn: async () => {
       const res = await fetch("/api/attendance/network");
       if (!res.ok) throw new Error("Failed to load network settings");
-      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean; requirePresence: boolean; retentionDays: number; requireFaceMatch: boolean }>;
+      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean; requirePresence: boolean; retentionDays: number; requireFaceMatch: boolean; selfCheckIn?: { ok: true; outsideOffice: boolean } | { ok: false; error: string } }>;
     },
     staleTime: 10_000,
+  });
+}
+
+/** R-605: owner turns "Can mark from outside office" on/off for one employee. */
+export function useSetAttendanceAnywhere() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { employeeId: string; value: boolean }) => {
+      const res = await fetch("/api/attendance/anywhere", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Could not save");
+    },
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      toast.success(v.value ? "Can now mark from outside the office" : "Office Wi-Fi only");
+    },
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save. Nothing was changed." }),
   });
 }
 

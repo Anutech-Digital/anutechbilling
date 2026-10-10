@@ -126,6 +126,7 @@ export default function MyAttendancePage() {
             checkOut={meQ.data.check_out}
             requireSelfie={requireSelfie}
             requirePresence={requirePresence}
+            here={netQ.data?.selfCheckIn}
           />
           <ThisDeviceCard />
           <HistoryCard />
@@ -414,12 +415,15 @@ function CheckInCard({
   checkOut,
   requireSelfie,
   requirePresence,
+  here,
 }: {
   name: string;
   checkIn: string | null;
   checkOut: string | null;
   requireSelfie: boolean;
   requirePresence: boolean;
+  /** R-605: can this person self check-in from this network? (from /api/attendance/network) */
+  here?: { ok: true; outsideOffice: boolean } | { ok: false; error: string };
 }) {
   const mark = useMarkSelfAttendance();
   const undo = useUndoLastPunch();
@@ -619,6 +623,14 @@ function CheckInCard({
         </div>
       </div>
 
+      {here && !here.ok && (
+        <p role="alert" className="mt-3 rounded-lg border border-rose/30 bg-rose/5 px-3 py-2 text-sm text-rose">{here.error}</p>
+      )}
+      {here?.ok && here.outsideOffice && (
+        <p className="mt-3 rounded-lg border border-amber/40 bg-amber-soft/40 px-3 py-2 text-xs text-amber-ink">
+          You&apos;re outside the office Wi-Fi. You&apos;re allowed to mark from outside — today will show &quot;Outside office&quot; to the owner.
+        </p>
+      )}
       {rulesQ.data && (
         <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-3">
           <span>Office hours {rulesQ.data.shiftStart}–{rulesQ.data.shiftEnd}</span>

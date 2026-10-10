@@ -18,8 +18,16 @@ export async function GET() {
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", authData.user.id).single();
   if (!me?.tenant_id) return NextResponse.json({ error: "No tenant" }, { status: 400 });
+  /* R-605: the code proves "I am in the office" — so a staff login at home must not be able
+     to read it. Only the owner / manager login that keeps the office tablet open may. */
+  if (me.role !== "owner" && me.role !== "manager") {
+    return NextResponse.json(
+      { error: "Only the owner or a manager can show the office code. Open the kiosk on the office tablet with that login." },
+      { status: 403 },
+    );
+  }
 
   const admin = createAdminClientFor(authData.user.id);
   const { data: settings } = await admin

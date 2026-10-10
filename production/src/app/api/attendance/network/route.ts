@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { newPresenceSecret } from "@/lib/attendance/presence";
 import { parseShiftRules, validateShiftInput } from "@/lib/attendance/shift";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
 import { countEmployeesWithoutDevice } from "../device/_server";
 
@@ -40,7 +41,19 @@ export async function GET(request: NextRequest) {
   const { data } = await supabase.from("attendance_settings").select("allowed_ips, require_selfie, require_presence, selfie_retention_days, require_face_match, require_device, shift_start, shift_end, late_grace_minutes, half_day_under_hours").maybeSingle();
   const allowedIps: string[] = data?.allowed_ips ?? [];
   const currentIp = clientIp(request);
+  /* R-605: can THIS person self check-in from here? Same rule /api/attendance/self enforces —
+     sent so My Attendance can say so before the press, not after. */
+  const { data: myUser } = await supabase.from("users").select("employee_id").eq("id", u.userId).maybeSingle();
+  const { data: myEmp } = myUser?.employee_id
+    ? await supabase.from("employees").select("attendance_anywhere").eq("id", myUser.employee_id).maybeSingle()
+    : { data: null };
+  const selfHere = officeNetworkDecision({
+    purpose: "self", allowedIps, ip: currentIp, anywhere: myEmp?.attendance_anywhere ?? false,
+  });
   return NextResponse.json({
+    selfCheckIn: selfHere.ok
+      ? { ok: true as const, outsideOffice: selfHere.flag === "outside_office" }
+      : { ok: false as const, error: selfHere.error },
     allowedIps,
     currentIp,
     onAllowedNetwork: allowedIps.length === 0 || allowedIps.includes(currentIp),
