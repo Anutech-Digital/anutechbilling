@@ -557,6 +557,35 @@ Any operation that touches **more than one row** must go through a Postgres `SEC
 
 The audit that corrected this table (1 Sep 2026) also measured 150 distinct functions in migrations+baseline — this table lists the money-spine four only. Do not add new multi-row money writes from the client. Bank reconciliation — the old worst offender (`bank.ts`, 6 chained writes in two hand-kept copies) — was folded into the atomic `reconcile_bank_txn` RPC on 1 Sep 2026 (migration `20260901160000`, test `supabase/tests/reconcile_bank_txn.test.sql`); both hooks (`useReconcileTransaction`, `useAutoReconcile`→`applyReconcile`) now call it, so they cannot drift. The one still outstanding is the post-RPC writes in `record-payment-dialog.tsx` (bank account / domain / TAN patches).
 
+### 17c. Tenant guards fail CLOSED (R-454, 10 Oct 2026)
+
+`if current_tenant_id() is not null and row.tenant_id <> current_tenant_id()` is **fail-open**:
+a signed-in user with no company (customer-portal login, apprentice, mid-signup) has a NULL
+`current_tenant_id()`, skips the check and acts on ANY company's row. That is how a fresh auth
+user accepted another company's quote (`accept_quote`, `generate_invoice`,
+`raise_subscription_billing`; `next_document_number` / `next_customer_number` honoured the
+parameter tenant). Every `SECURITY DEFINER` function that takes a row id must:
+
+```sql
+v_trusted := coalesce(auth.role(), '') = 'service_role'          -- admin client: cron, webhooks, public accept
+             or (auth.role() is null and session_user::text not in ('authenticator','anon','authenticated','app_runtime'));  -- psql/scripts
+v_caller := public.current_tenant_id();
+if v_caller is null and not v_trusted then raise exception '…' using errcode = '28000'; end if;
+if v_caller is not null and row.tenant_id <> v_caller then raise …; end if;
+```
+
+Lessons from building it:
+- **Prove it in ONE rollback.** Strip the migration's `begin;`/`commit;`, the test's `begin;`/`rollback;`,
+  and pipe `begin; <migration> <test> rollback;` into `docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1`.
+  Nothing is applied until it is green. Mutation-proof the same way: `begin; <old function body>; <test> rollback;` must go RED.
+- **Make the test check each function's OWN guard**, not a nested one: with only `next_document_number`
+  fixed, the old `generate_invoice` was still refused (by the nested number call) and the test passed.
+  Assert the refusal message too.
+- **Prod is Cloud SQL**: no `extensions.` schema, never reference `auth.users` from a migration, peeks use
+  `to_regprocedure(...)` (never `::regclass`, it throws before the migration exists). Staging rewrites
+  `auth.role()` → `public.current_request_role()` (R-161), so write `auth.role()`.
+- Test: `supabase/tests/tenant_guard_fail_closed.test.sql`.
+
 ---
 
 ## 18. Roadmap (high-level)
