@@ -5,7 +5,8 @@
  *   • Identity  — the login (auth.uid()) proves WHO.
  *   • Presence  — when require_presence is on, the rotating office code proves
  *                 the person is physically at the office (can only be read off
- *                 the office tablet). Validated server-side against the secret.
+ *                 the office tablet). R-440: checked INSIDE the database by
+ *                 validate_presence_code() — this route never sees the seed.
  *   • Proof     — when require_selfie is on, a live selfie is captured; GPS is
  *                 always stored (soft audit signal) if the phone shares it.
  *
@@ -22,12 +23,12 @@
 import crypto from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { validateCode } from "@/lib/attendance/presence";
 import { compareFaces } from "@/lib/attendance/face";
 import { officeNetworkDecision } from "@/lib/attendance/office-network";
 import { requestIp } from "@/lib/attendance/request-ip";
 import { deviceError } from "@/lib/attendance/webauthn";
 import { getCaller, verifyDeviceAssertion } from "../device/_server";
+import { presenceGateReply } from "./presence-gate";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -53,15 +54,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  /* R-601: employees cannot write attendance rows or read presence_secret themselves any
-     more. The mark itself is the SECURITY DEFINER RPC below; the seed read and the
-     selfie / geo / flags patch after it go through the server client, and every one of
-     those calls is scoped to THIS caller's tenant + linked employee in code. */
+  /* R-601: employees cannot write attendance rows themselves any more. The mark itself is
+     the SECURITY DEFINER RPC below; the settings read and the selfie / geo / flags patch
+     after it go through the server client, and every one of those calls is scoped to THIS
+     caller's tenant + linked employee in code. R-440: the office-code seed is not read here
+     at all — validate_presence_code() checks the code inside the database. */
   const admin = createAdminClientFor(authData.user.id);
   const { data: settings } = me.tenant_id
     ? await admin
       .from("attendance_settings")
-      .select("require_selfie, require_presence, presence_secret, require_face_match, require_device, allowed_ips")
+      .select("require_selfie, require_presence, require_face_match, require_device, allowed_ips")
       .eq("tenant_id", me.tenant_id)
       .maybeSingle()
     : { data: null };
@@ -84,14 +86,11 @@ export async function POST(request: NextRequest) {
   });
   if (!net.ok) return NextResponse.json({ error: net.error, code: net.code }, { status: net.status });
 
-  // Presence gate — must know the current rotating office code.
+  // Presence gate — must know the current rotating office code (R-440: checked in the
+  // database, for the caller's own company, with a wrong-code limit).
   if (requirePresence) {
-    if (!settings?.presence_secret || !validateCode(settings.presence_secret, code, Date.now())) {
-      return NextResponse.json(
-        { error: "Office code galat ya expire ho gaya — office tablet pe abhi jo code hai wahi daalo." },
-        { status: 400 },
-      );
-    }
+    const gate = presenceGateReply(await supabase.rpc("validate_presence_code", { p_code: code }));
+    if (gate) return NextResponse.json(gate.body, { status: gate.status });
   }
 
   if (requireSelfie && !photo) {
