@@ -219,6 +219,11 @@ All colors, spacing, typography are CSS variables in `src/app/globals.css`. Tail
 
 Brand accent = amber/orange (#C2410C). DO NOT introduce new accent colors without team agreement.
 
+**The same tokens are data in `src/lib/theme/tokens.ts`** (10 Oct 2026), served at
+`GET /api/public/theme` for the DMS Customer Portal, which renders them at runtime. Change a colour
+in `globals.css` and `tokens.ts` together (bump `version`); `src/lib/theme/tokens.test.ts` fails when
+they disagree. `scope: "platform"` is there so a tenant's own theme can be served later.
+
 ---
 
 ## 6. Fonts

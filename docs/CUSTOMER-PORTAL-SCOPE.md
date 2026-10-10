@@ -55,6 +55,21 @@ to pay and get the GST invoice without calling us.
 
 **What is missing:** there is no `/portal` route group. `production/CLAUDE.md` §7 says it was deleted on 19 Sep. A Workspace/M365/Zoho customer has **no self-service at all** today. Note: `docs/LIFECYCLE-AUDIT.md` "Stage 9 — Customer portal ✅ built" is out of date.
 
+### 2a′. Update, 10 Oct 2026 — the DMS Customer Portal today (Pawan)
+
+The hosting/domains customer panel lives in DMS (`/dashboard`) and now:
+- looks like ResellerOS: DMS reads the theme from `GET /api/public/theme` at runtime (fonts bundled);
+- has a dashboard (tiles, attention cards, renewals, invoices, quick links) and one heading style on every page;
+- sells hosting and domains in pop-ups, priced by ResellerOS before paying; a hosting order can
+  register a new domain in the same order (first year free with yearly hosting); domains for 1/2/3/5 years;
+- reuses the buyer's details: ResellerOS sends the order's GSTIN, state and address with `customer.ensure`,
+  and checkout shows "Billed to … Change" instead of a form ("Save for next time" when edited);
+- declares products in `lib/purchase/catalog.ts` — business email (Workspace, M365, Zoho) and
+  standalone SSL are planned entries;
+- passes a phone/tablet audit at 320/360/390/768px.
+
+Workspace/M365/Zoho customers still have no self-service; that is what this document's phases are for.
+
 ### 2b. The deleted ResellerOS portal (best place to restore from)
 
 Commit `61d3b4bd` (19 Sep, "feat: remove the ResellerOS customer portal") deleted 24 files and about 3,900 lines. It was self-contained, and the DB side was deliberately left in place. You can get every file back with `git show 61d3b4bd^:<path>`:

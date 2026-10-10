@@ -206,6 +206,15 @@ hosting line with quantity above 1 is still refused (`lib/checkout/hosting-limit
 `SEVERAL_HOSTING_PLANS_READY` switch and its "one hosting account for now" wording were removed
 on 9 Oct 2026).
 
+**DMS reads what the customer sees from ResellerOS — one source of truth, never a copy** (Pawan,
+10 Oct 2026: "modular … better SaaS approach"). The DMS Customer Portal fetches, at runtime:
+hosting prices (`GET /api/public/hosting-prices`), a domain's per-term price (`GET /api/domains/availability`)
+and the brand theme (`GET /api/public/theme`, from `src/lib/theme/tokens.ts`). **A brand colour is
+changed in `src/app/globals.css` AND `src/lib/theme/tokens.ts` in one commit** — `tokens.test.ts`
+fails when they differ — and the portal follows within five minutes. At payment, `customer.ensure`
+(`lib/provisioning/portal-account.server.ts`) also sends the order's GSTIN, state and registrant
+address, so the portal's checkout reuses them instead of asking again.
+
 **Email goes to every recipient, from both apps** (owner, 30 Sep 2026: "Fix this permanently. It
 should remain on by default for both DMS and Reseller OS app"). SMTP (`lib/email/smtp-transport.ts`,
 the `SMTP_*` variables) is the platform sender ahead of Resend, and a tenant's own working Gmail
