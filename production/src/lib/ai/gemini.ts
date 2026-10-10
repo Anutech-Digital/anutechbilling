@@ -248,6 +248,8 @@ export async function geminiJson<T>(args: {
    * circuit breaker aur retry me se kuch bhi nahi tha.
    */
   attachment?: { mimeType: string; base64: string };
+  /** R-830: more images after `attachment` (AI Help sends up to 5 screenshots with one message). */
+  attachments?: readonly { mimeType: string; base64: string }[];
   temperature?: number;
   timeoutMs?: number;
   /** Prefix for server logs, e.g. "ai/draft-followup". */
@@ -287,9 +289,11 @@ export async function geminiJson<T>(args: {
           ...(args.system ? { systemInstruction: { parts: [{ text: args.system }] } } : {}),
           contents: [{
             role: "user",
-            parts: args.attachment
-              ? [{ text: args.user }, { inlineData: { mimeType: args.attachment.mimeType, data: args.attachment.base64 } }]
-              : [{ text: args.user }],
+            parts: [
+              { text: args.user },
+              ...[...(args.attachment ? [args.attachment] : []), ...(args.attachments ?? [])]
+                .map((a) => ({ inlineData: { mimeType: a.mimeType, data: a.base64 } })),
+            ],
           }],
           generationConfig: {
             responseMimeType: "application/json",
