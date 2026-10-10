@@ -46,6 +46,31 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+/**
+ * R-827: while AI Help is docked on the right of a desktop, it publishes on <html> the
+ * attribute data-ai-help-docked and --ai-help-room = the width left of it for a dialog.
+ * Null = not docked. Re-reads whenever help opens, closes, minimizes or is resized.
+ */
+export function readHelpRoom(): number | null {
+  if (typeof document === "undefined") return null;
+  const root = document.documentElement;
+  if (!root.hasAttribute("data-ai-help-docked")) return null;
+  const room = parseFloat(root.style.getPropertyValue("--ai-help-room"));
+  return Number.isFinite(room) && room > 0 ? room : null;
+}
+function useHelpRoom(): number | null {
+  const [room, setRoom] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    const read = () => setRoom(readHelpRoom());
+    read();
+    if (typeof MutationObserver === "undefined") return;
+    const mo = new MutationObserver(read);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-ai-help-docked", "style"] });
+    return () => mo.disconnect();
+  }, []);
+  return room;
+}
+
 /** Edge/corner drag handles for resizing. Rendered as a fixed overlay that
  *  mirrors the dialog's box, so it never interferes with the dialog's own
  *  scroll or padding (works for every dialog, including `p-0` ones). */
@@ -99,6 +124,19 @@ const DialogContent = React.forwardRef<
     // for the initial paint of the handle overlay.
     if (node) syncBox();
   }, [ref, syncBox]);
+
+  // R-827: beside docked AI Help, never wider than the space left of the panel (at 1024px a
+  // 640px dialog's right column went under help). Its own max-width still applies when smaller;
+  // a size the person dragged by hand is kept. Set as !important to beat the md:!max-w-* class.
+  const helpRoom = useHelpRoom();
+  React.useLayoutEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    el.style.removeProperty("max-width");
+    if (!helpRoom || size || window.innerWidth < 768) return;
+    const own = window.getComputedStyle(el).maxWidth;
+    el.style.setProperty("max-width", own && own !== "none" ? `min(${own}, ${helpRoom}px)` : `${helpRoom}px`, "important");
+  }, [helpRoom, size]);
 
   // Keep the handle overlay aligned with the dialog as it (re)sizes.
   React.useLayoutEffect(() => {
@@ -243,7 +281,7 @@ const DialogContent = React.forwardRef<
 
         // Desktop position — `!` forces override of the mobile anchors.
         // R-827: while AI Help is docked on the right, centre in the space left of it
-        // (--ai-help-dock is set by the panel only when that space is wide enough).
+        // (--ai-help-dock is set by the panel on desktops; useHelpRoom below caps the width).
         "md:!left-[calc(50%_-_var(--ai-help-dock,0px)/2)] md:!right-auto md:!top-1/2 md:!bottom-auto",
         "md:!w-auto md:!max-w-xl md:max-h-[90vh] md:-translate-x-1/2 md:-translate-y-1/2",
         "md:rounded-lg md:border md:p-6",

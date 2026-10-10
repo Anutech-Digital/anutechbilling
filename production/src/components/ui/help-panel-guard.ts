@@ -23,6 +23,23 @@ function outsideTarget(e: Event): EventTarget | null {
   return original?.target ?? e.target;
 }
 
+/* R-827 follow-up (browser check, 11 Oct): Radix can report a pointer-down "outside" only
+   AFTER the click ran (deferred to the click event). A help button that removes itself on
+   click — the minimized "Open help" bar, "Ask AI", a follow-up chip — is detached from the
+   page by then, so closest("[data-ai-help]") finds nothing and the dialog closed. The last
+   element pressed inside help is remembered (window capture, before anything is removed). */
+let lastHelpPress: EventTarget | null = null;
+
+/** Remember the element a pointer went down on, when it is inside help (else forget). */
+export function noteHelpPress(target: EventTarget | null): void {
+  lastHelpPress = isInHelpPanel(target) ? target : null;
+}
+
+/** Inside help now, or the help element that was just pressed (it may have been removed since). */
+export function cameFromHelp(target: EventTarget | null | undefined): boolean {
+  return isInHelpPanel(target) || (target != null && target === lastHelpPress);
+}
+
 /**
  * Wrap a dialog's onInteractOutside / onEscapeKeyDown: the caller's own handler still runs,
  * then a click, focus or Escape that came from the help panel never closes the dialog.
@@ -30,7 +47,7 @@ function outsideTarget(e: Event): EventTarget | null {
 export function keepOpenForHelp<E extends Event>(handler?: (e: E) => void): (e: E) => void {
   return (e: E) => {
     handler?.(e);
-    if (isInHelpPanel(outsideTarget(e))) e.preventDefault();
+    if (cameFromHelp(outsideTarget(e))) e.preventDefault();
   };
 }
 
@@ -45,6 +62,7 @@ const MODAL = "[role=dialog],[role=alertdialog]";
  */
 export function installHelpPanelGuard(root: HTMLElement): () => void {
   const stop = (e: Event) => e.stopPropagation();
+  const onPress = (e: Event) => noteHelpPress(e.target);
   const onFocusOut = (e: FocusEvent) => {
     const from = e.target;
     if (!isInHelpPanel(e.relatedTarget) || isInHelpPanel(from)) return;
@@ -54,7 +72,10 @@ export function installHelpPanelGuard(root: HTMLElement): () => void {
   root.addEventListener("wheel", stop, { passive: true });
   root.addEventListener("touchmove", stop, { passive: true });
   window.addEventListener("focusout", onFocusOut, true);
+  window.addEventListener("pointerdown", onPress, true);
   return () => {
+    window.removeEventListener("pointerdown", onPress, true);
+    lastHelpPress = null;
     root.removeEventListener("focusin", stop);
     root.removeEventListener("wheel", stop);
     root.removeEventListener("touchmove", stop);
