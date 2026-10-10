@@ -93,6 +93,7 @@ MIGS=(
   "geofence|20261010233000_attendance_geofence.sql|resellersos_migration|(to_regprocedure('public.mark_self_attendance(double precision,double precision,double precision,text)') is not null and to_regprocedure('public.set_office_location(double precision,double precision,integer,text)') is not null)"
   "geofencefix|20261010235500_attendance_geofence_noarg.sql|resellersos_migration|(exists(select 1 from pg_proc where oid = to_regprocedure('public.mark_self_attendance()') and prosrc like '%R-438 fix%') and has_function_privilege('authenticated', 'public.mark_self_attendance()', 'execute'))"
   "r829linedomain|20261011000500_r829_line_domain_kept.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-829%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-829%') and exists(select 1 from pg_indexes where schemaname = 'public' and indexname = 'subscriptions_tenant_quote_domain_plan_unique')"
+  "salaryrules|20261011003000_attendance_owner_correction.sql|resellersos_migration|to_regclass('public.attendance_corrections') is not null and to_regprocedure('public.correct_attendance(uuid,date,timestamptz,timestamptz,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -37,7 +37,7 @@ begin
 
   -- ── employee's own check-in: not logged ────────────────────────────────
   perform set_config('request.jwt.claims', json_build_object('sub','46080000-0000-4000-8000-00000000000b','role','authenticated')::text, true);
-  v_r := public.mark_self_attendance(null, null, null);   -- R-438: the 0-argument version is server-only now
+  v_r := public.mark_self_attendance();
   if v_r <> 'checked_in' then raise exception 'FAIL 2: self check-in returned %', v_r; end if;
 
   -- ── owner at the kiosk punches Friend? Friend has no PIN; use Sales Person's PIN via kiosk path

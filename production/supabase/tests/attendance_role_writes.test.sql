@@ -79,7 +79,7 @@ begin
   if v_n <> 0 then raise exception 'FAIL 4: a sales login changed attendance_settings'; end if;
 
   -- ── ALLOWED: sales checks in through the RPC ────────────────────────────
-  v_action := public.mark_self_attendance(null, null, null);   -- R-438: the 0-argument version is server-only now
+  v_action := public.mark_self_attendance();
   if v_action <> 'checked_in' then raise exception 'FAIL 5: mark_self_attendance returned %', v_action; end if;
 
   -- ── ALLOWED: owner reviews + corrects, reads non-secret settings ────────
