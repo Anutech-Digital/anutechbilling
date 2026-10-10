@@ -17,8 +17,8 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule, followingTermStart, currentTermStart } from "@/lib/billing/subscription-schedule";
-import { periodLastDay } from "@/lib/billing/schedule";
+import { subscriptionSchedule, followingTermStart, currentTermStart, previousTermStart } from "@/lib/billing/subscription-schedule";
+import { periodLastDay, addDaysISO } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
 export interface SeatWindowSub {
@@ -69,6 +69,59 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
     }
   }
   return { remainingDays: daysBetweenDates(from, termEnd), termDays, chargeTo: renewal, instalmentPeriod: false };
+}
+
+/**
+ * R-543 — the part of a backdated seat increase that falls in the PREVIOUS term.
+ * Same rate rules as the current term: annual × days ÷ the previous term's own length.
+ */
+export interface SeatPreviousTermPart {
+  /** The effective date — first day charged. */
+  from: string;
+  /** Last day of the previous term (inclusive) — the day before the current term starts. */
+  to: string;
+  /** Days charged: from → current term start. */
+  remainingDays: number;
+  /** Length of the whole previous term in days. */
+  termDays: number;
+}
+
+export interface SeatChargePlan {
+  /** Null when the effective date is in the current term — the pre-R-543 shape. */
+  previous: SeatPreviousTermPart | null;
+  /** The current-term charge. From the effective date, or from the term start when backdated past it. */
+  current: SeatChargeWindow & { from: string };
+}
+
+/**
+ * R-543 (Abhishek, 10 Oct 2026): seats provisioned BEFORE the last renewal. An effective date
+ * in the previous term is charged as two parts on one quote:
+ *   1. previous term: effective date → the previous term's last day, pro-rata over that term;
+ *   2. current term: from its start, exactly what seatChargeWindow() charges for an effective
+ *      date ON the term start (the whole term; the current instalment for a split-billed row).
+ * An effective date in the current term returns { previous: null, current: seatChargeWindow(...) }
+ * — unchanged. Callers validate the date first (checkSeatEffectiveDate).
+ */
+export function seatChargePlan(sub: SeatWindowSub, todayISO: string, effectiveISO?: string): SeatChargePlan | null {
+  if (!sub.renewal_date) return null;
+  const from = (effectiveISO ?? todayISO).slice(0, 10);
+  const termStart = seatTermStart(sub);
+  const prevStart = previousTermStart(sub);
+  if (!termStart || !prevStart || from >= termStart) {
+    const w = seatChargeWindow(sub, todayISO, from);
+    return w ? { previous: null, current: { ...w, from } } : null;
+  }
+  const w = seatChargeWindow(sub, todayISO, termStart);
+  if (!w) return null;
+  return {
+    previous: {
+      from,
+      to: addDaysISO(termStart, -1),
+      remainingDays: daysBetweenDates(from, termStart),
+      termDays: Math.max(1, daysBetweenDates(prevStart, termStart)),
+    },
+    current: { ...w, from: termStart },
+  };
 }
 
 /**
