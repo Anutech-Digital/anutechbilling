@@ -10,8 +10,8 @@
  * server count that reads the searched set (folders, list.matching, hot card) agree.
  *
  * The one count lead_counts() takes before any filter — workspace.everything, the "All
- * leads" entry — is corrected per page: /leads subtracts kpi.won (same base); /deals sums its
- * own folders (quoted + proving + won + lost), which ARE counted over the stage-scoped set.
+ * leads" entry — is corrected per page: each page sums its own folders (/leads: inbox + talks
+ * + lost; /deals: quoted + proving + won + lost), which ARE counted over the stage-scoped set.
  * That sum narrows with search / filters like the list does.
  *
  * R-070 (migration 20260930200000): the View-menu counts (lead_counts().views) are scoped to
@@ -19,7 +19,10 @@
  * which lead_counts() applies to the View menu only. So on /deals "Hot", "Stalled" … count
  * deals, not New / Contacted leads. list_leads() never receives it (toListLeadsFilters).
  *
- * Lost stays on /leads too: the R-057 decision named Won only.
+ * R-433 (Pardeep, 7 Oct 2026, re-approved 10 Oct): "sales aur deals me jo common hai wo hata
+ * do — kanban view me lead me new aur contacted hi hone chahiye". /leads holds only New /
+ * Contacted (plus Lost in the list — the board has no Lost column); a lead moves to /deals once
+ * a quote is sent. Lost stays on both pages: a lead lost before any quote has nowhere else to be.
  */
 import type { Lead } from "@/lib/supabase/database.types";
 import type { LeadCounts, LeadListFilters } from "@/lib/leads/list-page";
@@ -28,14 +31,14 @@ import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { DEALS_PAGE_STAGES } from "@/lib/leads/deal-rules";
 
-/** Stages that never show on the Leads page — they live on /deals only. */
-export const LEADS_PAGE_HIDDEN_STAGES: readonly Lead["stage"][] = ["won"];
+/** R-433: the only stages the Leads page shows — from a sent quote on, a lead is on /deals. */
+export const LEADS_PAGE_STAGES: readonly Lead["stage"][] = ["new", "contact", "lost"];
 
 const ALL_STAGES = Object.keys(STAGE_LABEL) as Lead["stage"][];
 
 /** May a lead in this stage appear on this page? */
 export function stageShownOnPage(stage: Lead["stage"], isDealsPage: boolean): boolean {
-  return isDealsPage ? DEALS_PAGE_STAGES.includes(stage) : !LEADS_PAGE_HIDDEN_STAGES.includes(stage);
+  return (isDealsPage ? DEALS_PAGE_STAGES : LEADS_PAGE_STAGES).includes(stage);
 }
 
 /** Every stage this page can show. */
@@ -55,10 +58,11 @@ export function scopeFiltersForPage(f: LeadListFilters, isDealsPage: boolean): L
   return { ...f, stages, page_stages: pageStages(isDealsPage) };
 }
 
-/** Folders whose stage cannot be on this page (Inbox = new, Talks = contact on /deals). */
+/** Folders whose stage cannot be on this page (Inbox = new, Talks = contact on /deals;
+ *  Quote Sent, Demo / Trial and Won on /leads — R-433). Flags (Hot, Due) show on both. */
 export function folderShownOnPage(id: SalesFolder, isDealsPage: boolean): boolean {
   if (isDealsPage) return id !== "inbox" && id !== "talks";
-  return id !== "won";
+  return id !== "quoted" && id !== "proving" && id !== "won";
 }
 
 /**
@@ -67,11 +71,11 @@ export function folderShownOnPage(id: SalesFolder, isDealsPage: boolean): boolea
 export function everythingCountForPage(
   counts: Pick<LeadCounts, "workspace" | "kpi" | "folders">, isDealsPage: boolean,
 ): number {
-  if (isDealsPage) {
-    const f = counts.folders;
-    return f.quoted + f.proving + f.won + f.lost;
-  }
-  return counts.workspace.everything - counts.kpi.won;
+  const f = counts.folders;
+  if (isDealsPage) return f.quoted + f.proving + f.won + f.lost;
+  /* R-433: /leads sums its own folders too (was workspace.everything − won, which still
+     counted the Quote Sent / Demo / Trial leads that now live on /deals only). */
+  return f.inbox + f.talks + f.lost;
 }
 
 /**

@@ -142,7 +142,7 @@ export function LeadsSmartViews({
     { id: "everything", label: isDealsPage ? "All deals" : "All leads", count: everythingCount ?? all, tone: "default",
       hint: isDealsPage
         ? "Every deal, Quote Sent to Won and Lost"
-        : "Open, won and lost — not junk" },
+        : "New, Contacted and Lost — not junk. Quoted leads are on Deals." },
     { id: "all",   label: "All open", count: all,     tone: "default",
       hint: "Every open lead. Won and lost are not open — they have their own folders." },
     ...(currentUserId

@@ -180,6 +180,6 @@ describe("the page opens on every lead — won and lost included", () => {
     render(<LeadsSmartViews counts={views()} everythingCount={2} active="everything" onChange={() => {}} />);
     fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
     expect(screen.getByText("All open")).toBeTruthy();
-    expect(screen.getByText(/Open, won and lost/)).toBeTruthy();
+    expect(screen.getByText(/New, Contacted and Lost/)).toBeTruthy();
   });
 });
