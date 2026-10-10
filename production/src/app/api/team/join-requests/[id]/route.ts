@@ -15,6 +15,8 @@
  * reachable by the person being approved. It is a suggestion. The role that gets
  * written is the one the owner sends in this request (falling back to the safest
  * value), so a crafted signup cannot promote itself to owner by asking nicely.
+ * The role actually given is saved on the row as `granted_role` (R-828);
+ * `requested_role` is left as asked, so the record shows both. Reject leaves it null.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -103,7 +105,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
 
   const { data: already } = await admin
     .from("users")
-    .select("id, tenant_id")
+    .select("id, tenant_id, role")
     .eq("id", req.auth_user_id)
     .maybeSingle();
 
@@ -135,9 +137,18 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
     }
   }
 
+  // R-828: keep what they ASKED for (requested_role) and record what they were GIVEN.
+  // A brand-new user gets exactly the role inserted above; someone already in this
+  // workspace keeps the role they have, so that is what the record says.
+  const grantedRole = already?.role ?? role;
   await admin
     .from("join_requests")
-    .update({ status: "approved", decided_at: new Date().toISOString(), decided_by: authData.user.id })
+    .update({
+      status:       "approved",
+      decided_at:   new Date().toISOString(),
+      decided_by:   authData.user.id,
+      granted_role: grantedRole,
+    })
     .eq("id", req.id);
 
   // A pending invite for the same person is now moot; closing it keeps the

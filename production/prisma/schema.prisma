@@ -2205,6 +2205,7 @@ model join_requests {
   email          String
   full_name      String?
   requested_role user_role     @default(support)
+  granted_role   user_role?
   status         String        @default("pending_approval")
   matched_by     String
   note           String?
