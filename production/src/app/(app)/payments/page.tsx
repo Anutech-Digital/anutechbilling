@@ -77,6 +77,7 @@ import { paymentMethodLabel } from "./method-label";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
+import { scopeToCustomer, paymentTotals, paymentsSummaryLine } from "./customer-scope";
 import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
 import { paymentFeeView } from "@/lib/razorpay/fee-expense";
 import { createClient } from "@/lib/supabase/client";
@@ -187,20 +188,28 @@ function PaymentsPageInner() {
     return m;
   }, [customers]);
 
+  /* R-533: with ?customer= every number on the page is that customer's — the list, the tab
+     counts, the summary line, the analytics strip, the dues card and the view counts. One
+     slice, computed once; without the filter it is the whole company, as before. */
+  const scoped = React.useMemo(
+    () => scopeToCustomer(
+      { payments: payments ?? [], projectPayments: projectPayments ?? [], quotes: quotes ?? [], outstanding: outstanding ?? [] },
+      customerFilter,
+    ),
+    [payments, projectPayments, quotes, outstanding, customerFilter],
+  );
+  const scopedPayments = scoped.payments;
+  const customerName = customerFilter
+    ? cleanDisplayName(customerById.get(customerFilter)?.name ?? "this customer")
+    : null;
+
   // Filter. Memoised: DataTable starts again at one page whenever `rows` is a new array
   // (R-024), so a fresh array on every render would undo "Load more" (R-215).
-  const filtered = React.useMemo(() => (payments ?? []).filter((p) => {
+  /* The customer filter is already applied in `scoped` (customer-scope.ts: by the payment's
+     own customer_id, falling back to the customer on its quote for pre-conversion receipts). */
+  const filtered = React.useMemo(() => scopedPayments.filter((p) => {
     if (tab !== "all" && p.status !== tab) return false;
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
-    if (customerFilter) {
-      /* Two ways a payment belongs to a customer, and both count. `payments.customer_id`
-         is what record_payment stamps, but it is nullable — a receipt taken before the
-         lead was converted has none, and dropping those would under-report the very total
-         the operator clicked. So fall back to the customer on its quote. */
-      const own = p.customer_id === customerFilter;
-      const viaQuote = quoteById.get(p.quote_id)?.customerId === customerFilter;
-      if (!own && !viaQuote) return false;
-    }
     if (!search.trim()) return true;
     const s = search.toLowerCase();
     const quoteCtx = quoteById.get(p.quote_id);
@@ -210,7 +219,7 @@ function PaymentsPageInner() {
       p.method.toLowerCase().includes(s) ||
       (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
     );
-  }), [payments, tab, focus, customerFilter, quoteById, search]);
+  }), [scopedPayments, tab, focus, quoteById, search]);
 
   /* R-215: the list is on the shared DataTable — header sort, and R-104's "paint 50 at a
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
@@ -252,27 +261,24 @@ function PaymentsPageInner() {
   }, [payKeys.index]);
   const payKbSelectedId = payKeys.index >= 0 ? shownIds[payKeys.index] ?? null : null;
 
-  const counts: Record<string, number> = { all: payments?.length ?? 0 };
-  for (const p of payments ?? []) counts[p.status] = (counts[p.status] ?? 0) + 1;
+  // KPIs — include project-sale payments so "collected" is ALL money in (R-533: the scoped slice).
+  const projPays = scoped.projectPayments;
+  const { counts, projectCollected: projCollected, totalCollected } = paymentTotals(scopedPayments, projPays);
   const tabsWithCounts = STATUS_TABS.map((t) => ({ ...t, count: counts[t.id] ?? 0 }));
-
-  // KPIs — include project-sale payments so "collected" is ALL money in.
-  const allReceived = (payments ?? []).filter((p) => p.status === "received");
-  const projPays = projectPayments ?? [];
-  const projCollected = projPays.reduce((s, p) => s + p.amount, 0);
-  const totalCollected = allReceived.reduce((s, p) => s + p.amount, 0) + projCollected;
+  const allReceived = scopedPayments.filter((p) => p.status === "received");
+  const scopedOutstanding = scoped.outstanding;
 
   // Awaiting-invoice: quotes with payment_status = 'received' (fully paid, no invoice yet)
-  const awaitingInvoiceQuotes = (quotes ?? []).filter((q) => q.payment_status === "received");
+  const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
   const awaitingInvoiceTotal = awaitingInvoiceQuotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
   // Partial payments (quotes with status=partial)
-  const partialQuotes = (quotes ?? []).filter((q) => q.payment_status === "partial");
+  const partialQuotes = scoped.quotes.filter((q) => q.payment_status === "partial");
 
   /* Collected this IST month — one helper (lib/company/summary.ts), shared with the dashboard
      Company section (R-062: it used to start at "the 1st at this time of day", browser clock).
      TDS the customer withheld settles the invoice but never reaches the bank — said separately. */
-  const mtdCollected = collectedInMonth(payments ?? [], projPays);
+  const mtdCollected = collectedInMonth(scopedPayments, projPays);
   /* The part of Collected MTD that is project receipts — those rows live on /projects, so
      the tile and the banner say how much of the total this list cannot show. */
   const mtdProject = projectReceivedInMonth(projPays);
@@ -347,11 +353,31 @@ function PaymentsPageInner() {
         value={view}
         onChange={(v) => setView(v as "all" | "subscription" | "project")}
         items={[
-          { id: "all",          label: "All payments", count: ((payments?.length ?? 0) + projPays.length) || undefined },
-          { id: "subscription", label: "Subscription", count: (payments?.length ?? 0) || undefined },
+          { id: "all",          label: "All payments", count: (scopedPayments.length + projPays.length) || undefined },
+          { id: "subscription", label: "Subscription", count: scopedPayments.length || undefined },
           { id: "project",      label: "Project",      count: projPays.length || undefined },
         ]}
       />
+
+      {/* ── Arrived here from one customer ──────────────────────────────────
+          Names whose payments these are, and offers the way out. A filter applied from
+          another screen and then never mentioned is how an operator concludes the payments
+          page has lost their money. R-533: it sits above the analytics, because every
+          number below it — view counts, tiles, dues, tabs, totals — is this customer's. */}
+      {customerFilter && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-paper-2/60 px-3.5 py-2.5">
+          <Icon name="filter" size={15} className="shrink-0 text-ink-3" />
+          <p className="min-w-0 flex-1 text-[13px] text-ink-2">
+            Showing only <b className="text-ink">{customerName}</b>. All counts and totals below are theirs.
+          </p>
+          {/* A Link, not a click handler: this is navigation, so it should behave like a
+              link — focusable, middle-clickable, and it drops the query string by going to
+              the bare route. */}
+          <Button size="sm" variant="ghost" icon="x" asChild>
+            <Link href="/payments">Show all payments</Link>
+          </Button>
+        </div>
+      )}
 
       {(view === "subscription" || view === "all") && (<>
       {/* Collapsible Payments Analytics Banner */}
@@ -408,7 +434,8 @@ function PaymentsPageInner() {
       )}
 
       {/* ── Outstanding Receivables — actionable card ── */}
-      {outstanding && outstanding.length > 0 && (() => {
+      {scopedOutstanding.length > 0 && (() => {
+        const outstanding = scopedOutstanding;
         const totalDue = outstanding.reduce((s, o) => s + o.outstanding_amount, 0);
         const overdueCount = outstanding.filter((o) => o.days_outstanding > 30).length;
         return (
@@ -582,27 +609,6 @@ function PaymentsPageInner() {
         </GeminiCard>
       )}
 
-      {/* ── Arrived here from one customer ──────────────────────────────────
-          Names whose payments these are, and offers the way out. A filter applied from
-          another screen and then never mentioned is how an operator concludes the payments
-          page has lost their money — the count at the top would say "Showing 3 of 47" with
-          nothing on screen explaining the 3. */}
-      {customerFilter && (
-        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-paper-2/60 px-3.5 py-2.5">
-          <Icon name="filter" size={15} className="shrink-0 text-ink-3" />
-          <p className="min-w-0 flex-1 text-[13px] text-ink-2">
-            Showing only payments from{" "}
-            <b className="text-ink">{customerById.get(customerFilter)?.name ?? "this customer"}</b>.
-          </p>
-          {/* A Link, not a click handler: this is navigation, so it should behave like a
-              link — focusable, middle-clickable, and it drops the query string by going to
-              the bare route. */}
-          <Button size="sm" variant="ghost" icon="x" asChild>
-            <Link href="/payments">Show all payments</Link>
-          </Button>
-        </div>
-      )}
-
       {/* Sticky TabBar + Search */}
       {!isLoading && payments && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
@@ -619,8 +625,7 @@ function PaymentsPageInner() {
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <div className="text-xs text-ink-3">
               {/* How many are painted is the table's own "Showing x of y" (R-215). */}
-              {filtered.length} of {payments.length} payments
-              {" · "}{rupee(totalCollected)} collected all-time
+              {paymentsSummaryLine({ shown: filtered.length, total: scopedPayments.length, collected: rupee(totalCollected), customerName })}
             </div>
             <div className="w-full sm:w-72">
               <Input
@@ -681,7 +686,9 @@ function PaymentsPageInner() {
         <EmptyState
           icon="search"
           title="No payments match"
-          body={search ? `No results for "${search}".` : `No payments with status "${tab}".`}
+          body={search ? `No results for "${search}".`
+            : customerName && scopedPayments.length === 0 ? `No subscription payments from ${customerName} yet.`
+            : `No payments with status "${tab}".`}
           action={<Button icon="x" onClick={() => { setTab("all"); setSearch(""); }}>Clear filters</Button>}
           compact
         />
@@ -697,7 +704,7 @@ function PaymentsPageInner() {
             rows={filtered}
             columns={payColumns}
             getRowId={(p) => p.id}
-            totalCount={payments?.length}
+            totalCount={scopedPayments.length}
             noun="payment"
             cardsBelow="xl"
             pageSize={PAYMENTS_PAGE_SIZE}
