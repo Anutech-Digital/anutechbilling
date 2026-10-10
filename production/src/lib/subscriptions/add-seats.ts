@@ -29,6 +29,7 @@ import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./prora
 import { seatIncreaseQuote } from "./seat-increase-charge";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
 import { istToday, utcDateISO } from "@/lib/dates/ist";
+import { addSeatsCustomerNote, composeQuoteNotes } from "@/lib/quotes/customer-notes";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -377,15 +378,18 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     is_renewal:       false,
     is_add_seats:     true,   // 0052: record_payment skips sub handling → no duplicate sub
     extension_months: 0,
-    // factorPpm is an integer (547945 = 54.7945%), so the note records the exact
-    // fraction charged instead of a rounded float that cannot be reconciled.
-    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
+    /* R-813: the customer reads only the first part — the period, in words. The audit text
+       (subscription id, who backdated, the exact factor) sits after STAFF_NOTE_MARKER, and
+       every customer surface cuts there (lib/quotes/customer-notes.ts). factorPpm is an
+       integer (547945 = 54.7945%), so the audit records the exact fraction charged instead
+       of a rounded float that cannot be reconciled. */
+    notes:            composeQuoteNotes(addSeatsCustomerNote(effective, chargeTo), `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
       effective < today ? ` (backdated${input.effectiveDateSetBy ? ` by ${input.effectiveDateSetBy}` : ""} on ${today})` : ""
     }${
       prev && quoted.previous
         ? `. Crosses a term: ${quoted.previous.proration.chargedDays} of ${prev.termDays} days of the previous term (to ${prev.to}) + current term from ${currentFrom}`
         : ""
-    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`),
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
