@@ -13,6 +13,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,7 +42,7 @@ async function handle(req: Request): Promise<NextResponse<RetentionResult | { er
 
   const { data: settings, error: sErr } = await supabase
     .from("attendance_settings").select("tenant_id, selfie_retention_days");
-  if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 });
+  if (sErr) return cronDbFailure("attendance-retention", sErr, sErr.message);
 
   // IST today, for the cutoff date math.
   const today = istToday();

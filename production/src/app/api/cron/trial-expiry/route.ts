@@ -25,6 +25,7 @@ import { sendEmail } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { resolveOwnerAlert, type TenantContact } from "@/lib/email/owner-alert";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,7 +95,7 @@ async function handle(req: Request) {
       .order("id", { ascending: true })
       .range(from, to));
   } catch (e) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return cronDbFailure("trial-expiry", e, errorMessage(e));
   }
 
   /* ── Whose trial is this? ──────────────────────────────────────────────────

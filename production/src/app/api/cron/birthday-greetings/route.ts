@@ -25,6 +25,7 @@ import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -119,7 +120,7 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
       .order("id", { ascending: true })
       .range(from, to));
   } catch (e) {
-    return NextResponse.json({ error: `contacts fetch failed: ${errorMessage(e)}` }, { status: 500 });
+    return cronDbFailure("birthday-greetings", e, `contacts fetch failed: ${errorMessage(e)}`);
   }
 
   const isToday = (d: string | null): boolean => {

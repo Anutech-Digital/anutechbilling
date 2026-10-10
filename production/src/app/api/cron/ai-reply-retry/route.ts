@@ -37,6 +37,7 @@ import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all"
 import { shouldRetryReply, GIVE_UP_AFTER_HOURS, type RetryCandidate } from "@/lib/ai/reply-retry";
 import { runSalesAgentForLead } from "@/lib/ai/run-sales-agent";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -100,7 +101,7 @@ async function handle(req: NextRequest) {
     .order("id", { ascending: true })
     .range(from, to));
   } catch (e) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return cronDbFailure("ai-reply-retry", e, errorMessage(e));
   }
 
   type Seen = { tenantId: string; failedAt: string | null; failures: number; resolvedAt: string | null };

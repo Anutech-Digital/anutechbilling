@@ -43,6 +43,7 @@ import { runOverdueSuspension, type OverdueSuspensionResult } from "@/lib/collec
 import { loadLateCharges } from "@/lib/late-charges/load";
 import { lateChargesSentence } from "@/lib/late-charges/charges";
 import { istToday } from "@/lib/dates/ist";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -163,7 +164,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
         .in("quote_id", ids).order("id", { ascending: true }).range(from, to)),
     ]);
   } catch (e) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return cronDbFailure("invoice-dunning", e, errorMessage(e));
   }
   const tenantById = new Map(tenants.map((t) => [t.id, t]));
   const subscriptionByQuote = subscriptionIdByQuote(subs);

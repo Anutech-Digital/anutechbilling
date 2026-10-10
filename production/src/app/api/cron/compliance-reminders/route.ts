@@ -38,6 +38,7 @@ import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { toIstDate } from "@/lib/dates/ist";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -118,7 +119,7 @@ async function handle(req: Request) {
         .from("tenants").select("id, name, lut_number").order("id", { ascending: true }).range(from, to));
     }
   } catch (e) {
-    return NextResponse.json({ error: `tenants fetch failed: ${errorMessage(e)}` }, { status: 500 });
+    return cronDbFailure("compliance-reminders", e, `tenants fetch failed: ${errorMessage(e)}`);
   }
   result.tenants = tenants.length;
 

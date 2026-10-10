@@ -37,6 +37,7 @@ import { istNow, decideAttendanceReminder } from "@/lib/attendance/reminders";
 import { isWorkingDay, SIX_DAY_WEEK_SUNDAY_OFF } from "@/lib/attendance/working-day";
 import { sendPushToUsers } from "@/lib/push/send";
 import { reportCron } from "@/lib/ops/cron-report";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -80,7 +81,7 @@ async function handle(req: Request) {
       .order("id", { ascending: true })
       .range(from, to));
   } catch (e) {
-    return NextResponse.json({ error: `could not read users: ${errorMessage(e)}` }, { status: 500 });
+    return cronDbFailure("attendance-reminders", e, `could not read users: ${errorMessage(e)}`);
   }
 
   const employeeIds = users.map((u) => u.employee_id).filter((x): x is string => Boolean(x));

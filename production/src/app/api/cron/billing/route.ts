@@ -42,6 +42,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { syncSubscriptionInstalments, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
 import { reportCron } from "@/lib/ops/cron-report";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -109,7 +110,7 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   try {
     subs = await readActiveSubs(supabase);
   } catch (e) {
-    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+    return cronDbFailure("billing", e, errorMessage(e));
   }
   result.total_active = subs.length;
 

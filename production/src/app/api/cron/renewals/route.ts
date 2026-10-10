@@ -55,6 +55,7 @@ import { createReminderSender } from "@/lib/marketing/whatsapp-reminders.server"
 import { renewalReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { rupee } from "@/lib/utils";
 import { istToday, toIstDate, addDaysISO } from "@/lib/dates/ist";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -192,7 +193,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   try {
     allSubs = await readRenewableSubs(supabase);
   } catch (e) {
-    return NextResponse.json({ error: `subs fetch failed: ${errorMessage(e)}` }, { status: 500 });
+    return cronDbFailure("renewals", e, `subs fetch failed: ${errorMessage(e)}`);
   }
   result.total_active = allSubs.length;
 
