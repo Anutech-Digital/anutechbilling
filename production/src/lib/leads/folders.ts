@@ -76,6 +76,8 @@ export interface SalesFolderMeta {
   icon:  string;
   /** Plain English for when it is empty. */
   hint:  string;
+  /** R-835: the empty hint on /leads, where the cards are leads, not deals. Unset = `hint`. */
+  leadHint?: string;
 }
 
 /* The partition, in funnel order. Labels are the rep's words for each stop, and the
@@ -86,7 +88,8 @@ export const SALES_FOLDERS: readonly SalesFolderMeta[] = [
   { id: "quoted",  label: "Quote Sent",  icon: "📄", hint: "No proposals waiting on a customer's answer." },
   { id: "proving", label: "Demo / Trial",icon: "🧪", hint: "No demos or trials running — post-quote deals being proven sit here." },
   { id: "won",     label: "Won",         icon: "🏆", hint: "No deals closed yet — won leads collect here." },
-  { id: "lost",    label: "Lost",        icon: "📁", hint: "No deals lost yet. Junk is separate — that is the 🚫 view." },
+  { id: "lost",    label: "Lost",        icon: "📁", hint: "No deals lost yet. Junk is separate — that is the 🚫 view.",
+    leadHint: "No leads lost yet. Junk is separate — that is the 🚫 view." },
 ] as const;
 
 /* The flags. Rendered after a divider, styled as filters, never summed with folders. */

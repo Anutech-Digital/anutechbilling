@@ -543,7 +543,8 @@ function LeadsPageInner() {
       SALES_FOLDERS.filter((f) => folderShownOnPage(f.id, isDealsPage)).map((f) => {
         const count = counts?.folders[f.id] ?? 0;
         /* Only when it IS empty — see the note above. */
-        return { id: f.id as string, label: f.label, count, hint: count === 0 ? f.hint : "" };
+        const hint = isDealsPage ? f.hint : (f.leadHint ?? f.hint);
+        return { id: f.id as string, label: f.label, count, hint: count === 0 ? hint : "" };
       }),
     [counts, isDealsPage],
   );
@@ -803,6 +804,7 @@ function LeadsPageInner() {
           changeStage={changeStage}
           setSelected={openLead}
           setAddOpen={setAddOpen}
+          noun={isDealsPage ? "deal" : "lead"}
         />
       )}
 

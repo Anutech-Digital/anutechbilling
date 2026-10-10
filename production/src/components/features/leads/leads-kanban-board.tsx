@@ -31,9 +31,12 @@ export interface LeadsKanbanBoardProps {
   setAddOpen: (open: boolean) => void;
   /** The columns, in order. Default every deal stage; /leads leaves out Won (R-057). */
   stages?: readonly StageMeta[];
+  /** R-835: the word for a card. /leads passes "lead" (its board holds New and Contacted
+      only since R-433); /deals keeps the default "deal". */
+  noun?: "lead" | "deal";
 }
 
-export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals, changeStage, setSelected, setAddOpen, stages = DEAL_STAGES }: LeadsKanbanBoardProps) {
+export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals, changeStage, setSelected, setAddOpen, stages = DEAL_STAGES, noun = "deal" }: LeadsKanbanBoardProps) {
   const router = useRouter();
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overStage, setOverStage] = React.useState<Lead["stage"] | null>(null);
@@ -180,7 +183,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
 
                 {stageLeads.length === 0 && (
                   <div className="h-20 flex items-center justify-center border border-dashed border-hairline/60 rounded-md text-xs text-ink-3">
-                    No deals in {stage.label}
+                    No {noun}s in {stage.label}
                   </div>
                 )}
 
@@ -199,7 +202,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
                 onClick={() => setAddOpen(true)}
                 className="mt-2 shrink-0 border border-dashed border-hairline hover:border-hairline-strong rounded-md py-1.5 text-xs font-medium text-ink-3 hover:text-ink flex items-center justify-center gap-1 transition-colors cursor-pointer bg-paper/50 hover:bg-paper"
               >
-                <Icon name="plus" size={12} /> Add deal
+                <Icon name="plus" size={12} /> Add {noun}
               </button>
             </div>
           );
@@ -215,7 +218,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
             columns render the BOARD's, and the moment the Won column started holding
             cards the two disagreed on the same screen — 11 cards above "9 visible".
             "Visible" must mean what is visible. */}
-        <span className="font-mono">{boardLeads.length} total deal{boardLeads.length === 1 ? "" : "s"} visible</span>
+        <span className="font-mono">{boardLeads.length} total {noun}{boardLeads.length === 1 ? "" : "s"} visible</span>
       </div>
     </div>
   );
