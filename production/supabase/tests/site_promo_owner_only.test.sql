@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- Regression test: website offers (site_promos) are created and changed by the tenant's own
--- owner/manager only. Migration 20261009233000_site_promo_owner_only.sql (R-700).
+-- owner/manager only. Migration 20261010020000_site_promo_owner_only.sql (R-700).
 -- Rolled back — safe anywhere.
 --
 --   BLOCKED  an owner of ANOTHER tenant calling create_site_promo with our tenant id

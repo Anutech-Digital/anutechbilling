@@ -1,6 +1,6 @@
 -- deploy-key: sitepromoowner
 -- deploy-peek: (exists(select 1 from pg_policy where polname = 'site_promos_insert_admin' and polrelid = to_regclass('public.site_promos')) and not exists(select 1 from pg_policy where polname = 'site_promos_tenant_write' and polrelid = to_regclass('public.site_promos')))
--- 20261009233000_site_promo_owner_only.sql
+-- 20261010020000_site_promo_owner_only.sql
 --
 -- R-700 (security, 9 Oct 2026).
 --

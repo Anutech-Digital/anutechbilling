@@ -80,6 +80,7 @@ MIGS=(
   "splitbilledoutstanding|20261009235800_split_billed_outstanding.sql|resellersos_migration|to_regprocedure('public.sync_split_outstanding(uuid)') is not null"
   "attendancepiningestlock|20261010000000_attendance_pin_ingest_lock.sql|resellersos_migration|(to_regclass('public.employee_pin_attempts') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'ingest_key'))"
   "employeepinhidden|20261010010000_employee_pin_hidden.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'pin_set')"
+  "sitepromoowner|20261010020000_site_promo_owner_only.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'site_promos_insert_admin' and polrelid = to_regclass('public.site_promos')) and not exists(select 1 from pg_policy where polname = 'site_promos_tenant_write' and polrelid = to_regclass('public.site_promos')))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
