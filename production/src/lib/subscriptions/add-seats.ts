@@ -28,7 +28,9 @@ import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
 import { seatIncreaseQuote } from "./seat-increase-charge";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
-import { istToday, utcDateISO } from "@/lib/dates/ist";
+import { istToday } from "@/lib/dates/ist";
+import { addSeatsQuoteExpiry } from "@/lib/quotes/quote-validity";
+import { addSeatsCustomerNote, composeQuoteNotes } from "@/lib/quotes/customer-notes";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -148,7 +150,7 @@ export interface AddSeatsInput {
   currentMrr:         number;     // ₹/month per existing sub
   additionalSeats:    number;     // N
   renewalDate:        string;     // ISO / YYYY-MM-DD — drives pro-rata
-  graceDays:          number;     // tenant.grace_period_days
+  graceDays:          number;     // tenant.grace_period_days — no longer the quote expiry (R-814)
   /**
    * GST percent for THIS customer. 18 domestic, 0 for a zero-rated export.
    *
@@ -349,8 +351,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     commitment: "annual_yearly",
   }];
 
-  const renewalAt   = new Date(input.renewalDate);
-  const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 7) * 86400000);
+  /* R-814: the normal quote validity (30 days), capped at the last day this quote charges
+     for — not renewal + grace, which left a pro-rata price open for up to a year. */
+  const expiresDate = addSeatsQuoteExpiry(today, chargeTo);
 
   const { error: insertErr } = await input.supabase.from("quotes").insert({
     id:               newQuoteId,
@@ -363,10 +366,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     status:           "sent",
     payment_status:   "awaiting",
     owner_id:         null,
-    /* R-025 — same UTC trap as the renewal and extension quotes beside it. `validUntil`
-       is built from a YYYY-MM-DD at UTC midnight plus whole days, so no shift there. */
+    /* R-025 — same UTC trap as the renewal and extension quotes beside it. `expiresDate`
+       is calendar-day arithmetic on YYYY-MM-DD strings, so no shift there. */
     created_date:     istToday(),
-    expires_date:     utcDateISO(validUntil),
+    expires_date:     expiresDate,
     line_items:       lineItems,
     subtotal:         subtotalExGst,
     total_cost:       (wholesalePerSeat + prevWholesalePerSeat) * input.additionalSeats,
@@ -377,15 +380,18 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     is_renewal:       false,
     is_add_seats:     true,   // 0052: record_payment skips sub handling → no duplicate sub
     extension_months: 0,
-    // factorPpm is an integer (547945 = 54.7945%), so the note records the exact
-    // fraction charged instead of a rounded float that cannot be reconciled.
-    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
+    /* R-813: the customer reads only the first part — the period, in words. The audit text
+       (subscription id, who backdated, the exact factor) sits after STAFF_NOTE_MARKER, and
+       every customer surface cuts there (lib/quotes/customer-notes.ts). factorPpm is an
+       integer (547945 = 54.7945%), so the audit records the exact fraction charged instead
+       of a rounded float that cannot be reconciled. */
+    notes:            composeQuoteNotes(addSeatsCustomerNote(effective, chargeTo), `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
       effective < today ? ` (backdated${input.effectiveDateSetBy ? ` by ${input.effectiveDateSetBy}` : ""} on ${today})` : ""
     }${
       prev && quoted.previous
         ? `. Crosses a term: ${quoted.previous.proration.chargedDays} of ${prev.termDays} days of the previous term (to ${prev.to}) + current term from ${currentFrom}`
         : ""
-    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`),
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };

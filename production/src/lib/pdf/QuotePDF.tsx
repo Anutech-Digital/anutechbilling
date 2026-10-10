@@ -46,6 +46,7 @@ import { includedSupportLine, type IncludedSupportLine } from "./quote-support-l
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -425,10 +426,12 @@ export function QuotePDF(props: QuotePDFProps) {
     quoteId, customerName, contactName, contactEmail, contactPhone, customerState, customerGstin,
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
-    interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, notes, termsConditions, isRenewal,
+    interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
     isPaid = false, oneTime = false,
     upiQrDataUrl, upiVpa,
   } = props;
+  /* R-813: a customer document — never the staff-only audit part of the notes. */
+  const notes = customerQuoteNotes(props.notes, lineItems);
   const includedSupport = props.includedSupport !== undefined
     ? props.includedSupport
     : includedSupportLine(lineItems);

@@ -18,6 +18,7 @@ import { acceptedPayNow } from "./accepted-pay";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
+import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
 import { isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { QuoteReplaced, replacementHref } from "./replaced";
@@ -169,7 +170,8 @@ export default async function QuoteAcceptPage(props: Props) {
     tax_rate: quote.tax_rate,
     amount: quote.amount,
     expires_date: quote.expires_date,
-    notes: quote.notes,
+    /* R-813: only the customer part — the staff-only audit never leaves the server. */
+    notes: customerQuoteNotes(quote.notes, (quote.line_items ?? []) as QuoteLineItem[]),
     billing_cycle: quote.billing_cycle,
     currency: quote.currency,
     exchange_rate: quote.exchange_rate,

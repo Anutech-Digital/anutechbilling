@@ -121,18 +121,18 @@ describe("adding seats does not move the renewal date", () => {
   });
 
   /**
-   * The pro-rata quote must expire against the PARENT's renewal, not a year from today.
-   * An expiry a year out would let a customer accept a stale pro-rata price after the term
-   * it was calculated for had already ended.
+   * R-814: the pro-rata quote expires after the normal 30-day validity, never past the
+   * PARENT's renewal — it used to run to renewal + grace (362 days on Q-5F40-27-0012), so a
+   * customer could accept a pro-rata price long after the days it charged for had gone.
    */
-  it("expires the pro-rata quote from the parent's renewal date plus grace", async () => {
-    const renewal = futureISO(200);
-    const { in: args, captured } = input({ renewalDate: renewal, graceDays: 7 });
+  it("expires the pro-rata quote after the normal validity, capped at the parent's renewal", async () => {
+    const { in: args, captured } = input({ renewalDate: "2027-03-31", graceDays: 7, todayISO: "2026-10-10" });
     await addSeats(args);
+    expect(captured.quotes[0].expires_date).toBe("2026-11-09");
 
-    const expected = new Date(renewal);
-    expected.setDate(expected.getDate() + 7);
-    expect(captured.quotes[0].expires_date).toBe(expected.toISOString().slice(0, 10));
+    const near = input({ renewalDate: "2026-10-20", graceDays: 7, todayISO: "2026-10-10" });
+    await addSeats(near.in);
+    expect(near.captured.quotes[0].expires_date).toBe("2026-10-20");
   });
 
   it("marks the quote as an add-seats top-up, so record_payment makes no second subscription", async () => {

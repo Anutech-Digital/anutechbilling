@@ -28,6 +28,7 @@ import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
+import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -107,11 +108,13 @@ export function QuotePreviewDialog({
   exchangeRate,
   billingCycle,
   validityDays,
-  notes,
+  notes: rawNotes,
   termsConditions,
   isProspect = false,
   oneTime = false,
 }: Props) {
+  /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
+  const notes = customerQuoteNotes(rawNotes, lineItems);
   // First letter of tenant name → brand monogram (e.g. "Excel Technologies" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
   const expiresOn = new Date(Date.now() + validityDays * 86400000);

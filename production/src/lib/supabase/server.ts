@@ -23,6 +23,15 @@ import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
 import { authProvider } from "@/server/auth/authjs";
 import { accessTokenForRequest, adminAuth, serverAuth } from "@/server/auth/compat";
 import { actorHeaders } from "./admin-actor";
+import { resilientFetch } from "./resilient-fetch";
+
+/* R-710: one retry when api.anutech.in drops a connection (see resilient-fetch.ts). */
+const serverFetch = resilientFetch({ label: "supabase-server" });
+const adminFetch = resilientFetch({
+  label: "supabase-admin",
+  baseFetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+    fetch(input, { ...init, cache: "no-store" })) as typeof fetch,
+});
 
 type ServerClient = ReturnType<typeof createServerClient<Database>>;
 
@@ -71,9 +80,12 @@ export function createClient(): ServerClient {
       },
       // DATA_GATEWAY=1: /rest/v1 is answered in-process by the Prisma gateway (src/server/postgrest)
       // instead of the VM's PostgREST. Auth and storage still go to the VM until they move.
-      ...(gatewayEnabled()
-        ? { global: { fetch: gatewayFetch(process.env.NEXT_PUBLIC_SUPABASE_URL!, { allowService: false }) } }
-        : {}),
+      // Otherwise R-710's resilient fetch to the VM.
+      global: {
+        fetch: gatewayEnabled()
+          ? gatewayFetch(process.env.NEXT_PUBLIC_SUPABASE_URL!, { allowService: false })
+          : serverFetch,
+      },
     },
   );
 }
@@ -123,7 +135,7 @@ function adminClient(headers: Record<string, string>): ServerClient {
         headers,
         fetch: gatewayEnabled()
           ? gatewayFetch(process.env.NEXT_PUBLIC_SUPABASE_URL!, { allowService: true })
-          : noStoreFetch,
+          : adminFetch,
       },
     },
   );

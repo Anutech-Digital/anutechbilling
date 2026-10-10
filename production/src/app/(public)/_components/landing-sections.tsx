@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
+import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 import React from "react";
 
 /* ───────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ export function Hero() {
             className="mt-7 flex flex-wrap justify-center gap-3"
           >
             <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
-              <Link href="/signup">Start free trial</Link>
+              <Link href="/signup">Get started free</Link>
             </Button>
             <Button asChild variant="ghost" size="lg" icon="rocket" className="border border-hairline bg-paper hover:bg-paper-2 transition-colors">
               <Link href="/dashboard?preview=1">Explore Interactive Demo</Link>
@@ -83,7 +84,7 @@ export function Hero() {
             transition={{ duration: 0.5, delay: 0.6 }}
             className="mt-4 text-xs text-ink-3"
           >
-            14-day trial · No credit card · ₹0 to get started
+            {PRICING_LINE}
           </motion.p>
         </div>
 
@@ -598,7 +599,7 @@ export function FinalCta() {
         </p>
         <div className="flex flex-wrap justify-center gap-3 relative z-10">
           <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
-            <Link href="/signup">Start free trial</Link>
+            <Link href="/signup">Get started free</Link>
           </Button>
           <Button asChild variant="default" size="lg" className="hover:bg-paper-2 transition-colors">
             <Link href={"/about" as never}>Read the founder story</Link>

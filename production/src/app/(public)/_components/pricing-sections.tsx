@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { SLA } from "@/site/lib/config";
+import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 import React from "react";
 
 /* ───────────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ const TIERS = [
       "CSV bank statement import",
       "Email support · 48-hour response",
     ],
-    cta: "Start free trial",
+    cta: "Get started free",
     href: "/signup",
   },
   {
@@ -119,7 +120,7 @@ const TIERS = [
       "Setu Account Aggregator (live bank sync)",
       "Email + WhatsApp support · 12-hour response",
     ],
-    cta: "Start free trial",
+    cta: "Get started free",
     href: "/signup",
   },
   {
@@ -223,7 +224,7 @@ function TierCard({ tier, index }: { tier: (typeof TIERS)[number]; index: number
           )}
         </Button>
         <p className="mt-2 text-center text-2xs text-ink-3">
-          {tier.name === "Pro" ? `Reply ${SLA.quote}` : "14-day trial · No credit card"}
+          {tier.name === "Pro" ? `Reply ${SLA.quote}` : PRICING_LINE}
         </p>
       </div>
     </motion.div>
@@ -414,7 +415,7 @@ export function PricingCTA() {
         className="mx-auto max-w-3xl px-6 py-16 text-center sm:py-20 relative z-10"
       >
         <h2 className="mb-4 font-serif text-3xl leading-tight tracking-tight sm:text-4xl">
-          Try it free for 14 days.
+          Free during beta.
         </h2>
         <p className="mx-auto mb-7 max-w-xl text-base leading-relaxed text-ink-2">
           No credit card. No sales call. Bring your existing leads via CSV and run
@@ -422,7 +423,7 @@ export function PricingCTA() {
         </p>
         <div className="flex flex-wrap justify-center gap-3">
           <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
-            <Link href="/signup">Start free trial</Link>
+            <Link href="/signup">Get started free</Link>
           </Button>
           <Button asChild variant="default" size="lg" className="hover:bg-paper-2">
             <Link href="/">Back to home</Link>

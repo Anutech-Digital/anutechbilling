@@ -8,6 +8,11 @@
  */
 import { isoToIstHhmm } from "./ist-time";
 
+/** R-810: the "Changes by staff" list lives under ["attendance"], so every attendance save
+ *  that invalidates ["attendance"] (Fix attendance, Mark absent, review, kiosk, ...) refreshes
+ *  it too — no page reload needed to see the new line. */
+export const ATTENDANCE_CHANGES_KEY = ["attendance", "changes"] as const;
+
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json | undefined };
 
 const SHOWN: Record<string, string> = {

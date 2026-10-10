@@ -10,6 +10,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { COMPANY, WHATSAPP_URL, WHATSAPP_READY, CLIENT_AREA_URL } from "@/site/lib/config";
+import { floatingButtons, hideFloatingOn, useIsMobile } from "./floating";
 
 export function UtilityBar() {
   const pathname = usePathname();
@@ -168,29 +169,30 @@ export function Footer() {
   );
 }
 
-/**
- * R-230 (6 Oct 2026): on a phone the floating boxes (AI chat launcher, WhatsApp pill, consent
- * banner) stacked over the bottom of the page — on /checkout that is the Pay button. Where the
- * visitor is paying or has just paid, the AI launcher and WhatsApp pill do not float at all:
- * the page itself is the whole task.
- */
-export function hideFloatingOn(pathname: string | null | undefined): boolean {
-  if (!pathname) return false;
-  return ["/checkout", "/done"].some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
+/* R-230 (6 Oct 2026): nothing floats on /checkout and /done. R-464 (10 Oct 2026): one floating
+   action below 980px. The rules live in ./floating (shared with the AI launcher); hideFloatingOn
+   is re-exported here because the R-230 callers and tests import it from Chrome. */
+export { hideFloatingOn };
 
 export function WhatsAppButton() {
   const pathname = usePathname();
+  const isMobile = useIsMobile();
   /* R-078 (4 Oct 2026): the floating button linked to the placeholder 919800000000 on every
      page, and sat over the Google Ads landing page price. Hidden until the real number is set
-     in site/lib/config.ts (WHATSAPP_NUMBER), which flips WHATSAPP_READY. */
-  if (!WHATSAPP_READY || hideFloatingOn(pathname)) return null;
+     in site/lib/config.ts (WHATSAPP_NUMBER), which flips WHATSAPP_READY.
+     R-464: below 980px the pill does not float at all — it covered the homepage form and
+     doubled the hero's own "WhatsApp us" button. The AI launcher is the one floating action on
+     a phone (its panel offers WhatsApp). site.css `.hide-mobile` (server-rendered, !important)
+     hides it from the first paint, before hydration; floatingButtons() is the same rule in JS. */
+  const show = floatingButtons({ pathname, isMobile, avoidOnScreen: false, whatsappReady: WHATSAPP_READY }).whatsapp;
+  if (!show) return null;
   return (
     <a
       href={WHATSAPP_URL}
       target="_blank"
       rel="noopener"
       aria-label="WhatsApp us"
+      className="floating-wa hide-mobile"
       style={{
         position: "fixed", right: 22, bottom: 22, zIndex: 90,
         display: "inline-flex", alignItems: "center", gap: 9,

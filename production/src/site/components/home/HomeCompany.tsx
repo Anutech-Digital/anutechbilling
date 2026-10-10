@@ -78,7 +78,11 @@ export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
             {WHATSAPP_READY && <a className="hc-btn hc-btn-wa" href={WA("Hi Anutech — we want to automate some office work. Can we talk?")} target="_blank" rel="noopener">WhatsApp us</a>}
           </div>
         </div>
-        <StartForm />
+        {/* R-464: a wrapper that outlives the form→thanks swap, so the floating AI launcher
+            (phone only) stays aside while this box is on screen. */}
+        <div data-avoid-floating="">
+          <StartForm />
+        </div>
       </section>
 
       {/* ── WHAT WE AUTOMATE ─────────────────────────────────────────────────── */}

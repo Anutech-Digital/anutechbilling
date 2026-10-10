@@ -15,6 +15,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 
 const KEY = ["attendance-ingest"] as const;
+const STATUS_KEY = ["attendance-ingest-status"] as const;
 
 export function useAttendanceIngest() {
   return useQuery({
@@ -39,7 +40,38 @@ export function useRegenerateIngestKey() {
       if (!res.ok || !json.key) throw new Error(json.error ?? "Could not make a new key");
       return json.key;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); toast.success("New key generated — update it in the bridge."); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); qc.invalidateQueries({ queryKey: STATUS_KEY }); toast.success("New key generated — update it in the bridge."); },
+    onError: (e) => toastError(e),
+  });
+}
+
+/** R-609: does this workspace have a machine key at all? Any member may ask; the key never comes back. */
+export function useIngestKeyStatus() {
+  return useQuery({
+    queryKey: STATUS_KEY,
+    queryFn: async (): Promise<{ hasKey: boolean }> => {
+      const res = await fetch("/api/attendance/ingest-key?status=1");
+      const json = (await res.json().catch(() => ({}))) as { hasKey?: boolean; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Could not check the machine key");
+      return { hasKey: Boolean(json.hasKey) };
+    },
+  });
+}
+
+/** R-609: owner turns the machine key off — /api/attendance/punch then refuses every batch. */
+export function useTurnOffIngestKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/attendance/ingest-key", { method: "DELETE" });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Could not turn the key off. The old key still works — try again.");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: STATUS_KEY });
+      qc.invalidateQueries({ queryKey: KEY });
+      toast.success("Machine key turned off — no machine can send attendance now.");
+    },
     onError: (e) => toastError(e),
   });
 }

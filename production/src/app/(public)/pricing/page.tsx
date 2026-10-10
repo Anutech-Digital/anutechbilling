@@ -134,7 +134,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Do you have a free forever plan?",
-    a: "No — and we won&rsquo;t. We&rsquo;d rather give every paying customer real support than juggle a free tier we can&rsquo;t serve well. 14-day trial covers most evaluation needs.",
+    a: "No — and we won&rsquo;t. We&rsquo;d rather give every paying customer real support than juggle a free tier we can&rsquo;t serve well. During beta every feature is free, so you can try it all before you pay.",
   },
   {
     q: "Is my data secure?",

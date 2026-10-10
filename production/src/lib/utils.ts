@@ -106,14 +106,29 @@ export function num(n: number | null | undefined): string {
   return n.toLocaleString("en-IN");
 }
 
+/** A calendar date with no time ("2026-10-10") — e.g. a Postgres `date` column. */
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 /**
  * Format a date in IST as "DD MMM YYYY" (e.g., "15 May 2026").
+ *
+ * "long" adds the IST time ("10 Oct 2026 · 02:47 pm") — but ONLY for a real timestamp.
+ * R-815: a date-only value ("2026-10-10") has no time; `new Date()` reads it as midnight
+ * UTC, and the quote's Workflow history printed "Quote created … · 05:30 am" for a quote
+ * made at 14:47. A date-only string is shown as just its calendar date (short and long).
  */
 export function formatDate(
   input: Date | string | number | null | undefined,
   format: "short" | "long" | "relative" = "short"
 ): string {
   if (!input) return "—";
+  const dateOnly = typeof input === "string" ? DATE_ONLY_RE.exec(input.trim()) : null;
+  if (dateOnly && format !== "relative") {
+    const cal = new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])));
+    if (isNaN(cal.getTime())) return "—";
+    const mon = cal.toLocaleString("en-IN", { month: "short", timeZone: "UTC" });
+    return `${cal.getUTCDate()} ${mon} ${cal.getUTCFullYear()}`;
+  }
   const d = typeof input === "string" || typeof input === "number" ? new Date(input) : input;
   if (isNaN(d.getTime())) return "—";
 
@@ -126,9 +141,11 @@ export function formatDate(
     return formatDate(d, "short");
   }
 
-  const day = d.getDate();
+  // Day + year in IST as well — they used the machine's zone while the month used IST,
+  // so a non-IST server or browser could print a mixed-up date near midnight.
+  const day = Number(d.toLocaleString("en-IN", { day: "numeric", timeZone: "Asia/Kolkata" }));
   const month = d.toLocaleString("en-IN", { month: "short", timeZone: "Asia/Kolkata" });
-  const year = d.getFullYear();
+  const year = Number(d.toLocaleString("en-IN", { year: "numeric", timeZone: "Asia/Kolkata" }));
   if (format === "long") {
     const time = d.toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata", hour12: true });
     return `${day} ${month} ${year} · ${time}`;
