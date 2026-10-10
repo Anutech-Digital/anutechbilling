@@ -73,14 +73,35 @@ describe("R-830 Ask tab images", () => {
     expect(screen.getAllByAltText(/^Image \d to send$/)).toHaveLength(2);
   });
 
-  it("stops at 5 with 'Max 5 images' and refuses a file over 5 MB", async () => {
+  it("stops at 5 with 'Max 5 images' and refuses a file over 5 MB — as a plain note", async () => {
     await openPanel();
     await attach([png("big.png", 6 * 1024 * 1024)]);
-    expect(h.toastError).toHaveBeenCalledWith("Image too large — max 5 MB");
+    expect(screen.getByTestId("ai-help-image-note").textContent).toBe("Image too large — max 5 MB");
     await attach(Array.from({ length: 6 }, (_, i) => png(`${i}.png`)));
-    expect(h.toastError).toHaveBeenCalledWith("Max 5 images");
+    expect(screen.getByTestId("ai-help-image-note").textContent).toBe("Max 5 images");
     expect(screen.getAllByAltText(/^Image \d to send$/)).toHaveLength(5);
     expect((screen.getByRole("button", { name: "Attach images" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Remove image 1" }));
+    expect(screen.queryByTestId("ai-help-image-note")).toBeNull();
+  });
+
+  it("image limits never register as a caught error (no error toast, no red icon, nothing on the report)", async () => {
+    await openPanel();
+    await attach([png("big.png", 6 * 1024 * 1024)]);
+    await attach([png("doc.pdf", 10, "application/pdf")]);
+    expect(screen.getByTestId("ai-help-image-note").textContent).toBe("Only PNG, JPG or WebP images");
+    await attach(Array.from({ length: 6 }, (_, i) => png(`${i}.png`)));
+    expect(screen.getByTestId("ai-help-image-note").textContent).toBe("Max 5 images");
+
+    expect(h.toastError).not.toHaveBeenCalled();
+    /* The caught-error path only listens to sonner error toasts — none exists, so the trail stays clean. */
+    expect(document.querySelector("[data-sonner-toast][data-type=error]")).toBeNull();
+    expect(screen.queryByText(/Error caught/)).toBeNull();
+    const helpBtn = screen.getByRole("button", { name: /^Help —/ });
+    expect(helpBtn.getAttribute("title") ?? "").not.toMatch(/^Error caught/);
+    fireEvent.click(screen.getByRole("tab", { name: /Report/ }));
+    expect(screen.queryByText(/goes with this report/)).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Ask/ })); // the tab choice outlives the test
   });
 
   it("takes images dropped on the Ask tab", async () => {
