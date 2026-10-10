@@ -3,6 +3,7 @@ import {
   parseArgs,
   extractCardIds,
   parseAddedMigrations,
+  dropAlreadyInPrisma,
   groupRunsBySha,
   pickGreen,
   decide,
@@ -149,5 +150,17 @@ describe("staging train — safety + text", () => {
     expect(dry.join("\n")).toMatch(/Cards: R-386[\s\S]*Migrations: koi nahi[\s\S]*--push/);
     const conflict = summaryLines({ pick: D, cards: [], migrations: [], decision: { action: "merge-dry" }, merged: false });
     expect(conflict.join("\n")).toMatch(/CONFLICT/);
+  });
+});
+
+describe("R-540: migrations staging already has under prisma/migrations", () => {
+  it("drops an added supabase migration whose name is a staging prisma folder", () => {
+    const added = [
+      "production/supabase/migrations/20261006130000_feedback_checked.sql",
+      "production/supabase/migrations/20261010050000_attendance_change_log.sql",
+    ];
+    const tree = "production/prisma/migrations/0_init\nproduction/prisma/migrations/20261006130000_feedback_checked\nproduction/prisma/migrations/migration_lock.toml\n";
+    expect(dropAlreadyInPrisma(added, tree)).toEqual(["production/supabase/migrations/20261010050000_attendance_change_log.sql"]);
+    expect(dropAlreadyInPrisma(added, "")).toEqual(added);
   });
 });
