@@ -41,6 +41,9 @@ export type PublicQuote = {
    *  that currency; the ₹ books value stays canonical server-side. */
   currency?: string | null;
   exchange_rate?: number | null;
+  /** R-806: "covers 25 Sep 2026 to 31 Aug 2027" / "covers 12 months"; null = unknown,
+   *  so no period is claimed. Built server-side by lib/quotes/service-period. */
+  service_period?: string | null;
 };
 export type PublicLine = {
   id: string;
@@ -884,9 +887,11 @@ export function QuoteAcceptView({
                     <span className="text-sm tabular-nums">{fmtC(inst ? inst.instalmentsGross : payableTotal)}/yr</span>
                   </div>
                 )}
+                {/* R-806: was a hard-coded "covers full 12 months of service" — shown even on
+                    a 340-day pro-rata add-seats quote. Now the real period, or no claim. */}
                 {!perInvoice && billingN === 1 && (
-                  <div className="mt-1.5 text-2xs text-emerald font-medium">
-                    ✓ One-time payment · covers full 12 months of service
+                  <div className="mt-1.5 text-2xs text-emerald font-medium" data-testid="service-period">
+                    {quote.service_period ? `✓ One-time payment · ${quote.service_period}` : "✓ One-time payment"}
                   </div>
                 )}
               </div>

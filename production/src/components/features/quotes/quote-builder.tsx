@@ -14,6 +14,7 @@
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
+import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
@@ -875,6 +876,11 @@ export function QuoteBuilder() {
   const cycleLabel = ({ yearly: "Billed yearly", half_yearly: "Billed half-yearly", quarterly: "Billed quarterly", monthly: "Billed monthly" } as Record<string, string>)[effectiveCycle] ?? "Billed yearly";
   const billingUnit        = cycleUnitLabel(effectiveCycle);
   const showPerInvoice     = billingN > 1;
+  /* R-806: what one payment covers — from the lines' own dates/term, never assumed. */
+  const servicePeriodLabel = servicePeriodText(quoteServicePeriod({
+    lines:    lineItems,
+    isOneOff: isInvoiceMode && !invoiceRecurring,
+  }));
   const totalsLabel        =
     billingN === 12 ? "Subtotal (monthly recurring)" :
     billingN === 4  ? "Subtotal (quarterly)"         :
@@ -2796,9 +2802,11 @@ export function QuoteBuilder() {
                         Round off total
                       </label>
                     )}
+                    {/* R-806: was "pay once for full year" on every single-invoice quote,
+                        a pro-rata add-seats quote included. The real period, or no claim. */}
                     {!showPerInvoice && billingN === 1 && (
-                      <div className="text-2xs text-emerald font-medium mt-0.5">
-                        ✓ Single invoice · pay once for full year
+                      <div className="text-2xs text-emerald font-medium mt-0.5" data-testid="builder-service-period">
+                        {servicePeriodLabel ? `✓ Single invoice · ${servicePeriodLabel}` : "✓ Single invoice"}
                       </div>
                     )}
                     {isForeign && (
