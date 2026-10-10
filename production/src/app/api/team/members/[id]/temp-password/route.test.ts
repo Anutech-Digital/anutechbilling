@@ -159,8 +159,8 @@ describe("POST /api/team/members/[id]/temp-password", () => {
     nothingChanged();
   });
 
-  it("422 for a typed password under 12 characters", async () => {
-    expect((await call(SALES, { password: "Short9pass" })).status).toBe(422);
+  it("422 for a typed password under 8 characters", async () => {
+    expect((await call(SALES, { password: "Sh0rt9p" })).status).toBe(422);
     nothingChanged();
   });
 
@@ -188,7 +188,7 @@ describe("POST /api/team/members/[id]/temp-password", () => {
     }
   });
 
-  it("uses an owner-typed password of 12+ characters", async () => {
+  it("uses an owner-typed password of 8+ characters", async () => {
     const r = await call(SALES, { password: "Kites-river-42" });
     expect(r.status).toBe(200);
     expect(((await r.json()) as { password: string }).password).toBe("Kites-river-42");

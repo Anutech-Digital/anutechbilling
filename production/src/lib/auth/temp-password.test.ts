@@ -56,8 +56,9 @@ describe("generateTempPassword", () => {
 });
 
 describe("checkTypedTempPassword", () => {
-  it("needs 12+ characters even though normal passwords need 8", () => {
-    expect(checkTypedTempPassword("Short9pass")).not.toBeNull();
+  it("needs 8+ characters, like a normal password (R-534: was 12)", () => {
+    expect(checkTypedTempPassword("Sh0rt9p")).not.toBeNull();
+    expect(checkTypedTempPassword("Kites-42")).toBeNull();
     expect(checkTypedTempPassword("Kites-river-42")).toBeNull();
   });
   it("still applies the normal rules", () => {

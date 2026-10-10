@@ -21,8 +21,8 @@
  */
 import { checkNewPassword, type PasswordProblem } from "./password-rules";
 
-/** An owner-typed temporary password must be at least this long. */
-export const TEMP_PASSWORD_MIN_LENGTH = 12;
+/** An owner-typed temporary password must be at least this long. Pardeep, 10 Oct 2026: 8, same as a normal password (was 12, R-391). Generated ones stay 16. */
+export const TEMP_PASSWORD_MIN_LENGTH = 8;
 /** Length of a generated one. 16 chars over a 55-symbol alphabet ≈ 92 bits. */
 export const TEMP_PASSWORD_GENERATED_LENGTH = 16;
 
