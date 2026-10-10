@@ -234,3 +234,32 @@ describe("validation still happens before anything is claimed", () => {
     expect(state.claims).toHaveLength(0);
   });
 });
+
+describe("R-800 — effective date", () => {
+  it("a future effective date is refused with 400 before any claim or work", async () => {
+    const res = await post({ additional_seats: 2, idempotency_key: KEY, effective_date: "2999-01-01" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe("invalid_effective_date");
+    expect(state.apply).not.toHaveBeenCalled();
+    expect(state.claims).toHaveLength(0);
+  });
+
+  it("a date before the term start is refused", async () => {
+    state.sub = { ...state.sub, start_date: "2026-04-01" };
+    const res = await post({ additional_seats: 2, idempotency_key: KEY, effective_date: "2026-03-31" });
+    expect(res.status).toBe(400);
+    expect(state.apply).not.toHaveBeenCalled();
+  });
+
+  it("a valid backdated date is passed to applySeatIncrease with who chose it, and kept on the claim", async () => {
+    state.sub = { ...state.sub, start_date: "2026-04-01" };
+    state.apply = vi.fn(async () => ({ ...okResult, effectiveDate: "2026-04-15" }));
+    const res = await post({ additional_seats: 2, idempotency_key: KEY, effective_date: "2026-04-15" });
+    expect(res.status).toBe(200);
+    const args = (state.apply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { effectiveDate: string; effectiveDateSetBy: unknown };
+    expect(args.effectiveDate).toBe("2026-04-15");
+    expect("effectiveDateSetBy" in args).toBe(true);
+    expect((state.claims[0].result as { effectiveDate: string }).effectiveDate).toBe("2026-04-15");
+    expect(state.claims[0].requested_by).toBe("U1");
+  });
+});

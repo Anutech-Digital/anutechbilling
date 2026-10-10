@@ -39,6 +39,7 @@ import { addSeatsErrorMessage, type AddSeatsOk } from "./add-seats-error";
 import { seatChargeWindow } from "@/lib/subscriptions/seat-charge-window";
 import { previewCharge } from "@/lib/subscriptions/seat-request";
 import { istToday } from "@/lib/dates/ist";
+import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 
 interface Props {
   sub:          Subscription;
@@ -58,18 +59,25 @@ interface Props {
 export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }: Props) {
   const router = useRouter();
   const [seatsStr,   setSeatsStr]   = React.useState(String(initialSeats ?? 1));
+  /* R-800: the date the seats were actually provisioned. Default today; may be backdated to
+     the start of the current term, never in the future (lib/subscriptions/seat-effective-date). */
+  const today = istToday();
+  const [effectiveDate, setEffectiveDate] = React.useState(today);
   /* Re-seed when the dialog is REOPENED for a different subscription. Without this the
      box keeps whatever was typed the last time it was open, which on a prefilled dialog
      means the second customer silently inherits the first one's gap. */
   React.useEffect(() => {
-    if (open) setSeatsStr(String(initialSeats ?? 1));
+    if (open) {
+      setSeatsStr(String(initialSeats ?? 1));
+      setEffectiveDate(istToday());
+    }
   }, [open, initialSeats, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
   /* R-450: a failed add used to show only a toast, easy to miss behind the open dialog
      ("nothing happens"). The reason now also stays in the dialog, next to the button,
      until the operator changes something or tries again. */
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-  React.useEffect(() => { setSubmitError(null); }, [open, sub.id, seatsStr]);
+  React.useEffect(() => { setSubmitError(null); }, [open, sub.id, seatsStr, effectiveDate]);
 
   const additionalSeats = Math.max(0, Math.min(5000, Math.round(Number(seatsStr) || 0)));
 
@@ -85,14 +93,18 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
      attempt wrote nothing, so pressing the button again after fixing the cause is a
      retry of the same intent, not a new one. */
   const keyRef = React.useRef<string | null>(null);
-  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats]);
+  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats, effectiveDate]);
 
   /* Pro-rata preview — the server is the source of truth, and this now uses its rules:
      R-527 seatChargeWindow (a split-billed subscription is charged to the end of the CURRENT
      instalment, not to renewal) and prorate() via previewCharge (days over the real term,
      integer paise). It was days-to-renewal ÷ 365 here, so a quarterly sub showed the year. */
   const renewal = sub.renewal_date ? new Date(sub.renewal_date) : null;
-  const window = seatChargeWindow(sub, istToday());
+  const bounds = seatEffectiveBounds(sub, today);
+  const effCheck = checkSeatEffectiveDate(effectiveDate, sub, today);
+  const effectiveError = effCheck.ok ? null : effCheck.message;
+  const chargeFrom = effCheck.ok ? effCheck.date : today;
+  const window = seatChargeWindow(sub, today, chargeFrom);
   const daysRemaining = window ? Math.max(0, window.remainingDays) : 0;
   const termDaysForPreview = window?.termDays ?? 365;
   const factor = termDaysForPreview > 0 ? daysRemaining / termDaysForPreview : 0;
@@ -122,11 +134,16 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = Math.round((annualPerSeat * newSeats) / 12);
 
-  const isTermEnded = daysRemaining <= 0;
+  /* Term has ended = TODAY is past renewal; a backdated date does not reopen it. */
+  const isTermEnded = (seatChargeWindow(sub, today)?.remainingDays ?? 0) <= 0;
 
   const onSubmit = async () => {
     if (additionalSeats < 1) {
       toast.error("Add at least 1 seat.", { description: "Enter how many seats to add to this subscription." });
+      return;
+    }
+    if (effectiveError) {
+      setSubmitError(effectiveError);
       return;
     }
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
@@ -136,7 +153,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       const res  = await fetch(`/api/subscriptions/${sub.id}/add-seats`, {
         method:  "POST",
         headers: { "content-type": "application/json" },
-        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current }),
+        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current, effective_date: chargeFrom }),
       });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -219,14 +236,37 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
               </Button>
             </div>
 
+            {/* R-800: when the seats were provisioned — the charge runs from this date. */}
+            <label htmlFor="add-seats-effective-date" className="block text-xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
+              Effective date
+            </label>
+            <Input
+              id="add-seats-effective-date"
+              type="date"
+              value={effectiveDate}
+              min={bounds?.min}
+              max={bounds?.max}
+              onChange={(e) => setEffectiveDate(e.target.value)}
+              aria-invalid={effectiveError ? true : undefined}
+              aria-describedby="add-seats-effective-date-help"
+              className="font-mono mb-1"
+            />
+            <p id="add-seats-effective-date-help" className={effectiveError ? "text-2xs text-rose mb-4" : "text-2xs text-ink-3 mb-4"}>
+              {effectiveError ?? `Date the seats were added. Today or earlier, not before ${bounds ? formatDate(bounds.min) : "the term start"}.`}
+            </p>
+
             {/* Pro-rata math */}
             <div className="bg-paper-2 rounded-md p-3 mb-4 text-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-ink-3">Effective date</span>
+                <span className="tabular-nums text-ink-2">{formatDate(chargeFrom)}{chargeFrom < today ? " (backdated)" : ""}</span>
+              </div>
               <div className="flex justify-between mb-1">
                 <span className="text-ink-3">Annual rate per seat</span>
                 <span className="tabular-nums text-ink-2">{rupee(annualPerSeat)}</span>
               </div>
               <div className="flex justify-between mb-1">
-                <span className="text-ink-3">{window?.instalmentPeriod ? `Days left in this instalment (to ${formatDate(window.chargeTo)})` : "Days remaining in term"}</span>
+                <span className="text-ink-3">{window?.instalmentPeriod ? `Days charged in this instalment (to ${formatDate(window.chargeTo)})` : "Days charged (to renewal)"}</span>
                 <span className="tabular-nums text-ink-2">{daysRemaining} days</span>
               </div>
               <div className="flex justify-between mb-1">
@@ -266,7 +306,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             <p className="text-2xs text-ink-3 leading-relaxed mb-1">
               Seats are added <b className="text-ink-2">immediately</b> — provision them with the
               vendor (Google CSP / Microsoft / Zoho). A pro-rata quote will be sent to the customer for
-              the remaining <Badge size="sm" kind="muted">{daysRemaining} days</Badge>
+              {" "}<Badge size="sm" kind="muted">{daysRemaining} days</Badge> from {formatDate(chargeFrom)}
               {window?.instalmentPeriod ? " of this instalment — the later instalments include the new seats." : "."}
             </p>
           </>
@@ -283,7 +323,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             Cancel
           </Button>
           {!isTermEnded && (
-            <Button variant="primary" icon="plus" onClick={onSubmit} disabled={submitting || additionalSeats < 1}>
+            <Button variant="primary" icon="plus" onClick={onSubmit} disabled={submitting || additionalSeats < 1 || !!effectiveError}>
               {submitting ? "Adding…" : `Add ${additionalSeats} seat${additionalSeats === 1 ? "" : "s"}`}
             </Button>
           )}

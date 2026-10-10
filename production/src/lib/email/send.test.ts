@@ -23,6 +23,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { EmailLogEntry } from "./log";
 import type { EmailSendResult } from "./send";
+// R-541: imported statically, not with `await import("./send")` inside beforeEach. A dynamic
+// import there made the FIRST test pay for loading send.ts and its whole graph (AI autonomy,
+// transports, …) inside the 10s hook budget; under a full parallel `vitest run` that load
+// queues behind every other file and timed out. A static import loads during collection, which
+// has no per-test timeout. vi.mock calls are hoisted above it, so the doubles still apply.
+import { sendEmail } from "./send";
 
 // ── Doubles ───────────────────────────────────────────────────────────────────
 // Every external edge is mocked: no network, no database, no Google.
@@ -87,15 +93,12 @@ function loggedRow() {
   return recorded[0];
 }
 
-let sendEmail: typeof import("./send").sendEmail;
-
-beforeEach(async () => {
+beforeEach(() => {
   recorded.length = 0;
   sendViaGmail.mockReset();
   tenantRow = null;
   tokenRow = null;
   vi.stubEnv("RESEND_API_KEY", "re_test_key");
-  ({ sendEmail } = await import("./send"));
 });
 
 afterEach(() => {

@@ -25,7 +25,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
-import { prorate, rupeesToPaise, paiseToRupees } from "./proration";
+import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
 import { istToday, utcDateISO } from "@/lib/dates/ist";
 
@@ -173,6 +173,17 @@ export interface AddSeatsInput {
    * runs to renewal: the vendor commitment for the seats is the whole remaining term.
    */
   chargeWindow?:      { remainingDays: number; chargeTo: string } | null;
+  /**
+   * R-800: the date the seats were actually provisioned (YYYY-MM-DD), already validated by
+   * checkSeatEffectiveDate — never in the future, never before the term start. Absent =
+   * today, as before. The pro-rata charge runs FROM this date; with a chargeWindow, the
+   * caller has already measured remainingDays from it.
+   */
+  effectiveDate?:     string;
+  /** R-800: who chose a backdated effective date — written into the quote note. */
+  effectiveDateSetBy?: string | null;
+  /** Today (IST, YYYY-MM-DD). Injected for tests; defaults to istToday(). */
+  todayISO?:          string;
 }
 
 export interface AddSeatsResult {
@@ -180,6 +191,8 @@ export interface AddSeatsResult {
   quoteId:      string;
   amount:       number;            // pro-rata GST-incl ₹
   proRataDays:  number;
+  /** R-800: the date the charge runs from (today unless backdated). */
+  effectiveDate: string;
   newSeats:     number;
   newMrr:       number;
   /** Newly created draft Purchase Order for the additional seats (null if catalog/vendor info missing) */
@@ -188,25 +201,10 @@ export interface AddSeatsResult {
 
 export interface AddSeatsError {
   ok:       false;
-  code:     "invalid_seats" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed";
+  code:     "invalid_seats" | "invalid_effective_date" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed";
   message:  string;
 }
 
-/**
- * Days between today and renewal_date. 0 or less means the term has ended → can't
- * pro-rata, the operator should renew instead.
- *
- * No longer clamped to 365 here. `prorate()` clamps to the ACTUAL term, which is
- * the whole point — clamping to a year is what made a two-year term bill as an
- * annual one.
- */
-function daysToRenewal(renewalDate: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(renewalDate);
-  target.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86400000);
-}
 
 export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | AddSeatsError> {
   if (!Number.isFinite(input.additionalSeats) || input.additionalSeats < 1 || input.additionalSeats > 5000) {
@@ -216,12 +214,24 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     return { ok: false, code: "no_renewal_date", message: "Subscription has no renewal_date — extend or renew first" };
   }
 
-  const days = daysToRenewal(input.renewalDate);
-  if (days <= 0) {
+  /* Days between a calendar date and renewal_date — by date, not by elapsed hours
+     (daysBetweenDates), and no longer clamped to 365: prorate() clamps to the ACTUAL term,
+     which is the whole point — clamping to a year made a two-year term bill as annual. */
+  const today = (input.todayISO ?? istToday()).slice(0, 10);
+  const effective = (input.effectiveDate ?? today).slice(0, 10);
+  /* The term has ended when TODAY is past renewal — a backdated effective date does not
+     reopen a closed term. 0 or less → can't pro-rate, the operator should renew instead. */
+  if (daysBetweenDates(today, input.renewalDate) <= 0) {
     return { ok: false, code: "term_ended", message: "Term has ended — issue a renewal quote instead" };
   }
+  if (effective > today) {
+    return { ok: false, code: "invalid_effective_date", message: "Effective date can't be in the future." };
+  }
+  /* R-800: the seats were in use from `effective`, so the remaining term — and the vendor
+     commitment on the draft PO — runs from there. */
+  const days = daysBetweenDates(effective, input.renewalDate);
   /* R-527: days the CUSTOMER is charged for now — the current instalment on a split-billed
-     subscription, else the rest of the term. */
+     subscription, else the rest of the term. Both measured from the effective date. */
   const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : days;
   const chargeTo   = input.chargeWindow?.chargeTo ?? input.renewalDate;
 
@@ -284,7 +294,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
 
   const lineItems: QuoteLineItem[] = [{
     id:         "add-seats-1",
-    name:       `${input.plan} · +${input.additionalSeats} seats (pro-rata to ${chargeTo})`,
+    /* R-800: the line names the period charged, so the invoice built from this quote says
+       which dates the seats are billed for — "from" is the effective date. */
+    name:       `${input.plan} · +${input.additionalSeats} seats (pro-rata from ${effective} to ${chargeTo})`,
     qty:        input.additionalSeats,
     rate:       proRataPerSeat,
     cost:       wholesalePerSeat,
@@ -321,7 +333,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     extension_months: 0,
     // factorPpm is an integer (547945 = 54.7945%), so the note records the exact
     // fraction charged instead of a rounded float that cannot be reconciled.
-    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
+    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. Effective date ${effective}${
+      effective < today ? ` (backdated${input.effectiveDateSetBy ? ` by ${input.effectiveDateSetBy}` : ""} on ${today})` : ""
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
@@ -395,6 +409,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     quoteId:     newQuoteId,
     amount:      totalInclGst,
     proRataDays: chargeDays,
+    effectiveDate: effective,
     newSeats,
     newMrr,
     poId,

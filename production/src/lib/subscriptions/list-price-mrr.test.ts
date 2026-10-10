@@ -4,6 +4,11 @@ import {
 } from "./list-price-mrr";
 import { buildPlanPriceIndex } from "./plan-match";
 import { classifyRows } from "@/components/features/subscriptions/google-subs-parse";
+// R-541: imported statically, once. Each R-317 test used to `await import()` the dialog, so the
+// first one paid for loading a client component and its UI graph (React, sonner, supabase
+// client, …) inside its 5s budget — fine alone (~2.8s), a timeout under a full parallel run.
+// A static import loads during collection, which has no per-test timeout.
+import { parseSubsCsv } from "@/components/features/subscriptions/import-subscriptions-dialog";
 
 /* The Anutech catalogue rows as read from the local DB on 7 Oct 2026 (prices are whatever
    the catalogue says — the code under test never carries a price of its own). */
@@ -122,23 +127,20 @@ describe("R-317: CSV import with no price column — known edition gets list × 
   const custs = new Map([["c-1", { id: "cust-1", name: "One" }]]);
   const csv = (row: string) => `Customer Number,Item Name,Quantity,Domain Name\n${row}`;
 
-  it("known edition → mrr = list × seats (was refused before R-317)", async () => {
-    const { parseSubsCsv } = await import("@/components/features/subscriptions/import-subscriptions-dialog");
+  it("known edition → mrr = list × seats (was refused before R-317)", () => {
     const [r] = parseSubsCsv(csv("C-1,Google Workspace - Business Starter,4,one.com"), custs, new Map(), CATALOG);
     expect(r.error).toBeUndefined();
     expect(r.mrr).toBe(136 * 4);
     expect(r.listPriced).toBe(true);
   });
 
-  it("unknown edition → still refused, with a reason, never a guessed price", async () => {
-    const { parseSubsCsv } = await import("@/components/features/subscriptions/import-subscriptions-dialog");
+  it("unknown edition → still refused, with a reason, never a guessed price", () => {
     const [r] = parseSubsCsv(csv("C-1,Google Workspace,1,one.com"), custs, new Map(), CATALOG);
     expect(r.mrr).toBe(0);
     expect(r.error).toMatch(/no edition/);
   });
 
-  it("a price in the file is never replaced by the list price", async () => {
-    const { parseSubsCsv } = await import("@/components/features/subscriptions/import-subscriptions-dialog");
+  it("a price in the file is never replaced by the list price", () => {
     const [r] = parseSubsCsv(
       "Customer Number,Item Name,Quantity,MRR (₹/month)\nC-1,Google Workspace Business Starter,4,999", custs, new Map(), CATALOG,
     );
