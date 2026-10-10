@@ -4,14 +4,18 @@
  */
 "use client";
 
+import * as React from "react";
 import { ThemeProvider } from "./theme-provider";
 import { QueryProvider } from "./query-provider";
 import { ConfirmProvider } from "./confirm-provider";
 import { LossReasonProvider } from "./loss-reason-provider";
 import { WorkspaceTabsProvider } from "./workspace-tabs-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { installNumberWheelGuard } from "@/lib/ui/number-wheel-guard";
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  // R-836: the mouse wheel never changes a focused number box, anywhere in the app.
+  React.useEffect(() => installNumberWheelGuard(), []);
   return (
     <ThemeProvider>
       <QueryProvider>

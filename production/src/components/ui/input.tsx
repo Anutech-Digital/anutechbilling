@@ -13,6 +13,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { blurNumberInputOnWheel } from "@/lib/ui/number-wheel-guard";
 
 export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "prefix"> {
   /** Prefix node (icon, text) — inside the input border */
@@ -28,7 +29,7 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type = "text", prefix, suffix, error, helper, wrapperClassName, onFocus, ...props }, ref) => {
+  ({ className, type = "text", prefix, suffix, error, helper, wrapperClassName, onFocus, onWheel, ...props }, ref) => {
     const hasError = !!error;
     // Number fields default to "0"; selecting the value on focus means the first
     // keystroke replaces it (no manual delete). Deferred so a mouse-click's caret
@@ -39,6 +40,12 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         requestAnimationFrame(() => el.select());
       }
       onFocus?.(e);
+    };
+    // R-836: the wheel over a focused number box stepped the value (₹150 → ₹149 in the
+    // onboard dialog). Blur it instead — the value stays and the page scrolls.
+    const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
+      if (type === "number") blurNumberInputOnWheel(e.currentTarget);
+      onWheel?.(e);
     };
     return (
       <div className={cn("w-full", wrapperClassName)}>
@@ -71,6 +78,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             aria-invalid={hasError || undefined}
             aria-describedby={error ? `${props.id}-error` : helper ? `${props.id}-helper` : undefined}
             onFocus={handleFocus}
+            onWheel={handleWheel}
             {...props}
           />
           {suffix && (
