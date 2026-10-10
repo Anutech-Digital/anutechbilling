@@ -33,7 +33,7 @@ import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
-  billingTerms, annualise, BILLING_CHOICES,
+  billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES,
   type CatalogProduct, type BillingChoice,
 } from "@/lib/subscriptions/catalog-options";
 import type { Item } from "@/lib/supabase/database.types";
@@ -1498,7 +1498,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                   ? "Flex renews every month — no commitment to expire."
                   : terms.billingCycle === "monthly"
                     ? "End of the 12-month commitment. Invoices still go out monthly."
-                    : "End of the 12-month term, when the next yearly invoice is due."}
+                    : terms.billingCycle === "quarterly"
+                      ? "End of the 12-month commitment. Invoices go out every 3 months."
+                      : "End of the 12-month term, when the next yearly invoice is due."}
               </p>
             </FormField>
           </div>
@@ -1607,11 +1609,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
               <div className="text-2xs text-ink-3">
                 Customer pays <b className="text-ink-2">{rupee(grossAmount(storedTaxable, TAX_RATE_PCT))}</b> incl. {TAX_RATE_PCT}% GST
               </div>
-              {terms.periods > 1 && (
+              {terms.invoicesPerTerm > 1 && (
                 <div className="mt-1 text-2xs font-semibold text-ink-2">
-                  Invoiced monthly —{" "}
-                  <b>{rupee(grossAmount(perPeriodAmount, TAX_RATE_PCT))}</b> due this month,
-                  × 12 over the committed year.
+                  {/* R-826: the first invoice comes from the same split the cron uses
+                      (floor per invoice, remainder on the last), not a guess. */}
+                  {terms.billingCycle === "quarterly" ? "Invoiced every 3 months" : "Invoiced monthly"} —{" "}
+                  <b>{rupee(grossAmount(firstInvoiceTaxable(storedTaxable, terms), TAX_RATE_PCT))}</b>
+                  {" "}due {terms.billingCycle === "quarterly" ? "this quarter" : "this month"},
+                  × {terms.invoicesPerTerm} over the committed year.
                 </div>
               )}
               {terms.commitment === "monthly" && (
