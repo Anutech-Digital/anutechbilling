@@ -12,6 +12,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
+import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
 import { decideSite } from "@/site/lib/site-split";
 import {
   DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
@@ -238,6 +239,13 @@ export async function middleware(request: NextRequest) {
     url.pathname = "/mfa";
     if (target) url.searchParams.set("next", target);
     return NextResponse.redirect(url);
+  }
+
+  /* R-701: the same half-done login used to reach every API route — a password alone could
+     invite an owner or reveal a vault secret. API calls get a 401 until the code is entered;
+     the routes that never act on the session stay open (lib/auth/mfa-gate.ts). */
+  if (isAuthed && needsMfa && apiNeedsMfaCode(pathname)) {
+    return NextResponse.json({ error: MFA_API_REFUSAL, mfaRequired: true }, { status: 401 });
   }
 
   /* R-391: the forced password-change screen needs a session (it re-checks the current,
