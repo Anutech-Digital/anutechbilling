@@ -20,6 +20,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { IST_TZ } from "@/lib/dates/ist";
 import { ResetDataCard } from "@/components/features/settings/reset-data-card";
+import { LoadError } from "@/components/shared/load-error";
+import { backupListState } from "./backup-list-state";
 
 function humanSize(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -51,6 +53,8 @@ export default function BackupPage() {
   }, [qc]);
 
   const rows = q.data ?? [];
+  // R-823: a failed load must say so — never fall through to "No backups yet".
+  const listState = backupListState({ isLoading: q.isLoading, isError: q.isError, error: q.error, rowCount: rows.length });
 
   async function takeBackup() {
     try {
@@ -100,9 +104,16 @@ export default function BackupPage() {
         </div>
       </Card>
 
-      {q.isLoading ? (
+      {listState.kind === "loading" ? (
         <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
-      ) : rows.length === 0 ? (
+      ) : listState.kind === "owner_only" ? (
+        <Card className="py-2">
+          <EmptyState icon="lock" title="Only the workspace owner can see backups"
+            body="A backup holds every table in the workspace, including salaries and connected-account tokens. Ask an owner to open this page." />
+        </Card>
+      ) : listState.kind === "error" ? (
+        <LoadError what="Backups" onRetry={() => { void q.refetch(); }} />
+      ) : listState.kind === "empty" ? (
         <Card className="py-2">
           <EmptyState icon="download" title="No backups yet"
             body="Take your first backup — it downloads a copy of all your data and keeps one inside the app too."
