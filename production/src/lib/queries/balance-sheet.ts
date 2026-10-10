@@ -21,6 +21,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
 import { balanceSheetFromRpc, rpcRowOrThrow, type BalanceSheetRpcRow } from "@/lib/accounting/report-rpc";
+import { fetchLoansGivenAsset } from "@/lib/queries/loans-given";
 
 export type BalanceSheetItem = {
   id:         string;
@@ -39,6 +40,9 @@ export interface BalanceSheetAuto {
   projectReceivable: number; // one-time / project sales: total − payments received
   tdsReceivable:   number;   // pending TDS credits from customers
   employeeLoans:   number;   // outstanding loans/advances to employees (an asset)
+  /** R-544: principal still owed on loans given to outside parties (an asset). Optional so
+   *  fixtures stay valid; absent = 0. */
+  loansGiven?:     number;
   prepaidAdvances: number;   // vendor advances paid but not yet consumed (a current asset)
   fixedAssets:     number;   // registered assets at WDV (lib/accounting/depreciation.ts) + EMI purchases not yet registered, at cost
   payables:        number;   // unpaid vendor bills (total − paid)
@@ -134,8 +138,13 @@ export function useBalanceSheetAuto() {
     queryKey: ["balance-sheet", "auto"],
     queryFn: async (): Promise<BalanceSheetAuto> => {
       const supabase = createClient();
-      const res = await supabase.rpc("report_balance_sheet", {});
-      return balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet"));
+      const [res, loansGiven] = await Promise.all([
+        supabase.rpc("report_balance_sheet", {}),
+        /* R-544: before migration 20261010140000 is applied the RPC does not exist and
+           there are no loans given — 0 is the true figure then, not a guess. */
+        fetchLoansGivenAsset().catch(() => 0),
+      ]);
+      return { ...balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet")), loansGiven };
     },
     staleTime: 30_000,
   });

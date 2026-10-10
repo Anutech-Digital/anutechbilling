@@ -48,7 +48,7 @@ export function balanceSheetTotals(
 
   const autoAssets =
     cashLike + (a?.receivables ?? 0) + (a?.projectReceivable ?? 0) + (a?.tdsReceivable ?? 0)
-    + (a?.employeeLoans ?? 0) + (a?.prepaidAdvances ?? 0) + (a?.fixedAssets ?? 0) + gstCredit
+    + (a?.employeeLoans ?? 0) + (a?.loansGiven ?? 0) + (a?.prepaidAdvances ?? 0) + (a?.fixedAssets ?? 0) + gstCredit
     + (a?.advanceTaxPaid ?? 0);
   const autoLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)

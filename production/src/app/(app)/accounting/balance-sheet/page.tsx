@@ -131,6 +131,7 @@ export default function BalanceSheetPage() {
         ["Project receivable", auto.projectReceivable ?? 0],
         ["TDS receivable", auto.tdsReceivable ?? 0],
         ["Employee loans (advances)", auto.employeeLoans ?? 0],
+        ["Loans given", auto.loansGiven ?? 0],
         ["Prepaid / vendor advances", auto.prepaidAdvances ?? 0],
         ["Fixed assets", auto.fixedAssets ?? 0],
         ["GST input credit (ITC)", gstCredit],
@@ -281,6 +282,9 @@ export default function BalanceSheetPage() {
                 <BSLine label="TDS receivable" hint="credits from customers' TDS" amount={auto?.tdsReceivable ?? 0} kind="auto" source="TDS Receivable" href="/accounting/tds-receivable" />
                 {(auto?.employeeLoans ?? 0) > 0 && (
                   <BSLine label="Employee loans / advances" hint="outstanding, owed back" amount={auto?.employeeLoans ?? 0} kind="auto" source="Loans" href="/accounting/loans" />
+                )}
+                {(auto?.loansGiven ?? 0) > 0 && (
+                  <BSLine label="Loans given" hint="lent to outside parties, still owed back" amount={auto?.loansGiven ?? 0} kind="auto" source="Loans given" href="/accounting/loans-given" />
                 )}
                 {(auto?.prepaidAdvances ?? 0) > 0 && (
                   <BSLine label="Prepaid / vendor advances" hint="paid, not yet consumed" amount={auto?.prepaidAdvances ?? 0} kind="auto" source="Prepaid" href="/accounting/prepaid" />

@@ -2268,6 +2268,126 @@ export type Database = {
           },
         ]
       }
+      loans_given: {
+        Row: {
+          bank_txn_id: string | null
+          borrower_name: string
+          borrower_type: string
+          closed_on: string | null
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          due_on: string | null
+          given_on: string
+          id: string
+          instalments: number | null
+          interest_rate: number
+          notes: string | null
+          paid_from_account_id: string | null
+          principal: number
+          repayment_plan: string
+          status: string
+          tenant_id: string
+          updated_at: string
+          vendor_id: string | null
+        }
+        Insert: {
+          bank_txn_id?: string | null
+          borrower_name: string
+          borrower_type?: string
+          closed_on?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          due_on?: string | null
+          given_on: string
+          id?: string
+          instalments?: number | null
+          interest_rate?: number
+          notes?: string | null
+          paid_from_account_id?: string | null
+          principal: number
+          repayment_plan?: string
+          status?: string
+          tenant_id: string
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Update: {
+          bank_txn_id?: string | null
+          borrower_name?: string
+          borrower_type?: string
+          closed_on?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          due_on?: string | null
+          given_on?: string
+          id?: string
+          instalments?: number | null
+          interest_rate?: number
+          notes?: string | null
+          paid_from_account_id?: string | null
+          principal?: number
+          repayment_plan?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Relationships: []
+      }
+      loan_repayments: {
+        Row: {
+          amount: number
+          bank_account_id: string | null
+          bank_txn_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          interest_part: number
+          loan_id: string
+          mode: string
+          notes: string | null
+          principal_part: number
+          reference: string | null
+          repaid_on: string
+          tenant_id: string
+        }
+        Insert: {
+          amount: number
+          bank_account_id?: string | null
+          bank_txn_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          interest_part?: number
+          loan_id: string
+          mode?: string
+          notes?: string | null
+          principal_part: number
+          reference?: string | null
+          repaid_on: string
+          tenant_id: string
+        }
+        Update: {
+          amount?: number
+          bank_account_id?: string | null
+          bank_txn_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          interest_part?: number
+          loan_id?: string
+          mode?: string
+          notes?: string | null
+          principal_part?: number
+          reference?: string | null
+          repaid_on?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       business_loan_payments: {
         Row: {
           amount: number
@@ -14802,6 +14922,38 @@ export type Database = {
         }
         Returns: undefined
       }
+      give_loan: {
+        Args: {
+          p_borrower_name: string
+          p_borrower_type: string
+          p_customer_id?: string
+          p_due_on?: string
+          p_given_on: string
+          p_instalments?: number
+          p_interest_rate?: number
+          p_notes?: string
+          p_paid_from: string
+          p_principal: number
+          p_repayment_plan?: string
+          p_vendor_id?: string
+        }
+        Returns: string
+      }
+      record_loan_repayment: {
+        Args: {
+          p_amount: number
+          p_bank_account_id: string
+          p_interest_part: number
+          p_loan_id: string
+          p_mode?: string
+          p_notes?: string
+          p_reference?: string
+          p_repaid_on: string
+        }
+        Returns: string
+      }
+      delete_loan_given: { Args: { p_loan_id: string }; Returns: undefined }
+      loans_given_asset: { Args: never; Returns: number }
       record_loan_emi: {
         Args: {
           p_amount: number

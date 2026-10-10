@@ -91,6 +91,7 @@ export function buildTrialBalance(args: {
   put("Assets", "Project receivables", bs.projectReceivable, "debit", "Invoiced project milestones − received");
   put("Assets", "TDS receivable", bs.tdsReceivable, "debit", "TDS deducted by customers, not yet claimed");
   put("Assets", "Loans & advances to employees", bs.employeeLoans, "debit", "Employee loans − repayments");
+  put("Assets", "Loans given (outside parties)", bs.loansGiven ?? 0, "debit", "Loans given − principal repaid");
   put("Assets", "Prepaid / vendor advances", bs.prepaidAdvances, "debit", "Advances paid − consumed");
   put("Assets", "Fixed assets (WDV)", bs.fixedAssets, "debit", "Asset register at written-down value");
   put("Assets", `Advance income tax (${bs.fyLabel})`, bs.advanceTaxPaid, "debit", "Advance + self-assessment tax paid");
