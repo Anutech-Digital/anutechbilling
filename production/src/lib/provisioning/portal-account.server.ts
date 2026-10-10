@@ -43,11 +43,11 @@ export async function ensurePortalAccount(admin: Admin, input: PortalAccountInpu
   if (!input.vendors.some((v) => v === "hosting" || v === "domain")) return { kind: "skipped", reason: "no hosting or domain in this order" };
   if (!commandsConfigured()) return { kind: "skipped", reason: "the DMS engine is not connected on this server" };
 
-  let lead: { contact_name?: string | null; contact_email?: string | null; contact_phone?: string | null; company?: string | null } | null = null;
+  let lead: { contact_name?: string | null; contact_email?: string | null; contact_phone?: string | null; company?: string | null; gstin?: string | null; state?: string | null } | null = null;
   if (input.leadId) {
     const { data } = await admin
       .from("leads")
-      .select("contact_name, contact_email, contact_phone, company")
+      .select("contact_name, contact_email, contact_phone, company, gstin, state")
       .eq("id", input.leadId)
       .eq("tenant_id", input.tenantId)
       .maybeSingle();
@@ -57,16 +57,50 @@ export async function ensurePortalAccount(admin: Admin, input: PortalAccountInpu
   if (!email) return { kind: "skipped", reason: "no customer email on the order" };
 
   const name = splitName(lead?.contact_name || input.customerName || email.split("@")[0]);
+  /* The billing details this order already has, so the portal never asks for them again
+     (Pawan, 10 Oct 2026: "their details should be reused"): GSTIN and state from the lead, the
+     postal address from a domain line's registrant. DMS fills only empty fields with them. */
+  const billing = await billingDetailsOf(admin, input, lead);
   const outcome = await sendEngineCommand({
     commandId: portalAccountCommandId(input.quoteId),
     command: "customer.ensure",
     subject: email,
     mode: "live",
     payload: {
-      customer: { ...name, email, ...normalisePhone(lead?.contact_phone ?? ""), companyName: lead?.company || input.customerName || undefined },
+      customer: { ...name, email, ...normalisePhone(lead?.contact_phone ?? ""), companyName: lead?.company || input.customerName || undefined, ...billing },
       sourceRef: input.quoteId,
     },
   });
   if (outcome.kind === "done") return { kind: "done", created: outcome.result.created === true };
   return { kind: "not_done", reason: `${outcome.kind}: ${outcome.reason}` };
+}
+
+type Address = { line1: string; city: string; state: string; zipcode: string; country: string };
+
+/** GSTIN, state and postal address known for this order — each only when it is really there. */
+async function billingDetailsOf(
+  admin: Admin,
+  input: PortalAccountInput,
+  lead: { gstin?: string | null; state?: string | null } | null,
+): Promise<{ gstin?: string; state?: string; address?: Address }> {
+  const out: { gstin?: string; state?: string; address?: Address } = {};
+  const gstin = (lead?.gstin ?? "").trim().toUpperCase();
+  if (/^[0-9A-Z]{15}$/.test(gstin)) out.gstin = gstin;
+  const state = (lead?.state ?? "").trim();
+  if (state) out.state = state;
+  const { data: q } = await admin
+    .from("quotes")
+    .select("line_items")
+    .eq("id", input.quoteId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  const lines: unknown[] = Array.isArray((q as { line_items?: unknown } | null)?.line_items) ? ((q as { line_items: unknown[] }).line_items) : [];
+  for (const l of lines) {
+    const a = (l as { registrant?: { address?: Partial<Address> } } | null)?.registrant?.address;
+    if (a?.line1 && a.city && a.zipcode) {
+      out.address = { line1: a.line1, city: a.city, state: a.state || state, zipcode: a.zipcode, country: a.country || "IN" };
+      break;
+    }
+  }
+  return out;
 }
