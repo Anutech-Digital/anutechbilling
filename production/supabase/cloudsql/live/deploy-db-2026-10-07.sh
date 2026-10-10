@@ -84,6 +84,7 @@ MIGS=(
   "attendanceoutsideoffice|20261010040000_attendance_outside_office.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'attendance_anywhere')"
   "attendancechangelog|20261010050000_attendance_change_log.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_attendance_change_log' and tgrelid = to_regclass('public.attendance'))"
   "loansgiven|20261010140000_loans_given.sql|resellersos_migration|to_regclass('public.loan_repayments') is not null and exists(select 1 from pg_proc where proname = 'record_loan_repayment')"
+  "extmonths|20261010160000_extension_by_months.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-805%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

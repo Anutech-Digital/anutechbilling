@@ -4,8 +4,9 @@
  *
  * UX:
  *   • Shows the current term + new term preview
- *   • 1 / 2 / 3 year presets (clear ladder, no surprise pricing)
- *   • Live total = annual_amount × years (mrr × 12 × years)
+ *   • Years (1 / 2 / 3) or, R-805, Months (1 / 3 / 6 / custom 1–11)
+ *   • Live total from extensionCharge() — the same function the quote uses, so the
+ *     preview and the quote cannot differ by a rupee (R-803 rule)
  *   • On submit: hits /api/subscriptions/[id]/extend, redirects to the
  *     new quote so operator can review + send to customer
  *
@@ -26,6 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import {
+  EXTENSION_MONTH_PRESETS, MAX_EXTENSION_MONTHS,
+  extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
+  type ExtensionLength,
+} from "@/lib/renewals/extension-term";
 
 interface Props {
   sub:    Subscription;
@@ -39,22 +46,37 @@ const PRESETS: { years: number; label: string; sublabel?: string }[] = [
   { years: 3, label: "3 years", sublabel: "Add 36 months" },
 ];
 
+type Unit = "years" | "months";
+
 export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Props) {
   const router = useRouter();
+  const [unit, setUnit] = React.useState<Unit>("years");
   const [years, setYears] = React.useState(1);
+  const [months, setMonths] = React.useState(3);
+  const [customMonths, setCustomMonths] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
-  // Pricing preview — annual × years (matches what the API will quote)
-  const annualEstimate = Math.max(0, (sub.mrr ?? 0) * 12);
-  const totalEx = annualEstimate * years;
-  const gstAmt  = Math.round(totalEx * 0.18);
-  const totalIn = totalEx + gstAmt;
+  /* R-805: months are not offered on a subscription billed in parts — its instalments are
+     laid out per term, and a part-year move would shift them (the API refuses it too). */
+  const monthsBlocked = isSplitBilled(sub.billing_cycle);
+  const isCustom = unit === "months" && customMonths !== "";
+  const len: ExtensionLength = unit === "years"
+    ? { unit: "years", count: years }
+    : { unit: "months", count: isCustom ? Number(customMonths) : months };
+  const lenError = extensionLengthError(len);
 
-  // Term preview
-  const currentRenewal = sub.renewal_date ? new Date(sub.renewal_date) : null;
-  const newRenewal = currentRenewal
-    ? new Date(currentRenewal.getTime() + years * 365.25 * 86400000)
-    : null;
+  // Pricing preview — the same calculation the quote uses
+  const charge = extensionCharge({
+    seats: sub.seats ?? 0,
+    mrr:   sub.mrr ?? 0,
+    len:   lenError ? { unit: "years", count: 0 } : len,
+  });
+  const annualEstimate = Math.max(0, Math.round((sub.mrr ?? 0) * 12));
+
+  // Term preview — the date record_payment will write
+  const currentRenewal = sub.renewal_date ? sub.renewal_date.slice(0, 10) : null;
+  const newRenewal = lenError ? null : extensionRenewalDate(sub, len);
+  const addedMonths = lenError ? 0 : extensionMonths(len);
 
   const onSubmit = async () => {
     setSubmitting(true);
@@ -62,7 +84,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
       const res  = await fetch(`/api/subscriptions/${sub.id}/extend`, {
         method:  "POST",
         headers: { "content-type": "application/json" },
-        body:    JSON.stringify({ years }),
+        body:    JSON.stringify(unit === "years" ? { years } : { months: len.count }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -98,40 +120,104 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
           <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Current renewal</p>
             <p className="font-medium text-ink tabular-nums">
-              {currentRenewal ? formatDate(currentRenewal.toISOString()) : "—"}
+              {currentRenewal ? formatDate(currentRenewal) : "—"}
             </p>
           </div>
           <div className="text-ink-3">→</div>
           <div className="text-right">
             <p className="text-3xs uppercase tracking-wider text-emerald font-semibold">New renewal</p>
             <p className="font-medium text-emerald tabular-nums">
-              {newRenewal ? formatDate(newRenewal.toISOString()) : "—"}
+              {newRenewal ? formatDate(newRenewal) : "—"}
             </p>
           </div>
         </div>
 
-        {/* Preset chooser */}
-        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
-          How many years to add?
-        </p>
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          {PRESETS.map((p) => (
-            <button
-              key={p.years}
-              type="button"
-              onClick={() => setYears(p.years)}
+        {/* Length chooser — Years or Months (R-805) */}
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold">
+            How long to add?
+          </p>
+          <div role="radiogroup" aria-label="Unit" className="inline-flex rounded-md border border-hairline p-0.5">
+            {(["years", "months"] as const).map((u) => (
+              <button
+                key={u}
+                type="button"
+                role="radio"
+                aria-checked={unit === u}
+                disabled={u === "months" && monthsBlocked}
+                onClick={() => setUnit(u)}
+                className={cn(
+                  "px-3 py-1 text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                  unit === u ? "bg-amber-soft text-amber-ink font-medium" : "text-ink-2 hover:text-ink",
+                )}
+              >
+                {u === "years" ? "Years" : "Months"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {monthsBlocked && (
+          <p className="text-2xs text-ink-3 mb-2">Billed in parts — extend by whole years.</p>
+        )}
+        {unit === "years" ? (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {PRESETS.map((p) => (
+              <button
+                key={p.years}
+                type="button"
+                onClick={() => setYears(p.years)}
+                className={cn(
+                  "border rounded-md p-3 text-left transition-colors",
+                  years === p.years
+                    ? "border-amber bg-amber-soft text-amber-ink"
+                    : "border-hairline bg-paper hover:border-hairline-strong text-ink-2",
+                )}
+              >
+                <p className="font-medium text-sm">{p.label}</p>
+                {p.sublabel && <p className="text-3xs text-ink-3 mt-0.5">{p.sublabel}</p>}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            {EXTENSION_MONTH_PRESETS.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => { setMonths(m); setCustomMonths(""); }}
+                className={cn(
+                  "border rounded-md p-3 text-left transition-colors",
+                  !isCustom && months === m
+                    ? "border-amber bg-amber-soft text-amber-ink"
+                    : "border-hairline bg-paper hover:border-hairline-strong text-ink-2",
+                )}
+              >
+                <p className="font-medium text-sm">{m === 1 ? "1 month" : `${m} months`}</p>
+              </button>
+            ))}
+            <label
               className={cn(
-                "border rounded-md p-3 text-left transition-colors",
-                years === p.years
-                  ? "border-amber bg-amber-soft text-amber-ink"
-                  : "border-hairline bg-paper hover:border-hairline-strong text-ink-2",
+                "border rounded-md p-2 text-left transition-colors flex flex-col",
+                isCustom ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline bg-paper text-ink-2",
               )}
             >
-              <p className="font-medium text-sm">{p.label}</p>
-              {p.sublabel && <p className="text-3xs text-ink-3 mt-0.5">{p.sublabel}</p>}
-            </button>
-          ))}
-        </div>
+              <span className="text-3xs text-ink-3">Custom</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_EXTENSION_MONTHS}
+                step={1}
+                placeholder={`1–${MAX_EXTENSION_MONTHS}`}
+                aria-label="Custom months"
+                value={customMonths}
+                onChange={(e) => setCustomMonths(e.target.value)}
+                className="w-full bg-transparent text-sm font-medium tabular-nums outline-none"
+              />
+            </label>
+          </div>
+        )}
+        {lenError && <p className="text-2xs text-rose mb-2" role="alert">{lenError}</p>}
 
         {/* Pricing breakdown */}
         <div className="border border-hairline rounded-md p-3 text-sm space-y-1.5 mb-2">
@@ -140,30 +226,34 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
             <span className="tabular-nums text-ink-2">{rupee(annualEstimate)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-ink-3">× {years} year{years === 1 ? "" : "s"}</span>
-            <span className="tabular-nums text-ink-2">{rupee(totalEx)}</span>
+            <span className="text-ink-3">
+              {unit === "years"
+                ? `× ${extensionLabel(len)}`
+                : `× ${lenError ? "—" : len.count}/12 months`}
+            </span>
+            <span className="tabular-nums text-ink-2">{rupee(charge.subtotal)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-ink-3">GST 18%</span>
-            <span className="tabular-nums text-ink-2">{rupee(gstAmt)}</span>
+            <span className="tabular-nums text-ink-2">{rupee(charge.tax)}</span>
           </div>
           <div className="flex justify-between pt-2 border-t border-hairline">
             <span className="font-medium text-ink">Total (incl GST)</span>
-            <span className="font-serif text-lg tabular-nums text-ink">{rupee(totalIn)}</span>
+            <span className="font-serif text-lg tabular-nums text-ink">{rupee(charge.total)}</span>
           </div>
         </div>
 
         <p className="text-2xs text-ink-3 leading-relaxed mb-1">
           A separate <b className="text-ink-2">extension quote</b> will be issued — the original
           1-year invoice stays untouched. When the customer pays, the renewal date will
-          advance by <Badge size="sm" kind="muted">{years * 12} months</Badge>.
+          advance by <Badge size="sm" kind="muted">{addedMonths} months</Badge>.
         </p>
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="primary" icon="file" onClick={onSubmit} disabled={submitting}>
+          <Button variant="primary" icon="file" onClick={onSubmit} disabled={submitting || !!lenError}>
             {submitting ? "Creating quote…" : `Create extension quote`}
           </Button>
         </DialogFooter>

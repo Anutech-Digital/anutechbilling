@@ -27,8 +27,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
-import { grossAmount } from "@/lib/quotes/amounts";
-import { istToday, utcDateISO } from "@/lib/dates/ist";
+import { istToday, utcDateISO, formatIstDate } from "@/lib/dates/ist";
+import {
+  extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
+  type ExtensionLength,
+} from "./extension-term";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -44,8 +47,13 @@ export interface CreateExtensionQuoteInput {
   /** Current subscription.renewal_date — quote expiry uses this + grace */
   renewalDate:     string;
   graceDays:       number;
-  /** How many years the customer wants to add (1, 2, 3, …). */
-  years:           number;
+  /** How many years the customer wants to add (1, 2, 3, …). Ignored when `months` is set. */
+  years?:          number;
+  /** R-805: how many MONTHS to add instead (1–11). */
+  months?:         number;
+  /** R-805: for the new renewal date in the quote note (both stored date shapes). */
+  startDate?:      string | null;
+  termMonths?:     number | null;
   /** Optional override note for the quote */
   notes?:          string;
 }
@@ -54,7 +62,10 @@ export interface CreateExtensionQuoteResult {
   ok:       true;
   quoteId:  string;
   amount:   number;
-  years:    number;
+  /** Whole years added, or null for a month extension. */
+  years:    number | null;
+  /** Months added — what the quote stores as extension_months. */
+  months:   number;
 }
 
 export interface CreateExtensionQuoteError {
@@ -66,11 +77,13 @@ export interface CreateExtensionQuoteError {
 export async function createExtensionQuote(
   input: CreateExtensionQuoteInput,
 ): Promise<CreateExtensionQuoteResult | CreateExtensionQuoteError> {
-  if (!Number.isFinite(input.years) || input.years < 1 || input.years > 5) {
-    return { ok: false, code: "invalid_years", message: "Years must be between 1 and 5" };
-  }
+  const len: ExtensionLength = input.months != null
+    ? { unit: "months", count: input.months }
+    : { unit: "years", count: input.years ?? NaN };
+  const lenError = Number.isFinite(len.count) ? extensionLengthError(len) : "Years must be between 1 and 5";
+  if (lenError) return { ok: false, code: "invalid_years", message: lenError };
 
-  const months = Math.round(input.years * 12);
+  const months = extensionMonths(len);
 
   // Idempotency guard — refuse if subscription already has an open quote
   const { data: sub } = await input.supabase
@@ -96,12 +109,20 @@ export async function createExtensionQuote(
   }
   const newQuoteId = nextNumber as unknown as string;
 
-  // Build line item — annual rate × N years
-  const annualAmount = Math.max(0, Math.round((input.mrr ?? 0) * 12 * input.years)); // ex-GST subtotal
-  const grossAnnual  = grossAmount(annualAmount, 18);                                // GST-inclusive payable
-  const perSeatRate  = Math.round(annualAmount / Math.max(1, input.seats));
+  /* Build line item. Years: annual rate × N years (unchanged). R-805 months: annual price
+     per seat × seats × months / 12 through the R-803 paise engine — see extension-term.ts. */
+  const charge       = extensionCharge({ seats: input.seats, mrr: input.mrr, len });
+  const annualAmount = charge.subtotal;   // ex-GST subtotal
+  const grossAnnual  = charge.total;      // GST-inclusive payable
+  const perSeatRate  = charge.perSeat;
   const perSeatCost  = Math.round((annualAmount * 0.83) / Math.max(1, input.seats));
-  const yearLabel    = input.years === 1 ? "1-year extension" : `${input.years}-year extension`;
+  const yearLabel    = len.unit === "years"
+    ? (len.count === 1 ? "1-year extension" : `${len.count}-year extension`)
+    : `${len.count}-month extension`;
+  const newEnd = extensionRenewalDate(
+    { renewal_date: input.renewalDate, start_date: input.startDate ?? null, term_months: input.termMonths ?? null },
+    len,
+  );
 
   const lineItems: QuoteLineItem[] = [{
     id:         "extension-1",
@@ -141,7 +162,7 @@ export async function createExtensionQuote(
     is_extension:     true,    // display flag — UI shows "Extension" not "Renewal"
     extension_months: months,
     notes:            input.notes
-      ?? `${yearLabel} for subscription ${input.subscriptionId}. On payment the renewal date advances by ${months} months.`,
+      ?? `${yearLabel} for subscription ${input.subscriptionId}. On payment the renewal date advances by ${extensionLabel(len)}${newEnd ? ` (to ${formatIstDate(newEnd)})` : ""}.`,
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
@@ -153,5 +174,5 @@ export async function createExtensionQuote(
     .update({ renewal_quote_id: newQuoteId })
     .eq("id", input.subscriptionId);
 
-  return { ok: true, quoteId: newQuoteId, amount: grossAnnual, years: input.years };
+  return { ok: true, quoteId: newQuoteId, amount: grossAnnual, years: len.unit === "years" ? len.count : null, months };
 }

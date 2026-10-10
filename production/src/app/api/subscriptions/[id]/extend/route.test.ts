@@ -59,7 +59,7 @@ beforeEach(() => {
   db.reads = [];
   db.actors = [];
   quote.create.mockReset();
-  quote.create.mockResolvedValue({ ok: true, quoteId: "Q-1", amount: 14400, years: 1 });
+  quote.create.mockResolvedValue({ ok: true, quoteId: "Q-1", amount: 14400, years: 1, months: 12 });
 });
 
 describe("subscriptions extend — role gate (R-217)", () => {
@@ -79,7 +79,7 @@ describe("subscriptions extend — role gate (R-217)", () => {
     const res = await call({ years: 1 });
     expect(res.status).toBe(200);
     expect(db.actors).toEqual(["U1"]); // R-051: audit log gets the signed-in caller
-    expect(await res.json()).toEqual({ ok: true, quoteId: "Q-1", amount: 14400, years: 1, subscriptionId: "S1" });
+    expect(await res.json()).toEqual({ ok: true, quoteId: "Q-1", amount: 14400, years: 1, months: 12, subscriptionId: "S1" });
     expect(quote.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "T1", subscriptionId: "S1", years: 1 }));
   });
 
@@ -93,5 +93,48 @@ describe("subscriptions extend — role gate (R-217)", () => {
   it("years outside 1–5 is 400", async () => {
     db.me = { tenant_id: "T1", role: "owner" };
     expect((await call({ years: 9 })).status).toBe(400);
+  });
+});
+
+describe("subscriptions extend — months (R-805)", () => {
+  beforeEach(() => {
+    db.me = { tenant_id: "T1", role: "owner" };
+    quote.create.mockResolvedValue({ ok: true, quoteId: "Q-2", amount: 4885, years: null, months: 3 });
+  });
+
+  it("{ months: 3 } → 200, months passed through with the dates the quote note needs", async () => {
+    (db.rows.subscriptions as Record<string, unknown>).start_date = "2025-10-10";
+    (db.rows.subscriptions as Record<string, unknown>).term_months = 12;
+    (db.rows.subscriptions as Record<string, unknown>).billing_cycle = "yearly";
+    const res = await call({ months: 3 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, quoteId: "Q-2", amount: 4885, years: null, months: 3, subscriptionId: "S1" });
+    expect(quote.create).toHaveBeenCalledWith(expect.objectContaining({
+      months: 3, years: undefined, startDate: "2025-10-10", termMonths: 12,
+    }));
+  });
+
+  it.each([1, 6, 11])("{ months: %i } is accepted", async (m) => {
+    expect((await call({ months: m })).status).toBe(200);
+  });
+
+  it.each([0, 12, 2.5])("{ months: %s } → 400", async (m) => {
+    expect((await call({ months: m })).status).toBe(400);
+    expect(quote.create).not.toHaveBeenCalled();
+  });
+
+  it("both or neither of years / months → 400", async () => {
+    expect((await call({ years: 1, months: 3 })).status).toBe(400);
+    expect((await call({})).status).toBe(400);
+    expect(quote.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["monthly", "quarterly", "half_yearly"])("billed %s (in parts) → months refused, years still allowed", async (cycle) => {
+    (db.rows.subscriptions as Record<string, unknown>).billing_cycle = cycle;
+    const res = await call({ months: 3 });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("This subscription is billed in parts. Extend it by whole years.");
+    expect(quote.create).not.toHaveBeenCalled();
+    expect((await call({ years: 1 })).status).toBe(200);
   });
 });
