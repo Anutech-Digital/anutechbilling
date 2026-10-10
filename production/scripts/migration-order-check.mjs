@@ -50,6 +50,7 @@ const NOT_YET_ON_PRODUCTION = new Set([
   "20260927250000_gbp.sql",               // FK to auth.users refused for the prod migration role
   "20260927260000_ad_platforms.sql",      // same
   "20260930110000_scale_indexes.sql",     // prod has no `extensions` schema
+  "20261009220100_demo_readonly_wiring.sql", // R-531: deploy-skip, never deployed anywhere
 ]);
 
 const argBase = (() => { const i = process.argv.indexOf("--base"); return i > 0 ? process.argv[i + 1] : null; })();

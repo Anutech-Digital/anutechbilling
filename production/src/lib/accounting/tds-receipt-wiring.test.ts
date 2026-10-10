@@ -30,7 +30,9 @@ describe("R-523 Record payment drawer", () => {
     expect(drawer).not.toMatch(/fully satisfied/);
     expect(drawer).not.toMatch(/will still be due/);
     expect(drawer).not.toMatch(/Quote will be marked <b>fully paid<\/b>/);
-    expect(drawer).toMatch(/const outcome = paymentOutcome\(\{ expected: expectedAmount, alreadyReceived, settled: settledAgainstQuote \}\)/);
+    // R-527 wraps it: a split-billed quote gets an instalment sentence, built from the same outcome.
+    expect(drawer).toMatch(/const baseOutcome = paymentOutcome\(\{ expected: expectedAmount, alreadyReceived, settled: settledAgainstQuote \}\)/);
+    expect(drawer).toMatch(/const outcome = split\s*\? \{ \.\.\.baseOutcome, sentence: splitOutcomeSentence\(/);
     expect(drawer.match(/\{outcome\.sentence\}/g)?.length).toBe(2); // partial box, fully-paid box — never both (kind)
     expect(drawer).toMatch(/willBePartial && outcome\.kind === "partial"/);
     expect(drawer).toMatch(/\(outcome\.kind === "full" \|\| outcome\.kind === "over"\)/);
