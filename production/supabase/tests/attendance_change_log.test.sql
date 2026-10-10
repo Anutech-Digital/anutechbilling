@@ -37,7 +37,7 @@ begin
 
   -- ── employee's own check-in: not logged ────────────────────────────────
   perform set_config('request.jwt.claims', json_build_object('sub','46080000-0000-4000-8000-00000000000b','role','authenticated')::text, true);
-  v_r := public.mark_self_attendance();
+  v_r := public.mark_self_attendance(null, null, null);   -- R-438: the 0-argument version is server-only now
   if v_r <> 'checked_in' then raise exception 'FAIL 2: self check-in returned %', v_r; end if;
 
   -- ── owner at the kiosk punches Friend? Friend has no PIN; use Sales Person's PIN via kiosk path
@@ -50,15 +50,15 @@ begin
   select count(*) into v_n from public.activity_log where tenant_id = '46080000-0000-4000-8000-000000000001' and entity = 'attendance';
   if v_n <> 0 then raise exception 'FAIL 3: own check-in or kiosk punch was logged (% rows)', v_n; end if;
 
-  -- ── owner edits Friend's day directly: logged with before → after ──────
+  -- ── owner edits Friend's day: logged with before → after. R-439: no login may write
+  --    attendance rows directly any more, so the owner edits through correct_attendance(). ──
   set local role authenticated;
   perform set_config('request.jwt.claims', json_build_object('sub','46080000-0000-4000-8000-00000000000a','role','authenticated')::text, true);
-  update public.attendance set check_out = '2026-10-01 19:00+05:30'
-   where employee_id = '46080000-0000-4000-8000-0000000000e2' and work_date = date '2026-10-01';
-  insert into public.attendance (tenant_id, employee_id, work_date, check_in, check_out, source)
-    values ('46080000-0000-4000-8000-000000000001', '46080000-0000-4000-8000-0000000000e2', date '2026-10-03',
-            '2026-10-03 10:00+05:30', '2026-10-03 18:00+05:30', 'manual');
-  delete from public.attendance where employee_id = '46080000-0000-4000-8000-0000000000e2' and work_date = date '2026-10-03';
+  perform public.correct_attendance('46080000-0000-4000-8000-0000000000e2', date '2026-10-01',
+          '2026-10-01 10:00+05:30', '2026-10-01 19:00+05:30', 'Forgot to check out');
+  perform public.correct_attendance('46080000-0000-4000-8000-0000000000e2', date '2026-10-03',
+          '2026-10-03 10:00+05:30', '2026-10-03 18:00+05:30', 'Kiosk was down');
+  perform public.correct_attendance('46080000-0000-4000-8000-0000000000e2', date '2026-10-03', null, null, 'Was on leave');
   reset role;
 
   select count(*) into v_n from public.activity_log

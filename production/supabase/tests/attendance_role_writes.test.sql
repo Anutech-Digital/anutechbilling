@@ -52,11 +52,19 @@ begin
   exception when others then v_err := true; end;
   if not v_err then raise exception 'FAIL 1: a sales login inserted its own attendance row directly'; end if;
 
-  -- ── BLOCKED: sales clears its flag (RLS → 0 rows, no error) ──────────────
-  update public.attendance set flags = '{}', reviewed_at = now()
+  -- ── BLOCKED: sales clears its flag. R-439: `flags` is no longer updatable by any login
+  --    (column grant → permission denied); reviewed_at alone → RLS → 0 rows. ──────
+  v_n := 0;
+  begin
+    update public.attendance set flags = '{}', reviewed_at = now()
+     where employee_id = '46010000-0000-4000-8000-0000000000e1';
+    get diagnostics v_n = row_count;
+  exception when insufficient_privilege then v_n := 0; end;
+  if v_n <> 0 then raise exception 'FAIL 2: a sales login updated % attendance row(s)', v_n; end if;
+  update public.attendance set reviewed_at = now()
    where employee_id = '46010000-0000-4000-8000-0000000000e1';
   get diagnostics v_n = row_count;
-  if v_n <> 0 then raise exception 'FAIL 2: a sales login updated % attendance row(s)', v_n; end if;
+  if v_n <> 0 then raise exception 'FAIL 2b: a sales login marked its own row reviewed (% rows)', v_n; end if;
 
   -- ── BLOCKED: sales reads the presence seed ──────────────────────────────
   v_err := false;
@@ -71,7 +79,7 @@ begin
   if v_n <> 0 then raise exception 'FAIL 4: a sales login changed attendance_settings'; end if;
 
   -- ── ALLOWED: sales checks in through the RPC ────────────────────────────
-  v_action := public.mark_self_attendance();
+  v_action := public.mark_self_attendance(null, null, null);   -- R-438: the 0-argument version is server-only now
   if v_action <> 'checked_in' then raise exception 'FAIL 5: mark_self_attendance returned %', v_action; end if;
 
   -- ── ALLOWED: owner reviews + corrects, reads non-secret settings ────────

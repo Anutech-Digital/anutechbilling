@@ -610,7 +610,7 @@ export type AttendanceCorrection = {
   note: string;
 };
 
-/** R-603: owner/manager/accountant/billing fix one employee-day (missed punch, forgotten
+/** R-603 / R-439: the OWNER fixes one employee-day (missed punch, forgotten
  *  checkout, or mark absent). The RPC checks role, tenant, note, times and date again. */
 export function useCorrectAttendance() {
   const qc = useQueryClient();

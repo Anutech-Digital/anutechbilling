@@ -1851,6 +1851,54 @@ export type Database = {
           },
         ]
       }
+      attendance_corrections: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          employee_id: string
+          id: string
+          new_check_in: string | null
+          new_check_out: string | null
+          new_status: string
+          old_check_in: string | null
+          old_check_out: string | null
+          old_status: string
+          reason: string
+          tenant_id: string
+          work_date: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          employee_id: string
+          id?: string
+          new_check_in?: string | null
+          new_check_out?: string | null
+          new_status: string
+          old_check_in?: string | null
+          old_check_out?: string | null
+          old_status: string
+          reason: string
+          tenant_id: string
+          work_date: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          employee_id?: string
+          id?: string
+          new_check_in?: string | null
+          new_check_out?: string | null
+          new_status?: string
+          old_check_in?: string | null
+          old_check_out?: string | null
+          old_status?: string
+          reason?: string
+          tenant_id?: string
+          work_date?: string
+        }
+        Relationships: []
+      }
       attendance_settings: {
         Row: {
           allowed_ips: string[]

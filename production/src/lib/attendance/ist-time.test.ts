@@ -28,7 +28,7 @@ describe("isoToIstHhmm", () => {
 
 describe("buildCorrection", () => {
   it("needs a note", () => {
-    expect(buildCorrection("save", "2026-10-09", "09:30", "", " a ")).toEqual({ ok: false, error: "Write a short note (why)." });
+    expect(buildCorrection("save", "2026-10-09", "09:30", "", " a ")).toEqual({ ok: false, error: "Write a reason (why this is being corrected)." });
     expect(buildCorrection("absent", "2026-10-09", "", "", "")).toMatchObject({ ok: false });
   });
   it("absent sends both null", () => {
