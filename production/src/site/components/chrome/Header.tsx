@@ -112,7 +112,7 @@ const MENUS: readonly Menu[] = [
         { label: "GST & TDS", note: "HSN 998313, CGST §31, 26AS", href: "/reselleros" },
       ],
     ],
-    promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your workspace, import customers by CSV, send a GST quote. No card needed.", cta: "Start free trial", href: "/reselleros", os: true },
+    promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your workspace, import customers by CSV, send a GST quote. No card needed.", cta: "Get started free", href: "/reselleros", os: true },
   },
   {
     label: "Wholesale", href: "/reseller",
@@ -311,7 +311,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
               <Link href={active.promo.href as never} className={`btn btn-sm ${active.promo.os ? "btn-os" : "btn-primary"}`}>
                 {active.promo.cta}
               </Link>
-              {/* On the ResellerOS menu the promo sells a free trial — so the
+              {/* On the ResellerOS menu the promo says "Get started free" (free during beta) — so the
                   existing-user path (Log in) sits right under it, the same
                   two-step choice the home ResellerOS card makes. */}
               {active.promo.os && (

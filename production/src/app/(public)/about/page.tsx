@@ -9,6 +9,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { PublicShell } from "../_components/public-shell";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
+import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -135,11 +136,11 @@ export default function AboutPage() {
         <section className="text-center py-8 border-t border-hairline">
           <h2 className="font-serif text-2xl mb-3">Ready to try ResellerOS?</h2>
           <p className="text-base text-ink-3 mb-6">
-            14-day free trial. No credit card required.
+            {PRICING_LINE}
           </p>
           <div className="flex gap-3 justify-center flex-wrap">
             <Button asChild variant="primary" iconRight="arrow_right">
-              <Link href="/signup">Start free trial</Link>
+              <Link href="/signup">Get started free</Link>
             </Button>
             <Button asChild variant="default">
               <Link href="/login">Sign in</Link>

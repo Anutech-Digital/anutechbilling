@@ -1,6 +1,6 @@
 /**
  * R-520: the ResellerOS site's own header and footer (reselleros.anutech.in).
- * Short nav: logo → "/", Features, Pricing, Log in, Start free trial. Nothing about the
+ * Short nav: logo → "/", Features, Pricing, Log in, Get started free. Nothing about the
  * company's domains/hosting/custom-software offer — that lives on anutech.in.
  * App tokens (bg-paper / text-ink / amber) so light and dark themes both work.
  */
