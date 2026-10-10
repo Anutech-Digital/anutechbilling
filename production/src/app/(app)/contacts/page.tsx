@@ -12,7 +12,7 @@ import type { Route } from "next";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
-import { useAllContacts, contactKind, type ContactKind } from "@/lib/queries/contacts";
+import { useAllContacts, contactKind, type ContactKind, type UnifiedContact } from "@/lib/queries/contacts";
 import ImportContactsDialog from "@/components/features/contacts/import-contacts-dialog";
 import { ContactForm } from "@/components/features/contacts/contact-form";
 import CampaignComposerDialog from "@/components/features/campaigns/campaign-composer-dialog";
@@ -154,6 +154,8 @@ export default function ContactsPage() {
       const inArr = (arr?: string[]) => (arr ?? []).some((v) => v.toLowerCase().includes(s));
       if (
         !c.name?.toLowerCase().includes(s) &&
+        /* R-535: a company row names its primary contact in the subtitle — find it by that person too. */
+        !c.title?.toLowerCase().includes(s) &&
         !c.email?.toLowerCase().includes(s) &&
         !c.phone?.toLowerCase().includes(s) &&
         !c.company.toLowerCase().includes(s) &&
@@ -382,16 +384,16 @@ export default function ContactsPage() {
           {filtered.map((c) => (
             <li key={c.id} onClick={() => openContact(c)} className="bg-paper border border-hairline rounded-lg p-3 cursor-pointer hover:border-hairline-strong transition-colors">
               <div className="flex items-start gap-3">
-                <Avatar
-                  initials={c.name ? initials(c.name) : "?"}
-                  color={c.source === "customer" ? "emerald" : "amber"}
-                  size="sm"
-                />
+                <RowAvatar c={c} />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-ink truncate">
                     {c.name ?? <span className="italic text-ink-3">No name</span>}
                   </p>
+                  {c.isCompany && c.title && <p className="text-xs text-ink-2 truncate mt-0.5">{c.title}</p>}
                   {c.company && <p className="text-xs text-ink-3 truncate mt-0.5">{c.company}</p>}
+                  {c.isCompany && !c.email && !c.phone && (
+                    <p className="text-2xs text-ink-3 italic mt-1">No contact person yet</p>
+                  )}
                   {c.email && (
                     <a
                       href={`mailto:${c.email}`}
@@ -483,11 +485,7 @@ export default function ContactsPage() {
                     </td>
                     <td className="p-3">
                       <div className="flex items-center gap-2.5">
-                        <Avatar
-                          initials={c.name ? initials(c.name) : "?"}
-                          color={c.source === "customer" ? "emerald" : "amber"}
-                          size="sm"
-                        />
+                        <RowAvatar c={c} />
                         <div className="min-w-0">
                           <div className="font-medium text-sm text-ink truncate">
                             {c.name ?? <span className="italic text-ink-3">No name</span>}
@@ -499,6 +497,13 @@ export default function ContactsPage() {
                       </div>
                     </td>
                     <td className="p-3 text-sm text-ink-2 truncate" title={c.company}>{c.company}</td>
+                    {c.isCompany && !c.email && !c.phone ? (
+                      /* R-535: a company with nobody on it yet says so, instead of two dashes
+                         that read like a broken person row. */
+                      <td colSpan={2} className="p-3 text-xs italic text-ink-3 truncate">
+                        No contact person yet · add one on the company page
+                      </td>
+                    ) : (<>
                     <td className="p-3 text-xs font-mono text-ink-2 truncate" title={(c.emails ?? []).join(", ") || undefined}>
                       {c.email ?? "—"}
                       {(c.emails?.length ?? 0) > 1 && (
@@ -511,6 +516,7 @@ export default function ContactsPage() {
                         <span className="ml-1 text-ink-3 font-sans" title={`${c.phones!.length} phones`}>+{c.phones!.length - 1}</span>
                       )}
                     </td>
+                    </>)}
                     <td className="p-3">
                       <Badge
                         kind={KIND_META[contactKind(c)].badge}
@@ -588,6 +594,28 @@ export default function ContactsPage() {
         </BulkBarButton>
       </BulkActionBar>
     </div>
+  );
+}
+
+/** Company rows get a building tile, people get their initials — tells the two apart at a glance (R-535). */
+function RowAvatar({ c }: { c: UnifiedContact }) {
+  if (c.isCompany) {
+    return (
+      <span
+        role="img"
+        aria-label="Company"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-soft text-emerald-ink"
+      >
+        <Icon name="building" size={14} />
+      </span>
+    );
+  }
+  return (
+    <Avatar
+      initials={c.name ? initials(c.name) : "?"}
+      color={c.source === "customer" ? "emerald" : "amber"}
+      size="sm"
+    />
   );
 }
 

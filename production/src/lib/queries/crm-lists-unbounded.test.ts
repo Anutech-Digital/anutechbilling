@@ -18,7 +18,7 @@ const strip = (f: string) =>
   readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const HOOKS = [
-  ["src/lib/queries/contacts.ts",          "useAllContacts",            6],
+  ["src/lib/queries/contacts.ts",          "useAllContacts",            7],  // R-535: + customer_contacts
   ["src/lib/queries/contacts.ts",          "useCelebrations",           1],
   ["src/lib/queries/leads.ts",             "useLeads",                  1],
   ["src/lib/queries/trials.ts",            "useTrials",                 1],
