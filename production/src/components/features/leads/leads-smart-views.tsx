@@ -144,7 +144,11 @@ export function LeadsSmartViews({
         ? "Every deal, Quote Sent to Won and Lost"
         : "New, Contacted and Lost — not junk. Quoted leads are on Deals." },
     { id: "all",   label: "All open", count: all,     tone: "default",
-      hint: "Every open lead. Won and lost are not open — they have their own folders." },
+      /* R-835: since R-433 /leads holds only New and Contacted — quotes and won live on
+         Deals, so "won has its own folder" was untrue there. */
+      hint: isDealsPage
+        ? "Every open deal. Won and lost are not open — they have their own folders."
+        : "New and Contacted leads. Lost ones are in Lost; quotes and won are on Deals." },
     ...(currentUserId
       ? [{ id: "mine" as SmartView, label: "Mine", count: mine, tone: "default" as Tone, hint: "Assigned to you" }]
       : []),

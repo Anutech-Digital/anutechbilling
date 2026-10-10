@@ -49,10 +49,20 @@ describe("the leads scope chip never claims to hold more than it does", () => {
 
     /* A count that excludes something must say WHAT — otherwise the reader's only options
        are to trust it or to go looking, and on 21 Aug the answer was "go looking". */
-    const hint = screen.getByText(/Every open lead/);
+    /* R-835: /leads holds only New and Contacted since R-433 — quotes and won are on
+       Deals, so the hint says so instead of "won has its own folder". */
+    const hint = screen.getByText(/New and Contacted leads/);
     expect(hint.textContent).toMatch(/won/i);
     expect(hint.textContent).toMatch(/lost/i);
-    expect(hint.textContent).toMatch(/folder/i);
+    expect(hint.textContent).toMatch(/Deals/);
+    expect(hint.textContent).not.toMatch(/own folders/);
+  });
+
+  it("on /deals keeps the deal wording: won and lost have their own folders", () => {
+    render(<LeadsSmartViews counts={views()} active="all" onChange={() => {}} isDealsPage />);
+    fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
+    const hint = screen.getByText(/Every open deal/);
+    expect(hint.textContent).toMatch(/own folders/);
   });
 
   it("shows the server's open count on the trigger", () => {
@@ -85,7 +95,7 @@ describe("the Waiting on you view", () => {
        dropdown never rendered at all — which is exactly what happened on the first run of
        this test, because Radix opens on Enter and not on click. A negative assertion against
        a component that is not on screen is not a test. */
-    expect(screen.getByText(/Every open lead/)).toBeTruthy();
+    expect(screen.getByText(/New and Contacted leads/)).toBeTruthy();
     expect(screen.queryByText("Waiting on you")).toBeNull();
   });
 
