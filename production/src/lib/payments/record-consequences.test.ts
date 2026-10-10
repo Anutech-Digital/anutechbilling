@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recordPaymentConsequences, type PaymentToRecord } from "./record-consequences";
+import { recordPaymentConsequences, ADD_SEATS_CONSEQUENCE, type PaymentToRecord } from "./record-consequences";
 import type { SeriesState } from "@/lib/actions/consequence";
 
 /* ANUTECH's real receipt-voucher counter, measured 23 Aug 2026: 39 numbers used, zero
@@ -109,5 +109,32 @@ describe("recordPaymentConsequences", () => {
       expect(l[0].tone).toBe("warning");
       expect(l[0].text).toMatch(/more than zero/i);
     }
+  });
+
+  /* R-542: an add-seats quote's line carries a billing commitment, so it used to read
+     "Creates a recurring subscription for Business Starter · +1 seats …" — the owner took
+     it as double billing. record_payment creates no subscription for is_add_seats. */
+  it("add-seats: says the seats join the EXISTING subscription, never a new one", () => {
+    const addSeats: PaymentToRecord = {
+      ...P, createsCustomer: false, createsSubscription: true, addsSeats: true,
+      planLabel: "Business Starter · +1 seats (pro-rata from 2026-10-10 to 2027-04-01)",
+    };
+    const t = text(recordPaymentConsequences({ payment: addSeats, receiptSeries: RV }));
+    expect(t).toContain(ADD_SEATS_CONSEQUENCE);
+    expect(ADD_SEATS_CONSEQUENCE).toBe(
+      "Adds the seats to the existing subscription — no new subscription is created. The next renewal bills the new seat count.",
+    );
+    expect(t).not.toMatch(/Creates a recurring subscription/);
+    expect(t).not.toMatch(/No subscription and no renewal/);
+  });
+
+  it("leaves the renewal, one-off and new-subscription wording unchanged", () => {
+    const renew = text(recordPaymentConsequences({ payment: { ...P, renewsSubscription: true }, receiptSeries: RV }));
+    expect(renew).toContain("Renews the existing subscription — the same subscription moves to its next renewal date. No new subscription is created.");
+    const oneOff = text(recordPaymentConsequences({ payment: { ...P, createsSubscription: false }, receiptSeries: RV }));
+    expect(oneOff).toContain("No subscription and no renewal are created from this payment — nothing will be billed again automatically.");
+    expect(text(recordPaymentConsequences({ payment: P, receiptSeries: RV }))).toContain(
+      "Creates a recurring subscription for Google Workspace Business Standard and sets its first renewal date.",
+    );
   });
 });

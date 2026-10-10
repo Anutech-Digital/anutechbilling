@@ -610,6 +610,12 @@ export default function QuoteDetailPage() {
   const revise = canReviseQuote(quote, totalReceivedSoFar);
   const payment = PAYMENT_META[quote.payment_status];
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
+  /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
+     term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
+     "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
+  const addSeatsQuote = quote.is_add_seats === true;
+  const linePer = (line: QuoteLineItem) =>
+    addSeatsQuote || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
   const taxable = quote.subtotal - discount;
   const tax = Math.round(taxable * (quote.tax_rate / 100));
@@ -1475,7 +1481,7 @@ export default function QuoteDetailPage() {
             per line; under md each line is a row of name + amount, qty × rate below. */}
         <ul className="md:hidden divide-y divide-hairline">
           {items.map((line) => {
-            const per = line.commitment ? (isAnnualTier(line.commitment) ? "/yr" : "/mo") : "";
+            const per = linePer(line);
             return (
               <li key={line.id} className="p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -1486,7 +1492,9 @@ export default function QuoteDetailPage() {
                 </div>
                 <div className="text-xs text-ink-3 tabular-nums mt-0.5">
                   {line.qty} × {rupee(line.rate)}{per}
-                  {line.commitment && (isAnnualTier(line.commitment) ? " · Annual commitment" : " · Monthly, flexible")}
+                  {addSeatsQuote
+                    ? " · Pro-rata, one-time for the rest of the term"
+                    : line.commitment && (isAnnualTier(line.commitment) ? " · Annual commitment" : " · Monthly, flexible")}
                 </div>
               </li>
             );
@@ -1513,7 +1521,11 @@ export default function QuoteDetailPage() {
                       ₹3,240 dono sahi rate hain — farak sirf ikai ka hai, aur wahi
                       farak 12× ka hai. isAnnualTier wahi boundary hai jo PDF aur
                       chitthi use karte hain; yahan apna if likhna drift ka nyota. */}
-                  {line.commitment && (
+                  {addSeatsQuote ? (
+                    <span className="block text-xs text-ink-3 font-normal">
+                      Pro-rata · one-time charge for the rest of the term
+                    </span>
+                  ) : line.commitment && (
                     <span className="block text-xs text-ink-3 font-normal">
                       {isAnnualTier(line.commitment)
                         ? "Annual commitment · billed per year"
@@ -1524,11 +1536,11 @@ export default function QuoteDetailPage() {
                 <td className="p-3 text-right tabular-nums text-sm">{line.qty}</td>
                 <td className="p-3 text-right tabular-nums text-sm">
                   {rupee(line.rate)}
-                  <span className="text-ink-3">{line.commitment ? (isAnnualTier(line.commitment) ? "/yr" : "/mo") : ""}</span>
+                  <span className="text-ink-3">{linePer(line)}</span>
                 </td>
                 <td className="p-3 text-right tabular-nums text-sm font-medium">
                   {rupee(line.qty * line.rate)}
-                  <span className="text-ink-3 font-normal">{line.commitment ? (isAnnualTier(line.commitment) ? "/yr" : "/mo") : ""}</span>
+                  <span className="text-ink-3 font-normal">{linePer(line)}</span>
                 </td>
               </tr>
             ))}
