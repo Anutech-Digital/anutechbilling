@@ -112,6 +112,8 @@ const ADDED_7OCT_ACCOUNTANT = [
 ];
 /** R-263 (6 Oct 2026): Quality Score, owner / manager — a new page, next to Bug Reports. */
 const ADDED_6OCT_OM = ["/quality"];
+/** R-544 (10 Oct 2026): Loans given — a new page, owner + accountant only (RLS + RPCs check the same). */
+const ADDED_10OCT_OWNER_ACCOUNTANT = ["/accounting/loans-given"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
  *  so its Balance Sheet showed salary payable and statutory dues as Rs 0 (Pardeep's call). */
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet"] };
@@ -132,6 +134,7 @@ const addedFor = (role: string) => [
   ...(DEALS_ROLES.includes(role) ? ADDED_DEALS : []),
   ...(CONTACTS_ROLES.includes(role) ? ADDED_7OCT_CONTACTS : []),
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
+  ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 

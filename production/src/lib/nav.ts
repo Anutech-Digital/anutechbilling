@@ -260,7 +260,9 @@ export function allowedRoutesForRole(role: UserRole, opts: NavFilterOpts = {}): 
  * payable and PF/ESI/TDS dues as Rs 0 with no warning. Pardeep chose to take it away.
  */
 export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
-  billing: ["/accounting/balance-sheet"],
+  billing: ["/accounting/balance-sheet", "/accounting/loans-given"],
+  /* R-544: Loans given is owner + accountant only; /accounting admits the manager by prefix. */
+  manager: ["/accounting/loans-given"],
   /* R-255: the accountant READS Customers (the /customers row admits its sub-pages by prefix);
      the Add-customer form is a write it does not do. */
   accountant: ["/customers/new"],
@@ -558,6 +560,9 @@ export const APP_NAV: NavSection[] = [
         children: [
           { id: "fixed-assets",    href: "/accounting/assets",         label: "Assets & EMIs",  icon: "package", roles: BOOKS },
           { id: "business-loans",  href: "/accounting/business-loans", label: "Business Loans", icon: "wallet",  roles: BOOKS },
+          /* R-544: money lent to outside parties. Owner + accountant only — the RLS read
+             policy and every RPC check the same two roles (migration 20261010140000). */
+          { id: "loans-given",     href: "/accounting/loans-given",    label: "Loans given",    icon: "rupee",   roles: ["owner", "accountant"], hint: "Money lent to outside people or companies — repayments and balance" },
         ],
       },
       {
@@ -753,6 +758,7 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/accounting/banking/rules":  { tail: ["Category Rules"] },
   "/accounting/banking/brs":    { tail: ["Bank Reconciliation"] },
   "/accounting/business-loans": { tail: ["Business Loans"] },
+  "/accounting/loans-given":    { tail: ["Loans given"] },
   "/accounting/assets":         { tail: ["Assets & EMIs"] },
   "/accounting/tds-receivable/year-end": { tail: ["Year-End"] },
   "/compliance/roc":         { tail: ["ROC / MCA"] },
