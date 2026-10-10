@@ -117,7 +117,34 @@ interface Props {
   prefill?: LeadPrefill | null;
 }
 
-export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPayment, prefill = null }: Props) {
+/**
+ * R-818: every OPEN is a fresh form.
+ *
+ * Abhishek, staging, 10 Oct 2026: onboard a customer, confirm the payment, open
+ * "1-Click Onboard" again — and the last customer's company name, domain, contact,
+ * phone, email and state were still filled in. The page keeps this dialog mounted
+ * (only `open` flips), so the ~25 useState values below simply survived the close,
+ * and the next customer could be onboarded under the previous one's details.
+ *
+ * Nothing here was a deliberate draft — there is no "resume" affordance, and a half-
+ * filled form for a customer you abandoned is the same trap as a finished one — so the
+ * rule is simple: each false→true transition of `open` mounts the form under a new key.
+ * That resets EVERYTHING (customer picker, contact, state, vendor/plan/seats/price,
+ * dates), including state added later, which a hand-written reset list would silently
+ * miss. Closing leaves the old instance alone, so the close animation does not flash
+ * an empty form.
+ */
+export function AddSubscriptionDialog(props: Props) {
+  const [session, setSession] = React.useState(0);
+  const [wasOpen, setWasOpen] = React.useState(props.open);
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setSession((n) => n + 1);
+  }
+  return <AddSubscriptionForm key={session} {...props} />;
+}
+
+function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, prefill = null }: Props) {
   const { data: me } = useCurrentUser();
   const qc = useQueryClient();
 
@@ -746,8 +773,13 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
         .eq("tenant_id", tenantId)
         .or(`domain.ilike.${cleanDomain},name.ilike.${cleanCustomerName}`)
         .limit(5);
+      /* R-818: a customer PICKED from the dropdown wins outright. Its domain may differ
+         from the one typed (a second domain for the same company), so matching on the
+         typed domain/name alone could miss it and create a duplicate customer. */
+      const picked = selectedCustomerId ? { id: selectedCustomerId } : undefined;
       const existingMatch =
-        liveMatches?.find((c) => (c.domain ?? "").toLowerCase() === cleanDomain)
+        picked
+        ?? liveMatches?.find((c) => (c.domain ?? "").toLowerCase() === cleanDomain)
         ?? liveMatches?.find((c) => c.name.toLowerCase() === cleanCustomerName.toLowerCase())
         /* Last resort: the list the dialog opened with. Only reachable if the lookup
            above errored, and a stale hit still beats a duplicate. */
@@ -761,7 +793,7 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
          "is a new customer about to exist", and on 17 Sep 2026 the two came apart:
          picking a customer and then typing a different name and domain left the flag
          saying "existing", hid the contact block, and created FF Impex with no contact
-         at all. The UI now detaches the selection when either field is edited, but the
+         at all. The UI now detaches the selection when the name is edited, but the
          invariant belongs HERE — next to the insert it protects, where it cannot be
          bypassed by any future change to the form.
 
@@ -1143,9 +1175,14 @@ export function AddSubscriptionDialog({ open, onOpenChange, onSuccess, onNeedsPa
                 placeholder="e.g. exceltechnologies.in"
                 className="font-mono text-sm font-semibold"
                 value={domain}
-                /* Same reason as the name above — the domain is the stronger identity
-                   of the two, so editing it certainly means a different customer. */
-                onChange={(e) => { setDomain(e.target.value); setSelectedCustomerId(""); }}
+                /* R-818: editing the domain does NOT detach a picked customer. It used to
+                   (on the theory that a new domain means a new company), but a customer
+                   can buy for a second domain — Abhishek, 10 Oct 2026, picked a customer,
+                   typed the new domain and lost the selection. The name box above still
+                   detaches (a different name IS a different company), and "Clear
+                   Selection" is the explicit way out. Submit links the picked customer
+                   by id, so the new domain lands on this subscription only. */
+                onChange={(e) => setDomain(e.target.value)}
                 required
               />
               <p className="text-2xs text-ink-3 mt-1">Essential for Google/M365 Console provisioning.</p>
