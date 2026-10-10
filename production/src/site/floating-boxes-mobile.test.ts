@@ -33,7 +33,8 @@ describe("floating boxes on a phone", () => {
 
   it("AI chat launcher and WhatsApp pill both step aside on /checkout and /done", () => {
     expect(chat).toMatch(/if \(hideFloatingOn\(pathname\)\) return null;/);
-    expect(chrome).toMatch(/if \(!WHATSAPP_READY \|\| hideFloatingOn\(pathname\)\) return null;/);
+    // R-464: both go through the shared floatingButtons() rule, which starts with hideFloatingOn.
+    expect(chrome).toMatch(/floatingButtons\(\{ pathname, isMobile, avoidOnScreen: false, whatsappReady: WHATSAPP_READY \}\)\.whatsapp/);
   });
 
   it("the AI launcher becomes a 48px icon below 980px and keeps its accessible name", () => {

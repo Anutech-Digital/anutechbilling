@@ -18,6 +18,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WHATSAPP_URL } from "@/site/lib/config";
 import { hideFloatingOn } from "@/site/components/chrome/Chrome";
+import { floatingButtons, useAvoidFloating, useIsMobile } from "@/site/components/chrome/floating";
 
 interface Msg {
   role: "user" | "assistant";
@@ -64,6 +65,9 @@ function loadStored(): Stored | null {
 export function AgentChat() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  /* R-464: phone par form (data-avoid-floating) screen par ho to launcher hat jaata hai. */
+  const isMobile = useIsMobile();
+  const avoidOnScreen = useAvoidFloating(pathname);
   const [msgs, setMsgs] = useState<Msg[]>([GREETING]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -131,20 +135,23 @@ export function AgentChat() {
   /* R-230: /checkout aur /done par kuch float nahi karta — phone par launcher Pay button dhak
      deta tha. Saare hooks upar chal chuke, isliye yahan return safe hai. */
   if (hideFloatingOn(pathname)) return null;
+  const showLauncher = floatingButtons({ pathname, isMobile, avoidOnScreen, whatsappReady: false, chatOpen: open }).agent;
 
   return (
     <>
       {/* Launcher — fixed, WhatsApp pill (bottom 22) ke THEEK UPAR. R-230: 980px se neeche
           poori text wali pill ki jagah 48px gol icon (naam aria-label me), taaki phone par
           page ka neeche wala hissa na dhake. Position/size class me — inline style media
-          query ko jeet leta. */}
+          query ko jeet leta. R-464: phone par WhatsApp pill float nahi karti, to launcher
+          neeche (bottom 16) aata hai, aur form screen par ho to chhup jaata hai. */}
+      {showLauncher && (
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="Talk to our live AI sales agent"
         className="agent-launcher"
         style={{
-          position: "fixed", bottom: 78, zIndex: 90,
+          position: "fixed", zIndex: 90,
           display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9,
           background: "var(--primary)", color: "#fff", border: "none", borderRadius: 999,
           fontSize: 14, fontWeight: 600, cursor: "pointer",
@@ -157,15 +164,16 @@ export function AgentChat() {
         </svg>
         <span className="agent-launcher-text">Talk to our live AI sales agent</span>
         <style jsx>{`
-          .agent-launcher { right: 22px; padding: 12px 18px; }
+          .agent-launcher { right: 22px; bottom: 78px; padding: 12px 18px; }
           .agent-launcher-icon { display: none; }
           @media (max-width: 979px) {
-            .agent-launcher { width: 48px; height: 48px; padding: 0; }
+            .agent-launcher { width: 48px; height: 48px; padding: 0; right: 16px; bottom: 16px; }
             .agent-launcher-text, .agent-launcher-dot { display: none; }
             .agent-launcher-icon { display: block; }
           }
         `}</style>
       </button>
+      )}
 
       {open && (
         <div
