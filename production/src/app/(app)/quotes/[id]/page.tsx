@@ -27,6 +27,7 @@ import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -794,13 +795,13 @@ export default function QuoteDetailPage() {
   const events: TimelineEvent[] = [
     { icon: "file", kind: "indigo", title: "Quote created",
       body: `Draft created with ${items.length} line items`,
-      time: formatDate(quote.created_date, "long") },
+      time: historyTime(quoteCreatedAt(quote)) },
   ];
   if (quote.status !== "draft") {
-    events.push({ icon: "send", kind: "indigo", title: "Sent to customer", body: `Quote shared with ${quote.customer_name}`, time: formatDate(quote.updated_at, "long") });
+    events.push({ icon: "send", kind: "indigo", title: "Sent to customer", body: `Quote shared with ${quote.customer_name}`, time: historyTime(quote.updated_at) });
   }
   if (quote.status === "accepted") {
-    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: formatDate(quote.updated_at, "long") });
+    events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(quote.updated_at) });
   }
   // Only record a "Payment received" event when money ACTUALLY landed. A quote
   // can be 'invoiced' with ₹0 received (invoice raised, awaiting payment) — the
@@ -817,14 +818,14 @@ export default function QuoteDetailPage() {
         : latest?.method
           ? `${latest.method.toUpperCase()}${latest.reference ? ` · ref: ${latest.reference}` : ""}`
           : "Recorded",
-      time: latest?.received_at ? formatDate(latest.received_at, "long") : "Recently",
+      time: latest?.received_at ? historyTime(latest.received_at) : "Recently",
     });
   }
   if (quote.payment_status === "invoiced" && quote.invoice_id) {
     events.push({
       icon: "receipt", kind: "emerald", title: `Invoice ${quote.invoice_id} generated`,
       body: "GST e-invoice ready",
-      time: formatDate(quote.updated_at, "long"),
+      time: historyTime(quote.updated_at),
     });
   }
 
