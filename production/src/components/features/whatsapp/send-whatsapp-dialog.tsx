@@ -13,6 +13,8 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
+import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { Sheet, SheetContent, SheetFooter } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -162,7 +164,7 @@ export default function SendWhatsAppDialog({
                     if (previewing) return;
                     setPreviewing(true);
                     try { await onPreviewAttachment(); }
-                    catch (e) { toast.error(e instanceof Error ? e.message : "Could not open preview"); }
+                    catch (e) { toastError(asPdfError(e), { description: PDF_FAILED_DESCRIPTION }); }
                     finally { setPreviewing(false); }
                   }}
                   className="min-w-0 flex-1 text-left group focus:outline-none"

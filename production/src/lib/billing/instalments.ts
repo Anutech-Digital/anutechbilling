@@ -169,6 +169,8 @@ export interface QuoteInstalments {
   firstGross: number;
   /** ₹ INCLUDING GST for the whole term — what the quote totals. */
   termGross: number;
+  /** R-527: Σ of every instalment's own gross — what the term's invoices add up to. */
+  instalmentsGross: number;
 }
 
 /**
@@ -218,9 +220,155 @@ export function quoteInstalments(args: {
     cycle:        cycle as BillingCycle,
     count:        periods.length,
     firstTaxable: periods[0].amount,
-    firstGross:   grossAmount(periods[0].amount, taxRate),
+    firstGross:   instalmentGross(periods[0].amount, taxRate),
     termGross,
+    instalmentsGross: periods.reduce((s, p) => s + instalmentGross(p.amount, taxRate), 0),
   };
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   R-527 — ONE ROUNDING RULE FOR AN INSTALMENT, EVERYWHERE
+   ────────────────────────────────────────────────────────────────────────────
+   Measured 9 Oct 2026 on Q-FBB9-27-0020 (Starter × 8, annual commitment, billed
+   quarterly, ₹25,920 ex-GST a year):
+     editor            ₹30,586 ÷ 4 = ₹7,646.5 → ₹7,647 / qtr
+     customer page     ₹6,480 + round(₹1,166.40) = ₹7,646 / qtr
+     instalment invoice (raise_subscription_billing) ₹6,480 + round(6,480 × 18%) = ₹7,646
+   Three screens, two figures for one bill.
+
+   GST is charged on the value of EACH supply — each instalment's own tax invoice — and
+   rounded to the nearest rupee: tax = round(instalment taxable × rate / 100). So the
+   per-instalment figure is the INVOICE's figure, and the year's GST divided by four is
+   not a number any document will ever carry. Every screen that prints a per-instalment
+   amount (editor, PDF, preview, customer page, payment dialog) reads it from here; the
+   SQL twin is public.quote_split_due() (migration 20261009235800).
+
+   The year of instalments can therefore differ from quotes.amount by a rupee or two
+   (₹30,584 vs ₹30,586 here). quotes.amount is not rewritten: it is the accepted
+   quotation, and quoteAmountGap() reads it. What is DUE is always the sum of the
+   instalments that have fallen due — never quotes.amount.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/** ₹ incl GST for one instalment — the figure its tax invoice carries. */
+export function instalmentGross(taxable: number, taxRatePct: number): number {
+  return grossAmount(taxable, taxRatePct);
+}
+
+export interface InstalmentLine {
+  index:       number;
+  billOn:      string;
+  periodStart: string;
+  /** Exclusive. */
+  periodEnd:   string;
+  taxable:     number;
+  tax:         number;
+  gross:       number;
+}
+
+export interface QuoteInstalmentPlan {
+  cycle: BillingCycle;
+  count: number;
+  lines: InstalmentLine[];
+  /** Σ gross of every instalment — what the term actually invoices. */
+  instalmentsGross: number;
+}
+
+/**
+ * The dated instalments of a split-billed quote from `termStart` (the day the
+ * subscription starts — today for a quote not paid yet). Same arguments and the same
+ * nulls as quoteInstalments(): a flex line or a yearly quote has no plan.
+ */
+export function quoteInstalmentPlan(args: Parameters<typeof quoteInstalments>[0] & {
+  termStart: string;
+}): QuoteInstalmentPlan | null {
+  const summary = quoteInstalments(args);
+  if (!summary) return null;
+  const periods = buildBillingSchedule({
+    startDate:  args.termStart.slice(0, 10),
+    termMonths: Math.max(1, args.termMonths ?? 12),
+    cycle:      summary.cycle,
+    termAmount: args.termTaxable,
+  });
+  const lines = periods.map((p) => {
+    const gross = instalmentGross(p.amount, args.taxRate);
+    return {
+      index: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd,
+      taxable: p.amount, tax: gross - p.amount, gross,
+    };
+  });
+  return {
+    cycle: summary.cycle,
+    count: lines.length,
+    lines,
+    instalmentsGross: lines.reduce((s, l) => s + l.gross, 0),
+  };
+}
+
+export interface SplitDue {
+  /** Instalments whose bill date has arrived (the first is due on the start day). */
+  dueCount:    number;
+  /** ₹ incl GST of those instalments. */
+  dueGross:    number;
+  /** ₹ owed today = dueGross − received, never negative. */
+  outstanding: number;
+  /** The first instalment the money received does not cover yet. */
+  next:        InstalmentLine | null;
+  /** How many instalments the money received covers in full. */
+  paidCount:   number;
+}
+
+/**
+ * What a split-billed quote owes TODAY. Only instalments that have fallen due count —
+ * a quarterly year is not "₹22,940 outstanding" on the day Q1 is paid.
+ */
+export function splitDue(plan: QuoteInstalmentPlan, args: { todayISO: string; received: number }): SplitDue {
+  const today = args.todayISO.slice(0, 10);
+  const due = plan.lines.filter((l, i) => i === 0 || l.billOn <= today);
+  const dueGross = due.reduce((s, l) => s + l.gross, 0);
+  const received = Math.max(0, Math.round(args.received || 0));
+
+  let left = received;
+  let paidCount = 0;
+  for (const l of plan.lines) {
+    if (left >= l.gross) { left -= l.gross; paidCount += 1; } else break;
+  }
+  return {
+    dueCount:    due.length,
+    dueGross,
+    outstanding: Math.max(0, dueGross - received),
+    next:        plan.lines[paidCount] ?? null,
+    paidCount,
+  };
+}
+
+/** The quote columns every split-billing screen reads. */
+export interface SplitQuoteFields {
+  subtotal:       number | null;
+  discount_pct:   number | null;
+  tax_rate:       number | null;
+  amount:         number | null;
+  billing_cycle?: string | null;
+  line_items?:    unknown;
+}
+
+/** The first line's commitment, read defensively off a stored line_items jsonb. */
+export function firstLineCommitment(lineItems: unknown): string | null {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return null;
+  const c = (lineItems[0] as { commitment?: unknown } | null)?.commitment;
+  return typeof c === "string" ? c : null;
+}
+
+/** quoteInstalmentPlan() straight from a quote row. Null = not split-billed. */
+export function planForQuote(q: SplitQuoteFields, termStart: string): QuoteInstalmentPlan | null {
+  const subtotal = Math.round(q.subtotal ?? 0);
+  return quoteInstalmentPlan({
+    cycle:          (q.billing_cycle ?? null) as BillingCycle | null,
+    termTaxable:    subtotal - Math.round((subtotal * (q.discount_pct ?? 0)) / 100),
+    termGross:      q.amount ?? 0,
+    taxRate:        q.tax_rate ?? 18,
+    lineCommitment: firstLineCommitment(q.line_items),
+    termStart,
+  });
 }
 
 /**

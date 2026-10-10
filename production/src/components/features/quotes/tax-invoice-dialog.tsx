@@ -23,6 +23,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
+import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, toWhatsAppDigits, GST_STATE_BY_CODE } from "@/lib/utils";
@@ -292,7 +294,7 @@ export function TaxInvoiceDialog({
       });
     } catch (err) {
       console.error("Invoice PDF failed:", err);
-      toast.error("PDF didn't download — WhatsApp opened; download the PDF separately.");
+      toastError(asPdfError(err), { description: "WhatsApp opened — download the PDF again, then attach it in the chat." });
     } finally {
       setSharing(false);
     }
@@ -381,14 +383,10 @@ export function TaxInvoiceDialog({
                 } catch (err) {
                   console.error("Server PDF link failed — rendering in the browser:", err);
                   try {
-                    await Promise.race([
-                      downloadPdf(),
-                      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("The PDF took too long")), 25_000)),
-                    ]);
+                    /* R-525: downloadInvoicePDF itself now gives up after 20 s (lib/pdf/pdf-timeout). */
+                    await downloadPdf();
                   } catch (e2) {
-                    toast.error("Could not make the PDF.", {
-                      description: `${(e2 as Error).message}. Try again in a minute; if it keeps failing, report it from AI Help.`,
-                    });
+                    toastError(asPdfError(e2), { description: PDF_FAILED_DESCRIPTION });
                   }
                 } finally {
                   setDownloadingPdf(false);

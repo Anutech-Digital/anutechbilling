@@ -13,6 +13,7 @@ import { productCount } from "@/lib/items/catalog-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { OneTimeItemForm } from "@/components/features/items/one-time-item-form";
 import { ItemForm } from "@/components/features/items/item-form";
+import { CatalogUnitCheck } from "@/components/features/items/catalog-unit-check";
 import { FAB } from "@/components/ui/fab";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -27,7 +28,7 @@ import { Icon } from "@/components/ui/icon";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { catalogCostCoverage } from "@/lib/catalog/cost-coverage";
 import { workspaceListPriceGap, type ListPriceGap } from "@/lib/catalog/workspace-floor";
-import { headlinePrice, isOwnService } from "@/lib/catalog/headline-price";
+import { headlinePrice, headlineSuffix, isOwnService } from "@/lib/catalog/headline-price";
 import { displaySku, avgMarginPerSeat } from "@/lib/catalog/item-display";
 import {
   DropdownMenu,
@@ -328,6 +329,9 @@ export default function ItemsPage() {
         </div>
       )}
 
+      {/* R-526 — rows whose billing unit and name disagree (a domain billed per seat per month). */}
+      {!isLoading && <CatalogUnitCheck items={subItems} onEdit={(it) => { setEditing(it); setAddOpen(true); }} />}
+
       {/* Filters — vendor + type as compact labelled chip rows (clear which is which) */}
       {!isLoading && items && items.length > 0 && (
         <div className="space-y-2.5">
@@ -441,7 +445,7 @@ export default function ItemsPage() {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="font-serif text-base tabular-nums text-ink">
-                      {rupee(headlinePrice(it).amount)}<span className="text-3xs text-ink-3 font-sans">/{headlinePrice(it).unit}</span>
+                      {rupee(headlinePrice(it).amount)}<span className="text-3xs text-ink-3 font-sans">{headlineSuffix(it)}</span>
                     </p>
                     <p className="text-3xs text-ink-3">{isOwnService(it) ? "Own service" : `${it.margin_pct}% margin`}</p>
                   </div>
@@ -511,7 +515,7 @@ export default function ItemsPage() {
                     <td className="p-3 text-right tabular-nums text-sm">
                       {rupee(headlinePrice(it).amount)}
                       {/* R-472: the unit sits on each row — support is priced per year. */}
-                      <span className="text-3xs text-ink-3">{headlinePrice(it).unit === "yr" ? "/yr" : "/seat/mo"}</span>
+                      <span className="text-3xs text-ink-3">{headlineSuffix(it)}</span>
                     </td>
                     <td className="p-3 text-right tabular-nums text-sm text-ink-3">
                       {/* "₹0" reads as a free product. It almost always means nobody has

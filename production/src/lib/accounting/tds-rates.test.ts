@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { defaultTds, tdsBase, TDS_SECTION_RATES } from "./tds-rates";
+import { checkTdsRate, defaultTds, tdsBase, tdsDefaultRatePct, TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "./tds-rates";
+
+describe("R-523 section default rate — what the drawer sets when the section changes", () => {
+  it("194C → 2, 194J → 10 (the single table), unknown → null", () => {
+    expect(tdsDefaultRatePct("194C")).toBe(2);
+    expect(tdsDefaultRatePct("194J")).toBe(10);
+    expect(tdsDefaultRatePct(" 194h ")).toBe(TDS_SECTION_RATES["194H"].ratePct);
+    expect(tdsDefaultRatePct("192")).toBeNull();
+    expect(tdsDefaultRatePct(null)).toBeNull();
+  });
+
+  it("a rate kept at 10 after switching to 194C warns firmly", () => {
+    const c = checkTdsRate("194C", 10);
+    expect(c).toMatchObject({ matches: false, defaultPct: 2, knownVariant: false });
+    expect(c.message).toBe("194C is 2%, not 10%. Check the section or the rate before saving.");
+  });
+
+  it("the section's other lawful rate warns softly; the default does not warn", () => {
+    expect(checkTdsRate("194C", 1)).toMatchObject({ matches: false, knownVariant: true });
+    expect(checkTdsRate("194J", 2).message).toBe("194J is usually 10%. 2% is right only for technical services (not professional fees).");
+    expect(checkTdsRate("194J", 10)).toMatchObject({ matches: true, message: null });
+    expect(checkTdsRate("194C", Number("2.00")).matches).toBe(true);
+  });
+
+  it("every variant names a section the table knows, and differs from its default", () => {
+    for (const [sec, vs] of Object.entries(TDS_RATE_VARIANTS)) {
+      expect(TDS_SECTION_RATES[sec]).toBeDefined();
+      for (const v of vs) expect(v.ratePct).not.toBe(TDS_SECTION_RATES[sec].ratePct);
+    }
+  });
+});
 
 describe("default TDS per section", () => {
   it("194H commission at 2%: ₹5,00,000 → ₹10,000", () => {

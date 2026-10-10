@@ -43,6 +43,7 @@ import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
+import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -364,6 +365,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </div>
               )}
             </Card>
+
+            {/* R-530: late fee + interest — switch, accrued, bill (debit note) / waive. */}
+            <InvoiceLateCharges invoiceId={invoice.id} />
 
             {/* 🔽 Collapsible Panel 4: Internal Notes */}
             <Card className="p-4">

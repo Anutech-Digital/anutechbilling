@@ -28,9 +28,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
 import { useItems } from "@/lib/queries/items";
-import { catalogDefaultQty } from "@/lib/quotes/line-items";
-import { headlinePrice, isOwnService } from "@/lib/catalog/headline-price";
-import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
+import { billingUnitOf, defaultQtyForUnit, unitYearMultiplier } from "@/lib/catalog/billing-unit";
+import { headlinePrice, headlineSuffix, isOwnService } from "@/lib/catalog/headline-price";
+import { catalogYearlyPrice, commitmentForUnit } from "@/lib/quotes/catalog-line";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -115,6 +115,9 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
     // ₹/seat/YEAR (the canonical storage unit). Default commitment is
     // "annual_yearly" so we use the annual tier × 12. The commitment picker
     // can later switch to monthly which recalculates via updateCommitment().
+    // R-526: the item's own billing unit — ×12 only for a per-month price, qty = seats only
+    // for a per-seat item, and a one-time item is a one-time line (no commitment).
+    const unit       = billingUnitOf(it);
     const usdTier    = it.prices?.usd;
     let msrpPerYear: number;
     let wholesalePerYear: number;
@@ -123,8 +126,9 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
       // price × 12 × exchange rate. Books stay ₹; the USD shown later (₹ ÷ rate)
       // round-trips back to the real USD price the customer was quoted.
       const rate = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
-      msrpPerYear      = Math.round(usdTier.msrp * 12 * rate);
-      wholesalePerYear = Math.round(usdTier.wholesale * 12 * rate);
+      const mult = unitYearMultiplier(unit);
+      msrpPerYear      = Math.round(usdTier.msrp * mult * rate);
+      wholesalePerYear = Math.round(usdTier.wholesale * mult * rate);
     } else {
       // Domestic (or no USD price) → the ₹ catalog price, shared with the quote's
       // product chips and support toggle (lib/quotes/catalog-line.ts). A yearly-total
@@ -134,16 +138,17 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
       wholesalePerYear = p.cost;
     }
 
+    const commitment = commitmentForUnit(unit);
     onAdd({
       id: crypto.randomUUID(),
       item_id: it.id,
       name: it.name,
-      // Per-seat (Workspace/M365/Zoho) defaults to ~10; flat hosting to 1. See
-      // catalogDefaultQty — a flat ₹X/mo plan at the old ×10 was a 10× overquote.
-      qty: catalogDefaultQty(it.vendor),
-      rate: msrpPerYear,                    // store as ₹/seat/year (canonical)
+      // Per-seat (Workspace/M365/Zoho) defaults to ~10; a domain, hosting, support or a
+      // migration to 1 (defaultQtyForUnit) — a flat item at ×10 was a 10× overquote.
+      qty: defaultQtyForUnit(unit),
+      rate: msrpPerYear,                    // ₹ per unit per year (or once, one-time)
       cost: wholesalePerYear,
-      commitment: "annual_yearly",
+      ...(commitment ? { commitment } : {}),
     });
     onOpenChange(false);
   };
@@ -262,7 +267,7 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
                             </div>
                           ) : (
                             <div className="font-medium text-sm">
-                              {rupee(headlinePrice(it).amount)}/{headlinePrice(it).unit}
+                              {rupee(headlinePrice(it).amount)}{headlineSuffix(it)}
                               {isUsd && <span className="block text-3xs text-amber-ink font-normal">set the exchange rate to show {currency}</span>}
                             </div>
                           )}

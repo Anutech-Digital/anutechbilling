@@ -38,7 +38,8 @@
  */
 import { rupee, formatDate } from "@/lib/utils";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
-import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
+import { cycleScheduleLabel } from "@/lib/quotes/billing";
 
 /** The supplier's own particulars, as they must appear on a GST document. */
 export interface SupplierIdentity {
@@ -142,7 +143,8 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
 
   const billingWords = isFlex
     ? "Monthly (flex) — no commitment, cancel or change seats any month"
-    : `Annual commitment, ${cycle === "monthly" ? "billed monthly" : "billed yearly"}`;
+    /* R-527: quarterly and half-yearly said "billed yearly" here. */
+    : `Annual commitment, ${cycleScheduleLabel(cycle as BillingCycle)}`;
 
   const totalLabel = cycle === "yearly" ? "TOTAL PAYABLE"
     : cycle === "monthly" ? "PAYABLE EACH MONTH" : "PAYABLE EACH PERIOD";

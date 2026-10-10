@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { buyNowSchema, buyerCompany } from "./buy-now-schema";
-import sitemap from "@/app/sitemap";
+import { COMPANY_SITEMAP } from "@/site/lib/site-split";
 
 const base = {
   fullName: "Asha Rao", email: "asha@acme.in", phone: "9000000000",
@@ -34,7 +34,8 @@ describe("R-232 Buy now: company optional", () => {
 
 describe("R-232 sitemap", () => {
   it("lists the online Workspace checkout, the rate card and contact", () => {
-    const paths = sitemap().map((e) => new URL(e.url).pathname);
+    // R-520: the company sitemap (anutech.in) — sitemap.ts picks it by host.
+    const paths = COMPANY_SITEMAP.map((e) => e.path);
     for (const p of ["/buy/workspace", "/rates", "/contact", "/google-workspace/pricing"]) {
       expect(paths).toContain(p);
     }

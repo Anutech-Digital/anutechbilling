@@ -16,6 +16,7 @@
 import type { Metadata } from "next";
 import { archivoSans as archivo, plexMono } from "@/lib/fonts";
 import "@/site/site.css";
+import { SITE_URL } from "@/site/lib/config";
 
 /**
  * The public site is Anutech Digital's — not ResellerOS's. The root layout's
@@ -25,8 +26,13 @@ import "@/site/site.css";
  * ends "· Anutech Digital", and the OpenGraph site name matches. ResellerOS is
  * one product Anutech sells (it has its own /reselleros page); it is not the
  * name of this website.
+ *
+ * R-520 (9 Oct 2026): this subtree is the company site, anutech.in. Every page's canonical
+ * resolves to anutech.in/<its path> ("./" + metadataBase), unless the page sets its own.
  */
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  alternates: { canonical: "./" },
   title: {
     default: "Anutech Digital — Google Workspace, Microsoft 365, Zoho, Domains & Hosting in India",
     template: "%s · Anutech Digital",

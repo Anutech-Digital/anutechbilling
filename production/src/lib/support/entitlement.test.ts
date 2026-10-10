@@ -171,6 +171,19 @@ describe("entitlementRows", () => {
     expect(rows[0].licence.vendor).toBe("google");
   });
 
+  it("R-526: a domain registration is not a licence the support plan covers", () => {
+    const rows = entitlementRows(
+      [
+        licence(),
+        licence({ subscriptionId: "d1", vendor: "other", plan: "Domain registration (.in / .com / yr)" }),
+        licence({ subscriptionId: "d2", vendor: "domain", plan: ".in" }),
+      ],
+      [support()],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].licence.vendor).toBe("google");
+  });
+
   it("a customer with no licences has nothing to judge", () => {
     expect(entitlementRows([], [support()])).toEqual([]);
   });

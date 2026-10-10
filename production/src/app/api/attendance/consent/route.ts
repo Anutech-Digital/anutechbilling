@@ -10,23 +10,28 @@
  *                 clearing also deletes that employee's selfies.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
-/** Delete every stored selfie for one employee + null the row columns. */
+/** Delete every stored selfie for one employee + null the row columns.
+ *
+ *  R-601: runs on the server client. An employee withdrawing their OWN consent has no
+ *  write access to attendance / employees rows (role-restricted), and an RLS-blocked
+ *  update is silent — 0 rows, no error — so erasure used to report ok and erase nothing.
+ *  Callers scope it: tenant from the session, employee = the caller or an owner-chosen one. */
 async function eraseSelfies(
-  supabase: ReturnType<typeof createClient>,
+  admin: ReturnType<typeof createAdminClientFor>,
   tenantId: string,
   employeeId: string,
 ) {
-  const { data: rows } = await supabase
+  const { data: rows } = await admin
     .from("attendance")
     .select("id, selfie_in, selfie_out")
     .eq("tenant_id", tenantId)
     .eq("employee_id", employeeId);
   const paths = (rows ?? []).flatMap((r) => [r.selfie_in, r.selfie_out].filter(Boolean) as string[]);
   if (paths.length) {
-    await supabase.storage.from("attendance-selfies").remove(paths);
-    await supabase.from("attendance")
+    await admin.storage.from("attendance-selfies").remove(paths);
+    await admin.from("attendance")
       .update({ selfie_in: null, selfie_out: null })
       .eq("tenant_id", tenantId).eq("employee_id", employeeId);
   }
@@ -52,10 +57,12 @@ export async function POST(request: NextRequest) {
 
   if (action === "withdraw") {
     if (!me.employee_id) return NextResponse.json({ error: "Not linked to an employee" }, { status: 400 });
-    await supabase.from("employees")
+    const admin = createAdminClientFor(authData.user.id);
+    const { error } = await admin.from("employees")
       .update({ attendance_consent_at: null, attendance_consent_source: null })
       .eq("id", me.employee_id).eq("tenant_id", me.tenant_id);
-    await eraseSelfies(supabase, me.tenant_id, me.employee_id);
+    if (error) return NextResponse.json({ error: "Could not withdraw consent. Please try again." }, { status: 500 });
+    await eraseSelfies(admin, me.tenant_id, me.employee_id);
     return NextResponse.json({ ok: true });
   }
 
@@ -64,12 +71,13 @@ export async function POST(request: NextRequest) {
     const employeeId = body?.employeeId as string | undefined;
     const value = Boolean(body?.value);
     if (!employeeId) return NextResponse.json({ error: "Missing employee" }, { status: 400 });
-    await supabase.from("employees")
+    const admin = createAdminClientFor(authData.user.id);
+    await admin.from("employees")
       .update(value
         ? { attendance_consent_at: new Date().toISOString(), attendance_consent_source: "owner" }
         : { attendance_consent_at: null, attendance_consent_source: null })
       .eq("id", employeeId).eq("tenant_id", me.tenant_id);
-    if (!value) await eraseSelfies(supabase, me.tenant_id, employeeId);
+    if (!value) await eraseSelfies(admin, me.tenant_id, employeeId);
     return NextResponse.json({ ok: true });
   }
 

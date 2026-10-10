@@ -166,6 +166,13 @@ export interface AddSeatsInput {
    * billed as a full year (₹21,600 instead of ₹11,836).
    */
   termDays:           number;
+  /**
+   * R-527: a split-billed subscription is paid only to the end of its CURRENT instalment, so
+   * the new seats are charged to that date, not to renewal (lib/subscriptions/seat-charge-
+   * window.ts). Absent = charge to the renewal date, exactly as before. The draft PO still
+   * runs to renewal: the vendor commitment for the seats is the whole remaining term.
+   */
+  chargeWindow?:      { remainingDays: number; chargeTo: string } | null;
 }
 
 export interface AddSeatsResult {
@@ -213,6 +220,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   if (days <= 0) {
     return { ok: false, code: "term_ended", message: "Term has ended — issue a renewal quote instead" };
   }
+  /* R-527: days the CUSTOMER is charged for now — the current instalment on a split-billed
+     subscription, else the rest of the term. */
+  const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : days;
+  const chargeTo   = input.chargeWindow?.chargeTo ?? input.renewalDate;
 
   // annual rate per seat (₹) from current MRR
   // currentMrr = ₹/month for the whole subscription (all currentSeats together)
@@ -227,7 +238,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   const charge = prorate({
     annualPerSeatPaise: rupeesToPaise(annualPerSeat),
     seats:              input.additionalSeats,
-    remainingDays:      days,
+    remainingDays:      chargeDays,
     termDays:           input.termDays,
     taxRatePct:         input.taxRatePct,
   });
@@ -255,7 +266,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     prorate({
       annualPerSeatPaise: rupeesToPaise(seatCost.costPerSeatMonth * 12),
       seats:              1,
-      remainingDays:      days,
+      remainingDays:      chargeDays,
       termDays:           input.termDays,
       taxRatePct:         0,
     }).subtotalPaise,
@@ -273,7 +284,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
 
   const lineItems: QuoteLineItem[] = [{
     id:         "add-seats-1",
-    name:       `${input.plan} · +${input.additionalSeats} seats (pro-rata to ${input.renewalDate})`,
+    name:       `${input.plan} · +${input.additionalSeats} seats (pro-rata to ${chargeTo})`,
     qty:        input.additionalSeats,
     rate:       proRataPerSeat,
     cost:       wholesalePerSeat,
@@ -310,7 +321,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     extension_months: 0,
     // factorPpm is an integer (547945 = 54.7945%), so the note records the exact
     // fraction charged instead of a rounded float that cannot be reconciled.
-    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
+    notes:            `Add-seats pro-rata for subscription ${input.subscriptionId}${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days remaining (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`,
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
@@ -383,7 +394,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     ok:          true,
     quoteId:     newQuoteId,
     amount:      totalInclGst,
-    proRataDays: days,
+    proRataDays: chargeDays,
     newSeats,
     newMrr,
     poId,

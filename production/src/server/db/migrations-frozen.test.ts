@@ -34,7 +34,16 @@ function appliedByDeployScripts(): Set<string> {
 test("no new files in supabase/migrations (use prisma/migrations)", () => {
   const dir = join(__dirname, "..", "..", "..", "supabase", "migrations");
   const applied = appliedByDeployScripts();
-  const newer = readdirSync(dir).filter((f) => f.endsWith(".sql") && f > LAST_SUPABASE_MIGRATION && !applied.has(f));
+  /* R-531 (10 Oct 2026): a file whose top comment block says `-- deploy-skip:` is kept out of every deploy on purpose. */
+  const skipped = (f: string) => {
+    for (const line of readFileSync(join(dir, f), "utf8").split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      if (!line.startsWith("--")) return false;
+      if (/^--\s*deploy-skip:/.test(line)) return true;
+    }
+    return false;
+  };
+  const newer = readdirSync(dir).filter((f) => f.endsWith(".sql") && f > LAST_SUPABASE_MIGRATION && !applied.has(f) && !skipped(f));
   expect(newer).toEqual([]);
 });
 

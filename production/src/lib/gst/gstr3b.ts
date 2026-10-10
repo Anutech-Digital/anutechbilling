@@ -36,6 +36,10 @@ export interface Gstr3bOutput {
   zeroRated?: boolean;
   /** Inter-state supply to an unregistered person: its place of supply ("27-Maharashtra") → 3.2. */
   unregInterPos?: string | null;
+  /** R-521: a tax-on-advance row — "11A" received this period with no invoice yet (positive),
+   *  "11B" received earlier and adjusted on this period's invoice (negative). Counted in
+   *  3.1(a) like any output, and also totalled on its own so the page can NAME it. */
+  advance?: "11A" | "11B";
 }
 
 export interface Gstr3bInput {
@@ -65,6 +69,10 @@ export interface Gstr3b {
   /** R-258: how the credit was set off — per head credit used, cash, carried forward. */
   setOff: SetOff;
   notIn2b: number;
+  /** R-521: of 3.1(a), tax on advances received with no invoice yet (GSTR-1 Table 11A). */
+  adv11a: { taxable: number; heads: Heads };
+  /** R-521: of 3.1(a), advances adjusted on this period's invoices (GSTR-1 Table 11B) — positive, deducted. */
+  adv11b: { taxable: number; heads: Heads };
 }
 
 export function computeGstr3b(i: Gstr3bInput): Gstr3b {
@@ -95,7 +103,15 @@ export function computeGstr3b(i: Gstr3bInput): Gstr3b {
      RCM tax is never set off — it is paid in cash, then comes back as credit (in itcNet). */
   const setOff = setOffItc(outAll, itcNet);
   const pay = { igst: rcmTax + setOff.cash.igst, cgst: setOff.cash.cgst, sgst: setOff.cash.sgst };
-  return { outTaxable, out, zeroTaxable, zeroIgst, unregInter, rcmTaxable, rcmTax, itcRcm: rcmTax, itcAll, rev17, itcNet, pay, setOff, notIn2b: Math.max(0, i.notIn2b) };
+  const advOf = (kind: "11A" | "11B", sign: 1 | -1) => {
+    const rows = domestic.filter((r) => r.advance === kind);
+    const h = rows.reduce((acc, r) => add(acc, r.heads), Z);
+    return { taxable: sign * rows.reduce((s, r) => s + r.taxableValue, 0), heads: { igst: sign * h.igst, cgst: sign * h.cgst, sgst: sign * h.sgst } };
+  };
+  return {
+    outTaxable, out, zeroTaxable, zeroIgst, unregInter, rcmTaxable, rcmTax, itcRcm: rcmTax, itcAll, rev17, itcNet, pay, setOff,
+    notIn2b: Math.max(0, i.notIn2b), adv11a: advOf("11A", 1), adv11b: advOf("11B", -1),
+  };
 }
 
 /** Rows for the worksheet CSV / table: [box, description, taxable, igst, cgst, sgst]. */
@@ -103,6 +119,11 @@ export function gstr3bRows(g: Gstr3b): (string | number)[][] {
   const rows: (string | number)[][] = [
     ["3.1(a)", "Outward taxable supplies (other than zero/nil/exempt)", g.outTaxable, g.out.igst, g.out.cgst, g.out.sgst],
   ];
+  /* R-521: name the advance part of 3.1(a), so 3.1(a) = invoices/notes + these lines on the page. */
+  const a = g.adv11a, b = g.adv11b;
+  const any = (x: { taxable: number; heads: Heads }) => x.taxable !== 0 || x.heads.igst !== 0 || x.heads.cgst !== 0 || x.heads.sgst !== 0;
+  if (any(a)) rows.push(["—", "of 3.1(a): tax on advances received, not yet invoiced (GSTR-1 Table 11A)", a.taxable, a.heads.igst, a.heads.cgst, a.heads.sgst]);
+  if (any(b)) rows.push(["—", "of 3.1(a): less advances adjusted on this period's invoices (GSTR-1 Table 11B)", -b.taxable, -b.heads.igst, -b.heads.cgst, -b.heads.sgst]);
   if (g.zeroTaxable !== 0 || g.zeroIgst !== 0) rows.push(["3.1(b)", "Outward zero-rated supplies (exports)", g.zeroTaxable, g.zeroIgst, 0, 0]);
   if (g.rcmTaxable > 0) rows.push(["3.1(d)", "Inward supplies liable to reverse charge (imported services)", g.rcmTaxable, g.rcmTax, 0, 0]);
   for (const p of g.unregInter) rows.push(["3.2", `Inter-state supplies to unregistered persons — POS ${p.pos}`, p.taxable, p.igst, "", ""]);

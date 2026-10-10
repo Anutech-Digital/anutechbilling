@@ -162,6 +162,8 @@ describe("quoteInstalments — what a quote collects today", () => {
   it("charges one month of a ₹28,320 year, not the year", () => {
     expect(q()).toEqual({
       cycle: "monthly", count: 12, firstTaxable: 2_000, firstGross: 2_360, termGross: 28_320,
+      /* R-527: what the twelve instalment invoices add up to (12 × ₹2,360). */
+      instalmentsGross: 28_320,
     });
   });
 

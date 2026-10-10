@@ -13,7 +13,7 @@ type Gen = { files: string[]; scripts: Record<string, { before: string; after: s
 describe("gen-deploy-db headers", () => {
   it("reads key, peek and user from the top comment block", () => {
     const h = parseDeployHeaders("-- deploy-key: oneterm\r\n-- deploy-peek: exists(select 1 from pg_trigger where tgname='t')\r\n-- note\r\ncreate table x();\r\n", "20261007160000_quote_one_billing_term.sql");
-    expect(h).toEqual({ file: "20261007160000_quote_one_billing_term.sql", key: "oneterm", user: "resellersos_migration", peek: "exists(select 1 from pg_trigger where tgname='t')" });
+    expect(h).toEqual({ file: "20261007160000_quote_one_billing_term.sql", key: "oneterm", user: "resellersos_migration", peek: "exists(select 1 from pg_trigger where tgname='t')", skip: null });
     expect(parseDeployHeaders("-- deploy-peek: true\n-- deploy-user: postgres\n", "20261008000000_a_b.sql").user).toBe("postgres");
   });
 
@@ -31,6 +31,11 @@ describe("gen-deploy-db headers", () => {
     for (const bad of ["a|b", 'x="1"', "$x", "`x`"]) {
       expect(() => parseDeployHeaders(`-- deploy-peek: ${bad}\n`, "20261008000000_x.sql")).toThrow(/may not contain/);
     }
+  });
+
+  it("reads deploy-skip (R-531: a file kept in the repo but out of every deploy)", () => {
+    expect(parseDeployHeaders("-- deploy-peek: true\n-- deploy-skip: R-531 redesign\n", "20261008000000_a_b.sql").skip).toBe("R-531 redesign");
+    expect(parseDeployHeaders("-- deploy-peek: true\n", "20261008000000_a_b.sql").skip).toBeNull();
   });
 
   it("refuses two migrations with the same key", () => {
@@ -77,6 +82,15 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
     const since: Gen = generate({ supabaseDir, date: "2026-10-07", since: "20261006130000" });
     expect(since.files).toEqual(res.files);
     for (const env of ENVS) expect(since.scripts[env].after).toBe(since.scripts[env].before);
+  });
+
+  it("R-531: the global authenticator pre_request never reaches a deploy script", () => {
+    const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
+    expect(res.files.some((f: string) => f.startsWith("20261009220100_"))).toBe(false);
+    for (const env of ENVS) {
+      expect(res.scripts[env].after).not.toContain("20261009220100_");
+      expect(res.scripts[env].after).not.toMatch(/alter role authenticator/i);
+    }
   });
 
   it("staging keeps its auth.uid() rewrite; live never gets it", () => {

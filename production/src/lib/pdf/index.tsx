@@ -14,6 +14,11 @@ import type { QuotePDFProps } from "./QuotePDF";
 import type { InvoicePDFProps } from "./InvoicePDF";
 import type { ReceiptVoucherPDFProps } from "./ReceiptVoucherPDF";
 import type { PayslipPDFProps } from "./PayslipPDF";
+/* R-525: every BROWSER entry point (download / preview) races the render against 20 s and
+   turns any failure into "Could not make the PDF — try again", so a button spinner always
+   stops. The render* functions stay untimed — server routes call them and own their limits. */
+import { withPdfTimeout } from "./pdf-timeout";
+export { PdfGenerationError, PDF_FAILED_MESSAGE, PDF_FAILED_DESCRIPTION } from "./pdf-timeout";
 
 /* ─── FONT PEHLE, COMPONENT BAAD ME ─────────────────────────────────────────
    Har render function ke andar `await ensurePdfFonts()` component ke dynamic import se
@@ -35,7 +40,7 @@ import type { PayslipPDFProps } from "./PayslipPDF";
 // ─── Quote ────────────────────────────────────────────────────────────────
 
 export async function downloadQuotePDF(props: QuotePDFProps): Promise<Blob> {
-  const blob = await renderQuotePDF(props);
+  const blob = await withPdfTimeout(renderQuotePDF(props));
   triggerDownload(blob, `${props.quoteId}.pdf`);
   return blob;
 }
@@ -55,7 +60,7 @@ export async function renderQuotePDF(props: QuotePDFProps): Promise<Blob> {
  * what will land in the customer's inbox before pressing Send.
  */
 export async function previewQuotePDF(props: QuotePDFProps): Promise<void> {
-  const blob = await renderQuotePDF(props);
+  const blob = await withPdfTimeout(renderQuotePDF(props));
   const url  = URL.createObjectURL(blob);
   // _blank with a noopener tab so the preview doesn't share state with
   // the dialog window (and accidental Cmd+W stays scoped).
@@ -72,7 +77,7 @@ export async function previewQuotePDF(props: QuotePDFProps): Promise<void> {
 // ─── Invoice ──────────────────────────────────────────────────────────────
 
 export async function downloadInvoicePDF(props: InvoicePDFProps): Promise<Blob> {
-  const blob = await renderInvoicePDF(props);
+  const blob = await withPdfTimeout(renderInvoicePDF(props));
   triggerDownload(blob, `${props.invoice.id}.pdf`);
   return blob;
 }
@@ -88,7 +93,7 @@ export async function renderInvoicePDF(props: InvoicePDFProps): Promise<Blob> {
 // ─── Receipt Voucher ──────────────────────────────────────────────────────
 
 export async function downloadReceiptVoucherPDF(props: ReceiptVoucherPDFProps): Promise<Blob> {
-  const blob = await renderReceiptVoucherPDF(props);
+  const blob = await withPdfTimeout(renderReceiptVoucherPDF(props));
   const name = props.payment.receipt_voucher_no ?? `RV-${props.payment.id.slice(0, 8)}`;
   triggerDownload(blob, `${name}.pdf`);
   return blob;
@@ -105,7 +110,7 @@ export async function renderReceiptVoucherPDF(props: ReceiptVoucherPDFProps): Pr
 // ─── Payslip ──────────────────────────────────────────────────────────────
 
 export async function downloadPayslipPDF(props: PayslipPDFProps, filename: string): Promise<Blob> {
-  const blob = await renderPayslipPDF(props);
+  const blob = await withPdfTimeout(renderPayslipPDF(props));
   triggerDownload(blob, filename);
   return blob;
 }

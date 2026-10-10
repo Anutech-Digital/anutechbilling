@@ -18,6 +18,7 @@ import { AttendanceReminder } from "@/components/features/attendance/attendance-
 import { ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
 import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
+import { DemoBanner } from "@/components/layout/demo-banner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -49,6 +50,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* R-524: "Try the demo" visitor only — read-only notice + Sign up / Exit. */}
+        <DemoBanner />
         <TopBar onMobileMenuClick={() => setMobileNavOpen(true)} />
         {/* Renders nothing until a second tab is open — a one-tab strip is
             decoration that costs vertical space on every screen. */}

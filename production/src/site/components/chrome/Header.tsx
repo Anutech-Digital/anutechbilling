@@ -92,7 +92,7 @@ const MENUS: readonly Menu[] = [
       ],
       [
         { label: "Google Workspace", note: "Plans and pricing in INR", href: "/google-workspace/pricing" },
-        { label: "Microsoft 365", note: "Licence management by us", href: "/quote" },
+        { label: "Microsoft 365 quote", note: "Tell us seats, we price it", href: "/quote" },
         { label: "SSL certificates", note: "DV free, OV/EV when needed", href: "/ssl" },
       ],
     ],
@@ -104,7 +104,7 @@ const MENUS: readonly Menu[] = [
       [
         { label: "Subscription management", note: "Seats, terms, pro-rata, MRR", href: "/reselleros" },
         { label: "Pipeline & quotes", note: "Lead → quote → invoice, no re-typing", href: "/reselleros" },
-        { label: "Interactive demo", note: "Click through the dashboard", href: "/reselleros" },
+        { label: "See features", note: "Everything it does, one page", href: "/reselleros#features" },
       ],
       [
         { label: "Renewals on autopilot", note: "T-30 / T-15 / T-7 / T-0 cadence", href: "/reselleros" },
@@ -112,7 +112,7 @@ const MENUS: readonly Menu[] = [
         { label: "GST & TDS", note: "HSN 998313, CGST §31, 26AS", href: "/reselleros" },
       ],
     ],
-    promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your tenant, import customers by CSV, send a compliant quote. 14-day trial, no card.", cta: "Start free trial", href: "/reselleros", os: true },
+    promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your workspace, import customers by CSV, send a GST quote. No card needed.", cta: "Start free trial", href: "/reselleros", os: true },
   },
   {
     label: "Wholesale", href: "/reseller",
@@ -185,12 +185,9 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
       style={{ position: "sticky", top: 0, zIndex: 80, background: "#fff", borderBottom: "1px solid var(--border-light)" }}
     >
       <div className="wrap" style={{ height: 68, display: "flex", alignItems: "center", gap: 26 }}>
-        {/* The marketing home lives at "/", but "/" redirects a logged-in user to
-            /dashboard — so for an owner browsing the site, the logo would bounce to
-            the app instead of the company home they clicked for. "?preview=1" is the
-            root page's built-in bypass: it shows the Anutech Digital home to everyone,
-            signed in or not. */}
-        <Link href="/?preview=1" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }} aria-label="Anutech Digital home">
+        {/* R-465: plain "/". On anutech.in the company home no longer bounces a signed-in
+            user to the app (R-520), so the old "?preview=1" bypass is not needed there. */}
+        <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }} aria-label="Anutech Digital home">
           {/* New ANUTECH logo, the wordmark is in the image (Pardeep, 4 Oct 2026). */}
           <Image src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" width={120} height={40} priority style={{ objectFit: "contain", height: 40, width: "auto" }} />
         </Link>

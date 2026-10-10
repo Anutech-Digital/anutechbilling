@@ -1,5 +1,5 @@
 -- deploy-key: quoteacceptfamily
--- deploy-peek: position('revision_of' in pg_get_functiondef('public.tg_quote_accepted_sync_lead()'::regprocedure)) > 0
+-- deploy-peek: coalesce(position('revision_of' in pg_get_functiondef(to_regprocedure('public.tg_quote_accepted_sync_lead()'))) > 0, false)
 -- 20261009191000_quote_accept_family_only
 --
 -- WHAT THIS CHANGES (R-495 — Pardeep's decision 2B, 9 Oct 2026)

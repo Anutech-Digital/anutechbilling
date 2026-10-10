@@ -1,5 +1,5 @@
 -- deploy-key: leadcountspage
--- deploy-peek: position('page_unassigned' in pg_get_functiondef('public.lead_counts(jsonb)'::regprocedure)) > 0
+-- deploy-peek: coalesce(position('page_unassigned' in pg_get_functiondef(to_regprocedure('public.lead_counts(jsonb)'))) > 0, false)
 -- 20261009190500_lead_counts_page_pool
 --
 -- R-489 (R-457 leftover — Abhishek's audit, 8 Oct 2026):

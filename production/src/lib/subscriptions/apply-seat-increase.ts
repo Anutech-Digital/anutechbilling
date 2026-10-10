@@ -23,6 +23,10 @@ import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
 import { daysBetweenDates } from "./proration";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
+import { seatChargeWindow } from "./seat-charge-window";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
+import { istToday } from "@/lib/dates/ist";
 
 type Admin = SupabaseClient<Database>;
 
@@ -40,6 +44,10 @@ export interface SeatIncreaseSubject {
   start_date: string | null;
   renewal_date: string | null;
   status: string;
+  /** R-527: a split-billed subscription charges new seats to the end of this instalment. */
+  billing_cycle: Database["public"]["Tables"]["subscriptions"]["Row"]["billing_cycle"];
+  term_months: Database["public"]["Tables"]["subscriptions"]["Row"]["term_months"];
+  quote_id: string | null;
 }
 
 /**
@@ -93,6 +101,26 @@ export async function applySeatIncrease(args: {
   const { taxRatePct, taxLabel } = await resolveSeatTax(supabase, sub.customer_id, sub.tenant_id);
   const termDays = resolveTermDays(sub.start_date, sub.renewal_date);
 
+  /* R-527: split-billed → charge the new seats to the end of the CURRENT instalment; the later
+     instalments pick them up when the billing run re-syncs them to the new MRR. The current
+     instalment is invoiced FIRST, at the old seat count: if it were still un-invoiced when the
+     MRR changes, the re-sync would put the new seats into it as well — charged twice. */
+  const today = istToday();
+  const window = isSplitBilled(sub.billing_cycle) ? seatChargeWindow(sub, today) : null;
+  if (window?.instalmentPeriod) {
+    try {
+      await syncSubscriptionInstalments({
+        supabase, sub, todayISO: today,
+        quote: sub.quote_id ? await readQuotePaymentFacts(supabase, sub.quote_id) : undefined,
+      });
+    } catch (e) {
+      return {
+        ok: false, code: "insert_failed",
+        message: `Seats not added — this period's instalment invoice must be raised first, and it could not be: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
   return addSeats({
     supabase,
     subscriptionId: sub.id,
@@ -111,9 +139,10 @@ export async function applySeatIncrease(args: {
     taxRatePct,
     taxLabel,
     termDays,
+    chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
   });
 }
 
 /** The columns applySeatIncrease needs — shared so both callers select the same set. */
 export const SEAT_INCREASE_SELECT =
-  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, item_id, start_date, renewal_date, status" as const;
+  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, item_id, start_date, renewal_date, status, billing_cycle, term_months, quote_id" as const;

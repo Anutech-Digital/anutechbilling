@@ -78,6 +78,7 @@ import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-sou
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
 import { headlinePrice } from "@/lib/catalog/headline-price";
+import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
@@ -495,12 +496,15 @@ export function QuoteBuilder() {
       if (usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0) {
         annualRate = storedLineRate(usd.msrp * fx, lineCommitment);
         annualCost = storedLineRate(usd.wholesale * fx, lineCommitment);
-      } else if (headlinePrice(it).unit === "yr") {
+      } else if (headlinePrice(it).unit === "yr" || unitYearMultiplier(billingUnitOf(it)) !== 12) {
         /* A yearly-total plan (support "(Yearly)", msrp 0). msrp × 12 here re-priced it
-           to ₹0 the moment this effect re-ran (2 Oct 2026). */
+           to ₹0 the moment this effect re-ran (2 Oct 2026).
+           R-526: and any row priced per YEAR or ONCE (domain registration, migration) —
+           the tier branch below would ×12 it again every time the catalogue loads. */
         const p = catalogYearlyPrice(it);
-        annualRate = p.rate;
-        annualCost = p.cost;
+        const perMonthLine = lineCommitment === "monthly";
+        annualRate = perMonthLine ? Math.round(p.rate / 12) : p.rate;
+        annualCost = perMonthLine ? Math.round(p.cost / 12) : p.cost;
       } else {
         const tier = it.prices?.[lineCommitment === "monthly" ? "monthly" : "annual"];
         annualRate = storedLineRate(tier?.msrp ?? it.msrp, lineCommitment);
@@ -1069,7 +1073,9 @@ export function QuoteBuilder() {
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
           const tier    = item?.prices?.[tierKey];
-          if (tier && tier.msrp > 0) {
+          /* R-526: the tier is ₹/MONTH only on a per-month item. A domain (per year) or a
+             migration (once) keeps its rate here; the unit conversion below handles flex. */
+          if (item && tier && tier.msrp > 0 && unitYearMultiplier(billingUnitOf(item)) === 12) {
             /* R-369: the tier is ₹/seat/MONTH. An annual line stores the year (×12); a
                flex line stores the month as-is — that is what the PDF, e-mail, accept
                page and record_payment read. `tier.msrp * 12` on a flex line was a
@@ -2107,7 +2113,7 @@ export function QuoteBuilder() {
                       className="inline-flex flex-col items-start rounded-lg border border-hairline bg-paper px-3 py-2 text-left hover:border-amber hover:bg-amber-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
                     >
                       <span className="text-sm font-medium text-ink">{it.name}</span>
-                      <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}/seat/yr</span>
+                      <span className="text-2xs text-ink-3 tabular-nums">{rupee(catalogYearlyPrice(it).rate)}{lineRateSuffix(billingUnitOf(it))}</span>
                     </button>
                   ))}
                 </div>

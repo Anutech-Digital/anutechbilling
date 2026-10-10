@@ -15,8 +15,14 @@ import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import type { Database } from "@/lib/supabase/database.types";
 import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
+import { monthBounds } from "@/lib/dates/ist";
 
-export type Employee = Database["public"]["Tables"]["employees"]["Row"];
+/** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
+export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
+
+/** Every employees column a member may read: all but pin_hash. Kept explicit because
+ *  `select("*")` now fails with "permission denied" (column grants). */
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -44,7 +50,7 @@ export function useEmployees() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("employees")
-        .select("*")
+        .select(EMPLOYEE_COLUMNS)
         .order("is_active", { ascending: false })
         .order("name", { ascending: true });
       if (error) throw error;
@@ -581,12 +587,51 @@ export function useAttendance(period?: string) {
     queryFn: async (): Promise<Attendance[]> => {
       const supabase = createClient();
       let q = supabase.from("attendance").select("*").order("work_date", { ascending: false });
-      if (period) q = q.gte("work_date", `${period}-01`).lte("work_date", `${period}-31`);
+      /* R-604: was `.lte(`${period}-31`)` — Postgres rejects "2026-09-31" (400), so every
+         30-day month and February loaded NO attendance and payroll suggested a whole month
+         of loss-of-pay. monthBounds gives the real next-month start. */
+      if (period) {
+        const { start, nextStart } = monthBounds(period);
+        q = q.gte("work_date", start).lt("work_date", nextStart);
+      }
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as Attendance[];
     },
     staleTime: 15_000,
+  });
+}
+
+export type AttendanceCorrection = {
+  employeeId: string;
+  workDate: string;          // YYYY-MM-DD (IST day)
+  checkIn: string | null;    // ISO instant; both null = mark absent
+  checkOut: string | null;
+  note: string;
+};
+
+/** R-603: owner/manager/accountant/billing fix one employee-day (missed punch, forgotten
+ *  checkout, or mark absent). The RPC checks role, tenant, note, times and date again. */
+export function useCorrectAttendance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: AttendanceCorrection): Promise<string> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("correct_attendance", {
+        p_employee_id: v.employeeId,
+        p_work_date: v.workDate,
+        p_check_in: v.checkIn,
+        p_check_out: v.checkOut,
+        p_note: v.note.trim(),
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (result) => {
+      toast.success(result === "absent" ? "Marked absent" : "Attendance saved");
+      void qc.invalidateQueries({ queryKey: ["attendance"] });
+    },
+    onError: (err: unknown) => toastError(err, { fallback: "Could not fix attendance." }),
   });
 }
 
@@ -636,9 +681,30 @@ export function useAttendanceNetwork() {
     queryFn: async () => {
       const res = await fetch("/api/attendance/network");
       if (!res.ok) throw new Error("Failed to load network settings");
-      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean; requirePresence: boolean; retentionDays: number; requireFaceMatch: boolean }>;
+      return res.json() as Promise<{ allowedIps: string[]; currentIp: string; onAllowedNetwork: boolean; requireSelfie: boolean; requirePresence: boolean; retentionDays: number; requireFaceMatch: boolean; selfCheckIn?: { ok: true; outsideOffice: boolean } | { ok: false; error: string } }>;
     },
     staleTime: 10_000,
+  });
+}
+
+/** R-605: owner turns "Can mark from outside office" on/off for one employee. */
+export function useSetAttendanceAnywhere() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { employeeId: string; value: boolean }) => {
+      const res = await fetch("/api/attendance/anywhere", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Could not save");
+    },
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["employees"] });
+      toast.success(v.value ? "Can now mark from outside the office" : "Office Wi-Fi only");
+    },
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save. Nothing was changed." }),
   });
 }
 

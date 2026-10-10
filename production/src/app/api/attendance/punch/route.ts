@@ -39,10 +39,13 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient();
 
-  const { data: tenant } = await admin
-    .from("tenants").select("id").eq("attendance_ingest_key", key).maybeSingle();
-  if (!tenant) return NextResponse.json({ error: "Invalid ingest key" }, { status: 401 });
-  const tenantId = tenant.id as string;
+  /* R-607: the key lives in attendance_settings.ingest_key, which members cannot read.
+     Until 9 Oct it sat on tenants.attendance_ingest_key, readable by every member — so any
+     employee could post punches for anyone. That column is now always empty. */
+  const { data: setting } = await admin
+    .from("attendance_settings").select("tenant_id").eq("ingest_key", key).maybeSingle();
+  if (!setting) return NextResponse.json({ error: "Invalid ingest key" }, { status: 401 });
+  const tenantId = setting.tenant_id as string;
 
   // Map this tenant's biometric IDs → employee id.
   const { data: emps } = await admin

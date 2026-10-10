@@ -13,6 +13,12 @@ import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
+import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
+import { decideSite } from "@/site/lib/site-split";
+import {
+  DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
+  demoCookieLive, demoEnabled, demoHomePath, demoRequestVerdict, isDemoVisitor,
+} from "@/lib/demo/demo-account";
 
 // Routes that require authentication (the entire app shell).
 // Keep this in sync with APP_NAV in src/lib/nav.ts — any new section's
@@ -121,6 +127,26 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  /* ─── R-520: two sites on one service ─────────────────────────────────────
+     anutech.in = company, reselleros.anutech.in = ResellerOS. Company pages asked for on the
+     product host 301 to anutech.in (and ResellerOS pages on anutech.in 301 back); the product
+     host's "/" renders the ResellerOS homepage. GET/HEAD only, listed paths only, the two real
+     hosts only — the map, and why each exception exists, is site/lib/site-split.ts. */
+  const site = decideSite(
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host"),
+    pathname,
+    request.nextUrl.search,
+    request.method,
+  );
+  if (site.action === "redirect") {
+    return NextResponse.redirect(site.location, 301);
+  }
+  if (site.action === "rewrite") {
+    const url = request.nextUrl.clone();
+    url.pathname = site.pathname;
+    return NextResponse.rewrite(url);
+  }
+
   /* ─── Rate limit: unauthenticated public surface (audit A3, 1 Sep 2026) ────
      Auth se PEHLE, kyunki ye routes bina session ke hi chalte hain — aur inme
      paid Gemini (agent/chat), email + auto-quote (enquiry), aur PIN-jaanch
@@ -162,6 +188,32 @@ export async function middleware(request: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   const isAuthPage = AUTH_PREFIXES.some((p) => pathname.startsWith(p));
 
+  /* ─── R-524: "Try the demo" visitor — READ-ONLY, short-lived ──────────────
+     The database already refuses every write for this login (demo_pre_request → read-only
+     transaction). This is the app-route half: routes that write with the service role, send
+     mail/WhatsApp, take payments, invite or export never run for a demo visitor
+     (lib/demo/demo-account.ts). And the session ends when the ros_demo window closes or
+     DEMO_ENABLED is switched off. */
+  if (isAuthed && isDemoVisitor(user)) {
+    const live = demoEnabled() && demoCookieLive(request.cookies.get(DEMO_COOKIE)?.value, Date.now());
+    if (!live) {
+      const home = demoHomePath(request.headers.get("x-forwarded-host") ?? request.headers.get("host"));
+      const ended = pathname.startsWith("/api/")
+        ? NextResponse.json({ error: "The demo has ended. Open it again from the homepage." }, { status: 401 })
+        : NextResponse.redirect(new URL(`${home}?demo=ended`, request.url));
+      for (const c of request.cookies.getAll()) {
+        if (c.name.startsWith("sb-") || c.name === DEMO_COOKIE) ended.cookies.set(c.name, "", { path: "/", maxAge: 0 });
+      }
+      return ended;
+    }
+    if (demoRequestVerdict(request.method, pathname) === "refuse") {
+      return NextResponse.json(
+        { error: DEMO_REFUSAL, demo: true },
+        { status: 403, headers: { [DEMO_REFUSAL_HEADER]: "1" } },
+      );
+    }
+  }
+
   // Not logged in → block protected routes
   if (!isAuthed && isProtected) {
     const url = request.nextUrl.clone();
@@ -191,6 +243,13 @@ export async function middleware(request: NextRequest) {
     url.pathname = "/mfa";
     if (target) url.searchParams.set("next", target);
     return NextResponse.redirect(url);
+  }
+
+  /* R-701: the same half-done login used to reach every API route — a password alone could
+     invite an owner or reveal a vault secret. API calls get a 401 until the code is entered;
+     the routes that never act on the session stay open (lib/auth/mfa-gate.ts). */
+  if (isAuthed && needsMfa && apiNeedsMfaCode(pathname)) {
+    return NextResponse.json({ error: MFA_API_REFUSAL, mfaRequired: true }, { status: 401 });
   }
 
   /* R-391: the forced password-change screen needs a session (it re-checks the current,

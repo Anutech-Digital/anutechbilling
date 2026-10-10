@@ -101,14 +101,95 @@ export function gstr3bFromReport(data: GstReport, range: Pick<GstPeriod, "from" 
         return { taxableValue: r.taxableValue, heads: docHeads(d), zeroRated: c.zeroRated, unregInterPos: c.unregInterPos };
       }),
       /* Tax on advances: 11A adds to 3.1(a), 11B takes it back out. */
-      ...adv.at.map((a) => ({ taxableValue: a.advance, heads: a.heads })),
-      ...adv.atadj.map((a) => ({ taxableValue: -a.advance, heads: { igst: -a.heads.igst, cgst: -a.heads.cgst, sgst: -a.heads.sgst } })),
+      ...adv.at.map((a) => ({ taxableValue: a.advance, heads: a.heads, advance: "11A" as const })),
+      ...adv.atadj.map((a) => ({ taxableValue: -a.advance, heads: { igst: -a.heads.igst, cgst: -a.heads.cgst, sgst: -a.heads.sgst }, advance: "11B" as const })),
     ],
     itc: data.inputRows.map((r) => ({ igst: r.igst, cgst: r.cgst, sgst: r.sgst })),
     blocked17: data.blocked17Heads,
     notIn2b: data.blockedItc.blocked - data.blocked17Heads.reduce((s, h) => s + h.igst + h.cgst + h.sgst, 0),
     rcm: data.rcmRows,
   });
+}
+
+/* ── R-521 (9 Oct 2026): where the 3B output tax comes from ────────────────────────────
+ *
+ * October 2026 on ANUTECH: the Output GST card said ₹1,11,073 (12 invoices = the GSTR-1
+ * rows) while the 3B worksheet and the head-wise set-off said ₹1,12,930 — ₹1,857 tax on
+ * ₹10,320 taxable with no name anywhere. It was three receipt vouchers received in October
+ * on quotes not yet invoiced: tax on advances, GSTR-1 Table 11A, which GSTR-3B 3.1(a)
+ * rightly includes. Nothing was wrong in the sum; the page just hid one of its parts.
+ *
+ * This bridge is the ONE place the parts are listed: invoices, credit notes, debit notes,
+ * advances received (11A, +) and advances adjusted (11B, −). Its total is checked against
+ * the 3B figures computed from the same report, so a future difference shows up as a
+ * mismatch on the page instead of an unexplained number.
+ */
+export interface BridgeItem { ref: string; date: string; gross: number; taxable: number; tax: number }
+export interface BridgeLine {
+  key: "invoices" | "credit_notes" | "debit_notes" | "advances_11a" | "advances_11b";
+  label: string;
+  /** Where the figure is reported. */
+  source: string;
+  count: number;
+  /** Signed: credit notes and 11B are negative. */
+  taxable: number;
+  heads: Heads;
+  tax: number;
+  /** Advance lines: one entry per receipt voucher (signed like the line). */
+  items?: BridgeItem[];
+}
+export interface OutputTaxBridge {
+  lines: BridgeLine[];
+  /** The Output GST card (invoices + notes) — the GSTR-1 document rows. */
+  card: { taxable: number; tax: number };
+  /** card + 11A − 11B. */
+  total: { taxable: number; heads: Heads; tax: number };
+  /** The same figure as GSTR-3B reports it: 3.1(a) + 3.1(b) (taxable; tax incl. IGST on exports with payment). */
+  gstr3b: { taxable: number; heads: Heads; tax: number };
+  /** total − 3B tax. 0 when every rupee is accounted for. */
+  difference: number;
+}
+
+const ZH: Heads = { igst: 0, cgst: 0, sgst: 0 };
+const addH = (a: Heads, b: Heads): Heads => ({ igst: a.igst + b.igst, cgst: a.cgst + b.cgst, sgst: a.sgst + b.sgst });
+const negH = (a: Heads): Heads => ({ igst: -a.igst, cgst: -a.cgst, sgst: -a.sgst });
+const sumH = (h: Heads) => h.igst + h.cgst + h.sgst;
+
+export function outputTaxBridge(data: GstReport, range: Pick<GstPeriod, "from" | "to">, g3b: Gstr3b): OutputTaxBridge {
+  const seller = { stateCode: data.sellerStateCode, state: data.sellerState };
+  const docLine = (key: "invoices" | "credit_notes" | "debit_notes", docType: OutputRow["docType"], label: string, source: string): BridgeLine => {
+    const rows = data.outputRows.filter((r) => r.docType === docType);
+    const heads = rows.reduce((h, r) => addH(h, docHeads(toGstr1Doc(r))), ZH);
+    return { key, label, source, count: rows.length, taxable: rows.reduce((s, r) => s + r.taxableValue, 0), heads, tax: rows.reduce((s, r) => s + r.gst, 0) };
+  };
+
+  /* Each advance through buildAdvances on its own — the exact rule (period, export, place of
+     supply, rounding) the 3B rows and the GSTR-1 11A/11B export use; per-voucher rounding
+     adds up to the aggregate because buildAdvances also rounds per voucher. */
+  const a11: BridgeItem[] = [], b11: BridgeItem[] = [];
+  let aHeads = ZH, bHeads = ZH;
+  for (const a of data.advances) {
+    const t = buildAdvances([a], range, seller);
+    const ref = a.voucherNo ?? `payment ${a.paymentId.slice(0, 8)}`;
+    for (const r of t.at) { a11.push({ ref, date: a.receivedDate, gross: a.gross, taxable: r.advance, tax: sumH(r.heads) }); aHeads = addH(aHeads, r.heads); }
+    for (const r of t.atadj) { b11.push({ ref, date: a.adjustedOn ?? a.receivedDate, gross: -a.gross, taxable: -r.advance, tax: -sumH(r.heads) }); bHeads = addH(bHeads, negH(r.heads)); }
+  }
+
+  const lines: BridgeLine[] = [
+    docLine("invoices", "invoice", "Sales invoices", "GSTR-1 B2B / B2CL / B2CS / EXP"),
+    docLine("credit_notes", "credit_note", "Credit notes (reduce tax)", "GSTR-1 CDNR / CDNUR"),
+    docLine("debit_notes", "debit_note", "Debit notes (add tax)", "GSTR-1 CDNR / CDNUR"),
+    { key: "advances_11a", label: "Tax on advances received, not yet invoiced", source: "GSTR-1 Table 11A", count: a11.length,
+      taxable: a11.reduce((s, x) => s + x.taxable, 0), heads: aHeads, tax: a11.reduce((s, x) => s + x.tax, 0), items: a11 },
+    { key: "advances_11b", label: "Less: earlier advances adjusted on this period's invoices", source: "GSTR-1 Table 11B", count: b11.length,
+      taxable: b11.reduce((s, x) => s + x.taxable, 0), heads: bHeads, tax: b11.reduce((s, x) => s + x.tax, 0), items: b11 },
+  ];
+  const card = { taxable: data.outputTotal, tax: data.outputGST };
+  const totalHeads = lines.reduce((h, l) => addH(h, l.heads), ZH);
+  const total = { taxable: lines.reduce((s, l) => s + l.taxable, 0), heads: totalHeads, tax: lines.reduce((s, l) => s + l.tax, 0) };
+  const g3Heads = addH(g3b.out, { igst: g3b.zeroIgst, cgst: 0, sgst: 0 });
+  const gstr3b = { taxable: g3b.outTaxable + g3b.zeroTaxable, heads: g3Heads, tax: sumH(g3Heads) };
+  return { lines, card, total, gstr3b, difference: total.tax - gstr3b.tax };
 }
 
 export type GstCashState = "to_pay" | "still_to_pay" | "credit" | "overpaid" | "nil";

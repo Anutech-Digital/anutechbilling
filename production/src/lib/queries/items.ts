@@ -9,6 +9,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Item, Database } from "@/lib/supabase/database.types";
 import { TIER_FALLBACK_MONTHLY } from "@/lib/pricing/workspace";
+import type { BillingUnit } from "@/lib/catalog/billing-unit";
 
 type ItemInsert = Database["public"]["Tables"]["items"]["Insert"];
 type ItemUpdate = Database["public"]["Tables"]["items"]["Update"];
@@ -133,6 +134,8 @@ type CatalogEntry = {
   prices: {
     monthly?: { msrp: number; wholesale: number };  // ₹/seat/mo, no commit
     annual?:  { msrp: number; wholesale: number };  // ₹/seat/mo, 1-yr commit (same whether billed monthly or yearly)
+    /** R-526: how the price is billed — absent = per seat per month (lib/catalog/billing-unit.ts). */
+    billing_unit?: BillingUnit;
   };
 };
 
@@ -240,12 +243,12 @@ const DEFAULT_CATALOG: CatalogEntry[] = [
   {
     id: "M365-EM", name: "M365 Email migration (one-time)", vendor: "microsoft", kind: "addon",
     msrp: 199, wholesale: 80, hsn: "998314",
-    prices: {},  // one-time, no commitment tiers
+    prices: { billing_unit: "one_time" },  // R-526: ₹199 once — never ×12 (owner, 9 Oct)
   },
   {
     id: "DOM-IN", name: "Domain registration (.in / .com / yr)", vendor: "other", kind: "addon",
     msrp: 999, wholesale: 650, hsn: "998399",
-    prices: {},  // one-time per year
+    prices: { billing_unit: "unit_year" },  // R-526: ₹999 per year per domain (owner, 9 Oct)
   },
 ];
 

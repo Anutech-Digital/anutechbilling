@@ -82,6 +82,18 @@ const POLICY_HELPERS: Record<string, string> = {
     "leads_hierarchy_select/write/delete in 20260928100000 — the reporting-tree policies",
   visible_owner_ids:
     "the same three policies — owner_id = any(visible_owner_ids())",
+  is_demo_visitor:
+    "R-524: the RESTRICTIVE 'demo visitor no insert/update/delete' policies on storage.objects (to public)",
+};
+
+/**
+ * PostgREST's db_pre_request runs as the REQUEST's role — anon included — before every request,
+ * so anon must be able to EXECUTE it or every logged-out request fails. Not a policy helper,
+ * so the "named by a policy" check below does not apply; instead each must be the configured hook.
+ */
+const PRE_REQUEST_HOOKS: Record<string, string> = {
+  demo_pre_request:
+    "R-524: makes a 'Try the demo' visitor's request READ ONLY (20261009220000 / 20261009220100)",
 };
 
 describe("no later migration hands anon EXECUTE back", () => {
@@ -93,7 +105,7 @@ describe("no later migration hands anon EXECUTE back", () => {
     const grants = src.match(/grant\s+execute\s+on\s+function[\s\S]{0,300}?;/gi) ?? [];
     for (const g of grants) {
       if (!/\banon\b/.test(g)) continue;
-      const exempt = Object.keys(POLICY_HELPERS).find((fn) => g.includes(fn));
+      const exempt = [...Object.keys(POLICY_HELPERS), ...Object.keys(PRE_REQUEST_HOOKS)].find((fn) => g.includes(fn));
       expect(
         exempt,
         `${file} grants anon EXECUTE on a function that is not a known RLS policy ` +
@@ -102,6 +114,14 @@ describe("no later migration hands anon EXECUTE back", () => {
           "add it to POLICY_HELPERS with the policy that evaluates it, or say so on the " +
           "board (R-013) — do not re-grant quietly.",
       ).toBeDefined();
+    }
+  });
+
+  it("every allow-listed pre-request hook is really wired as pgrst.db_pre_request", () => {
+    const all = readdirSync(DIR).filter((f) => f.endsWith(".sql")).map((f) => code(f)).join("\n");
+    for (const fn of Object.keys(PRE_REQUEST_HOOKS)) {
+      expect(all.includes(`pgrst.db_pre_request to ''public.${fn}''`), `${fn} is allow-listed as a pre-request hook but nothing sets it`)
+        .toBe(true);
     }
   });
 

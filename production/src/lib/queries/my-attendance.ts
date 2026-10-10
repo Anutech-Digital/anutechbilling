@@ -166,6 +166,8 @@ export function useMarkSelfAttendance() {
     // and enforced server-side (client-only checks would be bypassable).
     mutationFn: async (input?: {
       photo?: string | null; code?: string; lat?: number | null; lng?: number | null; accuracy?: number | null; device?: string;
+      /** R-606: passkey signature from an approved device, when the workspace requires one. */
+      deviceAssertion?: unknown;
     }): Promise<string> => {
       const res = await fetch("/api/attendance/self", {
         method: "POST",
@@ -177,6 +179,7 @@ export function useMarkSelfAttendance() {
           lng: input?.lng ?? null,
           accuracy: input?.accuracy ?? null,
           device: input?.device ?? "",
+          deviceAssertion: input?.deviceAssertion ?? null,
         }),
       });
       const json = await res.json().catch(() => ({}));

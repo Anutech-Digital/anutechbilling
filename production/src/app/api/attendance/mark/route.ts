@@ -11,8 +11,9 @@
  * Ab lib/security/rate-limit.ts ka `clientIp` (right se, sirf humari infra ki entry).
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { clientIp as trustedClientIp } from "@/lib/security/rate-limit";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
 
 /* "" (IP nahi mili) purana matlab rakha — "unknown" kabhi allowlist se mel na khaye. */
 function clientIp(req: NextRequest): string {
@@ -33,18 +34,16 @@ export async function POST(request: NextRequest) {
 
   const ip = clientIp(request);
 
-  // Office-network gate (opt-in) + selfie requirement (anti buddy-punching).
+  // Office-network gate + selfie requirement (anti buddy-punching).
   const { data: settings } = await supabase
     .from("attendance_settings")
     .select("allowed_ips, require_selfie")
     .maybeSingle();
-  const allowed = settings?.allowed_ips ?? [];
-  if (allowed.length > 0 && !allowed.includes(ip)) {
-    return NextResponse.json(
-      { error: "You're not on the office network — attendance can only be marked at the office." },
-      { status: 403 },
-    );
-  }
+  /* R-605 (Pardeep 10 Oct: "kiosk sirf office wifi par"): the kiosk is no longer opt-in —
+     with no office network locked it refuses and tells the owner how to lock one. Before,
+     an unlocked workspace let anyone with a colleague's PIN mark them from anywhere. */
+  const net = officeNetworkDecision({ purpose: "kiosk", allowedIps: settings?.allowed_ips ?? [], ip });
+  if (!net.ok) return NextResponse.json({ error: net.error, code: net.code }, { status: net.status });
   // Selfie required (default): a PIN alone can't mark — every mark needs a photo
   // of who did it, so knowing someone else's PIN isn't enough to punch them in.
   const requireSelfie = settings?.require_selfie ?? true;
@@ -62,6 +61,16 @@ export async function POST(request: NextRequest) {
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const action = data as string;
+  /* R-607: the RPC RETURNS these instead of raising, so its attempt counter survives. */
+  if (action === "wrong_pin") {
+    return NextResponse.json({ error: "Wrong PIN. After 5 wrong tries this PIN is locked for 15 minutes." }, { status: 400 });
+  }
+  if (action === "pin_locked") {
+    return NextResponse.json(
+      { error: "Too many wrong PINs — this PIN is locked for 15 minutes. Try again later, or ask the owner to set a new PIN." },
+      { status: 429 },
+    );
+  }
 
   // Attach the selfie (best-effort — attendance is already recorded).
   if (photo && (action === "checked_in" || action === "checked_out")) {
@@ -75,9 +84,12 @@ export async function POST(request: NextRequest) {
         const path = `${me.tenant_id}/${workDate}/${employeeId}_${slot}.jpg`;
         const up = await supabase.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
         if (!up.error) {
-          await supabase.from("attendance")
+          /* R-601: the kiosk may be signed in as any staff login, and only HR roles may
+             write attendance rows directly now — so the selfie path goes on through the
+             server client, scoped to this tenant + the employee the RPC just marked. */
+          await createAdminClientFor(authData.user.id).from("attendance")
             .update(slot === "in" ? { selfie_in: path } : { selfie_out: path })
-            .eq("employee_id", employeeId).eq("work_date", workDate);
+            .eq("tenant_id", me.tenant_id).eq("employee_id", employeeId).eq("work_date", workDate);
         }
       }
     } catch { /* photo is best-effort; never block attendance */ }

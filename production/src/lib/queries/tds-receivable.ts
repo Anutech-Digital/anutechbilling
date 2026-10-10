@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
+import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 
 type TdsInsert = Database["public"]["Tables"]["tds_receivable"]["Insert"];
 type TdsUpdate = Database["public"]["Tables"]["tds_receivable"]["Update"];
@@ -46,12 +47,19 @@ export const TDS_STATUS_DESCRIPTION: Record<TdsStatus, string> = {
   written_off:   "Accepted as loss — bypass ITR claim",
 };
 
+/* R-523: the % in each label comes from the one rate table (tds-rates.ts) — the list said
+   194H "5%" while the table (and the rate the drawer now fills) says 2%. */
+const tdsLabel = (sec: string, what: string) => {
+  const def = TDS_SECTION_RATES[sec]?.ratePct;
+  const alt = (TDS_RATE_VARIANTS[sec] ?? []).map((v) => `${v.ratePct}% for ${v.when}`);
+  return `${sec} — ${what} (${[`${def}%`, ...alt].join("; ")})`;
+};
 export const TDS_SECTIONS = [
-  { value: "194J",  label: "194J — Professional / technical services (10%)" },
-  { value: "194C",  label: "194C — Contracts (2% for companies, 1% individuals)" },
-  { value: "194Q",  label: "194Q — High-value goods purchase (0.1%)" },
-  { value: "194H",  label: "194H — Commission / brokerage (5%)" },
-  { value: "194I",  label: "194I — Rent (10% building, 2% machinery)" },
+  { value: "194J",  label: tdsLabel("194J", "Professional / technical services") },
+  { value: "194C",  label: tdsLabel("194C", "Contracts") },
+  { value: "194Q",  label: tdsLabel("194Q", "High-value goods purchase") },
+  { value: "194H",  label: tdsLabel("194H", "Commission / brokerage") },
+  { value: "194I",  label: tdsLabel("194I", "Rent") },
 ] as const;
 
 // ────────────────────────────────────────────────────────────────
@@ -415,4 +423,22 @@ export async function getForm16aSignedUrl(path: string): Promise<string> {
     .createSignedUrl(path, 60 * 60);
   if (error) throw error;
   return data.signedUrl;
+}
+
+/** R-523: TDS the customer deducted on ONE payment (0 when none) — receipts show
+ *  "Received ₹A + TDS ₹B = ₹C" so the bank amount can be matched. */
+export function useTdsForPayment(paymentId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["tds_receivable", "payment", paymentId],
+    enabled: enabled && !!paymentId,
+    queryFn: async (): Promise<number> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("tds_receivable")
+        .select("tds_amount")
+        .eq("payment_id", paymentId as string);
+      if (error) throw error;
+      return (data ?? []).reduce((s, r) => s + Math.max(0, r.tds_amount ?? 0), 0);
+    },
+  });
 }

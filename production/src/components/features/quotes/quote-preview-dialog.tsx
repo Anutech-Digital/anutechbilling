@@ -26,6 +26,7 @@ import {
 } from "@/lib/quotes/billing";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
+import { quoteInstalmentPlan } from "@/lib/billing/instalments";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -131,6 +132,17 @@ export function QuotePreviewDialog({
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
   const intra        = splitIntraStateTax(tax);
+  /* R-527: per-instalment figures by the instalment invoice's own rounding — the plan the
+     editor, PDF, customer page and payment sheet read (lib/billing/instalments.ts). */
+  const splitPlan    = !isForeign && perInvoice
+    ? quoteInstalmentPlan({
+        cycle: effectiveCycle, termTaxable: taxable, termGross: total,
+        taxRate: isExport ? 0 : taxRate, lineCommitment: firstCommitment ?? null, termStart: "2000-01-01",
+      })
+    : null;
+  const firstInst    = splitPlan?.lines[0] ?? null;
+  const fmtInst      = (n: number) => `${money(n)}${billingUnit}`;
+  const instHeads    = firstInst ? splitIntraStateTax(firstInst.tax) : null;
   // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
   const includedSupport = includedSupportLine(lineItems);
 
@@ -333,15 +345,15 @@ export function QuotePreviewDialog({
                     accent
                   />
                 )}
-                <Row label="Taxable amount" value={fmt(taxable)} />
+                <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmt(taxable)} />
                 {isExport ? (
                   <Row label="Export — zero-rated (LUT), no GST" value={money(0)} />
                 ) : interState ? (
-                  <Row label={`IGST (${taxRate}%)`} value={fmt(tax)} />
+                  <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmt(tax)} />
                 ) : (
                   <>
-                    <Row label={`CGST (${taxRate / 2}%)`} value={fmt(intra.cgst)} />
-                    <Row label={`SGST (${taxRate / 2}%)`} value={fmt(intra.sgst)} />
+                    <Row label={`CGST (${taxRate / 2}%)`} value={instHeads ? fmtInst(instHeads.cgst) : fmt(intra.cgst)} />
+                    <Row label={`SGST (${taxRate / 2}%)`} value={instHeads ? fmtInst(instHeads.sgst) : fmt(intra.sgst)} />
                   </>
                 )}
                 <div className="border-t-2 border-ink pt-2 mt-2">
@@ -350,7 +362,9 @@ export function QuotePreviewDialog({
                       {perInvoice ? `Per invoice (${billingN}/yr)` : "Grand total"}
                     </span>
                     <span className="font-serif text-2xl tabular-nums">
-                      {perInvoice
+                      {firstInst
+                        ? fmtInst(firstInst.gross)
+                        : perInvoice
                         ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}
                     </span>
@@ -358,7 +372,7 @@ export function QuotePreviewDialog({
                   {perInvoice && (
                     <div className="flex justify-between items-baseline mt-1.5 text-ink-3">
                       <span className="text-2xs">Annual contract value</span>
-                      <span className="text-sm tabular-nums">{money(annualContractValue(total, billingN, firstCommitment))}/yr</span>
+                      <span className="text-sm tabular-nums">{splitPlan ? money(splitPlan.instalmentsGross) : money(annualContractValue(total, billingN, firstCommitment))}/yr</span>
                     </div>
                   )}
                   {isForeign && (

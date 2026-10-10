@@ -35,6 +35,9 @@ import {
   useSetMyReminderPrefs,
 } from "@/lib/queries/my-attendance";
 import { LeaveRequestDialog } from "@/components/features/attendance/leave-request-dialog";
+import { ThisDeviceCard, useDeviceSignature } from "./device-card";
+import { dayStatus, formatGap, formatWorked, type ShiftRules } from "@/lib/attendance/shift";
+import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { minutesToTimeValue, parseTimeToMinutes } from "@/lib/attendance/reminders";
 
 function fmtTime(iso: string | null): string {
@@ -52,6 +55,11 @@ function fmtDuration(inIso: string | null, outIso: string | null): string | null
   const mins = Math.max(0, Math.round((new Date(outIso).getTime() - new Date(inIso).getTime()) / 60000));
   const h = Math.floor(mins / 60), m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Today as YYYY-MM-DD in IST, whatever timezone this device is set to. */
+function todayIstDate(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
 function todayLabel(): string {
@@ -118,7 +126,9 @@ export default function MyAttendancePage() {
             checkOut={meQ.data.check_out}
             requireSelfie={requireSelfie}
             requirePresence={requirePresence}
+            here={netQ.data?.selfCheckIn}
           />
+          <ThisDeviceCard />
           <HistoryCard />
           <ReminderSettingsCard />
           {meQ.data.consent_at && (
@@ -337,9 +347,38 @@ function ConsentStatus({ consentAt, retentionDays }: { consentAt: string; retent
   );
 }
 
+/**
+ * Late / left early / half-day tags for one day (R-604). Late and left-early are shown
+ * only; half-day is what payroll counts as half a day — so its tooltip says so.
+ */
+function DayTags({ workDate, checkIn, checkOut, rules }: {
+  workDate: string; checkIn: string | null; checkOut: string | null; rules: ShiftRules;
+}) {
+  const s = dayStatus(workDate, checkIn, checkOut, rules);
+  if (!s.present) return null;
+  const tags: { label: string; title: string; tone: "amber" | "muted" }[] = [];
+  if (s.late) tags.push({ label: `Late ${formatGap(s.lateByMinutes)}`, title: `Checked in after ${rules.shiftStart} + ${rules.lateGraceMinutes} min grace`, tone: "amber" });
+  /* A half-day already says the day was short — "left 4h 25m early" beside it is noise. */
+  if (s.leftEarly && !s.halfDay) tags.push({ label: `Left ${formatGap(s.leftEarlyByMinutes)} early`, title: `Office closes at ${rules.shiftEnd}`, tone: "muted" });
+  if (s.halfDay) tags.push({ label: "Half day", title: `Under ${rules.halfDayUnderHours} hours (${formatWorked(s.workedMinutes ?? 0)}) — payroll counts this day as half`, tone: "amber" });
+  if (!tags.length) return null;
+  return (
+    <span className="inline-flex flex-wrap gap-1.5">
+      {tags.map((t) => (
+        <span key={t.label} title={t.title}
+          className={cn("rounded-full px-2 py-0.5 text-2xs font-medium",
+            t.tone === "amber" ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-2")}>
+          {t.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** Last 14 days of the caller's own attendance — transparency builds trust. */
 function HistoryCard() {
   const histQ = useMyAttendanceHistory(14);
+  const rulesQ = useShiftRules();
   const rows = histQ.data ?? [];
   if (histQ.isLoading) return <Skeleton className="mt-4 h-32 w-full rounded-xl" />;
   if (!rows.length) return null;
@@ -357,6 +396,11 @@ function HistoryCard() {
               {fmtDuration(r.check_in, r.check_out)
                 ? <span className="ml-2 text-ink-2">· {fmtDuration(r.check_in, r.check_out)}</span>
                 : r.check_in && !r.check_out ? <span className="ml-2 text-amber-ink">· no check-out</span> : null}
+              {rulesQ.data && (
+                <span className="ml-2 align-middle">
+                  <DayTags workDate={r.work_date} checkIn={r.check_in} checkOut={r.check_out} rules={rulesQ.data} />
+                </span>
+              )}
             </span>
           </li>
         ))}
@@ -371,15 +415,20 @@ function CheckInCard({
   checkOut,
   requireSelfie,
   requirePresence,
+  here,
 }: {
   name: string;
   checkIn: string | null;
   checkOut: string | null;
   requireSelfie: boolean;
   requirePresence: boolean;
+  /** R-605: can this person self check-in from this network? (from /api/attendance/network) */
+  here?: { ok: true; outsideOffice: boolean } | { ok: false; error: string };
 }) {
   const mark = useMarkSelfAttendance();
   const undo = useUndoLastPunch();
+  const device = useDeviceSignature();
+  const rulesQ = useShiftRules();
   const state: "out" | "in" | "done" = !checkIn ? "out" : !checkOut ? "in" : "done";
   const pending = state !== "done";
 
@@ -470,9 +519,12 @@ function CheckInCard({
     return canvas.toDataURL("image/jpeg", 0.6);
   }
 
-  function onMark() {
+  async function onMark() {
     setConfirmQuick(false);
     const photo = requireSelfie && !noCamDetected ? capture() : null;
+    // R-606: when the workspace requires a registered device, the press is signed first.
+    const deviceAssertion = await device.sign();
+    if (deviceAssertion === false) return;
     mark.mutate({
       photo,
       code,
@@ -480,13 +532,14 @@ function CheckInCard({
       lng: coords.current?.lng ?? null,
       accuracy: coords.current?.accuracy ?? null,
       device: noCamDetected ? "desktop_no_webcam" : getDeviceToken(),
+      deviceAssertion,
     });
   }
 
   function onPrimary() {
     // Quick check-out (just checked in) → confirm first, so a stray tap doesn't end the day.
     if (quickCheckout && !confirmQuick) { setConfirmQuick(true); return; }
-    onMark();
+    void onMark();
   }
 
   return (
@@ -570,6 +623,21 @@ function CheckInCard({
         </div>
       </div>
 
+      {here && !here.ok && (
+        <p role="alert" className="mt-3 rounded-lg border border-rose/30 bg-rose/5 px-3 py-2 text-sm text-rose">{here.error}</p>
+      )}
+      {here?.ok && here.outsideOffice && (
+        <p className="mt-3 rounded-lg border border-amber/40 bg-amber-soft/40 px-3 py-2 text-xs text-amber-ink">
+          You&apos;re outside the office Wi-Fi. You&apos;re allowed to mark from outside — today will show &quot;Outside office&quot; to the owner.
+        </p>
+      )}
+      {rulesQ.data && (
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-3">
+          <span>Office hours {rulesQ.data.shiftStart}–{rulesQ.data.shiftEnd}</span>
+          <DayTags workDate={todayIstDate()} checkIn={checkIn} checkOut={checkOut} rules={rulesQ.data} />
+        </p>
+      )}
+
       <div className="mt-6">
         {state === "done" && fmtDuration(checkIn, checkOut) && (
           <p className="mb-3 text-sm text-ink-2">In office today: <b className="text-ink">{fmtDuration(checkIn, checkOut)}</b></p>
@@ -594,12 +662,13 @@ function CheckInCard({
             size="lg"
             className="w-full h-14 text-base"
             onClick={onPrimary}
-            disabled={mark.isPending || (requireSelfie && !camOn && !noCamDetected) || (requirePresence && code.length !== 6)}
+            disabled={mark.isPending || device.signing || (requireSelfie && !camOn && !noCamDetected) || (requirePresence && code.length !== 6)}
           >
             <Icon name={state === "out" ? "check" : "logout"} className="h-5 w-5 mr-2" />
-            {mark.isPending ? "…" : state === "out" ? "Check In" : "Check Out"}
+            {mark.isPending || device.signing ? "…" : state === "out" ? "Check In" : "Check Out"}
           </Button>
         )}
+        {device.hint}
 
         {canUndo && !confirmQuick && (
           <button
@@ -617,6 +686,7 @@ function CheckInCard({
           "Google Auth Login",
           noCamDetected ? "desktop mode" : requireSelfie ? "selfie" : null,
           requirePresence ? "office code" : null,
+          device.required ? "registered device" : null,
           pending && geoState === "ok" ? "location" : null,
         ].filter(Boolean).join(" + ")}
         {" — "}

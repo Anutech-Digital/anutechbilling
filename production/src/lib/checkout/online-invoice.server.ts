@@ -26,6 +26,9 @@
  * which is read back as "already issued", never as a second invoice.
  */
 import type { createAdminClient } from "@/lib/supabase/server";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import { raiseDueInstalmentsForQuote } from "@/lib/billing/sync-instalments.server";
+import { istToday } from "@/lib/dates/ist";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -60,7 +63,7 @@ async function issue(
 
   const { data: q, error: qErr } = await admin
     .from("quotes")
-    .select("id, invoice_id, payment_status, lead_id, customer_id")
+    .select("id, invoice_id, payment_status, lead_id, customer_id, billing_cycle")
     .eq("id", quoteId)
     .eq("tenant_id", tenantId)
     .maybeSingle();
@@ -70,6 +73,36 @@ async function issue(
     return { status: "failed", reason };
   }
   if (q.invoice_id) return { status: "exists", invoiceId: String(q.invoice_id) };
+
+  /* R-527: a split-billed quote (annual commitment billed monthly / quarterly / half-yearly)
+     is never invoiced whole — the invoices trigger refuses generate_invoice for it. What the
+     customer just paid is the FIRST instalment, and its tax invoice is that instalment's,
+     raised through the billing cron's own code. It is "paid" only for that period, so the
+     not-fully-paid rule below (a whole-term rule) does not apply to it. */
+  if (isSplitBilled(q.billing_cycle as Parameters<typeof isSplitBilled>[0])) {
+    await fillBlankCustomerState(admin, { tenantId, quoteId, leadId: q.lead_id, customerId: q.customer_id, logTag });
+    const out = await raiseDueInstalmentsForQuote({ supabase: admin, quoteId, tenantId, todayISO: istToday() });
+    if (out.raised.length > 0) {
+      console.info(`${logTag} instalment invoice ${out.raised[0].invoice_id} issued for paid ${quoteId}`);
+      return { status: "issued", invoiceId: out.raised[0].invoice_id };
+    }
+    if (out.errors.length > 0) {
+      const reason = out.errors[0].message;
+      console.error(`${logTag} instalment invoice NOT issued for ${quoteId}: ${reason}`);
+      if (q.lead_id) {
+        await admin.from("lead_activities").insert({
+          tenant_id: tenantId,
+          lead_id: q.lead_id,
+          kind: "note",
+          detail:
+            `Paid online, but the instalment GST invoice could not be issued automatically — ${reason} ` +
+            `The payment is recorded; the daily billing run issues it once the above is fixed.`,
+        });
+      }
+      return { status: "failed", reason };
+    }
+    if (out.splitBilled) return { status: "not_fully_paid" };
+  }
 
   /* Only a FULLY paid quote is invoiced here — the same rule the Subscriptions screen
      applies after record_payment ("the GST invoice is raised once the quote is fully

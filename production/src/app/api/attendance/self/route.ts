@@ -9,14 +9,25 @@
  *   • Proof     — when require_selfie is on, a live selfie is captured; GPS is
  *                 always stored (soft audit signal) if the phone shares it.
  *
- * Flow: validate presence → mark_self_attendance() → attach selfie + geo to the
- * day's row (best-effort; never blocks the mark once recorded).
+ *   • Device    — R-606: when require_device is on, the check-in must carry a passkey
+ *                 signature (`deviceAssertion`) from an OWNER-APPROVED device of THIS
+ *                 employee. Threat: a colleague who knows the password checks someone in
+ *                 from his own laptop. The passkey's private key never leaves the employee's
+ *                 device (a synced passkey follows only their own Google/Apple account), so
+ *                 another laptop cannot sign. When off: the old soft token + new_device flag.
+ *
+ * Flow: validate presence → device passkey (if required) → mark_self_attendance() → attach
+ * selfie + geo to the day's row (best-effort; never blocks the mark once recorded).
  */
 import crypto from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { validateCode } from "@/lib/attendance/presence";
 import { compareFaces } from "@/lib/attendance/face";
+import { officeNetworkDecision } from "@/lib/attendance/office-network";
+import { requestIp } from "@/lib/attendance/request-ip";
+import { deviceError } from "@/lib/attendance/webauthn";
+import { getCaller, verifyDeviceAssertion } from "../device/_server";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -42,13 +53,36 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data: settings } = await supabase
-    .from("attendance_settings")
-    .select("require_selfie, require_presence, presence_secret, require_face_match")
-    .maybeSingle();
+  /* R-601: employees cannot write attendance rows or read presence_secret themselves any
+     more. The mark itself is the SECURITY DEFINER RPC below; the seed read and the
+     selfie / geo / flags patch after it go through the server client, and every one of
+     those calls is scoped to THIS caller's tenant + linked employee in code. */
+  const admin = createAdminClientFor(authData.user.id);
+  const { data: settings } = me.tenant_id
+    ? await admin
+      .from("attendance_settings")
+      .select("require_selfie, require_presence, presence_secret, require_face_match, require_device, allowed_ips")
+      .eq("tenant_id", me.tenant_id)
+      .maybeSingle()
+    : { data: null };
   const requireSelfie = settings?.require_selfie ?? true;
   const requirePresence = settings?.require_presence ?? false;
   const requireFaceMatch = settings?.require_face_match ?? false;
+  const requireDevice = settings?.require_device ?? false;
+
+  /* R-605 — office Wi-Fi. Until 10 Oct only the kiosk checked allowed_ips, so My Attendance
+     worked from home even with the office network locked. Checked before anything is
+     recorded; "Can mark from outside office" staff pass and the day is flagged. */
+  const { data: empNet } = await admin
+    .from("employees").select("attendance_anywhere")
+    .eq("id", me.employee_id).eq("tenant_id", me.tenant_id ?? "").maybeSingle();
+  const net = officeNetworkDecision({
+    purpose: "self",
+    allowedIps: settings?.allowed_ips ?? [],
+    ip: requestIp(request),
+    anywhere: empNet?.attendance_anywhere ?? false,
+  });
+  if (!net.ok) return NextResponse.json({ error: net.error, code: net.code }, { status: net.status });
 
   // Presence gate — must know the current rotating office code.
   if (requirePresence) {
@@ -79,6 +113,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  /* R-606 device gate — the last check before the mark, so the passkey's one-time challenge is
+     only spent once every other check has passed. */
+  let approvedDeviceId: string | null = null;
+  if (requireDevice) {
+    if (!body?.deviceAssertion) return NextResponse.json(deviceError("DEVICE_REQUIRED"), { status: 403 });
+    const caller = await getCaller();
+    if (!caller || caller.employeeId !== me.employee_id) {
+      return NextResponse.json(deviceError("DEVICE_NOT_REGISTERED"), { status: 403 });
+    }
+    const check = await verifyDeviceAssertion(caller, request, body.deviceAssertion);
+    if (!check.ok) return NextResponse.json({ error: check.error, code: check.code }, { status: 403 });
+    approvedDeviceId = check.deviceId;
+  }
+
   const { data, error } = await supabase.rpc("mark_self_attendance");
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const action = data as unknown as string;
@@ -106,14 +154,17 @@ export async function POST(request: NextRequest) {
       if (lat !== null && lng !== null) {
         patch[slot === "in" ? "geo_in" : "geo_out"] = `${lat.toFixed(6)},${lng.toFixed(6)}${accuracy !== null ? `,${Math.round(accuracy)}` : ""}`;
       }
-      if (deviceHash) patch[slot === "in" ? "check_in_device" : "check_out_device"] = deviceHash;
+      // R-606: with a required device, the approved device's id is the record; else the soft hash.
+      const deviceMark = approvedDeviceId ?? deviceHash;
+      if (deviceMark) patch[slot === "in" ? "check_in_device" : "check_out_device"] = deviceMark;
 
       // ── Anomaly flags (honest deterrence — surfaced to the owner, not blocking) ──
       const flags = new Set<string>();
+      if (net.flag) flags.add(net.flag);
       const hour = istNow.getUTCHours(); // istNow already shifted to IST wall-clock
       if (hour < 5 || hour >= 23) flags.add("odd_hours");
       if (lat === null || lng === null) flags.add("no_location");
-      if (deviceHash) {
+      if (deviceHash && !approvedDeviceId) {
         // "new device" = this soft token never used by this employee before.
         const { data: seen } = await supabase
           .from("attendance")
@@ -153,9 +204,9 @@ export async function POST(request: NextRequest) {
         patch.flags = [...merged];
       }
 
-      if (Object.keys(patch).length) {
-        await supabase.from("attendance").update(patch)
-          .eq("employee_id", me.employee_id).eq("work_date", workDate);
+      if (Object.keys(patch).length && me.tenant_id) {
+        await admin.from("attendance").update(patch)
+          .eq("tenant_id", me.tenant_id).eq("employee_id", me.employee_id).eq("work_date", workDate);
       }
     } catch { /* selfie/geo is best-effort; never block attendance */ }
   }

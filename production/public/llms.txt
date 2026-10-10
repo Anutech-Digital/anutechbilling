@@ -24,12 +24,12 @@ Monthly (flexible) billing is higher per user; annual billing saves roughly 12â€
 
 ## Key pages
 
-- Home / email pricing: https://reselleros.anutech.in/
-- Domains: https://reselleros.anutech.in/domains
-- Hosting: https://reselleros.anutech.in/hosting
-- Business email: https://reselleros.anutech.in/email
-- Get a quote: https://reselleros.anutech.in/quote
-- ResellerOS (software for resellers): https://reselleros.anutech.in/reselleros
+- Home: https://anutech.in/
+- Domains: https://anutech.in/domains
+- Hosting: https://anutech.in/hosting
+- Business email: https://anutech.in/email
+- Get a quote: https://anutech.in/quote
+- ResellerOS (software for resellers): https://reselleros.anutech.in/
 
 ## Contact
 

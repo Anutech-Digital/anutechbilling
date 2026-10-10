@@ -9,6 +9,7 @@
  *   -- deploy-peek: exists(select 1 from pg_trigger where tgname='trg_x')   (REQUIRED — SQL boolean, true once applied)
  *   -- deploy-key: oneterm                                                  (optional — short key; default from the file name)
  *   -- deploy-user: postgres                                                (optional — default resellersos_migration)
+ *   -- deploy-skip: R-531 redesign first                                    (optional — keep the file OUT of both scripts)
  *
  * and this script rewrites ONLY the lines between `MIGS=(` and its closing `)` in both scripts.
  * Everything else (backup, peek, the staging-only auth.uid() rewrite in apply()) stays byte-identical.
@@ -49,15 +50,16 @@ const BAD_CHARS = /[|"$`]/;
  * mistaken for a header. Throws with the file name when deploy-peek is missing or unsafe.
  */
 export function parseDeployHeaders(sql, file) {
-  const out = { file, key: null, user: DEFAULT_USER, peek: null };
+  const out = { file, key: null, user: DEFAULT_USER, peek: null, skip: null };
   for (const raw of String(sql).split("\n")) {
     const line = raw.replace(/\r$/, "").trim();
     if (!line) continue;
     if (!line.startsWith("--")) break;
-    const m = /^--\s*deploy-(peek|key|user):\s*(.*)$/.exec(line);
+    const m = /^--\s*deploy-(peek|key|user|skip):\s*(.*)$/.exec(line);
     if (!m) continue;
     const v = m[2].trim();
-    if (m[1] === "peek") out.peek = v;
+    if (m[1] === "skip") out.skip = v || "skipped";
+    else if (m[1] === "peek") out.peek = v;
     else if (m[1] === "key") out.key = v;
     else out.user = v;
   }
@@ -66,6 +68,9 @@ export function parseDeployHeaders(sql, file) {
   if (!/^[a-z0-9]+$/i.test(out.key)) throw new Error(`${file}: deploy-key "${out.key}" must be letters/digits only.`);
   if (!/^[a-z_][a-z0-9_]*$/i.test(out.user)) throw new Error(`${file}: deploy-user "${out.user}" is not a db user name.`);
   if (BAD_CHARS.test(out.peek)) throw new Error(`${file}: deploy-peek may not contain | " $ or a backtick (it sits inside a bash "…|…" line).`);
+  /* 9 Oct 2026: a peek that casts with ::regprocedure / ::regclass errors when the object is not
+     there yet, and one error blanks the WHOLE peek line — the staging run stopped at step 2. */
+  if (/::\s*reg(procedure|proc|class|type)\b/i.test(out.peek)) throw new Error(`${file}: deploy-peek must not cast with ::regprocedure/::regclass — use to_regprocedure(...)/to_regclass(...) so a missing object reads as false, not an error.`);
   return out;
 }
 
@@ -155,9 +160,11 @@ export function generate({ supabaseDir, date, since, fromScript }) {
     catch (e) { errors.push(e.message); }
   }
   if (errors.length) throw new Error(errors.join("\n"));
-  const body = buildMigsBody(entries);
+  /* R-531 (10 Oct 2026): a file can stay in the repo but out of every deploy — `-- deploy-skip: <why>`. */
+  const skipped = entries.filter((e) => e.skip);
+  const body = buildMigsBody(entries.filter((e) => !e.skip));
   for (const env of ENVS) scripts[env].after = replaceMigs(scripts[env].before, body, `${env} script`);
-  return { files, scripts };
+  return { files: files.filter((f) => !skipped.some((e) => e.file === f)), skipped, scripts };
 }
 
 function istDate(d = new Date()) {
@@ -191,6 +198,7 @@ function main(argv) {
     process.exit(1);
   }
   console.log(`${res.files.length} migrations: ${res.files.map(versionOf).join(", ")}`);
+  for (const e of res.skipped) console.log(`- skipped ${e.file}: ${e.skip}`);
   let changed = 0;
   for (const env of ENVS) {
     const s = res.scripts[env];

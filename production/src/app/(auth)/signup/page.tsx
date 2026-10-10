@@ -17,6 +17,7 @@ import { isValidGstin } from "@/lib/utils";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
+import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 
 const schema = z.object({
   companyName: z.string().min(2, "Company name is required"),
@@ -199,8 +200,9 @@ export default function SignupPage() {
   return (
     <Card>
       <div className="text-center mb-6">
-        <h1 className="font-serif text-3xl mb-2">Start your reseller business</h1>
-        <p className="text-sm text-ink-3">Free 14-day trial · No credit card</p>
+        <h1 className="font-serif text-3xl mb-2">Create your ResellerOS workspace</h1>
+        {/* R-463: one pricing line for the whole product site — site/lib/data/reselleros-home.ts */}
+        <p className="text-sm text-ink-3">{PRICING_LINE}</p>
       </div>
 
       {!configured && (
