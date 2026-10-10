@@ -47,7 +47,7 @@ export function buildCorrection(
   outHhmm: string,
   note: string,
 ): CorrectionCheck {
-  if (note.trim().length < 3) return { ok: false, error: "Write a short note (why)." };
+  if (note.trim().length < 3) return { ok: false, error: "Write a reason (why this is being corrected)." };
   if (mode === "absent") return { ok: true, checkIn: null, checkOut: null };
   const checkIn = istTimeToIso(dateISO, inHhmm);
   if (!checkIn) return { ok: false, error: "Enter a check in time." };

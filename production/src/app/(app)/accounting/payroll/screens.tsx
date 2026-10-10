@@ -63,6 +63,7 @@ import { Switch } from "@/components/ui/switch";
 import { OfficeHoursRow } from "@/components/features/attendance/office-hours-row";
 import { BiometricKeyRow } from "@/components/features/attendance/biometric-key-row";
 import { AttendanceChanges } from "@/components/features/attendance/attendance-changes";
+import { CorrectionTrail } from "@/components/features/attendance/correction-trail";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
@@ -2423,8 +2424,8 @@ export function AttendanceTab() {
 /** Monthly attendance register (muster): employees × days, P = present. */
 function AttendanceRegister({ period, employees, attendance }: { period: string; employees: Employee[]; attendance: Attendance[] }) {
   const holQ = useHolidays();
-  // R-603: these roles can fix a missed punch / forgotten checkout (the RPC checks again).
-  const canFix = canFixAttendance(useCurrentUser().data?.role);
+  // R-439: only the owner corrects a day (correct_attendance refuses everyone else too).
+  const canFix = useCurrentUser().data?.role === "owner";
   const teamQ = useTeamMembers();
   const [fixing, setFixing] = React.useState<{ employee: Employee; date: string; rec: Attendance | undefined } | null>(null);
   // R-604: office hours → late / half-day marks, and the same present count payroll uses.
@@ -2567,7 +2568,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
       )}
       {canFix && (
         <div className="border-t border-hairline px-4 py-2 text-xs text-ink-3">
-          Click a day to fix a missed punch. <span aria-hidden className="text-amber-ink">✎</span> = edited by hand.
+          Click a day to correct it — a reason is required and every change is kept in that day's history. <span aria-hidden className="text-amber-ink">✎</span> = corrected by hand.
         </div>
       )}
       {fixing && (
@@ -2582,12 +2583,8 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
   );
 }
 
-const ATTENDANCE_FIX_ROLES = new Set(["owner", "manager", "accountant", "billing"]);
-function canFixAttendance(role: string | null | undefined): boolean {
-  return Boolean(role && ATTENDANCE_FIX_ROLES.has(role));
-}
-
-/** R-603: fix one employee-day — times are IST (HH:mm), sent with an explicit +05:30. */
+/** R-603 / R-439: the owner fixes one employee-day — times are IST (HH:mm), sent with an
+ *  explicit +05:30. A reason is required; every save is kept in the day's history. */
 function FixAttendanceDialog({ employee, date, rec, onClose }: {
   employee: Employee; date: string; rec: Attendance | undefined; onClose: () => void;
 }) {
@@ -2615,11 +2612,6 @@ function FixAttendanceDialog({ employee, date, rec, onClose }: {
           <DialogDescription>{toTitleCase(employee.name)} · {formatDate(date)} · times in IST</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {rec?.corrected_at && (
-            <div className="rounded-md bg-paper-2/50 px-3 py-2 text-xs text-ink-2">
-              Last edit note: {rec.correction_note ?? "—"}
-            </div>
-          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Check in" htmlFor="att-fix-in">
               <Input id="att-fix-in" type="time" value={inT} onChange={(ev) => setInT(ev.target.value)} />
@@ -2628,7 +2620,7 @@ function FixAttendanceDialog({ employee, date, rec, onClose }: {
               <Input id="att-fix-out" type="time" value={outT} onChange={(ev) => setOutT(ev.target.value)} />
             </Field>
           </div>
-          <Field label="Note" required htmlFor="att-fix-note">
+          <Field label="Reason" required htmlFor="att-fix-note">
             <Input
               id="att-fix-note"
               value={note}
@@ -2640,6 +2632,7 @@ function FixAttendanceDialog({ employee, date, rec, onClose }: {
             />
           </Field>
           {error && <p id="att-fix-error" role="alert" className="text-xs text-rose-ink">{error}</p>}
+          <CorrectionTrail employeeId={employee.id} workDate={date} />
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={fix.isPending}>Cancel</Button>
