@@ -23,9 +23,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { SitePromoRow } from "@/lib/supabase/database.types";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
+import { isUnreachableError } from "@/lib/supabase/resilient-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
+
+/* R-705: a tier slug is spliced into a PostgREST .or() filter below, so anything but a plain
+   slug ("standard", "business_plus") could break the filter into a PostgREST 400 — which this
+   route used to report as a 500. Refuse it here as the caller's mistake. */
+const TIER_SLUG = /^[a-z0-9_-]{1,40}$/;
 
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
@@ -39,6 +45,10 @@ export async function GET(req: NextRequest) {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
   })();
+
+  if (tier && !TIER_SLUG.test(tier)) {
+    return NextResponse.json({ ok: false, error: "Unknown plan." }, { status: 400 });
+  }
 
   const admin = createAdminClient();
   // Direct query — service_role bypasses RLS, so we can read the table
@@ -59,6 +69,15 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query.maybeSingle();
   if (error) {
+    /* R-705: 46 × 500 on 9–10 Oct were the database not answering (api.anutech.in), not a
+       bug in this route. Say so: 503 + Retry-After. The buy page shows no banner either way. */
+    if (isUnreachableError(error)) {
+      console.error(`[api/public/site-promo/current] database unreachable: ${error.message}`);
+      return NextResponse.json(
+        { ok: false, error: "We could not load the current offer just now." },
+        { status: 503, headers: { "Retry-After": "30" } },
+      );
+    }
     const e = publicDbError("site-promo/current", error, "We could not load the current offer just now.");
     return NextResponse.json({ ok: false, error: e.message }, { status: e.status });
   }
