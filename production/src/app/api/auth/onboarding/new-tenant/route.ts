@@ -19,6 +19,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
 import { normalizeEmail } from "@/lib/auth/membership";
 import { emailDomain, isPublicEmailDomain } from "@/lib/auth/domain";
+import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
 
 const schema = z.object({
   companyName: z.string().trim().min(2, "Company name is required").max(120),
@@ -63,6 +64,23 @@ export async function POST(request: NextRequest) {
     (authUser.user_metadata?.name as string | undefined) ||
     email.split("@")[0] ||
     "New user";
+
+  // R-822: their company already uses ResellerOS → no second workspace. A signed-in
+  // person's address is verified (Google, or the R-048 link), so the request goes
+  // straight to that owner. This is the door the Google / Auth.js first login reaches
+  // through /welcome, so it must follow the same rule as the callback.
+  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto   = request.headers.get("x-forwarded-proto") ?? "https";
+  const routed = await routeVerifiedSignupToCompany({
+    authUserId: authUser.id,
+    email,
+    fullName,
+    appUrl:     fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL ?? ""),
+    note:       `Tried to create a workspace named "${parsed.data.companyName}".`,
+  });
+  if (routed) {
+    return NextResponse.json({ ok: true, status: "pending_approval", tenantName: routed.tenantName });
+  }
 
   const tenantId = crypto.randomUUID();
   const { error: tenantErr } = await admin.from("tenants").insert({

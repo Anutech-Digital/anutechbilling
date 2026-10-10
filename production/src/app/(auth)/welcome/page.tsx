@@ -36,7 +36,8 @@ function WelcomeInner() {
   const router = useRouter();
   const params = useSearchParams();
 
-  const pendingTenant = params.get("pending");
+  const [pendingFromCreate, setPendingFromCreate] = React.useState<string | null>(null);
+  const pendingTenant = params.get("pending") ?? pendingFromCreate;
   const suggested     = params.get("suggested") ?? "";
 
   const [choice, setChoice]   = React.useState<Choice | null>(null);
@@ -57,8 +58,11 @@ function WelcomeInner() {
           </div>
           <h1 className="font-serif text-2xl mb-2">Waiting for approval</h1>
           <p className="text-sm text-ink-2 leading-relaxed">
-            Your email domain belongs to <b className="text-ink">{pendingTenant}</b>, which is
-            already on ResellerOS. We&apos;ve asked its owner to add you.
+            Your company already uses ResellerOS — we&apos;ve asked the owner of{" "}
+            <b className="text-ink">{pendingTenant}</b> to add you.
+          </p>
+          <p className="mt-2 text-xs text-ink-3">
+            You&apos;ll be able to sign in as soon as they approve. Nothing else is needed from you.
           </p>
           <div className="mt-4 rounded-md border border-hairline bg-paper-2 p-3 text-left text-xs text-ink-3 leading-relaxed">
             We did <b>not</b> create a separate company for you. That is deliberate — joining the
@@ -104,12 +108,18 @@ function WelcomeInner() {
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ companyName: companyName.trim() }),
       });
-      const json = await res.json() as { ok?: boolean; error?: string };
+      const json = await res.json() as { ok?: boolean; error?: string; status?: string; tenantName?: string };
       if (!res.ok || json.error) {
         toastError(json.error, {
           fallback: "Could not create the workspace.",
           description: "Nothing was created. Check the company name and press Create again.",
         });
+        return;
+      }
+      /* R-822: their company already has a workspace — a join request went to its owner
+         instead of creating a second, empty company. */
+      if (json.status === "pending_approval") {
+        setPendingFromCreate(json.tenantName ?? "your company's workspace");
         return;
       }
       toast.success("Workspace created 🎉");
