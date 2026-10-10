@@ -36,6 +36,7 @@ import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
 import { CropOverlay, HELP_SELF, captureViewport, toShot, type Shot } from "@/components/shared/help-shot";
 import { HelpReportTab } from "@/components/shared/help-report-tab";
+import { installHelpPanelGuard } from "@/components/ui/help-panel-guard";
 
 /* Open/closed and "an error was caught" live outside the component (5 Oct 2026, Pardeep:
    "ai help button ko top me chhota sa icon laga do"). The big floating button covered page
@@ -46,34 +47,37 @@ import { HelpReportTab } from "@/components/shared/help-report-tab";
    AI chat, as before) and "Report a problem" (a plain form that always submits). Ctrl+Shift+B
    opens the Report tab straight away. */
 export type HelpTab = "ask" | "report";
-type HelpUi = { open: boolean; alert: string | null; tab: HelpTab };
-let helpUi: HelpUi = { open: false, alert: null, tab: "ask" };
+/* R-827: "minimized" = the panel folds to a small bar; the chat and the report draft stay. */
+type HelpUi = { open: boolean; alert: string | null; tab: HelpTab; minimized: boolean };
+let helpUi: HelpUi = { open: false, alert: null, tab: "ask", minimized: false };
 const helpListeners = new Set<() => void>();
 const setHelpUi = (patch: Partial<HelpUi>) => { helpUi = { ...helpUi, ...patch }; helpListeners.forEach((l) => l()); };
 const subscribeHelpUi = (l: () => void) => { helpListeners.add(l); return () => { helpListeners.delete(l); }; };
-const SERVER_UI: HelpUi = { open: false, alert: null, tab: "ask" };
+const SERVER_UI: HelpUi = { open: false, alert: null, tab: "ask", minimized: false };
 const useHelpUi = () => React.useSyncExternalStore(subscribeHelpUi, () => helpUi, () => SERVER_UI);
 
 /** Open Help on the "Report a problem" tab (phone More menu, other callers). */
-export function openHelpReport() { setHelpUi({ open: true, tab: "report" }); }
+export function openHelpReport() { setHelpUi({ open: true, minimized: false, tab: "report" }); }
 /** Ctrl+Shift+B: open on the Report tab; pressed again while that tab is showing, close. */
 export function toggleHelpReport() {
-  if (helpUi.open && helpUi.tab === "report") setHelpUi({ open: false });
+  if (helpUi.open && !helpUi.minimized && helpUi.tab === "report") setHelpUi({ open: false, minimized: false });
   else openHelpReport();
 }
 
 /** The top-bar trigger: the one Help button, with a red dot while an unseen error waits. */
 export function AiHelpButton() {
-  const { open, alert } = useHelpUi();
+  const { open, alert, minimized } = useHelpUi();
+  /* R-827: a minimized panel counts as closed here — pressing the icon brings it back. */
+  const showing = open && !minimized;
   return (
     <div className="relative">
       <IconButton
         icon={alert ? "alert" : "message"}
         aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
         title={alert ? `Error caught: ${alert}` : "Help — ask AI or report a problem (Ctrl+Shift+B to report)"}
-        aria-pressed={open}
+        aria-pressed={showing}
         data-topbar="help"
-        onClick={() => setHelpUi(open ? { open: false } : { open: true, tab: alert ? "report" : helpUi.tab })}
+        onClick={() => setHelpUi(showing ? { open: false, minimized: false } : { open: true, minimized: false, tab: alert ? "report" : helpUi.tab })}
         className={alert ? "text-rose" : undefined}
       />
       {alert && <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose ring-2 ring-paper animate-pulse pointer-events-none" aria-hidden="true" />}
@@ -151,6 +155,13 @@ function savePanelSize(s: PanelSize) {
   try { window.localStorage.setItem(PANEL_SIZE_KEY, JSON.stringify(s)); } catch { /* private window — size just isn't remembered */ }
 }
 const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
+
+/** R-827: room a dialog needs left of the docked panel (max-w-xl 576px + margins). */
+export const DIALOG_ROOM = 640;
+/** How far dialogs shift for the docked panel: its width on a desktop with room to spare, else 0 (dialog stays centred). */
+export function helpDockWidth(panelW: number, vpW: number): number {
+  return vpW >= 768 && vpW - panelW >= DIALOG_ROOM ? panelW : 0;
+}
 
 /**
  * R-352: "Last tested 7 Oct, 10:52 · 5 ✓ 1 ✗" at the top of AI Help, with the failed tests
@@ -297,8 +308,13 @@ export function AiHelp() {
   const { data: currentUser } = useCurrentUser();
   const submit = useSubmitFeedback();
   const { trail, unseen, clearUnseen } = useTrail(pathname);
-  const { open, tab } = useHelpUi();
-  const setOpen = React.useCallback((v: boolean) => setHelpUi({ open: v }), []);
+  const { open, tab, minimized } = useHelpUi();
+  const setOpen = React.useCallback((v: boolean) => setHelpUi({ open: v, minimized: false }), []);
+  /* R-827: the panel is shown in full (not closed, not folded to the small bar). */
+  const showing = open && !minimized;
+  /* R-827: help stays usable over an open dialog (shared guard — see ui/help-panel-guard). */
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => (rootRef.current ? installHelpPanelGuard(rootRef.current) : undefined), []);
   React.useEffect(() => { setHelpUi({ alert: unseen?.text ?? null }); }, [unseen]);
   /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
   const [size, setSize] = React.useState<PanelSize>(PANEL_NORMAL);
@@ -312,6 +328,15 @@ export function AiHelp() {
   }, [open]);
   const shownSize = clampPanelSize(size, viewport());
   const large = isLargePanel(shownSize);
+  /* R-827: the panel is docked on the right. When the window is wide enough, dialogs centre
+     in the space left of it (ui/dialog reads --ai-help-dock), so both are visible side by side. */
+  const dockW = showing ? helpDockWidth(shownSize.w, viewport().w) : 0;
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (dockW > 0) root.style.setProperty("--ai-help-dock", `${dockW}px`);
+    else root.style.removeProperty("--ai-help-dock");
+    return () => { root.style.removeProperty("--ai-help-dock"); };
+  }, [dockW]);
   function toggleSize() {
     /* Kept unclamped: "Expand" stays full height when the window later grows (clamped on show). */
     const next = large ? PANEL_NORMAL : PANEL_LARGE;
@@ -401,7 +426,7 @@ export function AiHelp() {
     setText(askAt.q);
     setAskAt(null);
     window.getSelection()?.removeAllRanges();
-    setHelpUi({ open: true, tab: "ask" });
+    setHelpUi({ open: true, minimized: false, tab: "ask" });
     setTimeout(() => inputRef.current?.focus(), 80);
   }
   async function finishCrop(c: HTMLCanvasElement) {
@@ -431,8 +456,8 @@ export function AiHelp() {
   const endRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
 
-  React.useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [items, busy, open]);
-  React.useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 50); }, [open]);
+  React.useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [items, busy, showing]);
+  React.useEffect(() => { if (showing) setTimeout(() => inputRef.current?.focus(), 50); }, [showing]);
 
   async function ask(mode: HelpMode, typed?: string, image?: Shot | null) {
     if (busy) return;
@@ -520,7 +545,9 @@ export function AiHelp() {
   }
 
   return (
-    <div data-ai-help>
+    /* R-827: pointer-events auto — an open modal dialog sets body pointer-events:none, and
+       help must stay clickable over it. The wrapper itself has no size, so it blocks nothing. */
+    <div data-ai-help ref={rootRef} style={{ pointerEvents: "auto" }}>
       {askAt && (
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={askSelection}
           style={{ left: askAt.x, top: askAt.y }}
@@ -535,8 +562,11 @@ export function AiHelp() {
           role="dialog"
           aria-label="Help"
           data-size={large ? "large" : "normal"}
+          hidden={minimized}
           style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px` } as React.CSSProperties}
-          className="fixed z-50 inset-0 md:inset-auto md:right-5 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] flex flex-col md:rounded-2xl md:border border-hairline bg-paper shadow-2xl overflow-hidden"
+          /* R-827: docked to the right edge (not floating over the middle) and above dialog
+             overlays (z-50), so a dialog and help can be used side by side. */
+          className={`fixed z-[65] inset-0 md:inset-auto md:right-0 md:top-16 md:w-[var(--ai-w)] md:h-[var(--ai-h)] ${minimized ? "hidden" : "flex"} flex-col md:rounded-l-2xl md:border-y md:border-l border-hairline bg-paper shadow-2xl overflow-hidden`}
         >
           {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
           {/* R-360: the left edge is also a keyboard control (Tab to it, ← / → / Home / End). */}
@@ -563,6 +593,11 @@ export function AiHelp() {
               aria-label={large ? "Collapse panel to normal size" : "Expand panel"}
               title={large ? "Back to the normal size" : "Make the panel bigger — or drag its left or bottom edge"}
               onClick={toggleSize}>{large ? "Smaller" : "Expand"}</button>
+            {/* R-827: fold to a small bar to work on the page; the chat is kept. Phone too. */}
+            <button type="button" className="rounded px-1 min-h-8 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              aria-label="Minimize help"
+              title="Fold help to a small bar — your chat stays"
+              onClick={() => setHelpUi({ minimized: true })}>Minimize</button>
             <button type="button" aria-label="Close" className="p-1 text-ink-3 hover:text-ink" onClick={() => setOpen(false)}>
               <Icon name="x" size={16} />
             </button>
@@ -750,6 +785,24 @@ export function AiHelp() {
             </div>
           )}
         </section>
+      )}
+      {open && minimized && (
+        /* R-827: the small bar — bottom right, above the phone tab bar. */
+        <div role="region" aria-label="Help (minimized)"
+          className="fixed z-[65] right-3 bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)] md:bottom-4 md:right-4 flex items-center gap-1 rounded-full border border-hairline bg-paper shadow-2xl pl-1 pr-1">
+          <button type="button" aria-label="Open help"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-ink hover:bg-paper-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+            onClick={() => setHelpUi({ minimized: false })}>
+            <Icon name="sparkles" size={14} className="text-amber-ink" />
+            Help
+            {busy ? <span className="font-normal text-ink-3">· answering…</span>
+              : items.length > 0 ? <span className="font-normal text-ink-3">· {items.length} {items.length === 1 ? "message" : "messages"}</span> : null}
+            {unseen && <span className="w-2 h-2 rounded-full bg-rose" aria-label="error caught" />}
+          </button>
+          <button type="button" aria-label="Close help" className="p-2 rounded-full text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber" onClick={() => setOpen(false)}>
+            <Icon name="x" size={14} />
+          </button>
+        </div>
       )}
     </div>
   );

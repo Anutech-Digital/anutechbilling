@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paymentDomainDefault, pickDomainStampTarget } from "./payment-domain";
+import { paymentDomainDefault, pickDomainStampTarget, domainConflictsOf, domainConflictMessage } from "./payment-domain";
 
 describe("the report: the domain did not pre-fill", () => {
   it("uses the domain on the quote", () => {
@@ -106,5 +106,29 @@ describe("R-389 (F8): the domain lands on ONE subscription of the quote", () => 
     expect(pickDomainStampTarget(kapoor, "  ")).toBeNull();
     expect(pickDomainStampTarget([], "x.in")).toBeNull();
     expect(pickDomainStampTarget([{ id: "a", vendor: "google", domain: "other.in" }], "x.in")).toBeNull();
+  });
+});
+
+describe("R-829: a line's domain that could not be saved is never silent", () => {
+  it("says nothing when record_payment kept every line's domain", () => {
+    expect(domainConflictMessage({ domain_conflicts: [] })).toBeNull();
+    expect(domainConflictMessage({ payment_id: "p" })).toBeNull(); // older function / replay
+    expect(domainConflictMessage(null)).toBeNull();
+  });
+
+  it("names the line, plan and domain the same plan already had", () => {
+    const r = { domain_conflicts: [{ line: 2, plan: "Google Workspace Business Starter", domain: "dup.in" }] };
+    expect(domainConflictsOf(r)).toEqual([{ line: 2, plan: "Google Workspace Business Starter", domain: "dup.in" }]);
+    const m = domainConflictMessage(r)!;
+    expect(m.title).toBe("One subscription was created without its domain");
+    expect(m.description).toContain("line 2 (Google Workspace Business Starter) — dup.in");
+    expect(m.description).toContain("Subscriptions");
+  });
+
+  it("counts several, and ignores junk entries", () => {
+    const m = domainConflictMessage({
+      domain_conflicts: [{ line: 2, plan: "A", domain: "x.in" }, { line: 3, plan: "A", domain: "x.in" }, { line: 4 }, "bad"],
+    })!;
+    expect(m.title).toBe("2 subscriptions were created without their domain");
   });
 });

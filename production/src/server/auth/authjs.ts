@@ -46,6 +46,8 @@ interface Token {
   gat?: string;
   grt?: string;
   gexp?: number;
+  /** R-824: the scopes Google granted with gat — so a missing permission is named, not guessed. */
+  gscope?: string;
   [k: string]: unknown;
 }
 
@@ -104,6 +106,7 @@ export const authConfig: NextAuthConfig = {
         t.gat = account.access_token;
         t.grt = account.refresh_token ?? t.grt;
         t.gexp = account.expires_at;
+        t.gscope = typeof account.scope === "string" ? account.scope : undefined;
       } else if (user?.id) {
         t.uid = user.id;
         t.email = user.email;

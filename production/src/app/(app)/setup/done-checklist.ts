@@ -99,8 +99,9 @@ export function buildDoneChecklist(i: DoneInputs): ChecklistItem[] {
       id: "google",
       label: "Google Reseller API",
       status: "todo",
-      note: code === "api_disabled" ? "Enable the Reseller API in Google Cloud"
-        : code === "needs_reauth" ? "Log in with your reseller-admin Google account"
+      note: code === "api_disabled" ? "The Reseller API is turned off in Google Cloud"
+        : code === "needs_reauth" ? "Google needs you to sign in again"
+        : code === "not_connected" || code === "missing_scope" ? "Connect Google Reseller in Settings"
         : "Optional · syncs subscriptions",
       href: INTEGRATIONS,
     });

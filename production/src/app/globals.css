@@ -151,6 +151,26 @@
   }
 }
 
+/* R-832: the keyframes the shimmer above runs on. tailwind.config.ts also declares
+   `shimmer`, but Tailwind only emits @keyframes for an `animate-*` class that is
+   actually used — nothing uses `animate-shimmer`, so the frames never shipped and
+   every <Skeleton> in the app sat still and looked frozen. Defined here so the
+   shared Skeleton never depends on an unrelated class being used somewhere. */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+  }
+}
+
 /* Print styles for invoices / quotes / reports.
    These are what make "Save as PDF" in the browser's print dialog produce a real
    document, so no PDF library is needed — see src/lib/reports/print.ts. */

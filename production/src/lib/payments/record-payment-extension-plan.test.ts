@@ -54,7 +54,7 @@ describe("record_payment renewal/extension branch keeps the subscription plan (R
   it("deploy header: peek uses to_regprocedure (no ::regclass) and a letters/digits key", () => {
     const head = sql.split("\n").slice(0, 3).join("\n");
     expect(head).toMatch(/^-- deploy-key: [a-z0-9]+$/m);
-    expect(head).toMatch(/^-- deploy-peek: .*to_regprocedure\('public\.record_payment\(text,integer,text,text,text\)'\).*R-812/m);
+    expect(head).toMatch(/^-- deploy-peek: .*to_regprocedure\('public\.record_payment\(text,integer,text,text,text\)'\).*R-\d+/m);  // R-829: a later card's migration keeps the R-812 body (checked above) under its own marker
     expect(head).not.toMatch(/::regclass/);
   });
 });

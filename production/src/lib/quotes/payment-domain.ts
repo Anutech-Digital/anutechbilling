@@ -106,3 +106,37 @@ export function pickDomainStampTarget(
   /* Stable: equal ranks keep the order the caller passed (oldest first). */
   return [...blank].sort((a, b) => rank(a) - rank(b))[0].id;
 }
+
+/**
+ * R-829 — the lines whose typed domain record_payment could NOT put on their subscription.
+ *
+ * Since 20261011000500 every quote line keeps its OWN domain (Starter + Business Standard on
+ * one domain is legitimate). The one case left is the SAME plan twice on the SAME domain in
+ * one quote — the unique index (tenant, quote, domain, plan) allows one — and record_payment
+ * then returns that line in `domain_conflicts` instead of blanking it silently. This turns the
+ * result into the warning the Record-payment dialog shows; null when there is nothing to say.
+ */
+export interface DomainConflict { line: number; plan: string; domain: string }
+
+export function domainConflictsOf(result: unknown): DomainConflict[] {
+  const raw = (result as { domain_conflicts?: unknown } | null | undefined)?.domain_conflicts;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((c) => c as Partial<DomainConflict>)
+    .filter((c) => typeof c?.domain === "string" && c.domain.trim() !== "")
+    .map((c) => ({ line: Number(c.line) || 0, plan: String(c.plan ?? ""), domain: String(c.domain) }));
+}
+
+export function domainConflictMessage(result: unknown): { title: string; description: string } | null {
+  const list = domainConflictsOf(result);
+  if (list.length === 0) return null;
+  const parts = list.map((c) => `line ${c.line} (${c.plan}) — ${c.domain}`);
+  return {
+    title: list.length === 1
+      ? "One subscription was created without its domain"
+      : `${list.length} subscriptions were created without their domain`,
+    description:
+      `The same plan already has this domain on this quote: ${parts.join("; ")}. ` +
+      "Open Subscriptions and add the right domain to it.",
+  };
+}

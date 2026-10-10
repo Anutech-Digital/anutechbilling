@@ -263,6 +263,15 @@ describe("Add Subscription — the billing period drives the term", () => {
     expect(priceLabel()).toContain("₹/mo");
   });
 
+  it("R-826: quarterly (annual commitment) is offered, priced ₹/mo, and still expires in TWELVE months", () => {
+    renderDialog();
+    fireEvent.change(start(), { target: { value: "2026-09-09" } });
+    pick("annual_quarterly");
+    expect(renewal()).toBe("2027-09-08");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(document.body.textContent).toContain("Invoices go out every 3 months.");
+  });
+
   it("switching back to yearly restores the year and the ₹/yr unit", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });

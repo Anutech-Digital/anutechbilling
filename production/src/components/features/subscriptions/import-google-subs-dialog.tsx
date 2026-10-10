@@ -31,6 +31,7 @@ import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
+import { CONNECT_GOOGLE_RESELLER_PATH, resellerCardState } from "@/lib/google/reseller-connect";
 import { readAllRows, type ExistingCustomerRow } from "@/components/features/customers/import-existing";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useItems } from "@/lib/queries/items";
@@ -133,19 +134,10 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
     }
   }
 
-  // Re-authenticate with the reseller scope (incremental consent), then return
-  // to /subscriptions so the user can hit Sync again with a scoped token.
-  async function connectGoogleReseller() {
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        scopes: "https://www.googleapis.com/auth/apps.order.readonly",
-        redirectTo: `${window.location.origin}/subscriptions`,
-        queryParams: { access_type: "offline", prompt: "consent" },
-      },
-    });
-    if (error) toastError(error, { fallback: "Could not open Google sign-in.", description: "Try again in a moment." });
+  // R-824: the server-side "Connect Google Reseller" consent (works with any sign-in, keeps a
+  // refresh token). It lands on Settings → Integrations, which shows the result.
+  function connectGoogleReseller() {
+    window.location.href = CONNECT_GOOGLE_RESELLER_PATH;
   }
 
   async function handleSync() {
@@ -157,10 +149,10 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
       if (!res.ok) {
         // Distinct, actionable guidance for the two common setup gaps.
         if (data?.code === "api_disabled") {
-          toast.error("Reseller API is not enabled yet.", { description: "Enable it in Google Cloud Console, then sync again.", duration: 8000 });
-        } else if (data?.code === "needs_reauth") {
+          toast.error("The Reseller API is turned off in Google Cloud.", { description: "Turn it on in Google Cloud Console, then sync again.", duration: 8000 });
+        } else if (data?.code === "needs_reauth" || data?.code === "not_connected" || data?.code === "missing_scope") {
           setNeedsAuth(true);
-          toast.error("Google reseller access is needed to sync.", { duration: 8000, action: { label: "Connect Google", onClick: () => { void connectGoogleReseller(); } } });
+          toast.error(resellerCardState(data).text, { duration: 8000, action: { label: "Connect Google Reseller", onClick: connectGoogleReseller } });
         } else {
           toastError(data?.error, { fallback: "Sync failed.", description: "Try again, or upload the CSV export instead." });
         }
@@ -287,7 +279,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
               </div>
               {needsAuth ? (
                 <Button type="button" variant="primary" icon="external" onClick={connectGoogleReseller}>
-                  Connect Google
+                  Connect Google Reseller
                 </Button>
               ) : (
                 <Button type="button" variant="primary" icon="refresh" loading={syncing} onClick={handleSync}>
@@ -297,7 +289,7 @@ export function ImportGoogleSubsDialog({ open, onOpenChange, onComplete }: Props
             </div>
             {needsAuth && (
               <p className="text-2xs text-amber-ink -mt-1">
-                Sign in with the reseller-admin Google account and approve the reseller permission, then click Sync again.
+                Connect with the reseller-admin Google account and approve the reseller permission, then click Sync again.
               </p>
             )}
 

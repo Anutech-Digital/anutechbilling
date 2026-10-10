@@ -22,6 +22,7 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { keepOpenForHelp } from "./help-panel-guard";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -67,7 +68,7 @@ const DialogContent = React.forwardRef<
     /** Allow the user to drag-resize this dialog (desktop only). Default on. */
     resizable?: boolean;
   }
->(({ className, children, hideClose, resizable = true, style, ...props }, ref) => {
+>(({ className, children, hideClose, resizable = true, style, onInteractOutside, onEscapeKeyDown, ...props }, ref) => {
   // Size the user has dragged the dialog to (null = natural / default size).
   const [size, setSize] = React.useState<{ w: number; h: number } | null>(null);
   // Offset (px) the user has dragged the dialog away from centre (null = centred).
@@ -241,7 +242,9 @@ const DialogContent = React.forwardRef<
         "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
 
         // Desktop position — `!` forces override of the mobile anchors.
-        "md:!left-1/2 md:!right-auto md:!top-1/2 md:!bottom-auto",
+        // R-827: while AI Help is docked on the right, centre in the space left of it
+        // (--ai-help-dock is set by the panel only when that space is wide enough).
+        "md:!left-[calc(50%_-_var(--ai-help-dock,0px)/2)] md:!right-auto md:!top-1/2 md:!bottom-auto",
         "md:!w-auto md:!max-w-xl md:max-h-[90vh] md:-translate-x-1/2 md:-translate-y-1/2",
         "md:rounded-lg md:border md:p-6",
         "md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95",
@@ -254,6 +257,9 @@ const DialogContent = React.forwardRef<
         className
       )}
       {...props}
+      /* R-827: a click, focus or Escape inside AI Help never closes the dialog under it. */
+      onInteractOutside={keepOpenForHelp(onInteractOutside)}
+      onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
     >
       {/* Drag handle (mobile only — visual affordance that the sheet is dismissible) */}
       <div className="md:hidden mx-auto -mt-1 mb-2 h-1.5 w-12 rounded-full bg-hairline" aria-hidden />

@@ -219,7 +219,8 @@ export function findProduct(
  * have instalments divide an already-monthly number by 12 — the same 12× defect as
  * B9, in the opposite direction. `periods` below is that rule, in one number.
  */
-export type BillingChoice = "monthly_flex" | "annual_monthly" | "annual_yearly";
+export type BillingChoice =
+  | "monthly_flex" | "annual_monthly" | "annual_quarterly" | "annual_yearly";
 
 export interface BillingChoiceMeta {
   value: BillingChoice;
@@ -233,6 +234,8 @@ export const BILLING_CHOICES: readonly BillingChoiceMeta[] = [
     hint: "Annual commitment, paid upfront. The default." },
   { value: "annual_monthly", label: "Monthly — annual commitment",
     hint: "Same annual rate, invoiced every month. Customer is committed for 12 months." },
+  { value: "annual_quarterly", label: "Quarterly — annual commitment",
+    hint: "Same annual rate, priced per month, invoiced every 3 months (4 invoices). Committed for 12 months." },
   { value: "monthly_flex",   label: "Monthly — no commitment (flex)",
     hint: "Cancel any time. Higher rate — this is its own price, not the annual one ÷ 12." },
 ] as const;
@@ -252,10 +255,13 @@ export interface BillingTerms {
   /** Multiply a per-`unit` figure by this to get what the QUOTE stores. See the
    *  stored-amount rule above: 12 for a monthly-billed annual commitment, 1 otherwise. */
   periods: number;
+  /** Invoices raised over the term: 12 monthly, 4 quarterly, 1 yearly or flex.
+   *  Display only — the schedule itself is lib/billing/schedule.ts. */
+  invoicesPerTerm: number;
   /** What goes on the quote line. Only two values are written for new quotes. */
   commitment: "monthly" | "annual_yearly";
   /** quotes.billing_cycle and subscriptions.billing_cycle. */
-  billingCycle: "monthly" | "yearly";
+  billingCycle: "monthly" | "quarterly" | "yearly";
   /** subscriptions.term_months — 1 for flex, 12 for a commitment. */
   termMonths: number;
 }
@@ -276,8 +282,25 @@ export function billingTerms(
       suggestedSellPerSeat: product?.annualSellPerSeat ?? 0,
       costPerSeat: product?.annualCostPerSeat ?? null,
       flexPriceMissing: false,
-      periods: 1,
+      periods: 1, invoicesPerTerm: 1,
       commitment: "annual_yearly", billingCycle: "yearly", termMonths: 12,
+    };
+  }
+  if (choice === "annual_quarterly") {
+    /* R-826. Priced PER MONTH at the annual rate (the same unit as annual_monthly) and
+       stored as the YEAR (periods 12), so quoteInstalments and the billing cron split
+       it into four 3-month invoices on billing_cycle 'quarterly'.
+       Why per month, not per quarter or per year: the cron derives the term from
+       subscriptions.mrr × term_months (subscription-schedule.ts). With a per-month
+       price mrr is exact, so the cron's year equals the quote's year to the rupee. A
+       per-year price (₹9,990) would store mrr ₹833 and the cron would bill ₹9,996. */
+    return {
+      unit: "per_seat_month", unitLabel: "₹/mo",
+      suggestedSellPerSeat: product?.annualMonthlySellPerSeat ?? 0,
+      costPerSeat: product?.annualMonthlyCostPerSeat ?? null,
+      flexPriceMissing: false,
+      periods: 12, invoicesPerTerm: 4,
+      commitment: "annual_yearly", billingCycle: "quarterly", termMonths: 12,
     };
   }
   if (choice === "annual_monthly") {
@@ -287,7 +310,7 @@ export function billingTerms(
       costPerSeat: product?.annualMonthlyCostPerSeat ?? null,
       flexPriceMissing: false,
       /* 12 — the quote stores the YEAR so quoteInstalments can split it. */
-      periods: 12,
+      periods: 12, invoicesPerTerm: 12,
       commitment: "annual_yearly", billingCycle: "monthly", termMonths: 12,
     };
   }
@@ -301,9 +324,22 @@ export function billingTerms(
     suggestedSellPerSeat: flexSell ?? product?.annualMonthlySellPerSeat ?? 0,
     costPerSeat: product?.flexMonthlyCostPerSeat ?? product?.annualMonthlyCostPerSeat ?? null,
     flexPriceMissing: missing,
-    periods: 1,
+    periods: 1, invoicesPerTerm: 1,
     commitment: "monthly", billingCycle: "monthly", termMonths: 1,
   };
+}
+
+/**
+ * What the FIRST invoice charges, ex-GST, given what the quote stores.
+ *
+ * Same split as buildBillingSchedule: whole rupees, floor per invoice, remainder on the
+ * LAST one — so the dialog never promises a first invoice the cron will not raise.
+ */
+export function firstInvoiceTaxable(
+  storedTaxable: number, terms: Pick<BillingTerms, "invoicesPerTerm">,
+): number {
+  const total = Math.max(0, Math.round(storedTaxable));
+  return Math.floor(total / Math.max(1, terms.invoicesPerTerm));
 }
 
 /** Annualise a per-`unit` figure, for the margin verdict — which reports "per seat per

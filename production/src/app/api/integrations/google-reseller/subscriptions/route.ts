@@ -2,16 +2,23 @@
  * GET /api/integrations/google-reseller/subscriptions
  *
  * Pulls ALL of the reseller's Google Workspace subscriptions live from the
- * Reseller API, using the signed-in user's Google OAuth token (same machinery
- * as the Google Contacts import). Returns normalized rows the subscriptions
- * "Add missing from Google" matcher can classify + import.
+ * Reseller API. Returns normalized rows the subscriptions "Add missing from
+ * Google" matcher can classify + import.
+ *
+ * R-824: the token comes from getGoogleAccessToken("reseller") — the company's
+ * "Connect Google Reseller" connection (refreshed server-side), else the sign-in
+ * session (Auth.js cookie, refreshed; or Supabase's provider_token). It never
+ * reaches the browser (R-528). Failures answer { code, error } in plain English:
+ *   not_connected / missing_scope → "Connect Google Reseller to see subscriptions"
+ *   needs_reauth                  → "Google needs you to sign in again"
+ *   api_disabled                  → "The Reseller API is turned off in Google Cloud"
  *
  * Owner does this ONCE in Google Cloud Console (we can't — it's their account):
  *   1. Enable "Google Workspace Reseller API" in the OAuth project.
- *   2. OAuth consent screen → add scope:
- *        https://www.googleapis.com/auth/apps.order.readonly
- *   3. Re-login to ResellerOS with the reseller-admin Google account so the
- *      token carries the new scope.
+ *   2. OAuth consent screen → add scope https://www.googleapis.com/auth/apps.order
+ *   3. Credentials → OAuth client → authorised redirect URI
+ *        <app origin>/api/integrations/google-reseller/callback
+ *   4. Settings → Integrations → Connect Google Reseller (reseller-admin account).
  *
  * Read-only: this NEVER writes to Google or the DB. It only reads subscriptions.
  *
@@ -19,6 +26,7 @@
  */
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { classifyGoogleApiError, getGoogleAccessToken, googleReasonMessage } from "@/server/auth/google-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,24 +70,25 @@ export async function GET(req: Request) {
   const probe = new URL(req.url).searchParams.get("probe") === "1";
 
   const supabase = createClient();
-  /* Pehchan getUser() se — wo JWT ko SERVER par verify karta hai; getSession()
-     cookie par bharosa karta hai (middleware.ts:47 isi wajah se getUser hai —
-     audit C8 ne yahan do chhoote hue pakde). provider_token phir bhi session
-     se hi milta hai, isliye dono call hain: getUser = darwaza, getSession =
-     Google ka token. */
+  /* Pehchan getUser() se — wo JWT ko SERVER par verify karta hai (audit C8). Google ka
+     token phir getGoogleAccessToken() server par hi dhoondta hai (R-824). */
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const { data: { session } } = await supabase.auth.getSession();
 
-  const accessToken = session?.provider_token;
-  if (!accessToken) {
-    return NextResponse.json(
-      { error: "Google access token unavailable — log in with your reseller-admin Google account.", code: "needs_reauth" },
-      { status: 403 },
+  /* A setup state is not a failure of the probe: the Settings card asks "what is the state?"
+     and gets a 200 with the answer, so the browser console stays clean. The full pull (import
+     dialog) keeps 403, which its toast logic expects. */
+  const notReady = (code: string, error: string, detail?: string) =>
+    NextResponse.json(
+      probe ? { connected: false, code, error } : { code, error, ...(detail ? { detail } : {}) },
+      { status: probe ? 200 : 403 },
     );
-  }
+
+  const got = await getGoogleAccessToken("reseller", user.id);
+  if (!got.ok) return notReady(got.reason, googleReasonMessage("reseller", got.reason));
+  const accessToken = got.token;
 
   const out: NormalizedSub[] = [];
   let pageToken: string | undefined;
@@ -97,28 +106,9 @@ export async function GET(req: Request) {
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        // API not enabled in the Cloud project → actionable, distinct from auth.
-        if (res.status === 403 && /(accessNotConfigured|has not been used|is disabled|SERVICE_DISABLED)/i.test(txt)) {
-          return NextResponse.json(
-            {
-              error: "Reseller API isn't enabled yet. In Google Cloud Console → APIs & Services, enable \"Google Workspace Reseller API\", then try again.",
-              code: "api_disabled",
-              detail: txt.slice(0, 400),
-            },
-            { status: 403 },
-          );
-        }
-        // Token expired or scope (apps.order.readonly) not granted → re-auth.
-        if (res.status === 401 || res.status === 403) {
-          return NextResponse.json(
-            {
-              error: "Google rejected the request. Re-login and grant the reseller (apps.order.readonly) scope.",
-              code: "needs_reauth",
-              detail: txt.slice(0, 400),
-            },
-            { status: 403 },
-          );
-        }
+        // API off in the Cloud project / permission missing / token refused → one plain line each.
+        const why = classifyGoogleApiError(res.status, txt);
+        if (why) return notReady(why, googleReasonMessage("reseller", why), txt.slice(0, 400));
         return NextResponse.json(
           { error: `Reseller API error: ${res.status}`, detail: txt.slice(0, 400) },
           { status: 502 },

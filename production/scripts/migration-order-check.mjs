@@ -54,6 +54,16 @@ const NOT_YET_ON_PRODUCTION = new Set([
   "20261009235000_attendance_devices.sql",   // auth.users FK refused on Cloud SQL; never reached staging/live
 ]);
 
+/**
+ * R-910 (10 Oct 2026): the staging → manager-pardeep merge moved these two into prisma/migrations,
+ * which deleted them here; cd777ef8 put them back byte-for-byte. Re-adding an already-run file
+ * under its old version is a restore, not a new out-of-order migration. Named, not a pattern.
+ */
+const RESTORED = new Set([
+  "20261006130000_feedback_checked.sql",
+  "20261006140000_undeposited_funds.sql",
+]);
+
 const argBase = (() => { const i = process.argv.indexOf("--base"); return i > 0 ? process.argv[i + 1] : null; })();
 const BASE = argBase || process.env.MIGRATION_BASE || "origin/main";
 
@@ -100,7 +110,7 @@ if (baseOk) {
     const code = status[0];
     if (code === "A") {
       const v = NAME.exec(fa)?.[1];
-      if (v && !baseSet.has(fa) && v <= newestOnBase)
+      if (v && !baseSet.has(fa) && v <= newestOnBase && !RESTORED.has(fa))
         problems.push(`out of order: ${fa} is not newer than ${newestOnBase} (newest on ${BASE}) — regenerate its timestamp`);
     } else if (code === "M") {
       if (NOT_YET_ON_PRODUCTION.has(fa)) {
