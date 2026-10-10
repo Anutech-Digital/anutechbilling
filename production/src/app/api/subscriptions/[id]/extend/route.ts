@@ -6,9 +6,9 @@
  * the original 1-year invoice) for the extension amount. When paid,
  * the existing subscription's renewal_date advances by N × 12 months.
  *
- * Body: { years: 1 | 2 | 3 | 4 | 5 }
+ * Body: { years: 1 | 2 | 3 | 4 | 5 }  or (R-805) { months: 1 … 11 }
  *
- * Returns: { quoteId, amount, years }
+ * Returns: { quoteId, amount, years, months }
  *
  * Workflow:
  *   1. Operator clicks "Extend" on a subscription
@@ -26,13 +26,18 @@ import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute } from "@/lib/api/with-route";
 import { createExtensionQuote } from "@/lib/renewals/create-extension-quote";
+import { MAX_EXTENSION_MONTHS, MAX_EXTENSION_YEARS, extensionBlockedReason } from "@/lib/renewals/extension-term";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const bodySchema = z.object({
-  years: z.coerce.number().int().min(1).max(5),
-});
+/* R-805: whole years (as before) OR months 1–11 — exactly one of the two. */
+const bodySchema = z
+  .object({
+    years:  z.coerce.number().int().min(1).max(MAX_EXTENSION_YEARS).optional(),
+    months: z.coerce.number().int().min(1).max(MAX_EXTENSION_MONTHS).optional(),
+  })
+  .refine((b) => (b.years == null) !== (b.months == null), { message: "Send either years or months" });
 
 /* R-217 (R-051): withRoute() does sign-in, tenant, the role gate (ACTION_ROLES
    "seats.change" = owner/manager/billing) and the zod body in one place. */
@@ -44,7 +49,7 @@ export const POST = withRoute(
     roleHint: forbiddenMessage("seats.change"),
   },
   async ({ input, params, user, tenantId }) => {
-  const { years } = input;
+  const { years, months } = input;
 
   // 3. Load subscription + tenant scope
   const supabase = createAdminClientFor(user.id); // R-051: audit log names the caller
@@ -52,7 +57,7 @@ export const POST = withRoute(
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, seats, mrr,
-       renewal_date, status, renewal_quote_id`
+       renewal_date, status, renewal_quote_id, start_date, term_months, billing_cycle`
     )
     .eq("id", params.id)
     .single();
@@ -70,6 +75,15 @@ export const POST = withRoute(
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date" }, { status: 400 });
+  }
+
+  /* R-807 (was R-805 months-only): a monthly / quarterly / half-yearly billed subscription is
+     invoiced per period by the billing cron. A paid extension quote — years OR months — is
+     invoiced in full AND the cron raises the same year's instalments again as unpaid (proven
+     on the local DB, see extensionBlockedReason). So no extension at all on these. */
+  const blocked = extensionBlockedReason(sub.billing_cycle);
+  if (blocked) {
+    return NextResponse.json({ error: blocked, code: "split_billed" }, { status: 400 });
   }
 
   // 4. Tenant grace days for quote expiry
@@ -92,6 +106,9 @@ export const POST = withRoute(
     renewalDate:     sub.renewal_date,
     graceDays:       tenant?.grace_period_days ?? 7,
     years,
+    months,
+    startDate:       sub.start_date,
+    termMonths:      sub.term_months,
   });
 
   if (!result.ok) {
@@ -103,6 +120,7 @@ export const POST = withRoute(
     quoteId:        result.quoteId,
     amount:         result.amount,
     years:          result.years,
+    months:         result.months,
     subscriptionId: sub.id,
   };
   },

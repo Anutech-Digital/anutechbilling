@@ -19,6 +19,7 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
+import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -64,7 +65,7 @@ export default async function QuoteAcceptPage(props: Props) {
     // payment_status / payment_amount / invoice_id are here for quoteAmountDue, which
     // refuses to build a UPI QR for money already settled or already asked for on an
     // invoice — two documents collecting the same amount is how a customer pays twice.
-    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country")
+    .select("id, status, tenant_id, public_token, customer_name, subtotal, discount_pct, tax_rate, amount, expires_date, notes, line_items, billing_cycle, currency, exchange_rate, payment_status, payment_amount, invoice_id, hot_lead_alerted_at, customer_id, lead_id, prospect_state_code, prospect_country, is_add_seats, is_renewal, is_extension, is_one_off, extension_months")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -172,6 +173,15 @@ export default async function QuoteAcceptPage(props: Props) {
     billing_cycle: quote.billing_cycle,
     currency: quote.currency,
     exchange_rate: quote.exchange_rate,
+    /* R-806: the real period the payment covers — never a blanket "12 months". */
+    service_period: servicePeriodText(quoteServicePeriod({
+      lines:           (quote.line_items ?? []) as QuoteLineItem[],
+      isAddSeats:      quote.is_add_seats,
+      isRenewal:       quote.is_renewal,
+      isExtension:     quote.is_extension,
+      isOneOff:        quote.is_one_off,
+      extensionMonths: quote.extension_months,
+    })),
   };
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
