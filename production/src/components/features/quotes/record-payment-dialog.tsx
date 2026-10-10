@@ -66,7 +66,7 @@ import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome } from "@/lib/accounting/tds-receipt";
 import { istToday } from "@/lib/dates/ist";
-import { pickDomainStampTarget } from "@/lib/quotes/payment-domain";
+import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
 
@@ -641,6 +641,12 @@ export function RecordPaymentDialog({
           replayOf: prior ? { amount: prior.amount, receivedAt: prior.received_at } : null,
         };
       }
+
+      /* R-829: every line keeps its own domain now; the one case record_payment cannot
+         save (the same plan twice on the same domain) comes back in domain_conflicts and
+         is said out loud — never a silently blank "+ Add domain". */
+      const domainConflict = domainConflictMessage(r);
+      if (domainConflict) toast.warning(domainConflict.title, { description: domainConflict.description, duration: 12_000 });
 
       // ── 2b. Tag date + bank account that received this money ──────
       const tagPatch = paymentTagPatch({ isReplay, receivedDate: data.receivedDate, bankAccountId });
