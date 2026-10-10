@@ -36,7 +36,7 @@ export interface QuotePeriodInput {
   extensionMonths?: number | null;
 }
 
-const EXT_RE = /\b(\d{1,2})-year extension\b/i;
+const EXT_RE = /\b(\d{1,2})-(year|month) extension\b/i;
 const RANGE_RE = /(?:pro-rata from|current term)\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/i;
 
 function validIso(iso: string): boolean {
@@ -77,14 +77,21 @@ export function quoteServicePeriod(input: QuotePeriodInput): QuoteServicePeriod 
     const m = input.extensionMonths;
     if (typeof m !== "number" || !Number.isInteger(m) || m <= 0) return null;
     if (allMonthly && m !== 1) return null;  // lines say monthly, field says more: conflict
-    if (allAnnual && m % 12 !== 0) return null;
+    /* R-811: a month extension (R-805) carries the seats' annual commitment on its line but
+       buys only extension_months — that IS the period. A plain renewal with odd months on an
+       annual line is still a conflict. */
+    if (allAnnual && m % 12 !== 0 && !input.isExtension) return null;
     return { kind: "months", months: m };
   }
 
-  // 3. No flags (the builder): an extension line names its years — "· 2-year extension".
-  const years = termLines.map((l) => EXT_RE.exec(l.name ?? "")?.[1]);
-  if (years.length > 0 && years.every((y) => y && y === years[0])) {
-    return { kind: "months", months: Number(years[0]) * 12 };
+  // 3. No flags (the builder): an extension line names its length — "· 2-year extension",
+  //    "· 3-month extension" (R-805).
+  const lens = termLines.map((l) => {
+    const m = EXT_RE.exec(l.name ?? "");
+    return m ? Number(m[1]) * (m[2].toLowerCase() === "year" ? 12 : 1) : null;
+  });
+  if (lens.length > 0 && lens.every((n) => n && n === lens[0])) {
+    return { kind: "months", months: lens[0] as number };
   }
 
   // 4. New quote: the commitment.
@@ -120,8 +127,52 @@ export function servicePeriodText(period: QuoteServicePeriod | null): string | n
  * still carry the seats' "annual_yearly" commitment on their lines, so the accept page and the
  * PDF printed "Annual commit · billed yearly" on a one-time charge (Q-F588-27-0007).
  */
-export function isOneTimeQuote(q: { isAddSeats?: boolean | null; isOneOff?: boolean | null }): boolean {
-  return q.isAddSeats === true || q.isOneOff === true;
+export function isOneTimeQuote(q: {
+  isAddSeats?: boolean | null;
+  isOneOff?: boolean | null;
+  /** R-811: a MONTH extension is paid once for N months, not "billed per year". */
+  isExtension?: boolean | null;
+  extensionMonths?: number | null;
+}): boolean {
+  return q.isAddSeats === true || q.isOneOff === true || isMonthExtension(q);
+}
+
+type ExtensionFlags = { isExtension?: boolean | null; extensionMonths?: number | null };
+
+/** Whole, positive extension_months on an extension quote — else null. */
+function extensionMonthsOf(q: ExtensionFlags): number | null {
+  const m = q.extensionMonths;
+  if (q.isExtension !== true || typeof m !== "number" || !Number.isInteger(m) || m <= 0) return null;
+  return m;
+}
+
+/**
+ * R-811 — an extension that adds MONTHS (R-805: 1–11, or any count that is not whole years).
+ * Its line keeps the seats' annual commitment, which printed "Annual commitment · billed per
+ * year · ₹810/yr" on a 3-month extension. Whole-year extensions are not this.
+ */
+export function isMonthExtension(q: ExtensionFlags): boolean {
+  const m = extensionMonthsOf(q);
+  return m != null && m % 12 !== 0;
+}
+
+/**
+ * R-811 — the heading an extension quote carries, from extension_months: 3 → "3-month
+ * extension", 12 → "1-year extension", 24 → "2-year extension". The badge printed
+ * round(months / 12) + " yr", i.e. "Extension · 0 yr" for 3 months. Null when the quote is
+ * not an extension or its months are unknown.
+ */
+export function extensionTitle(q: ExtensionFlags): string | null {
+  const m = extensionMonthsOf(q);
+  if (m == null) return null;
+  return m % 12 === 0 ? `${m / 12}-year extension` : `${m}-month extension`;
+}
+
+/** R-811: the line's sub-text on a one-time quote, e.g. "3-month extension · one-time charge". */
+export function oneTimeLineNote(q: ExtensionFlags & { isAddSeats?: boolean | null }): string {
+  if (q.isAddSeats === true) return "Pro-rata · one-time charge for the rest of the term";
+  const title = isMonthExtension(q) ? extensionTitle(q) : null;
+  return title ? `${title[0].toUpperCase()}${title.slice(1)} · one-time charge` : "One-time charge";
 }
 
 /** What the "Billing schedule" line says on a one-time quote. */

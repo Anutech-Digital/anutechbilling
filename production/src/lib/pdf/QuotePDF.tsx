@@ -125,6 +125,9 @@ export interface QuotePDFProps {
   /** R-809: add-seats (pro-rata) or one-off quote, paid once (isOneTimeQuote). "Billing
    *  schedule" then says "One-time charge" instead of "Annual commit, billed yearly". */
   oneTime?:      boolean;
+  /** R-811: "3-month extension" / "1-year extension" (extensionTitle()) — the stamp names the
+   *  extension instead of a bare RENEWAL. Null/absent on any other quote. */
+  extensionTitle?: string | null;
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
@@ -427,7 +430,7 @@ export function QuotePDF(props: QuotePDFProps) {
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
-    isPaid = false, oneTime = false,
+    isPaid = false, oneTime = false, extensionTitle = null,
     upiQrDataUrl, upiVpa,
   } = props;
   /* R-813: a customer document — never the staff-only audit part of the notes. */
@@ -568,7 +571,9 @@ export function QuotePDF(props: QuotePDFProps) {
             {!isPaid && (
               <Text style={s.quoteDate}>Valid until: {formatDate(expires)}</Text>
             )}
-            {isRenewal && (
+            {extensionTitle ? (
+              <Text style={s.renewalStamp}>{extensionTitle.toUpperCase()}</Text>
+            ) : isRenewal && (
               <Text style={s.renewalStamp}>RENEWAL</Text>
             )}
           </View>

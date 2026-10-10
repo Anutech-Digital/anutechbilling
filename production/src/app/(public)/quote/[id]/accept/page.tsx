@@ -20,7 +20,7 @@ import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
-import { isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { extensionTitle, isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -185,7 +185,12 @@ export default async function QuoteAcceptPage(props: Props) {
       extensionMonths: quote.extension_months,
     })),
     /* R-809: paid once → "One-time charge", not "Annual commit · billed yearly". */
-    one_time: isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
+    one_time: isOneTimeQuote({
+      isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
+      isExtension: quote.is_extension, extensionMonths: quote.extension_months,
+    }),
+    /* R-811: "3-month extension" from extension_months. */
+    extension_title: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
   };
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,
