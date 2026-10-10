@@ -57,7 +57,7 @@ export const POST = withRoute(
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, seats, mrr,
-       renewal_date, status, renewal_quote_id, start_date, term_months, billing_cycle`
+       renewal_date, status, renewal_quote_id, start_date, term_months, billing_cycle, domain`
     )
     .eq("id", params.id)
     .single();
@@ -109,6 +109,7 @@ export const POST = withRoute(
     months,
     startDate:       sub.start_date,
     termMonths:      sub.term_months,
+    domain:          sub.domain, // R-834: named in the quote note
   });
 
   if (!result.ok) {

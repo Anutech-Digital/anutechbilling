@@ -6,16 +6,13 @@
  * Abhishek on staging: the dialog only offered 1, 2 or 3 years. Months (1, 3, 6 or any
  * 1–11) are now offered next to years.
  *
- * ─── YEARS — exactly as before ──────────────────────────────────────────────
- *   subtotal = round(mrr × 12 × years), total = grossAmount(subtotal, 18),
- *   renewal_date += years × 12 months (record_payment's old roll).
+ * ─── CHARGE (R-834) ─────────────────────────────────────────────────────────
+ *   Per seat, whole rupees: annual per seat (round(mrr × 12 ÷ seats), the R-803 rule) ×
+ *   years, or round(annual per seat × months / 12). subtotal = per seat × seats, so the
+ *   quote line (rate × qty) IS the subtotal. total = grossAmount(subtotal, 18); GST shown =
+ *   total − subtotal (R-804). Years: renewal_date += years × 12 months.
  *
- * ─── MONTHS ─────────────────────────────────────────────────────────────────
- *   Charge: annual price per seat × seats × months / 12, through the R-803 paise engine
- *   (seatIncreaseCharge with "days" = months over a 12-"day" term): annual per seat =
- *   round(mrr × 12 ÷ seats), subtotal and total each rounded once from paise, GST shown =
- *   total − subtotal (R-804 quoteDisplayTax rule), so the three lines always add up.
- *
+ * ─── MONTHS — the date ──────────────────────────────────────────────────────
  *   Date: the new INCLUSIVE last day = (first day of the following term + months) − 1 day.
  *   followingTermStart() reads both stored shapes — inclusive last day and the older
  *   anniversary rows — so both land on the right day. Adding months straight to an
@@ -29,7 +26,6 @@ import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
-import { seatIncreaseCharge } from "@/lib/subscriptions/seat-increase-charge";
 
 /** Quick picks in the dialog. Any whole number 1–11 is allowed through "Custom". */
 export const EXTENSION_MONTH_PRESETS = [1, 3, 6] as const;
@@ -82,43 +78,41 @@ export function extensionLabel(len: ExtensionLength): string {
 export interface ExtensionCharge {
   /** ₹/seat/year the extension is priced at. */
   annualPerSeat: number;
-  /** Ex-GST, whole rupees — the quote's `subtotal`. */
+  /** Ex-GST, whole rupees — the quote's `subtotal`. Always perSeat × seats (R-834). */
   subtotal: number;
   /** total − subtotal. */
   tax: number;
   /** Incl. GST, whole rupees — the quote's `amount`. */
   total: number;
-  /** Per-seat rate for the quote line, display only. */
+  /** ₹ per seat for the whole extension, whole rupees — the quote line's `rate` (qty = seats). */
   perSeat: number;
 }
 
+/**
+ * R-834 (10 Oct 2026): the line IS the price. Quote screens, the PDF and the accept page
+ * show a line as rate × qty, so the subtotal is built from that line:
+ *   perSeat  = annual per seat × years, or round(annual per seat × months / 12);
+ *   subtotal = perSeat × seats; total = grossAmount(subtotal).
+ * Before, years charged round(mrr × 12 × years) and months a paise pro-rata of all seats,
+ * while the line carried a rounded per-seat figure "for display only" — Q-F588-27-0015
+ * (10 seats, mrr ₹83) showed ₹100/yr × 10 = ₹1,000 over a ₹996 subtotal. Annual per seat
+ * is the R-803 rule, round(mrr × 12 ÷ seats): mrr is stored rounded (₹1,000 ÷ 12 → ₹83),
+ * so ₹100 × 10 is the customer's real price and ₹996 was the rounding error.
+ * Saved quotes are untouched — only new extension quotes and the dialog preview use this.
+ */
 export function extensionCharge(args: { seats: number; mrr: number; len: ExtensionLength; taxRatePct?: number }): ExtensionCharge {
   const seats = Math.max(0, Math.round(args.seats));
   const mrr = Math.max(0, args.mrr ?? 0);
   const taxRatePct = args.taxRatePct ?? 18;
+  const count = Math.max(0, Math.round(args.len.count));
 
-  if (args.len.unit === "years") {
-    // Unchanged from before R-805.
-    const subtotal = Math.max(0, Math.round(mrr * 12 * args.len.count));
-    const total = grossAmount(subtotal, taxRatePct);
-    return {
-      annualPerSeat: Math.round((mrr * 12) / Math.max(1, seats)),
-      subtotal,
-      tax: total - subtotal,
-      total,
-      perSeat: Math.round(subtotal / Math.max(1, seats)),
-    };
-  }
-
-  const c = seatIncreaseCharge({
-    currentSeats: seats,
-    currentMrr: mrr,
-    additionalSeats: seats,
-    remainingDays: args.len.count, // months …
-    termDays: 12,                  // … over a 12-month year
-    taxRatePct,
-  });
-  return { annualPerSeat: c.annualPerSeat, subtotal: c.subtotal, tax: c.tax, total: c.total, perSeat: c.perSeat };
+  const annualPerSeat = seats > 0 ? Math.round((mrr * 12) / seats) : 0;
+  const perSeat = args.len.unit === "years"
+    ? annualPerSeat * count
+    : Math.round((annualPerSeat * count) / 12);
+  const subtotal = perSeat * seats;
+  const total = grossAmount(subtotal, taxRatePct);
+  return { annualPerSeat, subtotal, tax: total - subtotal, total, perSeat };
 }
 
 /**

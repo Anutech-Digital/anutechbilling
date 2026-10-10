@@ -29,6 +29,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { istToday, formatIstDate } from "@/lib/dates/ist";
 import { extensionQuoteExpiry } from "@/lib/quotes/quote-validity";
+import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
+import { addDaysISO } from "@/lib/billing/schedule";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
@@ -56,8 +59,56 @@ export interface CreateExtensionQuoteInput {
   /** R-805: for the new renewal date in the quote note (both stored date shapes). */
   startDate?:      string | null;
   termMonths?:     number | null;
+  /** R-834: subscriptions.domain — named in the quote note. */
+  domain?:         string | null;
   /** Optional override note for the quote */
   notes?:          string;
+}
+
+/**
+ * R-834 — the note an extension quote is saved with.
+ *
+ * It used to read "1-year extension for subscription 129f0d2b-…", and the staff quote page
+ * prints notes as stored. Now the readable part names what is extended — plan · domain ·
+ * the dates the extension covers — and the subscription id moves to the staff-only part
+ * (R-813 marker): the Renewals page still finds an open quote by "subscription <id>" in
+ * its notes (renewals/open-renewal-quotes.ts), and the staff page hides the id on display.
+ */
+export function extensionQuoteNotes(args: {
+  subscriptionId: string;
+  plan:           string | null | undefined;
+  domain:         string | null | undefined;
+  len:            ExtensionLength;
+  renewalDate:    string;
+  startDate:      string | null;
+  termMonths:     number | null;
+}): string {
+  const shape = { renewal_date: args.renewalDate, start_date: args.startDate, term_months: args.termMonths ?? 12 };
+  const newEnd = extensionRenewalDate(shape, args.len);
+  const title = extensionTitleCase(args.len);
+  const what = [args.plan?.trim(), args.domain?.trim()].filter((s): s is string => !!s).join(" · ");
+
+  let span = "";
+  if (newEnd && /^\d{4}-\d{2}-\d{2}/.test(args.renewalDate)) {
+    const from = followingTermStart(shape);
+    /* A month extension's date is always an inclusive last day. A year extension keeps the
+       row's shape: on an anniversary row (from === renewal date) the term ends the day before. */
+    const anniversary = from === args.renewalDate.slice(0, 10);
+    const to = args.len.unit === "years" && anniversary ? addDaysISO(newEnd, -1) : newEnd;
+    span = `${formatIstDate(from)} to ${formatIstDate(to)}`;
+  }
+
+  const head = [title, [what, span].filter(Boolean).join(" · ")].filter(Boolean).join(": ");
+  const tail = newEnd
+    ? ` On payment the renewal date moves by ${extensionLabel(args.len)}, to ${formatIstDate(newEnd)}.`
+    : ` On payment the renewal date moves by ${extensionLabel(args.len)}.`;
+  return composeQuoteNotes(`${head}.${tail}`, `Raised from Extend term for subscription ${args.subscriptionId}.`);
+}
+
+/** "1-year extension" / "3-month extension", capitalised. */
+function extensionTitleCase(len: ExtensionLength): string {
+  const t = `${len.count}-${len.unit === "years" ? "year" : "month"} extension`;
+  return `${t[0].toUpperCase()}${t.slice(1)}`;
 }
 
 export interface CreateExtensionQuoteResult {
@@ -111,20 +162,16 @@ export async function createExtensionQuote(
   }
   const newQuoteId = nextNumber as unknown as string;
 
-  /* Build line item. Years: annual rate × N years (unchanged). R-805 months: annual price
-     per seat × seats × months / 12 through the R-803 paise engine — see extension-term.ts. */
+  /* Build line item. R-834: the charge is built FROM the line — whole-rupee rate per seat
+     × seats = subtotal, so rate × qty on every screen equals the subtotal (extension-term.ts). */
   const charge       = extensionCharge({ seats: input.seats, mrr: input.mrr, len });
-  const annualAmount = charge.subtotal;   // ex-GST subtotal
+  const annualAmount = charge.subtotal;   // ex-GST subtotal = perSeat × seats
   const grossAnnual  = charge.total;      // GST-inclusive payable
   const perSeatRate  = charge.perSeat;
   const perSeatCost  = Math.round((annualAmount * 0.83) / Math.max(1, input.seats));
   const yearLabel    = len.unit === "years"
     ? (len.count === 1 ? "1-year extension" : `${len.count}-year extension`)
     : `${len.count}-month extension`;
-  const newEnd = extensionRenewalDate(
-    { renewal_date: input.renewalDate, start_date: input.startDate ?? null, term_months: input.termMonths ?? null },
-    len,
-  );
 
   const lineItems: QuoteLineItem[] = [{
     id:         "extension-1",
@@ -162,8 +209,15 @@ export async function createExtensionQuote(
     is_renewal:       true,    // drives record_payment roll-forward
     is_extension:     true,    // display flag — UI shows "Extension" not "Renewal"
     extension_months: months,
-    notes:            input.notes
-      ?? `${yearLabel} for subscription ${input.subscriptionId}. On payment the renewal date advances by ${extensionLabel(len)}${newEnd ? ` (to ${formatIstDate(newEnd)})` : ""}.`,
+    notes:            input.notes ?? extensionQuoteNotes({
+      subscriptionId: input.subscriptionId,
+      plan:           input.plan,
+      domain:         input.domain ?? null,
+      len,
+      renewalDate:    input.renewalDate,
+      startDate:      input.startDate ?? null,
+      termMonths:     input.termMonths ?? null,
+    }),
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };

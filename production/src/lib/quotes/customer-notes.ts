@@ -110,15 +110,31 @@ export function extensionCustomerNote(months: number, newEnd: string | null | un
   return newEnd?.trim() ? `${title}. Your renewal date moves to ${newEnd.trim()}.` : `${title} of your subscription.`;
 }
 
+/** One line with every "subscription <uuid>" reference and bare UUID taken out. */
+function stripIds(line: string): string {
+  return line
+    .replace(new RegExp(`\\s*\\(\\s*subscription(?:\\s+id)?[:\\s]+${UUID_SRC}\\s*\\)`, "gi"), "")
+    .replace(new RegExp(`\\s*\\bfor\\s+subscription(?:\\s+id)?[:\\s]+${UUID_SRC}`, "gi"), "")
+    .replace(new RegExp(`\\s*\\bsubscription(?:\\s+id)?[:\\s]+${UUID_SRC}`, "gi"), "")
+    .replace(new RegExp(UUID_SRC, "gi"), "")
+    .replace(/[ \t]+([.,;:])/g, "$1");
+}
+
+/**
+ * R-834 — the notes as the STAFF quote page shows them: the whole field (customer line and
+ * the staff-only audit) but with internal subscription ids taken out. The stored text keeps
+ * them — the Renewals page finds open quotes by "subscription <id>" — but a raw UUID on
+ * screen helps nobody ("1-year extension for subscription 129f0d2b-…").
+ */
+export function staffDisplayNotes(notes: string | null | undefined): string {
+  if (!notes) return "";
+  return notes.split("\n").map(stripIds).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /** Last guard on anything a customer reads: no internal id, no staff-only sentence. */
 export function scrubCustomerText(text: string): string {
   const lines = text.split("\n").map((line) => {
-    const cleaned = line
-      .replace(new RegExp(`\\s*\\(\\s*subscription(?:\\s+id)?[:\\s]+${UUID_SRC}\\s*\\)`, "gi"), "")
-      .replace(new RegExp(`\\s*\\bfor\\s+subscription(?:\\s+id)?[:\\s]+${UUID_SRC}`, "gi"), "")
-      .replace(new RegExp(`\\s*\\bsubscription(?:\\s+id)?[:\\s]+${UUID_SRC}`, "gi"), "")
-      .replace(new RegExp(UUID_SRC, "gi"), "")
-      .replace(/[ \t]+([.,;:])/g, "$1");
+    const cleaned = stripIds(line);
     return cleaned
       .split(/(?<=[.!?])\s+/)
       .filter((sentence) => !STAFF_PHRASE.test(sentence))

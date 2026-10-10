@@ -4,8 +4,10 @@
  * amount (total incl. GST), and that subtotal + GST = total for a month quote.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createExtensionQuote } from "./create-extension-quote";
+import { createExtensionQuote, extensionQuoteNotes } from "./create-extension-quote";
 import { grossAmount } from "@/lib/quotes/amounts";
+import { customerQuoteNotes, staffDisplayNotes } from "@/lib/quotes/customer-notes";
+import { openRenewalQuoteMap } from "@/app/(app)/renewals/open-renewal-quotes";
 
 type Row = Record<string, unknown>;
 
@@ -46,8 +48,60 @@ describe("createExtensionQuote", () => {
     expect(q.amount).toBe(4885);
     expect(q.tax_rate).toBe(18);
     expect((q.line_items as Row[])[0]).toMatchObject({ name: "Google Workspace Business Starter · 3-month extension", qty: 5, rate: 828 });
-    expect(q.notes).toContain("advances by 3 months (to 9 Jan 2027)");
+    expect(q.notes).toContain("moves by 3 months, to 9 Jan 2027");
     expect(f.updated[0]).toEqual({ renewal_quote_id: "Q-T1-0001" });
+  });
+
+  describe("R-834", () => {
+    const UUID = "129f0d2b-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
+    const odd = { ...base, subscriptionId: UUID, customerName: "R818 Test Co", seats: 10, mrr: 83, domain: "r818test.in" };
+    const lineOf = (q: Row) => (q.line_items as Row[])[0] as { qty: number; rate: number };
+
+    it("Q-F588-27-0015 shape (10 seats, mrr ₹83): line ₹100 × 10 = ₹1,000 = subtotal", async () => {
+      const f = fakeSupabase();
+      await createExtensionQuote({ ...odd, supabase: f.supabase, years: 1 });
+      const q = f.inserted[0];
+      expect(lineOf(q)).toMatchObject({ qty: 10, rate: 100 });
+      expect(q.subtotal).toBe(1000);
+      expect(q.amount).toBe(grossAmount(1000, 18));
+    });
+
+    it.each([
+      ["years", 1], ["years", 3], ["months", 1], ["months", 5], ["months", 7], ["months", 11],
+    ] as const)("odd pro-rata, %s × %i: line rate × qty == subtotal; amount = subtotal + GST", async (unit, n) => {
+      for (const [seats, mrr] of [[10, 83], [7, 1933], [13, 997], [3, 101]]) {
+        const f = fakeSupabase();
+        await createExtensionQuote({ ...odd, seats, mrr, supabase: f.supabase, [unit]: n });
+        const q = f.inserted[0];
+        const line = lineOf(q);
+        expect(Number.isInteger(line.rate)).toBe(true);
+        expect(line.qty * line.rate).toBe(q.subtotal);
+        expect(q.amount).toBe(grossAmount(q.subtotal as number, 18));
+      }
+    });
+
+    it("notes: plan · domain · term dates; no UUID on the customer part or the staff page", async () => {
+      const f = fakeSupabase();
+      await createExtensionQuote({ ...odd, supabase: f.supabase, years: 1 });
+      const notes = f.inserted[0].notes as string;
+      const shownToCustomer = customerQuoteNotes(notes, f.inserted[0].line_items as Row[]) ?? "";
+      expect(shownToCustomer).toBe(
+        "1-year extension: Google Workspace Business Starter · r818test.in · 10 Oct 2026 to 9 Oct 2027. On payment the renewal date moves by 1 year, to 9 Oct 2027.",
+      );
+      expect(shownToCustomer).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+      expect(staffDisplayNotes(notes)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+      // The stored text still names the subscription, so the Renewals page finds the open quote.
+      expect(openRenewalQuoteMap([{ id: "Q-T1-0001", notes }]).get(UUID)).toBe("Q-T1-0001");
+    });
+
+    it("anniversary-shaped renewal date: a year extension ends the day before the new anniversary", () => {
+      const notes = extensionQuoteNotes({
+        subscriptionId: UUID, plan: "Business Standard", domain: null, len: { unit: "years", count: 1 },
+        renewalDate: "2027-10-08", startDate: "2026-10-08", termMonths: 12,
+      });
+      expect(notes).toContain("1-year extension: Business Standard · 8 Oct 2027 to 7 Oct 2028.");
+      expect(notes).toContain("to 8 Oct 2028.");
+    });
   });
 
   it("1 year: exactly as before — round(mrr × 12) and grossAmount, extension_months 12", async () => {
