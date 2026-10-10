@@ -30,6 +30,7 @@ import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -78,7 +79,7 @@ export async function quotePdfAttachment(
     const discount    = Math.round(subtotal * (discountPct / 100));
     const taxable     = subtotal - discount;
     const taxRate     = quote.tax_rate ?? 18;
-    const tax         = Math.round(taxable * (taxRate / 100));
+    const tax         = quoteDisplayTax(taxable, taxRate, quote.amount); // R-804
     const total       = quote.amount ?? taxable + tax;
 
     const blob = await renderQuotePDF({

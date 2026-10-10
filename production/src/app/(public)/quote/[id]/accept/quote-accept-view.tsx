@@ -23,6 +23,7 @@ import { quoteInstalments } from "@/lib/billing/instalments";
 import { whatsAppLink } from "@/lib/marketing/review-request";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
+import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -134,7 +135,7 @@ export function QuoteAcceptView({
   // amount); foreign rebuilds in the display currency from the rounded lines.
   const discountInr = Math.round(quote.subtotal * (quote.discount_pct / 100));
   const taxableInr  = quote.subtotal - discountInr;
-  const taxInr      = Math.round(taxableInr * (quote.tax_rate / 100));
+  const taxInr      = quoteDisplayTax(taxableInr, quote.tax_rate, quote.amount); // R-804: adds up to the stored total
   const totalInr    = quote.amount ?? (taxableInr + taxInr);
   const dSubtotal = isForeign ? dRound(dispLines.reduce((s, x) => s + x.amount, 0)) : quote.subtotal;
   const dDiscount = isForeign ? dRound(dSubtotal * (quote.discount_pct / 100)) : discountInr;
