@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
 import { loadLastPageTestRun, lastTestedLine, summarizeRun, type PageTestRun } from "@/lib/ai/page-test-runs";
-import { bugReportText, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
+import { bugReportText, cleanSteps, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
 import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
@@ -711,7 +711,7 @@ export function AiHelp() {
                       <div className="text-xs"><b>What happened:</b> {m.draft.actual}</div>
                       {m.draft.expected && <div className="text-xs"><b>Expected:</b> {m.draft.expected}</div>}
                       {m.draft.steps.length > 0 && (
-                        <ol className="text-xs list-decimal pl-4 space-y-0.5">{m.draft.steps.map((s, j) => <li key={j}>{s}</li>)}</ol>
+                        <ol data-testid="ai-help-draft-steps" className="text-xs list-decimal pl-4 space-y-0.5">{cleanSteps(m.draft.steps).map((s, j) => <li key={j}>{s}</li>)}</ol>
                       )}
                       {m.recorded && <div className="text-2xs text-ink-3">+ the app&apos;s record of your last steps is attached</div>}
                       {items.some((x) => x.image) && <div className="text-2xs text-ink-3">+ screenshots from this chat are attached</div>}

@@ -142,6 +142,21 @@ export function helpUserTurn(
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 /**
+ * R-831 (Abhishek, staging: the draft showed "1 1." and filed reports read "1. 1. Open
+ * /subscriptions"): the model numbers its steps itself and the panel / report text number them
+ * again. Strip a leading "N." / "N)" / "N -" / "N:" (any count, also "10.") so only the list
+ * numbers. "1.5 GB" is left alone — the mark must be followed by a space.
+ */
+const STEP_NUMBER = /^\s*\(?\d{1,3}(?:[.)]|\s*[-–:])(?:\s+|$)/;
+export function stripStepNumber(step: string): string {
+  let t = step;
+  for (let i = 0; i < 3 && STEP_NUMBER.test(t); i++) t = t.replace(STEP_NUMBER, "");
+  return t.trim();
+}
+/** Steps as the person and the report should see them: numbers stripped, empties dropped. */
+export const cleanSteps = (steps: readonly string[]): string[] => steps.map(stripStepNumber).filter(Boolean);
+
+/**
  * Validate the model's JSON. A reply is required; a bugDraft is kept only when it is
  * complete — a half report (no title, no actual result) is dropped, never filed.
  */
@@ -221,7 +236,7 @@ export function parseHelpAnswer(raw: unknown, allowedCustomerIds?: ReadonlySet<s
   if (!title || !actual) return { reply, bugDraft: null, checklist, actions, followUps };
   const type = TYPES.includes(d.type as FeedbackType) ? (d.type as FeedbackType) : "bug";
   const severity = SEVERITIES.includes(d.severity as FeedbackSeverity) ? (d.severity as FeedbackSeverity) : "medium";
-  const steps = Array.isArray(d.steps) ? d.steps.map((s) => str(s, 300)).filter(Boolean).slice(0, 12) : [];
+  const steps = Array.isArray(d.steps) ? cleanSteps(d.steps.map((s) => str(s, 300))).slice(0, 12) : [];
   return {
     reply,
     checklist,
@@ -295,7 +310,8 @@ export function bugReportText(d: BugDraft, ctx: { pagePath: string | null; repor
     d.actual,
   ];
   if (d.expected) lines.push("", "What should happen:", d.expected);
-  if (d.steps.length) lines.push("", "Steps to see it:", ...d.steps.map((s, i) => `${i + 1}. ${s}`));
+  const steps = cleanSteps(d.steps);
+  if (steps.length) lines.push("", "Steps to see it:", ...steps.map((s, i) => `${i + 1}. ${s}`));
   /* R-162: the app's own record of the last moves and errors — the developer's best clue,
      and the part no reporter writes down. */
   if (ctx.recorded) lines.push("", "What the app recorded (last steps):", ctx.recorded.slice(0, 2500));

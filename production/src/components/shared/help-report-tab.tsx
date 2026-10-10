@@ -23,7 +23,7 @@ import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { trailForPrompt, type TrailEvent } from "@/lib/ai/test-trail";
-import type { BugDraft } from "@/lib/ai/app-help";
+import { cleanSteps, type BugDraft } from "@/lib/ai/app-help";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 import { CropOverlay, captureViewport, toShot } from "@/components/shared/help-shot";
 
@@ -42,7 +42,8 @@ export function reportTextWithContext(typed: string, trail: readonly TrailEvent[
 export function draftToText(d: BugDraft): string {
   const lines = [d.title, "", d.actual];
   if (d.expected) lines.push("", `Expected: ${d.expected}`);
-  if (d.steps.length) lines.push("", "Steps:", ...d.steps.map((s, i) => `${i + 1}. ${s}`));
+  const steps = cleanSteps(d.steps);
+  if (steps.length) lines.push("", "Steps:", ...steps.map((s, i) => `${i + 1}. ${s}`));
   return lines.join("\n");
 }
 
