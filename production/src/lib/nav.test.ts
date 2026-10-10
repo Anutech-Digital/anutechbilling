@@ -1,30 +1,32 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { getCrumb, getParentListHref, getSectionPrimaryHref, APP_NAV, allowedRoutesForRole, filterNavForRole, flattenNav, SCREEN_TITLES, sectionCrumb } from "./nav";
+import { getCrumb, getParentListHref, getSectionPrimaryHref, APP_NAV, allowedRoutesForRole, filterNavForRole, flattenNav, itemWithDescendants, SCREEN_TITLES, sectionCrumb } from "./nav";
+import { buildSidebarApps, appLabelForHref } from "./nav-apps";
 
 describe("getCrumb", () => {
   it("returns the exact crumb for a known static route", () => {
-    /* "Billing", not "Sales": Customers moved to Billing & Subscriptions on
+    /* R-821 (10 Oct 2026): "Sales", matching the menu (nav-apps.ts puts Companies and
+       Quotes in the Sales app). Before that it said "Billing": Customers moved to Billing & Subscriptions on
        10 Sep 2026 — a customer is a company you bill, so it sits beside the
        quotes, invoices and payments about it. Sales & CRM keeps the prospect
        half (leads, enquiries, referrals). */
-    expect(getCrumb("/customers")).toEqual(["Billing", "Companies"]);
-    expect(getCrumb("/quotes/new")).toEqual(["Billing", "Quotes", "New"]);
+    expect(getCrumb("/customers")).toEqual(["Sales", "Companies"]);
+    expect(getCrumb("/quotes/new")).toEqual(["Sales", "Quotes", "New"]);
   });
 
   it("resolves dynamic detail routes via the [id] placeholder (not 'Dashboard')", () => {
     // The bug this fixes: exact lookup missed dynamic ids → everything fell back
     // to the Dashboard crumb. A real customer id is a uuid.
-    expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647")).toEqual(["Billing", "Companies", "Profile"]);
+    expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647")).toEqual(["Sales", "Companies", "Profile"]);
     // Quote ids are prefixed text, not uuids.
-    expect(getCrumb("/quotes/Q-ET-2026-27-0010")).toEqual(["Billing", "Quotes", "Detail"]);
+    expect(getCrumb("/quotes/Q-ET-2026-27-0010")).toEqual(["Sales", "Quotes", "Detail"]);
     expect(getCrumb("/invoices/INV-ET-2026-27-0006")).toEqual(["Billing", "Invoices", "Detail"]);
   });
 
   it("resolves a mid-path id so a sub-page keeps its own crumb", () => {
     expect(getCrumb("/customers/17e61b78-9450-4849-ad93-9834d2281647/edit")).toEqual([
-      "Billing",
+      "Sales",
       "Companies",
       "Edit",
     ]);
@@ -258,7 +260,9 @@ describe("breadcrumbs — one sidebar section, one name", () => {
     name: sec.section,
     crumb: sectionCrumb(sec),
     crumbsInUse: [...new Set(
-      flattenNav([sec]).map((e) => SCREEN_TITLES[e.item.href]?.[0]).filter((c): c is string => !!c),
+      /* A row with its own crumbSection (R-821) is checked by the menu test below. */
+      flattenNav([sec]).filter((e) => !(e.parent ?? e.item).crumbSection)
+        .map((e) => SCREEN_TITLES[e.item.href]?.[0]).filter((c): c is string => !!c),
     )],
   }));
 
@@ -279,6 +283,25 @@ describe("breadcrumbs — one sidebar section, one name", () => {
     const billing = sections.find((s) => s.name === "Bill")!;
     expect(billing.crumbsInUse).toEqual(["Billing"]);
     expect(billing.crumb).toBe("Billing");
+  });
+
+  it("R-821: the crumb names the menu app for every Sales and Billing page (/customers said Billing)", () => {
+    const model = buildSidebarApps("owner");
+    const off: string[] = [];
+    for (const app of model.apps.filter((a) => a.id === "sales" || a.id === "billing")) {
+      for (const it of app.items) for (const d of itemWithDescendants(it)) {
+        const head = getCrumb(d.href)[0];
+        if (head !== app.label) off.push(`${d.href}: crumb ${head}, menu ${app.label}`);
+      }
+    }
+    expect(off).toEqual([]);
+    expect(getCrumb("/customers")[0]).toBe(appLabelForHref(model, "/customers"));
+  });
+
+  it("only lets a row override its crumb with a real section crumb (R-821)", () => {
+    const crumbs = new Set(APP_NAV.map(sectionCrumb));
+    const bad = flattenNav(APP_NAV).map((e) => e.item.crumbSection).filter((c): c is string => !!c && !crumbs.has(c));
+    expect(bad).toEqual([]);
   });
 
   it("names the Buy pages after the sidebar's Billing app, not 'Buy' (R-177)", () => {

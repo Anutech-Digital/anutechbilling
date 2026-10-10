@@ -16,8 +16,15 @@ const read = (p: string) => readFileSync(join(SRC, p), "utf8");
 describe("R-468 (5) / R-453 (2): the Mark-accepted sentence fits the quote", () => {
   it("renewal, existing customer and lead each get their own words", () => {
     expect(acceptHint({ is_renewal: true, customer_id: "C1" })).toContain("subscription is renewed");
-    expect(acceptHint({ is_renewal: false, customer_id: "C1" })).toBe("Customer accepted? Mark accepted to confirm the order.");
+    expect(acceptHint({ is_renewal: false, customer_id: "C1" })).toBe("Mark accepted when the customer agrees.");
     expect(acceptHint({ customer_id: null })).toContain("convert the lead into a customer");
+  });
+  it("R-821: add-seats / extension / renewal quotes never talk about converting a lead", () => {
+    const existing = "Mark accepted when the customer agrees.";
+    expect(acceptHint({ is_add_seats: true, customer_id: null })).toBe(existing);
+    expect(acceptHint({ is_extension: true, customer_id: null })).toBe(existing);
+    expect(acceptHint({ is_renewal: true, customer_id: null })).toMatch(/^Mark accepted when the customer agrees\./);
+    expect(acceptHint({ is_add_seats: false, is_extension: false, customer_id: null })).toContain("convert the lead");
   });
   it("the quote page and the action bar use it", () => {
     expect(read("app/(app)/quotes/[id]/page.tsx")).toContain("{acceptHint(quote)}");

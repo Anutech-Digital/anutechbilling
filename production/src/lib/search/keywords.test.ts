@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   phoneDigits, customerKeywords, leadKeywords, quoteKeywords,
-  invoiceKeywords, subscriptionKeywords, contactKeywords,
+  invoiceKeywords, subscriptionKeywords, contactKeywords, companyPaletteMeta,
 } from "./keywords";
 
 describe("phoneDigits — the lookup that happens when the phone rings", () => {
@@ -154,6 +156,29 @@ describe("the remaining categories", () => {
   it("every builder tolerates an empty object", () => {
     for (const fn of [customerKeywords, leadKeywords, quoteKeywords, invoiceKeywords, subscriptionKeywords, contactKeywords]) {
       expect(fn({})).toEqual([]);
+    }
+  });
+});
+
+describe("R-821: companyPaletteMeta — the Ctrl+K subtitle under a company", () => {
+  const UUID = "17e61b78-9450-4849-ad93-9834d2281647";
+  const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  it("prefers the domain, then city/state, then the contact name", () => {
+    expect(companyPaletteMeta({ id: UUID, domain: "excel.in", city: "Pune", contact_name: "Ravi" })).toBe("excel.in");
+    expect(companyPaletteMeta({ id: UUID, city: "Pune", state: "Maharashtra", contact_name: "Ravi" })).toBe("Pune, Maharashtra");
+    expect(companyPaletteMeta({ id: UUID, state: "Delhi" })).toBe("Delhi");
+    expect(companyPaletteMeta({ id: UUID, contact_name: "Ravi Kumar" })).toBe("Ravi Kumar");
+  });
+  it("is empty — never the id — when nothing readable is set", () => {
+    expect(companyPaletteMeta({ id: UUID })).toBe("");
+    expect(companyPaletteMeta({ id: UUID, domain: " ", contact_name: UUID })).toBe("");
+  });
+  it("the palette uses it and no longer falls back to c.id", () => {
+    const src = readFileSync(join(__dirname, "../../components/layout/command-palette.tsx"), "utf8");
+    expect(src).toContain("companyPaletteMeta(c)");
+    expect(src).not.toMatch(/meta=\{meta \|\| c\.id\}/);
+    for (const c of [{ id: UUID, name: "Acme" }, { id: UUID, name: "Acme", city: "Pune" }]) {
+      expect(companyPaletteMeta(c)).not.toMatch(UUID_RE);
     }
   });
 });

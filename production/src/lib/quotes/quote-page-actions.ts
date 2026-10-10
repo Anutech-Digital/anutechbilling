@@ -91,8 +91,13 @@ export function lostActivityDetail(quoteId: string, code: string, note: string |
  * "convert the lead into a customer" on every quote — wrong on a renewal (the customer and
  * the subscription already exist) and on a new quote for an existing customer (no lead).
  */
-export function acceptHint(q: { is_renewal?: boolean | null; customer_id?: string | null }): string {
-  if (q.is_renewal) return "Customer accepted? Mark accepted. Their subscription is renewed when the payment is recorded.";
-  if (q.customer_id) return "Customer accepted? Mark accepted to confirm the order.";
+export function acceptHint(q: {
+  is_renewal?: boolean | null; is_add_seats?: boolean | null; is_extension?: boolean | null;
+  customer_id?: string | null;
+}): string {
+  if (q.is_renewal) return "Mark accepted when the customer agrees. Their subscription is renewed when the payment is recorded.";
+  /* R-821 (10 Oct 2026): an add-seats or extension quote is always for an existing
+     customer, even on a row with no customer_id — it still said "convert the lead". */
+  if (q.customer_id || q.is_add_seats || q.is_extension) return "Mark accepted when the customer agrees.";
   return "Customer accepted? Mark accepted to convert the lead into a customer.";
 }

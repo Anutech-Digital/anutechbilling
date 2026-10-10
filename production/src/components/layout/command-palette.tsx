@@ -43,7 +43,7 @@ import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { usePayments } from "@/lib/queries/payments";
 import { formatDate } from "@/lib/utils";
 import {
-  customerKeywords, leadKeywords, quoteKeywords,
+  customerKeywords, companyPaletteMeta, leadKeywords, quoteKeywords,
   invoiceKeywords, subscriptionKeywords, contactKeywords, matchesAllTerms,
 } from "@/lib/search/keywords";
 import AddSeatsDialog from "@/components/features/subscriptions/add-seats-dialog";
@@ -296,13 +296,14 @@ export function CommandPalette({
               {fCustomers.length > 0 && (
                 <Command.Group heading={`Companies · ${count(fCustomers, customers)}`}>
                   {fCustomers.map((c) => {
-                    const meta = [c.contact_name, c.contact_email, c.domain].filter(Boolean).join(" · ");
+                    // R-821: readable subtitle, never the row id.
+                    const meta = companyPaletteMeta(c);
                     return (
                       <PaletteItem
                         key={c.id}
                         icon="users"
                         label={c.name}
-                        meta={meta || c.id}
+                        meta={meta || undefined}
                         keywords={customerKeywords(c)}
                         onSelect={() => go(`/customers/${c.id}`)}
                       />
