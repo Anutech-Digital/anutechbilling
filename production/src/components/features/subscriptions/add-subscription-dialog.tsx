@@ -30,6 +30,7 @@ import { useItems } from "@/lib/queries/items";
    person created here is indistinguishable from one added there. */
 import { CONTACT_ROLES, type ContactRole } from "@/lib/queries/contacts";
 import { attachPrimaryContact } from "@/lib/contacts/attach";
+import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
   billingTerms, annualise, BILLING_CHOICES,
@@ -425,19 +426,13 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
    *
    * Matches on BOTH, because the operator may start with either — and the email is the
    * one that used to cause the collision, so typing it should surface the person who
-   * already holds it before the form is ever submitted.
+   * already holds it before the form is ever submitted. R-825: a name matches only when
+   * ALL typed words match, so a shared surname alone no longer suggests someone else.
    */
-  const contactMatches = React.useMemo(() => {
-    const q = `${contactName} ${contactEmail}`.trim().toLowerCase();
-    if (q.length < 2) return [];
-    const terms = q.split(/\s+/).filter(Boolean);
-    return contactPool
-      .filter((p) => {
-        const hay = `${p.full_name ?? ""} ${p.email ?? ""}`.toLowerCase();
-        return terms.some((t) => hay.includes(t));
-      })
-      .slice(0, 6);
-  }, [contactPool, contactName, contactEmail]);
+  const contactMatches = React.useMemo(
+    () => matchContacts(contactPool, contactName, contactEmail, 6),
+    [contactPool, contactName, contactEmail],
+  );
 
   /** Take an existing person: fill the boxes and remember we are LINKING, not creating. */
   /* ── R-073: fill the form from a won deal, once per lead, after the catalog and the
