@@ -27,6 +27,7 @@ import {
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -74,6 +75,8 @@ interface Props {
   notes:         string;
   termsConditions?: string | null;
   isProspect?:   boolean;
+  /** R-809: add-seats (pro-rata) or one-off quote — paid once, no billing schedule. */
+  oneTime?:      boolean;
 }
 
 export function QuotePreviewDialog({
@@ -107,6 +110,7 @@ export function QuotePreviewDialog({
   notes,
   termsConditions,
   isProspect = false,
+  oneTime = false,
 }: Props) {
   // First letter of tenant name → brand monogram (e.g. "Excel Technologies" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
@@ -247,8 +251,8 @@ export function QuotePreviewDialog({
                   <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mt-3 mb-1.5">
                     Billing schedule
                   </p>
-                  <p className="text-sm">{scheduleLabel(firstCommitment, effectiveCycle)}</p>
-                  {billingN > 1 && (
+                  <p className="text-sm">{oneTime ? ONE_TIME_SCHEDULE : scheduleLabel(firstCommitment, effectiveCycle)}</p>
+                  {billingN > 1 && !oneTime && (
                     <p className="text-2xs text-ink-3">{billingN} invoices per year</p>
                   )}
                 </>
@@ -295,8 +299,8 @@ export function QuotePreviewDialog({
                       <td className="py-3 text-sm">
                         <p className="font-medium text-ink">{line.name}</p>
                         <p className="text-2xs text-ink-3 mt-0.5">
-                          {lineUnitLabel(line, showPer)} · HSN 998313
-                          {line.commitment && (
+                          {lineUnitLabel(line, showPer || oneTime)} · HSN 998313
+                          {line.commitment && !oneTime && (
                             <> · {scheduleLabel(line.commitment, effectiveCycle)}</>
                           )}
                         </p>

@@ -84,6 +84,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
+import { isOneTimeQuote } from "@/lib/quotes/service-period";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -734,6 +735,8 @@ export default function QuoteDetailPage() {
       /* R-034. Same rule as the server builder — a paid quote downloads as a record of
          the order, not as an offer with a validity window and Net-7 terms on it. */
       isPaid:        quoteIsPaid(quote),
+      /* R-809: add-seats / one-off → "One-time charge", not "billed yearly". */
+      oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
     });
   };
 
@@ -1825,6 +1828,8 @@ export default function QuoteDetailPage() {
         /* R-527: without it the preview fell back to the line's commitment and printed a
            quarterly quote as "billed yearly" with the year's CGST/SGST. */
         billingCycle={quote.billing_cycle as BillingCycle}
+        /* R-809: add-seats / one-off → "One-time charge", not "Annual commit · billed yearly". */
+        oneTime={isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off })}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
@@ -1930,6 +1935,7 @@ export default function QuoteDetailPage() {
               isExport:      pos.isExport,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
+              oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
             });
           }}
           related={{

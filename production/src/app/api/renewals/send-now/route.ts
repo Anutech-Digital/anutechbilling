@@ -30,6 +30,7 @@ import {
 } from "@/lib/renewals/cadence";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, vendor, seats, mrr,
-       renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months`
+       renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, billing_cycle`
     )
     .eq("id", body.subscription_id)
     .single();
@@ -92,6 +93,12 @@ export async function POST(req: Request) {
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date" }, { status: 400 });
+  }
+  /* R-808: billed in parts → no whole-term renewal quote (it was proven to bill the renewed
+     year twice). The renewals cron rolls the term and the instalments keep coming. */
+  const splitReason = renewalQuoteBlockedReason(sub.billing_cycle);
+  if (splitReason) {
+    return NextResponse.json({ error: splitReason, code: "split_billed" }, { status: 400 });
   }
   if (sub.renewal_state === "suspended" || sub.renewal_state === "renewed") {
     return NextResponse.json(

@@ -114,3 +114,15 @@ export function servicePeriodText(period: QuoteServicePeriod | null): string | n
   if (period.kind === "range") return `covers ${periodDate(period.from)} to ${periodDate(period.to)}`;
   return `covers ${monthsWords(period.months)}`;
 }
+
+/**
+ * R-809 — a quote paid once has no billing schedule. Add-seats (pro-rata) and one-off quotes
+ * still carry the seats' "annual_yearly" commitment on their lines, so the accept page and the
+ * PDF printed "Annual commit · billed yearly" on a one-time charge (Q-F588-27-0007).
+ */
+export function isOneTimeQuote(q: { isAddSeats?: boolean | null; isOneOff?: boolean | null }): boolean {
+  return q.isAddSeats === true || q.isOneOff === true;
+}
+
+/** What the "Billing schedule" line says on a one-time quote. */
+export const ONE_TIME_SCHEDULE = "One-time charge";

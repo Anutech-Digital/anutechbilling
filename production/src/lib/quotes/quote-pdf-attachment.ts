@@ -31,6 +31,7 @@ import { logoDataUri } from "@/lib/pdf/logo";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { isOneTimeQuote } from "@/lib/quotes/service-period";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -48,7 +49,7 @@ export async function quotePdfAttachment(
   try {
     const { data: q } = await admin
       .from("quotes")
-      .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, notes, is_renewal, billing_cycle")
+      .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, notes, is_renewal, is_add_seats, is_one_off, billing_cycle")
       .eq("id", quoteId)
       .eq("tenant_id", tenantId)
       .maybeSingle();
@@ -57,7 +58,7 @@ export async function quotePdfAttachment(
       id: string; customer_name: string | null; line_items: unknown;
       subtotal: number | null; discount_pct: number | null; tax_rate: number | null;
       amount: number | null; notes: string | null; is_renewal: boolean | null;
-      billing_cycle: string | null;
+      billing_cycle: string | null; is_add_seats: boolean | null; is_one_off: boolean | null;
     } | null;
     if (!quote) return null;
 
@@ -109,6 +110,7 @@ export async function quotePdfAttachment(
       billingCycle:  (quote.billing_cycle ?? undefined) as never,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal ?? false,
+      oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
     });
 
     return {

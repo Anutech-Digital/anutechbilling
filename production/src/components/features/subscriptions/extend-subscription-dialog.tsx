@@ -246,8 +246,14 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
 
         <p className="text-2xs text-ink-3 leading-relaxed mb-1">
           A separate <b className="text-ink-2">extension quote</b> will be issued — the original
-          1-year invoice stays untouched. When the customer pays, the renewal date will
-          advance by <Badge size="sm" kind="muted">{addedMonths} months</Badge>.
+          1-year invoice stays untouched.
+          {/* R-809: an invalid month count said "advance by 0 months" — say nothing instead. */}
+          {!lenError && (
+            <span data-testid="extend-advance">
+              {" "}When the customer pays, the renewal date will advance by{" "}
+              <Badge size="sm" kind="muted">{addedMonths === 1 ? "1 month" : `${addedMonths} months`}</Badge>.
+            </span>
+          )}
         </p>
         </>)}
 

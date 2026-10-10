@@ -45,6 +45,7 @@ import { includedSupportLine, type IncludedSupportLine } from "./quote-support-l
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
+import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -120,6 +121,9 @@ export interface QuotePDFProps {
    * derived here from `lineItems` (callers that build props by hand); `null` → none.
    */
   includedSupport?: IncludedSupportLine | null;
+  /** R-809: add-seats (pro-rata) or one-off quote, paid once (isOneTimeQuote). "Billing
+   *  schedule" then says "One-time charge" instead of "Annual commit, billed yearly". */
+  oneTime?:      boolean;
   /** When true, renders "Renewal Quotation" label + visible "RENEWAL" stamp.
    *  Set by lib/renewals/create-renewal-quote.ts on the source quote. */
   isRenewal?:    boolean;
@@ -422,7 +426,7 @@ export function QuotePDF(props: QuotePDFProps) {
     createdDate, expiresDate, validityDays,
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, notes, termsConditions, isRenewal,
-    isPaid = false,
+    isPaid = false, oneTime = false,
     upiQrDataUrl, upiVpa,
   } = props;
   const includedSupport = props.includedSupport !== undefined
@@ -598,7 +602,7 @@ export function QuotePDF(props: QuotePDFProps) {
             {lineItems.length > 0 && firstCommitment && (
               <View style={s.metaGroup}>
                 <Text style={s.sectionLabel}>Billing schedule</Text>
-                <Text style={s.metaValue}>{scheduleLabel(firstCommitment, effectiveCycle)}</Text>
+                <Text style={s.metaValue}>{oneTime ? ONE_TIME_SCHEDULE : scheduleLabel(firstCommitment, effectiveCycle)}</Text>
                 {/* ── A FLEX PLAN HAS NO YEAR TO COUNT ────────────────────────
                     "12 invoices per year" states a commitment the customer has not made.
                     Pardeep's point, 31 Aug 2026: monthly flex IS the flexible tier — take
@@ -607,7 +611,7 @@ export function QuotePDF(props: QuotePDFProps) {
 
                     And the truth here is a reason to buy, not a caveat: no commitment is
                     exactly what the flex tier is sold on. */}
-                {billingN > 1 && (
+                {billingN > 1 && !oneTime && (
                   <Text style={[s.metaValue, { fontSize: 9, color: COLORS.ink3 }]}>
                     {noYearlyCommitment ? "No commitment — cancel any time" : `${billingN} invoices per year`}
                   </Text>
@@ -653,8 +657,9 @@ export function QuotePDF(props: QuotePDFProps) {
                       <Text style={s.lineMeta}>Registration for {line.years} years, paid now · HSN 998313</Text>
                     ) : (
                     <Text style={s.lineMeta}>
-                      {lineUnitLabel(line, Boolean(perInvoice))} · HSN 998313
-                      {line.commitment && ` · ${scheduleLabel(line.commitment, effectiveCycle)}`}
+                      {/* R-809: a one-time charge is not "per year" and has no schedule. */}
+                      {lineUnitLabel(line, Boolean(perInvoice) || oneTime)} · HSN 998313
+                      {line.commitment && !oneTime && ` · ${scheduleLabel(line.commitment, effectiveCycle)}`}
                     </Text>
                     )}
                     {breakdown && (
