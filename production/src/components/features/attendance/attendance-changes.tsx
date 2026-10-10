@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/client";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
-import { describeAttendanceChange } from "@/lib/attendance/change-log";
+import { ATTENDANCE_CHANGES_KEY, describeAttendanceChange } from "@/lib/attendance/change-log";
 import { formatDate } from "@/lib/utils";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -29,7 +29,7 @@ const ACTION_WORD: Record<string, string> = { insert: "added", update: "changed"
 export function AttendanceChanges() {
   const teamQ = useTeamMembers();
   const q = useQuery({
-    queryKey: ["attendance-changes"],
+    queryKey: ATTENDANCE_CHANGES_KEY,
     queryFn: async (): Promise<Row[]> => {
       const supabase = createClient();
       const { data, error } = await supabase
