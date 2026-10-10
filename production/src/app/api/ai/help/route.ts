@@ -30,8 +30,14 @@ import { pagePurpose } from "@/lib/ai/page-purpose";
 import { helpFacts } from "@/lib/ai/help-facts";
 import { loadLastPageTestRun, testHistoryForPrompt } from "@/lib/ai/page-test-runs";
 import { helpSystemPrompt, helpUserTurn, parseHelpAnswer, HELP_MAX_CHARS, HELP_MAX_MESSAGES, type HelpAnswer } from "@/lib/ai/app-help";
+import { HELP_MAX_IMAGES } from "@/lib/ai/help-images";
 import { helpDataToolsPrompt, HELP_TOOL_RESULTS_RULE, parseToolRequest, runHelpDataTools, toolResultsForPrompt, toolFallbackAnswer, withToolLinks } from "@/lib/ai/help-data-tools";
 import { trailForPrompt, findingsForPrompt, looksLikeSameBug, TRAIL_MAX, FINDINGS_MAX, type TrailEvent, type Finding } from "@/lib/ai/test-trail";
+
+const imageSchema = z.object({
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  base64: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/),
+});
 
 const bodySchema = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().trim().min(1).max(HELP_MAX_CHARS * 2) })).max(HELP_MAX_MESSAGES * 2).default([]),
@@ -51,10 +57,9 @@ const bodySchema = z.object({
   })).max(FINDINGS_MAX).optional(),
   outline: z.string().max(2000).optional(),
   /** R-189: one screenshot with this message (page capture or pasted), JPEG/PNG base64, ≤ ~1.5 MB. */
-  image: z.object({
-    mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-    base64: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/),
-  }).optional(),
+  image: imageSchema.optional(),
+  /** R-830: several images with this message (attach / paste / drop), up to HELP_MAX_IMAGES. */
+  images: z.array(imageSchema).max(HELP_MAX_IMAGES).optional(),
 });
 
 const UNAVAILABLE = "AI Help abhi jawab nahi de pa raha. Bug ho to isi Help panel ke 'Report a problem' tab (Ctrl+Shift+B) se seedha bhej dijiye.";
@@ -83,12 +88,15 @@ export async function POST(request: NextRequest) {
     messages.push({ role: "user", text: `Ye test fail hua: "${parsed.data.failedCheck}". Iski bug report banao.` });
   } else if (mode !== "chat") messages.push({ role: "user", text: MODE_PROMPT[mode] });
   if (!messages.length || messages[messages.length - 1].role !== "user") return NextResponse.json({ error: "Last message must be yours." }, { status: 400 });
-  const image = parsed.data.image;
-  if (image) {
+  const images = [...(parsed.data.image ? [parsed.data.image] : []), ...(parsed.data.images ?? [])].slice(0, HELP_MAX_IMAGES);
+  if (images.length) {
     const last = messages[messages.length - 1];
+    const what = images.length === 1
+      ? "[Screenshot attached: the screen the person is looking at. Read it — labels, numbers, errors — and use it in your answer.]"
+      : `[${images.length} images attached, in the order the person added them. Read each — labels, numbers, errors — and use them in your answer; say "image 2" etc. when you refer to one.]`;
     messages[messages.length - 1] = { ...last, text: `${last.text}
 
-[Screenshot attached: the screen the person is looking at. Read it — labels, numbers, errors — and use it in your answer.]` };
+${what}` };
   }
 
   const trail: TrailEvent[] = (parsed.data.trail ?? []).map((e) => ({ ...e, text: maskPII(e.text, 200) ?? "", path: e.path }));
@@ -130,8 +138,8 @@ export async function POST(request: NextRequest) {
       toolResults,
     }),
     temperature: 0.3,
-    timeoutMs: image ? 40_000 : 25_000,
-    ...(image ? { attachment: { mimeType: image.mimeType, base64: image.base64 } } : {}),
+    timeoutMs: images.length ? 40_000 + (images.length - 1) * 5_000 : 25_000,
+    ...(images.length ? { attachments: images.map((i) => ({ mimeType: i.mimeType, base64: i.base64 })) } : {}),
     label: "ai/help",
     onFailure: (r) => { failure = r; },
   });

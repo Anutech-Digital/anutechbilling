@@ -675,4 +675,14 @@ describe("request ka body — attachment aur system", () => {
     };
     expect(second.contents[0].parts[1]).toEqual({ inlineData: { mimeType: "image/png", data: "iVBORw0K" } });
   });
+
+  it("R-830: attachments — several images go after the text, in order", async () => {
+    const spy = vi.fn(async () => ok('{"ok":true}'));
+    vi.stubGlobal("fetch", spy);
+    await geminiJson({ ...ARGS, attachments: [{ mimeType: "image/jpeg", base64: "QQ==" }, { mimeType: "image/png", base64: "Qg==" }] });
+    const parts = (sentBody(spy) as { contents: Array<{ parts: Array<Record<string, unknown>> }> }).contents[0].parts;
+    expect(parts).toHaveLength(3);
+    expect(parts[1]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "QQ==" } });
+    expect(parts[2]).toEqual({ inlineData: { mimeType: "image/png", data: "Qg==" } });
+  });
 });

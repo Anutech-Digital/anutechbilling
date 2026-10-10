@@ -37,6 +37,11 @@ import { IconButton } from "@/components/ui/button";
 import { CropOverlay, HELP_SELF, captureViewport, toShot, type Shot } from "@/components/shared/help-shot";
 import { HelpReportTab } from "@/components/shared/help-report-tab";
 import { installHelpPanelGuard } from "@/components/ui/help-panel-guard";
+import { HELP_MAX_IMAGES, HELP_IMAGE_ACCEPT, HELP_IMAGE_ERRORS, pickHelpImages, draftImages, draftScreenshots } from "@/lib/ai/help-images";
+
+/** R-830: an image waiting to go with the next message. */
+type PendingShot = Shot & { id: string };
+let shotSeq = 0;
 
 /* Open/closed and "an error was caught" live outside the component (5 Oct 2026, Pardeep:
    "ai help button ko top me chhota sa icon laga do"). The big floating button covered page
@@ -184,9 +189,11 @@ export function LastTestedNote({ run }: { run: PageTestRun | null }) {
 }
 
 interface ChatItem extends HelpMessage {
-  /** R-189: screenshot sent with this message */
-  image?: string;
+  /** R-189 / R-830: screenshots sent with this message (up to HELP_MAX_IMAGES) */
+  images?: string[];
   draft?: BugDraft | null;
+  /** R-830: the chat's images this draft carries — filed with it as the report's screenshots */
+  draftImages?: string[];
   filedId?: string;
   page?: string | null;
   checklist?: string[];
@@ -383,7 +390,12 @@ export function AiHelp() {
   const [filing, setFiling] = React.useState<number | null>(null);
   /** "Test next" marks, keyed "<message index>:<line index>". */
   const [checks, setChecks] = React.useState<Record<string, "ok" | "fail">>({});
-  const [shot, setShot] = React.useState<Shot | null>(null);
+  /* R-830: several images wait for the next message (was one). */
+  const [shots, setShots] = React.useState<PendingShot[]>([]);
+  /* Kept in step with `shots` by every setter, so quick adds (paste + drop) see the real count. */
+  const shotsRef = React.useRef<PendingShot[]>([]);
+  const [dragOver, setDragOver] = React.useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
   const [capturing, setCapturing] = React.useState(false);
   const [cropSrc, setCropSrc] = React.useState<HTMLCanvasElement | null>(null);
   /* R-195: a small "Ask AI" button above selected text, anywhere in the app. */
@@ -429,16 +441,33 @@ export function AiHelp() {
     setHelpUi({ open: true, minimized: false, tab: "ask" });
     setTimeout(() => inputRef.current?.focus(), 80);
   }
+  /** R-830: one more waiting image — refused past HELP_MAX_IMAGES (two quick adds cannot both slip in). */
+  const addShot = React.useCallback((s: Shot) => {
+    if (shotsRef.current.length >= HELP_MAX_IMAGES) { toast.error(HELP_IMAGE_ERRORS.tooMany); return; }
+    const next = [...shotsRef.current, { ...s, id: `shot-${++shotSeq}` }];
+    shotsRef.current = next;
+    setShots(next);
+  }, []);
+  /** R-830: files from the attach button, a paste or a drop — limits first, then each is shrunk like a screenshot. */
+  const addFiles = React.useCallback(async (files: readonly File[]) => {
+    const { accepted, errors } = pickHelpImages(shotsRef.current.length, files);
+    errors.forEach((e) => toast.error(e));
+    for (const f of accepted) {
+      const s = await toShot(f).catch(() => null);
+      if (s) addShot(s); else toast.warning("Could not read that image.", { description: f.name || "Try another one." });
+    }
+  }, [addShot]);
   async function finishCrop(c: HTMLCanvasElement) {
     setCropSrc(null);
     const s = await toShot(c);
-    if (s) setShot(s); else toast.warning("Screenshot is too large.", { description: "Choose a smaller part." });
+    if (s) addShot(s); else toast.warning("Screenshot is too large.", { description: "Choose a smaller part." });
   }
 
   /* R-189 (Pardeep, 6 Oct: "screenshot ka bhi option ho"): photo of the page behind the
      panel. The panel itself is left out of the picture (ignoreElements). */
   async function captureScreen() {
     if (capturing) return;
+    if (shotsRef.current.length >= HELP_MAX_IMAGES) { toast.error(HELP_IMAGE_ERRORS.tooMany); return; }
     setCapturing(true);
     const canvas = await captureViewport();
     setCapturing(false);
@@ -447,11 +476,28 @@ export function AiHelp() {
   }
 
   async function onPaste(e: React.ClipboardEvent) {
-    const file = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
-    if (!file) return;
+    /* R-830: every pasted image, not just the first. Pasted text is left to the box. */
+    const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+    if (!files.length) return;
     e.preventDefault();
-    const s = await toShot(file).catch(() => null);
-    if (s) setShot(s); else toast.warning("Could not read that image.", { description: "Try another screenshot." });
+    await addFiles(files);
+  }
+  /* R-830: drag images from the PC onto the Ask tab. */
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  function onDragOver(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (!dragOver) setDragOver(true);
+  }
+  function onDragLeave(e: React.DragEvent) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDragOver(false);
+  }
+  function onDrop(e: React.DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setDragOver(false);
+    void addFiles(Array.from(e.dataTransfer.files));
   }
   const endRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
@@ -459,7 +505,7 @@ export function AiHelp() {
   React.useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [items, busy, showing]);
   React.useEffect(() => { if (showing) setTimeout(() => inputRef.current?.focus(), 50); }, [showing]);
 
-  async function ask(mode: HelpMode, typed?: string, image?: Shot | null) {
+  async function ask(mode: HelpMode, typed?: string, images: readonly Shot[] = []) {
     if (busy) return;
     const shown = mode === "scan" ? "🔍 Is page ko jaancho" : mode === "error" ? "⚠️ Abhi wale error ki report banao" : mode === "check_failed" ? `✗ Test fail: ${typed ?? ""}` : typed ?? "";
     const prior = items.map(({ role, text: t }) => ({ role, text: t }));
@@ -467,7 +513,7 @@ export function AiHelp() {
     let scan: ReturnType<typeof scanPage> | null = null;
     if (mode === "scan") { try { scan = scanPage(trail.current, pathname); } catch { scan = { findings: [], outline: "" }; } }
     if (mode === "error") clearUnseen();
-    setItems((s) => [...s, { role: "user", text: shown, page: pathname, ...(image ? { image: image.dataUrl } : {}) }]);
+    setItems((s) => [...s, { role: "user", text: shown, page: pathname, ...(images.length ? { images: images.map((x) => x.dataUrl) } : {}) }]);
     setBusy(mode);
     const recorded = trailForPrompt(trail.current.slice(-15));
     try {
@@ -478,7 +524,7 @@ export function AiHelp() {
           messages, pagePath: pathname, mode, trail: trail.current,
           ...(scan ? { findings: scan.findings, outline: scan.outline } : {}),
           ...(mode === "check_failed" ? { failedCheck: typed } : {}),
-          ...(image ? { image: { mimeType: image.mimeType, base64: image.base64 } } : {}),
+          ...(images.length ? { images: images.map((x) => ({ mimeType: x.mimeType, base64: x.base64 })) } : {}),
         }),
       });
       const j = (await res.json().catch(() => ({}))) as { reply?: string; bugDraft?: BugDraft | null; checklist?: string[]; actions?: HelpAction[]; followUps?: string[]; similar?: { id: string; title: string }[]; error?: string; ai?: boolean };
@@ -491,7 +537,9 @@ export function AiHelp() {
           ? s.filter((x) => x.draft && looksLikeSameBug({ title: j.bugDraft!.title, pagePath: pathname }, { title: x.draft.title, page_path: x.page ?? null }))
               .map((x) => ({ id: x.filedId ?? "draft", title: x.draft!.title }))
           : [];
-        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, checklist: j.checklist ?? [], actions: j.actions ?? [], followUps: Array.isArray(j.followUps) ? j.followUps.filter((f): f is string => typeof f === "string" && f.trim() !== "").slice(0, 3) : [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
+        /* R-830: the draft carries every image shared in this chat so far (≤ 5, newest win). */
+        const carried = j.bugDraft ? draftImages(s) : [];
+        return [...s, { role: "assistant", text: reply, draft: j.bugDraft ?? null, ...(carried.length ? { draftImages: carried } : {}), checklist: j.checklist ?? [], actions: j.actions ?? [], followUps: Array.isArray(j.followUps) ? j.followUps.filter((f): f is string => typeof f === "string" && f.trim() !== "").slice(0, 3) : [], similar: [...earlier, ...(j.similar ?? [])].slice(0, 3), page: pathname, recorded }];
       });
     } catch {
       setItems((s) => [...s, { role: "assistant", text: "Could not connect — please try again. You can still send it from the Report a problem tab." }]);
@@ -502,12 +550,13 @@ export function AiHelp() {
 
   function send(e?: React.FormEvent, chip?: string) {
     e?.preventDefault();
-    const q = chip ?? (text.trim() || (shot ? "What is wrong in this screenshot?" : ""));
+    const q = chip ?? (text.trim() || (shots.length > 1 ? "What is wrong in these screenshots?" : shots.length ? "What is wrong in this screenshot?" : ""));
     if (!q || busy) return;
     /* R-353: a chip is sent exactly like a typed question; whatever is half-typed stays. */
     if (!chip) setText("");
-    const s = shot;
-    setShot(null);
+    const s = shots;
+    shotsRef.current = [];
+    setShots([]);
     void ask("chat", q, s);
   }
 
@@ -530,13 +579,18 @@ export function AiHelp() {
         reporterId: currentUser?.userId ?? null,
         reporterName: currentUser?.fullName ?? null,
         reporterEmail: currentUser?.authEmail ?? null,
-        /* R-189: every screenshot shared in this chat goes with the report. */
-        screenshots: items.filter((x) => x.image).slice(-3).map((x, n) => ({ name: `ai_help_screen_${n + 1}.jpg`, dataUrl: x.image! })),
+        /* R-830: the images this draft carries (shown on it, removable) — same feedback
+           screenshots path as the Report a problem tab. */
+        screenshots: draftScreenshots(it.draftImages ?? []),
         filedVia: "ai-chat",
         aiChatSummary: it.draft.chatSummary || null,
       });
       setItems((s) => s.map((x, i) => (i === idx ? { ...x, filedId: result.id } : x)));
-      toast.success("Report filed in your name", { description: `${AI_FILED_TAG}. It appears in Admin → Feedback.` });
+      if (result.failedUploads?.length) {
+        toast.warning(`Report filed — but ${result.failedUploads.length} screenshot(s) did not upload.`, { description: `Not attached: ${result.failedUploads.join(", ")}. The report itself is safe.`, duration: 10_000 });
+      } else {
+        toast.success("Report filed in your name", { description: `${AI_FILED_TAG}. It appears in Admin → Feedback.` });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Report was not filed — please try again.");
     } finally {
@@ -617,7 +671,14 @@ export function AiHelp() {
           </div>
 
           {tab === "ask" ? (
-          <div role="tabpanel" id="help-panel-ask" aria-labelledby="help-tab-ask" className="flex-1 min-h-0 flex flex-col">
+          <div role="tabpanel" id="help-panel-ask" aria-labelledby="help-tab-ask"
+            onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+            className={`relative flex-1 min-h-0 flex flex-col ${dragOver ? "ring-2 ring-inset ring-amber bg-amber-soft/30" : ""}`}>
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm font-semibold text-ink">
+              Drop images here (up to {HELP_MAX_IMAGES})
+            </div>
+          )}
           {unseen && (
             <div className="px-3 py-2 border-b border-hairline bg-red-50 text-red-900 text-xs flex items-start gap-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
@@ -642,15 +703,22 @@ export function AiHelp() {
               <div className="text-sm text-ink-2 space-y-2 p-1">
                 <p>Press <b>Check this page</b>: I check the screen and tell you what is wrong and what to test next.</p>
                 <p>I remember your clicks and errors. Found a bug? Just write "this is wrong" — I will write the steps. The AI Help icon turns red when an error happens.</p>
-                <p>Press 📷 or paste a screenshot with <b>Ctrl+V</b> — I will look at the screen and answer.</p>
+                <p>Press 📷, attach images, drop them here or paste with <b>Ctrl+V</b> — up to {HELP_MAX_IMAGES} at once. They also go with any bug report I draft.</p>
                 <p className="text-ink-3 text-xs">A report is sent only when you review the draft and press <b>File</b> — in your name.</p>
               </div>
             )}
             {items.map((m, i) => (
               <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
                 <div className={`max-w-[90%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap ${m.role === "user" ? "bg-ink text-paper" : "bg-paper-2 text-ink"}`}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {m.image && <img src={m.image} alt="Screenshot sent with this message" className="mb-1.5 max-h-40 rounded-md border border-hairline" />}
+                  {m.images && m.images.length > 0 && (
+                    <div className="mb-1.5 flex flex-wrap gap-1.5">
+                      {m.images.map((src, j) => (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img key={j} src={src} alt={`Image ${j + 1} sent with this message`}
+                          className={`${m.images!.length === 1 ? "max-h-40" : "h-16 w-20 object-cover"} rounded-md border border-hairline`} />
+                      ))}
+                    </div>
+                  )}
                   {m.text}
                   {m.actions && m.actions.length > 0 && (
                     <div className="mt-2 flex flex-col gap-1.5">
@@ -714,7 +782,26 @@ export function AiHelp() {
                         <ol data-testid="ai-help-draft-steps" className="text-xs list-decimal pl-4 space-y-0.5">{cleanSteps(m.draft.steps).map((s, j) => <li key={j}>{s}</li>)}</ol>
                       )}
                       {m.recorded && <div className="text-2xs text-ink-3">+ the app&apos;s record of your last steps is attached</div>}
-                      {items.some((x) => x.image) && <div className="text-2xs text-ink-3">+ screenshots from this chat are attached</div>}
+                      {m.draftImages && m.draftImages.length > 0 && (
+                        <div data-testid="ai-help-draft-images">
+                          <div className="text-2xs text-ink-3 mb-1">+ {m.draftImages.length} {m.draftImages.length === 1 ? "image" : "images"} from this chat go with the report</div>
+                          <ul className="flex flex-wrap gap-2" aria-label={`${m.draftImages.length} image(s) attached to this report`}>
+                            {m.draftImages.map((src, j) => (
+                              <li key={j} className="relative">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={src} alt={`Report image ${j + 1}`} className="w-16 h-12 object-cover rounded-md border border-hairline" />
+                                {!m.filedId && (
+                                  <button type="button" aria-label={`Remove image ${j + 1} from the report`} disabled={filing !== null}
+                                    onClick={() => setItems((s) => s.map((x, k) => (k === i ? { ...x, draftImages: (x.draftImages ?? []).filter((_, n) => n !== j) } : x)))}
+                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-paper flex items-center justify-center ring-2 ring-paper hover:bg-rose">
+                                    <Icon name="x" size={10} />
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       {m.similar && m.similar.length > 0 && !m.filedId && (
                         <div className="text-xs rounded-md bg-amber-50 text-amber-900 px-2 py-1.5">
                           <b>Already reported?</b> Same as: {m.similar.map((x) => `“${x.title}”`).join(", ")}. File only if this is different.
@@ -746,12 +833,22 @@ export function AiHelp() {
               ))}
             </div>
           )}
-          {shot && (
-            <div className="border-t border-hairline px-2 pt-2 flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={shot.dataUrl} alt="Screenshot to send" className="h-14 rounded-md border border-hairline" />
-              <span className="text-2xs text-ink-3 flex-1">Screenshot goes with your next message.</span>
-              <button type="button" aria-label="Remove screenshot" className="p-1 text-ink-3 hover:text-ink" onClick={() => setShot(null)}><Icon name="x" size={14} /></button>
+          {shots.length > 0 && (
+            <div data-testid="ai-help-pending-images" className="border-t border-hairline px-2 pt-2">
+              <ul className="flex flex-wrap gap-2" aria-label={`${shots.length} image(s) to send`}>
+                {shots.map((s, j) => (
+                  <li key={s.id} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={s.dataUrl} alt={`Image ${j + 1} to send`} className="w-16 h-12 object-cover rounded-md border border-hairline" />
+                    <button type="button" aria-label={`Remove image ${j + 1}`}
+                      onClick={() => { const next = shotsRef.current.filter((x) => x.id !== s.id); shotsRef.current = next; setShots(next); }}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-paper flex items-center justify-center ring-2 ring-paper hover:bg-rose">
+                      <Icon name="x" size={10} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-1 text-2xs text-ink-3">{shots.length}/{HELP_MAX_IMAGES} — go with your next message.</div>
             </div>
           )}
           <form onSubmit={send} className="border-t border-hairline p-2 flex gap-2 items-end">
@@ -761,8 +858,20 @@ export function AiHelp() {
               aria-label="Take a screenshot of this page"
               title="Screenshot this page — or paste one into the box"
               onClick={() => void captureScreen()}
-              disabled={capturing || !!busy}
+              disabled={capturing || !!busy || shots.length >= HELP_MAX_IMAGES}
             />
+            {/* R-830: attach images from the PC (several at once). */}
+            <IconButton
+              type="button"
+              icon="upload"
+              aria-label="Attach images"
+              title={`Attach images — PNG, JPG or WebP, up to ${HELP_MAX_IMAGES}, max 5 MB each`}
+              onClick={() => fileRef.current?.click()}
+              disabled={!!busy || shots.length >= HELP_MAX_IMAGES}
+            />
+            <input ref={fileRef} type="file" multiple accept={HELP_IMAGE_ACCEPT} name="ai-help-images" aria-label="Attach image files" className="hidden"
+              data-testid="ai-help-file-input"
+              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; void addFiles(files); }} />
             <label htmlFor="ai-help-input" className="sr-only">Your question</label>
             <textarea
               id="ai-help-input"
@@ -776,7 +885,7 @@ export function AiHelp() {
               placeholder="e.g. Why is the GST wrong on this invoice?"
               className="flex-1 resize-none rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
             />
-            <Button type="submit" size="sm" variant="primary" loading={busy === "chat"} disabled={(!text.trim() && !shot) || !!busy}>Send</Button>
+            <Button type="submit" size="sm" variant="primary" loading={busy === "chat"} disabled={(!text.trim() && !shots.length) || !!busy}>Send</Button>
           </form>
           </div>
           ) : (
