@@ -21,6 +21,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+import { keepOpenForHelp } from "./help-panel-guard";
 
 const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
@@ -75,13 +76,16 @@ interface SheetContentProps
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ side = "right", className, children, hideClose, ...props }, ref) => (
+>(({ side = "right", className, children, hideClose, onInteractOutside, onEscapeKeyDown, ...props }, ref) => (
   <SheetPortal>
     <SheetOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(sheetVariants({ side }), className)}
       {...props}
+      /* R-827: clicks, focus or Escape inside AI Help never close the sheet. */
+      onInteractOutside={keepOpenForHelp(onInteractOutside)}
+      onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
     >
       {children}
       {!hideClose && (
