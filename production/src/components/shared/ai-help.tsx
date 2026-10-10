@@ -413,6 +413,10 @@ export function AiHelp() {
   const [checks, setChecks] = React.useState<Record<string, "ok" | "fail">>({});
   /* R-830: several images wait for the next message (was one). */
   const [shots, setShots] = React.useState<PendingShot[]>([]);
+  /* R-830: "Max 5 images" / too large / wrong type are limits the user can fix, not app errors.
+     They show as a plain note by the thumbnails, never as an error toast: that toast is caught by
+     the trail, turns the Help icon red and rides along with the next report. */
+  const [imageNote, setImageNote] = React.useState<string | null>(null);
   /* Kept in step with `shots` by every setter, so quick adds (paste + drop) see the real count. */
   const shotsRef = React.useRef<PendingShot[]>([]);
   const [dragOver, setDragOver] = React.useState(false);
@@ -464,7 +468,7 @@ export function AiHelp() {
   }
   /** R-830: one more waiting image — refused past HELP_MAX_IMAGES (two quick adds cannot both slip in). */
   const addShot = React.useCallback((s: Shot) => {
-    if (shotsRef.current.length >= HELP_MAX_IMAGES) { toast.error(HELP_IMAGE_ERRORS.tooMany); return; }
+    if (shotsRef.current.length >= HELP_MAX_IMAGES) { setImageNote(HELP_IMAGE_ERRORS.tooMany); return; }
     const next = [...shotsRef.current, { ...s, id: `shot-${++shotSeq}` }];
     shotsRef.current = next;
     setShots(next);
@@ -472,7 +476,7 @@ export function AiHelp() {
   /** R-830: files from the attach button, a paste or a drop — limits first, then each is shrunk like a screenshot. */
   const addFiles = React.useCallback(async (files: readonly File[]) => {
     const { accepted, errors } = pickHelpImages(shotsRef.current.length, files);
-    errors.forEach((e) => toast.error(e));
+    setImageNote(errors.length ? errors.join(" · ") : null);
     for (const f of accepted) {
       const s = await toShot(f).catch(() => null);
       if (s) addShot(s); else toast.warning("Could not read that image.", { description: f.name || "Try another one." });
@@ -488,7 +492,7 @@ export function AiHelp() {
      panel. The panel itself is left out of the picture (ignoreElements). */
   async function captureScreen() {
     if (capturing) return;
-    if (shotsRef.current.length >= HELP_MAX_IMAGES) { toast.error(HELP_IMAGE_ERRORS.tooMany); return; }
+    if (shotsRef.current.length >= HELP_MAX_IMAGES) { setImageNote(HELP_IMAGE_ERRORS.tooMany); return; }
     setCapturing(true);
     const canvas = await captureViewport();
     setCapturing(false);
@@ -578,6 +582,7 @@ export function AiHelp() {
     const s = shots;
     shotsRef.current = [];
     setShots([]);
+    setImageNote(null);
     void ask("chat", q, s);
   }
 
@@ -862,7 +867,7 @@ export function AiHelp() {
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={s.dataUrl} alt={`Image ${j + 1} to send`} className="w-16 h-12 object-cover rounded-md border border-hairline" />
                     <button type="button" aria-label={`Remove image ${j + 1}`}
-                      onClick={() => { const next = shotsRef.current.filter((x) => x.id !== s.id); shotsRef.current = next; setShots(next); }}
+                      onClick={() => { const next = shotsRef.current.filter((x) => x.id !== s.id); shotsRef.current = next; setShots(next); setImageNote(null); }}
                       className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-paper flex items-center justify-center ring-2 ring-paper hover:bg-rose">
                       <Icon name="x" size={10} />
                     </button>
@@ -870,6 +875,11 @@ export function AiHelp() {
                 ))}
               </ul>
               <div className="mt-1 text-2xs text-ink-3">{shots.length}/{HELP_MAX_IMAGES} — go with your next message.</div>
+            </div>
+          )}
+          {imageNote && (
+            <div data-testid="ai-help-image-note" role="status" className={`${shots.length ? "" : "border-t border-hairline pt-2 "}px-2 text-2xs text-ink-2`}>
+              {imageNote}
             </div>
           )}
           <form onSubmit={send} className="border-t border-hairline p-2 flex gap-2 items-end">
