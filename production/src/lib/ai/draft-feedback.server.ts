@@ -11,7 +11,7 @@
  * `tenant_id` explicitly and it always comes from the caller's resolved session, never from a
  * request body.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { summariseEdit } from "./draft-feedback";
 
 function bare() {

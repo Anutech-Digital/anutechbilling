@@ -8,6 +8,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
@@ -190,9 +191,14 @@ export async function middleware(request: NextRequest) {
      the session (public API, webhooks, cron, health) run as usual. An app page or a session
      API gets a short "try again" answer instead of a bounce to /login: the person IS signed
      in, and sending them to a login form that cannot reach the same server helps nobody. */
-  let session: Awaited<ReturnType<typeof updateSession>>;
+  let session:
+    | Awaited<ReturnType<typeof updateSession>>
+    | (Awaited<ReturnType<typeof authjsMiddlewareSession>> & { authUnreachable: boolean });
   try {
-    session = await updateSession(request);
+    /* AUTH_PROVIDER=authjs: the session is Auth.js's (src/server/auth); same answers, same gates. */
+    session = process.env.AUTH_PROVIDER === "authjs"
+      ? { ...(await authjsMiddlewareSession(request)), authUnreachable: false }
+      : await updateSession(request);
   } catch (e) {
     console.error(`[middleware] session check threw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
     session = {
@@ -352,6 +358,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
+  /* Node.js, not Edge (5 Oct 2026): with the VM gone, the role lookup below runs through the
+     in-process data gateway (Prisma), which needs Node. Stable in Next 15.5. */
+  runtime: "nodejs",
   // Run on everything except static assets + Next internals
   matcher: [
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",

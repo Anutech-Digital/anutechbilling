@@ -17,7 +17,9 @@
  */
 import { NextResponse } from "next/server";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import { createClient as createBareClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+/* Staging (R-161): built through @/lib/supabase/bare so the in-process gateway / Auth.js switches reach it. */
+import { createBareClient } from "@/lib/supabase/bare";
 import { effectiveDocCode } from "@/lib/actions/consequence";
 import {
   GST_DOC_TYPES,

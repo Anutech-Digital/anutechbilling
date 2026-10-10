@@ -16,7 +16,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { createClient as createSessionlessClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+/* Staging (R-161): supabase-js clients are built only in src/lib/supabase — createBareClient is the drop-in. */
+import { createBareClient as createSessionlessClient } from "@/lib/supabase/bare";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";

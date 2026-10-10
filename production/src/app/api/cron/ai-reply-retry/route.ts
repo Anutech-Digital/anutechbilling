@@ -29,7 +29,7 @@
  * as they did the first time. A retry cannot say anything the original was not allowed to.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";

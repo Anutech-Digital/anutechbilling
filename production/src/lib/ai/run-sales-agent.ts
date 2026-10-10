@@ -33,7 +33,7 @@
  * 4. Dispatch (or hand over).
  * 5. Schedule the next follow-up, if the agent asked for one.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { decideAutoReply } from "./auto-reply";

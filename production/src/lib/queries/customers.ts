@@ -64,8 +64,8 @@ export function useCustomers(opts: { enabled?: boolean } = {}) {
 
 export const CUSTOMERS_PAGE_SIZE = 50;
 
-/** The columns the page's search box reads on the customer row itself. */
-export const CUSTOMER_SEARCH_COLUMNS = ["name", "display_name", "domain", "contact_name", "contact_email"] as const;
+/** The columns the page's search box reads on the customer row itself (R-467: + contact_phone — the box says "phone"). */
+export const CUSTOMER_SEARCH_COLUMNS = ["name", "display_name", "domain", "contact_name", "contact_email", "contact_phone"] as const;
 
 export interface CustomerPageFilters {
   /** Free text, as typed. Trimmed and lower-cased here. */

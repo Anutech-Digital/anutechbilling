@@ -15,6 +15,17 @@ export async function isOAuthProviderEnabled(
   provider: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<boolean | null> {
+  /* With Auth.js the providers that are switched on are listed by /api/auth/providers. */
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "authjs") {
+    try {
+      const res = await fetchFn("/api/auth/providers");
+      if (!res.ok) return null;
+      const json = (await res.json()) as Record<string, unknown> | null;
+      return Boolean(json && provider in json);
+    } catch {
+      return null;
+    }
+  }
   try {
     const res = await fetchFn(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/settings`);
     if (!res.ok) return null;

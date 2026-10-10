@@ -1,0 +1,13 @@
+-- BASELINE MARKER — intentionally empty.
+--
+-- The schema before Prisma Migrate = supabase/baseline.sql + supabase/baseline-storage.sql
+-- + every file in supabase/migrations/ up to and including
+-- 20261005100000_feedback_filed_via_ai_chat.sql. That folder is FROZEN from here on:
+-- new migrations go in prisma/migrations/<timestamp>_<name>/migration.sql
+-- (src/server/db/migrations-frozen.test.ts fails if a newer file appears there).
+--
+-- Existing databases (staging, production) take this baseline as already applied:
+--   npx prisma migrate resolve --applied 0_init
+-- A fresh local database is built by db/local/build.sh, which loads the frozen files and
+-- then runs the same resolve + `prisma migrate deploy`.
+select 1;

@@ -8,9 +8,42 @@
  *   const { data } = await supabase.from("leads").select("*");
  */
 import { createBrowserClient } from "@supabase/ssr";
+import { createClient as createSupabaseJs } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
+import { browserAccessToken, browserAuth } from "@/lib/auth/browser-auth";
 
-export function createClient() {
+/**
+ * NEXT_PUBLIC_DATA_GATEWAY=1: database requests (/rest/v1) go to this app's own
+ * /api/sb/rest/v1 (Prisma gateway, src/server/postgrest) instead of the VM's PostgREST. The
+ * session token travels exactly as before; auth and storage still go to the VM for now.
+ */
+function rewriteRest(input: RequestInfo | URL): RequestInfo | URL {
+  if (process.env.NEXT_PUBLIC_DATA_GATEWAY !== "1" || typeof window === "undefined") return input;
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "") + "/rest/v1/";
+  const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!href.startsWith(base)) return input;
+  return window.location.origin + "/api/sb/rest/v1/" + href.slice(base.length);
+}
+
+type BrowserClient = ReturnType<typeof createBrowserClient<Database>>;
+let authjsSingleton: BrowserClient | null = null;
+
+/* NEXT_PUBLIC_AUTH_PROVIDER=authjs: no GoTrue session in the browser. supabase-js runs without
+   its auth module, requests carry the token from /api/auth/supabase-token, and `client.auth`
+   is answered by Auth.js (src/lib/auth/browser-auth.ts) — so screens keep calling
+   supabase.auth.* unchanged. */
+function authjsBrowserClient(): BrowserClient {
+  if (authjsSingleton) return authjsSingleton;
+  const client = createSupabaseJs<Database>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+    accessToken: browserAccessToken,
+    global: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(rewriteRest(input), { ...init, cache: "no-store" }) },
+  });
+  authjsSingleton = Object.assign(client, { auth: browserAuth() }) as unknown as BrowserClient;
+  return authjsSingleton;
+}
+
+export function createClient(): BrowserClient {
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "authjs") return authjsBrowserClient();
   return createBrowserClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -39,7 +72,7 @@ export function createClient() {
       //      instead of showing up in monitoring.
       global: {
         fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-          fetch(input, { ...init, cache: "no-store" }),
+          fetch(rewriteRest(input), { ...init, cache: "no-store" }),
       },
     },
   );

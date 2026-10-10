@@ -12,7 +12,7 @@
  * separate functions taking an explicit `tenantId` rather than reusing a row object: it keeps
  * "this read is deliberately unscoped" from spreading into "this write forgot to scope".
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SlaTicketFacts } from "./support-sla";
 

@@ -23,11 +23,14 @@ export default defineConfig({
   // card.tsx…). Matching Next here keeps the app code untouched.
   esbuild: { jsx: "automatic" },
   test: {
+    // next-auth imports "next/server" without an extension; let Vite resolve it (5 Oct 2026).
+    server: { deps: { inline: ["next-auth", "@auth/core"] } },
     // src/ is the app. tests/ is for repo assets that are not part of the app and have no
     // build step -- currently dashboard.html, whose logic lives in an inline <script> and
     // can only be reached by extracting it. Keeping those under src/ would imply the app
     // ships them.
     include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}"],
-    exclude: ["node_modules", "e2e", ".next", "dist", "playwright-report", "test-results"],
+    // tests/isolation needs a real Postgres (npm run db:local) — run it with npm run test:isolation.
+    exclude: ["node_modules", "e2e", ".next", "dist", "playwright-report", "test-results", "tests/isolation/**"],
   },
 });

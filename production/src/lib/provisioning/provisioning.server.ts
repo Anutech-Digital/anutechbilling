@@ -13,7 +13,7 @@
  * argument and is written on the row, and the caller passes the one it read off the quote it
  * verified, never one from a webhook body.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { testPaymentProvisioningAllowed, type ProvisioningBlocker, type ProvisioningVendor } from "./provisioning";
 import { DOMAIN_RENEWAL_PLAN } from "@/lib/domains/renewal";
 import { HOSTING_RENEWAL_PLAN } from "@/lib/hosting/renewal";

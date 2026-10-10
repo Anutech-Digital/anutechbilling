@@ -25,7 +25,7 @@
  */
 import { NextResponse } from "next/server";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { effectiveDocCode, type SeriesState } from "@/lib/actions/consequence";
 
 export const dynamic = "force-dynamic";

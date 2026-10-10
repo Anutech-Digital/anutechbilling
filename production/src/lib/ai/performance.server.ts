@@ -16,7 +16,7 @@
  * explicit `.eq("tenant_id", …)`, and that line is the whole boundary between one reseller's
  * numbers and another's. `tenantId` always comes from the caller's resolved context.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   aiConversion,

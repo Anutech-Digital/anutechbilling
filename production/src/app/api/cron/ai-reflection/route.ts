@@ -23,7 +23,7 @@
  */
 import { reportCron } from "@/lib/ops/cron-report";
 import { NextResponse } from "next/server";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { reflect, type ReflectionInput } from "@/lib/ai/reflection";

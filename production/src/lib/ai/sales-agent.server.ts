@@ -20,7 +20,7 @@
  * workspace's customer conversations and another's. `tenantId` always comes from the caller's
  * resolved context, never from a request body.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, ItemPrices } from "@/lib/supabase/database.types";
 import { resolveGeminiConfig, geminiJson } from "./gemini";

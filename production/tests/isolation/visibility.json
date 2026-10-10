@@ -1,0 +1,10 @@
+{
+  "_why": "Tables whose seeded row an OWNER of the same tenant still cannot see — by design: rows private to one person (personal_*, push/Google tokens, notifications), service-only tables, or rows scoped to an apprentice/mentor. Checked against the old Supabase path by the 'both paths agree' test. A table appearing or disappearing here is a policy change — review it.",
+  "hiddenFromOwner": [
+    "academy_apprentice_skills", "academy_evaluations", "academy_submissions", "academy_tasks",
+    "attendance_reminder_log", "customer_number_seq", "google_contact_links", "notifications",
+    "personal_accounts", "personal_holdings", "personal_transactions", "personal_vault_pin",
+    "push_subscriptions", "support_sync_outbox", "ui_page_scores", "user_google_tokens",
+    "ux_analysis_runs", "ux_events", "ux_insights"
+  ]
+}

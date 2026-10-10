@@ -16,7 +16,7 @@
  * quote analytics and another's.
  */
 import crypto from "node:crypto";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";

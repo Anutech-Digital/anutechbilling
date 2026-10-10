@@ -19,11 +19,22 @@
  */
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { prismaPathEnabled } from "@/server/db/flags";
+import { getTenantSession } from "@/server/auth/session";
+import { emailSenderFor } from "@/server/settings/email-sender";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  // New path (RLS-scoped, no service-role key). See src/server/settings/email-sender.ts.
+  if (prismaPathEnabled()) {
+    const session = await getTenantSession();
+    if (!session) return NextResponse.json({ provider: null, address: null });
+    return NextResponse.json(await emailSenderFor(session));
+  }
+
+  // Old path — removed once DATABASE_URL is set everywhere (plan Phase 8).
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ provider: null, address: null });

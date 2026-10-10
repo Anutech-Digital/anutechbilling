@@ -70,6 +70,7 @@ MIGS=(
   "leadcountspage|20261009190500_lead_counts_page_pool.sql|resellersos_migration|coalesce(position('page_unassigned' in pg_get_functiondef(to_regprocedure('public.lead_counts(jsonb)'))) > 0, false)"
   "quoteacceptfamily|20261009191000_quote_accept_family_only.sql|resellersos_migration|coalesce(position('revision_of' in pg_get_functiondef(to_regprocedure('public.tg_quote_accepted_sync_lead()'))) > 0, false)"
   "hierarchysvc|20261009200000_hierarchy_service_role.sql|resellersos_migration|coalesce(position('service_role' in pg_get_functiondef(to_regprocedure('public.hierarchy_sees_all()'))) > 0, false)"
+  "loginlink|20261009200000_login_profile_lookup.sql|resellersos_migration|exists(select 1 from pg_proc where proname='login_profile_id_for_email' and pronamespace='public'::regnamespace)"
   "attendancerolewrites|20261009213000_attendance_role_writes.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'attendance_update_hr_roles') and not exists(select 1 from pg_policy where polname = 'tenant isolation write' and polrelid = to_regclass('public.attendance')))"
   "demotenant|20261009220000_demo_tenant_readonly.sql|resellersos_migration|(to_regclass('public.demo_tenants') is not null and to_regprocedure('public.demo_pre_request()') is not null and to_regprocedure('public.demo_readonly_probe()') is not null)"
   "attendancecorrections|20261009224500_attendance_corrections.sql|resellersos_migration|to_regprocedure('public.correct_attendance(uuid,date,timestamptz,timestamptz,text)') is not null"

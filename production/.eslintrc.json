@@ -3,7 +3,8 @@
     "next/core-web-vitals"
   ],
   "ignorePatterns": [
-    "src/lib/supabase/database.generated.ts"
+    "src/lib/supabase/database.generated.ts",
+    "src/server/db/generated/**"
   ],
   "rules": {
     "react/no-unescaped-entities": "off",
@@ -134,6 +135,144 @@
           {
             "selector": "MemberExpression[object.type='CallExpression'][object.callee.property.name='split'][object.callee.object.type='CallExpression'][object.callee.object.callee.property.name='toISOString']",
             "message": "S21 / AGENTS.md §6: toISOString() UTC ki tareekh deta hai — 00:00–05:30 IST me KAL. Aaj ke liye istToday(), kisi instant ki IST tareekh ke liye toIstDate(d), UTC-parts se bani Date ke liye utcDateISO(d) — sab @/lib/dates/ist se."
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "excludedFiles": [
+        "src/server/db/**",
+        "src/app/api/cron/**",
+        "src/server/postgrest/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/client",
+                  "@prisma/client/*",
+                  "@prisma/adapter-pg"
+                ],
+                "message": "Use withTenant() from @/server/db — the raw Prisma client skips the tenant context (docs/PLAN-move-off-supabase.md §3.2)."
+              },
+              {
+                "group": [
+                  "@/server/db/generated",
+                  "@/server/db/generated/*",
+                  "**/server/db/generated/**"
+                ],
+                "message": "Use withTenant() from @/server/db — the generated client is internal to src/server/db."
+              },
+              {
+                "group": [
+                  "@/server/db/context",
+                  "**/server/db/context"
+                ],
+                "message": "Internal to src/server/db: only withTenant() may set the tenant context."
+              },
+              {
+                "group": [
+                  "@/server/db/jobs",
+                  "**/server/db/jobs"
+                ],
+                "message": "Cross-tenant job access is for src/app/api/cron/** only. Request code uses withTenant()."
+              },
+              {
+                "group": [
+                  "@/server/db/gateway",
+                  "**/server/db/gateway"
+                ],
+                "message": "The gateway's logins are for src/server/postgrest only. Use withTenant() from @/server/db."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/app/api/cron/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/client",
+                  "@prisma/client/*",
+                  "@prisma/adapter-pg"
+                ],
+                "message": "Use withTenant() from @/server/db — the raw Prisma client skips the tenant context (docs/PLAN-move-off-supabase.md §3.2)."
+              },
+              {
+                "group": [
+                  "@/server/db/generated",
+                  "@/server/db/generated/*",
+                  "**/server/db/generated/**"
+                ],
+                "message": "Use withTenant() from @/server/db — the generated client is internal to src/server/db."
+              },
+              {
+                "group": [
+                  "@/server/db/context",
+                  "**/server/db/context"
+                ],
+                "message": "Internal to src/server/db: only withTenant() may set the tenant context."
+              },
+              {
+                "group": [
+                  "@/server/db/gateway",
+                  "**/server/db/gateway"
+                ],
+                "message": "The gateway's logins are for src/server/postgrest only. Use withTenant() from @/server/db."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/server/postgrest/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@prisma/client",
+                  "@prisma/client/*",
+                  "@prisma/adapter-pg"
+                ],
+                "message": "Use withIdentity() from @/server/db/gateway."
+              },
+              {
+                "group": [
+                  "@/server/db/generated",
+                  "@/server/db/generated/*",
+                  "**/server/db/generated/**"
+                ],
+                "message": "Internal to src/server/db."
+              },
+              {
+                "group": [
+                  "@/server/db/context",
+                  "**/server/db/context"
+                ],
+                "message": "Internal to src/server/db."
+              }
+            ]
           }
         ]
       }

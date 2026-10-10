@@ -8,7 +8,7 @@
  * `.eq("tenant_id", …)` except the cron's due-sweep, which is cross-tenant BY DESIGN and
  * says so at its call site.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loopDueAt } from "./sales-loops";
 

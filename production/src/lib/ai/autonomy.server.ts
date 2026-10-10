@@ -20,7 +20,7 @@
  * workspace's automation policy and another's. `tenantId` comes from the caller's own
  * resolved context, never from a request body.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { AutonomyPolicy, AiAction, AutonomyMode } from "./autonomy";
 import { buildAiActionRecord, type AiOutcome } from "./action-log";
 

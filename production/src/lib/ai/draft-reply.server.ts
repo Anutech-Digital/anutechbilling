@@ -23,7 +23,7 @@
  * reply is fine for a person to adapt and wrong to send unattended, and `decideAutoReply`
  * refuses one anyway — so producing one would only invite somebody to relax that rule.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { buildReplyContext, REPLY_SYSTEM_PROMPT, type ThreadTurn } from "./reply-context";
 import { geminiJson, resolveGeminiConfig } from "./gemini";
 import { buildEmailThread, summariseThread } from "@/lib/leads/email-thread";

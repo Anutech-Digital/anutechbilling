@@ -30,6 +30,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { appPathOr } from "@/lib/safe-path";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { authProvider } from "@/server/auth/authjs";
+import { currentAuthUser } from "@/server/auth/compat";
 import { initials } from "@/lib/utils";
 import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
@@ -80,27 +82,39 @@ export async function GET(request: NextRequest) {
      an email template using {{ .TokenHash }}) has none, so it used to end on "no_code".
      Recovery only — the one-time token signs the person in and the next stop is always
      /reset-password, where they choose the password. */
+  /* AUTH_PROVIDER=authjs: Auth.js has already finished the Google round-trip and set the session
+     before redirecting here, so there is no code to exchange — read the signed-in user and run
+     the same first-sign-in decisions below. */
+  let authjsUser: Awaited<ReturnType<typeof currentAuthUser>> = null;
+  if (authProvider() === "authjs") {
+    authjsUser = await currentAuthUser();
+    if (!authjsUser) return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+  }
+
   const tokenHash = searchParams.get("token_hash");
-  if (!code && tokenHash && searchParams.get("type") === "recovery") {
+  if (!authjsUser && !code && tokenHash && searchParams.get("type") === "recovery") {
     const supabase = createClient();
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
     if (error) return NextResponse.redirect(`${origin}/login?error=link_expired`);
     return NextResponse.redirect(`${origin}/reset-password`);
   }
 
-  if (!code) {
+  if (!authjsUser && !code) {
     return NextResponse.redirect(`${origin}/login?error=no_code`);
   }
 
-  const supabase = createClient();
-  const { data: exchData, error: exchError } =
-    await supabase.auth.exchangeCodeForSession(code);
-
-  if (exchError || !exchData?.user) {
-    return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+  let authUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> };
+  if (authjsUser) {
+    authUser = authjsUser.user;
+  } else {
+    const supabase = createClient();
+    const { data: exchData, error: exchError } =
+      await supabase.auth.exchangeCodeForSession(code!);
+    if (exchError || !exchData?.user) {
+      return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+    }
+    authUser = exchData.user;
   }
-
-  const authUser = exchData.user;
 
   // ─── Check if public.users row already exists ────────────────────────────
   // Use the admin client for this read — the new OAuth user has no
@@ -244,7 +258,7 @@ export async function GET(request: NextRequest) {
   // has to look at, not a decision made on their behalf while they wait for a
   // redirect. The person is authenticated and has no users row; /welcome is built
   // for exactly that state and is reachable in it (middleware.ts).
-  const suggested = tenantNameFromEmail(authUser.email);
+  const suggested = tenantNameFromEmail(authUser.email ?? undefined);
   return NextResponse.redirect(
     `${origin}/welcome?suggested=${encodeURIComponent(suggested)}&next=${encodeURIComponent(next)}`,
   );

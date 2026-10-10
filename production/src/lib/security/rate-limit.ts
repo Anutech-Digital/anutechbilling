@@ -158,6 +158,12 @@ async function sharedHit(
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), SHARED_TIMEOUT_MS);
   try {
+    /* DATA_GATEWAY=1 (5 Oct 2026): the RPC is answered in-process — over HTTP the gateway would
+       refuse the service-role key, and this would silently fall back to per-instance memory. */
+    if (fetchImpl === fetch && process.env.DATA_GATEWAY === "1") {
+      const { gatewayFetch } = await import("@/server/postgrest/fetch");
+      fetchImpl = gatewayFetch(url, { allowService: true }) as FetchLike;
+    }
     const r = await fetchImpl(`${url.replace(/\/$/, "")}/rest/v1/rpc/rate_limit_hit`, {
       method: "POST",
       headers: { apikey: svc, authorization: `Bearer ${svc}`, "content-type": "application/json" },

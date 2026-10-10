@@ -17,7 +17,7 @@
  * call transcripts and another's. `tenantId` always comes from the caller's resolved context —
  * an API key's tenant, or a cron's iteration — and never from a request body.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import type { TelecallAction, TelecallStatus, TelecallType } from "./telecall";
 
 function bare() {

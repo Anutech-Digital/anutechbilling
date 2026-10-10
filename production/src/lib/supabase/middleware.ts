@@ -13,6 +13,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./database.types";
+import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
 import { isUnreachableError, resilientFetch } from "./resilient-fetch";
 
 /* R-710: the middleware runs on every request, so it gets a short leash — 4 s per attempt,
@@ -53,7 +54,13 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
           );
         },
       },
-      global: { fetch: middlewareFetch },
+      // DATA_GATEWAY=1: the role lookup below goes to the in-process gateway, not the VM.
+      // Otherwise R-710's resilient fetch (4 s budget, 1 retry) to the VM.
+      global: {
+        fetch: gatewayEnabled()
+          ? gatewayFetch(process.env.NEXT_PUBLIC_SUPABASE_URL!, { allowService: false })
+          : middlewareFetch,
+      },
     },
   );
 

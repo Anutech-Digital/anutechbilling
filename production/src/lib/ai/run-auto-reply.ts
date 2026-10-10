@@ -35,7 +35,7 @@
  * `buildAiActionRecord` redacts message bodies by key name precisely so the audit table does
  * not quietly become the second place customer mail accumulates.
  */
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { sendEmail } from "@/lib/email/send";
 import { resolveAutonomy } from "./autonomy";
 import { loadAutonomyPolicy, logAiAction } from "./autonomy.server";

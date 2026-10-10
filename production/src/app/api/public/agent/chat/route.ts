@@ -29,7 +29,8 @@ import {
   type PublicChatReply,
 } from "@/lib/ai/public-sales-chat";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
-import { createClient as createBareClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
 
 const BUY_PAGE_TENANT_ID =

@@ -26,7 +26,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient as createSessionClient, createAdminClient } from "@/lib/supabase/server";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 import { checkPasswordChange } from "@/lib/auth/password-rules";
 import { MUST_CHANGE_PASSWORD_KEY, mustChangePassword } from "@/lib/auth/must-change-password";
 

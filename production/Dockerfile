@@ -70,6 +70,13 @@ ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_APP_ENV=""
 ENV NEXT_PUBLIC_APP_ENV=$NEXT_PUBLIC_APP_ENV
 
+# R-161 no-VM switches, browser half (the server half is Cloud Run env: DATA_GATEWAY,
+# AUTH_PROVIDER, STORAGE_BACKEND). "" = off. db/ops/README.md "Switching the VM off".
+ARG NEXT_PUBLIC_DATA_GATEWAY=""
+ENV NEXT_PUBLIC_DATA_GATEWAY=$NEXT_PUBLIC_DATA_GATEWAY
+ARG NEXT_PUBLIC_AUTH_PROVIDER=""
+ENV NEXT_PUBLIC_AUTH_PROVIDER=$NEXT_PUBLIC_AUTH_PROVIDER
+
 # Web-push VAPID PUBLIC key. Public by design — the browser sends it to the push
 # service when subscribing, so it ends up in the client bundle either way (RFC 8292).
 #

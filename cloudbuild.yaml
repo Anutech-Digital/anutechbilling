@@ -66,7 +66,7 @@ steps:
     entrypoint: bash
     args:
       - -c
-      - npm ci --no-audit --no-fund && npx next typegen && npx tsc --noEmit && npx vitest run
+      - npm ci --no-audit --no-fund && npx prisma generate && npx next typegen && npx tsc --noEmit && npx vitest run
 
   # 0b. DEPS CACHE (5 Oct 2026, Pardeep: "cache kar do"). The note on --cache-from below was
   #     right: it never worked because nothing was pulled. Now the deps stage (npm ci, ~43s +
@@ -109,6 +109,10 @@ steps:
       - --build-arg=NEXT_PUBLIC_SUPABASE_ANON_KEY=$_SUPABASE_ANON_KEY
       - --build-arg=NEXT_PUBLIC_APP_URL=$_APP_URL
       - --build-arg=NEXT_PUBLIC_APP_ENV=$_APP_ENV
+      # R-161 no-VM switches (browser half). "" = off = the VM path, which is what production
+      # gets until its own switch-over; the staging trigger sets 1 / authjs.
+      - --build-arg=NEXT_PUBLIC_DATA_GATEWAY=$_DATA_GATEWAY
+      - --build-arg=NEXT_PUBLIC_AUTH_PROVIDER=$_AUTH_PROVIDER
       # R-182: the gate above type-checks (typegen + tsc) and push waits for it.
       - --build-arg=SKIP_BUILD_TYPECHECK=1
       # ⚠️ YE FLAG LAGI HUI HAI PAR KABHI CHALI NAHI. 29 Aug 2026 par naapa: ek build ke
@@ -177,6 +181,9 @@ substitutions:
   _SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9udHBucWpveXNqZ3Jsc3VrZWNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNjc1NjcsImV4cCI6MjA5NDg0MzU2N30.tulYYDQSzq7IpEQCFbP7qjsSUxg4c-0ku5uO80-TKXI
   _APP_URL: https://reselleros.anutech.in
   _APP_ENV: ""
+  # R-161: off by default (production keeps the VM until its own switch-over).
+  _DATA_GATEWAY: ""
+  _AUTH_PROVIDER: ""
   _MIN_INSTANCES: "1"
   _CPU_BOOST: cpu-boost
   # The same Artifact Registry path the current revision already runs from. The staging

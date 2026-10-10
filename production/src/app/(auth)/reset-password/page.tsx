@@ -10,6 +10,10 @@
  * expired, been used once already, or been opened by hand.
  *
  * See AGENTS.md L15 for why none of this existed until 22 Aug 2026.
+ *
+ * With Auth.js (NEXT_PUBLIC_AUTH_PROVIDER=authjs, 5 Oct 2026) the email link carries the
+ * one-time token itself — /reset-password?token=… — and the page spends it on submit
+ * (POST /api/auth/password/reset), then signs in with the new password.
  */
 
 import * as React from "react";
@@ -36,11 +40,18 @@ export default function ResetPasswordPage() {
   const [show, setShow]       = React.useState(false);
   const [busy, setBusy]       = React.useState(false);
   const [done, setDone]       = React.useState(false);
+  const [resetToken, setResetToken] = React.useState<string | null>(null);
 
   /* Asked once, on mount. The session was established by /callback before this page loaded,
      so there is nothing to wait for beyond reading it. */
   React.useEffect(() => {
     if (!configured) return;
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (token) {
+      setResetToken(token);
+      setState("ready");
+      return;
+    }
     let alive = true;
     void (async () => {
       const { data } = await createClient().auth.getUser();
@@ -70,6 +81,25 @@ export default function ResetPasswordPage() {
     }
 
     setBusy(true);
+    if (resetToken) {
+      const res = await fetch("/api/auth/password/reset", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, password }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { email?: string; error?: string };
+      if (!res.ok || !body.email) {
+        setBusy(false);
+        toast.error(body.error ?? "This reset link has expired — ask for a new one.", {
+          action: { label: "Send a new link", onClick: () => { window.location.href = "/forgot-password"; } },
+        });
+        return;
+      }
+      setEmail(body.email);
+      await createClient().auth.signInWithPassword({ email: body.email, password });
+      setBusy(false);
+      setDone(true);
+      return;
+    }
     const { error } = await createClient().auth.updateUser({ password });
     setBusy(false);
 

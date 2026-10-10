@@ -27,7 +27,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import { createClient as createBareClient } from "@supabase/supabase-js";
+import { createBareClient } from "@/lib/supabase/bare";
 
 const schema = z.object({
   tables:           z.array(z.string().min(1)).min(1, "Tick at least one section to reset."),
