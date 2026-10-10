@@ -9,8 +9,13 @@
  *   2. subscription.seats incremented immediately + mrr recomputed
  *   3. Quote created for the pro-rata billing (sent, awaiting payment)
  *
- * Body: { additional_seats: 1..5000, idempotency_key: string }
- * Returns: { quoteId, amount, proRataDays, newSeats, newMrr }
+ * Body: { additional_seats: 1..5000, idempotency_key: string, effective_date?: "YYYY-MM-DD" }
+ * Returns: { quoteId, amount, proRataDays, effectiveDate, newSeats, newMrr }
+ *
+ * R-800: effective_date is when the seats were actually provisioned — default today, may be
+ * backdated to the current term's start, never in the future. The pro-rata charge runs from
+ * it. WHO chose it is recorded twice: seat_increase_claims.requested_by + result.effectiveDate
+ * (the claim row is the audit record of this add), and the quote note names them when backdated.
  *
  * ─── R-060: THE IDEMPOTENCY KEY IS REQUIRED ─────────────────────────────────
  * Until R-060 the only thing stopping a double submit was `disabled={submitting}` on
@@ -35,6 +40,8 @@ import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
+import { checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
+import { istToday } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,6 +51,8 @@ const bodySchema = z.object({
   /* Opaque — the server never parses it. Min 8 so a caller cannot defeat the point
      with "1"; max 128 so it cannot be used as a jsonb smuggling channel. */
   idempotency_key: z.string().trim().min(8, "idempotency_key must be at least 8 characters").max(128),
+  /* R-800: optional — absent means today. Range is checked against the subscription below. */
+  effective_date: z.string().trim().max(10).optional().nullable(),
 });
 
 /**
@@ -61,7 +70,7 @@ const UNIQUE_VIOLATION = "23505";
  * so the claim is kept as `failed` and a replay reports the half-done state instead of
  * raising a second quote on top of the first.
  */
-const WROTE_NOTHING = new Set(["invalid_seats", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
+const WROTE_NOTHING = new Set(["invalid_seats", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -72,7 +81,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
   const { data: me } = await userClient
     .from("users")
-    .select("tenant_id, role")
+    .select("tenant_id, role, full_name, email")
     .eq("id", authData.user.id)
     .single();
   if (!me?.tenant_id) {
@@ -116,6 +125,12 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date" }, { status: 400 });
+  }
+
+  /* R-800: refuse a bad effective date BEFORE the claim, like every other 400 here. */
+  const effective = checkSeatEffectiveDate(parsed.data.effective_date, sub, istToday());
+  if (!effective.ok) {
+    return NextResponse.json({ error: effective.message, code: "invalid_effective_date" }, { status: 400 });
   }
 
   /* ── R-060: claim the key BEFORE any money moves ────────────────────────────
@@ -196,6 +211,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     sub,
     additionalSeats: parsed.data.additional_seats,
     graceDays: tenant?.grace_period_days ?? 7,
+    effectiveDate: effective.date,
+    effectiveDateSetBy: me.full_name?.trim() || me.email || null,
   });
 
   if (!result.ok) {
@@ -226,6 +243,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     quoteId:        result.quoteId,
     amount:         result.amount,
     proRataDays:    result.proRataDays,
+    effectiveDate:  result.effectiveDate,
     newSeats:       result.newSeats,
     newMrr:         result.newMrr,
     poId:           result.poId,

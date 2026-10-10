@@ -24,6 +24,7 @@ import { daysBetweenDates } from "./proration";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { seatChargeWindow } from "./seat-charge-window";
+import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
@@ -91,6 +92,14 @@ export async function applySeatIncrease(args: {
   sub: SeatIncreaseSubject;
   additionalSeats: number;
   graceDays: number;
+  /**
+   * R-800: the date the seats were provisioned, chosen by the admin in the Add seats dialog
+   * (YYYY-MM-DD). Absent = today — a customer's approved request still starts today.
+   * Re-validated here so no caller can charge from the future or from before the term.
+   */
+  effectiveDate?: string | null;
+  /** R-800: name of the person who chose the date — recorded on the quote note. */
+  effectiveDateSetBy?: string | null;
 }): Promise<AddSeatsResult | AddSeatsError> {
   const { supabase, sub, additionalSeats, graceDays } = args;
 
@@ -106,7 +115,9 @@ export async function applySeatIncrease(args: {
      instalment is invoiced FIRST, at the old seat count: if it were still un-invoiced when the
      MRR changes, the re-sync would put the new seats into it as well — charged twice. */
   const today = istToday();
-  const window = isSplitBilled(sub.billing_cycle) ? seatChargeWindow(sub, today) : null;
+  const eff = checkSeatEffectiveDate(args.effectiveDate, sub, today);
+  if (!eff.ok) return { ok: false, code: "invalid_effective_date", message: eff.message };
+  const window = isSplitBilled(sub.billing_cycle) ? seatChargeWindow(sub, today, eff.date) : null;
   if (window?.instalmentPeriod) {
     try {
       await syncSubscriptionInstalments({
@@ -140,6 +151,9 @@ export async function applySeatIncrease(args: {
     taxLabel,
     termDays,
     chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
+    effectiveDate:  eff.date,
+    effectiveDateSetBy: args.effectiveDateSetBy ?? null,
+    todayISO:       today,
   });
 }
 

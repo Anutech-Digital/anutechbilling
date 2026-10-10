@@ -30,7 +30,7 @@ export interface SeatWindowSub {
 }
 
 export interface SeatChargeWindow {
-  /** Days charged for, from today. 0 or less = nothing left to charge. */
+  /** Days charged for, from the effective date (today by default). 0 or less = nothing left to charge. */
   remainingDays: number;
   /** Length of the whole term in days — prorate()'s denominator. */
   termDays: number;
@@ -40,9 +40,17 @@ export interface SeatChargeWindow {
   instalmentPeriod: boolean;
 }
 
-export function seatChargeWindow(sub: SeatWindowSub, todayISO: string): SeatChargeWindow | null {
+/**
+ * R-800: `effectiveISO` is the date the new seats were actually provisioned — today by
+ * default, earlier when the admin backdates it. WHICH instalment we are in is still decided
+ * by today (that is the instalment invoiced at the old seat count before the change), but
+ * the days charged run FROM the effective date, so a backdated add also covers the days the
+ * seats were already in use. Callers validate the date first (seat-effective-date.ts).
+ */
+export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effectiveISO?: string): SeatChargeWindow | null {
   if (!sub.renewal_date) return null;
   const today = todayISO.slice(0, 10);
+  const from = (effectiveISO ?? todayISO).slice(0, 10);
   const renewal = sub.renewal_date.slice(0, 10);
   const termDays = sub.start_date ? Math.max(1, daysBetweenDates(sub.start_date, renewal)) : 365;
 
@@ -50,12 +58,12 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string): SeatChar
     const period = subscriptionSchedule(sub).find((p) => p.periodStart <= today && today < p.periodEnd);
     if (period) {
       return {
-        remainingDays: daysBetweenDates(today, period.periodEnd),
+        remainingDays: daysBetweenDates(from, period.periodEnd),
         termDays,
         chargeTo: periodLastDay(period.periodEnd),
         instalmentPeriod: true,
       };
     }
   }
-  return { remainingDays: daysBetweenDates(today, renewal), termDays, chargeTo: renewal, instalmentPeriod: false };
+  return { remainingDays: daysBetweenDates(from, renewal), termDays, chargeTo: renewal, instalmentPeriod: false };
 }
