@@ -20,8 +20,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SendResetLinkButton } from "@/components/features/team/send-reset-link-button";
-import { SetTempPasswordButton } from "@/components/features/team/set-temp-password-button";
-import { canSetTempPassword } from "@/lib/auth/temp-password";
+import { SetTempPasswordButton, TempPasswordField, TempPasswordReveal } from "@/components/features/team/set-temp-password-button";
+import { canSetTempPassword, checkTypedTempPassword } from "@/lib/auth/temp-password";
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
@@ -434,7 +434,11 @@ export default function TeamPage() {
         <InviteDialog
           open={inviteOpen}
           onOpenChange={setInviteOpen}
-          onInvited={() => qc.invalidateQueries({ queryKey: ["team", "invites"] })}
+          onInvited={() => {
+            qc.invalidateQueries({ queryKey: ["team", "invites"] });
+            /* R-534: an invite with a temporary password adds the member straight away. */
+            qc.invalidateQueries({ queryKey: ["team", "members"] });
+          }}
         />
       )}
 
@@ -452,8 +456,17 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState<Role>("sales");
   const [saving, setSaving] = React.useState(false);
+  /* R-534: optional temporary password. `created` holds the one-time reveal; it lives only in
+     this dialog's state and is wiped when the dialog closes. */
+  const [tempPw, setTempPw] = React.useState("");
+  const [created, setCreated] = React.useState<{ email: string; password: string } | null>(null);
 
-  React.useEffect(() => { if (!open) { setEmail(""); setRole("sales"); setSaving(false); } }, [open]);
+  React.useEffect(() => {
+    if (!open) { setEmail(""); setRole("sales"); setSaving(false); setTempPw(""); setCreated(null); }
+  }, [open]);
+
+  const tempPwProblem = tempPw ? checkTypedTempPassword(tempPw) : null;
+  const ownerWithPw = role === "owner" && tempPw !== "";
 
   async function submit() {
     const clean = email.trim().toLowerCase();
@@ -467,11 +480,19 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       const res = await fetch("/api/team/invite", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ email: clean, role }),
+        body:    JSON.stringify(tempPw ? { email: clean, role, tempPassword: tempPw } : { email: clean, role }),
+        cache:   "no-store",
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         toastError(json.error, { fallback: "Couldn't send the invite." });
+        return;
+      }
+      if (json.memberCreated && typeof json.password === "string") {
+        // Stay open: the password is shown once, here, with Copy.
+        setTempPw("");
+        setCreated({ email: clean, password: json.password });
+        onInvited();
         return;
       }
       // Reflect whether the notification email actually went out.
@@ -499,10 +520,15 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
         <DialogHeader>
           <DialogTitle className="inline-flex items-center gap-2"><Icon name="plus" size={18} className="text-amber" /> Invite a teammate</DialogTitle>
           <DialogDescription>
-            They&apos;ll join this workspace the first time they sign in with Google using this email.
+            {created
+              ? `${created.email} can sign in now with this email and password.`
+              : "They'll join this workspace the first time they sign in with Google using this email."}
           </DialogDescription>
         </DialogHeader>
 
+        {created ? (
+          <TempPasswordReveal password={created.password} name={created.email} />
+        ) : (
         <div className="space-y-3">
           <div>
             <label htmlFor="inv-email" className="block text-xs font-medium text-ink-2 mb-1">Email</label>
@@ -517,11 +543,30 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
             </select>
             <p className="mt-1 text-2xs text-ink-3">For the Google reseller-admin account, pick <b>Owner</b> so it can run the sync + add subscriptions.</p>
           </div>
+          <TempPasswordField
+            id="inv-temp-pw"
+            label="Temporary password (optional)"
+            value={tempPw}
+            onChange={setTempPw}
+            hint={ownerWithPw
+              ? "Owners set their own password. Clear this, or pick another role."
+              : "Lets them sign in today with email + password. They must choose their own at first sign-in."}
+          />
         </div>
+        )}
 
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-          <Button type="button" variant="primary" loading={saving} onClick={submit}>Send invite</Button>
+          {created ? (
+            <Button type="button" variant="primary" onClick={() => onOpenChange(false)}>Done</Button>
+          ) : (
+            <>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+              <Button type="button" variant="primary" loading={saving} onClick={submit}
+                disabled={saving || tempPwProblem !== null || ownerWithPw}>
+                Send invite
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
