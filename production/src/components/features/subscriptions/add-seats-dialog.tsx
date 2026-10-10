@@ -37,7 +37,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { addSeatsErrorMessage, type AddSeatsOk } from "./add-seats-error";
 import { seatChargeWindow } from "@/lib/subscriptions/seat-charge-window";
-import { previewCharge } from "@/lib/subscriptions/seat-request";
+import { seatIncreaseCharge } from "@/lib/subscriptions/seat-increase-charge";
 import { istToday } from "@/lib/dates/ist";
 import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 
@@ -97,7 +97,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
 
   /* Pro-rata preview — the server is the source of truth, and this now uses its rules:
      R-527 seatChargeWindow (a split-billed subscription is charged to the end of the CURRENT
-     instalment, not to renewal) and prorate() via previewCharge (days over the real term,
+     instalment, not to renewal) and seatIncreaseCharge() (days over the real term,
      integer paise). It was days-to-renewal ÷ 365 here, so a quarterly sub showed the year. */
   const renewal = sub.renewal_date ? new Date(sub.renewal_date) : null;
   const bounds = seatEffectiveBounds(sub, today);
@@ -109,9 +109,6 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const termDaysForPreview = window?.termDays ?? 365;
   const factor = termDaysForPreview > 0 ? daysRemaining / termDaysForPreview : 0;
 
-  const annualPerSeat = sub.seats > 0
-    ? Math.round((sub.mrr * 12) / sub.seats)
-    : 0;
   /* R-389 (F9): name the head the invoice will use — "IGST 18%" for an inter-state customer,
      "CGST 9% + SGST 9%" within the state — and zero-rate an export, the same rule the server
      applies (lib/subscriptions/apply-seat-increase.ts resolveSeatTax). */
@@ -123,16 +120,20 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   });
   const taxRatePct       = pos.isExport ? 0 : 18;
   const taxLabel         = gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport });
-  const charge           = previewCharge({
-    currentSeats: sub.seats, currentMrr: sub.mrr, seatsToAdd: Math.max(1, additionalSeats),
+  /* R-803: the server's own calculation (addSeats calls seatIncreaseCharge too), so these
+     lines equal the quote it creates. Adding the separately rounded subtotal and GST here
+     showed ₹1,007 for a ₹1,006 quote (₹852.95 + ₹153.53 = ₹1,006.48). */
+  const charge           = seatIncreaseCharge({
+    currentSeats: sub.seats, currentMrr: sub.mrr, additionalSeats,
     remainingDays: daysRemaining, termDays: termDaysForPreview, taxRatePct,
   });
-  const subtotal         = additionalSeats > 0 ? (charge?.exGst ?? 0) : 0;
-  const gstAmt           = additionalSeats > 0 ? (charge?.tax ?? 0) : 0;
-  const totalIncl        = subtotal + gstAmt;
-  const proRataPerSeat   = additionalSeats > 0 ? Math.round(subtotal / additionalSeats) : 0;
+  const annualPerSeat    = charge.annualPerSeat;
+  const subtotal         = charge.subtotal;
+  const gstAmt           = charge.tax;
+  const totalIncl        = charge.total;
+  const proRataPerSeat   = charge.perSeat;
   const newSeats         = sub.seats + additionalSeats;
-  const newMrr           = Math.round((annualPerSeat * newSeats) / 12);
+  const newMrr           = charge.newMrr;
 
   /* Term has ended = TODAY is past renewal; a backdated date does not reopen it. */
   const isTermEnded = (seatChargeWindow(sub, today)?.remainingDays ?? 0) <= 0;

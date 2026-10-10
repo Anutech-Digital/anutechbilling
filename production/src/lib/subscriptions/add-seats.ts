@@ -26,6 +26,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
+import { seatIncreaseCharge } from "./seat-increase-charge";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
 import { istToday, utcDateISO } from "@/lib/dates/ist";
 
@@ -243,29 +244,26 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : days;
   const chargeTo   = input.chargeWindow?.chargeTo ?? input.renewalDate;
 
-  // annual rate per seat (₹) from current MRR
-  // currentMrr = ₹/month for the whole subscription (all currentSeats together)
-  // annual per seat = (currentMrr × 12) / currentSeats
-  const annualPerSeat = input.currentSeats > 0
-    ? Math.round((input.currentMrr * 12) / input.currentSeats)
-    : 0;
-
-  /* Pro-rata now comes from proration.ts: one expression in integer paise, rounded
-     ONCE, with the tax rate and the term length passed in. What changed in rupees
-     is pinned case by case in add-seats-before-after.test.ts. */
-  const charge = prorate({
-    annualPerSeatPaise: rupeesToPaise(annualPerSeat),
-    seats:              input.additionalSeats,
-    remainingDays:      chargeDays,
-    termDays:           input.termDays,
-    taxRatePct:         input.taxRatePct,
+  /* R-803: the charge comes from seatIncreaseCharge() — the same function every preview
+     (Add seats dialog, seat-requests card) calls, so a preview cannot disagree with this
+     quote. Annual per seat = round(currentMrr × 12 ÷ currentSeats); pro-rata via prorate()
+     in integer paise, rounded ONCE, with the tax rate and the term length passed in. What
+     changed in rupees is pinned case by case in add-seats-before-after.test.ts. */
+  const priced = seatIncreaseCharge({
+    currentSeats:    input.currentSeats,
+    currentMrr:      input.currentMrr,
+    additionalSeats: input.additionalSeats,
+    remainingDays:   chargeDays,
+    termDays:        input.termDays,
+    taxRatePct:      input.taxRatePct,
   });
-
-  const subtotalExGst = paiseToRupees(charge.subtotalPaise);
-  const totalInclGst  = paiseToRupees(charge.totalPaise);
+  const annualPerSeat = priced.annualPerSeat;
+  const charge        = priced.proration;
+  const subtotalExGst = priced.subtotal;
+  const totalInclGst  = priced.total;
   // Per-seat rate for the quote LINE only — the subtotal above is never derived
   // from it. That multiplication is exactly the bug this replaced.
-  const proRataPerSeat = paiseToRupees(charge.perSeatPaise);
+  const proRataPerSeat = priced.perSeat;
 
   /* The real vendor cost, resolved ONCE and used by both the quote line and the draft
      PO below. Those two used to disagree: the quote line was always `× 0.83` while the
@@ -352,7 +350,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   // Update subscription seats + MRR immediately — operator has decided
   // to provision the additional seats now. Customer pays via normal quote flow.
   const newSeats = input.currentSeats + input.additionalSeats;
-  const newMrr   = Math.round((annualPerSeat * newSeats) / 12);
+  const newMrr   = priced.newMrr;
 
   const { error: subErr } = await input.supabase
     .from("subscriptions")
