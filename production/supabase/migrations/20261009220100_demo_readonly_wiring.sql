@@ -1,6 +1,7 @@
 -- deploy-peek: (exists(select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='demo visitor no insert') and exists(select 1 from pg_db_role_setting s join pg_roles r on r.oid = s.setrole where r.rolname='authenticator' and array_to_string(s.setconfig, ',') like '%demo_pre_request%'))
 -- deploy-key: demowiring
 -- deploy-user: postgres
+-- deploy-skip: R-531 global authenticator pre_request; keep out of every deploy until redesigned
 -- 20261009220100_demo_readonly_wiring
 --
 -- R-524, part 2 of 2 (part 1: 20261009220000_demo_tenant_readonly.sql — run that first).

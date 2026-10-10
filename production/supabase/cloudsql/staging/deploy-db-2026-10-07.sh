@@ -72,7 +72,6 @@ MIGS=(
   "hierarchysvc|20261009200000_hierarchy_service_role.sql|resellersos_migration|coalesce(position('service_role' in pg_get_functiondef(to_regprocedure('public.hierarchy_sees_all()'))) > 0, false)"
   "attendancerolewrites|20261009213000_attendance_role_writes.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'attendance_update_hr_roles') and not exists(select 1 from pg_policy where polname = 'tenant isolation write' and polrelid = to_regclass('public.attendance')))"
   "demotenant|20261009220000_demo_tenant_readonly.sql|resellersos_migration|(to_regclass('public.demo_tenants') is not null and to_regprocedure('public.demo_pre_request()') is not null and to_regprocedure('public.demo_readonly_probe()') is not null)"
-  "demowiring|20261009220100_demo_readonly_wiring.sql|postgres|(exists(select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='demo visitor no insert') and exists(select 1 from pg_db_role_setting s join pg_roles r on r.oid = s.setrole where r.rolname='authenticator' and array_to_string(s.setconfig, ',') like '%demo_pre_request%'))"
   "attendancecorrections|20261009224500_attendance_corrections.sql|resellersos_migration|to_regprocedure('public.correct_attendance(uuid,date,timestamptz,timestamptz,text)') is not null"
   "attendanceshift|20261009230000_attendance_shift.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'half_day_under_hours')"
   "latecharges|20261009233000_late_payment_charges.sql|resellersos_migration|(to_regclass('public.late_charge_bills') is not null and to_regprocedure('public.bill_late_charges(text,integer,integer,date,date)') is not null and exists(select 1 from information_schema.columns where table_schema='public' and table_name='tenants' and column_name='late_fee_enabled'))"
@@ -81,6 +80,7 @@ MIGS=(
   "attendancepiningestlock|20261010000000_attendance_pin_ingest_lock.sql|resellersos_migration|(to_regclass('public.employee_pin_attempts') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'ingest_key'))"
   "employeepinhidden|20261010010000_employee_pin_hidden.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'pin_set')"
   "sitepromoowner|20261010020000_site_promo_owner_only.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'site_promos_insert_admin' and polrelid = to_regclass('public.site_promos')) and not exists(select 1 from pg_policy where polname = 'site_promos_tenant_write' and polrelid = to_regclass('public.site_promos')))"
+  "demonoanon|20261010030000_demo_pre_request_no_anon.sql|resellersos_migration|(to_regprocedure('public.demo_pre_request()') is null or not has_function_privilege('anon', 'public.demo_pre_request()', 'execute'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
