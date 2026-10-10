@@ -89,6 +89,7 @@ MIGS=(
   "extplan|20261010173000_extension_keeps_plan.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-812%')"
   "tenantguard|20261010190000_tenant_guard_fail_closed.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_quote(text)') and prosrc like '%R-454%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.generate_invoice(text)') and prosrc like '%R-454%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-454%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_document_number(text,uuid,date)') and prosrc like '%R-454%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_customer_number(uuid)') and prosrc like '%R-454%')"
   "presencesecret|20261010203000_presence_code_check.sql|resellersos_migration|(to_regclass('public.presence_code_attempts') is not null and to_regprocedure('public.validate_presence_code(text)') is not null and to_regprocedure('public.presence_code_at(text,bigint)') is not null)"
+  "backuplistid|20261010223000_list_tenant_backups_ambiguous_id.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.list_tenant_backups()') and prosrc like '%R-823%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
