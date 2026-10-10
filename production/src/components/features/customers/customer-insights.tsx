@@ -233,22 +233,28 @@ function computeNBA(args: {
   };
 }
 
-export type CustomerEvent = { date: string; icon: string; color: string; title: string; sub?: string };
+/** `stage` orders same-day events the way the business happens: quote → invoice → paid → subscription. */
+export type CustomerEvent = { date: string; stage: number; icon: string; color: string; title: string; sub?: string };
 
-/** Weave real quotes/invoices/subscriptions into one reverse-chronological feed. */
+/**
+ * Weave real quotes/invoices/subscriptions into one feed, newest first.
+ * R-532 (10 Oct 2026): the dates are day-only, so a quote accepted, its invoice paid and the
+ * subscription started on the same day used to come out in collection order — subscription first,
+ * quote after it. Same-day ties now break by business stage.
+ */
 export function buildCustomerActivity(subs: Subscription[], invoices: Invoice[], quotes: Quote[]): CustomerEvent[] {
   const events: CustomerEvent[] = [];
-  for (const s of subs) {
-    if (s.start_date) events.push({ date: s.start_date, icon: "refresh", color: "text-emerald", title: "Subscription started", sub: `${s.plan}${s.domain ? ` · ${s.domain}` : ""} · ${s.seats} seats` });
-  }
   for (const q of quotes) {
-    if (q.created_date) events.push({ date: q.created_date, icon: "file", color: "text-indigo", title: `Quote ${q.id} ${q.status}`, sub: q.plan ?? undefined });
+    if (q.created_date) events.push({ date: q.created_date, stage: 0, icon: "file", color: "text-indigo", title: `Quote ${q.id} ${q.status}`, sub: q.plan ?? undefined });
   }
   for (const i of invoices) {
-    if (i.paid_date) events.push({ date: i.paid_date, icon: "check_circle", color: "text-emerald", title: `Invoice ${i.id} paid`, sub: rupee(i.amount) });
-    else if (i.invoice_date) events.push({ date: i.invoice_date, icon: "receipt", color: i.status === "overdue" ? "text-rose" : "text-ink-3", title: `Invoice ${i.id} ${i.status}`, sub: rupee(i.amount) });
+    if (i.paid_date) events.push({ date: i.paid_date, stage: 2, icon: "check_circle", color: "text-emerald", title: `Invoice ${i.id} paid`, sub: rupee(i.amount) });
+    else if (i.invoice_date) events.push({ date: i.invoice_date, stage: 1, icon: "receipt", color: i.status === "overdue" ? "text-rose" : "text-ink-3", title: `Invoice ${i.id} ${i.status}`, sub: rupee(i.amount) });
   }
-  return events.sort((a, b) => b.date.localeCompare(a.date));
+  for (const s of subs) {
+    if (s.start_date) events.push({ date: s.start_date, stage: 3, icon: "refresh", color: "text-emerald", title: "Subscription started", sub: `${s.plan}${s.domain ? ` · ${s.domain}` : ""} · ${s.seats} seats` });
+  }
+  return events.sort((a, b) => b.date.localeCompare(a.date) || b.stage - a.stage);
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -537,7 +543,8 @@ export function SubscriptionList({ subs }: { subs: Subscription[] }) {
 export function CustomerActivity({ subs, invoices, quotes, limit = 12 }: {
   subs: Subscription[]; invoices: Invoice[]; quotes: Quote[]; limit?: number;
 }) {
-  const events = buildCustomerActivity(subs, invoices, quotes).slice(0, limit);
+  /* The latest `limit` events, shown as a timeline that reads top to bottom: quote, then invoice, then subscription. */
+  const events = buildCustomerActivity(subs, invoices, quotes).slice(0, limit).reverse();
   if (events.length === 0) return <PanelEmpty icon="clock" text="No activity yet." />;
   return (
     <ul className="space-y-3">
