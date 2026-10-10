@@ -70,6 +70,7 @@ import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 
 /** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
 function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
@@ -785,7 +786,8 @@ export default function QuotesPage() {
                         <span className="font-mono text-xs font-semibold text-ink">{q.id}</span>
                         {q.is_extension ? (
                           <Badge kind="warning" className="font-sans text-3xs">
-                            Extension · {Math.round((q.extension_months ?? 12) / 12)}yr
+                            {/* R-811: from extension_months — "3-month extension", not "0yr". */}
+                            {extensionTitle({ isExtension: q.is_extension, extensionMonths: q.extension_months }) ?? "Extension"}
                           </Badge>
                         ) : q.is_renewal ? (
                           <Badge kind="info" className="font-sans text-3xs">Renewal</Badge>
@@ -1295,6 +1297,12 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       placeOfSupply={pos.label}
       isExport={pos.isExport}
       validityDays={validity}
+      /* R-809/R-811: add-seats, one-off and month extensions are paid once. */
+      oneTime={isOneTimeQuote({
+        isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
+        isExtension: quote.is_extension, extensionMonths: quote.extension_months,
+      })}
+      extensionTitle={extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months })}
       notes={quote.notes ?? ""}
       isProspect={!!quote.lead_id}
     />

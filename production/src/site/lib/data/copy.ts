@@ -7,12 +7,13 @@
  * with real ones before launch — the handoff marks them so.
  */
 import { SLA } from "../config";
+import { DOMAIN_TEASER } from "./domain-teaser";
 
 /** R-347: "1–2 WORKING DAYS" from SLA.migration (was "OVERNIGHT"). */
 const MIGRATION_CHIP = SLA.migration.replace(/^usually\s+/i, "").split(",")[0].toUpperCase();
 
 export const CATALOGUE = [
-  { name: "Domains", from: "from ₹249/yr", body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
+  { name: "Domains", from: DOMAIN_TEASER.line, body: "500+ extensions with register, renew and transfer prices on one row.", chips: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], href: "/domains" },
   { name: "Web hosting", from: "from ₹49.99/mo", body: "cPanel and LiteSpeed on NVMe, in Mumbai and Bengaluru.", chips: ["CPANEL", "LITESPEED", "99.9% SLA"], href: "/hosting" },
   { name: "Business email", from: "from ₹79/mo", body: "Anutech Mail, Google Workspace or Microsoft 365 — quoted side by side.", chips: ["NO SEAT MINIMUM", "FREE MIGRATION"], href: "/email" },
   { name: "SSL & security", from: "from ₹0", body: "Free DV on every site, wildcard and OV when a client needs the paperwork.", chips: ["DV", "OV", "WILDCARD"], href: "/ssl" },

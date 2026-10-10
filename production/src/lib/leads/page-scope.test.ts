@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   boardServerTotals, everythingCountForPage, folderShownOnPage, openKpiForPage, pageStages, scopeFiltersForPage, stageShownOnPage,
 } from "@/lib/leads/page-scope";
+import { DEAL_STAGES } from "@/lib/leads/stage-meta";
 import { toLeadCountsFilters, toListLeadsFilters, type LeadListFilters } from "@/lib/leads/list-page";
 
 /* R-057 (Pardeep, 30 Sep 2026): "Won leads sirf Deals page par (Leads page se hatao)".
@@ -14,13 +15,38 @@ const base: LeadListFilters = { smart_view: "everything", folder: "all", owner_i
 const folders = { inbox: 9, talks: 26, quoted: 4, proving: 3, won: 2, lost: 5, hot: 1, followup: 0 };
 
 describe("R-057 — Leads page leaves out won", () => {
-  it("Leads page: list_leads and lead_counts params carry stages without won", () => {
+  it("R-433 — Leads page: list_leads and lead_counts get only new, contact, lost", () => {
     const f = scopeFiltersForPage(base, false);
     for (const p of [toListLeadsFilters(f), toLeadCountsFilters(f)]) {
-      expect(p.stages).toBeDefined();
-      expect(p.stages).not.toContain("won");
-      expect(p.stages).toEqual(expect.arrayContaining(["new", "contact", "demo", "trial", "quote", "lost"]));
+      expect([...(p.stages ?? [])].sort()).toEqual(["contact", "lost", "new"]);
     }
+  });
+
+  it("R-433 — no stage is on both pages except Lost", () => {
+    for (const s of ["quote", "demo", "trial", "won"] as const) {
+      expect(stageShownOnPage(s, false)).toBe(false);
+      expect(stageShownOnPage(s, true)).toBe(true);
+    }
+    for (const s of ["new", "contact"] as const) {
+      expect(stageShownOnPage(s, false)).toBe(true);
+      expect(stageShownOnPage(s, true)).toBe(false);
+    }
+    expect(pageStages(false).filter((s) => pageStages(true).includes(s))).toEqual(["lost"]);
+  });
+
+  it("R-433 — a quote / demo / trial pick on /leads cannot bring deals back", () => {
+    for (const stages of [["quote"], ["demo", "trial"], ["quote", "demo", "trial", "won"]] as const) {
+      const p = toListLeadsFilters(scopeFiltersForPage({ ...base, stages: [...stages] }, false));
+      expect([...(p.stages ?? [])].sort()).toEqual(["contact", "lost", "new"]);
+    }
+    expect(toListLeadsFilters(scopeFiltersForPage({ ...base, stages: ["contact", "quote"] }, false)).stages)
+      .toEqual(["contact"]);
+  });
+
+  it("R-433 — the /leads Kanban columns are New + Contacted only (DEAL_STAGES has no Lost column)", () => {
+    expect(DEAL_STAGES.filter((s) => stageShownOnPage(s.id, false)).map((s) => s.id)).toEqual(["new", "contact"]);
+    expect(DEAL_STAGES.filter((s) => stageShownOnPage(s.id, true)).map((s) => s.id))
+      .toEqual(["quote", "demo", "trial", "won"]);
   });
 
   it("Leads page: a stage pick is kept, minus won; a won-only pick cannot bring won back", () => {
@@ -31,10 +57,10 @@ describe("R-057 — Leads page leaves out won", () => {
     expect(wonOnly.stages).not.toContain("won");
   });
 
-  it('"All leads" count on /leads subtracts the won leads of the same base', () => {
-    const counts = { workspace: { junk: 2, everything: 37, suspects: 0 },
-      kpi: { open_count: 30, open_value: 0, open_value_project: 0, won: 4, lost: 3 }, folders };
-    expect(everythingCountForPage(counts, false)).toBe(33);
+  it('R-433 — "All leads" count on /leads = Inbox + In Talks + Lost (no quoted / demo / trial / won)', () => {
+    const counts = { workspace: { junk: 2, everything: 49, suspects: 0 },
+      kpi: { open_count: 42, open_value: 0, open_value_project: 0, won: 2, lost: 5 }, folders };
+    expect(everythingCountForPage(counts, false)).toBe(9 + 26 + 5);
   });
 });
 
@@ -62,12 +88,11 @@ describe("Deals page = only real deals (quote → won / lost)", () => {
     expect(pageStages(true).sort()).toEqual(["demo", "lost", "quote", "trial", "won"]);
   });
 
-  it("folders: no Inbox / Talks on /deals, no Won on /leads", () => {
-    expect(folderShownOnPage("inbox", true)).toBe(false);
-    expect(folderShownOnPage("talks", true)).toBe(false);
-    expect(folderShownOnPage("quoted", true)).toBe(true);
-    expect(folderShownOnPage("won", false)).toBe(false);
-    expect(folderShownOnPage("inbox", false)).toBe(true);
+  it("folders: no Inbox / Talks on /deals; no Quote Sent / Demo-Trial / Won on /leads (R-433)", () => {
+    for (const id of ["inbox", "talks"] as const) expect(folderShownOnPage(id, true)).toBe(false);
+    for (const id of ["quoted", "proving", "won", "lost", "hot", "followup"] as const) expect(folderShownOnPage(id, true)).toBe(true);
+    for (const id of ["quoted", "proving", "won"] as const) expect(folderShownOnPage(id, false)).toBe(false);
+    for (const id of ["inbox", "talks", "lost", "hot", "followup"] as const) expect(folderShownOnPage(id, false)).toBe(true);
   });
 
   it('"Saari deals" count = the deal folders, not every lead in the workspace', () => {
@@ -105,9 +130,9 @@ describe("R-070 — View-menu counts are the page's (page_stages)", () => {
     expect(toLeadCountsFilters(f).stages).toEqual(["quote"]);
   });
 
-  it("/leads sends its own page stages (no won)", () => {
-    expect(toLeadCountsFilters(scopeFiltersForPage(base, false)).page_stages).toEqual(
-      ["contact", "demo", "lost", "new", "quote", "trial"]);
+  it("/leads sends its own page stages (R-433: new, contact, lost)", () => {
+    expect([...(toLeadCountsFilters(scopeFiltersForPage(base, false)).page_stages ?? [])].sort()).toEqual(
+      ["contact", "lost", "new"]);
   });
 
   it("list_leads never receives page_stages — its query key is unchanged", () => {

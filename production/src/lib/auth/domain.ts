@@ -114,6 +114,58 @@ export function resolveDomainOwner(
   return { tenant_id: hit.tenant_id, tenant_name: hit.tenant_name };
 }
 
+/**
+ * An existing workspace OWNER, as the fallback resolver needs to see them (R-822).
+ * `owner_verified` = the owner's own sign-in email is confirmed (Google-verified or
+ * the R-048 confirmation link was followed).
+ */
+export interface OwnerDomainRecord {
+  tenant_id:         string;
+  tenant_name:       string;
+  /** ISO time the tenant was created — the oldest workspace wins a tie. */
+  tenant_created_at: string | null;
+  owner_email:       string;
+  owner_verified:    boolean;
+}
+
+/**
+ * R-822 (10 Oct 2026): which workspace owns this address's domain when no
+ * `tenant_domains` row is verified for it — decided from the OWNERS' verified
+ * email domains.
+ *
+ * Why this exists: Pawan signed up as pawan@anutech.in on staging and became the
+ * owner of a blank second "Anutech" workspace, because the real Anutech's
+ * `tenant_domains` claim was never verified, so `resolveDomainOwner` said "no
+ * signal". An owner who has proved their own @anutech.in mailbox is the same
+ * evidence a verified domain row is — and a match still only opens a join request
+ * the owner must approve, so it never grants access by itself.
+ *
+ * Rules, all tested:
+ *  - consumer mail providers (gmail.com …) never match;
+ *  - an UNVERIFIED owner email never matches (anyone can type an address);
+ *  - several workspaces whose owners share the domain → the OLDEST workspace wins
+ *    (the same tie-break 0242 used: the real company predates the accidental copies).
+ */
+export function resolveOwnerDomainTenant(
+  email: string | null | undefined,
+  owners: readonly OwnerDomainRecord[],
+): DomainMatch | null {
+  const domain = emailDomain(email);
+  if (!domain || isPublicEmailDomain(domain)) return null;
+
+  const hits = owners.filter(
+    (o) => o.owner_verified && !!o.tenant_id && emailDomain(o.owner_email) === domain,
+  );
+  if (hits.length === 0) return null;
+
+  const time = (o: OwnerDomainRecord) => {
+    const t = o.tenant_created_at ? Date.parse(o.tenant_created_at) : NaN;
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+  };
+  const oldest = [...hits].sort((a, b) => time(a) - time(b) || a.tenant_id.localeCompare(b.tenant_id))[0];
+  return { tenant_id: oldest.tenant_id, tenant_name: oldest.tenant_name };
+}
+
 export type OnboardingDecision =
   /** An explicit invite. The only path that grants access without a human. */
   | { mode: "join"; tenantId: string; role: InvitableRole }

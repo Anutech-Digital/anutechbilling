@@ -40,7 +40,7 @@ import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
-import { isOneTimeQuote } from "@/lib/quotes/service-period";
+import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,7 +94,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     .select(`
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
-      created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, public_token, lead_id,
+      created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
       prospect_state_code, prospect_country
     `)
     .eq("id", params.id)
@@ -265,7 +265,11 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       validityDays:  30,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,
-      oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
+      oneTime:       isOneTimeQuote({
+        isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off,
+        isExtension: quote.is_extension, extensionMonths: quote.extension_months,
+      }),
+      extensionTitle: extensionTitle({ isExtension: quote.is_extension, extensionMonths: quote.extension_months }),
     });
     const arrBuf = await blob.arrayBuffer();
     attachments = [{

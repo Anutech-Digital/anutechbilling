@@ -16,7 +16,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const lib = readFileSync(join(process.cwd(), "src/lib/queries/contacts.ts"), "utf8");
+/* R-535: assembly moved to the pure lib/contacts/book.ts (the hook only fetches now). */
+const lib = readFileSync(join(process.cwd(), "src/lib/contacts/book.ts"), "utf8");
 const page = readFileSync(join(process.cwd(), "src/app/(app)/contacts/page.tsx"), "utf8");
 
 describe("merged identity carries every company", () => {

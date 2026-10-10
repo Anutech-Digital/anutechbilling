@@ -15348,6 +15348,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      validate_presence_code: { Args: { p_code: string }; Returns: boolean }
       verify_claim_access: {
         Args: { p_employee_id: string; p_pin: string; p_tenant_id: string }
         Returns: number

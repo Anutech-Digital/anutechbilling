@@ -79,12 +79,15 @@ export const STAGE_META: StageMeta[] = [
  * R-057). Quote Sent, Demo, Trial and Lost rows were in the list but not in the filter, so
  * Lost could not be picked at all. Same set as stageShownOnPage(s, false), written out here
  * because page-scope imports this file.
+ *
+ * R-433: /leads now holds only New, Contacted and Lost — Quote Sent, Demo and Trial live on
+ * /deals only, so the /leads Filter offers just those three (a Quote pick there gave 0 rows).
  */
 export function filterStagesFor(isDealsPage: boolean): StageMeta[] {
   return STAGE_META.filter((s) =>
     isDealsPage
       ? s.id === "quote" || s.id === "demo" || s.id === "trial" || s.id === "won" || s.id === "lost"
-      : s.id !== "won",
+      : s.id === "new" || s.id === "contact" || s.id === "lost",
   );
 }
 

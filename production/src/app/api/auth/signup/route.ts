@@ -18,7 +18,8 @@
  * outcomes, in strict order of how much a human already decided:
  *
  *   invite (someone chose them)     → join that tenant, no tenant created
- *   verified domain (evidence only) → park in join_requests, NOTHING granted
+ *   company domain (evidence only)  → no workspace; once the email is confirmed a
+ *                                     join request goes to the owner (R-822), NOTHING granted
  *   nothing                         → create the tenant they asked for
  *
  * ─── THE DOMAIN CHECK OVERRIDES THE FORM ON PURPOSE ──────────────────────────
@@ -36,11 +37,7 @@ import { initials } from "@/lib/utils";
 import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
 import { startEmailVerification } from "@/lib/auth/email-verification";
-import {
-  findVerifiedDomainTenant,
-  openJoinRequest,
-  notifyOwnerOfJoinRequest,
-} from "@/lib/auth/tenant-match";
+import { findVerifiedDomainTenant } from "@/lib/auth/tenant-match";
 
 export async function POST(request: NextRequest) {
   try {
@@ -165,43 +162,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, status: "joined", userId, tenantId: decision.tenantId });
     }
 
-    // ── 3b. Domain match → park, alert, grant nothing. ─────────────────────
+    // ── 3b. Domain match → NO workspace; the join request waits for the email. ──
+    /* R-822 (10 Oct 2026): the company already uses ResellerOS, so no second workspace.
+       But this address is NOT verified yet (R-048) — a typed-in email proves nothing, and
+       opening the join request now would let anyone ping a company's owner in someone
+       else's name. So the request is opened by /api/auth/verify-email once the link in the
+       confirmation email is followed (routeVerifiedSignupToCompany). The workspace name is
+       not echoed back either: before verification it would turn this form into a lookup
+       of which companies use ResellerOS. */
     if (decision.mode === "request_approval") {
-      const parked = await openJoinRequest({
-        tenantId:   decision.tenantId,
-        email,
-        fullName,
-        authUserId: userId,
-        matchedBy:  "domain",
-        note:       `Signed up with the company name "${companyName}".`,
-      });
-
-      if (!parked.ok) {
-        // We could not record the request, so nobody would ever see it. Undo the
-        // auth account rather than stranding them — a stranded auth user is the
-        // exact state that produced thirteen of them in this database.
-        await admin.auth.admin.deleteUser(userId);
-        return NextResponse.json(
-          { error: "Could not create your join request. Please try again, or ask your workspace owner to invite you." },
-          { status: 500 },
-        );
-      }
-
-      const origin = originOf(request);
-      const verify = await startEmailVerification(admin, { userId, email, name: fullName, origin });
-      await notifyOwnerOfJoinRequest({
-        tenantId:   decision.tenantId,
-        tenantName: decision.tenantName,
-        email,
-        fullName,
-        appUrl:     origin,
-      });
-
+      const verify = await startEmailVerification(admin, { userId, email, name: fullName, origin: originOf(request) });
       return NextResponse.json({
         success: true,
         status: "pending_approval",
-        tenantName: decision.tenantName,
-        alreadyPending: parked.alreadyPending,
         needsVerification: true,
         verificationSent: verify.sent,
       });

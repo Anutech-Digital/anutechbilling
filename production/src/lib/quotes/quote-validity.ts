@@ -26,3 +26,14 @@ export function addSeatsQuoteExpiry(todayISO: string, lastChargedDay: string): s
   const capped = cap < normal ? cap : normal;
   return capped < today ? today : capped;
 }
+
+/**
+ * R-820 — expiry of an extension quote (Extend term): the same 30 days from today, but never
+ * past the subscription's current renewal date — the last day the current term covers, after
+ * which the renewal flow takes over. It used to be renewal + grace days, so a quote raised
+ * just after a yearly renewal stayed open ~339 days (Q-F588-27-0009, local, 10 Oct 2026).
+ * Never before today. Quotes already stored keep their expiry.
+ */
+export function extensionQuoteExpiry(todayISO: string, renewalDate: string): string {
+  return addSeatsQuoteExpiry(todayISO, renewalDate);
+}

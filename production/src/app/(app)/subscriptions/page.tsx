@@ -1915,7 +1915,9 @@ export default function SubscriptionsPage() {
       {/* 1-Click Onboard Subscription Modal */}
       <AddSubscriptionDialog
         open={addDirectOpen}
-        onOpenChange={setAddDirectOpen}
+        /* R-818: a won-deal prefill belongs to ONE open. Kept after close, the next plain
+           "Add Subscription" would re-fill that deal's customer into the fresh form. */
+        onOpenChange={(o) => { setAddDirectOpen(o); if (!o) setLeadPrefill(null); }}
         onSuccess={refetch}
         /* "Payment Received" hands off here instead of creating the subscription
            itself — record_payment does that, atomically, along with the receipt

@@ -93,6 +93,13 @@ export interface NavItem {
   external?: boolean;
   /** Hover tooltip — a one-line hint so a data-entry user knows what belongs here. */
   hint?: string;
+  /**
+   * R-821 (10 Oct 2026): breadcrumb head for this top-level row and everything under it,
+   * when the sidebar app holding it (nav-apps.ts) differs from its section's crumb.
+   * /customers sat in Bill ("Billing ›") while the menu showed it under Sales. Must be
+   * another section's crumb (nav-s30.test.ts).
+   */
+  crumbSection?: string;
 }
 
 export interface NavSection {
@@ -376,7 +383,7 @@ const STAFF: UserRole[] = ["owner", "manager", "sales", "sales_senior", "account
  */
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
-  "/customers/new": "Opened by Add customer on Customers",
+  "/customers/new": "Opened by Add company on Companies",
   "/setup": "First-run wizard; reached from onboarding and Settings",
   "/mobile": "Install-as-app guide; linked from the account menu",
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
@@ -410,6 +417,9 @@ export const APP_NAV: NavSection[] = [
   },
   {
     section: "Sell",
+    /* R-821: the sidebar app holding every Sell row is "Sales" (nav-apps.ts), so the crumb
+       says Sales too — "Sell ›" named a heading the sidebar never shows (same as R-177). */
+    crumb: "Sales",
     icon: "target",
     items: [
       { id: "leads",           href: "/leads",            label: "Sales & Pipeline", icon: "target", roles: ["owner", "manager", "sales"] },
@@ -465,13 +475,14 @@ export const APP_NAV: NavSection[] = [
   {
     /* Abhishek's grouping (10 Sep 2026) kept whole: a customer is a company you bill, so
        it sits beside the quotes, invoices and payments that concern it. The crumb stays
-       "Billing" so every one of these pages reads exactly as it did. */
+       "Billing" — except the rows the sidebar shows under its Sales app (Companies,
+       Quotes, Products: nav-apps.ts), which say "Sales" via `crumbSection` (R-821). */
     section: "Bill",
     crumb: "Billing",
     icon: "rupee",
     items: [
       {
-        id: "customers",       href: "/customers",        label: "Customers",       icon: "users",   roles: SALES_READ,
+        id: "customers",       href: "/customers",        label: "Companies",       icon: "users",   roles: SALES_READ, crumbSection: "Sales",
         children: [
           { id: "customer-groups", href: "/customers/groups", label: "Parent Accounts", icon: "layout",  roles: OM },
           /* R-497 (9 Oct 2026, Pardeep: "contact bhi customer ke under aaye"): Contacts left
@@ -484,7 +495,7 @@ export const APP_NAV: NavSection[] = [
           { id: "contacts",        href: "/contacts",         label: "Contacts",        icon: "user",    roles: ["owner", "manager", "sales"], hint: "Every person across leads and customers" },
         ],
       },
-      { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"] },
+      { id: "quotes",        href: "/quotes",        label: "Quotes",            icon: "file",    roles: ["owner", "manager", "sales"], crumbSection: "Sales" },
       { id: "subscriptions", href: "/subscriptions", label: "Subscriptions",     icon: "refresh", roles: OMB },
       { id: "renewals",      href: "/renewals",      label: "Renewals",          icon: "clock",   roles: ["owner", "manager", "billing", "support"] },
       { id: "invoices",      href: "/invoices",      label: "Invoices",          icon: "receipt", roles: SALES_READ },
@@ -492,7 +503,7 @@ export const APP_NAV: NavSection[] = [
       { id: "payments",      href: "/payments",      label: "Payments Received", icon: "rupee",   roles: SALES_READ },
       { id: "projects",      href: "/projects",      label: "Project Sales",     icon: "package", roles: ["owner", "manager", "sales", "delivery", "billing"] },
       {
-        id: "items",     href: "/items",           label: "Products", icon: "package", roles: OM,
+        id: "items",     href: "/items",           label: "Products", icon: "package", roles: OM, crumbSection: "Sales",
         children: [
           /* R-384 (7 Oct 2026, owner decision — Pardeep): this row was "Catalog & Products"
              with two children added 4 Oct, "Subscription catalog" (/items/subscriptions) and
@@ -780,7 +791,7 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
 function navCrumbs(nav: NavSection[]): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const e of flattenNav(nav)) {
-    const head = sectionCrumb(e.section);
+    const head = (e.parent ?? e.item).crumbSection ?? sectionCrumb(e.section);
     out[e.item.href] = e.via === "directory" && e.parent
       ? [head, e.parent.label, e.item.label]
       : [head, e.item.label];

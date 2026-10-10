@@ -48,6 +48,9 @@ export type PublicQuote = {
   /** R-809: add-seats (pro-rata) or one-off — paid once, so no "billed yearly" schedule.
    *  From isOneTimeQuote() in lib/quotes/service-period. */
   one_time?: boolean;
+  /** R-811: "3-month extension" / "1-year extension" on an extension quote (extensionTitle()
+   *  in lib/quotes/service-period); null/absent otherwise. */
+  extension_title?: string | null;
 };
 export type PublicLine = {
   id: string;
@@ -641,6 +644,11 @@ export function QuoteAcceptView({
                 <>
                   <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">Billing schedule</p>
                   <p className="text-sm" data-testid="billing-schedule">{schedule(firstCommitment)}</p>
+                  {quote.extension_title && (
+                    <p className="text-2xs text-ink-3" data-testid="extension-title">
+                      {quote.extension_title[0].toUpperCase() + quote.extension_title.slice(1)}
+                    </p>
+                  )}
                   {isFlex && !oneTime && (
                 <p className="text-2xs text-ink-3">Pay-as-you-go — har mahine apni invoice, jab tak chalu rakhein</p>
               )}

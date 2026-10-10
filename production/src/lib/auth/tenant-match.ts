@@ -20,7 +20,9 @@ import {
   emailDomain,
   isPublicEmailDomain,
   resolveDomainOwner,
+  resolveOwnerDomainTenant,
   type DomainMatch,
+  type OwnerDomainRecord,
   type TenantDomainRecord,
 } from "./domain";
 import type { TeamInviteRole } from "@/lib/supabase/database.types";
@@ -65,7 +67,126 @@ export async function findVerifiedDomainTenant(
     };
   });
 
-  return resolveDomainOwner(email, rows);
+  const verified = resolveDomainOwner(email, rows);
+  if (verified) return verified;
+
+  // R-822: no verified domain row → fall back to the existing OWNERS' verified
+  // email domains (see `resolveOwnerDomainTenant` for the rules).
+  return findTenantByOwnerDomain(admin, domain, email);
+}
+
+type Admin = ReturnType<typeof createAdminClient>;
+
+/** `%` and `_` are LIKE wildcards; a domain never holds them legitimately, but escape anyway. */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/**
+ * Owners whose own email is at `domain`, with their workspace and whether their
+ * mailbox is confirmed. Best-effort: any failure is "no signal".
+ */
+async function findTenantByOwnerDomain(
+  admin: Admin,
+  domain: string,
+  email: string | null | undefined,
+): Promise<DomainMatch | null> {
+  const { data: owners, error } = await admin
+    .from("users")
+    .select("id, tenant_id, email")
+    .eq("role", "owner")
+    .like("email", `%@${likeEscape(domain)}`)
+    .limit(25);
+  if (error) {
+    console.error("[tenant-match] owner-domain lookup failed:", error.message);
+    return null;
+  }
+  const list = (owners ?? []).filter((o) => o.tenant_id && emailDomain(o.email) === domain);
+  if (list.length === 0) return null;
+
+  const tenantIds = [...new Set(list.map((o) => o.tenant_id as string))];
+  const { data: tenants } = await admin
+    .from("tenants")
+    .select("id, name, created_at")
+    .in("id", tenantIds);
+  const byId = new Map((tenants ?? []).map((t) => [t.id, t]));
+
+  const records: OwnerDomainRecord[] = [];
+  for (const o of list) {
+    const t = byId.get(o.tenant_id as string);
+    if (!t) continue; // workspace gone — nothing to join
+    records.push({
+      tenant_id:         t.id,
+      tenant_name:       t.name ?? "your company's workspace",
+      tenant_created_at: t.created_at ?? null,
+      owner_email:       o.email ?? "",
+      owner_verified:    await ownerEmailConfirmed(admin, o.id),
+    });
+  }
+  return resolveOwnerDomainTenant(email, records);
+}
+
+/** Whether an owner's sign-in email is confirmed. Unknown counts as NO. */
+async function ownerEmailConfirmed(admin: Admin, userId: string): Promise<boolean> {
+  try {
+    const { data, error } = await admin.auth.admin.getUserById(userId);
+    if (error || !data?.user) return false;
+    return Boolean(data.user.email_confirmed_at);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * R-822: the one step every "first time in, no workspace yet" path runs for a
+ * person whose email is ALREADY verified (Google / Auth.js first login, the
+ * confirmation link of a password signup, the /welcome "create workspace" button).
+ *
+ * If their company's domain already belongs to a workspace, park them in
+ * `join_requests` for that owner and tell the owner — and return the workspace
+ * name so the caller can say "Your company already uses ResellerOS — we've asked
+ * the owner to add you." Returns null when nothing matched (or they already have a
+ * workspace), and the caller carries on as before.
+ *
+ * Never call this for an UNVERIFIED address: a typed-in email proves nothing, and
+ * routing it would let anyone ping a company's owner in someone else's name.
+ */
+export async function routeVerifiedSignupToCompany(input: {
+  authUserId: string;
+  email:      string;
+  fullName?:  string | null;
+  appUrl?:    string | null;
+  note?:      string | null;
+}): Promise<{ tenantName: string; alreadyPending: boolean } | null> {
+  const admin = createAdminClient();
+  const { data: member } = await admin
+    .from("users")
+    .select("id")
+    .eq("id", input.authUserId)
+    .maybeSingle();
+  if (member) return null;
+
+  const match = await findVerifiedDomainTenant(input.email);
+  if (!match) return null;
+
+  const parked = await openJoinRequest({
+    tenantId:   match.tenant_id,
+    email:      input.email,
+    fullName:   input.fullName ?? null,
+    authUserId: input.authUserId,
+    matchedBy:  "domain",
+    note:       input.note ?? null,
+  });
+  if (!parked.ok) return null;
+
+  if (!parked.alreadyPending) {
+    await notifyOwnerOfJoinRequest({
+      tenantId:   match.tenant_id,
+      tenantName: match.tenant_name,
+      email:      input.email,
+      fullName:   input.fullName ?? null,
+      appUrl:     input.appUrl ?? null,
+    });
+  }
+  return { tenantName: match.tenant_name, alreadyPending: parked.alreadyPending };
 }
 
 export interface OpenJoinRequestInput {

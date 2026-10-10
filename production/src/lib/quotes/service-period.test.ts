@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   quoteServicePeriod, servicePeriodText, lineDateRange, periodDate, monthsWords,
+  extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
 } from "./service-period";
 
 type In = Parameters<typeof quoteServicePeriod>[0];
@@ -117,5 +118,48 @@ describe("dates", () => {
   it("calendar date, no timezone shift", () => {
     expect(periodDate("2026-09-25")).toBe("25 Sep 2026");
     expect(periodDate("2027-01-01")).toBe("1 Jan 2027");
+  });
+});
+
+/* R-811 — Q-5F40-27-0011 (3-month extension) said "Extension · 0 yr" and
+   "Annual commitment · billed per year · ₹810/yr". */
+describe("extension quotes (R-811)", () => {
+  const ext = (m: number) => ({ isExtension: true, extensionMonths: m });
+  const line3 = [{ name: "Business Starter · 3-month extension", commitment: "annual_yearly" }];
+
+  it("title comes from extension_months", () => {
+    expect(extensionTitle(ext(3))).toBe("3-month extension");
+    expect(extensionTitle(ext(1))).toBe("1-month extension");
+    expect(extensionTitle(ext(12))).toBe("1-year extension");
+    expect(extensionTitle(ext(24))).toBe("2-year extension");
+    expect(extensionTitle(ext(18))).toBe("18-month extension");
+  });
+  it("no title when not an extension or months unknown", () => {
+    expect(extensionTitle({ isExtension: false, extensionMonths: 3 })).toBeNull();
+    expect(extensionTitle({ isExtension: true, extensionMonths: null })).toBeNull();
+    expect(extensionTitle({ isExtension: true, extensionMonths: 0 })).toBeNull();
+    expect(extensionTitle({})).toBeNull();
+  });
+  it("3-month extension is a one-time charge; 1-year and 2-year keep their yearly copy", () => {
+    expect(isMonthExtension(ext(3))).toBe(true);
+    expect(isOneTimeQuote(ext(3))).toBe(true);
+    expect(isOneTimeQuote(ext(12))).toBe(false);
+    expect(isOneTimeQuote(ext(24))).toBe(false);
+    expect(isOneTimeQuote({ isExtension: false, extensionMonths: 3 })).toBe(false); // a renewal is not
+  });
+  it("3-month extension covers 3 months (annual line no longer hides it)", () => {
+    expect(text({ isRenewal: true, ...ext(3), lines: line3 })).toBe("covers 3 months");
+    expect(text({ lines: line3 })).toBe("covers 3 months"); // builder: read from the line name
+  });
+  it("1-year and 2-year extensions unchanged", () => {
+    expect(text({ isRenewal: true, ...ext(12), lines: [{ name: "Starter · 1-year extension", commitment: "annual_yearly" }] }))
+      .toBe("covers 12 months");
+    expect(text({ isRenewal: true, ...ext(24), lines: [{ name: "Starter · 2-year extension", commitment: "annual_yearly" }] }))
+      .toBe("covers 2 years");
+  });
+  it("line note names the period", () => {
+    expect(oneTimeLineNote(ext(3))).toBe("3-month extension · one-time charge");
+    expect(oneTimeLineNote({ isAddSeats: true })).toBe("Pro-rata · one-time charge for the rest of the term");
+    expect(oneTimeLineNote({})).toBe("One-time charge");
   });
 });

@@ -28,6 +28,8 @@ function VerifyEmail() {
   const token = useSearchParams().get("token") ?? "";
   const [state, setState] = React.useState<State>("checking");
   const [email, setEmail] = React.useState("");
+  /** R-822: the workspace whose owner was asked to add this person, if any. */
+  const [joinTo, setJoinTo] = React.useState<string | null>(null);
   const ran = React.useRef(false);
 
   React.useEffect(() => {
@@ -40,8 +42,8 @@ function VerifyEmail() {
       body: JSON.stringify({ token }),
     })
       .then((r) => r.json())
-      .then((j: { ok?: boolean; email?: string; reason?: string }) => {
-        if (j.ok) { setEmail(j.email ?? ""); setState("ok"); return; }
+      .then((j: { ok?: boolean; email?: string; reason?: string; joinRequestedTo?: string | null }) => {
+        if (j.ok) { setEmail(j.email ?? ""); setJoinTo(j.joinRequestedTo ?? null); setState("ok"); return; }
         setState(j.reason === "expired" || j.reason === "used" || j.reason === "invalid" ? j.reason : "error");
       })
       .catch(() => setState("error"));
@@ -49,6 +51,27 @@ function VerifyEmail() {
 
   if (state === "checking") {
     return <Card><p className="text-sm text-ink-3" role="status">Checking your link…</p></Card>;
+  }
+
+  if (state === "ok" && joinTo) {
+    return (
+      <Card>
+        <div className="text-center">
+          <Icon name="check_circle" size={36} className="text-emerald mx-auto mb-3" />
+          <h1 className="font-serif text-3xl mb-2">Email confirmed</h1>
+          <p className="text-sm text-ink-2 leading-relaxed">
+            Your company already uses ResellerOS — we&apos;ve asked the owner of{" "}
+            <b className="text-ink">{joinTo}</b> to add you.
+          </p>
+          <p className="mt-2 text-xs text-ink-3 mb-6">
+            You&apos;ll be able to sign in as soon as they approve. Nothing else is needed from you.
+          </p>
+          <Button asChild variant="primary" className="w-full">
+            <Link href="/login">Back to sign in</Link>
+          </Button>
+        </div>
+      </Card>
+    );
   }
 
   if (state === "ok") {

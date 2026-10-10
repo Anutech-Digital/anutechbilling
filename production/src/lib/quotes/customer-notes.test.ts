@@ -98,3 +98,85 @@ describe("customer surfaces use customerQuoteNotes", () => {
     expect(readFileSync(join(root, rel), "utf8")).toContain("customerQuoteNotes(");
   });
 });
+
+/* R-817 — renewal and extension notes are written by the app with the internal subscription
+   id in them. The stored text is not touched (open-renewal-quotes reads the id back out);
+   the customer reads a plain line instead. */
+describe("customerQuoteNotes — renewal / extension quotes (R-817)", () => {
+  const SUB = "c28000ac-1b2c-4d5e-8f90-123456789abc";
+  const plan = [{ name: "Google Workspace Business Starter", commitment: "annual_yearly" }];
+
+  it.each([
+    `Renewal quote for subscription ${SUB}`,
+    `Auto-generated renewal quote for subscription ${SUB}`,
+    `Renewal quote (operator-generated) for subscription ${SUB}`,
+  ])("renewal: %s → plan + period", (stored) => {
+    const out = customerQuoteNotes(stored, plan, { plan: "Google Workspace Business Starter", extensionMonths: 12 });
+    expect(out).toBe("Renewal of Google Workspace Business Starter for 12 months.");
+    assertCustomerSafe(out);
+  });
+
+  it("renewal: plan and period from the line when no context (PDF / preview)", () => {
+    expect(customerQuoteNotes(`Renewal quote for subscription ${SUB}`, [{ name: "Hosting Basic", commitment: "monthly" }]))
+      .toBe("Renewal of Hosting Basic for 1 month.");
+  });
+
+  it("renewal: nothing known → 'Renewal for the next term.'", () => {
+    const out = customerQuoteNotes(`Renewal quote for subscription ${SUB}`);
+    expect(out).toBe("Renewal for the next term.");
+    assertCustomerSafe(out);
+  });
+
+  it("month extension → '3-month extension. Your renewal date moves to …'", () => {
+    const stored = `3-month extension for subscription ${SUB}. On payment the renewal date advances by 3 months (to 30 Jun 2027).`;
+    const out = customerQuoteNotes(stored, [{ name: "Plan · 3-month extension", commitment: "annual_yearly" }], { extensionMonths: 3 });
+    expect(out).toBe("3-month extension. Your renewal date moves to 30 Jun 2027.");
+    assertCustomerSafe(out);
+  });
+
+  it("year extension, and one with no new date", () => {
+    expect(customerQuoteNotes(`2-year extension for subscription ${SUB}. On payment the renewal date advances by 2 years (to 31 Mar 2029).`))
+      .toBe("2-year extension. Your renewal date moves to 31 Mar 2029.");
+    expect(customerQuoteNotes(`1-year extension for subscription ${SUB}. On payment the renewal date advances by 1 year.`))
+      .toBe("1-year extension of your subscription.");
+  });
+
+  it("domain renewal: no id, no supplier price", () => {
+    const out = customerQuoteNotes(
+      `Domain renewal for anutech.in (subscription ${SUB}), at ResellerClub's live renewal price of ₹799 + GST.`,
+      [{ name: "anutech.in renewal" }], { extensionMonths: 12 },
+    );
+    expect(out).toBe("Renewal of anutech.in for 12 months.");
+    expect(out).not.toMatch(/ResellerClub/);
+    assertCustomerSafe(out);
+  });
+
+  it("keeps what staff typed after the system sentence", () => {
+    const out = customerQuoteNotes(`Renewal quote for subscription ${SUB}\nPlease pay before 5 Nov to avoid suspension.`, plan, { extensionMonths: 12 });
+    expect(out).toBe("Renewal of Google Workspace Business Starter for 12 months.\nPlease pay before 5 Nov to avoid suspension.");
+    assertCustomerSafe(out);
+  });
+
+  it("a staff note elsewhere still loses any id or staff-only sentence", () => {
+    const out = customerQuoteNotes(`Thanks for staying with us. Ref subscription ${SUB}. Backdated by Pawan on 2026-10-01.`);
+    expect(out).toBe("Thanks for staying with us. Ref.");
+    assertCustomerSafe(out);
+  });
+
+  it("add-seats notes are unchanged by this", () => {
+    const stored = composeQuoteNotes(addSeatsCustomerNote("2026-09-25", "2027-03-31"), LEGACY);
+    expect(customerQuoteNotes(stored)).toBe("Additional seats from 25 Sep 2026 to 31 Mar 2027 (pro-rata).");
+  });
+
+  it("the STORED note still names the subscription for open-renewal-quotes", async () => {
+    const { openRenewalQuoteMap } = await import("@/app/(app)/renewals/open-renewal-quotes");
+    const stored = `Auto-generated renewal quote for subscription ${SUB}`;
+    expect(openRenewalQuoteMap([{ id: "Q-1", notes: stored }]).get(SUB)).toBe("Q-1");
+    expect(customerQuoteNotes(stored)).not.toContain(SUB);
+  });
+
+  it("the accept page passes plan + months", () => {
+    const src = readFileSync(join(__dirname, "..", "..", "app/(public)/quote/[id]/accept/page.tsx"), "utf8");
+    expect(src).toMatch(/customerQuoteNotes\(quote\.notes,[\s\S]{0,120}extensionMonths: quote\.extension_months/);
+  });
+});

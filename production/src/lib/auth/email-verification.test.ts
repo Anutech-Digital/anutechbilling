@@ -37,7 +37,7 @@ describe("email verification (R-048)", () => {
   it("a good token confirms once; a second use is refused", async () => {
     const t = newToken();
     const f = fakeAdmin([{ id: "1", user_id: "u1", email: "a@x.in", token_hash: hashToken(t), expires_at: new Date(Date.now() + 3600_000).toISOString(), used_at: null }]);
-    expect(await confirmEmailToken(f.admin, t)).toEqual({ ok: true, email: "a@x.in" });
+    expect(await confirmEmailToken(f.admin, t)).toMatchObject({ ok: true, email: "a@x.in" });
     expect(f.confirmed).toEqual(["u1"]);
     expect(await confirmEmailToken(f.admin, t)).toEqual({ ok: false, reason: "used" });
     expect(f.confirmed).toEqual(["u1"]);

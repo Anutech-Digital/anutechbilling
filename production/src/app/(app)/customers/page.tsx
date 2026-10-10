@@ -398,7 +398,7 @@ export default function CustomersPage() {
          bare error toast, and rightly — the next person editing this line cannot see
          whether a reason survives. */
       toast.error(m.title, {
-        description: m.description ?? "Nothing was changed. Open the customers to see why.",
+        description: m.description ?? "Nothing was changed. Open the companies to see why.",
       });
     }
     /* A partial or failed run keeps the selection: the refused rows are exactly the ones
@@ -413,7 +413,7 @@ export default function CustomersPage() {
       [...CUSTOMERS_CSV_HEADERS],
       customersCsvRows(pickedCustomers),
     );
-    toast.success(`Exported ${pickedCustomers.length} customer${pickedCustomers.length === 1 ? "" : "s"} to CSV`);
+    toast.success(`Exported ${pickedCustomers.length} compan${pickedCustomers.length === 1 ? "y" : "ies"} to CSV`);
   };
 
   /** Archive or reactivate. One code path — the flag is the only difference. */
@@ -523,7 +523,7 @@ export default function CustomersPage() {
 
   const stats: React.ComponentProps<typeof StatStrip>["items"] = [];
   if (!isLoading && customers && listCounts.data) {
-    stats.push({ label: "Customers", value: total, onClick: () => setView("all"), active: view === "all" });
+    stats.push({ label: "Companies", value: total, onClick: () => setView("all"), active: view === "all" });
     /* R-005: these are subscription MRR / ARR only. Named "Monthly / Yearly revenue" they
        read as total income — a customer who paid ₹11.8L for a project showed ₹0 in all of them. */
     /* R-118: subsByCustomer holds ACTIVE subscriptions only, and "With subscriptions" tests
@@ -561,10 +561,10 @@ export default function CustomersPage() {
     try {
       rows = mode === "full" && full.data ? full.data : await fetchAllCustomers(createClient());
     } catch (e) {
-      toast.error("Could not export customers", { description: (e as Error).message });
+      toast.error("Could not export companies", { description: (e as Error).message });
       return;
     }
-    if (rows.length === 0) { toast.error("No customers to export yet."); return; }
+    if (rows.length === 0) { toast.error("No companies to export yet."); return; }
     const cols = ["name", "contact_name", "contact_email", "contact_phone", "gstin", "state", "domain", "since"] as const;
     const esc = (v: unknown) => {
       const s = v == null ? "" : String(v);
@@ -581,7 +581,7 @@ export default function CustomersPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(`Exported ${rows.length} customer${rows.length === 1 ? "" : "s"} to CSV`);
+    toast.success(`Exported ${rows.length} compan${rows.length === 1 ? "y" : "ies"} to CSV`);
   }
 
   return (
@@ -590,7 +590,7 @@ export default function CustomersPage() {
       <div className="flex items-center justify-between gap-3 mb-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">Sales</p>
-          <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl leading-tight">Customers</h1>
+          <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl leading-tight">Companies</h1>
           <p className="text-xs sm:text-sm text-ink-3 mt-0.5 hidden sm:block">Your book of business — recurring revenue, money owed, and who to grow.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -604,7 +604,7 @@ export default function CustomersPage() {
               </DropdownMenuItem>
               {canWrite && (<>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setImportOpen(true)}>
-                <Icon name="upload" size={15} /> Import customers
+                <Icon name="upload" size={15} /> Import companies
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setDomainsOpen(true)}>
                 <Icon name="link" size={15} /> Link domains
@@ -614,13 +614,13 @@ export default function CustomersPage() {
           </DropdownMenu>
           {canWrite && (
             <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="whitespace-nowrap font-semibold shadow-xs">
-              Add customer
+              Add company
             </Button>
           )}
         </div>
       </div>
 
-      {!canWrite && <ViewOnlyNote what="add, import or edit customers" />}
+      {!canWrite && <ViewOnlyNote what="add, import or edit companies" />}
 
       {/* Collapsible Customer Analytics Banner */}
       {stats.length > 0 && !selectedId && (
@@ -632,7 +632,7 @@ export default function CustomersPage() {
           >
             <div className="flex items-center gap-2 flex-wrap text-xs">
               <Icon name="bar_chart" size={15} className="text-amber-ink" />
-              <span className="font-semibold text-ink">Customer Portfolio &amp; Receivables</span>
+              <span className="font-semibold text-ink">Company Portfolio &amp; Receivables</span>
               <Badge kind="info" size="sm" className="ml-1">{total} Accounts</Badge>
             </div>
             <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
@@ -677,8 +677,8 @@ export default function CustomersPage() {
             <div className="w-full sm:w-64 shrink-0">
               <Input
                 prefix={<Icon name="search" size={14} />}
-                aria-label="Search customers"
-                placeholder="Search customer, contact, phone or domain…"
+                aria-label="Search companies"
+                placeholder="Search company, contact, phone or domain…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -719,7 +719,7 @@ export default function CustomersPage() {
                   "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer shrink-0",
                   showArchived ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline text-ink-3 hover:text-ink hover:bg-paper-2",
                 )}
-                title={showArchived ? "Back to active customers" : "Show archived customers"}
+                title={showArchived ? "Back to active companies" : "Show archived companies"}
               >
                 <Icon name="inbox" size={13} />
                 {showArchived ? "Active" : "Archived"}
@@ -728,7 +728,7 @@ export default function CustomersPage() {
             )}
             {canWrite && (
               <Button variant="primary" size="sm" icon="plus" onClick={goAdd} className="shrink-0 font-semibold shadow-xs hidden sm:inline-flex">
-                Add customer
+                Add company
               </Button>
             )}
           </div>
@@ -786,7 +786,7 @@ export default function CustomersPage() {
       {error && (
         <EmptyState
           icon="alert"
-          title="Could not load customers"
+          title="Could not load companies"
           body={error.message}
           action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
         />
@@ -813,9 +813,9 @@ export default function CustomersPage() {
       {!isLoading && !error && listCounts.data && listCounts.data.all === 0 && (
         <EmptyState
           icon="users"
-          title="No customers yet"
-          body="Add your first customer to start tracking subscriptions, invoices, and renewals."
-          action={canWrite ? <Button variant="primary" icon="plus" onClick={goAdd}>Add your first customer</Button> : undefined}
+          title="No companies yet"
+          body="Add your first company to start tracking subscriptions, invoices, and renewals."
+          action={canWrite ? <Button variant="primary" icon="plus" onClick={goAdd}>Add your first company</Button> : undefined}
           secondary={canWrite ? <Button icon="download" onClick={() => setImportOpen(true)}>Import CSV</Button> : undefined}
         />
       )}
@@ -933,7 +933,7 @@ export default function CustomersPage() {
                     <th className="px-2 py-2.5">
                       <input
                         type="checkbox"
-                        aria-label="Select all customers on screen"
+                        aria-label="Select all companies on screen"
                         className="cursor-pointer accent-amber"
                         checked={shown.length > 0 && shown.every((c) => pickedIds.has(c.id))}
                         ref={(el) => {
@@ -952,7 +952,7 @@ export default function CustomersPage() {
                         }}
                       />
                     </th>
-                    <SortHead label="Customer"        sortKey="name"        sort={sort} onSort={toggleSort} />
+                    <SortHead label="Company"         sortKey="name"        sort={sort} onSort={toggleSort} />
                     <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Status</th>
                     <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Place of supply</th>
                     <SortHead label="Monthly"         sortKey="mrr"         sort={sort} onSort={toggleSort} align="right" />
@@ -1025,7 +1025,7 @@ export default function CustomersPage() {
                           <Badge kind={st.kind} size="sm" dot={st.dot}>{st.label}</Badge>
                         </td>
                         <td className="px-3 py-2.5 text-sm text-ink-2 truncate">{missingInvoiceState(c)
-                          ? <Badge kind="warning" size="sm" title="Tax invoice will not issue until a state is chosen — Edit the customer">{c.state ? `${c.state} · no code` : "State missing"}</Badge>
+                          ? <Badge kind="warning" size="sm" title="Tax invoice will not issue until a state is chosen — Edit the company">{c.state ? `${c.state} · no code` : "State missing"}</Badge>
                           : (c.state || <span className="text-ink-3">N/A</span>)}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">
                           {mrr > 0
@@ -1094,8 +1094,8 @@ export default function CustomersPage() {
         <div className="mt-6">
           <EmptyState
             icon="search"
-            title="No customers match"
-            body={search ? `No results for "${search}". Try a different search term.` : "No customers in this view."}
+            title="No companies match"
+            body={search ? `No results for "${search}". Try a different search term.` : "No companies in this view."}
             action={<Button icon="x" onClick={() => { setSearch(""); setView("all"); }}>Clear filters</Button>}
             compact
           />
@@ -1116,7 +1116,7 @@ export default function CustomersPage() {
             <div className="p-2 border-b border-hairline">
               <Input
                 prefix={<Icon name="search" size={14} />}
-                aria-label="Search customers"
+                aria-label="Search companies"
                 placeholder="Search…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -1279,7 +1279,7 @@ function RowActions({
         </DropdownMenuItem>
         {!readOnly && (<>
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onEdit)}>
-          <Icon name="edit" size={15} /> Edit customer
+          <Icon name="edit" size={15} /> Edit company
         </DropdownMenuItem>
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onNewQuote)}>
           <Icon name="plus" size={15} /> New quote

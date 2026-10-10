@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
+import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
 import { emailFromRate } from "@/site/lib/live-catalog";
 
 interface MenuItem { label: string; note: string; href: string }
@@ -64,7 +65,7 @@ const MENUS: readonly Menu[] = [
         { label: "Bulk operations", note: "Whole portfolios in one action", href: "/domains#included" },
       ],
     ],
-    promo: { tag: "FROM ₹249/YR", title: "Your name, in rupees", body: "500+ extensions with the renewal price printed next to the first-year price.", cta: "Search a domain", href: "/domains" },
+    promo: { tag: `${DOMAIN_TEASER.tld} FROM ${DOMAIN_TEASER.from}/YR`.toUpperCase(), title: "Your name, in rupees", body: `${DOMAIN_TEASER.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" },
   },
   {
     label: "Hosting", href: "/hosting",
@@ -135,7 +136,7 @@ const MENUS: readonly Menu[] = [
 const MOBILE_PAGES = [
   { label: "Home", note: "Everything Anutech does", href: "/" },
   { label: "Custom software", note: "Office automation, built for you", href: "/#software" },
-  { label: "Domains", note: "500+ extensions, from ₹249/yr", href: "/domains" },
+  { label: "Domains", note: DOMAIN_TEASER.line, href: "/domains" },
   { label: "Hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
   { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
   { label: "Compare editions", note: "GW, M365 and Zoho side by side", href: "/email/compare-editions" },

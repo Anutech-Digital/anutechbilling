@@ -69,6 +69,22 @@ export function customerKeywords(c: CustomerLike): string[] {
   ]);
 }
 
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * R-821 (10 Oct 2026): the grey line under a company in Ctrl+K. It fell back to the row's
+ * UUID when the company had no contact or domain. Now: the domain, else city/state, else
+ * the main contact's name, else nothing — never an id.
+ */
+export function companyPaletteMeta(c: CustomerLike & { city?: string | null; state?: string | null }): string {
+  const t = (v: string | null | undefined) => {
+    const s = (v ?? "").trim();
+    return s && !UUID_RE.test(s) ? s : "";
+  };
+  const place = [t(c.city), t(c.state)].filter(Boolean).join(", ");
+  return t(c.domain) || place || t(c.contact_name);
+}
+
 export interface LeadLike {
   id?: string | null;
   company?: string | null;

@@ -27,7 +27,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
-import { istToday, utcDateISO, formatIstDate } from "@/lib/dates/ist";
+import { istToday, formatIstDate } from "@/lib/dates/ist";
+import { extensionQuoteExpiry } from "@/lib/quotes/quote-validity";
 import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
@@ -44,8 +45,9 @@ export interface CreateExtensionQuoteInput {
   plan:            string;
   seats:           number;
   mrr:             number;
-  /** Current subscription.renewal_date — quote expiry uses this + grace */
+  /** Current subscription.renewal_date — caps the quote expiry (R-820) */
   renewalDate:     string;
+  /** Not used for the expiry since R-820 (30 days, capped at renewalDate). */
   graceDays:       number;
   /** How many years the customer wants to add (1, 2, 3, …). Ignored when `months` is set. */
   years?:          number;
@@ -133,8 +135,10 @@ export async function createExtensionQuote(
     commitment: "annual_yearly",
   }];
 
-  const renewalAt   = new Date(input.renewalDate);
-  const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 7) * 86400000);
+  /* R-820: 30 days from today (DEFAULT_QUOTE_VALIDITY_DAYS), capped at the current renewal
+     date — was renewal + grace, which left a quote open ~339 days right after a renewal. */
+  const today       = istToday();
+  const expiresDate = extensionQuoteExpiry(today, input.renewalDate);
 
   const { error: insertErr } = await input.supabase.from("quotes").insert({
     id:               newQuoteId,
@@ -147,12 +151,9 @@ export async function createExtensionQuote(
     status:           "sent",
     payment_status:   "awaiting",
     owner_id:         null,
-    /* R-025. UTC, so an extension quote raised before 05:30 IST was dated YESTERDAY and
-       its validity window ran a day short. `validUntil` is the renewal date (a
-       YYYY-MM-DD parsed as UTC midnight) plus whole days, so its UTC parts already ARE
-       the calendar date — `utcDateISO` says that out loud rather than shifting twice. */
-    created_date:     istToday(),
-    expires_date:     utcDateISO(validUntil),
+    /* R-025: IST date, so a quote raised before 05:30 IST is not dated yesterday. */
+    created_date:     today,
+    expires_date:     expiresDate,
     line_items:       lineItems,
     subtotal:         annualAmount,
     total_cost:       Math.round(annualAmount * 0.83),

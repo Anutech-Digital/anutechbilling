@@ -78,6 +78,8 @@ interface Props {
   isProspect?:   boolean;
   /** R-809: add-seats (pro-rata) or one-off quote — paid once, no billing schedule. */
   oneTime?:      boolean;
+  /** R-811: "3-month extension" / "1-year extension" under the heading (extensionTitle()). */
+  extensionTitle?: string | null;
 }
 
 export function QuotePreviewDialog({
@@ -112,6 +114,7 @@ export function QuotePreviewDialog({
   termsConditions,
   isProspect = false,
   oneTime = false,
+  extensionTitle = null,
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
@@ -209,6 +212,11 @@ export function QuotePreviewDialog({
                 Quotation
               </p>
               <p className="font-serif text-3xl mt-1">{quoteId}</p>
+              {extensionTitle && (
+                <p className="text-xs font-medium text-ink-2 mt-0.5" data-testid="extension-title">
+                  {extensionTitle[0].toUpperCase() + extensionTitle.slice(1)}
+                </p>
+              )}
               <p className="text-xs text-ink-3 mt-1">
                 Dated: {formatDate(new Date())}
               </p>

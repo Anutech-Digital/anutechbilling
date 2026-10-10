@@ -152,8 +152,10 @@ export default function SignupPage() {
           </div>
           <h1 className="font-serif text-2xl mb-2">Almost there</h1>
           <p className="text-sm text-ink-2 leading-relaxed">
-            Your email domain belongs to <b className="text-ink">{pending}</b>, which is already
-            on ResellerOS. We&apos;ve asked its owner to add you to that workspace.
+            Your company already uses ResellerOS, so we did not make a new workspace.
+            {verifyEmail
+              ? " Confirm your email and we'll ask the owner to add you."
+              : " We've asked the owner to add you."}
           </p>
           <div className="mt-4 rounded-md border border-hairline bg-paper-2 p-3 text-left text-xs text-ink-3 leading-relaxed">
             We did <b>not</b> create a separate company for you — that is on purpose. Joining the
@@ -161,7 +163,7 @@ export default function SignupPage() {
           </div>
           <p className="mt-4 text-xs text-ink-3">
             {verifyEmail
-              ? <>Two things before you can sign in: confirm your email (we sent a link to <b>{verifyEmail}</b>), and the owner&apos;s approval.</>
+              ? <>Two steps before you can sign in: open the link we sent to <b>{verifyEmail}</b>, then the owner approves you.</>
               : <>You&apos;ll be able to sign in as soon as they approve. Nothing else is needed from you.</>}
           </p>
           <Link

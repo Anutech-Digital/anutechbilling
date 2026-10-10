@@ -7,7 +7,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -111,6 +111,31 @@ const schema = z.object({
 });
 
 type FormData = z.infer<typeof schema>;
+
+/** Exported for tests only (R-819) — the same schema the sheet validates with. */
+export { schema as recordPaymentSchema };
+export type RecordPaymentFormData = FormData;
+
+/**
+ * R-819: change the payment method and re-check the reference with the NEW method's rule.
+ *
+ * Abhishek, staging 10 Oct: UPI + "INDBH06054327633" → Confirm → "A UPI reference is 12
+ * digits, numbers only" → switched to Bank transfer → the UPI message stayed under the Bank
+ * UTR box. react-hook-form only re-validates a field when THAT field changes, and
+ * setValue("method") did not touch "reference", so the old method's error was left behind.
+ * Now the stale error is cleared, and if the form was already checked (or showed an error)
+ * the reference is validated again right away with the current method's rule.
+ */
+export function applyPaymentMethod(
+  form: Pick<UseFormReturn<FormData>, "setValue" | "clearErrors" | "trigger" | "getValues">,
+  m: string,
+  alreadyChecked: boolean,
+): Promise<boolean> {
+  form.setValue("method", m, { shouldDirty: true });
+  form.clearErrors("reference");
+  if (alreadyChecked && (form.getValues("reference") ?? "").trim()) return form.trigger("reference");
+  return Promise.resolve(true);
+}
 
 /** Compute TDS amount = pre-GST gross × rate%. */
 function computeTds(quoteAmountInclGst: number, ratePct: number): { preGST: number; tds: number } {
@@ -302,7 +327,9 @@ export function RecordPaymentDialog({
     watch,
     setValue,
     getValues,
-    formState: { errors, isSubmitting },
+    clearErrors,
+    trigger,
+    formState: { errors, isSubmitting, isSubmitted },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -1226,7 +1253,8 @@ export function RecordPaymentDialog({
               onValueChange={(val) => {
                 const m = val as PaymentMethod;
                 setMethod(m);
-                setValue("method", m);
+                /* R-819: re-check the reference with THIS method's rule; drop the old one's error. */
+                void applyPaymentMethod({ setValue, clearErrors, trigger, getValues }, m, isSubmitted || !!errors.reference);
               }}
             >
               <SelectTrigger id="paymentMethod">

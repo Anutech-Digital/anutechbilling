@@ -32,6 +32,7 @@ import { reportCron } from "@/lib/ops/cron-report";
 import { refreshAccessToken, googleOAuthCreds } from "@/lib/google/oauth";
 import { listRecentMessageIds, fetchMessage, toIngestPayload } from "@/lib/email/gmail-read";
 import { ingestInboundEmail } from "@/lib/inbound/ingest";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -70,7 +71,7 @@ async function handle(req: NextRequest) {
     .from("user_google_tokens")
     .select("user_id, tenant_id, google_email, refresh_token, scopes")
     .not("refresh_token", "is", null);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return cronDbFailure("gmail-inbox", error, error.message);
 
   /* ── A MISSING SCOPE IS NOT A CRASH, IT IS AN INSTRUCTION (§24) ───────────
      The connected account has gmail.send but was never asked for gmail.readonly, and the

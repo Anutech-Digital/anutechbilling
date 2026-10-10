@@ -193,7 +193,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
 
   const saveButton = (
     <Button type="submit" variant="primary" icon="check" loading={isSubmitting || isPending}>
-      {isEdit ? "Save changes" : "Save customer"}
+      {isEdit ? "Save changes" : "Save company"}
     </Button>
   );
 
@@ -207,12 +207,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             <div className="min-w-0">
               <h1 className="font-serif text-2xl text-ink leading-tight truncate">
                 {isEdit
-                  ? (watch("display_name")?.trim() || companyName?.trim() || [dnFirst, dnLast].filter(Boolean).join(" ") || "Edit customer")
-                  : "New customer"}
+                  ? (watch("display_name")?.trim() || companyName?.trim() || [dnFirst, dnLast].filter(Boolean).join(" ") || "Edit company")
+                  : "New company"}
               </h1>
               <p className="text-sm text-ink-3 mt-0.5">
                 {isEdit
-                  ? "Update this customer's billing, address and contact details."
+                  ? "Update this company's billing, address and contact details."
                   : "Company = the customer you invoice. Pick the region first — it sets the tax treatment."}
               </p>
             </div>

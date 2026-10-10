@@ -52,7 +52,7 @@ const TAB_LEADS:     BottomNavItem = { id: "leads",     href: "/leads",         
 const TAB_TASKS:     BottomNavItem = { id: "tasks",     href: "/tasks",         label: "Tasks",     icon: "clock"  };
 // Owner/manager money-first tabs
 const TAB_PAYMENTS:  BottomNavItem = { id: "payments",  href: "/payments",      label: "Payments",  icon: "rupee"  };
-const TAB_CUSTOMERS: BottomNavItem = { id: "customers", href: "/customers",     label: "Customers", icon: "users"  };
+const TAB_CUSTOMERS: BottomNavItem = { id: "customers", href: "/customers",     label: "Companies", icon: "users"  };
 const TAB_RENEWALS:  BottomNavItem = { id: "renewals",  href: "/renewals",      label: "Renewals",  icon: "refresh"};
 const TAB_MY_EXPENSES: BottomNavItem = { id: "my-expenses", href: "/my-expenses", label: "Expenses", icon: "wallet" };
 const TAB_MORE:      BottomNavItem = { id: "more",      href: "#",              label: "More",      icon: "more_h", action: "menu" };

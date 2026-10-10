@@ -251,8 +251,8 @@ describe("2. structure", () => {
     const sell = APP_NAV.find((s) => s.section === "Sell")!;
     expect(sell.items.some((i) => i.href === "/contacts")).toBe(false);
     expect(flat.filter((e) => e.item.href === "/contacts").map((e) => e.via)).toEqual(["child"]);
-    expect(getCrumb("/contacts")).toEqual(["Billing", "Contacts"]);
-    expect(getCrumb("/contacts/abc")).toEqual(["Billing", "Contacts", "Profile"]);
+    expect(getCrumb("/contacts")).toEqual(["Sales", "Contacts"]);
+    expect(getCrumb("/contacts/abc")).toEqual(["Sales", "Contacts", "Profile"]);
     for (const r of ["owner", "manager", "sales", "sales_senior"] as UserRole[]) {
       expect(isRouteAllowed(r, "/contacts"), r).toBe(true);
       expect(isRouteAllowed(r, "/contacts/abc"), r).toBe(true);
@@ -286,9 +286,9 @@ describe("2. structure", () => {
       for (const r of ["owner", "manager"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(true);
       for (const r of ["sales", "billing", "support"] as UserRole[]) expect(isRouteAllowed(r, h), `${r} ${h}`).toBe(isRouteAllowed(r, "/items"));
     }
-    expect(getCrumb("/items")).toEqual(["Billing", "Products"]);
-    expect(getCrumb("/items/subscriptions")).toEqual(["Billing", "Products", "Subscriptions"]);
-    expect(getCrumb("/items/products")).toEqual(["Billing", "Products", "One-time products"]);
+    expect(getCrumb("/items")).toEqual(["Sales", "Products"]);
+    expect(getCrumb("/items/subscriptions")).toEqual(["Sales", "Products", "Subscriptions"]);
+    expect(getCrumb("/items/products")).toEqual(["Sales", "Products", "One-time products"]);
   });
 
   it("R-384 (7 Oct 2026): the employees row reads 'Employees & Users' (was 'Employees & Team')", () => {
@@ -382,17 +382,26 @@ describe("3. breadcrumbs come from the nav", () => {
 
   it("names a sidebar/accordion row [section, label] and a directory row [section, parent, label]", () => {
     expect(getCrumb("/today")).toEqual(["Home", "Today"]);
-    expect(getCrumb("/customers/groups")).toEqual(["Billing", "Parent Accounts"]);
+    expect(getCrumb("/customers/groups")).toEqual(["Sales", "Parent Accounts"]);
     expect(getCrumb("/accounting/pnl")).toEqual(["Books", "Reports", "P&L Report"]);
-    expect(getCrumb("/marketing/spend")).toEqual(["Sell", "Marketing Hub", "Spend"]);
-    expect(getCrumb("/deals")).toEqual(["Sell", "Deals"]);
+    expect(getCrumb("/marketing/spend")).toEqual(["Sales", "Marketing Hub", "Spend"]);
+    expect(getCrumb("/deals")).toEqual(["Sales", "Deals"]);
   });
 
   it("keeps every Billing page's crumb exactly as it was (Abhishek's pages)", () => {
-    for (const h of ["/customers", "/customers/groups", "/quotes", "/subscriptions", "/renewals", "/invoices", "/payments", "/projects"]) {
+    /* R-538 (10 Oct 2026, Pardeep "haan"): the menu says "Companies" where it said
+       "Customers"; the route is still /customers. R-821 (10 Oct 2026): the rows the menu
+       shows under Sales (Companies, Quotes, Products) say "Sales" — the crumb names the
+       menu the user sees. The Billing-app pages keep their crumbs exactly. */
+    expect(OLD_CRUMBS["/customers"]).toEqual(["Billing", "Customers"]);
+    expect(getCrumb("/customers")).toEqual(["Sales", "Companies"]);
+    for (const h of ["/customers/groups", "/quotes"]) {
+      expect(getCrumb(h), h).toEqual(["Sales", ...OLD_CRUMBS[h].slice(1)]);
+    }
+    for (const h of ["/subscriptions", "/renewals", "/invoices", "/payments", "/projects"]) {
       expect(getCrumb(h), h).toEqual(OLD_CRUMBS[h]);
     }
-    expect(getCrumb("/customers/abc/edit")).toEqual(["Billing", "Customers", "Edit"]);
+    expect(getCrumb("/customers/abc/edit")).toEqual(["Sales", "Companies", "Edit"]);
     // /online-orders left Billing on 6 Oct 2026 (R-204) — see block 5 below.
   });
 
@@ -454,8 +463,8 @@ describe("5. Website orders sit in Sell next to Deals/Enquiries, not under Payme
     expect(flattenNav([bill]).map((e) => e.item.href)).not.toContain("/online-orders");
   });
 
-  it("has the crumb Sell › Orders (website)", () => {
-    expect(getCrumb("/online-orders")).toEqual(["Sell", "Orders (website)"]);
+  it("has the crumb Sales › Orders (website) (R-821: Sell pages say Sales, like the menu)", () => {
+    expect(getCrumb("/online-orders")).toEqual(["Sales", "Orders (website)"]);
   });
 
   it.each(["owner", "manager", "billing"] as UserRole[])("%s still sees it and the guard lets it through", (role) => {

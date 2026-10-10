@@ -62,7 +62,7 @@ export async function startEmailVerification(
 }
 
 export type ConfirmResult =
-  | { ok: true; email: string }
+  | { ok: true; email: string; userId?: string }
   | { ok: false; reason: "invalid" | "expired" | "used" | "error" };
 
 /** Check a token and confirm its user's email. Single use. */
@@ -81,5 +81,5 @@ export async function confirmEmailToken(admin: SupabaseClient, token: string, no
   const { error: upErr } = await admin.auth.admin.updateUserById(row.user_id, { email_confirm: true });
   if (upErr) return { ok: false, reason: "error" };
   await admin.from("email_verifications").update({ used_at: now.toISOString() }).eq("id", row.id);
-  return { ok: true, email: row.email };
+  return { ok: true, email: row.email, userId: row.user_id };
 }

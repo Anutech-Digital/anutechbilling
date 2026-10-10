@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SmartView } from "@/components/features/leads/leads-smart-views";
 import { LEAD_STAGES } from "@/lib/leads/stage-meta";
+import { stageShownOnPage } from "@/lib/leads/page-scope";
 
 export interface LeadsStatusStatesProps {
   error: Error | null;
@@ -50,10 +51,11 @@ export function LeadsStatusStates({
         />
       )}
 
-      {/* Loading */}
+      {/* Loading — R-433: only this page's columns (New + Contacted on /leads), so the
+          skeleton does not flash Quote Sent … Won and then shrink to two. */}
       {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 flex-1 min-h-0">
-          {LEAD_STAGES.map((s) => (
+        <div className={cn("grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0", isDealsPage ? "lg:grid-cols-4" : "lg:grid-cols-2")}>
+          {LEAD_STAGES.filter((s) => stageShownOnPage(s.id, isDealsPage)).map((s) => (
             <div key={s.id} className="bg-paper-2 border-2 border-dashed border-hairline rounded-lg p-2.5 min-h-[400px]">
               <div className="flex items-center gap-1.5 mb-3 px-1">
                 <span className={cn("w-1.5 h-1.5 rounded-full", s.dot)} />
@@ -210,7 +212,7 @@ export function LeadsNoResults({
         <EmptyState
           icon="search"
           title={`No ${noun} in this view`}
-          body={isDealsPage ? "Deals show here once a lead reaches Demo, Trial or Quote." : "Won leads are on the Deals page."}
+          body={isDealsPage ? "Deals show here once a lead reaches Demo, Trial or Quote." : "Leads with a quote sent, a demo, a trial or a win are on the Deals page."}
           compact
         />
       )}

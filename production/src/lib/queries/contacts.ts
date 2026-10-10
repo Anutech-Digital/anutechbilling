@@ -20,6 +20,7 @@ import {
   type ContactLinkRow,
 } from "@/lib/contacts/search-index";
 import type { ContactRow, ContactChannel } from "@/lib/supabase/database.types";
+import { buildContactBook, type BookCustomerLinkRow } from "@/lib/contacts/book";
 
 export type Contact = ContactRow;
 export type { ContactChannel } from "@/lib/supabase/database.types";
@@ -63,6 +64,11 @@ export interface UnifiedContact {
    *  imported contact's own id. Used to union a lead with its shadow contact
    *  even if their channels were later edited apart. */
   linkId?: string | null;
+  /** R-535: this row is a COMPANY (a customer), not a person — name is the company,
+   *  title is its primary contact, email/phone are that contact's. */
+  isCompany?: boolean;
+  /** The company's website domain, for company rows. */
+  domain?: string | null;
 }
 
 /** A contact's unified "kind" for filtering + badges. Leads/customers derive it
@@ -92,7 +98,7 @@ export function useAllContacts() {
          ending on the unique id). A failed source still reads as empty, as before — a role
          that cannot see employees must not lose the whole contact book. */
       const lenient = <T,>(p: Promise<T[]>): Promise<T[]> => p.catch(() => []);
-      const [leadsData, customersData, vendorsData, partnersData, importedData, employeesData] = await Promise.all([
+      const [leadsData, customersData, vendorsData, partnersData, importedData, employeesData, customerLinksData] = await Promise.all([
         lenient(fetchAllRows((from, to) => supabase
           .from("leads")
           .select("id, company, contact_name, contact_email, contact_phone, stage, created_at, is_junk, contact_id")
@@ -100,7 +106,7 @@ export function useAllContacts() {
           .range(from, to))),
         lenient(fetchAllRows((from, to) => supabase
           .from("customers")
-          .select("id, name, contact_name, contact_title, contact_email, contact_phone, health, created_at")
+          .select("id, name, domain, contact_name, contact_title, contact_email, contact_phone, health, created_at")
           .order("id", { ascending: true })
           .range(from, to))),
         // Vendors = people/companies we BUY from — a real business relation, so
@@ -138,212 +144,23 @@ export function useAllContacts() {
           .select("id, name, email, phone, designation, is_active, created_at")
           .order("id", { ascending: true })
           .range(from, to))),
+        /* R-535: a company's people live here since 18 Sep 2026, not in customers.contact_*.
+           Without it a company row had a blank email/phone (see lib/contacts/book.ts). */
+        lenient(fetchAllRows((from, to) => supabase
+          .from("customer_contacts")
+          .select("id, customer_id, is_primary, contacts(full_name, email, phone)")
+          .order("id", { ascending: true })
+          .range(from, to))),
       ]);
-
-      const fromLeads: UnifiedContact[] = leadsData
-        /* R-135 (3 Oct 2026): a lead saved with only a company name ("demo", Won) was hidden
-           from the book — Customers and Vendors already fell back to the company name, Leads
-           did not. Same rule now: the company stands in for a missing person's name. */
-        .filter((l) => !l.is_junk && (l.contact_name || l.contact_email || l.contact_phone || l.company))
-        .map((l) => ({
-          id:        `lead:${l.id}`,
-          source:    "lead" as const,
-          refId:     l.id,
-          name:      l.contact_name || l.company,
-          email:     l.contact_email,
-          phone:     l.contact_phone,
-          company:   l.company,
-          title:     null,
-          status:    l.stage,
-          createdAt: l.created_at,
-          linkId:    (l as { contact_id?: string | null }).contact_id ?? null,
-        }));
-
-      const fromCustomers: UnifiedContact[] = customersData
-        .filter((c) => c.contact_name || c.contact_email || c.contact_phone || c.name)
-        .map((c) => ({
-          id:        `customer:${c.id}`,
-          source:    "customer" as const,
-          refId:     c.id,
-          name:      c.contact_name || c.name,
-          email:     c.contact_email,
-          phone:     c.contact_phone,
-          company:   c.name,
-          title:     c.contact_title,
-          status:    c.health != null ? String(c.health) : null,
-          createdAt: c.created_at,
-        }));
-
-      const fromVendors: UnifiedContact[] = vendorsData
-        .filter((v) => v.contact_name || v.contact_email || v.contact_phone || v.name)
-        .map((v) => ({
-          id:        `vendor:${v.id}`,
-          source:    "vendor" as const,
-          refId:     v.id,
-          name:      v.contact_name || v.name,
-          email:     v.contact_email,
-          phone:     v.contact_phone,
-          company:   v.name,
-          title:     null,
-          status:    null,
-          createdAt: v.created_at,
-        }));
-
-      const fromPartners: UnifiedContact[] = partnersData
-        .filter((p) => p.name || p.email || p.phone)
-        .map((p) => ({
-          id:        `partner:${p.id}`,
-          source:    "partner" as const,
-          refId:     p.id,
-          name:      p.name,
-          email:     p.email,
-          phone:     p.phone,
-          company:   "—",
-          title:     null,
-          status:    p.is_active ? "active" : "inactive",
-          createdAt: p.created_at,
-        }));
-
-      const fromEmployees: UnifiedContact[] = employeesData
-        .filter((e) => e.name || e.email || e.phone)
-        .map((e) => ({
-          id:        `employee:${e.id}`,
-          source:    "employee" as const,
-          refId:     e.id,
-          name:      e.name,
-          email:     e.email,
-          phone:     e.phone,
-          company:   "—",
-          title:     e.designation ?? null,
-          status:    e.is_active === false ? "inactive" : "active",
-          createdAt: e.created_at,
-        }));
-
-      const fromImported: UnifiedContact[] = importedData.map((c) => ({
-        id:           `imported:${c.id}`,
-        source:       "imported" as const,
-        refId:        c.id,
-        name:         c.full_name,
-        email:        c.email,
-        phone:        c.phone,
-        company:      c.company ?? "—",
-        title:        c.title,
-        status:       c.status,
-        importedFrom: c.source,
-        relationship: c.relationship,
-        createdAt:    c.created_at,
-        linkId:       c.id,
-      }));
-
-      // ── Identity grouping ────────────────────────────────────────────────
-      // One real person can appear across several sources AND under several
-      // emails/phones (they enquire from a personal + an office address, call
-      // from a second number, etc.). We union every source row that shares an
-      // email OR a phone into a SINGLE identity, so the book never shows the
-      // same human twice. Each identity keeps the STRONGEST current business
-      // relation as its face: Customer (we sold) > Vendor (we buy) > Partner
-      // (referral) > Lead (enquiry) > standalone contact.
-      const all: UnifiedContact[] = [
-        ...fromCustomers, ...fromVendors, ...fromPartners, ...fromEmployees, ...fromLeads, ...fromImported,
-      ];
-
-      const PRIORITY: Record<ContactSource, number> = {
-        customer: 0, vendor: 1, partner: 2, employee: 3, lead: 4, imported: 5,
-      };
-      const normEmail = (e?: string | null): string | null => {
-        const s = (e ?? "").toLowerCase().trim();
-        return s.includes("@") ? s : null;
-      };
-      const normPhone = (p?: string | null): string | null => {
-        // India: match on the last 10 significant digits so +91 / 0 / spaced
-        // variants of the same number unify. Ignore anything shorter (too weak
-        // an identity signal — would wrongly merge unrelated people).
-        const d = (p ?? "").replace(/\D/g, "");
-        return d.length >= 10 ? d.slice(-10) : null;
-      };
-
-      // Union-Find over row indices, keyed by shared email/phone.
-      const parent = all.map((_, i) => i);
-      const find = (i: number): number => {
-        while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
-        return i;
-      };
-      const union = (a: number, b: number) => {
-        const ra = find(a), rb = find(b);
-        if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb);
-      };
-      const keyToRow = new Map<string, number>();
-      all.forEach((c, i) => {
-        for (const key of [
-          normEmail(c.email) && `e:${normEmail(c.email)}`,
-          normPhone(c.phone) && `p:${normPhone(c.phone)}`,
-          c.linkId && `k:${c.linkId}`,
-        ]) {
-          if (!key) continue;
-          const prev = keyToRow.get(key);
-          if (prev === undefined) keyToRow.set(key, i);
-          else union(prev, i);
-        }
+      return buildContactBook({
+        leads:     leadsData,
+        customers: customersData,
+        vendors:   vendorsData,
+        partners:  partnersData,
+        imported:  importedData,
+        employees: employeesData,
+        customerLinks: customerLinksData as unknown as BookCustomerLinkRow[],
       });
-
-      // Collapse each union group into one identity.
-      const groups = new Map<number, number[]>();
-      all.forEach((_, i) => {
-        const r = find(i);
-        (groups.get(r) ?? groups.set(r, []).get(r)!).push(i);
-      });
-
-      const combined: UnifiedContact[] = [];
-      for (const idxs of groups.values()) {
-        // Face = strongest relation; tie-break = most recent.
-        const rep = idxs
-          .map((i) => all[i])
-          .sort((a, b) =>
-            PRIORITY[a.source] - PRIORITY[b.source] ||
-            b.createdAt.localeCompare(a.createdAt),
-          )[0];
-
-        // Merge all reachable channels (primary first, deduped, order-stable).
-        const emails: string[] = [];
-        const phones: string[] = [];
-        const companies: string[] = [];
-        const seenE = new Set<string>();
-        const seenP = new Set<string>();
-        const seenC = new Set<string>();
-        const ordered = [rep, ...idxs.map((i) => all[i]).filter((c) => c !== rep)];
-        for (const c of ordered) {
-          const e = (c.email ?? "").trim();
-          const ek = normEmail(e);
-          if (e && ek && !seenE.has(ek)) { seenE.add(ek); emails.push(e); }
-          const p = (c.phone ?? "").trim();
-          const pk = normPhone(p);
-          if (p && pk && !seenP.has(pk)) { seenP.add(pk); phones.push(p); }
-          const co = (c.company ?? "").trim();
-          const ck = co.toLowerCase();
-          if (co && co !== "—" && !seenC.has(ck)) { seenC.add(ck); companies.push(co); }
-        }
-        // Prefer a real company name over a "—" placeholder from a weaker row.
-        const company =
-          rep.company && rep.company !== "—"
-            ? rep.company
-            : (idxs.map((i) => all[i]).find((c) => c.company && c.company !== "—")?.company ?? rep.company);
-
-        combined.push({
-          ...rep,
-          name:        rep.name ?? idxs.map((i) => all[i]).find((c) => c.name)?.name ?? null,
-          company,
-          email:       emails[0] ?? rep.email,
-          phone:       phones[0] ?? rep.phone,
-          emails,
-          phones,
-          companies,
-          mergedCount: idxs.length,
-        });
-      }
-
-      // Sort by created date desc
-      combined.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      return combined;
     },
   });
 }

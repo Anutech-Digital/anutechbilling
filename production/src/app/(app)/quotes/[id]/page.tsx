@@ -85,7 +85,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
-import { isOneTimeQuote } from "@/lib/quotes/service-period";
+import { extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote } from "@/lib/quotes/service-period";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -617,8 +617,15 @@ export default function QuoteDetailPage() {
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
   const addSeatsQuote = quote.is_add_seats === true;
+  /* R-811: a MONTH extension (3 months) is paid once too — its line kept the seats' annual
+     commitment and printed "Annual commitment · billed per year · ₹810/yr". */
+  const extFlags = { isExtension: quote.is_extension, extensionMonths: quote.extension_months };
+  const oneTimeQuote = isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off, ...extFlags });
+  const paidOnceLines = addSeatsQuote || isMonthExtension(extFlags);
+  const lineOnceNote = oneTimeLineNote({ isAddSeats: quote.is_add_seats, ...extFlags });
+  const extTitle = extensionTitle(extFlags);
   const linePer = (line: QuoteLineItem) =>
-    addSeatsQuote || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
+    paidOnceLines || !line.commitment ? "" : isAnnualTier(line.commitment) ? "/yr" : "/mo";
   const discount = Math.round(quote.subtotal * (quote.discount_pct / 100));
   const taxable = quote.subtotal - discount;
   /* R-804: GST shown = stored total − taxable, so Subtotal + GST = Total (₹853 + ₹153 = ₹1,006). */
@@ -737,7 +744,8 @@ export default function QuoteDetailPage() {
          the order, not as an offer with a validity window and Net-7 terms on it. */
       isPaid:        quoteIsPaid(quote),
       /* R-809: add-seats / one-off → "One-time charge", not "billed yearly". */
-      oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
+      oneTime:       oneTimeQuote,
+      extensionTitle: extTitle,
     });
   };
 
@@ -884,7 +892,7 @@ export default function QuoteDetailPage() {
               {quote.is_extension ? (
                 <>
                   <span>·</span>
-                  <Badge kind="warning">Extension · {Math.round((quote.extension_months ?? 12) / 12)} yr</Badge>
+                  <Badge kind="warning">{extTitle ?? "Extension"}</Badge>
                 </>
               ) : quote.is_renewal && (
                 <>
@@ -1498,8 +1506,8 @@ export default function QuoteDetailPage() {
                 </div>
                 <div className="text-xs text-ink-3 tabular-nums mt-0.5">
                   {line.qty} × {rupee(line.rate)}{per}
-                  {addSeatsQuote
-                    ? " · Pro-rata, one-time for the rest of the term"
+                  {paidOnceLines
+                    ? ` · ${lineOnceNote}`
                     : line.commitment && (isAnnualTier(line.commitment) ? " · Annual commitment" : " · Monthly, flexible")}
                 </div>
               </li>
@@ -1527,9 +1535,9 @@ export default function QuoteDetailPage() {
                       ₹3,240 dono sahi rate hain — farak sirf ikai ka hai, aur wahi
                       farak 12× ka hai. isAnnualTier wahi boundary hai jo PDF aur
                       chitthi use karte hain; yahan apna if likhna drift ka nyota. */}
-                  {addSeatsQuote ? (
+                  {paidOnceLines ? (
                     <span className="block text-xs text-ink-3 font-normal">
-                      Pro-rata · one-time charge for the rest of the term
+                      {lineOnceNote}
                     </span>
                   ) : line.commitment && (
                     <span className="block text-xs text-ink-3 font-normal">
@@ -1830,7 +1838,8 @@ export default function QuoteDetailPage() {
            quarterly quote as "billed yearly" with the year's CGST/SGST. */
         billingCycle={quote.billing_cycle as BillingCycle}
         /* R-809: add-seats / one-off → "One-time charge", not "Annual commit · billed yearly". */
-        oneTime={isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off })}
+        oneTime={oneTimeQuote}
+        extensionTitle={extTitle}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))
@@ -1936,7 +1945,8 @@ export default function QuoteDetailPage() {
               isExport:      pos.isExport,
               notes:         quote.notes ?? "",
               isRenewal:     quote.is_renewal,
-              oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
+              oneTime:       oneTimeQuote,
+              extensionTitle: extTitle,
             });
           }}
           related={{

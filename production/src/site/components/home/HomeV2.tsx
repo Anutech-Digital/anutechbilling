@@ -34,6 +34,7 @@ import { TRUST } from "@/site/lib/data/copy";
 import { editionDelta } from "@/site/lib/edition-delta";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { HOSTING_FROM_MO } from "@/site/lib/data/hosting-landing-v2";
+import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
 import { WHATSAPP_URL, COMPANY, SLA } from "@/site/lib/config";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { MAIL_OPTIONS } from "@/site/lib/data/copy";
@@ -126,7 +127,7 @@ const CROSS_ROWS: readonly { label: string; gw: string; ms: string; zoho: string
  *  simple line-art glyph that fills a tinted 16:9 band (consistent across all
  *  four — no half-empty photo slots). */
 export const CATALOGUE_V2: readonly { name: string; href: string; from: string; unit: string; gst: string; body: string; tags: string[]; cta: string; icon: "globe" | "server" | "lock" | "tag"; img?: string }[] = [
-  { name: "Domains", href: "/domains", from: "₹249", unit: "from · first year", gst: "+ GST 18%", body: "500+ extensions, register and renew price on one row.", tags: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], cta: "See domain rates", icon: "globe", img: "/domain-search.jpg" },
+  { name: "Domains", href: "/domains", from: DOMAIN_TEASER.from, unit: `from · ${DOMAIN_TEASER.tld} /year · ${DOMAIN_TEASER.renewNote}`, gst: "+ GST 18%", body: "500+ extensions, register and renew price on one row.", tags: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], cta: "See domain rates", icon: "globe", img: "/domain-search.jpg" },
   { name: "Web hosting", href: "/hosting", from: HOSTING_FROM_MO, unit: "from · /mo, billed yearly", gst: "+ GST 18%", body: "cPanel and LiteSpeed on NVMe, Mumbai and Bengaluru.", tags: ["CPANEL", "LITESPEED", "99.9% SLA"], cta: "See hosting plans", icon: "server", img: "/cat-hosting.png" },
   { name: "SSL & security", href: "/ssl", from: "₹0", unit: "free DV", gst: "No charge", body: "Free DV on every hosted site; wildcard and OV when needed.", tags: ["DV", "OV", "WILDCARD"], cta: "See SSL options", icon: "lock", img: "/cat-ssl.jpg" },
   { name: "Reseller program", href: "/reseller", from: "₹0", unit: "to join", gst: "No charge", body: "Published wholesale rates. No slabs, no advance deposit.", tags: ["NO DEPOSIT", "ONE RATE", "WHITE LABEL"], cta: "See the rate card", icon: "tag", img: "/cat-reseller.png" },

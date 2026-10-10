@@ -766,12 +766,16 @@ describe("Selecting a customer then typing a different one", () => {
     expect(document.querySelector("#contactName")).not.toBeNull();
   });
 
-  it("brings it back when the DOMAIN is typed over too", async () => {
+  /* R-818 (Abhishek, 10 Oct 2026) reversed this one: a customer can buy for a SECOND
+     domain, so typing over the domain keeps the picked customer. Only the name box or
+     "Clear Selection" detaches. */
+  it("keeps the picked customer when only the DOMAIN is typed over", async () => {
     existingCustomerRows.push({ id: "cust-acme", name: "Acme", domain: "acme.in" });
     renderDialog();
     await pickExisting("cust-acme");
-    set("subDomain", "ffimpex.in");
-    expect(document.querySelector("#contactName")).not.toBeNull();
+    set("subDomain", "acme-second.in");
+    expect(document.querySelector("#contactName")).toBeNull();
+    expect(document.querySelector<HTMLInputElement>("#custName")?.value).toBe("Acme");
   });
 
   it("REFUSES to create a new customer with no contact, even with a stale selection", async () => {
@@ -903,12 +907,16 @@ describe("Selecting a customer then typing a different one", () => {
     expect(document.querySelector("#contactName")).not.toBeNull();
   });
 
-  it("brings it back when the DOMAIN is typed over too", async () => {
+  /* R-818 (Abhishek, 10 Oct 2026) reversed this one: a customer can buy for a SECOND
+     domain, so typing over the domain keeps the picked customer. Only the name box or
+     "Clear Selection" detaches. */
+  it("keeps the picked customer when only the DOMAIN is typed over", async () => {
     existingCustomerRows.push({ id: "cust-acme", name: "Acme", domain: "acme.in" });
     renderDialog();
     await pickExisting("cust-acme");
-    set("subDomain", "ffimpex.in");
-    expect(document.querySelector("#contactName")).not.toBeNull();
+    set("subDomain", "acme-second.in");
+    expect(document.querySelector("#contactName")).toBeNull();
+    expect(document.querySelector<HTMLInputElement>("#custName")?.value).toBe("Acme");
   });
 
   it("REFUSES to create a new customer with no contact, even with a stale selection", async () => {

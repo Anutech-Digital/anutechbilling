@@ -92,8 +92,10 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
         return;
       }
       toast.success(`Extension quote ${json.quoteId} created`);
+      /* R-820: open the new quote, like Add seats. Navigate BEFORE closing — closing makes
+         /subscriptions unmount this dialog, and the check on 10 Oct stayed on /subscriptions. */
+      router.push(`/quotes/${encodeURIComponent(String(json.quoteId))}`);
       onOpenChange(false);
-      router.push(`/quotes/${json.quoteId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Network error");
     } finally {
