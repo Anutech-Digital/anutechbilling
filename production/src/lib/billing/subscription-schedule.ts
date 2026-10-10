@@ -47,15 +47,27 @@ export function subscriptionSchedule(sub: ScheduleFields): BillingPeriod[] {
   const cycle = sub.billing_cycle ?? "yearly";
   const termAmount = Math.max(0, Math.round((sub.mrr ?? 0) * termMonths));
 
-  let start: string | null = null;
-  if (sub.renewal_date) {
-    start = addMonths(followingTermStart(sub), -termMonths);
-  } else if (sub.start_date) {
-    start = sub.start_date.slice(0, 10);
-  }
+  const start = currentTermStart(sub);
   if (!start || termAmount <= 0) return [];
 
   return buildBillingSchedule({ startDate: start, termMonths, cycle, termAmount });
+}
+
+/**
+ * R-802 (10 Oct 2026): the first day of the CURRENT term — the exclusive term end
+ * (followingTermStart) minus term_months. The rule the schedule above lays its
+ * instalments from, exported so seat pro-rata and the seat effective-date check use it too.
+ *
+ * start_date is the day the subscription was FIRST sold and is never moved on renewal
+ * (record_payment only rolls renewal_date forward), so counting a term from it on a row
+ * renewed twice spans three years: start 15 Sep 2023 → renewal 14 Sep 2026 was a
+ * 1,096-day "term", a +1 seat charge came out at a third of the right amount, and a
+ * backdated effective date could reach into 2023. Falls back to start_date only when
+ * there is no renewal date; null when there is neither. term_months null = 12.
+ */
+export function currentTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (sub.renewal_date) return addMonths(followingTermStart(sub), -Math.max(1, sub.term_months ?? 12));
+  return sub.start_date ? sub.start_date.slice(0, 10) : null;
 }
 
 /**

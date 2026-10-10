@@ -17,7 +17,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule, followingTermStart } from "@/lib/billing/subscription-schedule";
+import { subscriptionSchedule, followingTermStart, currentTermStart } from "@/lib/billing/subscription-schedule";
 import { periodLastDay } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
@@ -55,7 +55,7 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
   const renewal = sub.renewal_date.slice(0, 10);
   /* R-801: days are counted to the EXCLUSIVE term end, never to renewal_date directly. */
   const termEnd = followingTermStart(sub);
-  const termDays = sub.start_date ? Math.max(1, daysBetweenDates(sub.start_date, termEnd)) : 365;
+  const termDays = seatTermDays(sub);
 
   if (isSplitBilled(sub.billing_cycle)) {
     const period = subscriptionSchedule(sub).find((p) => p.periodStart <= today && today < p.periodEnd);
@@ -84,4 +84,26 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
 export function seatTermEnd(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
   if (!sub.renewal_date) return null;
   return followingTermStart(sub);
+}
+
+/**
+ * R-802: the first day of the CURRENT term — currentTermStart() from the billing schedule
+ * (exclusive term end minus term_months), never the stored start_date. start_date is the
+ * day the subscription was first sold and stays put across renewals, so on a row renewed
+ * twice it is three years back. Null without a renewal date.
+ */
+export function seatTermStart(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (!sub.renewal_date) return null;
+  return currentTermStart(sub);
+}
+
+/**
+ * R-802: length of the CURRENT term in days — prorate()'s denominator. 365 (366 across a
+ * 29 Feb) for a 12-month term however many times it has been renewed, 730/731 for 24 months.
+ * 365 when there is no renewal date (nothing can be charged then anyway).
+ */
+export function seatTermDays(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): number {
+  const start = seatTermStart(sub);
+  const end = seatTermEnd(sub);
+  return start && end ? Math.max(1, daysBetweenDates(start, end)) : 365;
 }
