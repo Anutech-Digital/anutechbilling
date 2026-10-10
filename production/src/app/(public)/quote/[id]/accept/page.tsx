@@ -19,7 +19,7 @@ import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { QuoteAcceptView, type PublicQuote, type PublicLine } from "./quote-accept-view";
-import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
+import { isOneTimeQuote, quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { QuoteReplaced, replacementHref } from "./replaced";
 import { isBotUserAgent } from "@/lib/quotes/quote-intent";
 import { maybeAlertHotLead, recordQuoteView } from "@/lib/quotes/quote-views.server";
@@ -182,6 +182,8 @@ export default async function QuoteAcceptPage(props: Props) {
       isOneOff:        quote.is_one_off,
       extensionMonths: quote.extension_months,
     })),
+    /* R-809: paid once → "One-time charge", not "Annual commit · billed yearly". */
+    one_time: isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
   };
   const lineItems: PublicLine[] = ((quote.line_items ?? []) as QuoteLineItem[]).map((l) => ({
     id: l.id, name: l.name, qty: l.qty, rate: l.rate, commitment: l.commitment,

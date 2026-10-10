@@ -20,6 +20,7 @@ import { quoteIsPaid } from "./quote-document-kind";
 import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { isOneTimeQuote } from "@/lib/quotes/service-period";
 
 /**
  * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
@@ -309,5 +310,7 @@ export function buildQuotePdfProps(args: {
     /* R-034: the money is in, so this sheet is a record of a paid order, not an offer.
        Decided once, here, so the heading and the footer cannot disagree. */
     isPaid:        quoteIsPaid(quote),
+    /* R-809: add-seats / one-off → "One-time charge", not "billed yearly". */
+    oneTime:       isOneTimeQuote({ isAddSeats: quote.is_add_seats, isOneOff: quote.is_one_off }),
   };
 }

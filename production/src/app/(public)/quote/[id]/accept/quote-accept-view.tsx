@@ -24,6 +24,7 @@ import { whatsAppLink } from "@/lib/marketing/review-request";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { AcceptedPay } from "./accepted-pay";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 
 /** Customer-SAFE quote shape — no cost/margin. Built server-side in page.tsx. */
 export type PublicQuote = {
@@ -44,6 +45,9 @@ export type PublicQuote = {
   /** R-806: "covers 25 Sep 2026 to 31 Aug 2027" / "covers 12 months"; null = unknown,
    *  so no period is claimed. Built server-side by lib/quotes/service-period. */
   service_period?: string | null;
+  /** R-809: add-seats (pro-rata) or one-off — paid once, so no "billed yearly" schedule.
+   *  From isOneTimeQuote() in lib/quotes/service-period. */
+  one_time?: boolean;
 };
 export type PublicLine = {
   id: string;
@@ -127,6 +131,10 @@ export function QuoteAcceptView({
   const billingN    = cycleInvoicesPerYear(effectiveCycle);
   const billingUnit = cycleUnitLabel(effectiveCycle);
   const perInvoice  = billingN > 1;
+  /* R-809: a one-time charge (add-seats pro-rata, one-off) has no schedule. Its lines still
+     carry the seats' annual commitment, which printed "Annual commit · billed yearly". */
+  const oneTime  = quote.one_time === true;
+  const schedule = (c: LineCommitment | undefined) => (oneTime ? ONE_TIME_SCHEDULE : scheduleLabel(c, effectiveCycle));
 
   // Per-line figures (annual) in the display currency — rounded unit → amount.
   const dispLines = lineItems.map((line) => {
@@ -524,7 +532,7 @@ export function QuoteAcceptView({
             </div>
             <div className="flex justify-between">
               <span className="text-ink-3">Billing</span>
-              <span>{scheduleLabel(firstCommitment, effectiveCycle)}</span>
+              <span>{schedule(firstCommitment)}</span>
             </div>
           </div>
           <Button
@@ -632,11 +640,11 @@ export function QuoteAcceptView({
               {lineItems.length > 0 && firstCommitment && (
                 <>
                   <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-1.5">Billing schedule</p>
-                  <p className="text-sm">{scheduleLabel(firstCommitment, effectiveCycle)}</p>
-                  {isFlex && (
+                  <p className="text-sm" data-testid="billing-schedule">{schedule(firstCommitment)}</p>
+                  {isFlex && !oneTime && (
                 <p className="text-2xs text-ink-3">Pay-as-you-go — har mahine apni invoice, jab tak chalu rakhein</p>
               )}
-              {billingN > 1 && !isFlex && (
+              {billingN > 1 && !isFlex && !oneTime && (
                     <p className="text-2xs text-ink-3">{billingN} invoices per year</p>
                   )}
                 </>
@@ -713,7 +721,7 @@ export function QuoteAcceptView({
                           {r.line.name}
                           {r.line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                         </p>
-                        {r.line.commitment && (
+                        {r.line.commitment && !oneTime && (
                           <p className="text-2xs text-ink-3 mt-0.5">{scheduleLabel(r.line.commitment, effectiveCycle)}</p>
                         )}
                         {r.breakdown && r.included && (
@@ -771,7 +779,7 @@ export function QuoteAcceptView({
                             {line.name}
                             {line.optional && <span className="ml-1.5 text-3xs uppercase tracking-wider text-ink-3">optional</span>}
                           </p>
-                          {line.commitment && (
+                          {line.commitment && !oneTime && (
                             <p className="text-2xs text-ink-3 mt-0.5">
                               {scheduleLabel(line.commitment, effectiveCycle)}
                             </p>
