@@ -3,7 +3,7 @@
  * Pins what record_payment reads: is_renewal, is_extension, extension_months, subtotal and
  * amount (total incl. GST), and that subtotal + GST = total for a month quote.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { createExtensionQuote } from "./create-extension-quote";
 import { grossAmount } from "@/lib/quotes/amounts";
 
@@ -86,5 +86,39 @@ describe("createExtensionQuote", () => {
     const r = await createExtensionQuote({ ...base, supabase: f.supabase, months: 3 });
     expect(r).toMatchObject({ ok: false, code: "already_open" });
     expect(f.inserted).toEqual([]);
+  });
+});
+
+/* R-820 — an extension quote was valid until renewal + grace days: Q-F588-27-0009 (local,
+   10 Oct 2026) was open until 14 Sept 2027, ~339 days. Now 30 days from today, capped at the
+   current renewal date. */
+describe("createExtensionQuote — expiry (R-820)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const at = (iso: string) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(iso));
+  };
+
+  it("renewal far away: valid for 30 days from today, not until renewal + grace", async () => {
+    at("2026-10-10T06:00:00Z");                       // 11:30 IST, 10 Oct
+    const f = fakeSupabase();
+    await createExtensionQuote({ ...base, renewalDate: "2027-09-07", supabase: f.supabase, years: 1 });
+    expect(f.inserted[0].created_date).toBe("2026-10-10");
+    expect(f.inserted[0].expires_date).toBe("2026-11-09");
+  });
+
+  it("renewal sooner than 30 days: expires on the renewal date", async () => {
+    at("2026-10-10T06:00:00Z");
+    const f = fakeSupabase();
+    await createExtensionQuote({ ...base, renewalDate: "2026-10-20", supabase: f.supabase, months: 3 });
+    expect(f.inserted[0].expires_date).toBe("2026-10-20");
+  });
+
+  it("before 05:30 IST still counts from the IST date", async () => {
+    at("2026-10-09T20:00:00Z");                       // 01:30 IST, 10 Oct
+    const f = fakeSupabase();
+    await createExtensionQuote({ ...base, renewalDate: "2027-09-07", supabase: f.supabase, years: 1 });
+    expect(f.inserted[0].created_date).toBe("2026-10-10");
+    expect(f.inserted[0].expires_date).toBe("2026-11-09");
   });
 });
