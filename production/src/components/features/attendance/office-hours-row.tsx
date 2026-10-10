@@ -7,6 +7,8 @@
  * Pardeep, 9 Oct 2026: 10:00–18:00, late after 15 minutes, under 4 hours is a half-day —
  * the same for every employee. Late is shown only; a half-day counts 0.5 in payroll's
  * loss-of-pay suggestion, so the row says that in words.
+ *
+ * R-438: the Office location row (geofence) renders right below it.
  */
 import * as React from "react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useSetShiftRules, useShiftRules } from "@/lib/queries/attendance-shift";
 import { DEFAULT_SHIFT, type ShiftRules } from "@/lib/attendance/shift";
+import { OfficeLocationRow } from "./office-location-row";
 
 export function OfficeHoursRow() {
   const rulesQ = useShiftRules();
@@ -31,6 +34,7 @@ export function OfficeHoursRow() {
   const dirty = `${draft.shiftStart}|${draft.shiftEnd}|${draft.lateGraceMinutes}|${draft.halfDayUnderHours}` !== savedKey;
 
   return (
+    <>
     <div className="mt-3 border-t border-hairline pt-3">
       <div className="text-sm font-medium text-ink flex items-center gap-2">
         <Icon name="clock" size={14} className="text-ink-3" />
@@ -72,5 +76,8 @@ export function OfficeHoursRow() {
         <p className="mt-1 text-xs text-ink-3">Only the owner can change office hours.</p>
       )}
     </div>
+    {/* R-438: office location sits under office hours in the same settings card. */}
+    <OfficeLocationRow />
+    </>
   );
 }

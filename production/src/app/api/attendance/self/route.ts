@@ -9,6 +9,10 @@
  *                 validate_presence_code() — this route never sees the seed.
  *   • Proof     — when require_selfie is on, a live selfie is captured; GPS is
  *                 always stored (soft audit signal) if the phone shares it.
+ *   • Location  — R-438: when the owner set the office location, mark_self_attendance()
+ *                 measures the distance IN THE DATABASE: block refuses (403, "You are about
+ *                 500 m from the office"), flag marks + flag outside_office. The office code
+ *                 is checked there again, so calling the RPC directly skips nothing.
  *
  *   • Device    — R-606: when require_device is on, the check-in must carry a passkey
  *                 signature (`deviceAssertion`) from an OWNER-APPROVED device of THIS
@@ -17,7 +21,8 @@
  *                 device (a synced passkey follows only their own Google/Apple account), so
  *                 another laptop cannot sign. When off: the old soft token + new_device flag.
  *
- * Flow: validate presence → device passkey (if required) → mark_self_attendance() → attach
+ * Flow: validate presence → device passkey (if required) → mark_self_attendance(lat, lng,
+ * accuracy, code) → attach
  * selfie + geo to the day's row (best-effort; never blocks the mark once recorded).
  */
 import crypto from "node:crypto";
@@ -26,6 +31,7 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { compareFaces } from "@/lib/attendance/face";
 import { officeNetworkDecision } from "@/lib/attendance/office-network";
 import { requestIp } from "@/lib/attendance/request-ip";
+import { accuracyM, coord, markErrorReply } from "@/lib/attendance/geofence";
 import { deviceError } from "@/lib/attendance/webauthn";
 import { getCaller, verifyDeviceAssertion } from "../device/_server";
 import { presenceGateReply } from "./presence-gate";
@@ -38,9 +44,10 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const photo = body?.photo as string | undefined; // data:image/jpeg;base64,...
   const code = typeof body?.code === "string" ? body.code.trim() : "";
-  const lat = typeof body?.lat === "number" ? body.lat : null;
-  const lng = typeof body?.lng === "number" ? body.lng : null;
-  const accuracy = typeof body?.accuracy === "number" ? body.accuracy : null;
+  // R-438: out-of-range or non-numeric coordinates count as "no location".
+  const lat = coord(body?.lat, 90);
+  const lng = coord(body?.lng, 180);
+  const accuracy = accuracyM(body?.accuracy);
   const deviceRaw = typeof body?.device === "string" ? body.device.trim() : "";
   const deviceHash = deviceRaw ? crypto.createHash("sha256").update(deviceRaw).digest("hex").slice(0, 32) : null;
 
@@ -126,8 +133,18 @@ export async function POST(request: NextRequest) {
     approvedDeviceId = check.deviceId;
   }
 
-  const { data, error } = await supabase.rpc("mark_self_attendance");
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  /* R-438: the office-location check (and the office code again) run INSIDE the function, so a
+     direct RPC call cannot skip them. The no-argument version is service-role only now.
+     Generated types say number for the coordinates; the function takes NULL = no location. */
+  const markArgs = { p_lat: lat, p_lng: lng, p_accuracy: accuracy, p_code: code || undefined };
+  const { data, error } = await supabase.rpc(
+    "mark_self_attendance",
+    markArgs as unknown as { p_lat: number; p_lng: number; p_accuracy: number; p_code?: string },
+  );
+  if (error) {
+    const reply = markErrorReply(error);
+    return NextResponse.json(reply.body, { status: reply.status });
+  }
   const action = data as unknown as string;
 
   // Attach selfie + geo (best-effort — attendance is already recorded).

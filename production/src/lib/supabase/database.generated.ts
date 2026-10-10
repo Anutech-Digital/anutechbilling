@@ -1854,8 +1854,12 @@ export type Database = {
       attendance_settings: {
         Row: {
           allowed_ips: string[]
+          geofence_mode: string
           half_day_under_hours: number
           ingest_key: string | null
+          office_lat: number | null
+          office_lng: number | null
+          office_radius_m: number
           late_grace_minutes: number
           presence_secret: string | null
           require_device: boolean
@@ -1870,8 +1874,12 @@ export type Database = {
         }
         Insert: {
           allowed_ips?: string[]
+          geofence_mode?: string
           half_day_under_hours?: number
           ingest_key?: string | null
+          office_lat?: number | null
+          office_lng?: number | null
+          office_radius_m?: number
           late_grace_minutes?: number
           presence_secret?: string | null
           require_device?: boolean
@@ -1886,8 +1894,12 @@ export type Database = {
         }
         Update: {
           allowed_ips?: string[]
+          geofence_mode?: string
           half_day_under_hours?: number
           ingest_key?: string | null
+          office_lat?: number | null
+          office_lng?: number | null
+          office_radius_m?: number
           late_grace_minutes?: number
           presence_secret?: string | null
           require_device?: boolean
@@ -14548,7 +14560,17 @@ export type Database = {
         Args: { p_paid_on?: string; p_run_id: string }
         Returns: undefined
       }
-      mark_self_attendance: { Args: never; Returns: string }
+      mark_self_attendance:
+        | { Args: never; Returns: string }
+        | {
+            Args: {
+              p_accuracy: number
+              p_code?: string
+              p_lat: number
+              p_lng: number
+            }
+            Returns: string
+          }
       match_existing_customer: {
         Args: {
           p_company: string
@@ -15190,6 +15212,15 @@ export type Database = {
         Returns: Json
       }
       set_my_employee: { Args: { p_employee_id: string }; Returns: undefined }
+      set_office_location: {
+        Args: {
+          p_lat: number
+          p_lng: number
+          p_mode: string
+          p_radius_m: number
+        }
+        Returns: undefined
+      }
       set_opening_balances: {
         Args: {
           p_as_of?: string
