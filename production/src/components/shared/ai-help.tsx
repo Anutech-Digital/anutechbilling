@@ -161,11 +161,21 @@ function savePanelSize(s: PanelSize) {
 }
 const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { w: window.innerWidth, h: window.innerHeight });
 
-/** R-827: room a dialog needs left of the docked panel (max-w-xl 576px + margins). */
-export const DIALOG_ROOM = 640;
-/** How far dialogs shift for the docked panel: its width on a desktop with room to spare, else 0 (dialog stays centred). */
-export function helpDockWidth(panelW: number, vpW: number): number {
-  return vpW >= 768 && vpW - panelW >= DIALOG_ROOM ? panelW : 0;
+/** R-827: narrowest a dialog may be squeezed to beside the docked panel; below this the panel just overlays. */
+export const DIALOG_MIN_ROOM = 360;
+/** 1rem each side of a dialog that sits left of the panel. */
+const DIALOG_SIDE_GAP = 32;
+export interface HelpDock { shift: number; room: number }
+/**
+ * R-827: how dialogs make way for the docked panel (desktop only). shift = the panel width
+ * (dialogs centre in the space left of it); room = the widest a dialog may be there. At 1024px
+ * with the normal 420px panel: room 572px, so a 640px dialog narrows instead of going under help.
+ * Null = no room (phone, or a very wide panel) — dialogs stay centred and help overlays them.
+ */
+export function helpDock(panelW: number, vpW: number): HelpDock | null {
+  if (vpW < 768) return null;
+  const room = vpW - panelW - DIALOG_SIDE_GAP;
+  return room >= DIALOG_MIN_ROOM ? { shift: panelW, room } : null;
 }
 
 /**
@@ -335,15 +345,26 @@ export function AiHelp() {
   }, [open]);
   const shownSize = clampPanelSize(size, viewport());
   const large = isLargePanel(shownSize);
-  /* R-827: the panel is docked on the right. When the window is wide enough, dialogs centre
-     in the space left of it (ui/dialog reads --ai-help-dock), so both are visible side by side. */
-  const dockW = showing ? helpDockWidth(shownSize.w, viewport().w) : 0;
+  /* R-827: the panel is docked on the right. On a desktop, dialogs centre in the space left of
+     it (ui/dialog reads --ai-help-dock) and are never wider than that space (globals.css reads
+     --ai-help-room under html[data-ai-help-docked]), so both are usable side by side. */
+  const dock = showing ? helpDock(shownSize.w, viewport().w) : null;
+  const dockShift = dock?.shift ?? 0;
+  const dockRoom = dock?.room ?? 0;
   React.useEffect(() => {
     const root = document.documentElement;
-    if (dockW > 0) root.style.setProperty("--ai-help-dock", `${dockW}px`);
-    else root.style.removeProperty("--ai-help-dock");
-    return () => { root.style.removeProperty("--ai-help-dock"); };
-  }, [dockW]);
+    const clear = () => {
+      root.style.removeProperty("--ai-help-dock");
+      root.style.removeProperty("--ai-help-room");
+      root.removeAttribute("data-ai-help-docked");
+    };
+    if (dockShift > 0) {
+      root.style.setProperty("--ai-help-dock", `${dockShift}px`);
+      root.style.setProperty("--ai-help-room", `${dockRoom}px`);
+      root.setAttribute("data-ai-help-docked", "");
+    } else clear();
+    return clear;
+  }, [dockShift, dockRoom]);
   function toggleSize() {
     /* Kept unclamped: "Expand" stays full height when the window later grows (clamped on show). */
     const next = large ? PANEL_NORMAL : PANEL_LARGE;
@@ -895,10 +916,12 @@ export function AiHelp() {
           )}
         </section>
       )}
-      {open && minimized && (
-        /* R-827: the small bar — bottom right, above the phone tab bar. */
-        <div role="region" aria-label="Help (minimized)"
-          className="fixed z-[65] right-3 bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)] md:bottom-4 md:right-4 flex items-center gap-1 rounded-full border border-hairline bg-paper shadow-2xl pl-1 pr-1">
+      {open && (
+        /* R-827: the small bar — bottom right, above the phone tab bar. It stays in the page
+           (just hidden) while help is shown: if a click on it removed it, an open dialog would
+           no longer know the click came from help and would close (browser check, 11 Oct). */
+        <div role="region" aria-label="Help (minimized)" hidden={!minimized}
+          className={`${minimized ? "flex" : "hidden"} fixed z-[65] right-3 bottom-[calc(var(--bottom-nav-h,56px)+0.75rem)] md:bottom-4 md:right-4 items-center gap-1 rounded-full border border-hairline bg-paper shadow-2xl pl-1 pr-1`}>
           <button type="button" aria-label="Open help"
             className="inline-flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-ink hover:bg-paper-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
             onClick={() => setHelpUi({ minimized: false })}>

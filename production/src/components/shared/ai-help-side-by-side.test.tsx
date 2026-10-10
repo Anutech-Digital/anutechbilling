@@ -18,9 +18,9 @@ vi.mock("@/lib/ai/page-test-runs", async (orig) => ({ ...(await orig<typeof impo
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 import * as React from "react";
-import { AiHelp, AiHelpButton, helpDockWidth, DIALOG_ROOM } from "./ai-help";
+import { AiHelp, AiHelpButton, helpDock, DIALOG_MIN_ROOM } from "./ai-help";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { isInHelpPanel, keepOpenForHelp, HELP_PANEL_SELECTOR } from "@/components/ui/help-panel-guard";
+import { isInHelpPanel, keepOpenForHelp, noteHelpPress, HELP_PANEL_SELECTOR } from "@/components/ui/help-panel-guard";
 import { HELP_SELF } from "./help-shot";
 
 beforeEach(() => {
@@ -42,9 +42,9 @@ afterEach(() => {
   cleanup();
 });
 
-function OnboardDialog({ onOpenChange }: { onOpenChange: (v: boolean) => void }) {
+function OnboardDialog({ onOpenChange, open = true }: { onOpenChange: (v: boolean) => void; open?: boolean }) {
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>1-Click Onboard Subscription</DialogTitle>
         <DialogDescription>Add a customer and subscription.</DialogDescription>
@@ -81,6 +81,28 @@ describe("help-panel guard", () => {
     guard(fromPage);
     expect(fromPage.defaultPrevented).toBe(false);
     expect(own).toHaveBeenCalledTimes(2);
+    help.remove(); page.remove();
+  });
+
+  it("a help button pressed and then removed (the minimized bar on click) still counts as help", () => {
+    const help = document.createElement("div");
+    help.setAttribute("data-ai-help", "");
+    const bar = document.createElement("button");
+    help.appendChild(bar);
+    document.body.append(help);
+    noteHelpPress(bar);
+    bar.remove(); /* React removed it in the click, BEFORE Radix's deferred "outside" check */
+    expect(isInHelpPanel(bar)).toBe(false);
+    const late = new CustomEvent("x", { cancelable: true, detail: { originalEvent: { target: bar } } });
+    keepOpenForHelp()(late);
+    expect(late.defaultPrevented).toBe(true);
+    /* a later press on the page clears it: a detached page element does not count */
+    const page = document.createElement("button");
+    document.body.append(page);
+    noteHelpPress(page);
+    const fromPage = new CustomEvent("x", { cancelable: true, detail: { originalEvent: { target: bar } } });
+    keepOpenForHelp()(fromPage);
+    expect(fromPage.defaultPrevented).toBe(false);
     help.remove(); page.remove();
   });
 });
@@ -121,6 +143,46 @@ describe("AI Help with a dialog open (R-827)", () => {
     await flush();
     expect(document.activeElement).toBe(box);
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("dialog open → Minimize → click the Help bar: the dialog stays open and the typed value is kept (R-827 follow-up)", async () => {
+    const onOpenChange = vi.fn();
+    function LiveDialog() {
+      const [open, setOpen] = React.useState(true);
+      return <OnboardDialog open={open} onOpenChange={(v) => { onOpenChange(v); setOpen(v); }} />;
+    }
+    render(<><AiHelpButton /><AiHelp /><LiveDialog /></>);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Help —/, hidden: true }));
+    await flush();
+
+    const contact = screen.getByLabelText("Contact Person") as HTMLInputElement;
+    act(() => { contact.focus(); });
+    fireEvent.change(contact, { target: { value: "Ravi Kumar" } });
+
+    /* press Minimize the way a mouse does */
+    const press = async (el: HTMLElement) => {
+      fireEvent.pointerDown(el, { button: 0, pointerType: "mouse" });
+      fireEvent.mouseDown(el, { button: 0 });
+      act(() => { el.focus(); });
+      fireEvent.pointerUp(el, { button: 0, pointerType: "mouse" });
+      fireEvent.mouseUp(el, { button: 0 });
+      fireEvent.click(el, { button: 0 });
+      await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+    };
+    await press(screen.getByRole("button", { name: "Minimize help", hidden: true }));
+    expect(screen.getByRole("region", { name: "Help (minimized)", hidden: true })).toBeTruthy();
+    expect(screen.queryByLabelText("Contact Person")).not.toBeNull();
+
+    /* click the small bar to bring help back */
+    await press(screen.getByRole("button", { name: "Open help", hidden: true }));
+    expect(screen.getByRole("dialog", { name: "Help", hidden: true })).toBeTruthy();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    const still = screen.getByLabelText("Contact Person") as HTMLInputElement;
+    expect(still.value).toBe("Ravi Kumar");
+    /* and back into the dialog to keep typing */
+    act(() => { still.focus(); });
+    expect(document.activeElement).toBe(still);
   });
 
   it("a pointer-down on the page outside both still closes the dialog (normal behaviour kept)", async () => {
@@ -165,25 +227,44 @@ describe("Minimize (R-827)", () => {
     expect(cls).toContain("z-[65]");
   });
 
-  it("sets --ai-help-dock while shown on a wide screen, clears it when minimized or closed", () => {
+  it("publishes the dock while shown on a desktop, clears it when minimized or closed", () => {
     const root = document.documentElement;
     render(<><AiHelpButton /><AiHelp /></>);
     fireEvent.click(screen.getByRole("button", { name: /^Help —/ }));
     expect(root.style.getPropertyValue("--ai-help-dock")).toBe("420px");
+    expect(root.style.getPropertyValue("--ai-help-room")).toBe(`${1440 - 420 - 32}px`);
+    expect(root.hasAttribute("data-ai-help-docked")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Minimize help" }));
     expect(root.style.getPropertyValue("--ai-help-dock")).toBe("");
+    expect(root.hasAttribute("data-ai-help-docked")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Close help" }));
     expect(root.style.getPropertyValue("--ai-help-dock")).toBe("");
   });
+
+  it("at 1024px a dialog is capped to the space left of help (its right column is not under the panel)", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    render(<><AiHelpButton /><AiHelp /><OnboardDialog onOpenChange={() => {}} /></>);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Help —/, hidden: true }));
+    await flush();
+    const dlg = screen.getByRole("dialog", { name: "1-Click Onboard Subscription" });
+    /* 1024 - 420 panel - 32 gap = 572px; jsdom has no Tailwind max-width, so the cap alone shows */
+    expect(dlg.style.getPropertyValue("max-width")).toBe("572px");
+    expect(dlg.style.getPropertyPriority("max-width")).toBe("important");
+    fireEvent.click(screen.getByRole("button", { name: "Minimize help", hidden: true }));
+    await flush();
+    expect(dlg.style.getPropertyValue("max-width")).toBe("");
+  });
 });
 
-describe("helpDockWidth", () => {
-  it("shifts dialogs only when a dialog still fits left of the panel", () => {
-    expect(helpDockWidth(420, 1440)).toBe(420);
-    expect(helpDockWidth(420, 420 + DIALOG_ROOM)).toBe(420);
-    expect(helpDockWidth(420, 420 + DIALOG_ROOM - 1)).toBe(0);
-    expect(helpDockWidth(840, 1280)).toBe(0);
-    expect(helpDockWidth(360, 700)).toBe(0); /* phone/tablet: dialog stays centred */
+describe("helpDock", () => {
+  it("dialogs centre left of the panel and narrow to the room there; no dock without room", () => {
+    expect(helpDock(420, 1440)).toEqual({ shift: 420, room: 988 });
+    expect(helpDock(420, 1024)).toEqual({ shift: 420, room: 572 });
+    expect(helpDock(420, 420 + 32 + DIALOG_MIN_ROOM)).toEqual({ shift: 420, room: DIALOG_MIN_ROOM });
+    expect(helpDock(420, 420 + 32 + DIALOG_MIN_ROOM - 1)).toBeNull();
+    expect(helpDock(840, 1024)).toBeNull(); /* expanded panel on a small window: help overlays */
+    expect(helpDock(360, 700)).toBeNull(); /* phone/tablet: dialog stays a bottom sheet */
   });
 });
 
