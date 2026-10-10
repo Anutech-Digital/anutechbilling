@@ -11,9 +11,10 @@
 --            owner sees none of it
 --
 -- Mutations measured 10 Oct (each turns this red): owner check widened back to manager →
--- FAIL 3; audit insert removed from the function → FAIL 1; table UPDATE grant given back to
--- authenticated → FAIL 8; audit table opened for writes (grant + permissive policy) → FAIL 10;
--- reason check removed from the function → the table's own reason check errors the run.
+-- FAIL 3; audit insert removed from the function → FAIL 1; direct-write trigger dropped →
+-- FAIL 8 (the test hands the table grants back first, as cloudsql/09 would); audit table
+-- opened for writes (grant + permissive policy) → FAIL 10; reason check removed from the
+-- function → the table's own reason check errors the run.
 
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -133,25 +134,34 @@ begin
   end if;
 
   -- ── DIRECT writes through the API: refused for every login, owner included ────
+  --    Even with the table privileges handed back (what cloudsql/09 does on a re-run), the
+  --    trigger refuses — the grant revoke is only the first wall.
+  reset role;
+  grant insert, update, delete on public.attendance to authenticated;
+  set local role authenticated;
   foreach who in array array['43900000-0000-4000-8000-00000000000a', '43900000-0000-4000-8000-00000000000b',
                              '43900000-0000-4000-8000-00000000000d'] loop
     perform set_config('request.jwt.claims', json_build_object('sub', who, 'role', 'authenticated')::text, true);
-    v_err := false;
+    -- refused = the trigger raises (owner / manager) or RLS hides the row (the employee): 0 rows
+    v_n := 0;
     begin
       update public.attendance set check_out = check_out + interval '2 hours' where employee_id = c_emp;
-    exception when insufficient_privilege then v_err := true; end;
-    if not v_err then raise exception 'FAIL 8: % changed check_out directly', who; end if;
+      get diagnostics v_n = row_count;
+    exception when insufficient_privilege then v_n := 0; end;
+    if v_n <> 0 then raise exception 'FAIL 8: % changed check_out directly', who; end if;
     v_err := false;
     begin
       insert into public.attendance (tenant_id, employee_id, work_date, check_in, source)
         values ('43900000-0000-4000-8000-000000000001', c_emp, d - 1, now() - interval '3 days', 'manual');
     exception when insufficient_privilege then v_err := true; end;
     if not v_err then raise exception 'FAIL 8: % inserted attendance directly', who; end if;
-    v_err := false;
+    -- delete: no policy left → RLS hides the row (0 rows) or the trigger refuses; either way it stays
+    v_n := 0;
     begin
       delete from public.attendance where employee_id = c_emp;
-    exception when insufficient_privilege then v_err := true; end;
-    if not v_err then raise exception 'FAIL 8: % deleted attendance directly', who; end if;
+      get diagnostics v_n = row_count;
+    exception when insufficient_privilege then v_n := 0; end;
+    if v_n <> 0 then raise exception 'FAIL 8: % deleted attendance directly', who; end if;
   end loop;
 
   -- review queue still works for a manager

@@ -20,7 +20,9 @@
 --   2. `authenticated` loses INSERT / DELETE / TRUNCATE and UPDATE on every column except
 --      reviewed_at / reviewed_by (the review queue, still owner + manager + money roles via
 --      the R-601 policy). So no login — not even the owner — can rewrite check_in / check_out
---      straight through the REST API without a reason and an audit row. Employees still mark
+--      straight through the REST API without a reason and an audit row. The same rule is also
+--      a BEFORE trigger (attendance_direct_write_guard), so a later grant / policy re-run
+--      cannot reopen it; the R-601 insert / delete policies are dropped. Employees still mark
 --      through the SECURITY DEFINER RPCs (mark_attendance, mark_self_attendance,
 --      undo_my_last_punch) and the server's service-role client, which grants do not touch.
 --      Measured before: no app code writes attendance directly as `authenticated` except the
@@ -72,6 +74,41 @@ grant all on table public.attendance_corrections to service_role;
 -- ── 2. no direct time edits through the API ──────────────────────────────────────
 revoke insert, update, delete, truncate on table public.attendance from authenticated;
 grant update (reviewed_at, reviewed_by) on public.attendance to authenticated;
+
+/* Grants alone are not enough: cloudsql/09-grant-what-policies-allow.sql hands a table back
+   the privileges its policies describe, and cloudsql/05 can restore the old tenant-only write
+   policies (measured 10 Oct: the local DB got table UPDATE back after this migration). So the
+   rule also lives in a trigger, which no grant or policy re-run can undo. It fires only for
+   statements run AS `authenticated` — the REST API. SECURITY DEFINER functions (marking RPCs,
+   correct_attendance) run as their owner and the server's client as service_role, so they
+   pass. */
+drop policy if exists attendance_insert_hr_roles on public.attendance;
+drop policy if exists attendance_delete_hr_roles on public.attendance;
+
+create or replace function public.attendance_direct_write_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $function$
+begin
+  if current_user <> 'authenticated' then
+    return case when tg_op = 'DELETE' then old else new end;
+  end if;
+  if tg_op <> 'UPDATE'
+     or (to_jsonb(new) - 'reviewed_at' - 'reviewed_by') is distinct from (to_jsonb(old) - 'reviewed_at' - 'reviewed_by') then
+    raise exception 'Attendance times can only be changed by the owner, with a reason (Fix attendance).'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$function$;
+
+revoke all on function public.attendance_direct_write_guard() from public, anon, authenticated;
+
+drop trigger if exists trg_attendance_direct_write_guard on public.attendance;
+create trigger trg_attendance_direct_write_guard
+  before insert or update or delete on public.attendance
+  for each row execute function public.attendance_direct_write_guard();
 
 -- ── 1. owner-only correction, with the audit row ─────────────────────────────────
 create or replace function public.correct_attendance(
