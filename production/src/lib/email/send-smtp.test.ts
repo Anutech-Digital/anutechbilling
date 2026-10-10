@@ -6,6 +6,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { EmailLogEntry } from "./log";
 import type { EmailSendResult } from "./send";
+// R-541: imported statically, not with `await import("./send")` inside beforeEach. A dynamic
+// import there made the FIRST test pay for loading send.ts and its whole graph (AI autonomy,
+// transports, …) inside the 10s hook budget; under a full parallel `vitest run` that load
+// queues behind every other file and timed out. A static import loads during collection, which
+// has no per-test timeout. vi.mock calls are hoisted above it, so the doubles still apply.
+import { sendEmail, isEmailConfigured } from "./send";
 
 const recorded: Array<{ entry: EmailLogEntry; result: EmailSendResult }> = [];
 vi.mock("./log", () => ({
@@ -37,8 +43,6 @@ const fetchSpy = vi.fn();
 const TENANT = "5e7d0000-0000-4000-8000-00000000a1a1";
 const msg = { to: "pawan@anutech.in", subject: "Renewal due", text: "t", route: { tenantId: TENANT, messageClass: "reminder" as const } };
 
-let sendEmail: typeof import("./send").sendEmail;
-let isEmailConfigured: typeof import("./send").isEmailConfigured;
 
 function smtpOn() {
   vi.stubEnv("SMTP_HOST", "smtp.example.test");
@@ -48,7 +52,7 @@ function smtpOn() {
   vi.stubEnv("FROM_EMAIL", "noreply@anutech.in");
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   recorded.length = 0;
   sendViaGmail.mockReset();
   sendViaSmtp.mockReset().mockResolvedValue({ ok: true, messageId: "<m1@x>" });
@@ -58,7 +62,6 @@ beforeEach(async () => {
   tokenRow = null;
   vi.stubEnv("RESEND_API_KEY", "re_test_key");
   for (const k of ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "FROM_EMAIL"]) vi.stubEnv(k, "");
-  ({ sendEmail, isEmailConfigured } = await import("./send"));
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
