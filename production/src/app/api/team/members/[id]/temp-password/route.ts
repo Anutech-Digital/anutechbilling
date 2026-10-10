@@ -9,7 +9,7 @@
  *   2. caller AND target re-read from public.users with the admin client — the target only
  *      within the caller's tenant — and decideTempPassword() refuses non-owners, other
  *      workspaces, owners and yourself (403). Nothing from the client is trusted for this.
- *   3. password: owner-typed (≥12, normal rules) or generated (16 random chars)
+ *   3. password: owner-typed (≥8, normal rules) or generated (16 random chars)
  *   4. audit row FIRST (activity_log: who, whom, when — never the password). If it cannot be
  *      written the password is not changed, so there is no unaudited change.
  *   5. auth admin update with the service role: password + app_metadata.must_change_password

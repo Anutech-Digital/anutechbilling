@@ -128,6 +128,7 @@ const ACTOR_AUDITED = [
   // team
   "team/join-requests/[id]",
   "team/members/[id]/temp-password",
+  "team/invite", // R-534: invite with a temporary password creates the login
   "academy/apprentices/[id]/login",
   // customers + documents
   "contacts/[id]/promote",

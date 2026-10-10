@@ -63,6 +63,17 @@ export function parseAddedMigrations(text) {
 }
 
 /**
+ * R-540 (10 Oct 2026): staging (R-161) keeps applied migrations as prisma/migrations/<name>/migration.sql,
+ * so a supabase/migrations/<name>.sql that arrives from manager-pardeep may already be there. Those are
+ * not new — they made the dry run ask for a DB step it did not need.
+ * `lsTreeText` = `git ls-tree --name-only <staging> production/prisma/migrations/` output.
+ */
+export function dropAlreadyInPrisma(migrations, lsTreeText) {
+  const have = new Set(String(lsTreeText ?? "").split(/\r?\n/).map((l) => l.trim().replace(/\\/g, "/").split("/").pop()).filter(Boolean));
+  return migrations.filter((m) => !have.has(m.split("/").pop().replace(/\.sql$/, "")));
+}
+
+/**
  * `gh run list --json headSha,status,conclusion` (newest first) → Map sha → runs (newest first).
  */
 export function groupRunsBySha(text) {
@@ -244,8 +255,11 @@ function main() {
   if (pick && !alreadyInStaging) {
     const subjects = git(["log", "--format=%s", `${REMOTE}/${STAGING}..${pick}`], { cwd: root }).split(/\r?\n/).filter(Boolean);
     cards = extractCardIds(subjects);
-    migrations = parseAddedMigrations(
-      git(["diff", "--name-only", "--diff-filter=A", `${REMOTE}/${STAGING}`, pick, "--", MIGRATIONS_DIR], { cwd: root }),
+    migrations = dropAlreadyInPrisma(
+      parseAddedMigrations(
+        git(["diff", "--name-only", "--diff-filter=A", `${REMOTE}/${STAGING}`, pick, "--", MIGRATIONS_DIR], { cwd: root }),
+      ),
+      git(["ls-tree", "--name-only", `${REMOTE}/${STAGING}`, "production/prisma/migrations/"], { cwd: root }),
     );
     console.log(`  ${subjects.length} commit staging me jaayenge.`);
   }
