@@ -58,8 +58,10 @@ describe("checkSeatEffectiveDate — allowed range", () => {
     expect(seatEffectiveBounds(SUB, TODAY)).toEqual({ min: "2026-04-01", max: TODAY });
   });
 
-  it("without a start_date the term start falls back to renewal − 365 days", () => {
-    expect(seatEffectiveBounds({ ...SUB, start_date: null }, TODAY)).toEqual({ min: "2026-04-01", max: TODAY });
+  /* R-801: was min 2026-04-01 (renewal − 365). With no start_date renewal_date is read as the
+     INCLUSIVE last day, so the 365-day term ending 1 Apr 2027 starts on 2 Apr 2026. */
+  it("without a start_date the term is the 365 days ending ON the (inclusive) renewal date", () => {
+    expect(seatEffectiveBounds({ ...SUB, start_date: null }, TODAY)).toEqual({ min: "2026-04-02", max: TODAY });
   });
 });
 

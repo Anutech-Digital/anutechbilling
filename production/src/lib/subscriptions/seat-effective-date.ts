@@ -7,7 +7,8 @@
  * the seats really started; the pro-rata charge (prorate(), integer paise) runs from that date.
  *
  * Allowed range, both ends inclusive:
- *   earliest = the start of the CURRENT term (start_date; without one, renewal − 365 days —
+ *   earliest = the start of the CURRENT term (start_date; without one, the 365 days ending on
+ *              the inclusive renewal date, i.e. renewal − 364 (R-801) —
  *              the same fallback resolveTermDays uses for the term length, so the two agree)
  *   latest   = today (IST). A future date would bill days that have not been provisioned.
  *
@@ -15,6 +16,7 @@
  */
 import { addDaysISO } from "@/lib/dates/ist";
 import { formatDate } from "@/lib/utils";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -33,7 +35,11 @@ export interface SeatEffectiveBounds {
 export function seatEffectiveBounds(sub: SeatDateSub, todayISO: string): SeatEffectiveBounds | null {
   if (!sub.renewal_date) return null;
   const today = todayISO.slice(0, 10);
-  const termStart = sub.start_date ? sub.start_date.slice(0, 10) : addDaysISO(sub.renewal_date, -365);
+  /* R-801: without a start_date the stored rule (inclusive renewal_date) applies, so the term
+     is the 365 days ending ON renewal_date — it starts at renewal − 364, not renewal − 365. */
+  const termStart = sub.start_date
+    ? sub.start_date.slice(0, 10)
+    : addDaysISO(followingTermStart({ term_months: 12, start_date: null, renewal_date: sub.renewal_date }), -365);
   /* A term that starts in the future (pre-dated renewal) leaves only today to choose. */
   return { min: termStart < today ? termStart : today, max: today };
 }

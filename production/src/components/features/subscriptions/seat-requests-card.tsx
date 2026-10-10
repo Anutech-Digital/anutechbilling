@@ -28,7 +28,7 @@ import { cn, rupee, formatDate } from "@/lib/utils";
 import type { SeatRequest, Subscription } from "@/lib/supabase/database.types";
 import { assessRequest, previewCharge, requestBadge } from "@/lib/subscriptions/seat-request";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { seatChargeWindow } from "@/lib/subscriptions/seat-charge-window";
+import { seatChargeWindow, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
 import { istToday } from "@/lib/dates/ist";
 
 export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
@@ -93,6 +93,7 @@ export function SeatRequestsCard({ requests, subscriptions, onDecided }: {
             liveSeats: sub?.seats ?? r.current_seats,
             subscriptionStatus: (sub?.status ?? "active") as "active" | "paused" | "expired" | "cancelled",
             renewalDate: sub?.renewal_date ?? null,
+            termEnd: sub ? seatTermEnd(sub) : null,
             today,
           });
 

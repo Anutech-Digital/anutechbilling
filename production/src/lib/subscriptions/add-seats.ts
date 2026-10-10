@@ -167,6 +167,13 @@ export interface AddSeatsInput {
    */
   termDays:           number;
   /**
+   * R-801: the EXCLUSIVE end of the term (first unpaid day) — seatTermEnd() in
+   * seat-charge-window.ts. renewalDate is the INCLUSIVE last covered day on rows written
+   * since 11 Sep 2026, so counting to it dropped the last day and refused the renewal day
+   * itself as "term ended". Absent = renewalDate (the old reading, right for anniversary rows).
+   */
+  termEnd?:           string | null;
+  /**
    * R-527: a split-billed subscription is paid only to the end of its CURRENT instalment, so
    * the new seats are charged to that date, not to renewal (lib/subscriptions/seat-charge-
    * window.ts). Absent = charge to the renewal date, exactly as before. The draft PO still
@@ -221,7 +228,8 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   const effective = (input.effectiveDate ?? today).slice(0, 10);
   /* The term has ended when TODAY is past renewal — a backdated effective date does not
      reopen a closed term. 0 or less → can't pro-rate, the operator should renew instead. */
-  if (daysBetweenDates(today, input.renewalDate) <= 0) {
+  const termEnd = (input.termEnd ?? input.renewalDate).slice(0, 10);
+  if (daysBetweenDates(today, termEnd) <= 0) {
     return { ok: false, code: "term_ended", message: "Term has ended — issue a renewal quote instead" };
   }
   if (effective > today) {
@@ -229,7 +237,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   }
   /* R-800: the seats were in use from `effective`, so the remaining term — and the vendor
      commitment on the draft PO — runs from there. */
-  const days = daysBetweenDates(effective, input.renewalDate);
+  const days = daysBetweenDates(effective, termEnd);
   /* R-527: days the CUSTOMER is charged for now — the current instalment on a split-billed
      subscription, else the rest of the term. Both measured from the effective date. */
   const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : days;
