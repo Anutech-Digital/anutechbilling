@@ -207,8 +207,16 @@ export function runGuardSuites(card) {
 async function pushWithTurn(card) {
   await withTurn("push", card, "push kar raha hai", async () => {
     sh("git fetch -q anutech");
-    try { sh("git rebase -q anutech/manager-pardeep"); }
-    catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
+    /* R-910 (10 Oct): a branch that already contains the tip needs no rebase, and a plain rebase would
+       flatten a merge (staging → manager-pardeep). Otherwise --rebase-merges keeps any merge commits. */
+    let upToDate = false;
+    try { sh("git merge-base --is-ancestor anutech/manager-pardeep HEAD"); upToDate = true; } catch {}
+    if (!upToDate) {
+      try { sh("git rebase -q --rebase-merges anutech/manager-pardeep"); }
+      catch { try { sh("git rebase --abort"); } catch {} console.error("✗ Rebase me CONFLICT — kisi aur ka code isi jagah badla. Ruko, owner ko batao. Khud se mat sulajhao."); process.exit(2); }
+    }
+    /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
+    if (fs.existsSync("prisma/schema.prisma")) { try { sh("npx prisma generate"); } catch (e) { console.error("✗ prisma generate fail — push nahi hua.\n" + String(e.stderr ?? e.message ?? "").slice(-800)); process.exit(1); } }
     if (!(await tscWithTurn(card))) { console.error("✗ Rebase ke baad tsc fail — push nahi hua."); process.exit(1); }
     const failed = await runGuardSuites(card);
     if (failed.length) {
@@ -217,8 +225,9 @@ async function pushWithTurn(card) {
       console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
       process.exit(5);
     }
-    const branch = sh("git branch --show-current").trim();
-    sh(`git push -q anutech ${branch}:manager-pardeep`);
+    /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
+       `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
+    sh("git push -q anutech HEAD:manager-pardeep");
     console.log(`✓ ${card} push ho gaya: ${sh("git rev-parse --short HEAD").trim()}`);
   });
 }
