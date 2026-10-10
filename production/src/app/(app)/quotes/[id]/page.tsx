@@ -28,6 +28,7 @@ import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-qu
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
+import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
 import { COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -1628,10 +1629,10 @@ export default function QuoteDetailPage() {
         userId={me?.userId}
       />
 
-      {/* Notes */}
-      {quote.notes && (
+      {/* Notes — R-834: internal subscription ids hidden (the stored text keeps them) */}
+      {staffDisplayNotes(quote.notes) && (
         <Card title="Notes">
-          <p className="text-sm text-ink-2 whitespace-pre-wrap">{quote.notes}</p>
+          <p className="text-sm text-ink-2 whitespace-pre-wrap">{staffDisplayNotes(quote.notes)}</p>
         </Card>
       )}
 

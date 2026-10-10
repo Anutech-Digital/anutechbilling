@@ -94,7 +94,9 @@ describe("extensionCharge", () => {
     expect(quoteDisplayTax(c.subtotal, 18, c.total)).toBe(c.tax);
     expect(isQuoteAmountConsistent(c.subtotal, 18, c.total)).toBe(true);
     const annualPerSeat = Math.round((1933 * 12) / 7);
-    expect(Math.abs(c.subtotal - (annualPerSeat * 7 * m) / 12)).toBeLessThanOrEqual(0.5);
+    // R-834: per-seat rate rounded to whole rupees, then × seats — within ½ rupee per seat.
+    expect(Math.abs(c.subtotal - (annualPerSeat * 7 * m) / 12)).toBeLessThanOrEqual(0.5 * 7);
+    expect(c.perSeat * 7).toBe(c.subtotal);
   });
 
   it("paise rounding: ₹853-style odd figures still add up (rounded once from paise)", () => {
@@ -106,12 +108,43 @@ describe("extensionCharge", () => {
     expect(c.tax).toBe(25);
   });
 
-  it.each([1, 2, 3])("%i year(s): unchanged — round(mrr × 12 × years), grossAmount at 18%%", (y) => {
+  it.each([1, 2, 3])("%i year(s): even mrr — same as before (mrr × 12 × years), grossAmount at 18%%", (y) => {
     const c = extensionCharge({ ...base, len: { unit: "years", count: y } });
     const old = Math.max(0, Math.round(1380 * 12 * y));
     expect(c.subtotal).toBe(old);
     expect(c.total).toBe(grossAmount(old, 18));
     expect(c.perSeat).toBe(Math.round(old / 5));
+  });
+
+  describe("R-834: the line is the price — rate × qty = subtotal", () => {
+    it("Q-F588-27-0015: 10 seats, mrr ₹83 → ₹100/yr × 10 = ₹1,000 = subtotal (was ₹996)", () => {
+      const c = extensionCharge({ seats: 10, mrr: 83, len: { unit: "years", count: 1 } });
+      expect(c.annualPerSeat).toBe(100);
+      expect(c.perSeat).toBe(100);
+      expect(c.subtotal).toBe(1000);
+      expect(c.total).toBe(grossAmount(1000, 18));
+      expect(c.subtotal + c.tax).toBe(c.total);
+    });
+
+    const odd: Array<[number, number]> = [[10, 83], [7, 1933], [3, 101], [13, 997], [1, 1657 / 12], [9, 250.37]];
+    it.each(odd)("%i seats, mrr %d: every length keeps rate × qty == subtotal, whole rupees", (seats, mrr) => {
+      for (const len of [
+        ...[1, 2, 3, 4, 5].map((count) => ({ unit: "years" as const, count })),
+        ...Array.from({ length: 11 }, (_, i) => ({ unit: "months" as const, count: i + 1 })),
+      ]) {
+        const c = extensionCharge({ seats, mrr, len });
+        expect(Number.isInteger(c.perSeat)).toBe(true);
+        expect(Number.isInteger(c.subtotal)).toBe(true);
+        expect(c.perSeat * seats).toBe(c.subtotal);
+        expect(c.subtotal + c.tax).toBe(c.total);
+        expect(isQuoteAmountConsistent(c.subtotal, 18, c.total)).toBe(true);
+      }
+    });
+
+    it("0 seats charges nothing (no divide-by-zero)", () => {
+      const c = extensionCharge({ seats: 0, mrr: 500, len: { unit: "years", count: 1 } });
+      expect(c).toMatchObject({ perSeat: 0, subtotal: 0, total: 0, tax: 0 });
+    });
   });
 
   it("12 months in months would equal 1 year in years (same annual price)", () => {
