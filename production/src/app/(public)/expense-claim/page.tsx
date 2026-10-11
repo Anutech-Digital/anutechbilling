@@ -1,5 +1,5 @@
 /**
- * Public expense-claim form — /expense-claim?tid=<tenant>&sig=<hmac>
+ * Public expense-claim form — /expense-claim?tid=<tenant>&exp=<unix>&sig=<hmac>
  *
  * An employee opens this link (WhatsApp), picks their name, enters their
  * attendance PIN, and logs what they spent from their expense advance. The
@@ -9,7 +9,7 @@
  */
 import type { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/server";
-import { verifyClaimToken } from "@/lib/claim-token";
+import { claimTokenError, claimTokenStatus } from "@/lib/claim-token";
 import { ExpenseClaimClient } from "./expense-claim-client";
 
 export const metadata: Metadata = {
@@ -21,15 +21,17 @@ export const dynamic = "force-dynamic";
 
 export default async function ExpenseClaimPage(
   props: {
-    searchParams: Promise<{ tid?: string; sig?: string }>;
+    searchParams: Promise<{ tid?: string; sig?: string; exp?: string }>;
   }
 ) {
   const searchParams = await props.searchParams;
   const tid = (searchParams.tid ?? "").trim();
   const sig = (searchParams.sig ?? "").trim();
+  const exp = (searchParams.exp ?? "").trim();
+  const linkStatus = claimTokenStatus(tid, sig, exp);
 
-  if (!verifyClaimToken(tid, sig)) {
-    return <ExpenseClaimError message="This link is invalid or expired. Please ask the office for a fresh link." />;
+  if (linkStatus !== "ok") {
+    return <ExpenseClaimError message={claimTokenError(linkStatus)} />;
   }
 
   const admin = createAdminClient();
@@ -46,6 +48,7 @@ export default async function ExpenseClaimPage(
     <ExpenseClaimClient
       tid={tid}
       sig={sig}
+      exp={exp}
       brandName={tenant.name}
       employees={(employees ?? []).map((e) => ({ id: e.id, name: e.name }))}
     />

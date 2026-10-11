@@ -1,15 +1,18 @@
 /**
- * POST /api/public/expense-claim/verify  { tid, sig, employeeId, pin }
+ * POST /api/public/expense-claim/verify  { tid, sig, exp?, employeeId, pin }
  *
  * Step 1 of the claim flow: check the employee's PIN once and return how much
  * of their advance is still claimable. The form then lets them log several
  * expenses in a row without re-entering the PIN (it's kept in memory for the
  * session and sent with each submit — never stored).
+ *
+ * R-725: the PIN check is the shared checkClaimPin (per-employee limit + DB lockout),
+ * the same one submit and manage run.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { verifyClaimToken } from "@/lib/claim-token";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { claimTokenError, claimTokenStatus, verifyClaimToken } from "@/lib/claim-token";
+import { checkClaimPin, claimPinFailure } from "@/lib/security/claim-pin-guard";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 
 export const runtime = "nodejs";
@@ -21,27 +24,21 @@ export async function POST(request: NextRequest) {
 
   const tid        = String(body.tid ?? "");
   const sig        = String(body.sig ?? "");
+  const exp        = body.exp == null ? "" : String(body.exp);
   const employeeId = String(body.employeeId ?? "");
   const pin        = String(body.pin ?? "");
 
-  if (!verifyClaimToken(tid, sig)) {
-    return NextResponse.json({ error: "This link is invalid or expired. Ask the office for a fresh link." }, { status: 403 });
-  }
-  if (!employeeId || !pin) return NextResponse.json({ error: "Pick your name and enter your PIN" }, { status: 400 });
-
-  /* PIN 4–6 ank ka hai aur DB me iska koi attempt-counter nahi (audit A3) —
-     IP-wali seema middleware me hai, par PIN par PER-EMPLOYEE tala bhi
-     chahiye warna dheere-dheere (ya kai IP se) 10,000 me se sahi mil hi
-     jata. 10 galat/ghanta kaafi udaar hai asli ungli-phisalne ke liye. */
-  const pinGate = rateLimit(`claim-pin:${tid}:${employeeId}`, { limit: 10, windowMs: 60 * 60_000 });
-  if (!pinGate.ok) {
-    return NextResponse.json(
-      { error: "Bahut galat koshishen — ek ghante baad dobara, ya office se PIN reset karwaiye." },
-      { status: 429, headers: { "Retry-After": String(pinGate.retryAfterSec) } },
-    );
+  if (!verifyClaimToken(tid, sig, exp)) {
+    return NextResponse.json({ error: claimTokenError(claimTokenStatus(tid, sig, exp)) }, { status: 403 });
   }
 
   const admin = createAdminClient();
+  const gate = await checkClaimPin(admin, tid, employeeId, pin);
+  if (!gate.ok) {
+    const f = claimPinFailure(gate);
+    return NextResponse.json(f.body, f.init);
+  }
+
   const { data, error } = await admin.rpc("verify_claim_access", {
     p_tenant_id:   tid,
     p_employee_id: employeeId,
