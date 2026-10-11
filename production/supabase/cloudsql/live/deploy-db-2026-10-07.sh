@@ -97,6 +97,7 @@ MIGS=(
   "grantedrole|20261011020000_join_request_granted_role.sql|resellersos_migration|exists(select 1 from pg_attribute where attrelid = to_regclass('public.join_requests') and attname = 'granted_role' and not attisdropped)"
   "r714definers|20261011030000_r714_null_caller_definers.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_project_quote(uuid)') and prosrc like '%R-714%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.reopen_quote(text)') and prosrc like '%R-714%')"
   "r712users|20261011041200_r712_users_self_update.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.guard_privileged_user_columns()') and prosrc like '%R-712%') and exists(select 1 from pg_policy where polrelid = to_regclass('public.users') and polname = 'users_self_update' and polwithcheck is not null)"
+  "r713views|20261011060000_r713_views_tenant_scope.sql|resellersos_migration|(select count(*) from pg_class c where c.oid in (to_regclass('public.v_tenant_with_parent'), to_regclass('public.purchase_order_summary')) and ('security_invoker=on' = any(c.reloptions) or 'security_invoker=true' = any(c.reloptions)) and not has_table_privilege('anon', c.oid, 'SELECT') and not has_table_privilege('authenticated', c.oid, 'INSERT') and not has_table_privilege('authenticated', c.oid, 'UPDATE') and not has_table_privilege('authenticated', c.oid, 'DELETE')) = 2"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
