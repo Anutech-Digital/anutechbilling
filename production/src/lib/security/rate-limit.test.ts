@@ -216,13 +216,27 @@ describe("wiring — limiter LAGA bhi hai", () => {
     expect(src).toContain("429");
   });
 
-  it("PIN-verify route per-employee tala rakhta hai", () => {
-    const src = readFileSync(
-      join(process.cwd(), "src/app/api/public/expense-claim/verify/route.ts"),
-      "utf8",
-    );
-    const gate = src.indexOf("claim-pin:");
-    const rpc = src.indexOf('rpc("verify_claim_access"');
+  /* R-725: teeno PIN raaste (verify / submit / manage) ek hi checkClaimPin se — har PIN wali
+     RPC (aur photo upload) usके BAAD. Pehle sirf verify par tala tha. */
+  it.each([
+    ["verify/route.ts", 'rpc("verify_claim_access"'],
+    ["route.ts", 'rpc("submit_expense_claim"'],
+    ["route.ts", ".upload("],
+    ["manage/route.ts", 'rpc("delete_claim_public"'],
+    ["manage/route.ts", 'rpc("edit_claim_public"'],
+  ])("expense-claim/%s: checkClaimPin before %s", (file, after) => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/public/expense-claim", file), "utf8");
+    const gate = src.indexOf("await checkClaimPin(");
+    const rpc = src.indexOf(after);
+    expect(gate).toBeGreaterThan(-1);
+    expect(rpc).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(rpc);
+  });
+
+  it("checkClaimPin: per tenant+employee shared limiter, then the DB lockout", () => {
+    const src = readFileSync(join(process.cwd(), "src/lib/security/claim-pin-guard.ts"), "utf8");
+    const gate = src.indexOf("rateLimitShared(`claim-pin:");
+    const rpc = src.indexOf('rpc("claim_pin_check"');
     expect(gate).toBeGreaterThan(-1);
     expect(gate).toBeLessThan(rpc);
   });

@@ -32,10 +32,11 @@ type Session = { employeeId: string; employeeName: string; pin: string; remainin
 type Logged = { id: string; category: string; amount: number; spentOn: string; purpose: string | null };
 
 export function ExpenseClaimClient({
-  tid, sig, brandName, employees,
+  tid, sig, exp, brandName, employees,
 }: {
   tid: string;
   sig: string;
+  exp: string;
   brandName: string;
   employees: Array<{ id: string; name: string }>;
 }) {
@@ -61,6 +62,7 @@ export function ExpenseClaimClient({
             <LogStep
               tid={tid}
               sig={sig}
+              exp={exp}
               brandName={brandName}
               session={session}
               setSession={setSession}
@@ -70,7 +72,7 @@ export function ExpenseClaimClient({
               employeeName={employees.find((e) => e.id === session.employeeId)?.name ?? session.employeeName}
             />
           ) : (
-            <IdentifyStep tid={tid} sig={sig} employees={employees} onVerified={setSession} />
+            <IdentifyStep tid={tid} sig={sig} exp={exp} employees={employees} onVerified={setSession} />
           )}
         </div>
 
@@ -84,10 +86,11 @@ export function ExpenseClaimClient({
 
 /* ── Step 1: pick name + PIN ─────────────────────────────────────────────── */
 function IdentifyStep({
-  tid, sig, employees, onVerified,
+  tid, sig, exp, employees, onVerified,
 }: {
   tid: string;
   sig: string;
+  exp: string;
   employees: Array<{ id: string; name: string }>;
   onVerified: (s: Session) => void;
 }) {
@@ -106,7 +109,7 @@ function IdentifyStep({
       const res = await fetch("/api/public/expense-claim/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tid, sig, employeeId, pin }),
+        body: JSON.stringify({ tid, sig, exp, employeeId, pin }),
       });
       const json = await res.json();
       if (!res.ok) { setErr(json.error ?? "Could not verify. Please try again."); return; }
@@ -162,10 +165,11 @@ function IdentifyStep({
 
 /* ── Step 2: log expenses (repeat) ───────────────────────────────────────── */
 function LogStep({
-  tid, sig, brandName, session, setSession, logged, setLogged, onSwitch, employeeName,
+  tid, sig, exp, brandName, session, setSession, logged, setLogged, onSwitch, employeeName,
 }: {
   tid: string;
   sig: string;
+  exp: string;
   brandName: string;
   session: Session;
   setSession: React.Dispatch<React.SetStateAction<Session | null>>;
@@ -207,7 +211,7 @@ function LogStep({
       const res = await fetch("/api/public/expense-claim/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", tid, sig, employeeId: session.employeeId, pin: session.pin, claimId: l.id }),
+        body: JSON.stringify({ action: "delete", tid, sig, exp, employeeId: session.employeeId, pin: session.pin, claimId: l.id }),
       });
       const json = await res.json();
       if (!res.ok) { setErr(json.error ?? "Couldn't delete. Please try again."); return; }
@@ -244,7 +248,7 @@ function LogStep({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "edit", tid, sig, employeeId: session.employeeId, pin: session.pin,
+            action: "edit", tid, sig, exp, employeeId: session.employeeId, pin: session.pin,
             claimId: editingId, amount: amt, category, purpose: purpose || null, spentOn,
           }),
         });
@@ -263,7 +267,7 @@ function LogStep({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tid, sig, employeeId: session.employeeId, pin: session.pin,
+          tid, sig, exp, employeeId: session.employeeId, pin: session.pin,
           amount: amt, category, purpose: purpose || null, spentOn, photo,
         }),
       });
