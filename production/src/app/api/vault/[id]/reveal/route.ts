@@ -17,9 +17,16 @@
  * writing when there is no JWT, which was discovered the hard way on this
  * project (638 rows in, 638 rows out). A security log needs its own table with
  * its own insert that can actually fail.
+ *
+ * ─── THE CIPHERTEXT IS READ BY THE SERVER, NOT THE USER (R-840) ──────────────
+ * vault_passwords.*_ciphertext are server-only columns: no browser role holds SELECT on them
+ * (20261011081000_r840_vault_ciphertext_columns.sql, cloudsql/09 secret_cols), so REST can never
+ * hand the encrypted logins to a browser. This route reads them with the admin client — only
+ * AFTER vaultGate() said owner / manager, and pinned to the caller's own tenant and this id.
+ * The audit insert stays on the user's client (RLS on vault_access_log).
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClientFor, createClient } from "@/lib/supabase/server";
 import { clientIp } from "@/lib/security/rate-limit";
 import { decryptSecret, isVaultConfigured } from "@/lib/crypto/vault";
 import { assessStrength } from "@/lib/vault/passwords";
@@ -50,12 +57,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  // RLS scopes this to the caller's tenant; a wrong id returns nothing rather
-  // than another tenant's credential.
-  const { data: row, error } = await db
+  // R-840: the admin client bypasses RLS, so the tenant is pinned here explicitly — a wrong id,
+  // or another tenant's id, returns nothing.
+  const admin = vaultDb(createAdminClientFor(authData.user.id));
+  const { data: row, error } = await admin
     .from("vault_passwords")
     .select("id, tenant_id, customer_id, title, username_ciphertext, password_ciphertext, notes_ciphertext")
     .eq("id", params.id)
+    .eq("tenant_id", gate.tenantId)
     .maybeSingle();
 
   if (error) {

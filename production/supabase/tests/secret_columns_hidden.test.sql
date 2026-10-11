@@ -141,7 +141,10 @@ declare
     'user_google_tokens.access_token',
     'user_google_tokens.refresh_token',
     'user_google_tokens.sync_token',
-    'email_verifications.token_hash'
+    'email_verifications.token_hash',
+    'vault_passwords.username_ciphertext',
+    'vault_passwords.password_ciphertext',
+    'vault_passwords.notes_ciphertext'
   ];
   secret_tables text[];
   sel_needed text[] := '{}';   -- "table|role" pairs whose policies cover SELECT
