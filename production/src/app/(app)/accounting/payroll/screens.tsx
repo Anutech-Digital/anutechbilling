@@ -408,6 +408,9 @@ function Field({ label, required, children, htmlFor }: { label: React.ReactNode;
 function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onClose: () => void }) {
   const save = useUpsertEmployee();
   const setPin = useSetEmployeePin();
+  /* R-717: the DB lets only owner / manager set a kiosk PIN; the accountant edits the rest. */
+  const myRole = useCurrentUser().data?.role;
+  const canSetPin = myRole === "owner" || myRole === "manager";
   const [name, setName] = React.useState(employee?.name ?? "");
   const [gross, setGross] = React.useState(String(employee?.monthly_gross ?? ""));
   const [joined, setJoined] = React.useState(employee?.joining_date ?? "");
@@ -486,7 +489,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       basic_monthly: basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
       da_monthly: Math.round(Number(daMonthly) || 0),
     });
-    if (pin && id) await setPin.mutateAsync({ employeeId: id, pin });
+    if (pin && id && canSetPin) await setPin.mutateAsync({ employeeId: id, pin });
     onClose();
   }
 
@@ -894,13 +897,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 </Field>
               </div>
 
-              <Field htmlFor="payroll-field" label={<>Attendance Kiosk PIN {employee?.pin_set ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
-                <Input id="payroll-field" inputMode="numeric" value={pin} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
-                  placeholder={employee?.pin_set ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
-                {!pinValid
-                  ? <p className="mt-1 text-xs text-rose">PIN must be 4–6 digits.</p>
-                  : <p className="mt-1 text-xs text-ink-3">Used at the attendance kiosk to check in / out.</p>}
-              </Field>
+              {canSetPin && (
+                <Field htmlFor="payroll-field" label={<>Attendance Kiosk PIN {employee?.pin_set ? <span className="text-emerald font-normal">· already set</span> : ""}</>}>
+                  <Input id="payroll-field" inputMode="numeric" value={pin} onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
+                    placeholder={employee?.pin_set ? "Enter new 4–6 digits to reset" : "Set a 4–6 digit PIN"} maxLength={6} />
+                  {!pinValid
+                    ? <p className="mt-1 text-xs text-rose">PIN must be 4–6 digits.</p>
+                    : <p className="mt-1 text-xs text-ink-3">Used at the attendance kiosk to check in / out.</p>}
+                </Field>
+              )}
 
               <label className="flex items-center gap-2 text-sm text-ink-2 pt-2 border-t border-hairline">
                 <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="w-4 h-4 accent-amber" />
