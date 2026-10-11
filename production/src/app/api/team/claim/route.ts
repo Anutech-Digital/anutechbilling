@@ -1,5 +1,5 @@
 /**
- * GET  /api/team/claim  → who is stranded right now
+ * GET  /api/team/claim  → who is stranded right now AND asked to join / was invited here (R-721)
  * POST /api/team/claim  { email, role }  → claim them into this workspace
  *
  * ─── THIS ROUTE DELIBERATELY HOLDS NO PRIVILEGE OF ITS OWN ───────────────────

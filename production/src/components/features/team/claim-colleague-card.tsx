@@ -11,6 +11,9 @@
  * money sitting inside it.
  *
  * ─── IT IS ALLOWED TO REFUSE, AND THE REFUSAL IS THE FEATURE ─────────────────
+ * R-721: the list and the claim cover only people with a pending join request (or an
+ * invite they signed in after) to THIS workspace — never the rest of the platform.
+ *
  * The RPC behind this will not touch a workspace that holds business data — not
  * even to move the person out, because moving the last member out of a workspace
  * full of customers leaves that data with nobody who can sign in and see it. The
@@ -104,6 +107,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           <p className="text-xs text-ink-3 leading-relaxed">
             Someone who signed in before you invited them ends up outside this workspace —
             either with nowhere to go, or in an empty company of their own. Put them back here.
+            Only people who asked to join, or signed in after your invite, can be claimed.
           </p>
         </div>
       </div>
@@ -152,8 +156,8 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
       {list.length > 0 && (
         <div className="mt-4 border-t border-hairline pt-3">
           <p className="mb-2 text-xs text-ink-3">
-            {list.length} {list.length === 1 ? "person can" : "people can"} sign in but {list.length === 1 ? "has" : "have"} no
-            workspace. Until claimed, {list.length === 1 ? "they" : "they"} land in an app with nothing in it.
+            {list.length} {list.length === 1 ? "person" : "people"} asked to join or {list.length === 1 ? "was" : "were"} invited
+            here but {list.length === 1 ? "has" : "have"} no workspace yet. Until claimed, they land in an app with nothing in it.
           </p>
           <ul className="flex flex-wrap gap-1.5">
             {list.map((u) => (
