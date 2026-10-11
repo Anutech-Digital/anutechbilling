@@ -33,6 +33,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { killSwitchFor, needsConfirmation } from "@/lib/ai/autonomy";
+import { ScheduledJobs } from "./scheduled-jobs";
 
 type Mode = "off" | "hold" | "auto";
 
@@ -187,6 +188,8 @@ export default function AutomationPage() {
           </ul>
         </Card>
       )}
+
+      <ScheduledJobs />
 
       {/* ── 2. THE SWITCH ─────────────────────────────────────────────────── */}
       <Card className="mb-6 p-4">
