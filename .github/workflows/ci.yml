@@ -173,6 +173,16 @@ jobs:
         # visible in every run instead of invisible in all of them. Seeding the
         # fixtures (a Supabase branch + two test users) turns it green — that
         # decision needs DB credentials as repo secrets, which is Pardeep's call.
+        #
+        # R-855 (11 Oct 2026): "red in every run" backfired — the permanently red job
+        # was read as the CI blocker and nobody could tell a real smoke failure from it.
+        # Now, with ZERO auth secrets in the repo, suite-health SKIPS and prints
+        # "[suite-health] SKIP: SKIPPED: …" naming every variable it looked for, so the
+        # log still says the auth half did not run. The moment ANY of those secrets is
+        # added it is a hard gate again: partial setup = red. Logic + unit test:
+        # e2e/fixtures/suite-health-verdict.mjs, tests/suite-health-verdict.test.ts.
+        # Do not pass auth secrets to this job until R-839 (Auth.js E2E seed) lands —
+        # this job targets the production host, where the seed must never run.
         run: npx playwright test smoke.spec.ts money-spine.spec.ts suite-health.spec.ts --project=chromium
       - name: Upload Playwright report on failure
         if: failure()
