@@ -64,6 +64,7 @@ import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { canWriteSales } from "@/lib/nav";
+import { canDeleteMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
@@ -1169,7 +1170,8 @@ function InvoiceRow({
                   distrust the menu. The credit-note item two rows up IS the route for an
                   issued invoice, so the §24 next step is already on screen; this says so
                   rather than disappearing silently. */}
-              {inv.status === "draft" ? (
+              {/* R-718: deleting an invoice is owner / accountant only — hidden for the rest. */}
+              {!canDeleteMoney(me?.role) ? null : inv.status === "draft" ? (
                 <DropdownMenuItem destructive className="gap-2.5 py-2 cursor-pointer" onClick={() => setDelOpen(true)}>
                   <Icon name="trash" size={15} /> Delete draft
                 </DropdownMenuItem>

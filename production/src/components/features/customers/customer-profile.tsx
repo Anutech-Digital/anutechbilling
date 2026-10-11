@@ -63,6 +63,7 @@ import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
+import { canDeleteMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { COPY } from "@/lib/copy";
@@ -86,6 +87,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const canQuotes = canOpenQuotes(me?.role);
   /* R-255: the accountant reads the profile; edit / invoice / archive / delete stay with the team. */
   const canWrite = canWriteSales(me?.role);
+  /* R-718: deleting a payment is owner / accountant only — the database refuses everyone else. */
+  const canDeletePay = canWrite && canDeleteMoney(me?.role);
   const openQuote = (id: string) => (canQuotes ? () => router.push(`/quotes/${id}` as never) : undefined);
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
@@ -644,7 +647,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                         </span>,
                         <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
                         // Delete — only on payments from the `payments` table.
-                        payId ? (
+                        payId && canDeletePay ? (
                           <IconButton
                             key="del"
                             icon="trash"

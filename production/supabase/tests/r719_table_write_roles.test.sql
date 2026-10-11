@@ -101,10 +101,18 @@ begin
   insert into public.customer_credits (tenant_id, customer_id, amount, source, status, note)
     values (c_seller, c_cust, 50, 'overpayment', 'open', 'R719 restored by billing');  -- the record-payment compensation
 
-  /* A SECURITY DEFINER called by sales is untouched: redeem consumes the open credit. */
+  /* R-718 (11 Oct): redeeming credit is a money action — sales is refused by the function's
+     own role gate (Pardeep's role table); billing's call goes through and consumes the credit. */
   perform set_config('request.jwt.claims', json_build_object('sub', u_sales, 'role', 'authenticated')::text, true);
+  v_err := false;
+  begin
+    perform public.redeem_customer_credits(c_cust, 100, 'R719 redeem by sales');
+  exception when insufficient_privilege then v_err := true;
+  end;
+  if not v_err then raise exception 'FAIL 4: redeem_customer_credits by sales was not refused (R-718)'; end if;
+  perform set_config('request.jwt.claims', json_build_object('sub', u_bill, 'role', 'authenticated')::text, true);
   select public.redeem_customer_credits(c_cust, 100, 'R719 redeem') into v_n;
-  if v_n <> 100 then raise exception 'FAIL 4: redeem_customer_credits by sales consumed % (expected 100)', v_n; end if;
+  if v_n <> 100 then raise exception 'FAIL 4: redeem_customer_credits by billing consumed % (expected 100)', v_n; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', u_other, 'role', 'authenticated')::text, true);
   v_err := false;
