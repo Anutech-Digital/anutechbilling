@@ -223,6 +223,24 @@ export function useUndoLastPunch() {
   });
 }
 
+export type EmployeeLinkChoice = { id: string; name: string };
+
+/** R-1001: the "Select your profile" list. employees SELECT is owner / manager / accountant
+ *  only, so a sales or support login reads the names it may link to from this RPC (active,
+ *  not linked to anyone else, e-mail empty or its own — what set_my_employee accepts). */
+export function useMyEmployeeLinkChoices(enabled = true) {
+  return useQuery({
+    queryKey: ["my-employee-link-choices"],
+    enabled,
+    queryFn: async (): Promise<EmployeeLinkChoice[]> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("my_employee_link_choices");
+      if (error) throw error;
+      return (data as unknown as EmployeeLinkChoice[] | null) ?? [];
+    },
+  });
+}
+
 export function useSetMyEmployee() {
   const qc = useQueryClient();
   return useMutation({
@@ -234,6 +252,7 @@ export function useSetMyEmployee() {
     onSuccess: () => {
       toast.success("Your employee profile is linked.");
       void qc.invalidateQueries({ queryKey: ["my-attendance-today"] });
+      void qc.invalidateQueries({ queryKey: ["my-employee-link-choices"] });
     },
     onError: (err: unknown) => {
       toastError(err, { fallback: "Could not link your employee profile." });

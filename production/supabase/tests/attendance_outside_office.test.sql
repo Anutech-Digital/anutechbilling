@@ -1,7 +1,7 @@
 -- Regression test: R-605 (20261010040000_attendance_outside_office.sql). Rolled back.
 --
---   ALLOWED  a member reading attendance_anywhere (My Attendance + Payroll list need it —
---            R-607 made employees column-granted, so a missing grant = "permission denied")
+--   ALLOWED  a member reading its own attendance_anywhere (My Attendance needs it) — since
+--            R-1001 through my_employee_profile(); the Payroll list reads the column as owner
 --   BLOCKED  a `sales` login switching itself to "Can mark from outside office"
 --   DEFAULT  off for a new employee
 
@@ -23,7 +23,9 @@ begin
   set local role authenticated;
   perform set_config('request.jwt.claims', json_build_object('sub','46050000-0000-4000-8000-00000000000b','role','authenticated')::text, true);
 
-  select attendance_anywhere into v from public.employees where id = '46050000-0000-4000-8000-0000000000e1';
+  -- R-1001: a sales login reads its OWN row through my_employee_profile() (employees SELECT is
+  -- owner / manager / accountant only).
+  v := (public.my_employee_profile()->>'attendance_anywhere')::boolean;
   if v is distinct from false then raise exception 'FAIL 1: attendance_anywhere unreadable or not false by default (%)', v; end if;
 
   update public.employees set attendance_anywhere = true where id = '46050000-0000-4000-8000-0000000000e1';

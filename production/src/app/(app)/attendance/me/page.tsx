@@ -21,11 +21,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { getDeviceToken } from "@/lib/attendance/device";
-import { useEmployees, useAttendanceNetwork } from "@/lib/queries/payroll";
+import { useAttendanceNetwork } from "@/lib/queries/payroll";
 import {
   useMyAttendanceToday,
   useMarkSelfAttendance,
   useSetMyEmployee,
+  useMyEmployeeLinkChoices,
   useMyAttendanceHistory,
   useRecordConsent,
   useWithdrawConsent,
@@ -697,11 +698,13 @@ function CheckInCard({
 }
 
 function LinkEmployeeCard() {
-  const empQ = useEmployees();
+  /* R-1001: names come from my_employee_link_choices() — employees itself is owner / manager /
+     accountant only, so a sales or support login would see an empty list. */
+  const empQ = useMyEmployeeLinkChoices();
   const setEmp = useSetMyEmployee();
   const [selectedId, setSelectedId] = React.useState<string>("");
 
-  const rows = (empQ.data ?? []).filter((e) => e.is_active !== false);
+  const rows = empQ.data ?? [];
 
   return (
     <Card className="p-6 md:p-8 text-center">
@@ -717,6 +720,10 @@ function LinkEmployeeCard() {
         <Skeleton className="mt-5 h-10 w-full rounded-md" />
       ) : empQ.error ? (
         <p className="mt-4 text-xs text-rose">Could not load employees.</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-4 text-sm text-ink-3">
+          No profile is waiting for you. Ask the owner to add you in Payroll → Employees with your login e-mail.
+        </p>
       ) : (
         <div className="mt-5 space-y-3">
           <Select value={selectedId} onValueChange={setSelectedId}>

@@ -29,8 +29,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Sirf owner doosre employee ko enrol kar sakta hai" }, { status: 403 });
   }
 
-  const { data: emp } = await supabase
-    .from("employees").select("id, tenant_id, attendance_consent_at").eq("id", targetId).maybeSingle();
+  /* R-1001: read through the server client, scoped to the caller's tenant (employees SELECT
+     is owner / manager / accountant only, so a sales login enrolling its OWN face read
+     nothing). targetId is already limited above to the caller's own employee, or anyone for
+     the owner. */
+  const admin = createAdminClientFor(authData.user.id);
+  const { data: emp } = await admin
+    .from("employees").select("id, tenant_id, attendance_consent_at")
+    .eq("id", targetId).eq("tenant_id", me.tenant_id).maybeSingle();
   if (!emp || emp.tenant_id !== me.tenant_id) {
     return NextResponse.json({ error: "Employee not in your workspace" }, { status: 400 });
   }
@@ -47,7 +53,6 @@ export async function POST(request: NextRequest) {
   /* R-724: _enroll is server-only in storage (20261011133000_r724_storage_roles) — with the
      browser token anyone in the workspace could overwrite a colleague's reference face and
      clock in as them. targetId passed the owner/self + same-tenant + consent checks above. */
-  const admin = createAdminClientFor(authData.user.id);
   const path = `${me.tenant_id}/_enroll/${targetId}.jpg`;
   const up = await admin.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
   if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 });

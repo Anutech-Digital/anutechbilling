@@ -14670,6 +14670,8 @@ export type Database = {
         }[]
       }
       my_attendance_today: { Args: never; Returns: Json }
+      my_employee_link_choices: { Args: never; Returns: Json }
+      my_employee_profile: { Args: never; Returns: Json }
       nav_badges: { Args: { p_approval_tiers?: string[] }; Returns: Json }
       next_customer_number: { Args: { p_tenant: string }; Returns: string }
       next_document_number: {
