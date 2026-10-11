@@ -67,7 +67,12 @@ jobs:
       - name: npm audit (production deps, high+) — advisory
         continue-on-error: true
         run: npm audit --omit=dev --audit-level=high
+      # 11 Oct 2026 (R-712): `tsc --noEmit` now hits the same default ~2 GB old-space cap the
+      # build hit on 28 Aug (exit 134, "Ineffective mark-compacts near heap limit") on three
+      # runs in a row with no TypeScript change. Same fix as the build step below.
       - run: npm run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - run: npm run test
       # Blocking since S18. `next lint` fails on any ESLint ERROR; the ratchet fails when any
       # rule has more WARNINGS than lint-baseline.json allows (no-explicit-any, max-lines…).
