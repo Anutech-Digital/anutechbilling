@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- Regression test: R-712 (+ the users.email part of R-729). Migration
--- 20261011030000_r712_users_self_update.sql. Rolled back — safe anywhere.
+-- 20261011041200_r712_users_self_update.sql. Rolled back — safe anywhere.
 --
 -- Before R-712 every signed-up account owns its own company, and the users guard only asked
 -- "is the caller an owner ANYWHERE?". With users_self_update = USING (id = auth.uid()) and no

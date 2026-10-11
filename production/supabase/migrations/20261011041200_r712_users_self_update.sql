@@ -1,6 +1,6 @@
 -- deploy-key: r712users
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.guard_privileged_user_columns()') and prosrc like '%R-712%') and exists(select 1 from pg_policy where polrelid = to_regclass('public.users') and polname = 'users_self_update' and polwithcheck is not null)
--- 20261011030000_r712_users_self_update.sql
+-- 20261011041200_r712_users_self_update.sql
 --
 -- R-712 (P0, security audit 10 Oct) + the users.email part of R-729.
 --
