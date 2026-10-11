@@ -26,6 +26,8 @@ import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
 import { AddSubscriptionDialog } from "@/components/features/subscriptions/add-subscription-dialog";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canDeleteMoney } from "@/lib/auth/roles";
 import type { QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/client";
@@ -277,6 +279,8 @@ export default function SubscriptionsPage() {
   /* R-455: END a real subscription (customer left) — separate from Delete (wrong entry). */
   const [cancelSub,   setCancelSub]   = React.useState<Subscription | null>(null);
   const delSub = useDeleteSubscription();
+  /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
+  const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -1845,14 +1849,16 @@ export default function SubscriptionsPage() {
                       Cancel subscription
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    icon="trash"
-                    className="w-full text-rose"
-                    onClick={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
-                  >
-                    Delete (wrong entry)
-                  </Button>
+                  {canDeleteSub && (
+                    <Button
+                      variant="ghost"
+                      icon="trash"
+                      className="w-full text-rose"
+                      onClick={() => { const sub = scheduleSub; setScheduleSub(null); handleDeleteSub(sub); }}
+                    >
+                      Delete (wrong entry)
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1948,7 +1954,7 @@ export default function SubscriptionsPage() {
         count={pickedIds.size}
         onExport={bulkExport}
         onSendRenewals={bulkSendRenewals}
-        onDelete={bulkDelete}
+        onDelete={canDeleteSub ? bulkDelete : undefined}
         onDeselectAll={clearPicked}
         busy={bulkBusy}
       />

@@ -29,6 +29,8 @@ import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
 import type { Quote } from "@/lib/supabase/database.types";
 import { acceptedToast } from "@/lib/quotes/accepted-toast";
 import { acceptHint } from "@/lib/quotes/quote-page-actions";
@@ -45,6 +47,8 @@ interface QuoteActionBarProps {
 export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }: QuoteActionBarProps) {
   const qc = useQueryClient();
   const [paymentOpen, setPaymentOpen] = React.useState(false);
+  /* R-718: only owner / manager / accountant / billing record money; sales see the rest. */
+  const mayRecordMoney = canRecordMoney(useCurrentUser().data?.role);
 
   // Total — identical formula to the quote hub. `amount` is the frozen stored
   // total; fall back to a recompute only for older rows that predate it.
@@ -110,7 +114,7 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
        wrong, not the route. The hub's own banner now deep-links to the invoice itself, so
        nothing is lost by naming this honestly. */
     if (ps === "invoiced") return { label: "Open quote · invoiced", icon: "receipt" };
-    if (ps === "partial") return { label: "Record remaining payment", icon: "rupee" };
+    if (ps === "partial") return mayRecordMoney ? { label: "Record remaining payment", icon: "rupee" } : { label: "Open full quote", icon: "file" };
     if (st === "draft") return { label: "Send draft quote", icon: "send" };
     if (st === "rejected") return { label: "Open quote · duplicate & re-send", icon: "file" };
     return { label: "Open full quote", icon: "file" };
@@ -120,14 +124,16 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
     <div className={cn("space-y-2", className)}>
       {unpaidSent || acceptedAwaiting ? (
         <>
-          <Button
-            variant="primary"
-            icon="rupee"
-            className="w-full justify-center"
-            onClick={() => setPaymentOpen(true)}
-          >
-            Record payment now
-          </Button>
+          {mayRecordMoney && (
+            <Button
+              variant="primary"
+              icon="rupee"
+              className="w-full justify-center"
+              onClick={() => setPaymentOpen(true)}
+            >
+              Record payment now
+            </Button>
+          )}
 
           {unpaidSent && (
             <div className="grid grid-cols-2 gap-2">
@@ -173,7 +179,7 @@ export function QuoteActionBar({ quote, onOpenFullQuote, onChanged, className }:
       )}
 
       <RecordPaymentDialog
-        open={paymentOpen}
+        open={paymentOpen && mayRecordMoney}
         onOpenChange={setPaymentOpen}
         quoteId={quote.id}
         customerName={quote.customer_name}

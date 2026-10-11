@@ -246,3 +246,28 @@ export function maskContact(value: string | null | undefined): string {
   if (digits.length < 5) return "•".repeat(v.length);
   return `${"•".repeat(digits.length - 4)}${digits.slice(-4)}`;
 }
+
+/**
+ * R-718 (11 Oct 2026, Pardeep's role table): who may do money actions. The database refuses
+ * everyone else (migration 20261011120000_r718_money_roles), so the buttons are hidden too.
+ *   MONEY_RECORD_ROLES — record a payment, credit / debit note, direct invoice, bank match /
+ *                        booking, vendor bill / referral payout, transfer, use customer credit.
+ *   MONEY_DELETE_ROLES — delete a payment, an invoice or a subscription.
+ * Sales, support, delivery and the partner agent: view only.
+ */
+export const MONEY_RECORD_ROLES: readonly UserRole[] = ["owner", "manager", "accountant", "billing"];
+export const MONEY_DELETE_ROLES: readonly UserRole[] = ["owner", "accountant"];
+
+/** True when the role may record money. An unknown role (still loading) counts as allowed —
+ *  like canWriteMoney, so owners never see the buttons flicker; the database is the guard. */
+export function canRecordMoney(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return (MONEY_RECORD_ROLES as readonly string[]).includes(role);
+}
+
+/** True when the role may delete a payment, invoice or subscription. Unknown role → allowed
+ *  (still loading), same reason as canRecordMoney. */
+export function canDeleteMoney(role: string | null | undefined): boolean {
+  if (!role) return true;
+  return (MONEY_DELETE_ROLES as readonly string[]).includes(role);
+}

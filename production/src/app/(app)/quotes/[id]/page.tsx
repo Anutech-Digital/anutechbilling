@@ -83,6 +83,7 @@ import { useLead, useUpdateLeadStage } from "@/lib/queries/leads";
 import { useLogLeadActivity } from "@/lib/queries/lead-activities";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteIsPaid } from "@/lib/pdf/quote-document-kind";
@@ -142,6 +143,9 @@ export default function QuoteDetailPage() {
      the preview, the downloaded PDF and the WhatsApp attachment preview. */
   const contact = quoteContact(customer, lead);
   const { data: me } = useCurrentUser();
+  /* R-718: recording a payment is owner / manager / accountant / billing — sales, support and
+     delivery see the money state but no Record button (the database refuses them). */
+  const mayRecordMoney = canRecordMoney(me?.role);
   const qc = useQueryClient();
   const deleteQuote = useDeleteQuote();
   const [paymentOpen, setPaymentOpen] = React.useState(false);
@@ -291,9 +295,9 @@ export default function QuoteDetailPage() {
     const action = payIntent(payParam, quote, paymentHistory === undefined ? null : totalReceivedSoFar);
     if (action === "none") return;
     payIntentHandled.current = true;
-    if (action === "open") setPaymentOpen(true);
+    if (action === "open" && mayRecordMoney) setPaymentOpen(true);
     router.replace(`/quotes/${quote.id}` as never);
-  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router]);
+  }, [payParam, quote, paymentHistory, totalReceivedSoFar, router, mayRecordMoney]);
 
   /* R-248: ?receipt=<paymentId> (Record payment's "Send receipt" toast button) opens that
      payment's Receipt Voucher — the same dialog as the row's Receipt button. Waits for the
@@ -1412,7 +1416,7 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
 
-              {money.canRecordPayment && (
+              {money.canRecordPayment && mayRecordMoney && (
                 <Button variant="primary" icon="rupee" onClick={() => setPaymentOpen(true)}>
                   {money.recordLabel}
                 </Button>
@@ -1456,7 +1460,7 @@ export default function QuoteDetailPage() {
                 )}
               </div>
               <div className="flex gap-2">
-                {hasBalance && (
+                {hasBalance && mayRecordMoney && (
                   <Button variant="primary" icon="rupee" onClick={() => setPaymentOpen(true)}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
                   </Button>
@@ -1780,7 +1784,7 @@ export default function QuoteDetailPage() {
 
       {/* Payment dialog */}
       <RecordPaymentDialog
-        open={paymentOpen}
+        open={paymentOpen && mayRecordMoney}
         onOpenChange={setPaymentOpen}
         quoteId={quote.id}
         customerName={quote.customer_name}

@@ -36,7 +36,8 @@ interface SubscriptionsBulkBarProps {
   onExport: () => void;
   /** Creates-or-reuses the renewal quote for each selection and emails it. */
   onSendRenewals: () => void;
-  onDelete: () => void;
+  /** Absent = the role may not delete subscriptions (R-718: owner / accountant only). */
+  onDelete?: () => void;
   onDeselectAll: () => void;
   busy?: boolean;
 }
@@ -56,9 +57,11 @@ export function SubscriptionsBulkBar({
         Send renewal quotes
       </BulkBarConfirmButton>
 
-      <BulkBarConfirmButton icon="trash" onConfirm={onDelete}>
-        Delete
-      </BulkBarConfirmButton>
+      {onDelete && (
+        <BulkBarConfirmButton icon="trash" onConfirm={onDelete}>
+          Delete
+        </BulkBarConfirmButton>
+      )}
     </BulkActionBar>
   );
 }

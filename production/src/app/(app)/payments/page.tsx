@@ -45,6 +45,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
+import { canDeleteMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
@@ -1043,6 +1044,7 @@ function PaymentRowView({
   /* R-237: billing cannot open quotes — every quote link/row-click below is for the rest. */
   const canQuotes = canOpenQuotes(me?.role);
   const canWrite = canWriteSales(me?.role); // R-255
+  const canDelete = canDeleteMoney(me?.role); // R-718: owner / accountant only
   const openQuote = canQuotes
     ? { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) }
     : undefined;
@@ -1271,9 +1273,11 @@ function PaymentRowView({
                   <Icon name="rupee" size={16} /> {ctx?.invoiceId ? "Refund (credit note first)" : "Refund payment"}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleDelete}>
-                <Icon name="trash" size={16} /> Delete payment
-              </DropdownMenuItem>
+              {canDelete && (
+                <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleDelete}>
+                  <Icon name="trash" size={16} /> Delete payment
+                </DropdownMenuItem>
+              )}
               </>)}
             </DropdownMenuContent>
           </DropdownMenu>

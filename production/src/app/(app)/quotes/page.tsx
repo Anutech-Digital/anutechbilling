@@ -28,6 +28,7 @@ import { useProjectSales, useDeleteProjectSale, type ProjectSaleWithTotals } fro
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { useLead } from "@/lib/queries/leads";
 import { GeminiCard } from "@/components/shared/gemini-card";
@@ -1083,8 +1084,9 @@ export default function QuotesPage() {
                             }
                             // 'none' or 'awaiting' — money hasn't started flowing yet
                             return (
-                              <Button asChild size="sm" variant="primary" icon="rupee">
-                                <Link href={`/quotes/${q.id}` as any}>Record payment</Link>
+                              <Button asChild size="sm" variant="primary" icon={canRecordMoney(me?.role) ? "rupee" : "file"}>
+                                {/* R-718: sales / support cannot record money — same link, honest label. */}
+                                <Link href={`/quotes/${q.id}` as any}>{canRecordMoney(me?.role) ? "Record payment" : "Open quote"}</Link>
                               </Button>
                             );
                           })()}
