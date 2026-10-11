@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.pay_salary(uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer)') and prosrc like '%R-717%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_employee_pin(uuid,text)') and prosrc like '%R-717%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.give_employee_advance(text,integer,date,text,uuid,text)') and prosrc like '%R-717%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.top_up_employee_advance(uuid,integer,date,uuid)') and prosrc like '%R-717%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.settle_employee_advance(uuid,date,uuid)') and prosrc like '%R-717%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.approve_expense_claim(uuid)') and prosrc like '%R-717%')
 -- deploy-key: r717payroll
--- 20261011050000_r717_payroll_roles.sql
+-- 20261011070000_r717_payroll_roles.sql
 --
 -- R-717 (P1 SECURITY, audit 10 Oct 2026): payroll / PIN / advance / expense-claim definers
 -- check the caller's ROLE, not just the company.

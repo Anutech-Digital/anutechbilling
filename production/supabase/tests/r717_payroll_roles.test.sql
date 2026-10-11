@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- R-717 (P1 SECURITY): payroll / PIN / advance / expense-claim SECURITY DEFINER functions
--- check the caller's ROLE, not only the company. Migration 20261011050000_r717_payroll_roles.
+-- check the caller's ROLE, not only the company. Migration 20261011070000_r717_payroll_roles.
 -- Self-asserting, ONE transaction, rolled back — safe anywhere:
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/r717_payroll_roles.test.sql
