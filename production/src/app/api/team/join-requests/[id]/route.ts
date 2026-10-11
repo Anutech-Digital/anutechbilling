@@ -23,6 +23,7 @@ import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
 import { INVITABLE_ROLES, type InvitableRole } from "@/lib/auth/roles";
+import { isActiveOwner } from "@/lib/auth/deactivated";
 
 const schema = z.object({
   action: z.enum(["approve", "reject"]),
@@ -47,13 +48,13 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   // ── Caller must be the OWNER of the tenant this request belongs to ──────
   const { data: me } = await admin
     .from("users")
-    .select("tenant_id, role")
+    .select("tenant_id, role, is_active")
     .eq("id", authData.user.id)
     .maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json({ error: "You are not in a workspace." }, { status: 403 });
   }
-  if (me.role !== "owner") {
+  if (!isActiveOwner(me)) { // R-722: a deactivated owner is not an owner
     return NextResponse.json(
       { error: "Only the workspace owner can approve people. Ask them to open Team." },
       { status: 403 },

@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./database.types";
 import { gatewayEnabled, gatewayFetch } from "@/server/postgrest/fetch";
 import { isUnreachableError, resilientFetch } from "./resilient-fetch";
+import { isDeactivated } from "@/lib/auth/deactivated";
 
 /* R-710: the middleware runs on every request, so it gets a short leash — 4 s per attempt,
    one retry — instead of undici's 10 s connect timeout. auth-js does not retry getUser(). */
@@ -75,12 +76,12 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
     const { data, error } = await supabase.auth.getUser();
     if (error && isUnreachableError(error)) {
       console.error(`[middleware] auth unreachable: ${error.name}: ${error.message}`);
-      return { response, user: null, role: null, canViewDeals: false, needsMfa: false, authUnreachable: true };
+      return { response, user: null, role: null, canViewDeals: false, needsMfa: false, deactivated: false, authUnreachable: true };
     }
     user = data?.user ?? null;
   } catch (e) {
     console.error(`[middleware] auth unreachable (thrown): ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
-    return { response, user: null, role: null, canViewDeals: false, needsMfa: false, authUnreachable: true };
+    return { response, user: null, role: null, canViewDeals: false, needsMfa: false, deactivated: false, authUnreachable: true };
   }
 
   // Look up the app-level role (owner / manager / sales) + per-user
@@ -88,6 +89,8 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
   // lookup; cost ≈ 1 ms. Cached at the Supabase edge anyway.
   let role: string | null = null;
   let canViewDeals = false;
+  /** R-722: users.is_active = false — src/middleware.ts signs this browser out. */
+  let deactivated = false;
   /* R-048 part 2: this session signed in with a password but has not passed the account's
      authenticator code yet (verified TOTP factor → nextLevel aal2, session still aal1).
      Read from the session JWT + the user's factors; no extra network call. */
@@ -97,17 +100,18 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
     needsMfa = aal?.nextLevel === "aal2" && aal?.currentLevel !== "aal2";
     const { data: me, error: meErr } = await supabase
       .from("users")
-      .select("role, can_view_deals")
+      .select("role, can_view_deals, is_active")
       .eq("id", user.id)
       .maybeSingle();
     /* R-710: an unknown role must not read as "no role" — the role guard below skips a null
        role, so a sales login would see every page during a blip. Report it as unreachable. */
     if (meErr && isUnreachableError(meErr)) {
       console.error(`[middleware] role lookup unreachable: ${meErr.message}`);
-      return { response, user, role: null, canViewDeals: false, needsMfa, authUnreachable: true };
+      return { response, user, role: null, canViewDeals: false, needsMfa, deactivated: false, authUnreachable: true };
     }
     role = (me?.role as string | null) ?? null;
     canViewDeals = Boolean(me?.can_view_deals);
+    deactivated = isDeactivated(me);
     /* Apprentice Academy (R-149): an apprentice is not a staff (public.users) row — they are
        academy_apprentices.user_id. RLS lets them read only their own row. */
     if (!me) {
@@ -120,5 +124,5 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
     }
   }
 
-  return { response, user, role, canViewDeals, needsMfa, authUnreachable: false };
+  return { response, user, role, canViewDeals, needsMfa, deactivated, authUnreachable: false };
 }

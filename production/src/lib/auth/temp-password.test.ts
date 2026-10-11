@@ -74,6 +74,10 @@ describe("decideTempPassword — server-side who-may", () => {
   it("403 for a non-owner caller", () => {
     expect(decideTempPassword(sales, { ...owner2, role: "support" })).toMatchObject({ ok: false, status: 403 });
   });
+  it("R-722: 403 for a DEACTIVATED owner", () => {
+    expect(decideTempPassword({ ...owner, is_active: false }, sales)).toMatchObject({ ok: false, status: 403 });
+    expect(decideTempPassword({ ...owner, is_active: true }, sales)).toEqual({ ok: true });
+  });
   it("403 for a caller with no workspace", () => {
     expect(decideTempPassword(null, sales)).toMatchObject({ ok: false, status: 403 });
     expect(decideTempPassword({ ...owner, tenant_id: null }, sales)).toMatchObject({ ok: false, status: 403 });

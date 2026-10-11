@@ -27,6 +27,7 @@ import { rateLimitShared } from "@/lib/security/rate-limit";
 import { TEMP_PASSWORD_RATE, checkTypedTempPassword } from "@/lib/auth/temp-password";
 import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
+import { isActiveOwner } from "@/lib/auth/deactivated";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 
@@ -51,13 +52,13 @@ export async function POST(request: NextRequest) {
   // ── Caller's tenant + role — only an OWNER may invite ─────────────────
   const { data: me, error: meErr } = await supabase
     .from("users")
-    .select("tenant_id, role")
+    .select("tenant_id, role, is_active")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me) {
     return NextResponse.json({ error: "User not linked to a tenant" }, { status: 403 });
   }
-  if (me.role !== "owner") {
+  if (!isActiveOwner(me)) { // R-722: a deactivated owner is not an owner
     return NextResponse.json({ error: "Only the workspace owner can invite teammates" }, { status: 403 });
   }
 

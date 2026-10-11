@@ -19,8 +19,9 @@ export async function getTenantSession(): Promise<TenantSession | null> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) return null;
 
-  const { data: row } = await supabase.from("users").select("tenant_id").eq("id", auth.user.id).maybeSingle();
+  const { data: row } = await supabase.from("users").select("tenant_id, is_active").eq("id", auth.user.id).maybeSingle();
   if (!row?.tenant_id) return null;
+  if (row.is_active === false) return null; // R-722: a deactivated member has no tenant session
 
   return { userId: auth.user.id, tenantId: row.tenant_id };
 }
