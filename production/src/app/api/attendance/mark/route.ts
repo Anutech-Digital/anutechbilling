@@ -82,12 +82,15 @@ export async function POST(request: NextRequest) {
         const workDate = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
         const slot = action === "checked_in" ? "in" : "out";
         const path = `${me.tenant_id}/${workDate}/${employeeId}_${slot}.jpg`;
-        const up = await supabase.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
+        /* R-724: storage lets a login write only ITS OWN employee's selfie; the kiosk marks
+           someone else once the PIN RPC accepted them, so the server client stores it. */
+        const admin = createAdminClientFor(authData.user.id);
+        const up = await admin.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
         if (!up.error) {
           /* R-601: the kiosk may be signed in as any staff login, and only HR roles may
              write attendance rows directly now — so the selfie path goes on through the
              server client, scoped to this tenant + the employee the RPC just marked. */
-          await createAdminClientFor(authData.user.id).from("attendance")
+          await admin.from("attendance")
             .update(slot === "in" ? { selfie_in: path } : { selfie_out: path })
             .eq("tenant_id", me.tenant_id).eq("employee_id", employeeId).eq("work_date", workDate);
         }

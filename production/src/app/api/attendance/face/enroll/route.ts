@@ -44,15 +44,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Photo galat ya bahut badi hai" }, { status: 400 });
   }
 
+  /* R-724: _enroll is server-only in storage (20261011143000_r724_storage_roles) — with the
+     browser token anyone in the workspace could overwrite a colleague's reference face and
+     clock in as them. targetId passed the owner/self + same-tenant + consent checks above. */
+  const admin = createAdminClientFor(authData.user.id);
   const path = `${me.tenant_id}/_enroll/${targetId}.jpg`;
-  const up = await supabase.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
+  const up = await admin.storage.from("attendance-selfies").upload(path, buf, { contentType: "image/jpeg", upsert: true });
   if (up.error) return NextResponse.json({ error: up.error.message }, { status: 500 });
 
   /* R-601: on the server client. employees writes are owner/manager/accountant only
      (20260930175000_role_hardening.sql), and an RLS-blocked update is silent, so an
      employee enrolling their OWN face got "ok" with nothing saved. targetId is already
      limited above to the caller's own employee, or anyone for the owner. */
-  const { error } = await createAdminClientFor(authData.user.id).from("employees")
+  const { error } = await admin.from("employees")
     .update({ face_enrolled_at: new Date().toISOString(), face_ref_path: path })
     .eq("id", targetId).eq("tenant_id", me.tenant_id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
