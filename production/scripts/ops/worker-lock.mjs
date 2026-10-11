@@ -32,6 +32,15 @@
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
  * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = MAX_WORKERS (4) already
  * running. Either way: stop, do not work around it.
+ *
+ * R-842 (11 Oct) — board v76 card contract, enforced here instead of by cleanup (400+ cards lacked fields).
+ * The script cannot read the board (claude.ai artifact DB), so the caller saves the card first with
+ * ArtifactData get … out_dir=<dir> and passes the file:
+ *   node scripts/ops/worker-lock.mjs claim R-197 <worktree> <area>... --card <dir>/cards/R-197.json
+ *   node scripts/ops/worker-lock.mjs push  R-197 --card <dir>/cards/R-197.json   (re-save after writing howToCheck)
+ * claim needs triage {verdict, why, at}, kind, category, doneWhen; push needs howToCheck. Commits are
+ * NOT checked: the sha exists only after the push, so the worker/dispatcher writes `commits` right after.
+ * `--no-card-check` skips this ONLY for R-9xx manager cards. Exit 6 = card contract missing / no --card.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -270,9 +279,83 @@ function prep(card, paths) {
   console.log(`✓ ${card} taiyaar — card par prepared: true likho.`);
 }
 
+/** R-842: board v76 card contract. Fields a card must have before a worker may claim it. */
+export const CLAIM_FIELDS = ["triage.verdict", "triage.why", "triage.at", "kind", "category", "doneWhen"];
+/** Before the finishing push. (`commits` is written right after the push — the sha does not exist before it.) */
+export const PUSH_FIELDS = ["howToCheck"];
+
+function filled(v) {
+  if (v == null) return false;
+  if (typeof v === "string") return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+/** Missing contract fields (dotted names) for "claim" or "push"; [] = card is fine. */
+export function cardContractGaps(card, stage) {
+  const need = stage === "push" ? PUSH_FIELDS : CLAIM_FIELDS;
+  const c = card && typeof card === "object" ? card : {};
+  return need.filter((f) => !filled(f.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), c)));
+}
+
+/** Only manager cards (R-900…R-999) may skip the card check. */
+export function managerCard(card) { return /^R-9\d\d$/i.test(String(card)); }
+
+/** Pull --card <path> / --card=<path> / --no-card-check out of the args; the rest stay positional. */
+export function parseCardFlags(args) {
+  const rest = []; let cardPath = null; let noCheck = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--no-card-check") noCheck = true;
+    else if (a === "--card") cardPath = args[++i] ?? "";
+    else if (a.startsWith("--card=")) cardPath = a.slice("--card=".length);
+    else rest.push(a);
+  }
+  return { rest, cardPath, noCheck };
+}
+
+/** Accepts the ArtifactData out_dir file (plain card fields) or a {id, data: {...}} wrapper. */
+export function cardFromJson(obj) {
+  if (obj && typeof obj === "object" && obj.data && typeof obj.data === "object" && !("doneWhen" in obj) && !("title" in obj)) return { id: obj.id, ...obj.data };
+  return obj;
+}
+
+/**
+ * The guard, pure so tests can drive it: { ok, message }. `readFile` is injected (fs in the CLI).
+ * Refuses: no --card (unless R-9xx + --no-card-check), unreadable JSON, a card file for another id,
+ * or missing contract fields.
+ */
+export function checkCardContract(cardId, stage, { cardPath, noCheck }, readFile = (p) => fs.readFileSync(p, "utf8")) {
+  const id = String(cardId).toUpperCase();
+  if (noCheck) {
+    if (managerCard(id)) return { ok: true, message: `(${id}: manager card — card contract check skipped)` };
+    return { ok: false, message: `✗ --no-card-check sirf R-9xx manager cards ke liye hai. ${id} ke liye --card <card.json> do.` };
+  }
+  if (!cardPath) {
+    return { ok: false, message: `✗ ${id}: --card <file> do. Pehle ArtifactData get (collection cards, doc_id ${id}, out_dir <folder>) se card save karo, phir: ${stage} ${id} … --card <folder>/cards/${id}.json` + (managerCard(id) ? " (R-9xx manager card: --no-card-check bhi chalega)" : "") };
+  }
+  let card;
+  try { card = cardFromJson(JSON.parse(readFile(cardPath))); }
+  catch (e) { return { ok: false, message: `✗ ${id}: card file padh nahi paaya (${cardPath}): ${String(e?.message ?? e).slice(0, 200)}` }; }
+  if (card && card.id && String(card.id).toUpperCase() !== id) return { ok: false, message: `✗ --card file ${card.id} ki hai, ${id} ki nahi.` };
+  const gaps = cardContractGaps(card, stage);
+  if (gaps.length) {
+    const when = stage === "push" ? "push (card band) se pehle" : "claim se pehle";
+    return { ok: false, message: `✗ ${id}: card contract (board v76) adhoora — ${when} ye field chahiye: ${gaps.join(", ")}.\n   Card par likho, card dobara save karo (ArtifactData get out_dir), phir chalao. Bina field ke card mat chalao.` };
+  }
+  return { ok: true, message: `✓ ${id}: card contract theek (${stage}).` };
+}
+
+function enforceCard(card, stage, flags) {
+  const r = checkCardContract(card, stage, flags);
+  if (!r.ok) { console.error(r.message); process.exit(6); }
+  console.log(r.message);
+}
+
 function main(argv) {
-  const [cmd, rawCard, ...rest] = argv;
+  const [cmd, rawCard, ...args] = argv;
   const card = rawCard?.toUpperCase();
+  const { rest, ...cardFlags } = parseCardFlags(args);
   fs.mkdirSync(LOCK_DIR, { recursive: true });
 
   if (cmd === "list") {
@@ -285,7 +368,8 @@ function main(argv) {
 
   if (cmd === "claim") {
     const [worktree, ...areas] = rest;
-    if (!worktree || !areas.length) { console.error("claim <CARD> <worktree> <folder/file>..."); process.exit(1); }
+    if (!worktree || !areas.length) { console.error("claim <CARD> <worktree> <folder/file>... --card <card.json>"); process.exit(1); }
+    enforceCard(card, "claim", cardFlags);
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
     const locks = readLocks();
@@ -312,7 +396,7 @@ function main(argv) {
     console.log(`✓ ${files.length} badli files — kisi aur worker se takraav nahi.`);
     return;
   }
-  if (cmd === "push") return pushWithTurn(card);
+  if (cmd === "push") { enforceCard(card, "push", cardFlags); return pushWithTurn(card); }
   if (cmd === "tsc") return tscWithTurn(card).then((ok) => { if (ok) console.log("✓ tsc green"); else process.exit(1); });
   if (cmd === "prep") return prep(card, rest);
   if (cmd === "release") {
@@ -320,7 +404,7 @@ function main(argv) {
     console.log(`✓ ${card} ka lock hata.`);
     return;
   }
-  console.error("claim | check | release | list");
+  console.error("claim | check | push | tsc | prep | release | list   (claim/push need --card <card.json>)");
   process.exit(1);
 }
 
