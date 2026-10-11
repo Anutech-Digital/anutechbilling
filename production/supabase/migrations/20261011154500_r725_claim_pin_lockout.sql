@@ -1,6 +1,6 @@
 -- deploy-peek: (to_regclass('public.expense_claim_pin_attempts') is not null and to_regprocedure('public.claim_pin_check(uuid, uuid, text)') is not null and exists(select 1 from pg_policy where polname = 'expense_claim_pin_attempts_service_role'))
 -- deploy-key: r725pin
--- 20261011134000_r725_claim_pin_lockout.sql
+-- 20261011154500_r725_claim_pin_lockout.sql
 --
 -- R-725 (P1, security audit 9–10 Oct). The public expense-claim link checks the employee's
 -- 4–6 digit attendance PIN on three server routes (verify / submit / manage). Only verify had
