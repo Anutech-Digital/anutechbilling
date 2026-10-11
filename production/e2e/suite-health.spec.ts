@@ -14,6 +14,11 @@
  * so the run cannot be mistaken for coverage. It is the only test here that is
  * supposed to go red on a fresh machine — and the message says exactly what to do.
  *
+ *
+ * R-855: the ONE exception is a CI with no auth secret at all — there it SKIPS with
+ * the reason printed in the log, because a permanently red non-blocking job taught
+ * everyone to ignore it (and got mistaken for the real CI blocker). Partial secrets in
+ * CI still FAIL, and so does a dev machine without a complete .env.test.
  * ─── IT DOES NOT ASK ANYONE TO PASTE A SERVICE-ROLE KEY ANYWHERE PUBLIC ─────
  * Lighting up the suite needs SUPABASE_SERVICE_ROLE_KEY in `.env.test`, which is
  * gitignored. That key must never reach a commit, a screenshot, or a chat message —
@@ -23,38 +28,39 @@
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { E2E_ROLES, missingEnvFor } from "./fixtures/e2e-roles.mjs";
+import { suiteHealthVerdict } from "./fixtures/suite-health-verdict.mjs";
 
 const ENV_FILE = path.join(process.cwd(), ".env.test");
 
 test.describe("suite health", () => {
   test("the auth-gated specs are actually able to run", () => {
-    const hasFile = fs.existsSync(ENV_FILE);
-    const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-    const hasService = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+    // R-855: the decision lives in fixtures/suite-health-verdict.mjs (unit-tested in
+    // src/test/suite-health-verdict.test.ts).
+    const verdict = suiteHealthVerdict({
+      env: process.env,
+      hasEnvFile: fs.existsSync(ENV_FILE),
+      isCI: Boolean(process.env.CI),
+    });
 
-    const missing: string[] = [];
-    if (!hasFile) missing.push("production/.env.test does not exist");
-    if (!hasAnon) missing.push("NEXT_PUBLIC_SUPABASE_ANON_KEY is not set");
-    if (!hasService) missing.push("SUPABASE_SERVICE_ROLE_KEY is not set");
-    // R-053: the logged-in workflow specs (wNN-*.spec.ts) skip per role without these,
-    // so their skips count here exactly like the older auth-gated ones.
-    for (const name of missingEnvFor(E2E_ROLES)) {
-      if (!name.startsWith("E2E_")) continue; // the Supabase vars are reported above
-      missing.push(`${name} is not set — the logged-in workflow specs for that role skip`);
+    console.log(`[suite-health] ${verdict.status.toUpperCase()}: ${verdict.reason}`);
+    if (verdict.status === "skip") {
+      test.info().annotations.push({ type: "suite-health", description: verdict.reason });
+      test.skip(true, verdict.reason);
+      return;
     }
 
     expect(
-      missing,
+      verdict.missing,
       [
         "",
         "The E2E suite is running with its auth-gated specs disabled, so a green run",
-        "here proves almost nothing. Missing:",
-        ...missing.map((m) => `  · ${m}`),
+        `here proves almost nothing. ${verdict.reason} Missing:`,
+        ...verdict.missing.map((m) => `  · ${m}`),
         "",
         "Fix: create production/.env.test (gitignored) with the keys and the E2E_*_PASSWORD",
-        "vars, then seed (e2e/README.md, \"Logged-in E2E\"). Until then the only specs that",
-        "really execute are the no-auth ones: smoke, and the public buy page.",
+        "vars (in CI: the same names as repo secrets), then seed (e2e/README.md,",
+        '"Logged-in E2E"). Until then the only specs that really execute are the no-auth',
+        "ones: smoke, and the public buy page.",
         "",
       ].join("\n"),
     ).toEqual([]);
