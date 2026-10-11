@@ -299,3 +299,54 @@ describe("Add Subscription — the billing period drives the term", () => {
     expect(renewal()).toBe("2026-02-27");
   });
 });
+
+/**
+ * R-876 — the price CONVERTS when the billing period changes.
+ *
+ * Found by the AI tester on 11 Oct 2026 (build b8722096): ₹1,800 typed under Yearly,
+ * switched to Quarterly, and the label went ₹/yr → ₹/mo with the number unchanged —
+ * ₹1,800/mo, twelve times the agreed price. No catalogue row here (custom plan), which
+ * is exactly the path that used to leave the number alone.
+ */
+describe("Add Subscription — R-876 switching the period converts the price", () => {
+  const pick = (value: string) => {
+    const sel = Array.from(document.querySelectorAll("select"))
+      .find((s) => Array.from(s.options).some((o) => o.value === value));
+    if (!sel) throw new Error(`no select offering ${value}`);
+    fireEvent.change(sel, { target: { value } });
+  };
+  const arr = () => {
+    const m = (document.body.textContent ?? "").match(/Total Annual Contract Value \(ARR\):\s*(₹[\d,]+)/);
+    return m?.[1] ?? null;
+  };
+
+  it("₹1,800 Yearly → Quarterly shows ₹150/mo; back to Yearly shows ₹1,800; ARR unchanged", () => {
+    const { price, seats } = renderDialog();
+    fireEvent.change(seats, { target: { value: "1" } });
+    fireEvent.change(price, { target: { value: "1800" } });
+    const before = arr();
+    expect(before).toBe("₹1,800");
+
+    pick("annual_quarterly");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(price.value).toBe("150");
+    expect(arr()).toBe(before);
+    expect(document.querySelector('[data-testid="price-switch-hint"]')?.textContent).toMatch(/÷ 12/);
+
+    pick("annual_yearly");
+    expect(priceLabel()).toContain("₹/yr");
+    expect(price.value).toBe("1800");
+    expect(arr()).toBe(before);
+  });
+
+  it("switching to flex clears the price with a plain hint instead of guessing", () => {
+    const { price } = renderDialog();
+    fireEvent.change(price, { target: { value: "1800" } });
+    pick("monthly_flex");
+    expect(price.value).toBe("");
+    expect(document.querySelector('[data-testid="price-switch-hint"]')?.textContent).toMatch(/flex/i);
+    /* Typing clears the hint. */
+    fireEvent.change(price, { target: { value: "200" } });
+    expect(document.querySelector('[data-testid="price-switch-hint"]')).toBeNull();
+  });
+});
