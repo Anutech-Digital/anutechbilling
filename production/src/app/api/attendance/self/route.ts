@@ -198,7 +198,11 @@ export async function POST(request: NextRequest) {
         if (!emp?.face_ref_path) {
           flags.add("face_not_enrolled");
         } else {
-          const dl = await supabase.storage.from("attendance-selfies").download(emp.face_ref_path);
+          /* R-724: _enroll photos are server-only in storage. This is the caller's OWN
+             employee's path, and it must sit in the caller's tenant _enroll folder. */
+          const dl = emp.face_ref_path.startsWith(`${me.tenant_id}/_enroll/`)
+            ? await admin.storage.from("attendance-selfies").download(emp.face_ref_path)
+            : { data: null };
           if (dl.data) {
             const refB64 = Buffer.from(await dl.data.arrayBuffer()).toString("base64");
             const probeB64 = photo.includes(",") ? photo.split(",")[1] : photo;
