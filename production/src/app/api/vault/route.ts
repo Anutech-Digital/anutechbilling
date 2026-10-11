@@ -28,6 +28,7 @@ import { clientIp } from "@/lib/security/rate-limit";
 import { encryptSecret, isVaultConfigured, fingerprintPassword } from "@/lib/crypto/vault";
 import { assessStrength, vaultHealth, type VaultEntryHealth } from "@/lib/vault/passwords";
 import { vaultDb, UNDEFINED_TABLE, type VaultCategory } from "@/lib/vault/db";
+import { vaultGate } from "./vault-access";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,6 +41,10 @@ export async function GET() {
   if (!authData?.user) {
     return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
   }
+
+  // R-716: owner / manager only — the same roles that see the /vault menu.
+  const gate = await vaultGate(supabase, authData.user.id);
+  if (!gate.ok) return gate.res;
 
   const { data, error } = await db
     .from("vault_passwords")
@@ -124,6 +129,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
   }
 
+  // R-716: owner / manager only — the same roles that see the /vault menu.
+  const gate = await vaultGate(supabase, authData.user.id);
+  if (!gate.ok) return gate.res;
+
   // Refuse rather than store an admin console password in the clear. A vault
   // that silently degrades to plaintext is the worst of both worlds: it carries
   // the trust of a vault and the safety of a spreadsheet.
@@ -155,15 +164,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Password is required." }, { status: 400 });
   }
 
-  const { data: me } = await supabase
-    .from("users")
-    .select("tenant_id")
-    .eq("id", authData.user.id)
-    .maybeSingle();
-
-  if (!me?.tenant_id) {
-    return NextResponse.json({ ok: false, error: "No tenant for this user." }, { status: 403 });
-  }
+  const me = { tenant_id: gate.tenantId };
 
   const username = str(body.username);
   const notes    = str(body.notes);

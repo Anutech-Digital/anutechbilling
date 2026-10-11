@@ -24,6 +24,7 @@ import { clientIp } from "@/lib/security/rate-limit";
 import { decryptSecret, isVaultConfigured } from "@/lib/crypto/vault";
 import { assessStrength } from "@/lib/vault/passwords";
 import { vaultDb } from "@/lib/vault/db";
+import { vaultGate } from "../../vault-access";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!authData?.user) {
     return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
   }
+
+  // R-716: only owner / manager may decrypt a stored credential (roles.ts can_reveal_vault).
+  // Checked before anything is read or logged; RLS enforces the same rule underneath.
+  const gate = await vaultGate(supabase, authData.user.id);
+  if (!gate.ok) return gate.res;
 
   if (!isVaultConfigured()) {
     return NextResponse.json(
