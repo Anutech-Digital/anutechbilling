@@ -6,7 +6,7 @@
  * Two layers:
  *   1. rateLimitShared per tenant+employee — every PIN attempt counts (right or wrong), shared
  *      across instances when RATE_LIMIT_STORE=postgres. Bounds hammering cheaply.
- *   2. public.claim_pin_check (migration 20261011134000) — the durable wrong-PIN counter in the
+ *   2. public.claim_pin_check (migration 20261011154500) — the durable wrong-PIN counter in the
  *      DB: every 5th wrong PIN in a row locks the employee (15 min, doubling, max 24 h). This is
  *      what survives restarts and multiple instances regardless of the limiter's store.
  *

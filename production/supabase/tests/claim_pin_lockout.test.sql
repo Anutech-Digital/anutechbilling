@@ -1,4 +1,4 @@
--- Regression test: R-725 (20261011134000_r725_claim_pin_lockout.sql). Rolled back.
+-- Regression test: R-725 (20261011154500_r725_claim_pin_lockout.sql). Rolled back.
 --
 --   ALLOWED  right PIN → 'ok' and clears the wrong-count
 --   BLOCKED  the 5th wrong PIN in a row locks; the RIGHT PIN is then refused too
