@@ -62,8 +62,12 @@ exception when others then if sqlerrm like 'FAIL:%' then raise; end if; end $$;
 select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-0000-0000-00000000a0a4', 'role', 'authenticated')::text, true);
 
 -- 4. invoice with a credit note → refused, nothing changes
+-- Fixture row written as the table owner: since R-719 nobody inserts a credit note directly
+-- through PostgREST (only issue_credit_note numbers one), so the test cannot either.
+reset role;
 insert into public.credit_notes (id, tenant_id, invoice_id, amount, taxable_value, tax_amount, tax_rate, credit_date)
   select 'CN-TEST-UR-1', 'aaaaaaaa-0000-0000-0000-0000000000a4', v, 118, 100, 18, 18, '2026-08-10' from s where k = 'inv:aaaaaaaa-0000-0000-0000-0000000b7001';
+set local role authenticated;
 do $$ begin
   perform public.unreconcile_bank_receipt('aaaaaaaa-0000-0000-0000-0000000b7001', true);
   raise exception 'FAIL: invoice with credit note undone';
