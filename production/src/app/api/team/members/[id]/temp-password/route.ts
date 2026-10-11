@@ -57,7 +57,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   const admin = createAdminClientFor(callerId);
   const { data: caller } = await admin
     .from("users")
-    .select("id, role, tenant_id")
+    .select("id, role, tenant_id, is_active")
     .eq("id", callerId)
     .maybeSingle();
 

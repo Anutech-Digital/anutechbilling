@@ -20,6 +20,7 @@ import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
 import { LocalTestLogin } from "./local-test-login";
+import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -203,6 +204,13 @@ function LoginPageInner() {
         <span>or use email</span>
         <div className="flex-1 h-px bg-hairline" />
       </div>
+
+      {/* R-722: the middleware signed this browser out because the owner deactivated the account. */}
+      {searchParams.get("error") === DEACTIVATED_ERROR && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          {DEACTIVATED_MESSAGE}
+        </div>
+      )}
 
       {unconfirmed && (
         <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm" role="alert">

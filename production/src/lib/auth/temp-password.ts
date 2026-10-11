@@ -70,6 +70,8 @@ export interface TeamRow {
   id: string;
   role: string | null;
   tenant_id: string | null;
+  /** R-722: only an ACTIVE owner may act; a deactivated owner is refused. */
+  is_active?: boolean | null;
 }
 
 export type TempPasswordDecision =
@@ -86,7 +88,7 @@ export function decideTempPassword(caller: TeamRow | null, target: TeamRow | nul
   if (!caller?.tenant_id) {
     return { ok: false, status: 403, error: "You are not in a workspace." };
   }
-  if (caller.role !== "owner") {
+  if (caller.role !== "owner" || caller.is_active === false) {
     return { ok: false, status: 403, error: "Only the workspace owner can set a temporary password. Ask an owner, or use Send reset link." };
   }
   if (!target || target.tenant_id !== caller.tenant_id) {

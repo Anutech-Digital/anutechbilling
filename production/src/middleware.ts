@@ -14,6 +14,7 @@ import { isRouteAllowed, ROLE_HOME, type UserRole } from "@/lib/nav";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
+import { clearLoginCookies, DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 import { AUTH_OUTAGE_HTML, AUTH_OUTAGE_MESSAGE, authOutageVerdict } from "@/lib/supabase/auth-outage";
 import { decideSite } from "@/site/lib/site-split";
 import {
@@ -203,7 +204,7 @@ export async function middleware(request: NextRequest) {
     console.error(`[middleware] session check threw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
     session = {
       response: NextResponse.next({ request }), user: null, role: null,
-      canViewDeals: false, needsMfa: false, authUnreachable: true,
+      canViewDeals: false, needsMfa: false, deactivated: false, authUnreachable: true,
     };
   }
   if (session.authUnreachable) {
@@ -224,6 +225,27 @@ export async function middleware(request: NextRequest) {
   }
   const { response, user, role, canViewDeals, needsMfa } = session;
   const isAuthed = !!user;
+
+  /* ─── R-722: a deactivated member is signed out on their next request ─────────────
+     Owner turned the member off (users.is_active = false) → their login cookies are cleared
+     on THIS response, pages go to /login?error=deactivated, API calls get 401. The database
+     already gives them nothing (current_tenant_id() is NULL for an inactive user); this ends
+     the session itself. Re-checked on every request, so turning them back on just works. */
+  if (isAuthed && session.deactivated) {
+    const names = request.cookies.getAll().map((c) => c.name);
+    if (pathname.startsWith("/api/")) {
+      return clearLoginCookies(
+        NextResponse.json({ error: DEACTIVATED_MESSAGE, deactivated: true }, { status: 401, headers: { "Cache-Control": "no-store" } }),
+        names,
+      );
+    }
+    if (isAuthPage) return clearLoginCookies(NextResponse.next({ request }), names);
+    const url = request.nextUrl.clone();
+    url.search = "";
+    url.pathname = "/login";
+    url.searchParams.set("error", DEACTIVATED_ERROR);
+    return clearLoginCookies(NextResponse.redirect(url), names);
+  }
 
   /* ─── R-524: "Try the demo" visitor — READ-ONLY, short-lived ──────────────
      The database already refuses every write for this login (demo_pre_request → read-only

@@ -16,6 +16,7 @@ const NEW_ID = "b0000000-0000-4000-8000-000000000009";
 const st = vi.hoisted(() => ({
   sessionUserId: null as string | null,
   callerRole: "owner",
+  callerActive: true,
   existingLogins: new Set<string>(),
   invites: [] as Array<Record<string, unknown>>,
   inviteUpdates: [] as Array<Record<string, unknown>>,
@@ -54,7 +55,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     auth: { getUser: async () => ({ data: { user: st.sessionUserId ? { id: st.sessionUserId } : null } }) },
     from: (table: string) => {
-      if (table === "users") return chain(() => ({ data: { tenant_id: T1, role: st.callerRole }, error: null }));
+      if (table === "users") return chain(() => ({ data: { tenant_id: T1, role: st.callerRole, is_active: st.callerActive }, error: null }));
       if (table === "tenants") return chain(() => ({ data: { name: "Acme" }, error: null }));
       if (table === "team_invites") {
         return {
@@ -125,7 +126,7 @@ const call = (body: unknown) =>
 const PW = "Kites-river-42";
 
 beforeEach(() => {
-  st.sessionUserId = OWNER; st.callerRole = "owner"; st.existingLogins = new Set();
+  st.sessionUserId = OWNER; st.callerRole = "owner"; st.callerActive = true; st.existingLogins = new Set();
   st.invites = []; st.inviteUpdates = []; st.audits = []; st.auditUpdates = [];
   st.createdAuth = []; st.deletedAuth = []; st.userRows = []; st.emails = [];
   st.actors = []; st.order = []; st.rateOk = true; st.createFails = null;
@@ -151,6 +152,14 @@ describe("POST /api/team/invite — temporary password (R-534)", () => {
 
   it("refuses a non-owner (with or without a password)", async () => {
     st.callerRole = "manager";
+    expect((await call({ email: "new@acme.test", role: "sales", tempPassword: PW })).status).toBe(403);
+    expect(st.invites).toHaveLength(0);
+    noLogin();
+  });
+
+  it("R-722: refuses a DEACTIVATED owner (with or without a password)", async () => {
+    st.callerActive = false;
+    expect((await call({ email: "new@acme.test", role: "sales" })).status).toBe(403);
     expect((await call({ email: "new@acme.test", role: "sales", tempPassword: PW })).status).toBe(403);
     expect(st.invites).toHaveLength(0);
     noLogin();
