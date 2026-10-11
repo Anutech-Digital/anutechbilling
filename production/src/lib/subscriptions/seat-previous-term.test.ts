@@ -92,7 +92,7 @@ describe("seatChargePlan", () => {
 });
 
 describe("seatIncreaseQuote", () => {
-  it("+2 seats from 1 Aug 2025: ₹799 + ₹6,480 → subtotal ₹7,279, total ₹8,589", () => {
+  it("+2 seats from 1 Aug 2025: ₹399 × 2 + ₹3,240 × 2 → subtotal ₹7,278, total ₹8,588 (R-837)", () => {
     const q = seatIncreaseQuote({
       currentSeats: 1, currentMrr: 270, additionalSeats: 2, taxRatePct: 18,
       previous: { remainingDays: 45, termDays: 365 }, current: { remainingDays: 365, termDays: 365 },
@@ -100,13 +100,15 @@ describe("seatIncreaseQuote", () => {
     // 324000 × 2 × 45 / 365 = 79890.4 → 79890 paise; GST 14380 → 94270
     expect(q.previous!.proration.subtotalPaise).toBe(79890);
     expect(q.previous!.proration.totalPaise).toBe(94270);
-    expect(q.previous!.subtotal).toBe(799);
+    // R-837: line first — round(3240 × 45 / 365) = ₹399/seat × 2 = ₹798
+    expect(q.previous!.perSeat).toBe(399);
+    expect(q.previous!.subtotal).toBe(798);
     // whole current term: 648000 paise; GST 116640 → 764640
     expect(q.current.subtotal).toBe(6480);
     expect(q.current.total).toBe(7646);
-    // parts added in paise, rounded once: 727890 → ₹7,279; 858910 → ₹8,589
-    expect(q.subtotal).toBe(7279);
-    expect(q.total).toBe(8589);
+    // R-837: line totals added (₹798 + ₹6,480), GST once: ₹7,278 + ₹1,310 = ₹8,588
+    expect(q.subtotal).toBe(7278);
+    expect(q.total).toBe(8588);
     expect(q.tax).toBe(1310);
     expect(q.newMrr).toBe(810);
   });
@@ -182,9 +184,11 @@ describe("addSeats — previous-term effective date", () => {
       "Google Workspace Business Starter · +2 seats (current term 2025-09-15 to 2026-09-14)",
     ]);
     expect(lines.map((l) => [l.qty, l.rate])).toEqual([[2, 399], [2, 3240]]);
-    expect(quotes[0].subtotal).toBe(7279);
-    expect(quotes[0].amount).toBe(8589);
-    expect(r.amount).toBe(8589);
+    // R-837: rate × qty per line adds up to the subtotal
+    expect(lines.reduce((s, l) => s + l.qty * l.rate, 0)).toBe(quotes[0].subtotal);
+    expect(quotes[0].subtotal).toBe(7278);
+    expect(quotes[0].amount).toBe(8588);
+    expect(r.amount).toBe(8588);
     expect(r.newMrr).toBe(810);
     const notes = String(quotes[0].notes);
     expect(notes).toContain("Effective date 2025-08-01 (backdated by Abhishek on 2026-06-01)");

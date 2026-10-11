@@ -56,9 +56,9 @@ export type RenewalTermResult =
       ok: true;
       /** Months this renewal covers. Never assumed — always from the subscription. */
       termMonths: number;
-      /** Ex-GST subtotal for the whole term, in whole rupees. */
+      /** Ex-GST subtotal for the whole term, in whole rupees. Always perSeatRate × seats (R-837). */
       subtotal: number;
-      /** Ex-GST rate per seat for the whole term. */
+      /** Ex-GST rate per seat for the whole term, whole rupees — the quote line's `rate`. */
       perSeatRate: number;
       /** "annual_yearly" | "monthly" — what the quote line should say it is. */
       commitment: "annual_yearly" | "monthly";
@@ -114,12 +114,22 @@ export function renewalTerm(input: RenewalTermInput): RenewalTermResult {
     };
   }
 
-  const subtotal = Math.max(0, Math.round(mrr * termMonths));
+  /* R-837 (Pardeep's R-834 rule, same as extensionCharge): the quote line is the price.
+     Annual per seat = round(mrr × 12 ÷ seats) (R-803); per seat for the term = annual × years
+     on a whole-year term, else round(annual × months ÷ 12); subtotal = per seat × seats, so
+     rate × qty on the quote IS the subtotal. Before, subtotal = round(mrr × months) and the
+     line carried round(subtotal ÷ seats) "for display": 10 seats at ₹83/mo read
+     ₹100 × 10 = ₹1,000 over a ₹996 subtotal. */
+  const annualPerSeat = Math.round((mrr * 12) / seats);
+  const perSeatRate = termMonths % 12 === 0
+    ? annualPerSeat * (termMonths / 12)
+    : Math.round((annualPerSeat * termMonths) / 12);
+  const subtotal = perSeatRate * seats;
   return {
     ok: true,
     termMonths,
     subtotal,
-    perSeatRate: Math.round(subtotal / seats),
+    perSeatRate,
     /* A 1-month renewal is not an annual commitment, and labelling it one is what makes
        record_payment build the wrong subscription on the way back in. */
     commitment: termMonths === 1 ? "monthly" : "annual_yearly",

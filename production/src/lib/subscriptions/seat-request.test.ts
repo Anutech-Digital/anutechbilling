@@ -120,11 +120,13 @@ describe("previewCharge", () => {
   };
 
   it("prices the added seats at what THIS customer pays, not at list", () => {
-    // ₹2,700/mo ÷ 10 = ₹270/seat/mo → ₹3,240/seat/yr. × 20 × 228/365 = ₹40,477.81
+    // ₹2,700/mo ÷ 10 = ₹270/seat/mo → ₹3,240/seat/yr. R-837: per seat round(3240 × 228/365)
+    // = ₹2,024 × 20 = ₹40,480 (was the all-seats pro-rata ₹40,477.81 → ₹40,478)
     const p = previewCharge(base)!;
-    expect(p.exGst).toBe(40_478);
+    expect(p.perSeat).toBe(2_024);
+    expect(p.exGst).toBe(40_480);
     expect(p.tax).toBe(7_286);
-    expect(p.total).toBe(47_764);
+    expect(p.total).toBe(47_766);
   });
 
   it("total is subtotal + tax with no third rounding", () => {

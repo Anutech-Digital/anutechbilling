@@ -281,8 +281,8 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   const charge        = priced.proration;
   const subtotalExGst = quoted.subtotal;
   const totalInclGst  = quoted.total;
-  // Per-seat rate for the quote LINE only — the subtotal above is never derived
-  // from it. That multiplication is exactly the bug this replaced.
+  /* R-837 (R-834 rule): the whole-rupee per-seat rate IS the price — subtotal = line rate ×
+     seats added (summed over R-543's two lines), so rate × qty on the quote equals it. */
   const proRataPerSeat = priced.perSeat;
 
   /* The real vendor cost, resolved ONCE and used by both the quote line and the draft

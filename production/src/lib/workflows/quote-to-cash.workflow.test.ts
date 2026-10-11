@@ -153,7 +153,7 @@ describe("WORKFLOW 2 — Mid-cycle seat addition", () => {
     expect(v).toEqual({ canApprove: true, seatsToAdd: 20, newTotal: 30 });
   });
 
-  it("the PREVIEW and the raw proration agree to the rupee", () => {
+  it("the PREVIEW is the quote line: whole-rupee rate per seat × seats (R-837)", () => {
     /* The seam that matters most here: the queue shows a figure and the approval
        charges one. Different code paths, and they must not diverge. */
     const preview = previewCharge({ currentSeats, currentMrr, seatsToAdd, remainingDays, termDays, taxRatePct: 18 })!;
@@ -161,15 +161,19 @@ describe("WORKFLOW 2 — Mid-cycle seat addition", () => {
       annualPerSeatPaise: Math.round(rupeesToPaise(currentMrr / currentSeats) * 12),
       seats: seatsToAdd, remainingDays, termDays, taxRatePct: 18,
     });
-    expect(preview.exGst).toBe(paiseToRupees(raw.subtotalPaise));
-    expect(preview.total).toBe(paiseToRupees(raw.totalPaise));
+    /* R-837 (R-834 rule): per seat = the one-seat pro-rata in whole rupees; subtotal = that × seats. */
+    const onePaise = prorate({ annualPerSeatPaise: Math.round(rupeesToPaise(currentMrr / currentSeats) * 12), seats: 1, remainingDays, termDays, taxRatePct: 18 }).subtotalPaise;
+    expect(preview.perSeat).toBe(paiseToRupees(onePaise));
+    expect(preview.exGst).toBe(preview.perSeat * seatsToAdd);
+    expect(Math.abs(preview.exGst - paiseToRupees(raw.subtotalPaise))).toBeLessThanOrEqual(seatsToAdd);
+    expect(preview.total).toBe(grossAmount(preview.exGst, 18));
     expect(preview.total).toBe(preview.exGst + preview.tax);
   });
 
-  it("the arithmetic is the documented one, in paise, rounded once", () => {
+  it("the arithmetic is the documented one: per seat rounded once, × seats (R-837)", () => {
     const p = previewCharge({ currentSeats, currentMrr, seatsToAdd, remainingDays, termDays, taxRatePct: 18 })!;
-    // ₹270/seat/mo → ₹3,240/seat/yr × 20 × 228/365 = ₹40,477.81 → ₹40,478
-    expect(p.exGst).toBe(40_478);
+    // ₹270/seat/mo → ₹3,240/seat/yr × 228/365 = ₹2,023.89 → ₹2,024 × 20 = ₹40,480 (R-837)
+    expect(p.exGst).toBe(40_480);
     expect(p.newMrr).toBe(8_100);
   });
 
@@ -181,7 +185,7 @@ describe("WORKFLOW 2 — Mid-cycle seat addition", () => {
     // 400 days is clamped to the 365-day term, so an annual deal bills the full year.
     expect(annual.exGst).toBe(64_800);            // ₹3,240 × 20
     // On a 730-day term the same 400 days is 400/730 of it.
-    expect(twoYear.exGst).toBe(35_507);           // ₹3,240 × 20 × 400/730
+    expect(twoYear.exGst).toBe(35_500);           // round(₹3,240 × 400/730) = ₹1,775 × 20 (R-837)
     expect(twoYear.exGst).toBeLessThan(annual.exGst);
   });
 

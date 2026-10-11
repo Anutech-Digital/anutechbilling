@@ -17,8 +17,20 @@
  *     and `amount` columns);
  *   - GST shown = total − subtotal, so the three lines add up on screen and equal what the
  *     quote and the invoice built from it show (tax there is amount − taxable value).
+ *
+ * R-837 (11 Oct 2026, Pardeep's R-834 rule): the quote LINE is the price. Quote screens, the
+ * PDF and the accept page show a line as rate × qty, so the per-seat pro-rata rate is now the
+ * source of truth, in whole rupees:
+ *   perSeat  = round(annualPerSeat × chargedDays ÷ termDays)   (integer maths, rounded once)
+ *   subtotal = perSeat × seats added   (= the line total; R-543's two lines are summed)
+ *   total    = grossAmount(subtotal, taxRatePct)
+ * Before, the subtotal was the paise pro-rata of ALL added seats and the line carried a
+ * per-seat figure "for display only", so ₹2,700/mo over 10 seats, +20, 228/365 read
+ * ₹2,024 × 20 = ₹40,480 over a ₹40,478 subtotal. Saved quotes are untouched. The proration result is
+ * still returned for the quote notes (charged days, exact factor).
  */
-import { prorate, rupeesToPaise, paiseToRupees, type ProrationResult } from "./proration";
+import { prorate, rupeesToPaise, type ProrationResult } from "./proration";
+import { grossAmount } from "@/lib/quotes/amounts";
 
 export interface SeatIncreaseChargeInput {
   /** Seats on the subscription before the change. */
@@ -44,7 +56,8 @@ export interface SeatIncreaseCharge {
   tax: number;
   /** Incl. GST, whole rupees — the quote's `amount`. */
   total: number;
-  /** Per-seat pro-rata rate for the quote line, display only. */
+  /** ₹ per added seat for the period, whole rupees — the quote line's `rate` (qty = seats
+   *  added). subtotal is always perSeat × additionalSeats (R-837). */
   perSeat: number;
   /** ₹/month the subscription bills after the change. */
   newMrr: number;
@@ -65,15 +78,18 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
     taxRatePct,
   });
 
-  const subtotal = paiseToRupees(proration.subtotalPaise);
-  const total    = paiseToRupees(proration.totalPaise);
+  /* R-837: per seat first, whole rupees, from integers (annualPerSeat × days is exact), rounded
+     once; the line total and the subtotal are built from it. Days are prorate()'s clamped days. */
+  const perSeat  = Math.round((annualPerSeat * proration.chargedDays) / termDays);
+  const subtotal = perSeat * Math.max(0, additionalSeats);
+  const total    = grossAmount(subtotal, taxRatePct);
 
   return {
     annualPerSeat,
     subtotal,
     tax:     total - subtotal,
     total,
-    perSeat: paiseToRupees(proration.perSeatPaise),
+    perSeat: additionalSeats > 0 ? perSeat : 0,
     newMrr:  Math.round((annualPerSeat * (currentSeats + additionalSeats)) / 12),
     proration,
   };
@@ -81,11 +97,11 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
 
 /**
  * R-543 — a seat increase whose effective date is in the PREVIOUS term: two parts on one quote,
- * each priced by seatIncreaseCharge() (same annual per seat, same paise engine, same tax).
+ * each priced by seatIncreaseCharge() (same annual per seat, same tax).
  *   previous — the rest of the previous term (days over the previous term's length);
  *   current  — the current term from its start (what a current-term-start date charges).
- * The quote's subtotal and amount are the parts added in PAISE and rounded once, so the two
- * lines cannot drift a rupee from the total. With no previous part this is exactly
+ * R-837: the quote's subtotal is the two line totals added (each rate × qty) and the amount is
+ * grossAmount() of it, so the lines add up to the subtotal exactly. With no previous part this is exactly
  * seatIncreaseCharge() — the quote for a current-term date is unchanged.
  * addSeats() and the Add seats dialog both call it (R-803 rule: preview = server).
  */
@@ -117,8 +133,9 @@ export function seatIncreaseQuote(input: SeatIncreaseQuoteInput): SeatIncreaseQu
     };
   }
   const previous = seatIncreaseCharge({ ...base, remainingDays: prevDays.remainingDays, termDays: prevDays.termDays });
-  const subtotal = paiseToRupees(previous.proration.subtotalPaise + current.proration.subtotalPaise);
-  const total    = paiseToRupees(previous.proration.totalPaise + current.proration.totalPaise);
+  /* R-837: the two line totals (each rate × qty) added; GST once on that subtotal. */
+  const subtotal = previous.subtotal + current.subtotal;
+  const total    = grossAmount(subtotal, base.taxRatePct);
   return {
     annualPerSeat: current.annualPerSeat, previous, current,
     subtotal, tax: total - subtotal, total, newMrr: current.newMrr,

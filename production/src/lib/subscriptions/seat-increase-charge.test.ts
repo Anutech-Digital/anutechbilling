@@ -72,17 +72,21 @@ const CASES: Case[] = [
 ];
 
 describe("R-803 seatIncreaseCharge — the 10 Oct case, pinned", () => {
-  it("₹1,656/seat/yr × 188/365 × 1 = ₹853 + ₹153 GST = ₹1,006, like quote Q-F588-27-0004", () => {
+  /* R-837 (R-834 rule): the subtotal is the whole-rupee line (₹853 × 1) and GST is charged on
+     it, so ₹853 + ₹154 = ₹1,007. Q-F588-27-0004 (saved, untouched) says ₹1,006 — GST there was
+     on the paise figure ₹852.95. */
+  it("₹1,656/seat/yr × 188/365 × 1 = ₹853 + ₹154 GST = ₹1,007 (R-837: GST on the ₹853 line)", () => {
     const c = seatIncreaseCharge({ currentSeats: 1, currentMrr: 138, additionalSeats: 1, remainingDays: 188, termDays: 365, taxRatePct: 18 });
     expect(c.annualPerSeat).toBe(1_656);
+    expect(c.perSeat).toBe(853);
     expect(c.subtotal).toBe(853);
-    expect(c.tax).toBe(153);
-    expect(c.total).toBe(1_006);
+    expect(c.tax).toBe(154);
+    expect(c.total).toBe(1_007);
   });
 
-  it("rounding the other way: 25/365 → ₹113 + ₹21 = ₹134 (old dialog said ₹133)", () => {
+  it("rounding the other way: 25/365 → ₹113 + ₹20 = ₹133 (R-837: GST on the ₹113 line)", () => {
     const c = seatIncreaseCharge({ currentSeats: 1, currentMrr: 138, additionalSeats: 1, remainingDays: 25, termDays: 365, taxRatePct: 18 });
-    expect([c.subtotal, c.tax, c.total]).toEqual([113, 21, 134]);
+    expect([c.subtotal, c.tax, c.total]).toEqual([113, 20, 133]);
   });
 
   it("the three lines always add up", () => {
