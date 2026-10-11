@@ -2,7 +2,7 @@
 -- R-715 (P1 SECURITY, audit 10 Oct 2026): the remaining SECURITY DEFINER functions that take a
 -- tenant / record id must not act on another company's rows, and must not serve a
 -- "null-caller" (signed-in login with no public.users row → current_tenant_id() NULL).
--- Migration 20261011045500_r715_definers_tenant.
+-- Migration 20261011072600_r715_definers_tenant.
 -- Self-asserting, ONE transaction, rolled back — safe anywhere:
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/r715_definers_tenant.test.sql
