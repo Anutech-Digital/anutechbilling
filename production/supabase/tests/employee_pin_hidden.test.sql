@@ -3,7 +3,8 @@
 --   BLOCKED  a `sales` login reading employees.pin_hash
 --   BLOCKED  an OWNER reading it too — nobody's browser needs the hash
 --   BLOCKED  anon reading employees
---   ALLOWED  members reading every other column + pin_set (the Payroll screen's list)
+--   ALLOWED  the owner reading every other column + pin_set (the Payroll screen's list)
+--   BLOCKED  a `sales` login reading any employees row (R-1001: owner / manager / accountant only)
 --   ALLOWED  the kiosk RPC still checking the PIN (SECURITY DEFINER reads the hash)
 
 begin;
@@ -33,10 +34,9 @@ begin
   exception when insufficient_privilege then v_err := true; end;
   if not v_err then raise exception 'FAIL 1: a sales login can read employees.pin_hash'; end if;
 
-  select pin_set, name into v_set, v_name from public.employees where id = '46072000-0000-4000-8000-0000000000e1';
-  if v_set is not true or v_name <> 'Emp With PIN' then raise exception 'FAIL 2: pin_set/name not readable (% %)', v_set, v_name; end if;
-  select pin_set into v_set from public.employees where id = '46072000-0000-4000-8000-0000000000e2';
-  if v_set is not false then raise exception 'FAIL 3: pin_set should be false without a PIN'; end if;
+  -- R-1001: employees SELECT is owner / manager / accountant only — sales sees no rows.
+  select count(*)::text into v_r from public.employees;
+  if v_r <> '0' then raise exception 'FAIL 2: a sales login still reads % employee rows (R-1001)', v_r; end if;
 
   -- ── owner: hash refused as well ────────────────────────────────────────
   perform set_config('request.jwt.claims', json_build_object('sub','46072000-0000-4000-8000-00000000000a','role','authenticated')::text, true);
@@ -44,6 +44,12 @@ begin
   begin perform pin_hash from public.employees;
   exception when insufficient_privilege then v_err := true; end;
   if not v_err then raise exception 'FAIL 4: an owner can read employees.pin_hash'; end if;
+
+  -- owner reads every other column + pin_set (the Payroll screen's list)
+  select pin_set, name into v_set, v_name from public.employees where id = '46072000-0000-4000-8000-0000000000e1';
+  if v_set is not true or v_name <> 'Emp With PIN' then raise exception 'FAIL 3a: pin_set/name not readable by the owner (% %)', v_set, v_name; end if;
+  select pin_set into v_set from public.employees where id = '46072000-0000-4000-8000-0000000000e2';
+  if v_set is not false then raise exception 'FAIL 3b: pin_set should be false without a PIN'; end if;
 
   -- ── the kiosk RPC still verifies the PIN ───────────────────────────────
   v_r := public.mark_attendance('46072000-0000-4000-8000-0000000000e1', '2468', null);

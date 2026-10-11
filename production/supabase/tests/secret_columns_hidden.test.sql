@@ -80,9 +80,16 @@ begin
             shift_end, office_lng, office_radius_m, updated_at
       from public.attendance_settings;
 
-    select name, pin_set into v_name, v_set from public.employees where id = '48330000-0000-4000-8000-0000000000e1';
-    if v_name is distinct from 'R833 Emp' or v_set is not true then
-      raise exception 'FAIL 7% (%): employees name/pin_set not readable (% %)', p_round, v_who, v_name, v_set;
+    /* R-1001: employees rows are owner / manager / accountant only — the owner reads name and
+       pin_set; the sales login reads no row at all (its own comes from my_employee_profile()). */
+    if v_who = '48330000-0000-4000-8000-00000000000a' then
+      select name, pin_set into v_name, v_set from public.employees where id = '48330000-0000-4000-8000-0000000000e1';
+      if v_name is distinct from 'R833 Emp' or v_set is not true then
+        raise exception 'FAIL 7% (%): employees name/pin_set not readable (% %)', p_round, v_who, v_name, v_set;
+      end if;
+    else
+      select count(*) into v_n from public.employees;
+      if v_n <> 0 then raise exception 'FAIL 7% (%): a sales login reads % employee rows (R-1001)', p_round, v_who, v_n; end if;
     end if;
 
     select count(*) into v_n from public.ad_accounts where name = 'R833 Ads' and token_expires_at is null;

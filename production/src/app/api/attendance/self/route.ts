@@ -109,8 +109,11 @@ export async function POST(request: NextRequest) {
 
   // DPDP shield — never store a face selfie without recorded consent.
   if (requireSelfie) {
-    const { data: emp } = await supabase
-      .from("employees").select("attendance_consent_at").eq("id", me.employee_id).maybeSingle();
+    /* R-1001: own row through the server client, scoped to this caller's tenant + linked
+       employee (employees SELECT is owner / manager / accountant only). */
+    const { data: emp } = await admin
+      .from("employees").select("attendance_consent_at")
+      .eq("id", me.employee_id).eq("tenant_id", me.tenant_id ?? "").maybeSingle();
     if (!emp?.attendance_consent_at) {
       return NextResponse.json(
         { error: "NEEDS_CONSENT", needsConsent: true },
@@ -193,8 +196,9 @@ export async function POST(request: NextRequest) {
       }
       // ── Face verification (Phase 4 seam — opt-in; stub → owner review) ──────
       if (requireFaceMatch && photo) {
-        const { data: emp } = await supabase
-          .from("employees").select("face_ref_path").eq("id", me.employee_id).maybeSingle();
+        const { data: emp } = await admin
+          .from("employees").select("face_ref_path")
+          .eq("id", me.employee_id).eq("tenant_id", me.tenant_id ?? "").maybeSingle();
         if (!emp?.face_ref_path) {
           flags.add("face_not_enrolled");
         } else {

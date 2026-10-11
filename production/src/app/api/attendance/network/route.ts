@@ -43,10 +43,10 @@ export async function GET(request: NextRequest) {
   const currentIp = clientIp(request);
   /* R-605: can THIS person self check-in from here? Same rule /api/attendance/self enforces —
      sent so My Attendance can say so before the press, not after. */
-  const { data: myUser } = await supabase.from("users").select("employee_id").eq("id", u.userId).maybeSingle();
-  const { data: myEmp } = myUser?.employee_id
-    ? await supabase.from("employees").select("attendance_anywhere").eq("id", myUser.employee_id).maybeSingle()
-    : { data: null };
+  /* R-1001: employees SELECT is owner / manager / accountant only — the caller's OWN row comes
+     from my_employee_profile() (null when no employee is linked). */
+  const { data: myProfile } = await supabase.rpc("my_employee_profile");
+  const myEmp = myProfile as { attendance_anywhere?: boolean | null } | null;
   const selfHere = officeNetworkDecision({
     purpose: "self", allowedIps, ip: currentIp, anywhere: myEmp?.attendance_anywhere ?? false,
   });
