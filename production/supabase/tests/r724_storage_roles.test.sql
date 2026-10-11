@@ -1,5 +1,5 @@
 -- R-724 attack test — storage buckets follow ROLES, not just the tenant folder.
--- Migration: 20261011143000_r724_storage_roles.sql (public.storage_object_allowed + bucket policies).
+-- Migration: 20261011133000_r724_storage_roles.sql (public.storage_object_allowed + bucket policies).
 --
 -- Before the fix every bucket policy only checked "first folder = your tenant", so a SALES login
 -- read KYC / salary files, vendor bills, reimbursement receipts, payment receipts and TDS
