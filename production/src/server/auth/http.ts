@@ -2,13 +2,16 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { clientIp, rateLimitShared } from "@/lib/security/rate-limit";
+import { trustedOrigin } from "@/lib/app-url";
 import { authProvider } from "./authjs";
 
-/** Public host for links — never `new URL(request.url).origin` (the container address on Cloud Run). */
+/**
+ * Public host for links (password reset etc.) — never `new URL(request.url).origin` (the
+ * container address on Cloud Run) and never a raw Host / X-Forwarded-Host (R-723: a forged
+ * header sent the reset token to the attacker's domain). See lib/app-url.ts.
+ */
 export function publicOrigin(req: NextRequest): string {
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
-  return host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ?? "");
+  return trustedOrigin(req.headers);
 }
 
 /** These routes exist only when login runs on Auth.js. With GoTrue they answer 404, as before. */

@@ -12,6 +12,7 @@
  * than linked: one sign-in must never be both.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { randomBytes } from "node:crypto";
 import { createAdminClientFor, createClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
   }
 
-  const origin = request.nextUrl.origin;
+  const origin = trustedOrigin(request.headers); // R-723
   const firstName = (appr.full_name as string).split(" ")[0];
   const result = await sendEmail({
     to: email,

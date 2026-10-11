@@ -16,7 +16,7 @@ import { GET } from "./route";
 
 const req = (qs: string) => new NextRequest(`https://app.example/callback?${qs}`, { headers: { host: "app.example", "x-forwarded-proto": "https" } });
 
-beforeEach(() => { verifyOtp.mockReset(); exchangeCodeForSession.mockReset(); });
+beforeEach(() => { verifyOtp.mockReset(); exchangeCodeForSession.mockReset(); vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example"); });
 
 describe("recovery token_hash", () => {
   it("verifies the token and goes to /reset-password", async () => {

@@ -20,6 +20,7 @@
  * still has to approve it.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeEmail } from "@/lib/auth/membership";
@@ -109,14 +110,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (parked.ok) {
-    const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-    const proto   = request.headers.get("x-forwarded-proto") ?? "https";
     await notifyOwnerOfJoinRequest({
       tenantId:   claim.tenant_id,
       tenantName,
       email,
       fullName,
-      appUrl:     fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL ?? ""),
+      appUrl:     trustedOrigin(request.headers), // R-723
     });
   }
 

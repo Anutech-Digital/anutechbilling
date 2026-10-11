@@ -20,6 +20,7 @@
  *   - the password comes back ONCE in this response (no-store) and is not put in the email.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
@@ -200,9 +201,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   const workspace = tenant?.name ?? "the workspace";
 
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
-  const host  = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
-  const base  = host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/+$/, "") ?? "");
+  const base  = trustedOrigin(request.headers); // R-723: never a raw request host
   const loginUrl  = `${base}/login`;
   /* Password-raasta: token wale link se hi khulta hai. Ye link hi mailbox ka
      saboot hai — bina iske signup 409 deta hai (audit 1 Sep 2026). */

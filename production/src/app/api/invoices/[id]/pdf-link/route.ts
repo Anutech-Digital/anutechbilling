@@ -12,6 +12,7 @@
  * minted for that invoice's tenant and lives one day.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { createClient } from "@/lib/supabase/server";
 import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
 
@@ -25,8 +26,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   const { data: inv } = await supabase.from("invoices").select("id, tenant_id").eq("id", id).maybeSingle();
   if (!inv) return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
 
-  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
-  const origin = fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin);
+  const origin = trustedOrigin(request.headers); // R-723
   return NextResponse.json({ url: pdfDownloadUrl(origin, "invoice", inv.id, inv.tenant_id, { ttlDays: 1 }) });
 }

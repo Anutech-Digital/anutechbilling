@@ -13,6 +13,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 
@@ -68,7 +69,7 @@ async function resolveTenant(access: "read" | "manage") {
 /** Webhook URL Pardeep will paste into the Meta dashboard. Bound to the
  *  tenant via the verify token so we know which workspace owns inbounds. */
 function webhookUrlFor(tenantId: string, req: NextRequest): string {
-  const origin = req.nextUrl.origin;
+  const origin = trustedOrigin(req.headers); // R-723
   return `${origin}/api/webhooks/whatsapp?tenant=${encodeURIComponent(tenantId)}`;
 }
 

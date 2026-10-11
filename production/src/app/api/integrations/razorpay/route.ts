@@ -12,6 +12,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { appUrl as canonicalAppUrl } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { razorpayReadiness, razorpayMode } from "@/lib/payments/razorpay-readiness";
@@ -80,11 +81,11 @@ async function resolveTenant(access: "read" | "manage") {
   };
 }
 
-function webhookUrlFor(tenantId: string, req: NextRequest): string {
-  // On Cloud Run behind the proxy, req.nextUrl.origin resolves to the container's
-  // internal http://0.0.0.0:8080 — useless to paste into Razorpay. Prefer the
-  // canonical public URL, falling back to the request origin only in dev.
-  const origin = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") || req.nextUrl.origin;
+function webhookUrlFor(tenantId: string): string {
+  // The canonical public URL (R-723: never the request host) — req.nextUrl.origin on Cloud Run
+  // is the container's internal http://0.0.0.0:8080, useless to paste into Razorpay.
+  // (NEXT_PUBLIC_APP_URL; localhost:3000 in dev.)
+  const origin = canonicalAppUrl(); // R-723
   // The `tenant` param is load-bearing: /api/webhooks/razorpay reads it to pick
   // WHICH tenant's signing secret to verify against, and to reject an event
   // whose quote belongs to a different tenant. Registering the URL without it
@@ -92,7 +93,7 @@ function webhookUrlFor(tenantId: string, req: NextRequest): string {
   return `${origin}/api/webhooks/razorpay?tenant=${encodeURIComponent(tenantId)}`;
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const r = await resolveTenant("read");
   if ("error" in r) return NextResponse.json({ ok: false, error: r.error }, { status: 403 });
 
@@ -125,7 +126,7 @@ export async function GET(req: NextRequest) {
     key_secret_mask:       r.isOwner ? mask(data?.razorpay_key_secret) : null,
     webhook_secret_mask:   r.isOwner ? mask(data?.razorpay_webhook_secret) : null,
     can_manage:            r.isOwner,
-    webhook_url:           webhookUrlFor(r.tenantId, req),
+    webhook_url:           webhookUrlFor(r.tenantId),
     updated_at:            data?.updated_at ?? null,
   });
 }

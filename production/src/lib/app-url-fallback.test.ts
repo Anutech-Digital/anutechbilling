@@ -152,14 +152,14 @@ describe("the dead fallback host does not spread", () => {
     ).toEqual([]);
   });
 
-  it("the GST invoice link is built from the request, not from the dead fallback", () => {
+  it("the GST invoice link is built from the trusted request origin (R-723), not from the dead fallback", () => {
     /**
      * This link goes to the CUSTOMER after payment. The file still contains the
      * dead host for its internal staff links, so "does the string appear"
      * cannot tell whether this was fixed — pin the behaviour instead.
      */
     const src = readFileSync(join(SRC, "app/api/webhooks/razorpay/route.ts"), "utf8");
-    expect(src).toContain("const publicBase = new URL(request.url).origin;");
+    expect(src).toContain("const publicBase = trustedOrigin(request.headers);");
     expect(src).toContain('pdfDownloadUrl(publicBase, "invoice"');
     // The constant it used to take became unused and was deleted; if it comes
     // back, something is reading env for a customer-facing URL again. Asserted

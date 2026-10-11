@@ -24,6 +24,7 @@
  */
 import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
@@ -469,7 +470,7 @@ export async function POST(request: NextRequest) {
       /* R-120 parity: a test buy sends what a real one sends (webhook) — setup steps to the
          customer, next steps to the lead owner — so the flow can be checked before go-live. */
       const leadOwner = await loadLeadOwner(admin, BUY_PAGE_TENANT_ID, leadId);
-      const simBase = new URL(request.url).origin;
+      const simBase = trustedOrigin(request.headers); // R-723
       const sellerPerson = (owner.ok ? owner.ownerName : "") || ownerTenant?.name?.trim() || "Your reseller";
       const voice = storefrontVoice(BUY_PAGE_TENANT_ID);
       const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;

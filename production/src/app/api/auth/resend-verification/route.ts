@@ -5,6 +5,7 @@
  * signed up. Rate-limited per IP and per address.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { createAdminClient } from "@/lib/supabase/server";
 import { startEmailVerification } from "@/lib/auth/email-verification";
 import { rateLimit, clientIp } from "@/lib/security/rate-limit";
@@ -38,8 +39,8 @@ export async function POST(request: NextRequest) {
   const { data: au } = await admin.auth.admin.getUserById(userId);
   if (!au?.user || au.user.email_confirmed_at) return NextResponse.json(SAME_ANSWER);
 
-  const fwd = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const origin = fwd ? `${request.headers.get("x-forwarded-proto") ?? "https"}://${fwd}` : (process.env.NEXT_PUBLIC_APP_URL ?? "");
+  // R-723: never the raw Host / X-Forwarded-Host — a forged one sent the token to the attacker.
+  const origin = trustedOrigin(request.headers);
   await startEmailVerification(admin, { userId, email, name, origin });
   return NextResponse.json(SAME_ANSWER);
 }

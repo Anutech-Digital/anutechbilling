@@ -28,6 +28,7 @@
  * ask, not to guess well. Step 3 no longer creates anything it was not told to.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { appPathOr } from "@/lib/safe-path";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { authProvider } from "@/server/auth/authjs";
@@ -67,14 +68,9 @@ export async function GET(request: NextRequest) {
      which is cheaper to keep true than three subtly different checks. */
   const next = appPathOr(searchParams.get("next"));
 
-  // Public host for redirects — NEVER new URL(request.url).origin. On Cloud Run
-  // the container binds 0.0.0.0:3000, so that origin is the internal address and
-  // sends users to dead https://0.0.0.0:3000 links after Google sign-in.
-  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto   = request.headers.get("x-forwarded-proto") ?? "https";
-  const origin  = fwdHost
-    ? `${proto}://${fwdHost}`
-    : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ?? new URL(request.url).origin);
+  // Public host for redirects — NEVER new URL(request.url).origin (Cloud Run binds
+  // 0.0.0.0:3000) and never a raw Host / X-Forwarded-Host either (R-723: caller-chosen).
+  const origin  = trustedOrigin(request.headers);
 
   /* A password-recovery link in the token_hash form (5 Oct 2026). Supabase's own SSR
      pattern for email links: `/callback?token_hash=…&type=recovery`. The code flow above

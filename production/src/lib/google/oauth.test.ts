@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
   originFromRequest, gmailRedirectUri, contactsRedirectUri, buildAuthUrl,
@@ -24,30 +24,36 @@ describe("originFromRequest", () => {
     expect(originFromRequest(req({ host }))).toBe(`http://${host}`);
   });
 
-  it("keeps https for a real host with no proxy header", () => {
+  it("keeps https for the app's own host with no proxy header", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.com");
     expect(originFromRequest(req({ host: "app.example.com" })))
       .toBe("https://app.example.com");
+    vi.unstubAllEnvs();
   });
 
-  it("always obeys x-forwarded-proto when the proxy sets it", () => {
-    // Cloud Run's case. The localhost exception must not override a real header.
+  it("obeys x-forwarded-proto https for localhost", () => {
     expect(originFromRequest(req({ host: "localhost:3000", "x-forwarded-proto": "https" })))
       .toBe("https://localhost:3000");
   });
 
-  it("prefers x-forwarded-host over host", () => {
+  it("prefers an allowlisted x-forwarded-host over host", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://resellersos.run.app");
     expect(originFromRequest(req({
       host: "0.0.0.0:8080",
       "x-forwarded-host": "resellersos.run.app",
       "x-forwarded-proto": "https",
     }))).toBe("https://resellersos.run.app");
+    vi.unstubAllEnvs();
   });
 
-  it("does not mistake a host merely starting with 'localhost' for local", () => {
-    // localhost-evil.com is not localhost; downgrading it to http would be a
-    // real downgrade on a real domain.
+  it("R-723: a host that is not allowlisted never becomes the redirect origin", () => {
+    // localhost-evil.com is not localhost and not ours: the app URL is used instead.
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.com");
     expect(originFromRequest(req({ host: "localhost-evil.com" })))
-      .toBe("https://localhost-evil.com");
+      .toBe("https://app.example.com");
+    expect(originFromRequest(req({ host: "app.example.com", "x-forwarded-host": "evil.tld" })))
+      .toBe("https://app.example.com");
+    vi.unstubAllEnvs();
   });
 });
 

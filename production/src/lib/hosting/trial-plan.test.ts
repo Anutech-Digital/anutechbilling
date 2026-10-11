@@ -52,9 +52,9 @@ describe("Start free trial goes straight to the cart (owner, 24 Sep 2026)", () =
     expect(src("app/(marketing)/hosting/trial/page.tsx")).toMatch(/redirect\("\/hosting#choose"\)/);
   });
 
-  it("the trial's emailed links use the request origin, not a fallback host", () => {
+  it("the trial's emailed links use the trusted origin (R-723), not a fallback host", () => {
     const s = src("lib/hosting/start-trial.ts");
     expect(s).not.toMatch(/resellersos\.web\.app/);
-    expect(s).toMatch(/new URL\(`\/api\/public\/trial\/hosting\/confirm/);
+    expect(s).toContain("${trustedOrigin(request.headers)}/api/public/trial/hosting/confirm");
   });
 });
