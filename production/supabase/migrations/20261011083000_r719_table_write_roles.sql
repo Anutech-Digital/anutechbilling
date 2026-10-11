@@ -1,6 +1,6 @@
 -- deploy-key: r719writes
 -- deploy-peek: (exists(select 1 from pg_policy where polname = 'customer_credits_insert_money_roles' and polrelid = to_regclass('public.customer_credits')) and not exists(select 1 from pg_policy where polname = 'customer_credits_insert_own_tenant' and polrelid = to_regclass('public.customer_credits')) and exists(select 1 from pg_policy where polname = 'referral_partners_insert_roles' and polrelid = to_regclass('public.referral_partners')) and exists(select 1 from pg_trigger where tgname = 'a00_r719_customers_column_guard' and tgrelid = to_regclass('public.customers')))
--- 20261011080000_r719_table_write_roles.sql
+-- 20261011083000_r719_table_write_roles.sql
 --
 -- R-719 (P1 SECURITY, audit 10 Oct 2026): direct writes to twelve tables asked only "which
 -- company?", never "which role?".

@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- Regression test: direct (PostgREST) writes to money / catalogue / customer tables need a ROLE,
--- not just the tenant. Migration 20261011080000_r719_table_write_roles.sql (R-719).
+-- not just the tenant. Migration 20261011083000_r719_table_write_roles.sql (R-719).
 -- Rolled back — safe anywhere.
 --
 --   For each table: a sales / support login's direct write is refused where the app does not
