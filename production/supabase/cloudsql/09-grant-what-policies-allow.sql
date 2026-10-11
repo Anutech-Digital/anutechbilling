@@ -22,6 +22,8 @@
 --   (seed of the rotating office code — whoever reads it can compute the code), .ingest_key
 --   (the biometric device's shared key), employees.pin_hash (kiosk PIN hash), ad_accounts.
 --   access_token (Meta token), user_google_tokens.* tokens, email_verifications.token_hash.
+--   R-840: vault_passwords.*_ciphertext (customers' console logins, encrypted) are server only;
+--   the vault routes read/write them with the admin client after vaultGate().
 --   Their migrations use COLUMN grants on purpose (a table-level SELECT overrides any column
 --   revoke). Until R-833 this file checked has_table_privilege(), which ignores column grants,
 --   so EVERY run handed `authenticated` table-level SELECT on attendance_settings, employees and
@@ -62,7 +64,10 @@ declare
     'user_google_tokens.access_token',
     'user_google_tokens.refresh_token',
     'user_google_tokens.sync_token',
-    'email_verifications.token_hash'
+    'email_verifications.token_hash',
+    'vault_passwords.username_ciphertext',
+    'vault_passwords.password_ciphertext',
+    'vault_passwords.notes_ciphertext'
   ];
   secret_tables text[];
   sel_needed text[] := '{}';   -- "table|role" pairs whose policies cover SELECT

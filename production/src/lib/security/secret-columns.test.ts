@@ -28,6 +28,7 @@ import { readdirSync, readFileSync } from "node:fs";
 
 const NINE = "supabase/cloudsql/09-grant-what-policies-allow.sql";
 const SQL_TEST = "supabase/tests/secret_columns_hidden.test.sql";
+const SQL_TEST_R840 = "supabase/tests/r840_vault_ciphertext_hidden.test.sql";
 const MIG_DIR = "supabase/migrations";
 const BASELINE = "supabase/baseline.sql";
 
@@ -41,6 +42,11 @@ const SECRET_COLUMNS = [
   "user_google_tokens.refresh_token",
   "user_google_tokens.sync_token",
   "email_verifications.token_hash",
+  // R-840: customers' admin-console logins (encrypted). Server-only: the vault routes read and
+  // write them with the admin client after vaultGate() (owner / manager).
+  "vault_passwords.username_ciphertext",
+  "vault_passwords.password_ciphertext",
+  "vault_passwords.notes_ciphertext",
 ];
 
 /** Secret-LOOKING columns that are fine for their table's readers — each with the reason. */
@@ -55,8 +61,7 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "quote_views.viewer_hash": "hashed viewer fingerprint for view counts, not a credential",
   "attendance_devices.credential_id": "WebAuthn credential id — a public identifier, the key never leaves the phone",
   "vault_access_log.credential_id": "id of a vault entry (foreign key), not a credential",
-  "vault_passwords.password_ciphertext": "the owner's own vault rows (RLS owner_user_id = auth.uid()); vault design",
-  "vault_passwords.password_fingerprint": "the owner's own vault rows (RLS owner_user_id = auth.uid()); vault design",
+  "vault_passwords.password_fingerprint": "keyed truncated HMAC for reuse detection, not crackable; owner/manager only (R-716 RLS); the vault list shows reuse from it",
   "personal_vault_pin.pin_hash": "own row only (RLS user_id = auth.uid()); /api/vault/personal/pin verifies with it",
   "tenants.attendance_ingest_key": "emptied by R-607 (20261010000000) — always null, key moved to attendance_settings.ingest_key",
   "tenant_secrets.gemini_api_key": "tenant_secrets is owner-only by RLS (tenant_secrets_owner_*); the owner enters these keys",
@@ -116,6 +121,7 @@ describe("R-833 secret columns", () => {
 
   it("the SQL test runs a byte-identical copy of 09's block", () => {
     expect(blockOf(read(SQL_TEST))).toBe(blockOf(read(NINE)));
+    expect(blockOf(read(SQL_TEST_R840))).toBe(blockOf(read(NINE)));
   });
 
   it("after baseline + every migration, no browser role has table-level SELECT on a secret table", () => {

@@ -80,6 +80,9 @@ interface VaultQueries {
       order(column: string): Promise<Result<VaultPasswordRow[] | null>>;
       eq(column: string, value: string): {
         maybeSingle(): Promise<Result<VaultPasswordRow | null>>;
+        eq(column: string, value: string): {
+          maybeSingle(): Promise<Result<VaultPasswordRow | null>>;
+        };
       };
     };
     insert(row: Partial<VaultPasswordRow>): {

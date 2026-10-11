@@ -21,9 +21,15 @@
  * though the admin client would be simpler. With the user's own client a bug in
  * my WHERE clause cannot leak another tenant's credentials, because the database
  * refuses. With the admin client, that one bug is the whole breach.
+ *
+ * ─── EXCEPT THE CIPHERTEXT COLUMNS (R-840) ───────────────────────────────────
+ * username/password/notes_ciphertext are server-only: browser roles hold no SELECT, INSERT or
+ * UPDATE on them (20261011081000_r840_vault_ciphertext_columns.sql). POST therefore writes the
+ * new row with the admin client, only after vaultGate() (owner / manager), with tenant_id set
+ * from the gate — never from the body. GET reads non-secret columns only, with the user client.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClientFor, createClient } from "@/lib/supabase/server";
 import { clientIp } from "@/lib/security/rate-limit";
 import { encryptSecret, isVaultConfigured, fingerprintPassword } from "@/lib/crypto/vault";
 import { assessStrength, vaultHealth, type VaultEntryHealth } from "@/lib/vault/passwords";
@@ -169,7 +175,9 @@ export async function POST(req: NextRequest) {
   const username = str(body.username);
   const notes    = str(body.notes);
 
-  const { data: created, error } = await db
+  // R-840: ciphertext columns are server-only — written with the admin client, after the gate.
+  const admin = vaultDb(createAdminClientFor(authData.user.id));
+  const { data: created, error } = await admin
     .from("vault_passwords")
     .insert({
       tenant_id: me.tenant_id,

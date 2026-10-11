@@ -94,8 +94,10 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub','71600000-0000-4000-8000-00000000000a','role','authenticated')::text, true);
   select count(*) into v_n from public.vault_passwords where id = c_row;
   if v_n <> 1 then raise exception 'FAIL 9: our owner cannot see the vault row (% rows)', v_n; end if;
-  insert into public.vault_passwords (tenant_id, title, category, password_ciphertext)
-    values (c_seller, 'R716 owner insert', 'other', 'dummy');
+  -- R-840: ciphertext columns are server-only now (the API writes them with the admin client),
+  -- so the owner's direct insert carries the non-secret columns only.
+  insert into public.vault_passwords (tenant_id, title, category)
+    values (c_seller, 'R716 owner insert', 'other');
   update public.vault_passwords set title = 'R716 Google Admin (main)' where id = c_row;
   get diagnostics v_n = row_count;
   if v_n <> 1 then raise exception 'FAIL 10: our owner could not update the vault row (% rows)', v_n; end if;
