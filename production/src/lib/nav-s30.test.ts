@@ -116,7 +116,16 @@ const ADDED_6OCT_OM = ["/quality"];
 const ADDED_10OCT_OWNER_ACCOUNTANT = ["/accounting/loans-given"];
 /** R-138 (3 Oct 2026): billing loses the Balance Sheet — salaries are hidden from it by RLS,
  *  so its Balance Sheet showed salary payable and statutory dues as Rs 0 (Pardeep's call). */
-const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet"] };
+/** R-1003 (11 Oct 2026): payroll is owner / manager / accountant (Pardeep's R-718 role table;
+ *  supersedes R-254). Billing loses Payroll, Salary Register, Loans & Salary Advances, Employees,
+ *  Attendance, Leave and the ESI & PF Register; the accountant gains the four it did not have
+ *  in the menu (it already opened them by the /accounting prefix). */
+const R1003_BILLING_REMOVED = [
+  "/accounting/payroll", "/accounting/salary-register", "/accounting/loans", "/accounting/employees",
+  "/accounting/attendance", "/accounting/leave", "/accounting/esi-register",
+];
+const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/accounting/attendance", "/accounting/leave"];
+const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED] };
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -135,6 +144,7 @@ const addedFor = (role: string) => [
   ...(CONTACTS_ROLES.includes(role) ? ADDED_7OCT_CONTACTS : []),
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
+  ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 

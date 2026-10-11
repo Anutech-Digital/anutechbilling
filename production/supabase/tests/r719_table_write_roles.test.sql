@@ -325,10 +325,16 @@ begin
   exception when insufficient_privilege then v_err := true; end;
   if not v_err then raise exception 'FAIL 41: a support login created a staff loan'; end if;
 
+  -- R-1003 (11 Oct): Loans & Salary Advances is payroll = owner / manager / accountant;
+  -- billing no longer edits a staff loan, the accountant does.
   perform set_config('request.jwt.claims', json_build_object('sub', u_bill, 'role', 'authenticated')::text, true);
+  update public.employee_loans set notes = 'R719 billing' where id = '71900000-0000-4000-8000-0000000000e1';
+  get diagnostics v_n = row_count;
+  if v_n <> 0 then raise exception 'FAIL 42a: billing changed a staff loan (% rows) - payroll is O/M/A since R-1003', v_n; end if;
+  perform set_config('request.jwt.claims', json_build_object('sub', u_acct, 'role', 'authenticated')::text, true);
   update public.employee_loans set notes = 'R719 purpose' where id = '71900000-0000-4000-8000-0000000000e1';
   get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL 42: billing could not edit a loan''s purpose (% rows)', v_n; end if;
+  if v_n <> 1 then raise exception 'FAIL 42: the accountant could not edit a loan''s purpose (% rows)', v_n; end if;
 
   -- ════ referral_partners ══════════════════════════════════════════════════
   perform set_config('request.jwt.claims', json_build_object('sub', u_sales, 'role', 'authenticated')::text, true);

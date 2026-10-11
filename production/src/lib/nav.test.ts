@@ -338,10 +338,11 @@ describe("canWriteMoney (R-254: billing sees Payroll and Banking read-only)", ()
     expect(canWriteMoney(undefined)).toBe(true);
   });
 
-  it("billing still has Payroll, Salary Register and Banking in the menu", () => {
+  it("billing keeps Banking but not Payroll / Salary Register (R-1003 supersedes R-254)", () => {
     const hrefs = allowedRoutesForRole("billing");
-    for (const h of ["/accounting/payroll", "/accounting/salary-register", "/accounting/banking"]) {
-      expect(hrefs, h).toContain(h);
+    expect(hrefs).toContain("/accounting/banking");
+    for (const h of ["/accounting/payroll", "/accounting/salary-register"]) {
+      expect(hrefs, h).not.toContain(h);
     }
   });
 

@@ -267,7 +267,15 @@ export function allowedRoutesForRole(role: UserRole, opts: NavFilterOpts = {}): 
  * payable and PF/ESI/TDS dues as Rs 0 with no warning. Pardeep chose to take it away.
  */
 export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
-  billing: ["/accounting/balance-sheet", "/accounting/loans-given"],
+  billing: [
+    "/accounting/balance-sheet", "/accounting/loans-given",
+    /* R-1003 (11 Oct 2026): payroll is owner / manager / accountant (PAYROLL_ROLES). The menu
+       rows are gone for billing; these stop "/accounting" admitting them by prefix, so a
+       typed URL bounces too (middleware → isRouteAllowed). */
+    "/accounting/payroll", "/accounting/salary-register", "/accounting/loans",
+    "/accounting/employees", "/accounting/attendance", "/accounting/leave",
+    "/accounting/esi-register",
+  ],
   /* R-544: Loans given is owner + accountant only; /accounting admits the manager by prefix. */
   manager: ["/accounting/loans-given"],
   /* R-255: the accountant READS Customers (the /customers row admits its sub-pages by prefix);
@@ -324,8 +332,9 @@ const OMB: UserRole[] = ["owner", "manager", "billing"];
 export const SALARY_ROLES: UserRole[] = ["owner", "manager", "accountant"];
 /** Who may WRITE salary_payments, employees, bank_accounts and bank_transactions — the
  *  database rule since role hardening (migration 20260930175000, `v_money`). R-254 (7 Oct 2026):
- *  billing SEES Payroll and Banking (Pardeep's call) but every write button is hidden from
- *  anyone outside this list, because the database refuses the save. Keep the two in step. */
+ *  billing SEES Banking (Pardeep's call) but every write button is hidden from anyone outside
+ *  this list, because the database refuses the save. Keep the two in step. Payroll is no longer
+ *  billing's at all since R-1003 (11 Oct 2026) — see PAYROLL_ROLES. */
 export const MONEY_WRITE_ROLES: UserRole[] = ["owner", "manager", "accountant"];
 
 /** True when the signed-in role can save money records (salary, employee, bank). An unknown
@@ -363,9 +372,12 @@ export function canOpenRoute(role: string | null | undefined, href: string): boo
   return isRouteAllowed(role as UserRole, path);
 }
 
-/** Payroll Overview + Salary Register: the roles that had them, plus the accountant (R-061).
- *  Billing is read-only here (R-254): see MONEY_WRITE_ROLES. */
-const PAYROLL_ROLES: UserRole[] = ["owner", "manager", "billing", "accountant"];
+/** Payroll (Overview, Salary Register, Loans & Salary Advances), Employees, Attendance and Leave:
+ *  owner, manager, accountant ONLY (R-1003, 11 Oct 2026 — Pardeep's R-718 role table: payroll =
+ *  owner / manager / accountant; billing, sales, sales_senior, support, delivery and
+ *  partner_agent none). Supersedes R-254 (7 Oct: billing read Payroll). Same three roles read
+ *  salary_payments in the database (migration 20261011142000_r1003_payroll_roles). */
+export const PAYROLL_ROLES: UserRole[] = ["owner", "manager", "accountant"];
 /** Books: the accountant / CA reads every one of these. */
 const BOOKS: UserRole[] = ["owner", "manager", "billing", "accountant"];
 /** Sales lists the accountant READS (R-255): Customers, Invoices, Payments Received. Writes
@@ -610,7 +622,7 @@ export const APP_NAV: NavSection[] = [
           { id: "tds-year-end",        href: "/accounting/tds-receivable/year-end", label: "TDS Year-end", icon: "file", roles: BOOKS, group: "Tax" },
           { id: "itr",                 href: "/accounting/itr",           label: "Income Tax (ITR)",    icon: "file", roles: BOOKS, group: "Tax" },
           { id: "acc-aging-owner",     href: "/accounting/aging",         label: "Customer Aging",      icon: "clock", roles: BOOKS, group: "Receivables & registers" },
-          { id: "esi-register",        href: "/accounting/esi-register",  label: "ESI & PF Register",   icon: "file", roles: BOOKS, group: "Receivables & registers" },
+          { id: "esi-register",        href: "/accounting/esi-register",  label: "ESI & PF Register",   icon: "file", roles: PAYROLL_ROLES, group: "Receivables & registers" },
           /* Was reachable only by URL. Owner/manager: it is who-did-what across the team. */
           { id: "activity",            href: "/activity",                 label: "Activity Log",        icon: "list", roles: OM, group: "Audit" },
         ],
@@ -636,7 +648,7 @@ export const APP_NAV: NavSection[] = [
       { id: "my-expenses", href: "/my-expenses", label: "Advances & Expenses", icon: "wallet", roles: STAFF, hint: "Advance cash balances & mobile expense entries." },
       {
         /* R-384 (7 Oct 2026, owner decision): label was "Employees & Team". */
-        id: "employees",         href: "/accounting/employees",       label: "Employees & Users",      icon: "users", roles: OMB,
+        id: "employees",         href: "/accounting/employees",       label: "Employees & Users",      icon: "users", roles: PAYROLL_ROLES,
         children: [
           /* Was reachable only by URL. */
           { id: "scorecard",       href: "/scorecard",                  label: "Scorecards",             icon: "award", roles: OM },
@@ -648,9 +660,9 @@ export const APP_NAV: NavSection[] = [
         ],
       },
       {
-        id: "attendance-reg",    href: "/accounting/attendance",      label: "Attendance Register",    icon: "calendar", roles: OMB, hint: "Daily attendance logs, check-in/out & hours.",
+        id: "attendance-reg",    href: "/accounting/attendance",      label: "Attendance Register",    icon: "calendar", roles: PAYROLL_ROLES, hint: "Daily attendance logs, check-in/out & hours.",
         children: [
-          { id: "leave-reg",         href: "/accounting/leave",           label: "Leave Register",         icon: "file", roles: OMB, hint: "Casual leave, sick leave & earned leave tracking." },
+          { id: "leave-reg",         href: "/accounting/leave",           label: "Leave Register",         icon: "file", roles: PAYROLL_ROLES, hint: "Casual leave, sick leave & earned leave tracking." },
         ],
       },
       /* R-061 (6 Oct 2026): the accountant / CA could open Payroll and the Salary Register by URL
@@ -661,7 +673,7 @@ export const APP_NAV: NavSection[] = [
         id: "payroll",           href: "/accounting/payroll",         label: "Payroll Overview",       icon: "rupee", roles: PAYROLL_ROLES,
         children: [
           { id: "salary-register",   href: "/accounting/salary-register", label: "Salary & Payroll Register", icon: "receipt", roles: PAYROLL_ROLES, hint: "Monthly salary slip register, CTC & net payouts." },
-          { id: "emp-loans",         href: "/accounting/loans",           label: "Loans & Salary Advances",icon: "rupee", roles: OMB },
+          { id: "emp-loans",         href: "/accounting/loans",           label: "Loans & Salary Advances",icon: "rupee", roles: PAYROLL_ROLES },
         ],
       },
       /* Where teammates are invited, a stranded colleague is claimed, and join requests are
