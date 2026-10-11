@@ -159,10 +159,26 @@ const ACTOR_AUDITED = [
   "support/call-request",
   "support/tickets",
   "ux/insights",
+  // R-840: customer console credentials (the ciphertext is server-only)
+  "vault",
+  "vault/[id]/reveal",
 ];
 
 /** The verified caller, as each route names it — never a request body field. */
 const VERIFIED_ACTOR = /createAdminClientFor\s*\(\s*((user|authData\.user|auth\.user)\.id|callerId)\s*\)/;
+
+/**
+ * R-840: a shared gate helper counts as the (b) "user" proof only when the helper's own file
+ * does the `users` row lookup (tenant_id / role) — checked in a test below, so the helper
+ * cannot quietly stop proving it. helper name → its file under src/app/api.
+ */
+const USER_GATE_HELPERS: Record<string, string> = {
+  vaultGate: "vault/vault-access.ts", // owner / manager via public.users (R-716)
+};
+const helperProves = (name: string) =>
+  USERS_ROW.test(code(fs.readFileSync(path.join(API, USER_GATE_HELPERS[name]), "utf8")));
+const callsUserGate = (src: string) =>
+  Object.keys(USER_GATE_HELPERS).some((n) => new RegExp(`\\b${n}\\s*\\(`).test(src) && helperProves(n));
 
 type Kind = "secret" | "platform" | "user" | "self" | "public" | "FINDING";
 
@@ -170,7 +186,7 @@ function classify(route: string, src: string): Kind {
   if (SECRET_EVIDENCE.test(src)) return "secret";
   const signedIn = SIGNED_IN.test(src);
   if (signedIn && PLATFORM.test(src)) return "platform";
-  if (/\bwithRoute\s*\(/.test(src) || (signedIn && USERS_ROW.test(src))) return "user";
+  if (/\bwithRoute\s*\(/.test(src) || (signedIn && (USERS_ROW.test(src) || callsUserGate(src)))) return "user";
   if (route in SELF_SCOPED && signedIn && OWN_ID_ONLY.test(src)) return "self";
   if (route in PUBLIC_BY_DESIGN) return "public";
   return "FINDING";
@@ -222,6 +238,10 @@ describe("service-role API routes prove their caller (R-051 ratchet)", () => {
       return !VERIFIED_ACTOR.test(src) || /createAdminClient\s*\(/.test(src);
     });
     expect(plain, "use createAdminClientFor(user.id) — the verified caller, never a body field").toEqual([]);
+  });
+
+  it("every USER_GATE_HELPERS file really looks up the caller's users row", () => {
+    expect(Object.keys(USER_GATE_HELPERS).filter((n) => !helperProves(n))).toEqual([]);
   });
 
   it("the classifier catches an unguarded route and ignores guards that are only in comments", () => {
