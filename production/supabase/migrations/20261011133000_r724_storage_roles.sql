@@ -1,7 +1,7 @@
 -- deploy-peek: (to_regprocedure('public.storage_object_allowed(text,text,text,uuid)') is not null and exists(select 1 from pg_policy where polrelid = to_regclass('storage.objects') and polname = 'r724 private files select') and not exists(select 1 from pg_policy where polrelid = to_regclass('storage.objects') and polname = 'employee-docs tenant read'))
 -- deploy-key: r724storage
 -- deploy-user: postgres
--- 20261011143000_r724_storage_roles.sql
+-- 20261011133000_r724_storage_roles.sql
 --
 -- R-724 (P1 SECURITY, audit 10 Oct 2026): private files follow the caller's ROLE, not only the
 -- tenant folder.

@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Photo galat ya bahut badi hai" }, { status: 400 });
   }
 
-  /* R-724: _enroll is server-only in storage (20261011143000_r724_storage_roles) — with the
+  /* R-724: _enroll is server-only in storage (20261011133000_r724_storage_roles) — with the
      browser token anyone in the workspace could overwrite a colleague's reference face and
      clock in as them. targetId passed the owner/self + same-tenant + consent checks above. */
   const admin = createAdminClientFor(authData.user.id);
