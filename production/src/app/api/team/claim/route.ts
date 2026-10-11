@@ -24,6 +24,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { INVITABLE_ROLES, type InvitableRole } from "@/lib/auth/roles";
+import { isActiveOwner } from "@/lib/auth/deactivated";
 
 export async function GET() {
   const supabase = createClient();
@@ -64,14 +65,14 @@ export async function POST(request: NextRequest) {
   // caller's own row, so "claim into some other tenant" is not expressible.
   const { data: me } = await supabase
     .from("users")
-    .select("tenant_id, role")
+    .select("tenant_id, role, is_active")
     .eq("id", authData.user.id)
     .maybeSingle();
 
   if (!me?.tenant_id) {
     return NextResponse.json({ error: "You are not in a workspace." }, { status: 403 });
   }
-  if (me.role !== "owner") {
+  if (!isActiveOwner(me)) { // R-722: a deactivated owner is not an owner
     return NextResponse.json(
       { error: "Only the workspace owner can claim a colleague. Ask them to open Team." },
       { status: 403 },
