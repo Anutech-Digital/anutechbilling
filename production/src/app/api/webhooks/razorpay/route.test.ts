@@ -177,6 +177,7 @@ const rpcNames = () => db.rpcCalls.map((c) => c.name);
 const ENV = { ...process.env };
 
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://shop.example.invalid"); // R-723: links come from the app URL
   seed();
   sendEmail.mockClear();
   queueProvisioning.mockClear();

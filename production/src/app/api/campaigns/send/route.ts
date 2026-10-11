@@ -21,6 +21,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { appUrl as canonicalAppUrl } from "@/lib/app-url";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { z } from "zod";
 import { createAdminClientFor } from "@/lib/supabase/server";
@@ -75,7 +76,7 @@ export const POST = withRoute(
     roles: ACTION_ROLES["campaign.send"],
     roleHint: forbiddenMessage("campaign.send"),
   },
-  async ({ req, input, user, tenantId }) => {
+  async ({ input, user, tenantId }) => {
   const me = { tenant_id: tenantId };
 
   const { name, subject, body: bodyTemplate, body_html: htmlTemplate, audience, offer, recipients: explicitRecipients } = input;
@@ -156,7 +157,7 @@ export const POST = withRoute(
   const senderName = tenant?.name ?? "Your team";
   /* Unsubscribe links need an absolute host. The configured app URL, else this request's
      own origin — a campaign is always sent from the app, so that origin serves /unsubscribe. */
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+  const appUrl = canonicalAppUrl(); // R-723: never the request's own host
 
   // ── 3. Allocate campaign ID + insert campaign row ─────────────
   const { data: campaignIdRaw, error: numErr } = await admin

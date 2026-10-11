@@ -23,6 +23,7 @@
  */
 
 import { PRODUCT_HOME_ROUTE, siteKindForHost } from "@/site/lib/site-split";
+import { trustedOrigin } from "@/lib/app-url";
 
 /** The read-only login every visitor shares. `.invalid` = no mail can ever reach it (RFC 2606). */
 export const DEMO_VISITOR_EMAIL = "visitor@demo.reselleros.invalid";
@@ -105,12 +106,13 @@ export function isReadOnlyRefusal(body: unknown): boolean {
   return b.code === "25006" || (typeof b.message === "string" && /read-only transaction/i.test(b.message));
 }
 
-/** Public origin for a redirect — the same rule as (auth)/callback: never the container's 0.0.0.0. */
-export function publicOrigin(headers: Headers, requestUrl: string): string {
-  const host = headers.get("x-forwarded-host") ?? headers.get("host");
-  const proto = headers.get("x-forwarded-proto") ?? "https";
-  if (host) return `${proto}://${host}`;
-  return process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ?? new URL(requestUrl).origin;
+/**
+ * Public origin for a redirect — the same rule as (auth)/callback: never the container's
+ * 0.0.0.0, never a non-allowlisted request host (R-723, lib/app-url.ts).
+ * `requestUrl` is kept for call-site compatibility; it is no longer consulted.
+ */
+export function publicOrigin(headers: Headers, _requestUrl?: string): string {
+  return trustedOrigin(headers);
 }
 
 /**

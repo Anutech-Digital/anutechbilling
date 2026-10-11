@@ -168,7 +168,7 @@ async function followVerifyLink(email: string) {
   return verifyEmail(post("/api/auth/verify-email", { token }));
 }
 
-beforeEach(() => { seed(); sendEmail.mockClear(); });
+beforeEach(() => { seed(); sendEmail.mockClear(); vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example"); });
 
 describe("email signup at a company domain (R-822)", () => {
   it("creates NO workspace and NO users row — the old bug made Pawan owner of a blank copy", async () => {

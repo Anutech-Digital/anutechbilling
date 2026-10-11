@@ -15,6 +15,7 @@
  * Only Starter is trialled (owner, 24 Sep 2026) — see ./trial-plan.
  */
 import type { NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email/send";
@@ -304,7 +305,7 @@ export async function startHostingTrial(
   const token = makeTrialToken(leadId);
   // Links are built from the request's own origin (AGENTS.md L112): it needs no
   // configuration and cannot point at a dead fallback host.
-  const confirmUrl = token ? new URL(`/api/public/trial/hosting/confirm?token=${encodeURIComponent(token)}`, request.url).toString() : null;
+  const confirmUrl = token ? `${trustedOrigin(request.headers)}/api/public/trial/hosting/confirm?token=${encodeURIComponent(token)}` : null;
   const firstName = fullName.split(" ")[0];
 
   const { alert: owner, tenant: ownerTenant } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);

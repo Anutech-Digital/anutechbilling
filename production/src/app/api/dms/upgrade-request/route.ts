@@ -15,6 +15,7 @@
  * Auth: `Authorization: Bearer <DMS_PANEL_API_KEY>`, the same key as /api/dms/panel-order.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { checkPanelKey } from "@/lib/dms-engine/panel-auth";
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
       await sendEmail({
         to: alert.to, from: FROM_EMAIL, kind: "dms_upgrade_request_owner", route: { tenantId: BUY_PAGE_TENANT_ID }, replyTo: r.email,
         subject: `Hosting upgrade requested — ${domain}: ${r.currentPlan} → ${r.targetPlan}`,
-        text: `${notes}\n\nContact: ${r.fullName} <${r.email}>${r.phone ? ` · ${r.phone}` : ""}\nLead: ${new URL(`/leads/${leadId}`, request.url).toString()}\n\n— ResellerOS`,
+        text: `${notes}\n\nContact: ${r.fullName} <${r.email}>${r.phone ? ` · ${r.phone}` : ""}\nLead: ${`${trustedOrigin(request.headers)}/leads/${leadId}`}\n\n— ResellerOS`,
       });
     } else {
       console.warn(`[dms/upgrade-request] no owner to alert for lead ${leadId}: ${alert.reason}`);

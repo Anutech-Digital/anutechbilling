@@ -14,6 +14,7 @@
  * already has a workspace cannot mint a second one from here.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
@@ -69,13 +70,11 @@ export async function POST(request: NextRequest) {
   // person's address is verified (Google, or the R-048 link), so the request goes
   // straight to that owner. This is the door the Google / Auth.js first login reaches
   // through /welcome, so it must follow the same rule as the callback.
-  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto   = request.headers.get("x-forwarded-proto") ?? "https";
   const routed = await routeVerifiedSignupToCompany({
     authUserId: authUser.id,
     email,
     fullName,
-    appUrl:     fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL ?? ""),
+    appUrl:     trustedOrigin(request.headers), // R-723
     note:       `Tried to create a workspace named "${parsed.data.companyName}".`,
   });
   if (routed) {

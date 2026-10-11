@@ -22,6 +22,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
@@ -170,9 +171,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   // Build the accept/pay link from the ACTUAL host the request came in on, not
   // NEXT_PUBLIC_APP_URL — that's baked at build time to a domain that may not be
   // live yet (dead links). Honours the Cloud Run proxy's x-forwarded-* headers.
-  const linkProto = req.headers.get("x-forwarded-proto") ?? "https";
-  const linkHost  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  const linkBase  = linkHost ? `${linkProto}://${linkHost}` : new URL(req.url).origin;
+  // R-723: the request host only when allowlisted (lib/app-url.ts), else NEXT_PUBLIC_APP_URL.
+  const linkBase  = trustedOrigin(req.headers);
   const customerUrl = quoteAcceptUrl(linkBase, quote.id, quote.public_token);
   if (!customerUrl) {
     /* Practically unreachable — `linkBase` comes from the request's own headers, so a real

@@ -41,6 +41,7 @@ const req = (b: unknown, key: string | null = KEY) =>
 
 const ENV = { ...process.env };
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.invalid"); // R-723: links come from the app URL
   db.existing = null; db.findError = null; db.inserts = []; db.insertError = null;
   mail.sendEmail.mockReset().mockResolvedValue({ status: "sent" });
   mail.loadOwnerAlert.mockReset().mockResolvedValue({ alert: { ok: true, to: "owner@example.invalid", ownerName: "Owner" } });

@@ -31,6 +31,7 @@
  * `pending_approval` is not a failure and must not be shown as one.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { turnstileRefusal } from "@/lib/security/turnstile-guard";
 import { createAdminClient } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
@@ -232,9 +233,8 @@ export async function POST(request: NextRequest) {
 /** Public host for links in outbound alerts — never `new URL(request.url).origin`,
  *  which is the container's internal address on Cloud Run. */
 function originOf(request: NextRequest): string {
-  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto   = request.headers.get("x-forwarded-proto") ?? "https";
-  return fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ?? "");
+  // R-723: allowlisted request host or NEXT_PUBLIC_APP_URL — never a caller-chosen host.
+  return trustedOrigin(request.headers);
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;

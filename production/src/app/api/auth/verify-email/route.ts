@@ -11,6 +11,7 @@
  * before verification.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import { createAdminClient } from "@/lib/supabase/server";
 import { confirmEmailToken } from "@/lib/auth/email-verification";
 import { routeVerifiedSignupToCompany } from "@/lib/auth/tenant-match";
@@ -48,7 +49,6 @@ export async function POST(request: NextRequest) {
 
 /** Public host for links in outbound alerts — never the container's internal address. */
 function originOf(request: NextRequest): string {
-  const fwdHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto   = request.headers.get("x-forwarded-proto") ?? "https";
-  return fwdHost ? `${proto}://${fwdHost}` : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ?? "");
+  // R-723: allowlisted request host or NEXT_PUBLIC_APP_URL — never a caller-chosen host.
+  return trustedOrigin(request.headers);
 }

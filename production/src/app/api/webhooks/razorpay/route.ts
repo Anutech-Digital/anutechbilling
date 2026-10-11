@@ -28,6 +28,7 @@
  * isn't set in env, we reject every request — fail closed.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedOrigin } from "@/lib/app-url";
 import crypto from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
@@ -305,7 +306,7 @@ export async function POST(request: NextRequest) {
   /* R-079: a failed payment is no longer only a log line — the lead gets a note and the
      buyer gets a link back to the SAME quote. Nothing is charged again from here. */
   if (event === "payment.failed") {
-    return handlePaymentFailed(admin, body, tenantParam, new URL(request.url).origin, mayActOn);
+    return handlePaymentFailed(admin, body, tenantParam, trustedOrigin(request.headers), mayActOn);
   }
 
   /* R-045: the money already went back to the buyer at Razorpay — tell the desk what to book. */
@@ -654,7 +655,7 @@ export async function POST(request: NextRequest) {
      Razorpay calls our public webhook URL, so this request's origin IS a
      public origin for us, needs no configuration, and stays right even though
      this service answers on more than one hostname (L18). */
-  const publicBase = new URL(request.url).origin;
+  const publicBase = trustedOrigin(request.headers); // R-723: allowlisted host or NEXT_PUBLIC_APP_URL
   const leadOwner = await loadLeadOwner(admin, quote.tenant_id, quote.lead_id);
   const invoiceUrl = paidQuote?.invoice_id
     ? pdfDownloadUrl(publicBase, "invoice", String(paidQuote.invoice_id), quote.tenant_id)
