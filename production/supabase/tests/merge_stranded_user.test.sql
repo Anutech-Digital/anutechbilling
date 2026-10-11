@@ -11,6 +11,11 @@
 --   5. REFUSE (role)  — a non-owner cannot claim anyone.
 --   6. NO CROSS-TENANT— an owner cannot claim into a tenant that is not theirs.
 --
+-- R-721 (11 Oct 2026): a signed-in owner may claim only someone with a pending join request
+-- (or an invite they signed in after) to THEIR workspace, so cases 1–4 each open one first —
+-- the legitimate shape. Refusals no longer name the other company or its tables
+-- (supabase/tests/r721_stranded_users.test.sql covers the attack side).
+--
 -- Case 3 is the one that matters most. Prevention was never the hard part; the
 -- repair tool quietly orphaning ₹21,240 of customer data would have recreated the
 -- exact bug this whole migration set exists to answer.
@@ -36,6 +41,8 @@ insert into auth.users (id,email) values
 insert into public.users (id,tenant_id,email,full_name,role) values
   ('3333bbbb-0000-0000-0000-000000000001','2222aaaa-0000-0000-0000-000000000001','owner@m1.in','Owner','owner'),
   ('3333bbbb-0000-0000-0000-000000000002','2222aaaa-0000-0000-0000-000000000002','stray@m1.in','Stray','owner');
+insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) values
+  ('2222aaaa-0000-0000-0000-000000000001','3333bbbb-0000-0000-0000-000000000002','stray@m1.in','manual');
 
 do $$ declare r jsonb; n int; t int; begin
   perform set_config('request.jwt.claims',
@@ -75,6 +82,8 @@ insert into auth.users (id,email,raw_user_meta_data) values
   ('3333bbbb-0000-0000-0000-000000000004','deepak@m3.in','{"full_name":"Deepak Sharma"}'::jsonb);
 insert into public.users (id,tenant_id,email,full_name,role) values
   ('3333bbbb-0000-0000-0000-000000000003','2222aaaa-0000-0000-0000-000000000003','owner@m3.in','Owner','owner');
+insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) values
+  ('2222aaaa-0000-0000-0000-000000000003','3333bbbb-0000-0000-0000-000000000004','deepak@m3.in','manual');
 
 do $$ declare r jsonb; nm text; begin
   perform set_config('request.jwt.claims',
@@ -112,6 +121,8 @@ insert into auth.users (id,email) values
 insert into public.users (id,tenant_id,email,full_name,role) values
   ('3333bbbb-0000-0000-0000-000000000005','2222aaaa-0000-0000-0000-000000000005','owner@m4.in','Owner','owner'),
   ('3333bbbb-0000-0000-0000-000000000006','2222aaaa-0000-0000-0000-000000000006','ranjeet@m4.in','Ranjeet','owner');
+insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) values
+  ('2222aaaa-0000-0000-0000-000000000005','3333bbbb-0000-0000-0000-000000000006','ranjeet@m4.in','manual');
 -- One real customer is enough. This is the ₹21,240 shape.
 insert into public.customers (id,tenant_id,name,contact_email) values
   ('4444cccc-0000-0000-0000-000000000006','2222aaaa-0000-0000-0000-000000000006','A SQUARE TECHNOLOGIES','vinay@x.in');
@@ -131,8 +142,9 @@ do $$ declare msg text; tid uuid; t int; begin
 
   if msg not like '%still holds%' then
     raise exception 'FAIL 3: refusal did not state what was in the way: %', msg; end if;
-  if msg not like '%customers%' then
-    raise exception 'FAIL 3: refusal did not name the blocking table: %', msg; end if;
+  -- R-721: the refusal no longer names the other workspace or lists its tables.
+  if msg like '%Has Data Co%' or msg like '%customers%' then
+    raise exception 'FAIL 3: refusal leaks the other workspace''s name or contents: %', msg; end if;
 
   -- The whole point: the refusal is total. No partial application.
   select tenant_id into tid from public.users where id='3333bbbb-0000-0000-0000-000000000006';
@@ -163,6 +175,8 @@ insert into public.users (id,tenant_id,email,full_name,role) values
   ('3333bbbb-0000-0000-0000-000000000007','2222aaaa-0000-0000-0000-000000000007','owner@m6.in','Owner','owner'),
   ('3333bbbb-0000-0000-0000-000000000008','2222aaaa-0000-0000-0000-000000000008','a@m6.in','A','owner'),
   ('3333bbbb-0000-0000-0000-000000000009','2222aaaa-0000-0000-0000-000000000008','b@m6.in','B','support');
+insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) values
+  ('2222aaaa-0000-0000-0000-000000000007','3333bbbb-0000-0000-0000-000000000008','a@m6.in','manual');
 
 do $$ declare msg text; begin
   perform set_config('request.jwt.claims',
@@ -177,6 +191,8 @@ do $$ declare msg text; begin
   end;
   if msg not like '%people in it%' then
     raise exception 'FAIL 4: wrong refusal reason: %', msg; end if;
+  if msg like '%Real Other Co%' then
+    raise exception 'FAIL 4: refusal leaks the other company''s name: %', msg; end if;
   raise notice 'PASS 4: refused — separate company, not an accident';
 end $$;
 rollback;

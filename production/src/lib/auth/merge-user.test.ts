@@ -122,7 +122,9 @@ describe("mergeChangedSomething — a no-op must not be reported as a change", (
 
 describe("refusal contract — the RPC's own message reaches the operator intact", () => {
   /**
-   * These strings are copied from migration 0243's `raise exception` calls. The
+   * These strings are copied from the `raise exception` calls in migration
+   * 20261011124100_r721_stranded_users (R-721 made them generic: no other company's
+   * name, no record counts, and "no account" reads the same as "no request"). The
    * test is that nothing in the client rewrites or truncates them: each carries a
    * reason AND a next step (CLAUDE.md §24), and "Could not claim user" would throw
    * away the only useful thing the failure knows.
@@ -132,9 +134,9 @@ describe("refusal contract — the RPC's own message reaches the operator intact
    * design — so what this asserts is that the messages themselves are actionable.
    */
   const REFUSALS = [
-    'Cannot claim x@y.in: their workspace "Excel Technologies" still holds 9 records ({"customers": 3}). Moving them out would leave that data with no one who can sign in and see it. Move or export the data first — this tool only clears empty workspaces.',
-    'Cannot claim x@y.in: they belong to "Delfos Technologies", which has 2 people in it. That is a separate company, not an accidental workspace. If it really should be merged, that is a platform-admin job.',
-    "No account exists for nobody@example.com. Send them an invite from Team → Invite teammate using this exact address, ask them to sign in once, then claim them.",
+    "Cannot claim x@y.in: their current workspace still holds records. Moving them out would leave that data with no one who can sign in and see it. They should move or export it first — this tool only clears empty workspaces.",
+    "Cannot claim x@y.in: they are in another company that has other people in it. That is a separate company, not an accidental workspace — moving them is a platform-admin job.",
+    "Cannot claim nobody@example.com. Only someone with a pending invite or join request to your workspace, who has signed in at least once, can be claimed. Invite them from Team → Invite teammate using this exact address, ask them to sign in once, then claim them.",
     "Only the owner of a workspace can claim someone into it. Ask your workspace owner to open Team → Claim a colleague.",
   ];
 
@@ -147,7 +149,13 @@ describe("refusal contract — the RPC's own message reaches the operator intact
 
   it("every refusal explains WHY, not just that it was blocked", () => {
     for (const msg of REFUSALS) {
-      expect(msg).toMatch(/still holds|people in it|No account exists|Only the owner/i);
+      expect(msg).toMatch(/still holds|people in it|pending invite or join request|Only the owner/i);
+    }
+  });
+
+  it("R-721: no refusal says whether an account exists or names another company", () => {
+    for (const msg of REFUSALS) {
+      expect(msg).not.toMatch(/No account exists|"[^"]+"|d+ (records|people)/i);
     }
   });
 
