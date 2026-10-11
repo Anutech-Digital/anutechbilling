@@ -27,6 +27,8 @@ export interface SessionResult {
   role: string | null;
   canViewDeals: boolean;
   needsMfa: boolean;
+  /** R-722: users.is_active = false — the root middleware signs this browser out. */
+  deactivated: boolean;
   /** R-710: the auth server could not be reached — "signed out" is NOT known, only "unknown". */
   authUnreachable: boolean;
 }
