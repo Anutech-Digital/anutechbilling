@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -83,5 +83,70 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(2); // 21:59 IST
     expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(4); // 22:00 IST
     expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(4); // 02:30 IST
+  });
+});
+
+describe("R-842: board v76 card contract (claim/push refuse an incomplete card)", () => {
+  const full = {
+    id: "R-500", title: "x", kind: "bug", category: "billing", doneWhen: "invoice total right",
+    triage: { verdict: "zaroori", why: "customer ko galat bill", at: "2026-10-11T07:00:00Z" },
+    howToCheck: "1. /invoices kholo 2. total dekho",
+  };
+  const file = (card: unknown) => () => JSON.stringify(card);
+  const flags = { cardPath: "card.json", noCheck: false };
+
+  it("missing kind → claim refused, naming the field", () => {
+    const { kind: _k, ...noKind } = full;
+    const r = checkCardContract("R-500", "claim", flags, file(noKind));
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("kind");
+    expect(cardContractGaps(noKind, "claim")).toEqual(["kind"]);
+  });
+
+  it("full card → claim and push ok", () => {
+    expect(checkCardContract("R-500", "claim", flags, file(full)).ok).toBe(true);
+    expect(checkCardContract("R-500", "push", flags, file(full)).ok).toBe(true);
+  });
+
+  it("missing howToCheck → push refused (claim still fine)", () => {
+    const { howToCheck: _h, ...noCheck } = full;
+    expect(checkCardContract("R-500", "claim", flags, file(noCheck)).ok).toBe(true);
+    const r = checkCardContract("R-500", "push", flags, file(noCheck));
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("howToCheck");
+    expect(cardContractGaps({ ...full, howToCheck: "   " }, "push")).toEqual(["howToCheck"]);
+  });
+
+  it("triage needs verdict, why AND at; blank strings count as missing", () => {
+    expect(cardContractGaps({ ...full, triage: { verdict: "zaroori" } }, "claim")).toEqual(["triage.why", "triage.at"]);
+    expect(cardContractGaps({ ...full, triage: undefined, category: "" }, "claim")).toEqual(["triage.verdict", "triage.why", "triage.at", "category"]);
+    expect(cardContractGaps({}, "claim")).toHaveLength(6);
+  });
+
+  it("no --card → refused with how-to; --no-card-check only for R-9xx manager cards", () => {
+    const none = { cardPath: null, noCheck: false };
+    const r = checkCardContract("R-500", "claim", none, file(full));
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("--card");
+    expect(checkCardContract("R-500", "claim", { cardPath: null, noCheck: true }).ok).toBe(false);
+    expect(checkCardContract("R-912", "push", { cardPath: null, noCheck: true }).ok).toBe(true);
+    expect(managerCard("R-999")).toBe(true);
+    expect(managerCard("R-9001")).toBe(false);
+    expect(managerCard("R-842")).toBe(false);
+  });
+
+  it("refuses a card file for another card, and unreadable JSON", () => {
+    expect(checkCardContract("R-501", "claim", flags, file(full)).message).toContain("R-500");
+    expect(checkCardContract("R-500", "claim", flags, () => "{nope").ok).toBe(false);
+  });
+
+  it("reads the ArtifactData out_dir file and a {id, data} wrapper alike", () => {
+    expect(cardFromJson({ id: "R-500", version: 3, data: full }).kind).toBe("bug");
+    expect(checkCardContract("R-500", "claim", flags, file({ id: "R-500", data: full })).ok).toBe(true);
+  });
+
+  it("flags come out of the args; areas stay positional", () => {
+    expect(parseCardFlags(["C:/wt", "src/lib/deals", "--card", "c.json"])).toEqual({ rest: ["C:/wt", "src/lib/deals"], cardPath: "c.json", noCheck: false });
+    expect(parseCardFlags(["--card=c.json", "--no-card-check"])).toEqual({ rest: [], cardPath: "c.json", noCheck: true });
   });
 });
