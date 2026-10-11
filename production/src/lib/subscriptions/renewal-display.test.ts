@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { term, renewalDistance } from "./renewal-display";
+import { term, rowTerm, renewalDistance, termValue } from "./renewal-display";
 
 describe("term — the label AND the money it implies", () => {
   it("reads a 12-month span as Annual", () => {
@@ -95,5 +95,25 @@ describe("renewalDistance — the number the whole cadence turns on", () => {
   it("degrades to a dash rather than printing NaN", () => {
     expect(renewalDistance(NaN)).toBe("—");
     expect(renewalDistance(Infinity)).toBe("—");
+  });
+});
+
+/* R-876: a saved quarterly subscription spans 12 months, and the list row read
+   "Annual · about ₹18,000". The billing cycle now names the row. */
+describe("rowTerm — R-876", () => {
+  const S = "2026-10-01", R = "2027-09-30";
+  it("billing_cycle quarterly says Quarterly, and its amount is one quarter", () => {
+    const t = rowTerm("quarterly", S, R)!;
+    expect(t.label).toBe("Quarterly");
+    expect(termValue(1500, t.months, 18_000).amount).toBe(4_500);
+  });
+  it("billing_cycle monthly says Monthly", () => {
+    expect(rowTerm("monthly", S, R)!.label).toBe("Monthly");
+  });
+  it("billing_cycle yearly says Annual", () => {
+    expect(rowTerm("yearly", S, R)!.label).toBe("Annual");
+  });
+  it("yearly (the column default) still defers to the span for old rows", () => {
+    expect(rowTerm("yearly", "2026-10-01", "2026-10-31")!.label).toBe("Monthly");
   });
 });

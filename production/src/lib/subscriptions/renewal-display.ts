@@ -111,3 +111,30 @@ export function termValue(
 export function termValueLabel(v: TermValue, rupees: (n: number) => string): string {
   return v.exact ? rupees(v.amount) : `about ${rupees(v.amount)}`;
 }
+
+/**
+ * R-876. The term shown on a subscriptions list row — the BILLING CYCLE wins when it
+ * says something the start↔renewal span cannot.
+ *
+ * A quarterly-billed annual commitment (R-826) spans twelve months, so `term()` alone
+ * called it "Annual · about ₹18,000" — a row that never mentioned it is invoiced every
+ * three months. `subscriptions.billing_cycle` knows, so:
+ *   quarterly   → "Quarterly",   amount = one quarter's invoice
+ *   half_yearly → "Half-yearly", amount = one half-year's invoice
+ *   monthly     → "Monthly"      (no amount — the MRR is already on the row)
+ *   yearly      → the span, as before. 'yearly' is the column DEFAULT, so older rows
+ *                 written before billing_cycle existed carry it whatever their real term
+ *                 was; the span stays the better witness for them.
+ * `months` is what one invoice covers, so termValue(mrr, months, annual) is the amount
+ * of one invoice — never the year shown next to the word "Quarterly".
+ */
+export function rowTerm(
+  billingCycle: string | null | undefined,
+  start: string | null | undefined,
+  renewal: string | null | undefined,
+): Term | null {
+  if (billingCycle === "quarterly")   return { label: "Quarterly",   months: 3 };
+  if (billingCycle === "half_yearly") return { label: "Half-yearly", months: 6 };
+  if (billingCycle === "monthly")     return { label: "Monthly",     months: 1 };
+  return term(start, renewal);
+}

@@ -33,8 +33,8 @@ import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { matchContacts } from "@/lib/contacts/match-contacts";
 import {
   subscriptionProducts, vendorSelectOptions, productsForVendor, findProduct, judgePrice,
-  billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES,
-  type CatalogProduct, type BillingChoice,
+  billingTerms, annualise, firstInvoiceTaxable, BILLING_CHOICES, convertPriceForChoice,
+  type CatalogProduct, type BillingChoice, type PriceSwitchMemo,
 } from "@/lib/subscriptions/catalog-options";
 import type { Item } from "@/lib/supabase/database.types";
 
@@ -213,6 +213,11 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
      spinner — is not worth it. See add-subscription-price-input.test.tsx. */
   const [seatsText, setSeatsText] = React.useState("10");
   const [priceText, setPriceText] = React.useState("0");
+  /** R-876: a one-line note under the price after a billing switch converted or
+   *  cleared it. Gone as soon as the operator types. */
+  const [priceHint, setPriceHint] = React.useState<string | null>(null);
+  /** R-876: the last conversion, so switching straight back restores the exact number. */
+  const priceSwitchMemo = React.useRef<PriceSwitchMemo | null>(null);
   const seats = Number.parseInt(seatsText, 10) || 0;
   /** ₹/seat in the CHOSEN unit — per month for both monthly choices, per year for
    *  yearly. `terms.unit` says which; nothing below may assume. */
@@ -292,14 +297,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     setVendor(first.vendor);
     setItemId(first.id);
     setPlan(first.name);
-    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat));
+    setPriceText(String(billingTerms(billingChoice, first).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
   }, [products, vendor, itemId, isCustomPlan, billingChoice]);
 
   const applyProduct = (p: CatalogProduct) => {
     setIsCustomPlan(false);
     setItemId(p.id);
     setPlan(p.name);
-    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat));
+    setPriceText(String(billingTerms(billingChoice, p).suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
   };
 
   /**
@@ -322,8 +327,25 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
        like a bug precisely because the word "Monthly" is in the choice. The hint under
        the field now says which of the two it is. */
     setRenewalDate(termEndInclusive(startDate, billingTerms(next, selected).termMonths));
-    if (!selected) return;
-    setPriceText(String(billingTerms(next, selected).suggestedSellPerSeat));
+    /* R-876: a catalog plan whose price is still the catalog's suggestion is re-priced
+       from the catalog, as before. Anything else — a custom plan, or a number the
+       operator typed over the suggestion — is CONVERTED between units (or cleared, for
+       flex), never left alone. Leaving it alone was the bug: ₹1,800/yr became
+       ₹1,800/mo the moment the label flipped. */
+    const untouchedSuggestion = selected !== undefined
+      && priceText === String(billingTerms(billingChoice, selected).suggestedSellPerSeat);
+    if (untouchedSuggestion) {
+      setPriceText(String(billingTerms(next, selected).suggestedSellPerSeat));
+      setPriceHint(null);
+      priceSwitchMemo.current = null;
+      return;
+    }
+    const out = convertPriceForChoice(priceText, billingChoice, next, priceSwitchMemo.current);
+    if (out.text !== priceText) {
+      priceSwitchMemo.current = { fromText: priceText, fromChoice: billingChoice, toText: out.text };
+    }
+    setPriceText(out.text);
+    setPriceHint(out.hint);
   };
 
   /**
@@ -463,7 +485,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       setIsCustomPlan(false);
       setItemId(product.id);
       setPlan(product.name);
-      setPriceText(String(terms.suggestedSellPerSeat));
+      setPriceText(String(terms.suggestedSellPerSeat)); setPriceHint(null); priceSwitchMemo.current = null;
       setRenewalDate(termEndInclusive(startDate, terms.termMonths));
     } else if (prefill.plan) {
       setIsCustomPlan(true);
@@ -1411,9 +1433,14 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 type="number"
                 min={0}
                 value={priceText}
-                onChange={(e) => setPriceText(e.target.value)}
+                onChange={(e) => { setPriceText(e.target.value); setPriceHint(null); }}
                 required
               />
+              {priceHint && (
+                <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="price-switch-hint">
+                  {priceHint}
+                </p>
+              )}
               {/* The margin, live, next to the number being typed. The defaults this
                   replaced sat below vendor cost for months with nothing on screen to
                   say so — on M365 Business Standard, ₹7,920 against a ₹9,840 cost.

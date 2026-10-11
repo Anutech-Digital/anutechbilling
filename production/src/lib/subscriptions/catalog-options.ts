@@ -376,3 +376,71 @@ export function judgePrice(
   const marginPct = ((annualSellPerSeat - annualCostPerSeat) / annualSellPerSeat) * 100;
   return marginPct < thinBelowPct ? { kind: "thin", marginPct } : { kind: "ok", marginPct };
 }
+
+/**
+ * R-876. What the typed price becomes when the billing choice changes and the catalog
+ * cannot re-price it (a custom plan, or a number the operator changed by hand).
+ *
+ * ─── THE 12× BUG THIS CLOSES ──────────────────────────────────────────────────
+ * The label flipped ₹/yr → ₹/mo on switching Yearly → Quarterly but the NUMBER stayed,
+ * so ₹1,800/yr silently became ₹1,800/mo — twelve times the agreed price, reported by
+ * the AI tester on 11 Oct 2026 (build b8722096).
+ *
+ * The three annual-commitment choices are the SAME annual rate in two units, so the
+ * conversion is exact arithmetic: per year → per month is ÷ 12, rounded to whole rupees
+ * (AGENTS.md §1, the same Math.round the stored mrr uses); per month → per year is × 12.
+ *
+ * Flex is its own, higher price — not the annual rate ÷ 12 (see flexMonthlySell). Any
+ * move into or out of flex therefore has no honest conversion, and the price is CLEARED
+ * with a plain hint instead of guessed.
+ *
+ * `previous` makes a round trip exact: ₹9,990/yr → ₹833/mo → back gives ₹9,990, not
+ * ₹9,996, as long as the operator has not touched the box in between.
+ */
+export interface PriceSwitch {
+  text: string;
+  /** Plain-English line to show under the field, or null. */
+  hint: string | null;
+}
+
+export interface PriceSwitchMemo {
+  /** The text that was in the box before the last conversion, and its choice. */
+  fromText: string;
+  fromChoice: BillingChoice;
+  /** The text the last conversion produced. */
+  toText: string;
+}
+
+export function convertPriceForChoice(
+  text: string, from: BillingChoice, to: BillingChoice, previous?: PriceSwitchMemo | null,
+): PriceSwitch {
+  if (from === to) return { text, hint: null };
+  const trimmed = text.trim();
+  const n = Number.parseFloat(trimmed);
+  if (trimmed === "" || !Number.isFinite(n) || n === 0) return { text, hint: null };
+
+  if (from === "monthly_flex" || to === "monthly_flex") {
+    return {
+      text: "",
+      hint: to === "monthly_flex"
+        ? "Flex has its own price (not the annual rate ÷ 12). Please enter the flex price per month."
+        : "Flex was its own price. Please enter the annual-commitment price.",
+    };
+  }
+
+  /* Undoing the last switch, box untouched since: give back exactly what was typed. */
+  if (previous && previous.fromChoice === to && previous.toText === text) {
+    return { text: previous.fromText, hint: null };
+  }
+
+  const fromUnit = billingTerms(from).unit;
+  const toUnit = billingTerms(to).unit;
+  if (fromUnit === toUnit) return { text, hint: null };
+  const converted = toUnit === "per_seat_month" ? Math.round(n / 12) : Math.round(n * 12);
+  return {
+    text: String(converted),
+    hint: toUnit === "per_seat_month"
+      ? `Converted to a monthly price: ₹${n.toLocaleString("en-IN")}/yr ÷ 12.`
+      : `Converted to a yearly price: ₹${n.toLocaleString("en-IN")}/mo × 12.`,
+  };
+}

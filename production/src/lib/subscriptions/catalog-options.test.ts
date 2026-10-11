@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   subscriptionProducts, catalogVendors, vendorSelectOptions, productsForVendor,
-  findProduct, judgePrice,
+  findProduct, judgePrice, convertPriceForChoice,
 } from "./catalog-options";
 import type { Item } from "@/lib/supabase/database.types";
 
@@ -241,5 +241,42 @@ describe("judgePrice — the live check next to the field", () => {
 
   it("exactly at cost is a thin 0%, not a loss", () => {
     expect(judgePrice(9_840, 9_840)).toEqual({ kind: "thin", marginPct: 0 });
+  });
+});
+
+/* R-876: switching the billing period converts the typed price — it never keeps the
+   number while the unit label flips (₹1,800/yr silently became ₹1,800/mo). */
+describe("convertPriceForChoice — R-876", () => {
+  it("yearly ₹1,800 → quarterly is ₹150/mo", () => {
+    expect(convertPriceForChoice("1800", "annual_yearly", "annual_quarterly").text).toBe("150");
+  });
+  it("quarterly ₹150/mo → yearly is ₹1,800", () => {
+    expect(convertPriceForChoice("150", "annual_quarterly", "annual_yearly").text).toBe("1800");
+  });
+  it("yearly → monthly (annual commitment) uses the same ÷ 12", () => {
+    expect(convertPriceForChoice("1800", "annual_yearly", "annual_monthly").text).toBe("150");
+  });
+  it("rounds to whole rupees, and a straight round trip restores the exact number", () => {
+    const there = convertPriceForChoice("9990", "annual_yearly", "annual_quarterly");
+    expect(there.text).toBe("833");
+    const memo = { fromText: "9990", fromChoice: "annual_yearly" as const, toText: there.text };
+    expect(convertPriceForChoice("833", "annual_quarterly", "annual_yearly", memo).text).toBe("9990");
+    /* Without the memo (box edited in between) it is plain × 12. */
+    expect(convertPriceForChoice("833", "annual_quarterly", "annual_yearly").text).toBe("9996");
+  });
+  it("monthly ↔ quarterly (both per month at the annual rate) keeps the number", () => {
+    expect(convertPriceForChoice("150", "annual_monthly", "annual_quarterly").text).toBe("150");
+  });
+  it("into or out of flex clears the price with a hint — no honest conversion", () => {
+    const a = convertPriceForChoice("1800", "annual_yearly", "monthly_flex");
+    expect(a.text).toBe("");
+    expect(a.hint).toMatch(/flex/i);
+    const b = convertPriceForChoice("200", "monthly_flex", "annual_yearly");
+    expect(b.text).toBe("");
+    expect(b.hint).toBeTruthy();
+  });
+  it("an empty or zero box is left alone", () => {
+    expect(convertPriceForChoice("", "annual_yearly", "annual_quarterly")).toEqual({ text: "", hint: null });
+    expect(convertPriceForChoice("0", "annual_yearly", "annual_quarterly")).toEqual({ text: "0", hint: null });
   });
 });

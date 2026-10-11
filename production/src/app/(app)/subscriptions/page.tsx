@@ -83,7 +83,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { term, renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { rowTerm, renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
 import { useQuotes } from "@/lib/queries/quotes";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
@@ -1054,7 +1054,7 @@ export default function SubscriptionsPage() {
         <ul className="xl:hidden space-y-2 mb-3">
           {shown.map((s) => {
             const dl = daysUntil(s.renewal_date);
-            const t  = term(s.start_date, s.renewal_date);
+            const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
             const vm = vendorMeta(s.vendor);
             /* Seat gap only — the money needs the catalogue, and this card deliberately
                shows no margin figure (see the note further down about estimateMargin). */
@@ -1125,7 +1125,7 @@ export default function SubscriptionsPage() {
                   <Badge kind={vm.kind} size="sm" dot>{vm.label}</Badge>
                   {t && (
                     <Badge kind="muted" size="sm"
-                           title={`${t.label} term — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} invoiced at each renewal`}>
+                           title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
                       {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
                     </Badge>
                   )}
@@ -1249,7 +1249,7 @@ export default function SubscriptionsPage() {
                     pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
                   });
                   const dl = daysUntil(s.renewal_date);
-                  const t  = term(s.start_date, s.renewal_date);
+                  const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
                   const isUrgent = dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
@@ -1344,7 +1344,7 @@ export default function SubscriptionsPage() {
                         <div className="break-words leading-snug">{s.plan}</div>
                         {t && (
                           <Badge kind="muted" size="sm" className="mt-1"
-                                 title={`${t.label} term — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} invoiced at each renewal`}>
+                                 title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
                             {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
                           </Badge>
                         )}
