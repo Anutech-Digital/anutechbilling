@@ -63,6 +63,7 @@ import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
+import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
@@ -163,7 +164,12 @@ export default function CustomersPage() {
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
   /* R-255: the accountant reads customers; adding, importing and editing stay with the team. */
-  const canWrite = canWriteSales(useCurrentUser().data?.role);
+  const myRole = useCurrentUser().data?.role;
+  const canWrite = canWriteSales(myRole);
+  /* R-885: deleting a customer is owner / accountant only (delete_customer refuses the rest). */
+  const canDeleteCustomer = canDeleteMoney(myRole);
+  /* R-885: issuing an invoice (generate_invoice / create_direct_invoice) is a money role. */
+  const canInvoice = canRecordMoney(myRole);
   /* `?contact=` arrives from the "Serves N customers" chip on a contact. It seeds the
      search box rather than living as a filter of its own, so the operator lands on an
      ordinary search they can widen, narrow or clear — and so there is one filter to
@@ -1062,7 +1068,7 @@ export default function CustomersPage() {
                             onView={() => setSelectedId(c.id)}
                             onEdit={() => router.push(`/customers/${c.id}/edit` as never)}
                             onNewQuote={() => router.push(`/quotes/new?customer=${c.id}` as never)}
-                            onInvoice={() => setInvoiceForCustomer(c.id)}
+                            onInvoice={canInvoice ? () => setInvoiceForCustomer(c.id) : undefined}
                             onManageSubs={() => router.push(`/customers/${c.id}` as never)}
                             readOnly={!canWrite}
                           />
@@ -1183,6 +1189,7 @@ export default function CustomersPage() {
         onDelete={() => void bulkDelete()}
         onDeselectAll={clearPicked}
         readOnly={!canWrite}
+        canDelete={canDeleteCustomer}
       />
 
       <ImportCustomersDialog open={importOpen} onOpenChange={setImportOpen} onImportComplete={() => refetch()} />
@@ -1258,7 +1265,8 @@ function RowActions({
   onView: () => void;
   onEdit: () => void;
   onNewQuote: () => void;
-  onInvoice: () => void;
+  /** R-885: absent for roles that may not issue an invoice (owner/manager/accountant/billing only). */
+  onInvoice?: () => void;
   onManageSubs: () => void;
 }) {
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
@@ -1284,9 +1292,11 @@ function RowActions({
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onNewQuote)}>
           <Icon name="plus" size={15} /> New quote
         </DropdownMenuItem>
+        {onInvoice && (
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onInvoice)}>
           <Icon name="receipt" size={15} /> Create invoice
         </DropdownMenuItem>
+        )}
         <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={stop(onManageSubs)}>
           <Icon name="refresh" size={15} /> Manage subscriptions
         </DropdownMenuItem>

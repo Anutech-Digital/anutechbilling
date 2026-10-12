@@ -32,6 +32,8 @@ import {
   type BusinessLoan,
 } from "@/lib/queries/business-loans";
 import { istToday } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canDeleteMoney } from "@/lib/auth/roles";
 
 function todayISO(): string {
   return istToday();
@@ -44,6 +46,8 @@ export default function BusinessLoansPage() {
   const [emiFor, setEmiFor] = React.useState<BusinessLoan | null>(null);
   const [historyFor, setHistoryFor] = React.useState<BusinessLoan | null>(null);
   const del = useDeleteBusinessLoan();
+  /* R-885: deleting a business loan is owner / accountant only (delete_business_loan refuses the rest). */
+  const canDelete = canDeleteMoney(useCurrentUser().data?.role);
   const confirm = useConfirm();
 
   const loans = q.data ?? [];
@@ -143,7 +147,7 @@ export default function BusinessLoansPage() {
                         <LoanActions
                           onEmi={l.status === "active" ? () => setEmiFor(l) : undefined}
                           onHistory={() => setHistoryFor(l)}
-                          onDelete={l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
+                          onDelete={canDelete && l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
                         />
                       </div>
                     </td>
@@ -175,7 +179,7 @@ export default function BusinessLoansPage() {
                     <LoanActions
                       onEmi={l.status === "active" ? () => setEmiFor(l) : undefined}
                       onHistory={() => setHistoryFor(l)}
-                      onDelete={l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
+                      onDelete={canDelete && l.emisPaid === 0 ? () => confirmDelete(l) : undefined}
                     />
                   </div>
                 </Card>

@@ -38,6 +38,8 @@ import { ProjectTasks } from "@/components/features/projects/project-tasks";
 import { useRemoveProjectLabour, useSaveProjectLabour, useUpdateProjectDates, type ProjectLabourLine } from "@/lib/queries/projects";
 import { Input } from "@/components/ui/input";
 import { istToday } from "@/lib/dates/ist";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
 import { bookedToDate, labourMonthsElapsed, labourToDate } from "@/lib/projects/pnl";
 
 export default function ProjectDetailPage() {
@@ -53,6 +55,8 @@ export default function ProjectDetailPage() {
   const raise = useRaiseMilestoneInvoice();
   const accept = useAcceptProjectQuote();
   const [payFor, setPayFor] = React.useState<ProjectMilestoneRow | null>(null);
+  /* R-885: record_project_payment is owner / manager / accountant / billing. */
+  const mayRecordMoney = canRecordMoney(useCurrentUser().data?.role);
   const [addCostOpen, setAddCostOpen] = React.useState(false);
   const [editCost, setEditCost] = React.useState<import("@/lib/queries/expenses").Expense | null>(null);
   const [addLabourOpen, setAddLabourOpen] = React.useState(false);
@@ -455,7 +459,7 @@ export default function ProjectDetailPage() {
                           Raise invoice
                         </Button>
                       )}
-                      {m.status !== "paid" && (
+                      {m.status !== "paid" && mayRecordMoney && (
                         <Button size="sm" variant="primary" onClick={() => setPayFor(m)}>
                           {partial ? "Record balance" : "Record payment"}
                         </Button>

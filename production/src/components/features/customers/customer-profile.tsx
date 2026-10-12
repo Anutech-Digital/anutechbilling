@@ -63,7 +63,7 @@ import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
-import { canDeleteMoney } from "@/lib/auth/roles";
+import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { COPY } from "@/lib/copy";
@@ -405,7 +405,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             {(agreements ?? []).some((a) => a.status === "active") ? "Referral ✓" : "Add referral"}
           </Button>
           <Button icon="edit" onClick={() => router.push(`/customers/${c.id}/edit` as never)}>Edit</Button>
-          <Button icon="receipt" onClick={() => setInvoiceOpen(true)}>Invoice</Button>
+          {/* R-885: issuing an invoice is owner / manager / accountant / billing. */}
+          {canRecordMoney(me?.role) && <Button icon="receipt" onClick={() => setInvoiceOpen(true)}>Invoice</Button>}
           {canQuotes && (
             <Button variant="primary" icon="plus" onClick={() => router.push(`/quotes/new?customer=${c.id}` as any)}>{COPY.newQuote}</Button>
           )}
@@ -425,6 +426,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           >
             {c.is_active === false ? "Reactivate" : "Archive"}
           </Button>
+          {/* R-885: delete_customer is owner / accountant only (Pardeep's role table). */}
+          {canDeleteMoney(me?.role) && (
           <Button
             icon="trash"
             variant="ghost"
@@ -435,6 +438,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           >
             Delete
           </Button>
+          )}
         </div>
         )}
       </div>

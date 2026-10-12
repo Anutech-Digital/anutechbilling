@@ -34,12 +34,16 @@ import { TransferDialog } from "@/components/features/banking/transfer-dialog";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
+import { canDeleteMoney } from "@/lib/auth/roles";
 
 export default function BankingPage() {
   const router = useRouter();
   const { data: accounts, isLoading, isError, refetch } = useBankAccounts();
   /* R-254: billing reads Banking; only owner / manager / accountant may save bank records. */
-  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const myRole = useCurrentUser().data?.role;
+  const canWrite = canWriteMoney(myRole);
+  /* R-885: deleting a bank account is owner / accountant only (delete_bank_account refuses the rest). */
+  const canDeleteAccount = canWrite && canDeleteMoney(myRole);
   const [addOpen, setAddOpen] = React.useState(false);
   const [editAccount, setEditAccount] = React.useState<BankAccountRow | null>(null);
   const [deleteAccount, setDeleteAccount] = React.useState<BankAccountRow | null>(null);
@@ -146,7 +150,7 @@ export default function BankingPage() {
               account={acc}
               onOpen={() => router.push(`/accounting/banking/${acc.id}` as Route)}
               onEdit={canWrite ? () => setEditAccount(acc) : undefined}
-              onDelete={canWrite ? () => setDeleteAccount(acc) : undefined}
+              onDelete={canDeleteAccount ? () => setDeleteAccount(acc) : undefined}
             />
           ))}
         </div>
