@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 
 // ============================================================
@@ -26,7 +27,7 @@ export function usePayments() {
       return await fetchAllRows<Payment>((from, to) =>
         supabase
           .from("payments")
-          .select("*")
+          .select(PAYMENT_COLUMNS)
           .order("received_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to));
@@ -45,7 +46,7 @@ export function usePaymentsByQuote(quoteId: string | null | undefined) {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("payments")
-        .select("*")
+        .select(PAYMENT_COLUMNS)
         .eq("quote_id", quoteId!)
         .order("received_at", { ascending: true });
       if (error) throw error;
