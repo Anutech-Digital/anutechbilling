@@ -5,6 +5,13 @@
 > people's changes from the shared board, how to stay in your area ([`OWNERS.json`](OWNERS.json)),
 > and what to write back before you stop. Five minutes of it saves a day of merge conflicts.
 
+> **The repo is public (R-1430, 12 Oct 2026):** no secrets, tenant data or client details in
+> commits, docs or card text copied into commits. Use env vars / the secret manager and invented
+> fixtures (`@example.test`, obviously fake numbers). `production/scripts/ops/secret-scan.mjs`
+> runs on push (worker-lock push guard) and in CI; it prints file:line + rule, never the value.
+> A false positive goes in `secret-scan.allow.json` with a reason. A real secret that was ever
+> pushed must be **rotated**, not just deleted.
+
 Read this before writing code. It is the short list of things that, if you get them
 wrong, cost real money or break a live business.
 

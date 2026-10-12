@@ -60,6 +60,15 @@ jobs:
       - name: Config drift check (ci.yml / cloudbuild.yaml vs Dockerfile)
         run: node scripts/check-config-drift.mjs
 
+      # R-1430: the repo is PUBLIC. Lines added by this push / PR must hold no secret, key file,
+      # client term or personal contact. Prints file:line + rule only, never the value. A new
+      # branch (no "before") gets a full-tree scan. Client terms come from a repo secret.
+      - name: Secret / client-data scan
+        env:
+          SECRET_SCAN_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+          SECRET_SCAN_DENY_TERMS: ${{ secrets.SECRET_SCAN_DENY_TERMS }}
+        run: node scripts/ops/secret-scan.mjs --diff "$SECRET_SCAN_BASE"
+
       - run: npm ci
       # Advisory, NOT blocking: a new advisory in a transitive dependency appears overnight
       # without any commit here, and should not turn every branch red at once. It is visible
