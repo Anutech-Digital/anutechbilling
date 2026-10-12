@@ -4,7 +4,7 @@
  * ─── THE BUG THIS REPLACES ──────────────────────────────────────────────────
  * Five server routes carried this, module-level:
  *
- *     const PARDEEP_EMAIL = "Pardeep@exceltechnologies.in";
+ *     const PARDEEP_EMAIL = "owner@client-a.example.test";
  *
  * and used it as the `to:` of the owner alert — in four of them unconditionally,
  * ignoring the tenant entirely. `api/webhooks/razorpay/route.ts` had already been
@@ -20,9 +20,9 @@
  * that one address.
  *
  * ─── WHY THIS IS NOT A "STALE BRAND" FIX ────────────────────────────────────
- * The tempting fix is to ban `exceltechnologies.in`, since CLAUDE.md §1 records
+ * The tempting fix is to ban `example.test`, since CLAUDE.md §1 records
  * that brand as historical. That would be wrong twice over. Tenant
- * `3bbd2280-b8e3-4e70-98c9-6916d85708fb` genuinely has `pardeep@exceltechnologies.in`
+ * `<client-tenant-id>` genuinely has `pardeep@example.test`
  * as its recorded contact, so banning the domain would block that tenant's own
  * mail — its address is the operator's data, not this module's business. And a
  * ban list dated to one brand goes stale the moment somebody hardcodes

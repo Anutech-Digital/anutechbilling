@@ -91,7 +91,7 @@ export type TeamInviteRow = Tables<"team_invites">;
 // tenant_domains — which email domain belongs to which tenant (migration 0242)
 //
 // `verified_at` is the gate, not the row's existence: an unverified claim routes
-// nobody. See the migration header for why (exceltechnologies.in is currently
+// nobody. See the migration header for why (example.test is currently
 // claimed by two accidentally-created tenants).
 // ============================================================
 export type TenantDomainRow = Tables<"tenant_domains">;

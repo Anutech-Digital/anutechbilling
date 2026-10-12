@@ -5,7 +5,7 @@
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 \
 --     < supabase/tests/project_receipt_tds.test.sql
 --
--- What it proves (the Excel Technologies case: ₹5,00,000 + GST, 10% TDS, ₹5,40,000 banked):
+-- What it proves (the Demo Co case: ₹5,00,000 + GST, 10% TDS, ₹5,40,000 banked):
 --   1. The ₹5,90,000 milestone is settled by ₹5,40,000 (bank) + ₹50,000 (TDS) and marked paid.
 --   2. The invoice is ₹5,90,000 = ₹5,00,000 taxable + ₹90,000 GST, born paid.
 --   3. The bank line is reconciled to the net project payment.
@@ -35,7 +35,7 @@ grant all on ids to authenticated;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-0000-0000-00000000a0a5', 'role', 'authenticated')::text, true);
 
-insert into ids select 'p', public.create_project_quote(null::uuid, 'Excel Technologies'::text, 'Complete ERP'::text, null::text,
+insert into ids select 'p', public.create_project_quote(null::uuid, 'Demo Co'::text, 'Complete ERP'::text, null::text,
   '[{"name":"Complete ERP","qty":1,"rate":500000,"amount":500000}]'::jsonb, 18, false,
   '[{"label":"Full payment","total_amount":590000,"due_date":null}]'::jsonb)::text;
 select public.accept_project_quote((select v from ids where k = 'p')::uuid);

@@ -2,19 +2,20 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PLATFORM_OPERATOR } from "./platform";
+import { denyTermsRe } from "@/test/deny-terms";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    ResellerOS ko chalane wali company ka naam — public pages par.
 
    26 Aug 2026, Pardeep: "anutech digital ka logo lagao aur reselleros ko uska product
-   show karo". Dekhne par "Excel Technologies Pvt Ltd" 98 jagah, 55 file me mila — aur
+   show karo". Dekhne par "Demo Co Pvt Ltd" 98 jagah, 55 file me mila — aur
    sabse bura wahan tha jahan sabse kam dikhta hai: **Privacy Policy aur Terms of Service
    me, SERVICE CHALANE WALI ENTITY ke roop me.**
 
    Ye rename ki galti nahi thi. DB me naapa gaya, GSTIN ke andar chhupe PAN ke 4th char se:
 
        ANUTECH DIGITAL PVT LTD   07ABDCA0298H1ZP   'C' → Company
-       Excel Technologies        07BMOPS5609G1ZM   'P' → Person (proprietorship)
+       Demo Co        07AAAAP0000A1Z5   'P' → Person (proprietorship)
 
    Do alag legal entity. Privacy Policy me doosri entity ka naam hona padhne wale se kehta
    hai ki uska data kisi aur ke paas hai.
@@ -85,8 +86,8 @@ describe("PLATFORM_OPERATOR — ek jagah, jo DB se mel khati hai", () => {
 
 describe("public pages par purani entity ka naam nahi", () => {
   for (const [label, parts] of PUBLIC_FACING) {
-    it(`${label} — "Excel Tech" kahin nahi`, () => {
-      expect(codeOf(parts)).not.toMatch(/Excel Tech/i);
+    it(`${label} — "Demo Co" kahin nahi`, () => {
+      expect(codeOf(parts)).not.toMatch(denyTermsRe());
     });
   }
 
@@ -94,16 +95,16 @@ describe("public pages par purani entity ka naam nahi", () => {
     /* Ye do jagah live deploy ke baad mili, aur dono UPAR wali list se bahar thin —
        isliye alag se pinned hain:
 
-         • quotes/[id]/page.tsx — WhatsApp ka body, `me?.tenantName ?? "Excel Technologies"`.
+         • quotes/[id]/page.tsx — WhatsApp ka body, `me?.tenantName ?? "Demo Co"`.
            `me` load na ho to quote us company ke naam se jaata jo usne bheji hi nahi.
-         • tds-detail-dialog.tsx — Form 16A maangne wala message, "Pardeep, Excel Tech" se
+         • tds-detail-dialog.tsx — Form 16A maangne wala message, "Pardeep, Demo Co" se
            sign hota tha.
 
        Dono ek hi shreni hain jise lib/invoices/supplier-identity.ts poore comment ke saath
        likhti hai: galat company ka naam chhapne se behtar hai naam na chhapna. */
     for (const p of [["src", "app", "(app)", "quotes", "[id]", "page.tsx"],
                      ["src", "components", "features", "accounting", "tds-detail-dialog.tsx"]]) {
-      expect(codeOf(p), p.join("/")).not.toMatch(/Excel Tech/i);
+      expect(codeOf(p), p.join("/")).not.toMatch(denyTermsRe());
     }
   });
 

@@ -2,8 +2,8 @@
 
 > **Status**: ⏳ in progress · paused 2026-05-29 · resume next session
 > **Owner**: Pardeep (manual signup + DNS) → Claude (Cloud Run env vars + test)
-> **Approach**: Use `exceltechnologies.in` as sending domain temporarily, until `resellersos.in` is bought
-> **From-address**: `ResellerOS by Excel Tech <noreply@exceltechnologies.in>`
+> **Approach**: Use `example.test` as sending domain temporarily, until `resellersos.in` is bought
+> **From-address**: `ResellerOS by Client A <noreply@example.test>`
 
 ---
 
@@ -11,18 +11,18 @@
 
 Current state: app falls back to `onboarding@resend.dev` (shared sender) → 30-40% of renewal reminders + quote emails land in spam.
 
-After setup: emails ship from `noreply@exceltechnologies.in` with proper SPF + DKIM + DMARC → 95%+ inbox delivery.
+After setup: emails ship from `noreply@example.test` with proper SPF + DKIM + DMARC → 95%+ inbox delivery.
 
 ---
 
 ## Pre-confirmed facts (saved 2026-05-29)
 
-- **Domain**: `exceltechnologies.in` (already owned by Excel Tech)
+- **Domain**: `example.test` (already owned by Client A)
 - **DNS provider**: Cloudflare (nameservers: `addilyn.ns.cloudflare.com`, `damian.ns.cloudflare.com`)
 - **Resend account**: Pardeep has one (login available)
 - **Cloud Run env vars to update** (Claude's job):
   - `RESEND_API_KEY=re_...`
-  - `RESEND_FROM_DEFAULT=ResellerOS by Excel Tech <noreply@exceltechnologies.in>`
+  - `RESEND_FROM_DEFAULT=ResellerOS by Client A <noreply@example.test>`
 
 ---
 
@@ -33,7 +33,7 @@ After setup: emails ship from `noreply@exceltechnologies.in` with proper SPF + D
 1. Open https://resend.com → login
 2. Left sidebar → **Domains**
 3. Top-right → **Add Domain**
-4. Enter: `exceltechnologies.in`
+4. Enter: `example.test`
 5. Region: **EU** (closer latency to India than US)
 6. Click **Add Domain**
 
@@ -43,17 +43,17 @@ Resend will show a table with **4 records**:
 
 | Type | Name | Value | Priority |
 |---|---|---|---|
-| MX | `send.exceltechnologies.in` | `feedback-smtp.eu-west-1.amazonses.com` | 10 |
-| TXT | `send.exceltechnologies.in` | `v=spf1 include:amazonses.com -all` | — |
-| TXT | `resend._domainkey.exceltechnologies.in` | (long DKIM key, ~400 chars) | — |
-| TXT | `_dmarc.exceltechnologies.in` | `v=DMARC1; p=none;` | — |
+| MX | `send.example.test` | `feedback-smtp.eu-west-1.amazonses.com` | 10 |
+| TXT | `send.example.test` | `v=spf1 include:amazonses.com -all` | — |
+| TXT | `resend._domainkey.example.test` | (long DKIM key, ~400 chars) | — |
+| TXT | `_dmarc.example.test` | `v=DMARC1; p=none;` | — |
 
 **Screenshot this table and send to Claude** so values can be verified.
 
 ### ☐ Step 3 — Add records in Cloudflare
 
 1. Open https://dash.cloudflare.com → login
-2. Left sidebar → click `exceltechnologies.in`
+2. Left sidebar → click `example.test`
 3. Top menu → **DNS → Records**
 4. For each of the 4 records above, click **Add record**:
    - **Type**: as in table (MX or TXT)
@@ -69,7 +69,7 @@ Resend will show a table with **4 records**:
 
 1. Wait 5-15 minutes after saving Cloudflare records
 2. Back to Resend → Domains page
-3. Click **Verify** next to `exceltechnologies.in`
+3. Click **Verify** next to `example.test`
 4. All 4 records should turn green ✅
 
 If any record fails:
@@ -99,7 +99,7 @@ gcloud run services update resellersos \
   --region asia-south1 \
   --update-env-vars \
 RESEND_API_KEY=re_<paste-from-pardeep>,\
-RESEND_FROM_DEFAULT="ResellerOS by Excel Tech <noreply@exceltechnologies.in>"
+RESEND_FROM_DEFAULT="ResellerOS by Client A <noreply@example.test>"
 ```
 
 ### ☐ Step 7 — Test send
@@ -109,7 +109,7 @@ Send a test renewal reminder email manually:
 ```bash
 # Hit existing test endpoint or trigger via app:
 # Option A: Resend dashboard "Send test email"
-# Option B: Sign in as pardeep@anutech.in, trigger a quote send to pardeep@exceltechnologies.in
+# Option B: Sign in as pardeep@anutech.in, trigger a quote send to pardeep@example.test
 ```
 
 Or simpler: send via Resend dashboard direct test feature → recipient is Pardeep's email.
@@ -148,5 +148,5 @@ When `resellersos.in` is purchased:
 1. Add `resellersos.in` as a 2nd domain in Resend
 2. Verify DNS (same SPF/DKIM/DMARC pattern, on resellersos.in DNS panel)
 3. Update Cloud Run env: `RESEND_FROM_DEFAULT="ResellerOS <hello@resellersos.in>"`
-4. Keep `exceltechnologies.in` verified as backup sender
+4. Keep `example.test` verified as backup sender
 5. Done — no code changes needed

@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-24
 **Auditor**: Claude (Product Architect)
-**Goal**: Honest assessment before Pardeep dogfoods at Excel Tech + onboards first paying customers.
+**Goal**: Honest assessment before Pardeep dogfoods at Client A + onboards first paying customers.
 
 ---
 
@@ -235,9 +235,9 @@ Day 0 (TODAY)
 ├─ Set NEXT_PUBLIC_APP_URL       (5 min)
 ├─ Set CRON_SECRET               (5 min)
 ├─ Verify renewal cron fires     (1 hr wait + verify log)
-└─ Add Excel Tech as first tenant (already exists)
+└─ Add Client A as first tenant (already exists)
 
-Day 1-3 — Dogfood with Excel Tech
+Day 1-3 — Dogfood with Client A
 ├─ Add 5-10 real customers manually
 ├─ Send actual renewal quotes (via existing flow)
 ├─ Receive payments (manual record_payment for now — Razorpay later)
@@ -315,9 +315,9 @@ No other doc updates needed — code matches docs.
 **Mera honest recommend launch order:**
 
 1. **Aaj** — Firebase deploy + Resend signup + first cron fire ✓
-2. **Kal-Parso** — Excel Tech ke 3-5 real customers add karo, real workflows test karo
+2. **Kal-Parso** — Client A ke 3-5 real customers add karo, real workflows test karo
 3. **Is hafte** — Razorpay test integration build karte hain
-4. **Agle hafte** — First non-Excel-Tech reseller onboard karte hain free
+4. **Agle hafte** — First non-Client-A reseller onboard karte hain free
 
 Sab apne control me hai. **No deal-breakers, sirf next steps.**
 

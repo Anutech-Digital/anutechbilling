@@ -118,7 +118,7 @@ export function QuotePreviewDialog({
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
-  // First letter of tenant name → brand monogram (e.g. "Excel Technologies" → "E")
+  // First letter of tenant name → brand monogram (e.g. "Demo Co" → "E")
   const brandInitial = (tenantName?.trim()?.[0] ?? "?").toUpperCase();
   const expiresOn = new Date(Date.now() + validityDays * 86400000);
 

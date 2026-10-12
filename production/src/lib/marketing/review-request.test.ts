@@ -19,11 +19,11 @@ describe("review requests", () => {
   });
 
   it("email carries the link in text and html, first name only, and escapes", () => {
-    const m = reviewEmail({ contactName: "Deepak Sharma", company: "Excel <Tech>", sender: "Anutech", link: "https://g.page/r/abc/review" });
+    const m = reviewEmail({ contactName: "Deepak Sharma", company: "Demo <Co>", sender: "Anutech", link: "https://g.page/r/abc/review" });
     expect(m.subject).toBe("A quick favour, Deepak?");
     expect(m.text).toContain("https://g.page/r/abc/review");
     expect(m.html).toContain('href="https://g.page/r/abc/review"');
-    expect(m.html).not.toContain("<Tech>");
+    expect(m.html).not.toContain("<Co>");
     expect(reviewEmail({ contactName: null, company: null, sender: "A", link: "https://x.y" }).subject).toBe("A quick favour, there?");
   });
 

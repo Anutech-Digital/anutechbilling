@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   /* Who the draft is FROM. The stub's three email variants used to end
-     "Thanks,\nExcel Technologies" — a hardcoded company in text the operator sends to
+     "Thanks,\nDemo Co" — a hardcoded company in text the operator sends to
      their own customer, and a company this tenant no longer is (CLAUDE.md §1). Read
      through the session client, so RLS scopes it to the caller's own tenant.
 

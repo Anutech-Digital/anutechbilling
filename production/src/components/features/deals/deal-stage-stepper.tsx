@@ -58,7 +58,7 @@ export function DealStageStepper({ lead, reached }: {
 
   /* 1 Oct 2026, Pardeep: "4 Won ka matlab nahi samjh aaya". The pills showed a step number
      ("4 Won") and a ✓ on every earlier stage — but a deal can jump straight from quote to
-     won (Excel Technologies did), so the ✓ claimed a demo and trial that never happened.
+     won (Demo Co did), so the ✓ claimed a demo and trial that never happened.
      Now: no numbers; a ✓ only on steps with evidence (stages-reached.ts — e.g. a sent quote); the current stage is just highlighted (Pardeep: no "Abhi:"/"Current:" prefix — the highlight says it), the rest are plain
      "click to move" pills, and one caption says what the row is for. */
   return (

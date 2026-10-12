@@ -18,7 +18,7 @@ const QUOTES  = strip("src/app/(app)/quotes/page.tsx");
 
 describe("Customer 360 -> Quotes includes project quotations", () => {
   it("the Quotes segment counts project rows", () => {
-    /* THE BUG: `type === "Quote"` only. Excel Technologies' ERP quotation was
+    /* THE BUG: `type === "Quote"` only. Demo Co' ERP quotation was
        invisible under the one heading somebody would look for it. */
     expect(PROFILE).toContain("const isQuoteish");
     expect(PROFILE).toMatch(/txnFilter === "quotes"\s*\?\s*isQuoteish\(type\)/);

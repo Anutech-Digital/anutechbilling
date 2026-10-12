@@ -71,7 +71,7 @@
   - NOTE: teenon 'propagation' hain — pattern maujood, N-screens par phailana. Batch me Pardeep greenlight kare to karta rahunga.
 - [x] C8 ✅ 1 Sep — dono Google-token routes getUser-first (provider_token session se, darwaza getUser se); dono WhatsApp handshake constant-time
 - [ ] C9. Bundle budget + analyzer; plausible ya hatao daava
-- [ ] C10. Zod 27 baki JSON-parse routes par (pehle unauthenticated wale)
+- [ ] C10. Input validation on remaining JSON routes — details on the board (R-1432)
 
 ## 🧭 MERGE (website+DMS+ResellerOS) — naksha: https://claude.ai/code/artifact/1f80ef89-2cd6-42a4-89ed-090014f31b6f
 
@@ -89,9 +89,7 @@ Aage (kram se):
 
 ## 👉 sirf Pardeep (audit se)
 
-- [ ] **DMS repo → PRIVATE karna (F1)**: github.com/exceltechnologies-india/domain-management-system → Settings → neeche “Danger Zone” → “Change visibility” → Private. (IDOR+secrets chhape hain — sabse pehla click.)
-- [ ] GitHub-secrets me DB creds (SQL-tests-in-CI + Cloud Build migration-gate dono isi par atke hain) — repo ka apna note: "decision, not a cleanup"
-- [ ] Razorpay LIVE keys + Resend domain verify (purane, ab bhi khade)
+- [ ] 3 open security/ops owner items from the 1 Sep audit — details on the board (R-1432)
 
 # 🟢 HANDOFF — 25 Aug 2026 (शाम). Satrah feature, ek bhi migration nahi, aur chaar cheezein jo LIVE tooti hui hain.
 
@@ -833,8 +831,8 @@ rollback-style, prod par safe. Do mutation chala kar dekha ki sach me kaatta hai
 Pardeep ne 24 Aug ko bola, tab lagayi. `20260817100000_fix_missing_gst_on_onboarded_quotes`
 **applied + tracked**.
 
-`Q-2026-9776` · **SAHAKAR INFRACON PROJECTS PRIVATE LIMITED** · tenant `3bbd2280…` (Excel
-Technologies) · subtotal ₹45,360 · 18% · amount **₹45,360 → ₹53,525**.
+`Q-2026-9776` · **(a customer)** · tenant (client) (Client
+A) · subtotal ₹45,360 · 18% · amount **₹45,360 → ₹53,525**.
 
 Chalane se PEHLE dono UPDATE ka preview liya — statement 1 par 1 row, statement 2 par 0 row
 (us quote ki koi subscription hai hi nahi). Chalane ke BAAD backup se poora diff kiya:
@@ -1071,7 +1069,7 @@ Naapa hua, 22 Aug: tenant `7e57e57e-0000-4000-8000-000000000001` ka `name` ab
 **`Delfos Technologies`** hai. Ye wahi tenant hai jo jaan-boojh kar
 `ZZ TESTING SANDBOX — not a real company` naam se banaya gaya tha, aur wajah is file me hi
 likhi hai: *"company jaisa naam wala tenant company jaisa hi padha jata hai"* — usi galti ne
-ek "Excel Technologies" tenant me do din ka asli kaam aur ₹21,240 ka payment chhupa rakha tha.
+ek "Client A" tenant me do din ka asli kaam aur ₹21,240 ka payment chhupa rakha tha.
 
 Ab wo bachaav **hat gaya hai**. Sirf `doc_code = 'TEST'` bacha hai jo batata hai ki ye asli
 nahi hai — aur `doc_code` kisi report ya screen par nahi dikhta. Isi tenant me ₹32,400 MRR aur
@@ -1223,7 +1221,7 @@ renewal 2026-08-27. Verify alag run me kiya gaya.
 > wali paanch aur subscriptions asli lagne wale email par baithi hain —
 > `itadmin@jiva-designs.com` (JIVA DESIGNS PVT LTD, ×3), `sarvesh.k@dcmnvlchem.co.in`
 > (DCM NOUVELLE SPECIALTY CHEMICALS), `ceo@prop.guide` (NS PROPERTY GUIDE ADVISORS),
-> `nationalprinter2016@yahoo.com` (National Printer). Ye `example.com` jaise nakli address
+> `printer.test@yahoo.com` (a printer shop). Ye `example.com` jaise nakli address
 > nahi hain. Unki renewal 2027 ki hai, to jaldi nahi — par ek test tenant me live Resend key
 > ke saath khade hain. Memory me yahi darj hai: *test tenant se asli email jata hai.*
 
@@ -1287,7 +1285,7 @@ Theek karne ka rasta (Pardeep ko ek baar chalana padega, browser khulega):
 gcloud auth login
 ```
 
-Account pehle se do hain, active `pardeep@anutech.in` (doosra `Pardeep@exceltechnologies.in` — purana). Deploy script `production/deploy.sh` hai.
+Account pehle se do hain, active `pardeep@anutech.in` (doosra `Pardeep@example.test` — purana). Deploy script `production/deploy.sh` hai.
 
 </details>
 
@@ -1299,7 +1297,7 @@ Sawaal tha *"app testing ke liye perfect hai kya"*. Jawab naap kar: **nahi thi, 
 
 **🔴 Pehle ek sudhaar jo poore doc par asar daalta hai.** Kal tak jo aankde "live tenant" ke naam se likhe gaye (15 customers · 27 quotes · 22 invoices · 24 payments · 30 subscriptions) wo **poore DB ke** the, ek tenant ke nahi. Asli per-tenant ginti:
 
-| | ANUTECH (live) | Excel Technologies | ZZ TESTING SANDBOX |
+| | ANUTECH (live) | Client A | ZZ TESTING SANDBOX |
 |---|---|---|---|
 | items | 25 | 21 | **25** |
 | customers | 14 | 1 | 0 |
@@ -1323,7 +1321,7 @@ Ab wo screens *"migration missing"* nahi, **khaali** dikhayengi — jo alag baat
 
 **3. ✅ Testing sandbox tenant ban gaya** — `ZZ TESTING SANDBOX — not a real company` (`7e57e57e-0000-4000-8000-000000000001`, doc_code `TEST`). Usme **sirf item catalogue** hai (25 rows live tenant se copy, naye id `TST-` prefix ke saath). Customers/quotes/invoices/payments **jaan-boojh kar nahi** — money spine banana hi wo cheez hai jo test honi chahiye; banaya hua data dekar wo poora hissa skip ho jata aur banane me chhupe bug bhi.
 
-Naam jaan-boojh kar bhadda hai. §4a ka sabak: company jaisa naam wala tenant company jaisa hi padha jata hai — aur usi galti ne ek "Excel Technologies" tenant me do din ka asli kaam aur ₹21,240 ka payment chhupa rakha tha. Script deewar ko **maanti nahi, assert karti hai**: sandbox me 0 customer/quote/invoice/payment, aur copy ke baad live tenant bilkul waisa hi. [create-test-tenant.sql](production/supabase/maintenance/create-test-tenant.sql)
+Naam jaan-boojh kar bhadda hai. §4a ka sabak: company jaisa naam wala tenant company jaisa hi padha jata hai — aur usi galti ne ek "Client A" tenant me do din ka asli kaam aur ₹21,240 ka payment chhupa rakha tha. Script deewar ko **maanti nahi, assert karti hai**: sandbox me 0 customer/quote/invoice/payment, aur copy ke baad live tenant bilkul waisa hi. [create-test-tenant.sql](production/supabase/maintenance/create-test-tenant.sql)
 
 **⏳ 4. Jo baaki hai — tester ka email.** `team_invites` me us tester ka **theek wahi address** daalna hai (columns: `tenant_id`, `email`, `role`). Callback ki pehli branch invited address ko **usi tenant** me daalti hai — isliye Google sign-in sandbox me girega, live tenant me **nahi ja sakta**. Password kisi ko dene ki zaroorat nahi.
 
@@ -1723,7 +1721,7 @@ Aur us line par `list_rate` set hi nahi hota, to renewal quote par discount hame
 
 **5b. 🔴→✅ DB BACKUP CHHUP KAR TOOTA HUA THA — 6 din (13–19 Aug), ab theek.** Safai karte hue mila, dhoonda nahi tha. `npm run backup:db` MCP server par chalti thi jise `SUPABASE_ACCESS_TOKEN` chahiye — aur wo var is machine par kharab hai. To har run `Unauthorized` laata tha, aur script use `rows(...).map is not a function` bana deti thi. **Free plan par PITR nahi hai, automatic backup nahi hai** — yaani poora safety net ek 13 Aug ki purani file thi, aur kisi ne bataya tak nahi. Ab transport CLI par hai (token chahiye hi nahi) aur **har parse failure throw karti hai** — pehle `[]` lautati thi, jisse ek baar "0 tables wala backup" likha ja chuka hai. Chala kar dekha: **96 tables / 933 rows, exit 0**. Rows 1210 → 933 giri, jo aadha-adhoora backup jaisa hi dikhta hai — isliye maana nahi, **dusre connection se har table ka live `count(*)` milaya, sab exact match**; kami asli test-data deletion hai. [docs/BACKUP.md](docs/BACKUP.md)
 
-**5c. Safai (19 Aug) — poori ho gayi:** purani global skill `resellersos-builder` **archive** kar di (`~/.claude/backups/skills-archive/`, mitayi nahi) — wo 27 May ki thi, path galat batati thi, aur "4 users, 3 Excel Technologies me" kehti thi jabki asli me 11 users / 2 tenants hain. Uski jagah repo ke andar [.claude/skills/resellersos-env](.claude/skills/resellersos-env/SKILL.md) — sirf access/machine ki sachchai (code patterns `production/CLAUDE.md` me hi rahenge). **`.mcp.json` hata di** (Pardeep ki haan par) — usme sirf ek server tha jo `"${SUPABASE_ACCESS_TOKEN}"` ki wajah se hamesha `Unauthorized` deta tha; kaam ka server `supabase-db` user-scope me hai aur chalta hai.
+**5c. Safai (19 Aug) — poori ho gayi:** purani global skill `resellersos-builder` **archive** kar di (`~/.claude/backups/skills-archive/`, mitayi nahi) — wo 27 May ki thi, path galat batati thi, aur "4 users, 3 Client A me" kehti thi jabki asli me 11 users / 2 tenants hain. Uski jagah repo ke andar [.claude/skills/resellersos-env](.claude/skills/resellersos-env/SKILL.md) — sirf access/machine ki sachchai (code patterns `production/CLAUDE.md` me hi rahenge). **`.mcp.json` hata di** (Pardeep ki haan par) — usme sirf ek server tha jo `"${SUPABASE_ACCESS_TOKEN}"` ki wajah se hamesha `Unauthorized` deta tha; kaam ka server `supabase-db` user-scope me hai aur chalta hai.
 
 > Naye teammate ko Supabase MCP chahiye to wo **apne user-scope me asli PAT ke saath** joḍe. Repo me token nahi jaana chahiye, aur `${VAR}` `.mcp.json` me expand hota hi nahi — yahi is file ki maut thi.
 
@@ -2053,7 +2051,7 @@ Fixed in `useBalanceSheetAuto()` — query-layer only, **no migration**. Two pur
 - `0225` created a table the feature never uses — Employee Advances deliberately runs on `expenses` ("zero-migration compatibility"). It also used `NUMERIC(14,2)` where all money is `integer` ₹, and inlined its RLS tenant check instead of `current_tenant_id()` (**150 prod policies use the function**) — which would have silently kept single-tenant behaviour when multi-company lands.
 - **My own error, recorded:** I first called this a P0 broken feature. All 4 "references" to that table were TanStack **cache keys**, not DB calls. Third time this session that grep pointed the wrong way — see [UX-AUDIT §6](docs/UX-AUDIT.md).
 
-**Tenancy question SETTLED — my analysis held.** RLS is enabled on every core table (4–6 policies each) and `record_payment` is not anon-callable, so **no live cross-tenant leak** and the `.or()` fallbacks are **confirmed dead code**. But prod has **5 tenants** and `use-workspace.ts` is worse than described: `606a7ae7` is hardcoded as "Excel Tech" and is actually **Delfos Technologies — a real separate tenant with its own user, invoice and payment**; the real Excel Technologies (`13a364c7`) isn't in the hook at all, so its data displays under Anutech. All real business (34 customers / 62 leads / 39 quotes / 26 invoices / 8 users) sits in **one** tenant, Anutech Digital.
+**Tenancy question SETTLED — my analysis held.** RLS is enabled on every core table (4–6 policies each) and `record_payment` is not anon-callable, so **no live cross-tenant leak** and the `.or()` fallbacks are **confirmed dead code**. But prod has **5 tenants** and `use-workspace.ts` is worse than described: `606a7ae7` is hardcoded as "Client A" and is actually **Delfos Technologies — a real separate tenant with its own user, invoice and payment**; the real Client A (`13a364c7`) isn't in the hook at all, so its data displays under Anutech. All real business (34 customers / 62 leads / 39 quotes / 26 invoices / 8 users) sits in **one** tenant, Anutech Digital.
 
 **Still open from this session:** off-database backup (dashboard shows **`No backups`**; the in-app snapshots live *inside* the same DB, so they're an undo, not a backup) · `tenants.doc_code = 'ET'` sits on **Anutech Digital**, and 4 of 5 tenants have `doc_code = NULL` — worth confirming GST invoice series are labelled with the right legal entity.
 
@@ -2103,12 +2101,12 @@ Then: **F1 + F6 are query-layer additions to `useBalanceSheetAuto()`, no migrati
 
 **The finding.** `lib/hooks/use-workspace.ts` partitions Customers / Invoices / Quotes / Subscriptions / Leads / Contacts (6 pages) by **hardcoded tenant UUIDs** (`:95-99`) plus **company-name keyword matching** (`:122`):
 ```
-if (identifier.includes("excel") || identifier.includes("vera") || identifier.includes("veracious")) return true;
+if (identifier.includes("<name fragment>")) return true;
 ```
 Verified against the DB, not assumed:
 1. `leads` and `customers` each have exactly **4 RLS policies**, all `tenant_id = current_tenant_id()` (`0002_rls.sql:63-73, 99-109`). The only extra SELECT is portal-side `customers_select_self_customer` → `id = current_customer_id()` (`0016:68`), which is NULL for a reseller user. Partner/distributor cross-tenant reads go through `SECURITY DEFINER` RPCs (`0040`–`0044`), **never through policies**.
 2. A user therefore belongs to exactly one tenant (`lib/auth/membership.ts` — no invite ⇒ new tenant, never joins another), and can only ever read **one** tenant's rows.
-3. **⇒ The switcher is not switching tenants.** It re-filters a single tenant's rows by company name and badges them "Excel Tech" / "Anutech Digital". A customer named e.g. "Excellent Traders" lands in the wrong workspace and gets the wrong badge. The last ~10 commits (`242aa2b` → `646f27b`) are all patches to this same mechanism — which says the *approach* is wrong, not that a bug remains.
+3. **⇒ The switcher is not switching tenants.** It re-filters a single tenant's rows by company name and badges them "Client A" / "Anutech Digital". A customer named e.g. "Excellent Traders" lands in the wrong workspace and gets the wrong badge. The last ~10 commits (`242aa2b` → `646f27b`) are all patches to this same mechanism — which says the *approach* is wrong, not that a bug remains.
 4. **⇒ The hardcoded-tenant fallbacks are dead code.** `leads.ts:31` and `customers.ts:29` re-query with `.or("tenant_id.eq.A,tenant_id.eq.B,tenant_id.eq.C")` whenever the first query is empty/errored. Both queries pass through the same RLS, so the retry can never return a row the first one didn't — including when `current_tenant_id()` is NULL. It cannot help; it only hides *why* the screen was empty ("no data" vs "auth/tenant broken" become indistinguishable).
 
 **Not a live data leak** — RLS is holding. The cost is wrong labels, wrong buckets, and a masked root cause.
@@ -2169,7 +2167,7 @@ Pardeep asked: "Zoho Books lets a customer create multiple companies — can't w
 | Org-tagged document numbers | `INV-ET-2026-27-0001` via `tenants.doc_code` (`0054` — whose own comment says "confirmed codes for the **two real tenants**") |
 | Org switcher | ❌ **the only missing piece** |
 
-**One tenant = one company is already true.** Per-company GST series, GSTIN, LUT, logo and doc code all work today. The only thing hard-wired is *a user to a single tenant* — which is exactly what the membership plan above unlocks. Also telling: `lib/platform.ts` already ships **two founder emails for one person** (`pardeep@anutech.in`, `pardeep@exceltechnologies.in`) — the two-identity workaround is already in the code.
+**One tenant = one company is already true.** Per-company GST series, GSTIN, LUT, logo and doc code all work today. The only thing hard-wired is *a user to a single tenant* — which is exactly what the membership plan above unlocks. Also telling: `lib/platform.ts` already ships **two founder emails for one person** (`pardeep@anutech.in`, `pardeep@example.test`) — the two-identity workaround is already in the code.
 
 **⏱ Also revised: deferring this gets more expensive, not less.** 32 JS write-sites need the active-tenant lookup today; at 196-migrations-and-counting velocity that number only grows. (I originally argued "defer"; the cost curve and the category-standard point both cut the other way. The one thing that did *not* change is the precondition below.)
 
@@ -2180,7 +2178,7 @@ Zoho's model, and Pardeep's call: each company is billed separately.
 **Billing lives on `tenants`, NOT on the membership.** My first phrasing ("per-membership billing flag") was wrong thinking — here's the counter-example that kills it:
 
 ```
-Excel Technologies (COMPANY — Growth ₹2,499/mo)      Anutech Digital (COMPANY — Starter ₹999/mo)
+Client A (COMPANY — Growth ₹2,499/mo)      Anutech Digital (COMPANY — Starter ₹999/mo)
    ├── Pardeep     ← membership                          └── Pardeep  ← membership
    └── Accountant  ← membership
 ```
@@ -2193,7 +2191,7 @@ Excel Technologies (COMPANY — Growth ₹2,499/mo)      Anutech Digital (COMPAN
 
 **Two consequences of "3 dega":**
 1. **"+ Add company" becomes a paid action** — it cannot be a free button, or someone runs 10 companies on a Starter plan. Zoho asks for the plan at org-creation for exactly this reason.
-2. **The paywall must check the ACTIVE tenant, not the user.** If Anutech's payment fails while Excel Tech is paid, switching to Anutech must go read-only/blocked while Excel Tech keeps working. A per-user check cannot express that.
+2. **The paywall must check the ACTIVE tenant, not the user.** If Anutech's payment fails while Client A is paid, switching to Anutech must go read-only/blocked while Client A keeps working. A per-user check cannot express that.
 
 **⚠️ Verified: this billing system does not exist at all.** No `plan`, `billing_status`, `trial_ends`, or subscription column on `tenants` anywhere in 196 migrations; `/pricing` is marketing only; there is no paywall. (The "billing status" mentioned in CLAUDE.md §17 is `api_keys.revoked_at` — unrelated to Model B.) So **"3 dega" is a decision about a system that must be built from zero, and it's a bigger piece of work than multi-company access itself.**
 
@@ -2342,7 +2340,7 @@ Types: `ContactPerson` + `ShippingAddress` + CustomerRow/Insert fields. Verified
 Pardeep: free-text state let a Kuwait customer be saved with "california". Now the State/Province field is a **dropdown of the selected country's states/emirates** for the markets we serve. New `lib/gst/states-by-country.ts` (`getStatesForCountry`) covers the Gulf (UAE/Saudi/Kuwait/Qatar/Oman/Bahrain) + US/UK/Canada/Australia; countries without a list fall back to free text. Changing country **resets** the state (clears a now-wrong value). India is untouched — it derives the state (with GST state code) from the GSTIN, the compliant source. Verified LIVE: Country → Kuwait turns State/Province into a select of Kuwait's 6 governorates, value reset. typecheck clean. Files: `states-by-country.ts` (new), `add-customer-form.tsx`.
 
 ### 🧾 Invoice builder — rich customer picker (Zoho-style) — ✅ BUILT (localhost, post-00171, awaiting deploy)
-Pardeep liked Zoho's customer-select dropdown in the invoice. Replaced our plain `<select>` (names only) with a new `CustomerCombobox` (`components/features/customers/customer-combobox.tsx`): a Popover trigger showing the selected customer (avatar + name + email), a dropdown with a search box, a scrollable list (avatar · name · email/domain, active row highlighted + ✓), and a **"+ New customer"** footer that opens the AddCustomerForm and **auto-selects** the created customer (added an `onCreated` callback to AddCustomerForm). Wired into the quote/invoice builder (replaces the Select block). Verified LIVE: picker opens with search + avatars + email subtitles + New-customer; selecting "Excel Technologies" showed avatar+name+email in the trigger and cascaded GSTIN / place-of-supply / intra-state GST. typecheck clean, no console errors. Files: customer-combobox (new), add-customer-form (onCreated), quote-builder.
+Pardeep liked Zoho's customer-select dropdown in the invoice. Replaced our plain `<select>` (names only) with a new `CustomerCombobox` (`components/features/customers/customer-combobox.tsx`): a Popover trigger showing the selected customer (avatar + name + email), a dropdown with a search box, a scrollable list (avatar · name · email/domain, active row highlighted + ✓), and a **"+ New customer"** footer that opens the AddCustomerForm and **auto-selects** the created customer (added an `onCreated` callback to AddCustomerForm). Wired into the quote/invoice builder (replaces the Select block). Verified LIVE: picker opens with search + avatars + email subtitles + New-customer; selecting "Client A" showed avatar+name+email in the trigger and cascaded GSTIN / place-of-supply / intra-state GST. typecheck clean, no console errors. Files: customer-combobox (new), add-customer-form (onCreated), quote-builder.
 
 ### 🧾 Invoice builder — Zoho-Books-style improvements — ✅ BUILT + TEST-GREEN (localhost, post-00171, awaiting deploy)
 Pardeep shared Zoho Books' New Invoice page + wanted ours improved to match. Adopted the useful Zoho patterns (kept our reseller features — billing cycle, USD, margin — which Zoho lacks; did NOT do a risky full visual clone of the shared quote-builder):
@@ -2415,7 +2413,7 @@ Closed the deferred mobile gaps from sweep #1 (§20: no table should horizontal-
 - **invoices** — "Pending GST invoice generation" table → mobile card list keeping the primary **Generate** action; bulk-select stays desktop.
 - **quotes** — Project-quotes table → mobile card list (customer/project, amount, outstanding, status + the same actions dropdown: Open / Preview / Edit / Delete).
 - **contacts** — empty state now has real CTAs (Add contact + Import CSV) instead of a dead-end message.
-Verified LIVE on mobile viewport (375px): payments Project-payments card renders clean ("Excel Technologies · Custom accounting software · ₹5,40,000", no horizontal scroll). typecheck clean. Files: payments/invoices/quotes/contacts `page.tsx`. Polish sweep now COMPLETE (empty + error + mobile). Deferred to a future consistency pass: ₹/label/date micro-consistency audit across pages.
+Verified LIVE on mobile viewport (375px): payments Project-payments card renders clean ("Client A · Custom accounting software · ₹5,40,000", no horizontal scroll). typecheck clean. Files: payments/invoices/quotes/contacts `page.tsx`. Polish sweep now COMPLETE (empty + error + mobile). Deferred to a future consistency pass: ₹/label/date micro-consistency audit across pages.
 
 ### 🤖 AI next-best-action on leads — 1-tap Gemini follow-up draft (the moat) — ✅ BUILT (✅ DEPLOYED rev 00170)
 Roadmap P1 differentiator vs pre-AI incumbents (RackNap/Zoho). Customers already had an AI draft in their next-best-action; Leads did NOT — the "what do I say?" gap. Added a full-width **"✨ Draft follow-up with AI"** button to the lead detail drawer (between Call/WhatsApp/Email and the smart next-action CTA), reusing existing infra: `AiDraftButton` + `/api/ai/draft-followup` (Gemini Flash, stub fallback). Channel auto = WhatsApp if phone else email; purpose = followup (lead mode never touches money figures — money-safe for prospects). Draft is editable, Copy / Open WhatsApp, ZERO auto-send (human-in-the-loop). Small change to `ai-draft-button.tsx` (added `className` prop for full-width in drawer). Verified LIVE on localhost: opened "Dogma Soft Ltd" → button drafted a contextual Hinglish WhatsApp message referencing real contact (S.Godara), company, plan (Google Workspace Business Starter) + 10 seats; API 200, mode=gemini. typecheck clean. Files: `app/(app)/leads/page.tsx` (import + drawer button), `components/shared/ai-draft-button.tsx` (className prop). Closes fast-follow 171(b) for Leads.
@@ -2556,7 +2554,7 @@ All money movement via atomic SECURITY DEFINER RPCs (§17b) and verified in **ro
 - [x] ~~**Attendance selfie**~~ — front-camera photo captured on check-in/out (best-effort), private tenant-foldered storage bucket, owner reviews via signed URLs in "Today's check-ins". Deters buddy-punching. Migration 0090.
 - [x] ~~**Project Quotations — send → customer accepts → project**~~ ✅ (23 Jul 2026, migration 0104, rev **00103**) — full quote→accept→project flow for one-time sales, mirroring the subscription quote-accept pattern (project id = unguessable link secret). project_sales gained `line_items` + `accepted_at` + 'quoted'/'draft' statuses; RPCs `create_project_quote` (itemised, status 'quoted') + `accept_project_quote` (public-safe, 'quoted'→'active'). **Public page `/project-quote/[id]`** (server component, admin read) shows itemised quote + GST + milestone schedule + Accept button; POST accept API. Owner: `CreateProjectQuoteDialog` (line items from one-time catalog + milestones, live GST/total), /projects "New quotation", detail shows quotation banner (copy customer link + Mark accepted) + quoted-items table + gates milestone billing until accepted. Balance-Sheet project-receivable counts only active/completed (a quoted project isn't owed yet). **Browser-verified END-TO-END** on prod (public page rendered ANUTECH branding + ₹4.72L quote; clicked Accept → "✓ Accepted"; test data deleted). ⏳ Fast-follow: quotation PDF (currently the public link IS the shareable quote), link project to a customer record, WhatsApp/email send button.
 - [x] ~~**Catalog split — Subscription vs one-time Items catalog**~~ ✅ (23 Jul 2026, migration 0103, rev **00102**) — Items screen now has a top switcher: **Subscription Catalog** (recurring per-seat/mo, existing) and **Items Catalog** (one-off products/services — custom software, setup, AMC, hardware; flat sale price + cost + HSN/SAC, `item_type='one_time'`). New `OneTimeItemForm` + `OneTimeCatalog` list. Subscription quote pickers (quote-builder, add-line-item) now exclude one-time items (can't be quoted with wrong per-seat pricing). One-time items will feed the Project Quotation flow. ⏳ Next: **Project Quotation** (quote PDF → customer accepts → creates project + milestones) — approved by Pardeep, builds on this.
-- [x] ~~**Project / one-time sales (custom software as a product)**~~ ✅ (22 Jul 2026, migration 0101, rev **00100**) — new self-contained path for one-off deals (e.g. ₹22L custom software) billed in **milestones**, separate from the subscription spine (no bogus subscription/PO/renewal). Tables `project_sales`/`project_milestones`/`project_payments` (tenant RLS) + RPCs `create_project_sale`, `raise_project_milestone_invoice` (writes a proper GST Tax Invoice into the existing `invoices` table via central doc-numbering; reverse-derives GST from the inclusive milestone amount; SAC 998314), `record_project_payment` (no subscription; optionally links the real bank credit line → `matched_to_type='project'`, reconciled, no double count). UI: `/projects` list + `/projects/[id]` detail + create dialog (live GST/total + milestone editor) + record-payment dialog (bank-credit picker). Balance Sheet: new **"Project receivables"** asset (total − payments). Revenue flows into P&L on invoice date. **Money-tested (rolled back)** on the real ₹22L Excel Technologies deal: taxable 22,00,000 + GST 3,96,000 = 25,96,000; M1 invoice raised+paid; bank ₹5.4L credit matched 'project'; receivable 20,56,000. ⚠️ Not in the automated Vitest suite yet. Fast-follow: milestone edit UI, invoice PDF (CGST/SGST split) for project invoices, link project to a customer record.
+- [x] ~~**Project / one-time sales (custom software as a product)**~~ ✅ (22 Jul 2026, migration 0101, rev **00100**) — new self-contained path for one-off deals (e.g. ₹22L custom software) billed in **milestones**, separate from the subscription spine (no bogus subscription/PO/renewal). Tables `project_sales`/`project_milestones`/`project_payments` (tenant RLS) + RPCs `create_project_sale`, `raise_project_milestone_invoice` (writes a proper GST Tax Invoice into the existing `invoices` table via central doc-numbering; reverse-derives GST from the inclusive milestone amount; SAC 998314), `record_project_payment` (no subscription; optionally links the real bank credit line → `matched_to_type='project'`, reconciled, no double count). UI: `/projects` list + `/projects/[id]` detail + create dialog (live GST/total + milestone editor) + record-payment dialog (bank-credit picker). Balance Sheet: new **"Project receivables"** asset (total − payments). Revenue flows into P&L on invoice date. **Money-tested (rolled back)** on the real ₹22L Client A deal: taxable 22,00,000 + GST 3,96,000 = 25,96,000; M1 invoice raised+paid; bank ₹5.4L credit matched 'project'; receivable 20,56,000. ⚠️ Not in the automated Vitest suite yet. Fast-follow: milestone edit UI, invoice PDF (CGST/SGST split) for project invoices, link project to a customer record.
 - [x] ~~**Salary accrual — unpaid until the bank confirms it**~~ ✅ (22 Jul 2026, migration 0099, rev **00097**) — payroll run now books ONLY the Salaries expense (P&L) + records the salary `paid_status='unpaid'` with **no cash leg**; the net shows as a new **"Salary payable"** liability on the Balance Sheet until the real bank debit is imported and reconciled to it (trigger flips it → `paid`; un-reconcile → back to `unpaid`). Kills the old double-count (payroll used to post a net-pay debit AND the imported statement line was a second debit). Reconcile "Suggested matches" now offers unpaid salaries (by NET) for money-out lines + `salary` match-type badge; Salaries expenses excluded from the expense suggestions. Payroll UI shows Paid/Unpaid badge. **Money-tested (rolled back):** run→unpaid, expense +1, bank_transactions Δ0, reconcile→paid, un-reconcile→unpaid. ⚠️ Not yet in the automated Vitest suite. ⚠️ Existing/already-run salaries were migrated to `paid` (they'd already moved cash).
 - **Decision:** face-recognition attendance considered + **declined** (owner chose PIN+selfie) — biometric DPDP consent, accuracy→wrong-pay risk, photo-spoof without liveness, dep/cost. Revisit if office scales.
 - ⚠️ **Not yet done:** unit tests (Vitest) for the new RPCs — logic is rolled-back-txn verified but not in the automated suite; add before relying heavily. New employees/loans are hard-delete-only (no undo) — acceptable, non-money.
@@ -2608,7 +2606,7 @@ All money movement via atomic SECURITY DEFINER RPCs (§17b) and verified in **ro
 - [~] **2b. Extend-on-already-renewed (#16) ✅ FIXED + silent-no-sub (#6) deferred** (migration 0056)
   - [x] ✅ **#16 (31 May)** — proven red (extend-on-`renewed` sub → 2 subs), then fixed: dropped the `renewal_state <> 'renewed'` filter from the renewal-sub lookup so a quote that is a sub's `renewal_quote_id` ALWAYS rolls that sub forward (no duplicate). Idempotency unaffected (payment dedup returns first; `renewal_quote_id` nulled after completion). Regression test green; same dup-sub class as the bug Pardeep originally found.
   - [ ] **#6 (deferred, low-risk):** fully-paid + annual + no-customer silently makes no sub. A defensive `raise` could block a legit edge; left as documented fast-follow (rare — quotes always have a customer or lead in practice).
-- [x] ~~**🔴 NEW P0 — cross-tenant global doc-id collision**~~ ✅ FIXED (30 May 2026) - `quotes`/`invoices`/`purchase_orders` ids are GLOBAL text PKs but numbered per-tenant → two tenants both made `Q-2026-27-0009` → collision (confirmed live: broke buy-page quote creation). Fix: migration 0054 — `tenants.doc_code` (ET/ANU) embedded in doc numbers → `Q-ET-2026-27-0012` vs `Q-ANU-2026-27-0012` (globally unique, no FK/PK change, existing ids untouched). Applied to prod + regression test committed. Storefront also re-pointed to Excel Tech (fbb976f1).
+- [x] ~~**🔴 NEW P0 — cross-tenant global doc-id collision**~~ ✅ FIXED (30 May 2026) - `quotes`/`invoices`/`purchase_orders` ids are GLOBAL text PKs but numbered per-tenant → two tenants both made `Q-2026-27-0009` → collision (confirmed live: broke buy-page quote creation). Fix: migration 0054 — `tenants.doc_code` (ET/ANU) embedded in doc numbers → `Q-ET-2026-27-0012` vs `Q-ANU-2026-27-0012` (globally unique, no FK/PK change, existing ids untouched). Applied to prod + regression test committed. Storefront also re-pointed to Client A (fbb976f1).
 - [~] **3. Pricing unify** - charged price == shown price (bugs #10,#11,#12) — PARTIAL
   - [x] ✅ Architectural fix (30 May): shared `src/lib/pricing/workspace.ts`; enquiry + checkout both price from the catalog (single source of truth). Removed enquiry's hardcoded ₹270/₹864/₹1080 + first-20 promo. Checkout fallback aligned to catalog. 6 Vitest tests + typecheck green.
   - [x] ✅ VALUE RESOLVED (30 May): Pardeep confirmed via Google's site — real India price is Starter **₹270**, Standard **₹864** (current 20%-off of ₹1080 list). Catalog `items.msrp` updated (was mis-seeded ₹136/₹736 = ~half price → live underpricing fixed). Code fallbacks + Vitest updated to match. (Claude's ₹136/₹736 belief was outdated — Pardeep's Google screenshot was authoritative.)
@@ -2625,7 +2623,7 @@ All money movement via atomic SECURITY DEFINER RPCs (§17b) and verified in **ro
   - Real issue surfaced = **schema drift**: `accept_quote`, `redeem_coupon`, `create_site_promo` + `coupons`/`site_promos` tables exist in prod but NOT in committed migrations. Capture via `supabase db diff` (also unblocks CI). See bug #34.
 - [~] **6. GST split + IST expiry fixes** - customer-visible correctness (bugs #18,#19,#20) — GST HEAD DONE, IST expiry pending
   - [x] ✅ **GST head (IGST vs CGST/SGST) derivation unified (31 May)** — new `src/lib/gst/place-of-supply.ts` `isInterStateSupply(customerStateCode, sellerStateCode)` + 5 Vitest (green). Replaced hardcoded GST head in **all** authoritative surfaces: quote-builder (was seller="27"!), quote-send PDF route (was false), quote-detail preview+download, whatsapp-send PDF, cron-renewals PDF, renewals/send-now PDF. Tax-invoice view + receipt-voucher already derived → refactored to the shared helper. Typecheck green.
-  - [x] ✅ **Excel Tech GST profile set (31 May)** — `state='Delhi (07)'`, `state_code='07'`, `gstin='07BMOPS5609G1ZM'` (Pardeep-provided). Now seller state is known → head derives correctly.
+  - [x] ✅ **Client A GST profile set (31 May)** — `state='Delhi (07)'`, `state_code='07'`, `gstin='07AAAAP0000A1Z5'` (Pardeep-provided). Now seller state is known → head derives correctly.
   - [x] ✅ **Journey 1 (IGST) + Journey 3 (CGST/SGST) verified LIVE (31 May, deploy rev resellersos-00072-ssv)** — same Standard×10 (₹1,03,680) for a Maharashtra (27) vs Delhi (07) customer: MH → **IGST ₹18,662** (single line), Delhi → **CGST ₹9,331 + SGST ₹9,331**; both total ₹1,22,342. Verified across quote-builder, customer-facing quote PDF ("Inter-state (IGST applies)"), AND the legal **Tax Invoice** (IGST @ 18% ₹18,662, ITC note per CGST §31, advance adjusted per Rule 53). Receipt Voucher RV-ET-…-0008 also generated (Journey 1 step 6). Full spine again 1-of-each, zero dups. Test data cleaned.
   - [x] ✅ **FU2: Quotes LIST quick-preview GST head fixed (31 May)** — extracted to `QuotePreviewContainer` which fetches the customer + derives via `isInterStateSupply()`. (commit d4ff0e6)
   - [x] ✅ **FU3: end-of-day IST quote expiry (31 May)** — `endOfDayIST()`+`isQuoteExpired()` in lib/utils (23:59:59.999 IST), used in the public quote-accept route; 7 Vitest. A quote "valid until 30 Jun" no longer lapses at 05:30 IST dawn. (commit d4ff0e6)
@@ -2650,7 +2648,7 @@ All money movement via atomic SECURITY DEFINER RPCs (§17b) and verified in **ro
 - [ ] **Soft launch with 1-3 design-partner customers** - public launch nahi, friendly cohort first
 
 ## Waiting On
-- [ ] **🔴 Pardeep: Resend pe `exceltechnologies.in` domain VERIFY karo** - quote/enquiry emails abhi FAIL ho rahe hain (`Resend 403: domain is not verified`, confirmed in `quote_send_log` 30 May). Customer ko quote email + PDF nahi milega jab tak verify nahi hota (resend.com/domains). Journey 1 step 1 + step 4 ka email part isi pe blocked. [Interim: `RESEND_FROM_DEFAULT=onboarding@resend.dev` se bhej sakte ho test ke liye.]
+- [ ] **🔴 Pardeep: Resend pe `example.test` domain VERIFY karo** - quote/enquiry emails abhi FAIL ho rahe hain (`Resend 403: domain is not verified`, confirmed in `quote_send_log` 30 May). Customer ko quote email + PDF nahi milega jab tak verify nahi hota (resend.com/domains). Journey 1 step 1 + step 4 ka email part isi pe blocked. [Interim: `RESEND_FROM_DEFAULT=onboarding@resend.dev` se bhej sakte ho test ke liye.]
 - [ ] **Pardeep: `resellersos.in` domain khareedo** - ~₹1000, 5 min (custom domain + email)
 - [ ] **Pardeep: Razorpay live KYC complete karo** - live keys ke liye
 - [ ] **Pardeep: decide karo — money unit ₹ ya paise?** - schema vs CLAUDE.md ambiguity (bug #36)

@@ -83,7 +83,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   });
 
   /* ── WHO IS SELLING THIS — resolved or refused, never invented ──────────────
-     This used to be `me || { tenantName: "Excel Technologies Pvt Ltd",
+     This used to be `me || { tenantName: "Demo Co Pvt Ltd",
      tenantGstin: "27AABCE9876D1Z3", tenantStateCode: "27", … }` — a fallback that
      looked like a placeholder and behaved like a false declaration.
 

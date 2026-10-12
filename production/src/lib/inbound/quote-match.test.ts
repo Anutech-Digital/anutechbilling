@@ -100,8 +100,8 @@ describe("the name rule does not get clever", () => {
   it("matches on the company as well as the contact", () => {
     /* A quote is usually filed under the company, and the email under the person. */
     const m = matchQuotesToEnquiry(
-      { names: ["Pardeep Sharma", "Excel Technologies"] },
-      [q({ id: "A", customerName: "Excel Technologies" })],
+      { names: ["Pardeep Sharma", "Demo Co"] },
+      [q({ id: "A", customerName: "Demo Co" })],
     );
     expect(m).toHaveLength(1);
   });

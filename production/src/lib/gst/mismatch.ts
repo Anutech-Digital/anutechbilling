@@ -16,7 +16,7 @@
  * issued as intra-state — CGST + SGST, Delhi:
  *
  *   Jijo corprotion 2,78,916 · KAILASH 2,13,840 · Pankaj 1,65,600 · abc corporaton 1,13,676
- *   Pardeep Sharma 1,13,676 · POP TECH 81,000 · Excel Technologies 56,400
+ *   Pardeep Sharma 1,13,676 · POP TECH 81,000 · Demo Co 56,400
  *   Joel 32,400 · ROHINI TECH 32,400          = Rs 10,87,908 taxable
  *
  * Nobody chose that. `isInterStateSupply` returns FALSE when the buyer's state is unknown,

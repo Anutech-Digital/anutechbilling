@@ -59,7 +59,7 @@ Login/logout system jisme **har reseller (tenant) ka data alag** hota hai. Fireb
 
 ### Live Example
 **Scenario:** Two resellers using same ResellerOS platform:
-- **Tenant A:** Excel Technologies (Pardeep, Delhi)
+- **Tenant A:** Client A (Pardeep, Delhi)
 - **Tenant B:** CloudCorp Services (Vikram, Bangalore)
 
 Both login via `app.resellerosaas.com`. Pardeep ne login kiya:
@@ -71,7 +71,7 @@ Both login via `app.resellerosaas.com`. Pardeep ne login kiya:
 ```
 firestore/
 ├── tenants/
-│   ├── {tenantA-uid}/        ← Excel Technologies data
+│   ├── {tenantA-uid}/        ← Client A data
 │   │   ├── customers/
 │   │   ├── quotations/
 │   │   └── ...
@@ -79,7 +79,7 @@ firestore/
 │       ├── customers/
 │       └── ...
 └── users/
-    ├── pardeep@exceltech.in  ← uid + role + tenantId
+    ├── pardeep@clienta.in  ← uid + role + tenantId
     └── vikram@cloudcorp.in
 ```
 
@@ -121,7 +121,7 @@ Company-wide configuration: GSTIN, branding, currency, integrations, team roster
 Pardeep logs in for first time:
 1. Settings → Company tab
 2. Fills:
-   - Legal Name: "Excel Technologies Pvt Ltd"
+   - Legal Name: "Client A Pvt Ltd"
    - GSTIN: "07AABCE1234D1Z9"
    - PAN: "AABCE1234D"
    - State: Delhi (07)
@@ -129,9 +129,9 @@ Pardeep logs in for first time:
    - Logo: uploads PNG
 3. Settings → Team tab
 4. Invites:
-   - rahul@exceltech.in → Sales
-   - amit@exceltech.in → Accountant
-   - sneha@exceltech.in → Support
+   - rahul@clienta.in → Sales
+   - amit@clienta.in → Accountant
+   - sneha@clienta.in → Support
 
 Yeh data **har quote/invoice me letterhead pe auto-fill** hota hai.
 
@@ -296,7 +296,7 @@ Rahul Acme Corp ke liye quote banata:
 ### Acceptance Criteria
 1. Create quote with 5+ line items
 2. GST auto-calc correct (test both same-state and inter-state)
-3. PDF generates with Excel Tech letterhead, GSTIN, all line items
+3. PDF generates with Client A letterhead, GSTIN, all line items
 4. Send via Email — customer receives PDF attachment
 5. Send via WhatsApp — message + PDF link
 6. Quote validity countdown shown

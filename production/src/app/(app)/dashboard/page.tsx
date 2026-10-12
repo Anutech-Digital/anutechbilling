@@ -873,7 +873,7 @@ function DashWidget({ id, children }: { id: string; children: React.ReactNode })
 
 /**
  * Banner-style card shown on a distributor tenant's dashboard summarising
- * upcoming renewals across all sub-resellers. Lets Excel Tech see "Anutech
+ * upcoming renewals across all sub-resellers. Lets Demo Co see "Anutech
  * has X seats renewing this month — confirm Google Workspace inventory"
  * at a glance, without having to navigate to /partners.
  *

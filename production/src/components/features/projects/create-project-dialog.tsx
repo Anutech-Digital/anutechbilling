@@ -45,8 +45,8 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
 
   /* R-002 (Pardeep, 25 Sep 2026). This was a free-text `customerName`, saved with
      `customerId: null`. Three things followed: the sale never appeared in that
-     customer's Ledger or Aging, "Excel Tech" quietly became a different party from
-     "Excel Technologies", and the tax head came from a checkbox instead of from the
+     customer's Ledger or Aging, "Demo Co" quietly became a different party from
+     "Demo Co", and the tax head came from a checkbox instead of from the
      customer's state. The id is the record now; the name is read off it. */
   const [customerId, setCustomerId]     = React.useState("");
   const [addCustomerOpen, setAddCustomerOpen] = React.useState(false);

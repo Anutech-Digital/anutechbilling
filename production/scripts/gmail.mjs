@@ -38,7 +38,7 @@ import { SA, SUB as DEFAULT_SUB } from "./apps-script-lib.mjs";
  * Us din ye maana ja raha tha ki enquiry `pardeep@anutech.in` me aati hai. Naapa gaya to
  * us mailbox me `to:sales@anutech.in` wale 18 mail the aur **satrah ke satrah SENT** —
  * Pardeep ke apne bheje hue test. Ek bhi asli customer ka mail wahan tha hi nahi
- * (`from:deepakandideepak@gmail.com` → 0), jabki wahi mail app me maujood hai.
+ * (`from:someone.test@gmail.com` → 0), jabki wahi mail app me maujood hai.
  *
  * Yaani sales@ ek ALAG mailbox hai. Ek mailbox me dekh kar "mail aaya hi nahi" keh dena
  * is din ki sabse aasan galti thi.

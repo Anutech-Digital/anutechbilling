@@ -70,9 +70,9 @@ Each "tenant" is a reseller business; each tenant manages many of their own cust
   GSTIN `07ABDCA0298H1ZP` (Delhi, 07) · directors **Pardeep Sharma** and **Deepak Sharma**.
   This is tenant `fbb976f1-9090-4f10-9726-0901bd144e42`, `tier = 'distributor'`. **Every other
   tenant is a tenant company under it** — see §4a.
-  ⚠️ Corrected 2026-08-14. This entry previously said "Excel Technologies Pvt Ltd ·
-  pardeep@exceltechnologies.in". Excel Technologies is historical: the same tenant row was
-  created by `pardeep@exceltechnologies.in` on 26 May 2026 and later renamed. Two traces of
+  ⚠️ Corrected 2026-08-14. This entry previously said "Client A Pvt Ltd ·
+  pardeep@example.test". Client A is historical: the same tenant row was
+  created by `pardeep@example.test` on 26 May 2026 and later renamed. Two traces of
   that identity were left in the code:
   - `doc_code` was `ET` (set by `0054_tenant_scoped_document_ids.sql:23`) — **now `ADPL`**,
     changed 14 Aug 2026. It was free to change because this tenant had issued **zero**
@@ -81,7 +81,7 @@ Each "tenant" is a reseller business; each tenant manages many of their own cust
     under CGST Rule 46 and become a compliance decision, not a rename — which is why
     `scripts/set-doc-code.mjs` refuses once anything has been issued. Next invoice:
     `INV-ADPL-2026-27-0001`.
-  - The dev-login demo list in `(auth)/login/page.tsx:27-31` still names Excel Technologies.
+  - The dev-login demo list in `(auth)/login/page.tsx:27-31` still names Client A.
     Dev-only and harmless, but it is why the wrong name keeps resurfacing.
 - **First customer**: ANUTECH DIGITAL PVT LTD itself
 - **Target customers**: Other Indian cloud resellers (B2B SaaS)
@@ -201,7 +201,7 @@ commercial statement ("this tenant buys wholesale from that distributor",
 **Never assume a tenant's name tells you whose it is.** New tenants are auto-named from the
 signer-in's email domain (`(auth)/callback/route.ts:23`), so a wrongly-created tenant is
 named *exactly* like the company it should have joined. On 11 Aug 2026 that produced a
-private "Excel Technologies" tenant holding 3 real customers and a ₹21,240 payment, and
+private "Client A" tenant holding 3 real customers and a ₹21,240 payment, and
 nobody noticed for two days because the sidebar showed the expected company name. When
 diagnosing "the app looks empty", check `tenant_id`, never the tenant name.
 
@@ -594,7 +594,7 @@ Lessons from building it:
 - **Phase 2 (Weeks 4-6)**: Money — Razorpay, GST, WhatsApp, email
 - **Phase 3 (Weeks 7-9)**: Reseller moat — Google CSP, margin, churn risk, AI features
 - **Phase 4 (Weeks 10-12)**: Polish — PWA, performance, security audit (Hindi cancelled 1 Sep 2026)
-- **Phase 5 (Weeks 13-14)**: Soft launch — Excel Tech first, then customer #2
+- **Phase 5 (Weeks 13-14)**: Soft launch — Client A first, then customer #2
 
 Detailed plan in repo wiki or `../prototype/` docs.
 

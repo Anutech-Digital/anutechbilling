@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { stagesReached } from "./stages-reached";
 
 describe("stagesReached — a ✓ needs evidence, not position", () => {
-  it("Excel Technologies: accepted project quotation, straight to Won → only Quote ✓", () => {
+  it("Demo Co: accepted project quotation, straight to Won → only Quote ✓", () => {
     const r = stagesReached({
       stageMoves: ["won"],
       projectQuotes: [{ kind: "project", statusLabel: "Accepted" }],

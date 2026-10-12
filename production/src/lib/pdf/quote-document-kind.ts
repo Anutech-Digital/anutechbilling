@@ -21,7 +21,7 @@ import type { Quote } from "@/lib/supabase/database.types";
  * validity window and the payment terms are still the truth for it.
  *
  * `invoiced` — ONLY when the payments recorded cover the quote. R-159 (5 Oct 2026, Hitesh,
- * Excel Technologies): "I converted a Quote into Invoice without payment. Why is it showing
+ * Demo Co): "I converted a Quote into Invoice without payment. Why is it showing
  * quote paid?" generate_invoice sets payment_status = 'invoiced' whether or not money came
  * (invoicing before payment is allowed — "Invoice now (before payment)"), and this function
  * read 'invoiced' as settled, so an unpaid quote showed a ticked "Paid" step and downloaded

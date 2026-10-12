@@ -27,7 +27,7 @@ describe("checkNewPassword", () => {
 
   it("refuses company / product names (R-059: such passwords sat in this repo)", () => {
     expect(ok("Anutech@2025")).toBe(false);
-    expect(ok("excel tech 2025!")).toBe(false);
+    expect(ok("anutech digital 2025!")).toBe(false);
     expect(ok("MyResellerOS#99")).toBe(false);
     expect(ok("chai-samosa-42")).toBe(true);
   });

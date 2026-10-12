@@ -7,8 +7,8 @@
 --  ─── WHY A SEPARATE TENANT AND NOT "JUST BE CAREFUL" ──────────────────────
 --  Measured 21 Aug 2026, the live tenant holds 14 customers, 25 quotes, 21
 --  invoices, 23 payments and 28 subscriptions. Those are PER-TENANT counts; the
---  DB-wide totals are higher (15/27/22/24/30) because the historical Excel
---  Technologies tenant holds the difference. Mixing the two is how a per-tenant
+--  DB-wide totals are higher (15/27/22/24/30) because the historical Demo
+--  Co tenant holds the difference. Mixing the two is how a per-tenant
 --  assertion ends up written against a global number — which is exactly what
 --  happened on the first run of this file, and why the guards below caught it.
 --  This project is on the Supabase
@@ -20,8 +20,8 @@
 --
 --  ─── THE NAME IS DELIBERATELY UGLY ────────────────────────────────────────
 --  Tenant names in this product are derived from an email domain, so a wrong
---  tenant reads exactly like the right one -- that is how a private "Excel
---  Technologies" tenant held two days of real work and a ₹21,240 payment before
+--  tenant reads exactly like the right one -- that is how a private "Demo
+--  Co" tenant held two days of real work and a ₹21,240 payment before
 --  anyone noticed (CLAUDE.md §4a). This one is named so that nobody can mistake
 --  it for a company, and it sorts to the bottom of any list.
 --

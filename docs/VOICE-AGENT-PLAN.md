@@ -84,7 +84,7 @@ The app never holds the audio stream — the platform owns real-time. ResellerOS
 ## Open decisions for Pardeep (build greenlight)
 1. Monthly voice **budget** ceiling (drives volume + provider).
 2. **Provider** after spike (Sarvam vs Bolna).
-3. **Number + DLT/KYC** ownership (Excel Tech).
+3. **Number + DLT/KYC** ownership (Client A).
 4. **Consent** source for leads (web form / WhatsApp opt-in / missed-call callback).
 
 ## Honest risks

@@ -46,7 +46,7 @@ describe("projectQuotationView", () => {
 
 describe("isQuotableProject", () => {
   it("includes accepted projects — an accepted quote is still a quote", () => {
-    // Hiding them is what made the Quotes tab look empty for Excel Technologies.
+    // Hiding them is what made the Quotes tab look empty for Demo Co.
     expect(isQuotableProject("active")).toBe(true);
   });
 

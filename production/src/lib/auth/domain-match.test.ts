@@ -8,7 +8,7 @@
  *
  * They do NOT prove which domains ANUTECH DIGITAL owns in production. As of
  * 14 Aug 2026 that is exactly one verified claim, `anutech.in`. The fixtures below
- * that give it `anutechbilling.in` and `exceltechnologies.in` are a scenario, not a
+ * that give it `anutechbilling.in` and `example.test` are a scenario, not a
  * statement about the live database. Making them true in production is two INSERTs
  * plus verification, not a code change — which is the point of putting ownership in
  * a table.
@@ -28,14 +28,14 @@ const VERIFIED = "2026-08-14T00:00:00Z";
 const CLAIMS: TenantDomainRecord[] = [
   { tenant_id: ANUTECH_ID, tenant_name: ANUTECH, domain: "anutech.in",           verified_at: VERIFIED },
   { tenant_id: ANUTECH_ID, tenant_name: ANUTECH, domain: "anutechbilling.in",    verified_at: VERIFIED },
-  { tenant_id: ANUTECH_ID, tenant_name: ANUTECH, domain: "exceltechnologies.in", verified_at: VERIFIED },
+  { tenant_id: ANUTECH_ID, tenant_name: ANUTECH, domain: "example.test", verified_at: VERIFIED },
 ];
 
 describe("resolveDomainOwner — the three ANUTECH DIGITAL domains", () => {
   it.each([
     ["pardeep@anutech.in",            "anutech.in"],
     ["darshan@anutechbilling.in",     "anutechbilling.in"],
-    ["ranjeetraj@exceltechnologies.in", "exceltechnologies.in"],
+    ["staff@example.test", "example.test"],
   ])("routes %s to ANUTECH DIGITAL PVT LTD", (email) => {
     expect(resolveDomainOwner(email, CLAIMS)).toEqual({
       tenant_id: ANUTECH_ID,
@@ -45,7 +45,7 @@ describe("resolveDomainOwner — the three ANUTECH DIGITAL domains", () => {
 
   it("one tenant owning several domains is normal, not a conflict", () => {
     const owners = new Set(
-      ["a@anutech.in", "b@anutechbilling.in", "c@exceltechnologies.in"]
+      ["a@anutech.in", "b@anutechbilling.in", "c@example.test"]
         .map((e) => resolveDomainOwner(e, CLAIMS)?.tenant_id),
     );
     expect(owners).toEqual(new Set([ANUTECH_ID]));
@@ -61,12 +61,12 @@ describe("resolveDomainOwner — the three ANUTECH DIGITAL domains", () => {
 
 describe("resolveDomainOwner — what must NOT match", () => {
   it("an UNVERIFIED claim routes nobody, even on an exact domain hit", () => {
-    // This is the tenant-leak guard. exceltechnologies.in is claimed-but-unverified
+    // This is the tenant-leak guard. example.test is claimed-but-unverified
     // in the live database precisely because its ownership is not settled.
     const unverified: TenantDomainRecord[] = [
       { ...CLAIMS[2], verified_at: null },
     ];
-    expect(resolveDomainOwner("ranjeetraj@exceltechnologies.in", unverified)).toBeNull();
+    expect(resolveDomainOwner("staff@example.test", unverified)).toBeNull();
   });
 
   it("ignores an unverified row and still finds a verified one for the same domain", () => {

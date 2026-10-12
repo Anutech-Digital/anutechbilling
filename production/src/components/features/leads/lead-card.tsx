@@ -48,7 +48,7 @@ export function LeadCard({ lead, isDragging, onDragStart, onDragEnd, onClick }: 
 
   const handleWhatsApp = (e: React.MouseEvent) => {
     e.stopPropagation();
-    /* Signed with THIS tenant. The message used to end "*Excel Technologies*" for
+    /* Signed with THIS tenant. The message used to end "*Demo Co*" for
        every reseller who ever used the app — see lib/whatsapp.ts. */
     const url = getLeadWhatsAppUrl(lead, null, waSender);
     window.open(url, "_blank");

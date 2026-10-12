@@ -7,7 +7,7 @@
  * it at `/project-quote/<id>?t=<token>`. There is no row in `quotes`.
  *
  * So Customer 360 -> Transactions -> Quotes showed only `quotes` rows, and for a
- * software client like Excel Technologies that meant an empty tab next to a deal that
+ * software client like Demo Co that meant an empty tab next to a deal that
  * was very much quoted. The owner reads that as "nobody ever sent them a quote".
  *
  * ─── WHY NOT JUST COPY THEM INTO `quotes` ───────────────────────────────────

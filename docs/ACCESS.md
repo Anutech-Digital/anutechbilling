@@ -15,7 +15,7 @@ Fill each row, then both people log in once and tick "checked".
 | DNS provider — **Cloudflare** (anutech.in nameservers `addilyn` / `damian.ns.cloudflare.com`, seen 29 Sep) | Site, email, verification records | _who owns the Cloudflare account? — fill_ | | |
 | Razorpay (Owner / Admin) | Customer payments, payment links, refunds | | | |
 | Google Workspace (Super Admin) — anutech.in mail is on Google (MX `smtp.google.com`, seen 29 Sep) | Everyone's email and logins | | | |
-| ⚠ GitHub — repository `Abhicode0to1/new-reselleros` | Code, branches, Actions (integration-check). **The repo lives in Abhishek's personal account**, not a company org | Abhicode0to1 (admin, owner) | _none — pardeepwebmaster, exceltechnologies-india and hitesh-anutech (QA, added by 29 Sep) have write only. Best: move the repo to a company GitHub organisation with two owners; at least make Pardeep admin (R-019)_ | |
+| ⚠ GitHub — repository `Abhicode0to1/new-reselleros` | Code, branches, Actions (integration-check). **The repo lives in Abhishek's personal account**, not a company org | Abhicode0to1 (admin, owner) | _none — pardeepwebmaster, clienta-india and hitesh-anutech (QA, added by 29 Sep) have write only. Best: move the repo to a company GitHub organisation with two owners; at least make Pardeep admin (R-019)_ | |
 | Google Ads (Admin) | Ad spend, API developer token | | | |
 | Meta Business Manager (Admin) | Meta ads, WhatsApp Business | | | |
 | WhatsApp Business API — Gupshup (`GUPSHUP_*`) | Customer WhatsApp messages, broadcasts | | | |

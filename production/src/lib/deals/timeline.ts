@@ -414,7 +414,7 @@ export function buildDealHistory(src: DealHistorySources, nameOf: NameOf = () =>
     /* create_project_quote writes the row straight as 'quoted' — a project quotation has no
        separate send step or send log, so the moment it was made is the moment it was out. */
     const st = (p.status ?? "").toLowerCase();
-    /* 1 Oct 2026, Pardeep: "ye history logical thik ho sakti hai" — Excel Technologies' project
+    /* 1 Oct 2026, Pardeep: "ye history logical thik ho sakti hai" — Demo Co' project
        ran 20 Apr → Aug but was keyed in on 26 Sep, created and accepted in the same second. The
        feed then said "quote banaya 26 Sep 10:41" AFTER "won 9:50" and after Aug payments.
        A project keyed in already accepted, with a start date days earlier, is a backfill: show

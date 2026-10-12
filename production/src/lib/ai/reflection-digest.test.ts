@@ -25,7 +25,7 @@ describe("kehne ko kuch na ho to CHUP — sabse zaroori", () => {
        nahi. Is halat me mail aana hi galat hoga. */
     expect(reflectionEmail([
       base({ leadsSeen: 3 }),
-      base({ tenantId: "excel", tenantName: "Excel Technologies", leadsSeen: 0 }),
+      base({ tenantId: "excel", tenantName: "Demo Co", leadsSeen: 0 }),
       base({ tenantId: "delfos", tenantName: "Delfos Technologies", leadsSeen: 0 }),
     ])).toBeNull();
   });

@@ -347,13 +347,13 @@ function QuotePreview(props) {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div style={{ width: 36, height: 36, background: "#1A1815", color: "#FAF8F2", borderRadius: 6, display: "grid", placeItems: "center", fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>R</div>
               <div>
-                <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, lineHeight: 1 }}>Excel Technologies</div>
+                <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, lineHeight: 1 }}>Demo Co</div>
                 <div style={{ fontSize: 11, color: "#6B6457", marginTop: 2 }}>Cloud Reseller · Authorised Partner</div>
               </div>
             </div>
             <div style={{ fontSize: 11, color: "#6B6457", lineHeight: 1.6, marginTop: 8 }}>
               Mumbai, Maharashtra 400001 · India<br />
-              GSTIN: <span className="mono">27AABCE9876D1Z3</span> · pardeep@exceltechnologies.in · +91 98765 00000
+              GSTIN: <span className="mono">27AABCE9876D1Z3</span> · pardeep@example.test · +91 98765 00000
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -463,7 +463,7 @@ function QuotePreview(props) {
         {/* Signature */}
         <div style={{ padding: "32px 48px 32px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
           <div style={{ fontSize: 11, color: "#6B6457", maxWidth: 280, lineHeight: 1.5 }}>
-            Thank you for considering Excel Technologies. For any clarifications, please contact <b>Rahul B.</b> at <span className="mono">rahul@exceltechnologies.in</span> or call <span className="mono">+91 98765 11111</span>.
+            Thank you for considering Demo Co. For any clarifications, please contact <b>Rahul B.</b> at <span className="mono">rahul@example.test</span> or call <span className="mono">+91 98765 11111</span>.
           </div>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 14, fontStyle: "italic", color: "#1A1815", paddingBottom: 4 }}>Pardeep A.</div>
@@ -476,7 +476,7 @@ function QuotePreview(props) {
         {/* Modal action bar (not part of the "PDF") */}
         <div style={{ background: "#FAF8F2", padding: "12px 48px", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #E8E2D4", position: "sticky", bottom: 0 }}>
           <div style={{ fontSize: 11, color: "#6B6457" }}>
-            <I name="info" size={11} /> This is a preview · Final PDF will use Excel Tech letterhead
+            <I name="info" size={11} /> This is a preview · Final PDF will use Demo Co letterhead
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn kind="ghost" onClick={onClose}>Close</Btn>

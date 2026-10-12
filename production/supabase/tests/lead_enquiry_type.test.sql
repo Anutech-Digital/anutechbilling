@@ -26,11 +26,11 @@ insert into public.users (id, tenant_id, email, role) values
   ('aaaaaaaa-0000-0000-0000-00000000a0a6', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'lp-a-user@example.in', 'owner'),
   ('bbbbbbbb-0000-0000-0000-00000000b0b6', 'bbbbbbbb-0000-0000-0000-0000000000b6', 'lp-b-user@example.in', 'owner');
 insert into public.customers (id, tenant_id, name) values
-  ('aaaaaaaa-0000-0000-0000-0000000c0006', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'Excel Technologies');
+  ('aaaaaaaa-0000-0000-0000-0000000c0006', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'Demo Co');
 insert into public.leads (id, tenant_id, company, contact_name, stage) values
   ('L-TEST-SUB', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'Acme', 'Rajesh', 'new');
 insert into public.leads (id, tenant_id, company, contact_name, stage, enquiry_type, requirement, project_timeline, value) values
-  ('L-TEST-PRJ', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'excel technologies', 'Deepak', 'new', 'project', 'Complete ERP', '6 months', 500000),
+  ('L-TEST-PRJ', 'aaaaaaaa-0000-0000-0000-0000000000a6', 'demo co', 'Deepak', 'new', 'project', 'Complete ERP', '6 months', 500000),
   ('L-TEST-NOCO', 'aaaaaaaa-0000-0000-0000-0000000000a6', '', 'Priya Sharma', 'contact', 'project', 'School app', null, null);
 
 -- 1

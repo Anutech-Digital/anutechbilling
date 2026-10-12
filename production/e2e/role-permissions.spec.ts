@@ -1,7 +1,7 @@
 /**
  * role-permissions.spec.ts — verify role-based UI gating + middleware redirects.
  *
- * Sales role (Darshan @ Excel Tech) is restricted:
+ * Sales role (Darshan @ Demo Co) is restricted:
  *   - Sidebar nav shows only 3 items (Leads / Deal Pipeline / Tasks)
  *   - /accounting/* routes redirect to /leads
  *   - /customers, /quotes, /invoices, /payments redirect to /leads

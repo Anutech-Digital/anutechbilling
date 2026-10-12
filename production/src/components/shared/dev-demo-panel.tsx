@@ -26,7 +26,7 @@ import * as React from "react";
 import { Icon } from "@/components/ui/icon";
 
 export interface DevDemoEntry {
-  /** Bold first line. Keep qualifiers inside it — "Excel Technologies · Owner"
+  /** Bold first line. Keep qualifiers inside it — "Demo Co · Owner"
    *  is ONE label, not a label plus a lighter suffix. */
   label: string;
   /** Second line, monospaced — the address, and the credential when there is one. */

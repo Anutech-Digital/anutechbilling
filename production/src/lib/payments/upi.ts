@@ -18,7 +18,7 @@
  */
 
 export interface UpiIntentInput {
-  /** Payee VPA, e.g. `exceltech@okhdfcbank`. */
+  /** Payee VPA, e.g. `democo@okhdfcbank`. */
   vpa: string;
   /** Payee name shown in the UPI app before the user confirms. */
   payeeName: string;

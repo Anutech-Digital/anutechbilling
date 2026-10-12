@@ -24,8 +24,8 @@ export const metadata: Metadata = {
   description: "How ResellerOS collects, uses, and protects your data. DPDP Act 2023 compliant.",
 };
 
-/* 26 Aug 2026 ko badla kyunki SERVICE CHALANE WALI ENTITY badli: dastavez pehle "Excel
-   Technologies Pvt Ltd" ko operator batata tha, jo ek doosri legal entity hai (uska GSTIN
+/* 26 Aug 2026 ko badla kyunki SERVICE CHALANE WALI ENTITY badli: dastavez pehle "Demo
+   Co Pvt Ltd" ko operator batata tha, jo ek doosri legal entity hai (uska GSTIN
    ek proprietorship ka hai — dekho lib/platform.ts). Privacy Policy me operator ka naam
    badalna aur taareekh purani chhod dena wahi jhooth hai jise ye badlav theek karne aaya
    hai — padhne wale ko lagega ki May se yahi likha tha. */

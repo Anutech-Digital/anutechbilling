@@ -22,6 +22,7 @@ vi.mock("@/site/lib/config", async (orig) => {
 
 import { ThanksClient, type ThanksOrder } from "./thanks-client";
 import { COMPANY, WHATSAPP_PLACEHOLDER, whatsappDisplay } from "@/site/lib/config";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const order: ThanksOrder = {
   quoteId: "Q-ADPL-2026-27-0048", customerName: "Asha Co", tierName: "Business Starter",
@@ -58,7 +59,7 @@ describe("thanks page contact", () => {
     for (const f of ["thanks-client.tsx", "page.tsx"]) {
       const src = strip(readFileSync(join(__dirname, f), "utf8"));
       expect(src, f).not.toMatch(/Pardeep/);
-      expect(src, f).not.toMatch(/exceltechnologies/i);
+      expect(src, f).not.toMatch(denyTermsRe());
       expect(src, f).not.toMatch(/\b9\d{9,11}\b/);
     }
   });

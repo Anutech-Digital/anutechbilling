@@ -69,7 +69,7 @@ function LandingScreen() {
       {/* Why us */}
       <section className="landing-section surface-paper" style={{ background: "var(--paper-2)", padding: "64px 24px" }}>
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
-          <div className="rail-label" style={{ padding: 0, marginBottom: 6 }}>Why Excel Technologies</div>
+          <div className="rail-label" style={{ padding: 0, marginBottom: 6 }}>Why Demo Co</div>
           <h2 className="serif" style={{ fontSize: 40, margin: "0 0 28px", letterSpacing: "-0.02em" }}>
             Authorized. Local. Reliable.
           </h2>
@@ -155,7 +155,7 @@ function LandingScreen() {
               <span className="serif" style={{ fontSize: 18 }}>ResellerOS</span>
             </div>
             <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-              © 2026 Excel Technologies Pvt Ltd · A Google Authorized Reseller
+              © 2026 Demo Co Pvt Ltd · A Google Authorized Reseller
             </div>
           </div>
           <div className="row" style={{ gap: 24, fontSize: 12, color: "var(--ink-3)" }}>

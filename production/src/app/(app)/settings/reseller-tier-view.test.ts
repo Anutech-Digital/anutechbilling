@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resellerTierView } from "./reseller-tier-view";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const base = { name: "Sharma Cloud", tier: "reseller" as const, parent_tenant_id: null, parent_name: null, parent_gstin: null };
 
@@ -26,15 +27,16 @@ describe("resellerTierView (R-251)", () => {
   });
   it("never prints our own companies for someone else", () => {
     const v = resellerTierView({ ...base, parent_tenant_id: "p1", parent_name: "Acme" });
-    expect(JSON.stringify(v)).not.toMatch(/Anutech|Excel Tech/);
+    expect(JSON.stringify(v)).not.toMatch(/Anutech/);
+    expect(JSON.stringify(v)).not.toMatch(denyTermsRe());
   });
 });
 
 describe("settings page wiring (R-251)", () => {
   const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
-  it("no hard-coded Anutech / Excel hierarchy", () => {
+  it("no hard-coded Anutech / client hierarchy", () => {
     expect(src).not.toMatch(/Anutech Digital \(anutech\.in\)/);
-    expect(src).not.toMatch(/Excel Technologies \(exceltechnologies\.in\)/);
+    expect(src).not.toMatch(denyTermsRe());
     expect(src).toMatch(/resellerTierView\(/);
   });
   it("no toast-only 'Microsoft Partner' Setup placeholder", () => {

@@ -40,9 +40,9 @@ Sidebar → **APIs & Services → Enabled APIs**:
 Sidebar → **APIs & Services → OAuth consent screen**:
 
 - User Type: **External** (unless you have Google Workspace org)
-- App name: `ResellerOS` (or `Excel Technologies — ResellerOS`)
-- User support email: `Pardeep@exceltechnologies.in`
-- Developer email: `Pardeep@exceltechnologies.in`
+- App name: `ResellerOS` (or `Client A — ResellerOS`)
+- User support email: `Pardeep@example.test`
+- Developer email: `Pardeep@example.test`
 - App domain: `https://resellersos.web.app` (or whatever your Cloud Run / Firebase URL is)
 - Authorized domains: Add `supabase.co` AND your app domain
 - **Scopes**: For now just default (`email`, `profile`, `openid`). Add `contacts.readonly` later when building Google Contacts import.

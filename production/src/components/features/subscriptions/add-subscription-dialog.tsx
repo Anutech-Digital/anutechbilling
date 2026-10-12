@@ -1189,7 +1189,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
             <FormField label="Primary Customer Domain *" required htmlFor="subDomain">
               <Input
                 id="subDomain"
-                placeholder="e.g. exceltechnologies.in"
+                placeholder="e.g. example.test"
                 className="font-mono text-sm font-semibold"
                 value={domain}
                 /* R-818: editing the domain does NOT detach a picked customer. It used to
@@ -1270,7 +1270,7 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
                 <Input
                   id="contactEmail"
                   type="email"
-                  placeholder="e.g. ranjeet@exceltechnologies.in"
+                  placeholder="e.g. staff@example.test"
                   value={contactEmail}
                   onChange={(e) => { setContactEmail(e.target.value); setPickedContactId(null); setContactQueryOpen(true); }}
                   required

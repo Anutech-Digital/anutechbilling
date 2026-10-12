@@ -27,9 +27,9 @@ import { join } from "node:path";
 
 const KEEPER = "fbb976f1-9090-4f10-9726-0901bd144e42";       // ANUTECH DIGITAL PVT LTD
 const DELETE_IDS = [
-  "4eeab895-6f4e-42ea-aaf2-efe4cfbc2129",  // Exceltechnologies
+  "4eeab895-6f4e-42ea-aaf2-efe4cfbc2129",  // Democo
   "606a7ae7-9805-4a10-8163-7da6e42968e9",  // Delfos Technologies
-  "13a364c7-d057-4725-876f-32376c8dd3c9",  // Excel Technologies
+  "13a364c7-d057-4725-876f-32376c8dd3c9",  // Demo Co
   "f2fb0254-68d9-4e57-9be3-4b77c113d33a",  // Anutech
 ];
 

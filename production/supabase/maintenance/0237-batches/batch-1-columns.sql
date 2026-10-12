@@ -15,6 +15,6 @@ alter table public.tenants
   add column if not exists email_from_name text;
 
 comment on column public.tenants.email_from_address is
-  'From: address for outbound mail, e.g. billing@exceltechnologies.in. Must be on a domain verified in that tenant''s own Resend account, or Resend rejects the send.';
+  'From: address for outbound mail, e.g. billing@example.test. Must be on a domain verified in that tenant''s own Resend account, or Resend rejects the send.';
 
 commit;

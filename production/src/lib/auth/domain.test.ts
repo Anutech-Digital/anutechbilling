@@ -8,7 +8,7 @@ import {
 
 describe("emailDomain", () => {
   it("returns the lower-cased domain", () => {
-    expect(emailDomain("Ranjeet.Raj@ExcelTechnologies.IN")).toBe("exceltechnologies.in");
+    expect(emailDomain("Ranjeet.Raj@example.test")).toBe("example.test");
   });
 
   it("trims surrounding whitespace", () => {
@@ -42,7 +42,7 @@ describe("isPublicEmailDomain", () => {
 
   it("does not flag a company domain", () => {
     expect(isPublicEmailDomain("anutech.in")).toBe(false);
-    expect(isPublicEmailDomain("exceltechnologies.in")).toBe(false);
+    expect(isPublicEmailDomain("example.test")).toBe(false);
   });
 
   it("handles empty input", () => {
@@ -104,12 +104,12 @@ describe("decideOnboarding", () => {
 
   it("reproduces the 11 Aug 2026 case: right company, wrong invite address", () => {
     // Invite existed for ranjeet@anutech.in; he signed in as
-    // ranjeetraj@exceltechnologies.in. Exact-string matching found nothing.
+    // staff@example.test. Exact-string matching found nothing.
     const invite = null;
-    // Had exceltechnologies.in been a verified domain of the real workspace:
+    // Had example.test been a verified domain of the real workspace:
     const d = decideOnboarding({
       invite,
-      domainMatch: { tenant_id: "t-excel", tenant_name: "Excel Technologies" },
+      domainMatch: { tenant_id: "t-excel", tenant_name: "Demo Co" },
     });
     // He waits for an owner instead of getting a private company of his own.
     expect(d.mode).toBe("request_approval");

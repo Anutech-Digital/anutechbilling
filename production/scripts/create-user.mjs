@@ -38,7 +38,7 @@ if (!USER_PASSWORD) {
   process.exit(1);
 }
 const USER_NAME = "Pardeep Sharma";
-const COMPANY_NAME = "Excel Technologies Pvt Ltd";
+const COMPANY_NAME = "Demo Co Pvt Ltd";
 const GSTIN = "27AABCE9876D1Z3";
 
 async function main() {
@@ -61,7 +61,7 @@ async function main() {
   }
   console.log("✅ Auth user created:", authData.user.id);
 
-  // 2. Create their own tenant (fresh start, NOT linked to seeded Excel Tech tenant)
+  // 2. Create their own tenant (fresh start, NOT linked to any seeded tenant)
   console.log("Creating tenant…");
   const { data: tenant, error: tenantError } = await supabase
     .from("tenants")

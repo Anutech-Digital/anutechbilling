@@ -8,7 +8,7 @@ import { join, relative } from "node:path";
    Found 22 Aug 2026 by reading api/webhooks/razorpay/route.ts while chasing an
    unrelated log line. Five routes carried a module-level literal:
 
-       const PARDEEP_EMAIL = "Pardeep@exceltechnologies.in";
+       const PARDEEP_EMAIL = "Pardeep@example.test";
 
    and used it as `to:` / `replyTo:`. The razorpay route had already been fixed to
    resolve the tenant's own address, and its header explains the cost:
@@ -24,9 +24,9 @@ import { join, relative } from "node:path";
    to reply to a domain the company no longer uses.
 
    ─── WHY THIS TEST IS BRAND-AGNOSTIC ─────────────────────────────────────────
-   The obvious guard is `expect(src).not.toMatch(/exceltechnologies/)`, which is
+   The obvious guard is `expect(src).not.toMatch(/democo/)`, which is
    what lib/whatsapp.test.ts does for message signatures. Wrong tool here: tenant
-   3bbd2280 legitimately HAS that address on file, and a brand-dated guard passes
+   <client-tenant-id> legitimately HAS that address on file, and a brand-dated guard passes
    happily the day somebody hardcodes `pardeep@anutech.in` instead — the identical
    bug with a fresher domain. So this checks the SHAPE (a literal recipient) and
    not the string, and it will fail on a hardcoded address nobody has thought of

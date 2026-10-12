@@ -37,7 +37,7 @@ set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-0000-0000-00000000a0a3', 'role', 'authenticated')::text, true);
 
 -- A project paid in full by the first receipt.
-insert into ids select 'p', public.create_project_sale(null::uuid, 'Excel Technologies'::text, 'Complete ERP'::text, null::text,
+insert into ids select 'p', public.create_project_sale(null::uuid, 'Demo Co'::text, 'Complete ERP'::text, null::text,
   457627, 18, false, '[{"label":"Full payment","total_amount":540000,"due_date":null}]'::jsonb);
 insert into ids select 'm1', id from public.project_milestones where project_id = (select v from ids where k = 'p');
 select public.record_project_payment((select v from ids where k = 'm1'), 540000, 'bank_transfer', null, '2026-08-07',

@@ -1,5 +1,5 @@
 /**
- * 1 Oct 2026 — Excel Technologies: project ran 20 Apr → Aug, keyed into the app on 26 Sep.
+ * 1 Oct 2026 — Demo Co: project ran 20 Apr → Aug, keyed into the app on 26 Sep.
  * Pardeep: "ye history logical thik ho sakti hai". The feed must read in the order things
  * HAPPENED, mark backfilled rows, and not claim the quotation was made after the deal was won.
  */
@@ -9,7 +9,7 @@ import { buildDealHistory, formatIstDate, type DealHistorySources } from "./time
 const P = "proj-1";
 const src: DealHistorySources = {
   lead: {
-    id: "L-1", company: "Excel Technologies", stage: "won", source: "meta-ads",
+    id: "L-1", company: "Demo Co", stage: "won", source: "meta-ads",
     created_at: "2026-09-26T04:04:55Z", created_by: null, stage_changed_at: "2026-09-26T04:20:07Z",
     lost_at: null, lost_reason: null, lost_note: null, trial_started_at: null, trial_converted_at: null, trial_expired_at: null,
   } as DealHistorySources["lead"],

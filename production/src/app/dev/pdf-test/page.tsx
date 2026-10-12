@@ -57,9 +57,9 @@ function zohoOne(qty: number, commitment: QuoteLineItem["commitment"] = "annual_
 // ─── Tenant identity presets ──────────────────────────────────────────────
 
 const TENANT_FULL = {
-  tenantName:    "Excel Technologies Pvt Ltd",
+  tenantName:    "Demo Co Pvt Ltd",
   tenantGstin:   "27AABCE9876D1Z3",
-  tenantEmail:   "pardeep@exceltechnologies.in",
+  tenantEmail:   "pardeep@example.test",
   tenantPhone:   "+91 98765 43210",
   tenantAddress: "Plot 14, Sector 7, Industrial Area, Andheri East, Mumbai 400093",
 };

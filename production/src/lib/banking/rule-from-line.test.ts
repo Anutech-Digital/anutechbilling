@@ -14,7 +14,7 @@ const REAL = {
   playStore:    "DHDF23P1QTMPV7/BILLDKPLAYSTOREGOOGL",
   facebook:     "K4UHU5ENAJ52FPOTCU/PAYUFACEBOOK",
   esic:         "01026130346651/ESIC",
-  software:     "50200008254523-TPT-ACCOUNTING SOFTWARE-EXCEL TECHNOLOGIES",
+  software:     "50200008254523-TPT-ACCOUNTING SOFTWARE-DEMO CO",
   impsDarshan:  "IMPS-518912349366-DARSHAN KUMAR-HDFC-XXXXXXXXXX5456-ANUTECH",
   impsNeetu:    "IMPS-518916843797-NEETU  -SBIN-XXXXXXX1014-REQPAY",
   noDelimiter:  "CU1906914097ANUTECH DIGITAL PVT LTD",
@@ -70,7 +70,7 @@ describe("what it offers to remember", () => {
        Ranking them would dress a guess up as an answer, so both are offered. */
     const p = proposePatterns(REAL.software);
     expect(p).toContain("ACCOUNTING SOFTWARE");
-    expect(p).toContain("EXCEL TECHNOLOGIES");
+    expect(p).toContain("DEMO CO");
   });
 
   it("trims the stray spaces a bank leaves behind", () => {

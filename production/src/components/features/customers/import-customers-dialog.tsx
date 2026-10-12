@@ -41,8 +41,8 @@ import { cn, GST_STATE_BY_CODE, gstStateFromGstin } from "@/lib/utils";
 const CSV_HEADER = "customer_number,first_name,last_name,company_name,email,mobile_phone,gstin,billing_state";
 const SAMPLE_CSV = [
   CSV_HEADER,
-  `CUS-00001,Aravinder,Singh,DELUX SPORTS INTERNATIONAL,arvinder@deluxsports.com,+917889077965,03AAFFD8232J1ZL,Punjab`,
-  `CUS-00002,Siddharth,Jain,PKS Developers Pvt Ltd.,info@pksdevelopers.com,9810562000,,Delhi`,
+  `CUS-00001,Test,Customer,Test Customer 1,customer1@example.test,+919800000001,03AAAAA0000A1Z5,Punjab`,
+  `CUS-00002,Test,Customer Two,Test Customer 2,customer2@example.test,9800000002,,Delhi`,
 ].join("\n");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

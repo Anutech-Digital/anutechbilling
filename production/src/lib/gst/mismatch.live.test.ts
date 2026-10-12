@@ -25,7 +25,7 @@ const LIVE: [string, string | null, string | null, number, number, boolean, numb
   ["Pardeep Sharma",     null,             null,  113676,  20462, false, 1],
   ["Vivek corprotion",   null,             "24",  103680,  18662, true,  1],
   ["POP TECH",           null,             null,   81000,  14580, false, 1],
-  ["Excel Technologies", null,             null,   56400,  10152, false, 2],
+  ["Demo Co", null,             null,   56400,  10152, false, 2],
   ["Joel",               null,             null,   32400,   5832, false, 1],
   ["ROHINI TECH",        null,             null,   32400,   5832, false, 1],
   ["JASH PHARMA CHEM",   "27AABPM3961F1ZS","27",   24960,   4493, true,  1],
@@ -65,7 +65,7 @@ describe("what the detector finds in the real books", () => {
     /* Nine of thirteen. Not a tidy-up — nine tax decisions taken by a default. */
     expect(assumed).toHaveLength(9);
     expect(assumed.map((r) => r[0]).sort()).toEqual([
-      "Excel Technologies", "Joel", "KAILASH CORPROTION", "POP TECH", "Pankaj",
+      "Demo Co", "Joel", "KAILASH CORPROTION", "POP TECH", "Pankaj",
       "Pardeep Sharma", "ROHINI TECH", "abc corporaton", "Jijo corprotion",
     ].sort());
   });

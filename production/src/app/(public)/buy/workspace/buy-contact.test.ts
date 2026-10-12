@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const raw = readFileSync(join(__dirname, "buy-workspace-client.tsx"), "utf8");
 const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -20,7 +21,7 @@ describe("buy page contact", () => {
     expect(code).toMatch(/from "@\/site\/lib\/config"/);
     expect(code).not.toMatch(/PARDEEP_PHONE/);
     expect(code).not.toMatch(/\b9\d{9,11}\b/);
-    expect(code).not.toMatch(/exceltechnologies/i);
+    expect(code).not.toMatch(denyTermsRe());
   });
 
   it("every WhatsApp and call link sits behind WHATSAPP_READY", () => {

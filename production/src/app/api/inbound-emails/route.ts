@@ -14,7 +14,7 @@
  *   2. Worse, and live for a properly signed-in user: when the resolved tenant had zero
  *      rows, the handler ran a SECOND query with NO tenant filter —
  *      `select * from inbound_emails order by created_at limit 50` — and returned that.
- *      Delfos Technologies and Excel Technologies both hold 0 inbound emails today, so
+ *      Delfos Technologies and Demo Co both hold 0 inbound emails today, so
  *      either of their users opening this screen would have been served ANUTECH's 32.
  *      A "local preview" convenience became a cross-tenant read in production.
  *

@@ -46,13 +46,13 @@ describe("describeMergeOutcome — moved vs attached must never be blurred", () 
   it("'moved' with deletion says WHICH workspace was removed", () => {
     const s = describeMergeOutcome(result({
       action: "moved",
-      email: "ranjeetraj@exceltechnologies.in",
+      email: "staff@example.test",
       role: "support",
-      old_tenant_name: "Excel Technologies",
+      old_tenant_name: "Demo Co",
       old_tenant_deleted: true,
     }));
-    expect(s).toContain("ranjeetraj@exceltechnologies.in");
-    expect(s).toContain("Excel Technologies");
+    expect(s).toContain("staff@example.test");
+    expect(s).toContain("Demo Co");
     expect(s).toContain("removed");
   });
 

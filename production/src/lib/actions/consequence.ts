@@ -45,7 +45,7 @@ export interface SeriesState {
  * `{PREFIX}-{DOC_CODE}-{YYYY}-{YY}-{NNNN}`, matching live data.
  *
  * The doc code is omitted when the tenant has none rather than rendered as "null" —
- * Excel Technologies' row is in exactly that state, and a literal "INV-null-…" on a tax
+ * Demo Co' row is in exactly that state, and a literal "INV-null-…" on a tax
  * document is worse than a missing segment.
  */
 /**

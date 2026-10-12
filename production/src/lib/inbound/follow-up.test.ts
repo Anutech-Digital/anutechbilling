@@ -105,7 +105,7 @@ describe("real production emails", () => {
 
   it("creates a task for the Hinglish quotation request", () => {
     const d = decideFollowUp({
-      fromEmail: "pardeep@exceltechnologies.in",
+      fromEmail: "pardeep@example.test",
       subject: "100 google workspace email id ke liye quotation chahiye",
       isEnquiry: true,
       isReplyToExistingLead: true,
@@ -122,7 +122,7 @@ describe("real production emails", () => {
   });
 
   it("does NOT suppress the tenant's own domain", () => {
-    // sales@anutech.in and pardeep@exceltechnologies.in both appear as senders in
+    // sales@anutech.in and pardeep@example.test both appear as senders in
     // production and correctly produce leads — staff forward enquiries in.
     // Suppressing own-domain would break a path that works today.
     const d = decideFollowUp({

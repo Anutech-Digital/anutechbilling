@@ -1,7 +1,7 @@
 /**
  * Which pipeline steps did this deal REALLY go through? Drives the ✓ on the deal page stepper.
  *
- * 1 Oct 2026, Pardeep, on Excel Technologies: first "jo kaam is deal me hue hi nahi unhe tick ke
+ * 1 Oct 2026, Pardeep, on Demo Co: first "jo kaam is deal me hue hi nahi unhe tick ke
  * saath kyo dikha raha hai" (it showed ✓ Demo Done and ✓ Trial Active because those come before
  * Won in the list), then, once the ticks were gone, "kya is deal ko quote nahi gaya — mere khayal
  * se gaya hai" (it had: an accepted project quotation). So a ✓ needs evidence, never position:

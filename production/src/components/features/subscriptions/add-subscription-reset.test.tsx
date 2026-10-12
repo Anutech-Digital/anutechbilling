@@ -149,10 +149,10 @@ describe("R-818 — onboarding dialog opens empty every time", () => {
 /* A picked customer, reached through the same handleSelectExistingCustomer path the
    dropdown uses (the won-deal prefill calls it) — Radix Select cannot be driven in jsdom. */
 function mountWithPickedCustomer() {
-  customerRows = [{ id: "c-1", name: "Excel Technologies", domain: "exceltechnologies.in" }];
+  customerRows = [{ id: "c-1", name: "Demo Co", domain: "example.test" }];
   const prefill: LeadPrefill = {
-    leadId: "lead-1", customerId: "c-1", customerName: "Excel Technologies",
-    domain: "exceltechnologies.in", contactName: "", contactEmail: "", contactPhone: "",
+    leadId: "lead-1", customerId: "c-1", customerName: "Demo Co",
+    domain: "example.test", contactName: "", contactEmail: "", contactPhone: "",
     plan: "", seats: null, billingChoice: "annual_yearly",
   };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -169,13 +169,13 @@ describe("R-818 — editing the domain keeps the picked customer", () => {
   it("customer stays selected and its fields stay filled when the domain changes", async () => {
     mountWithPickedCustomer();
     await waitFor(() => expect(clearButton()).toBeDefined());
-    expect(field("custName")?.value).toBe("Excel Technologies");
+    expect(field("custName")?.value).toBe("Demo Co");
     expect(field("contactName")).toBeNull();   // existing customer → no contact block
 
     set("subDomain", "excel-second-domain.in");
 
     expect(field("subDomain")?.value).toBe("excel-second-domain.in");
-    expect(field("custName")?.value).toBe("Excel Technologies");
+    expect(field("custName")?.value).toBe("Demo Co");
     expect(clearButton()).toBeDefined();
     expect(field("contactName")).toBeNull();
   });

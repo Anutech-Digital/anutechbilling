@@ -282,20 +282,20 @@ describe("what the panel shows is what the quote button sends", () => {
   it("finds seats AND product on the live enquiry", () => {
     const e = run({
       body: LIVE, subject: "", fromName: "Pardeep Sharma",
-      fromEmail: "pardeep@exceltechnologies.in",
+      fromEmail: "pardeep@example.test",
       catalogue: [{ id: "gws-std", name: "Google Workspace Standard" }],
     });
     expect(e.seats.value).toBe(20);
     expect(e.product.value?.name).toBe("Google Workspace Standard");
     expect(e.name.value).toBe("Pardeep Sharma");
-    expect(e.email.value).toBe("pardeep@exceltechnologies.in");
+    expect(e.email.value).toBe("pardeep@example.test");
   });
 
   it("raises the found-count the panel prints", () => {
     /* It read "DETAILS FOUND · 3 OF 5" while seats were missing. */
     const e = run({
       body: LIVE, subject: "", fromName: "Pardeep Sharma",
-      fromEmail: "pardeep@exceltechnologies.in",
+      fromEmail: "pardeep@example.test",
       catalogue: [{ id: "gws-std", name: "Google Workspace Standard" }],
     });
     expect(foundCount(e)).toBe(4);

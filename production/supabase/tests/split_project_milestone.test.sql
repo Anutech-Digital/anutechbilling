@@ -30,7 +30,7 @@ grant all on ids to authenticated;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-0000-0000-00000000a0a8', 'role', 'authenticated')::text, true);
 
-insert into ids select 'p', public.create_project_sale(null::uuid, 'Excel Technologies'::text, 'Billing'::text, null::text,
+insert into ids select 'p', public.create_project_sale(null::uuid, 'Demo Co'::text, 'Billing'::text, null::text,
   4500000, 18, false,
   '[{"label":"Advance baaki","total_amount":2360000,"due_date":null},{"label":"On delivery","total_amount":2950000,"due_date":null}]'::jsonb);
 insert into ids select 'adv', id from public.project_milestones where project_id = (select v from ids where k = 'p') and label = 'Advance baaki';

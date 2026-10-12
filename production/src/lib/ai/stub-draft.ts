@@ -6,13 +6,13 @@
  * It was a private function inside `api/ai/draft-followup/route.ts`, which meant
  * nothing could test it — and its three EMAIL variants each ended:
  *
- *     \n\nThanks,\nExcel Technologies
+ *     \n\nThanks,\nDemo Co
  *
  * a hardcoded company name in text the operator sends to their own customer.
- * Excel Technologies is historical (CLAUDE.md §1), so on this tenant it is simply
+ * Demo Co is historical (CLAUDE.md §1), so on this tenant it is simply
  * the wrong company; on any other tenant it names a business the customer has no
  * relationship with. `lib/whatsapp.ts` had exactly this defect and fixed it — its
- * test still asserts no message says "Excel Technologies" — but the fix stopped at
+ * test still asserts no message says "Demo Co" — but the fix stopped at
  * WhatsApp. The three WhatsApp variants below carry no signature at all, which is
  * why they were never wrong and why the gap went unnoticed.
  *

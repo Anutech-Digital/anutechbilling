@@ -3,7 +3,7 @@
 # ─── WHY A SECOND FILE AND NOT AN EDIT TO cloudbuild.yaml ───────────────────
 #   `cloudbuild.yaml` targets PRODUCTION: project `resellsubsos-prod`, service
 #   `resellersos`, region asia-southeast1. Measured 29 Sep 2026 — this account
-#   (abhishek@exceltechnologies.in) gets PERMISSION_DENIED on that project and cannot
+#   (abhishek@example.test) gets PERMISSION_DENIED on that project and cannot
 #   even describe it. Editing that file to point here would leave the production deploy
 #   with no config at all, and whoever owns that project would find out the hard way.
 #

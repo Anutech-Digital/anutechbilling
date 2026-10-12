@@ -51,7 +51,7 @@ where I deliberately did something other than what was asked.
 database (SQL tests, each red-checked by reintroducing the defect). R-002, R-005, R-006 and
 R-008 are test-verified only — this local database was rebuilt from the baseline today and
 holds no customers or projects, so there was nothing to look at in a browser. They are worth
-one pass on your machine, where Excel Technologies and its ERP project exist.
+one pass on your machine, where Client A and its ERP project exist.
 
 ---
 
@@ -100,7 +100,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
   `/projects?amount=…&reconcile=…` to be booked as a project sale. Today the project is saved with
   `customerId: null` and only a typed name, so:
   - the sale never appears in that customer's **Ledger (Khata)** or **Customer Aging**;
-  - a typo ("Excel Tech" vs "Excel Technologies") silently becomes a different party;
+  - a typo ("Client A" vs "Client A") silently becomes a different party;
   - IGST vs CGST+SGST comes from a manual checkbox, not the customer's state — the same
     "place of supply assumed" problem the GST health card on Accounting Overview flags.
 - **What to change** — `production/src/components/features/projects/create-project-dialog.tsx`:
@@ -228,7 +228,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
 - **For:** Abhishek
 - **Status:** ✅ **Done** — Abhishek, 2026-09-26
 - **Raised:** 2026-09-25
-- **Why accounting needs it:** Excel Technologies has an active project (Complete ERP, ₹10,80,000,
+- **Why accounting needs it:** Client A has an active project (Complete ERP, ₹10,80,000,
   `project_sales.customer_id` correctly set) yet `/customers` shows it as **"No subscription"**, Monthly
   ₹0, Yearly revenue ₹0, and it falls under the "No subscription" filter. The list reads only
   subscriptions, so a customer who buys custom software looks like a dead account. (The Customer 360
@@ -245,16 +245,16 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
      nothing for money actually received, so a customer who has paid ₹11,80,000 reads as ₹0 everywhere. Sum per
      customer, dated in the current FY: `payments` (status `received`) + `project_payments` (incl. method
      `tds` — TDS the customer paid on our behalf settles the invoice; show it in the tooltip as "of which
-     TDS ₹…"). Excel Technologies should read **₹11,80,000** (₹10,80,000 bank + ₹1,00,000 TDS). Sortable, like
+     TDS ₹…"). Client A should read **₹11,80,000** (₹10,80,000 bank + ₹1,00,000 TDS). Sortable, like
      the other money columns.
   6. **Portfolio strip — say what each tile counts** (added 2026-09-26). "Monthly revenue" / "Yearly revenue" are
      subscription MRR / ARR only, but read as total income — a customer who paid ₹11.8L shows ₹0 in all four
      tiles. (a) Rename them **"Recurring monthly (subscriptions)"** and **"Recurring yearly (subscriptions)"**;
-     (b) add a **"Received (this FY)"** tile — same sum as the column in point 5, TDS included (Excel
-     Technologies: ₹11.8L); (c) the "Project value" tile from point 3 sits beside them.
+     (b) add a **"Received (this FY)"** tile — same sum as the column in point 5, TDS included (Client
+     A: ₹11.8L); (c) the "Project value" tile from point 3 sits beside them.
   `useCustomerProjects` / `useProjectReceivablesByCustomer` in `lib/queries/projects.ts` already
   return what is needed (the page already uses the latter for "To collect").
-- **Done when:** Excel Technologies shows as a project client with its project value, appears
+- **Done when:** Client A shows as a project client with its project value, appears
   under a "With projects" filter, and its row shows ₹11,80,000 received this FY; the strip's tiles say
   "Recurring … (subscriptions)" and a "Received (this FY)" tile shows ₹11.8L.
 
@@ -271,7 +271,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
     Say the word and I will collapse them.
   - **Filters:** added **"With projects"**. "No subscription" is renamed **"No business"** and
     now excludes anyone with won project work — it was being read as "dead accounts", which
-    is exactly how Excel Technologies ended up in it. A customer with only a quotation still
+    is exactly how Client A ended up in it. A customer with only a quotation still
     appears there, because they genuinely have no business yet.
   - **Portfolio strip:** added **"Project value"** (won projects' contract total), clickable
     through to the new segment. Deliberately NOT added to Monthly or Yearly revenue — those
@@ -283,7 +283,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
     phone card call the shared rule and that no local copy survives.
   - **Verification:** test-verified, not browser-verified. This local database was rebuilt
     today and has no projects in it, so there was nothing to look at. Worth one look on your
-    machine, where Excel Technologies exists.
+    machine, where Client A exists.
 
 ### R-006 · Project quotations don't appear under "Quotes"
 - **For:** Abhishek
@@ -291,7 +291,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
 - **Raised:** 2026-09-25
 - **Why accounting needs it:** a project's quotation lives on `project_sales` itself (status
   `quoted` → `active` on acceptance, line items, public link `/project-quote/<id>?t=<token>`), not in
-  `quotes`. So for a software client like Excel Technologies, Customer 360 → Transactions → **Quotes**
+  `quotes`. So for a software client like Client A, Customer 360 → Transactions → **Quotes**
   shows only old `quotes` rows and never the project quotation the deal was actually made on, and
   `/quotes` has no row for it either. The owner reads that as "no quote was ever made".
   (Banking → Reconcile → Project payment → Naya project now creates the project as a quotation and
@@ -303,7 +303,7 @@ one pass on your machine, where Excel Technologies and its ERP project exist.
   2. `/quotes` list — either the same rows with a "Project" badge, or a visible link to Project Sales
      for project quotations. Do **not** copy them into `quotes`: that would double them in the quote
      pipeline and in Customer 360.
-- **Done when:** Excel Technologies' "Complete ERP" quotation shows under Customer 360 → Quotes
+- **Done when:** Client A' "Complete ERP" quotation shows under Customer 360 → Quotes
   (and in `/quotes` or clearly linked from it).
 
 - **Done by Abhishek (2026-09-26):**

@@ -27,7 +27,7 @@ vi.mock("@/lib/queries/items", () => ({
 import { SupportPlanPicker } from "./support-plan-picker";
 
 const TENANT = "fbb976f1-1111-2222-3333-444455556666";
-const ACCESS = { tenantId: TENANT, tenantName: "Excel Technologies" };
+const ACCESS = { tenantId: TENANT, tenantName: "Demo Co" };
 
 function row(id: string, over: Partial<Item> = {}): Item {
   return { id, name: id, msrp: 0, wholesale: 0, prices: {}, is_active: true, item_type: "subscription", kind: "main", ...over } as unknown as Item;
@@ -77,7 +77,7 @@ describe("support plan picker — Add to catalog (R-364)", () => {
     /* Yearly is the default cycle; the first missing paid plan is Standard. */
     fireEvent.click(screen.getAllByRole("button", { name: "Add to catalog" })[0]);
     const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByLabelText(/Name/) as HTMLInputElement).value).toBe("Excel Technologies Standard Support (Yearly)");
+    expect((within(dialog).getByLabelText(/Name/) as HTMLInputElement).value).toBe("Demo Co Standard Support (Yearly)");
     expect((within(dialog).getByLabelText(/Price/) as HTMLInputElement).value).toBe("9996");
     fireEvent.click(within(dialog).getByRole("button", { name: /Add to catalog and quote/ }));
 

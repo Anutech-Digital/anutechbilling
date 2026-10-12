@@ -427,8 +427,8 @@ export function bankTxnKey(r: { txn_date?: string | null; debit?: number | null;
   // statement often omits it while the stored row has one (or vice-versa),
   // which would make the same line look "new". Description is normalised by
   // REMOVING ALL whitespace + lowercasing so re-parsed spacing/masking variants
-  // of the SAME line still match — e.g. "EXCEL TECHNO LOGIES" == "EXCEL
-  // TECHNOLOGIES" and "ICIC-XX XXXXXX4658" == "ICIC-XXXXXX4658". (Collapsing to a
+  // of the SAME line still match — e.g. "DEMO C O" == "DEMO
+  // CO" and "ICIC-XX XXXXXX4658" == "ICIC-XXXXXX4658". (Collapsing to a
   // single space, as before, left those different and let duplicates slip in.)
   // A SHORT prefix (first 25 non-space chars) — this captures the stable leading
   // bank txn/UTR number (e.g. "50100784857219-TPT-SALARY", "IMPS-621856395591-")

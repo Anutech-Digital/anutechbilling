@@ -24,8 +24,8 @@
  * quoted a different price than "Buy now" for the same tier. Now both agree, and
  * `items.msrp` (retail) is the single source of truth.
  *
- * v1 limitation: single-tenant (routes leads to Excel Tech). When we add
- * subdomain-based multi-tenancy (excel.resellersos.app), we'll resolve
+ * v1 limitation: single-tenant (routes leads to Demo Co). When we add
+ * subdomain-based multi-tenancy (democo.resellersos.app), we'll resolve
  * the tenant from the request host instead.
  *
  * Security:
@@ -66,8 +66,8 @@ const APP_URL       = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resell
 
 // The tenant that owns the /buy/workspace storefront. Explicit env var keeps
 // this from drifting when new tenants get added (the previous "oldest tenant"
-// heuristic broke when seed data created an earlier Excel Tech tenant that
-// Pardeep wasn't logged in as). Falls back to the active Excel Tech tenant.
+// heuristic broke when seed data created an earlier Demo Co tenant that
+// Pardeep wasn't logged in as). Falls back to the active Demo Co tenant.
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
 
     // ── Route to the explicit buy-page tenant ─────────────────────────────
     // We used to pick "oldest tenant by created_at", but seed data introduced
-    // an earlier Excel Tech tenant that the logged-in operator can't see, so
+    // an earlier Demo Co tenant that the logged-in operator can't see, so
     // leads landed in the wrong inbox. Use BUY_PAGE_TENANT_ID env var instead.
     const tenantId = BUY_PAGE_TENANT_ID;
 
@@ -412,7 +412,7 @@ ${autoSent
 
       /* ── EMAIL 2: Customer acknowledgement ─────────────────────────────
          Every identity in this body used to be hardcoded: it promised "a WhatsApp
-         message from Pardeep (he runs Excel Technologies himself)", gave a fixed
+         message from Pardeep (he runs Demo Co himself)", gave a fixed
          phone number, and signed off "Google Premier Partner · since 2014". On a
          storefront owned by any other tenant that is three false statements to a
          stranger — including a partner certification this code cannot know the
