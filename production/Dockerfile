@@ -147,6 +147,13 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
+# R-1411: runtime heap. Without this Node picks ~50% of the 1 GiB Cloud Run
+# cgroup (~512 MB). A web instance builds up to 6 PrismaClients (runtime,
+# gateway user/anon/service, auth-store, jobs) at ~60 MB each, so it idles at
+# ~450-500 MB and any burst ran out of heap (staging crash 12 Oct 05:21Z).
+# 768 leaves room under 1 GiB; cutting the clients is its own card.
+# The builder stage's 6144 is separate and unchanged.
+ENV NODE_OPTIONS=--max-old-space-size=768
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
