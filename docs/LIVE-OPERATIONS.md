@@ -32,8 +32,11 @@ Gaps are marked **TODO R-xxx** — that card owns the fix.
 - **How code reaches live:** push of the green staging sha to the `deploy` branch → Cloud Build trigger
   `resellersos-deploy-on-push` runs `cloudbuild.yaml` (gate: `npm ci` + tsc + vitest, then image, then `gcloud run deploy`).
   Fast-forward only, never `--force`.
-- **Do not use `production/deploy.sh` for live.** It runs `gcloud run deploy --source .` — no CI check and no Auth.js /
-  gateway build args. **TODO R-884** (make it refuse unless the gate passed).
+- **`production/deploy.sh` is gated (R-884, 12 Oct).** It no longer runs `gcloud run deploy --source .`; it runs
+  `scripts/ops/deploy-gate.mjs` (tree clean + sha pushed to anutech + GitHub **CI** and **SQL tests** green on that
+  exact sha) and only then fast-forwards `anutech/deploy` to the sha, so the build always goes through `cloudbuild.yaml`.
+  Always `bash production/deploy.sh --dry-run <sha>` first. `--emergency` can skip red CI only after typing the phrase
+  it shows (`DEPLOY <sha8> WITHOUT GATE`); logged to `~/.reselleros/deploy-overrides.log`. Never `gcloud run deploy --source .`.
 - **First live deploy = the R-909 cutover on 17 Oct.** Use that runbook for 17 Oct, this file after it.
 
 ### Emergency hotfix (outside the 2 days)
@@ -55,7 +58,7 @@ All must be ✓ before asking Pardeep for haan. The manager posts this list with
 |---|---|---|
 | 1 | Every card in the release is ✓ on **staging** by its reporter / owner (board stage "Staging par" with Theek) | Board; cards without ✓ are taken out or Pardeep says go anyway |
 | 2 | The sha going live is **exactly** the one checked on staging | `git log --oneline -1 <sha>`; staging `/api/version` showed this sha |
-| 3 | GitHub **CI**, **SQL tests**, **Money check** and **E2E (logged-in)** are green on that exact sha | `gh run list --commit <sha>` (workflows in `.github/workflows/`). Today this is a manual look — **TODO R-884** makes the deploy refuse a red sha |
+| 3 | GitHub **CI**, **SQL tests**, **Money check** and **E2E (logged-in)** are green on that exact sha | `gh run list --commit <sha>` (workflows in `.github/workflows/`). `bash production/deploy.sh --dry-run <sha>` checks CI + SQL tests (R-884); Money check / E2E still a manual look |
 | 4 | New migrations were **rehearsed on the staging DB** with the same script | Every migration has a `-- deploy-peek:` line; `node scripts/ops/gen-deploy-db.mjs --date <day> --check` passes; the staging `deploy-db-<day>.sh` ran and printed "DB READY" |
 | 5 | Every migration keeps the **old code working** (expand → deploy → contract) | No drop/rename of anything the live revision still uses — this is what makes a code-only rollback safe (section 3) |
 | 6 | **Backup** just before the DB step | The live `deploy-db-<day>.sh` takes an on-demand backup first and stops if it is not SUCCESSFUL — note the backup id it prints |

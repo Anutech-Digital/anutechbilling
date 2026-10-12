@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 /* S22 (28 Sep 2026): Cloud Scheduler waits 540s for a cron; Cloud Run's default request
    timeout is 300s. Every cron longer than five minutes was killed halfway, and the
-   scheduler's retry started it again from the top. Both deploy paths must set a service
+   scheduler's retry started it again from the top. cloudbuild.yaml (the only deploy path since R-884) must set a service
    timeout at least as long as the longest scheduler deadline. */
 
 const prod = process.cwd();
@@ -27,13 +27,17 @@ describe("Cloud Run timeout covers the scheduler deadline", () => {
     expect(schedulerDeadlines().length).toBeGreaterThan(0);
   });
 
-  it("deploy.sh sets --timeout >= the deadline", () => {
-    const deploy = read(prod, "deploy.sh");
-    const line = deploy.split("\n").find((l) => /^gcloud run deploy/.test(l)) ?? "";
-    const t = timeoutOf(line);
-    expect(t, "gcloud run deploy in deploy.sh has no --timeout").not.toBeNull();
-    expect(t!).toBeGreaterThanOrEqual(deadline);
-    expect(t!).toBeLessThanOrEqual(3600); // Cloud Run's ceiling
+  it("deploy.sh never deploys directly — it ships through cloudbuild.yaml (R-884)", () => {
+    // deploy.sh used to run `gcloud run deploy --source .` with its own --timeout. Since R-884
+    // it only pushes the gated sha to the `deploy` branch, so cloudbuild.yaml's --timeout
+    // (next test) is the one that reaches Cloud Run.
+    const code = read(prod, "deploy.sh")
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    expect(code).not.toMatch(/gcloud\s+run\s+deploy/);
+    expect(code).not.toMatch(/--source/);
+    expect(code).toMatch(/deploy-gate\.mjs/);
   });
 
   it("cloudbuild.yaml's deploy step sets --timeout >= the deadline", () => {
