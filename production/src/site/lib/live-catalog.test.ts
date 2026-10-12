@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  mergeEditions, liveGwMonthlyRate, liveMonthlyRate, suitePriceRows, emailFromRate, type LiveWorkspaceItem,
+  mergeEditions, liveGwMonthlyRate, catalogOrigin, fetchLiveWorkspace, liveMonthlyRate, suitePriceRows, emailFromRate, type LiveWorkspaceItem,
 } from "./live-catalog";
 import { LICENCE_EDITIONS, EDITION_MATRICES, MAIL_RATES } from "./data/catalog";
+import { RESELLEROS_URL } from "./config";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Website ↔ app ka daam-connection. Do niyam pin hain:
@@ -164,5 +165,47 @@ describe("R-076 — header ka 'Mailboxes from ₹…' teaser", () => {
     const src = readFileSync(join(process.cwd(), "src", "site", "components", "chrome", "Header.tsx"), "utf8");
     expect(src).not.toMatch(/Mailboxes from ₹\d/);
     expect(src).toContain("emailFromRate");
+  });
+});
+
+/* R-1102 (11 Oct 2026): har deployment apne hi app se daam padhe — staging/local/CI live ko
+   call karke 503 kha rahe the jab live band tha. */
+describe("catalogOrigin — R-1102", () => {
+  const KEYS = ["CATALOG_ORIGIN", "AUTH_URL", "NEXT_PUBLIC_APP_URL"] as const;
+  const clear = () => KEYS.forEach((k) => vi.stubEnv(k, ""));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("CATALOG_ORIGIN sabse upar (trailing slash hata ke)", () => {
+    clear();
+    vi.stubEnv("CATALOG_ORIGIN", "http://127.0.0.1:9/");
+    vi.stubEnv("AUTH_URL", "https://staging.example.test");
+    expect(catalogOrigin()).toBe("http://127.0.0.1:9");
+  });
+
+  it("AUTH_URL, phir NEXT_PUBLIC_APP_URL", () => {
+    clear();
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3001");
+    expect(catalogOrigin()).toBe("http://localhost:3001");
+    vi.stubEnv("AUTH_URL", "https://staging.example.test");
+    expect(catalogOrigin()).toBe("https://staging.example.test");
+  });
+
+  it("kuch set nahi — live domain (live ka bartaav nahi badla)", () => {
+    clear();
+    expect(catalogOrigin()).toBe(RESELLEROS_URL.replace(/\/+$/, ""));
+  });
+
+  it("fetch usi origin ko jaata hai, aur 503 par null (fallback daam) milta hai", async () => {
+    clear();
+    vi.stubEnv("CATALOG_ORIGIN", "https://staging.example.test");
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchLiveWorkspace()).resolves.toBeNull();
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe(
+      "https://staging.example.test/api/public/catalog/workspace",
+    );
   });
 });
