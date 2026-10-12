@@ -32,7 +32,7 @@ export const GET = withRoute(
     const row = (job: string) => {
       const r = byJob.get(job);
       return {
-        state: stateOf(r),
+        state: stateOf(r, job),
         lastRunAt: r?.last_run_at ?? null,
         lastResult: r?.last_result ?? null,
         changedAt: r?.changed_at ?? null,

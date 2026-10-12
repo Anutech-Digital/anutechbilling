@@ -23,8 +23,8 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
-import { AUTOMATION_JOBS, platformTenantId, type AutomationJob } from "./jobs";
-import { cronTenants, recordRun } from "./gate.server";
+import { AUTOMATION_JOBS, isDefaultOn, platformTenantId, stateOf, type AutomationJob } from "./jobs";
+import { cronTenants, ensureDefaultOnRow, readJobRow, recordRun } from "./gate.server";
 
 export interface CronRunContext {
   job: AutomationJob;
@@ -121,6 +121,22 @@ export function gatedCron<R extends Request>(job: AutomationJob, handler: Handle
     if (!bearerOk(req)) return handler(req);
 
     const spec = AUTOMATION_JOBS[job];
+
+    /* Safety jobs (backup) are ON unless the platform company's row says otherwise, and a
+       failed read RUNS them: for a backup, "could not check the switch" must not mean "no
+       backup tonight". The kill switch is for customer-facing automation, not backups. */
+    if (isDefaultOn(job)) {
+      const p = platformTenantId();
+      const row = await readJobRow(p, job);
+      const state = row === undefined ? "on" : stateOf(row, job);
+      if (state === "off") {
+        await recordRun(job, [p], "Skipped — turned off");
+        return NextResponse.json({ ok: true, skipped: "off", job });
+      }
+      if (row === null) await ensureDefaultOnRow(p, job);
+      return runPass(job, "live", [p], true, req, handler);
+    }
+
     const where = await cronTenants(job);
     if (!where) {
       return NextResponse.json({ ok: false, skipped: "gate_unreadable", job }, { status: 503 });

@@ -19,6 +19,17 @@
 
 export const CUSTOMER_MESSAGES = "customer_messages" as const;
 
+/**
+ * Internal safety jobs that are ON when nobody has set them (manager, 12 Oct 2026): a forgotten
+ * switch must never mean "no backups". Only jobs that send nothing to anyone and protect data
+ * belong here. The owner can still turn them off (that writes a row, and the row wins).
+ * attendance-retention is deliberately NOT here: it deletes data per company, and a forgotten
+ * switch only delays a deletion, while a wrong default would delete.
+ * The SQL automation_state() does not know this list; the gate (cron-gate.ts) and the
+ * /automation page do — nothing else asks about these jobs.
+ */
+export const SAFETY_JOBS_DEFAULT_ON = ["backup"] as const;
+
 export interface AutomationJobSpec {
   label: string;
   /** One plain-English line for the page. */
@@ -55,7 +66,7 @@ export const AUTOMATION_JOBS = {
   "indiamart-leads":      { label: "IndiaMART leads", what: "Pulls new leads from IndiaMART.", customerFacing: false, scope: "tenant", dryRun: false },
   "lead-finder":          { label: "Lead finder", what: "Looks for new business leads.", customerFacing: false, scope: "tenant", dryRun: false },
   "mrr-snapshot":         { label: "Monthly revenue snapshot", what: "Saves each customer's monthly revenue for the reports.", customerFacing: false, scope: "tenant", dryRun: true },
-  "backup":               { label: "Nightly backup", what: "Saves a restore point of every company's data each night.", customerFacing: false, scope: "platform", dryRun: false },
+  "backup":               { label: "Nightly backup", what: "Saves a restore point of every company's data each night. On unless you turn it off.", customerFacing: false, scope: "platform", dryRun: false },
   "demo-reset":           { label: "Demo reset", what: "Resets the public \"Try the demo\" workspace each night.", customerFacing: false, scope: "platform", dryRun: false },
 } as const satisfies Record<string, AutomationJobSpec>;
 
@@ -81,8 +92,16 @@ export function platformTenantId(): string {
   return process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 }
 
-/** A row → its state. Missing row, or off, = "off". Mirrors public.automation_state(). */
-export function stateOf(row: { enabled?: boolean | null; dry_run?: boolean | null } | null | undefined): AutomationState {
-  if (!row?.enabled) return "off";
+export function isDefaultOn(job: string): boolean {
+  return (SAFETY_JOBS_DEFAULT_ON as readonly string[]).includes(job);
+}
+
+/**
+ * A row → its state. Missing row = "off" (mirrors public.automation_state()), except a
+ * SAFETY_JOBS_DEFAULT_ON job, which is "on" until a row says otherwise.
+ */
+export function stateOf(row: { enabled?: boolean | null; dry_run?: boolean | null } | null | undefined, job?: string): AutomationState {
+  if (!row) return job && isDefaultOn(job) ? "on" : "off";
+  if (!row.enabled) return "off";
   return row.dry_run ? "dry_run" : "on";
 }
