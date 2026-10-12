@@ -6,10 +6,16 @@
  * signed-in user; the file lands in the private `documents` bucket and a
  * documents row is inserted.
  *
+ * R-880: owner / manager only — R-724's storage rule for the vault folder
+ * ({tenant}/{file}: owner + manager read, upload, replace, delete). Before this any member
+ * could write into the vault through the admin client, past the bucket's own policy.
+ *
  * Body: multipart/form-data — file, title, category, expiry_date?, notes?
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
+import { logDbError } from "@/lib/errors/db-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +27,11 @@ export async function POST(req: NextRequest) {
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", authData.user.id).single();
   if (!me?.tenant_id) return NextResponse.json({ error: "No tenant" }, { status: 400 });
+  if (!mayDo((me as { role?: string | null }).role, "vault.upload")) {
+    return NextResponse.json({ error: forbiddenMessage("vault.upload") }, { status: 403 });
+  }
 
   let form: FormData;
   try { form = await req.formData(); } catch { return NextResponse.json({ error: "Bad form" }, { status: 400 }); }
@@ -47,7 +56,11 @@ export async function POST(req: NextRequest) {
 
   const { error: upErr } = await admin.storage
     .from("documents").upload(path, buf, { upsert: false, contentType: f.type || undefined });
-  if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
+  if (upErr) {
+    /* R-880 (as R-025): storage's own text names the bucket and the tenant-foldered path. */
+    logDbError("documents:upload", upErr);
+    return NextResponse.json({ error: "Could not store the file. Try again." }, { status: 500 });
+  }
 
   const { error: insErr } = await admin.from("documents").insert({
     tenant_id:   me.tenant_id,
@@ -63,7 +76,8 @@ export async function POST(req: NextRequest) {
   });
   if (insErr) {
     await admin.storage.from("documents").remove([path]);
-    return NextResponse.json({ error: insErr.message }, { status: 500 });
+    logDbError("documents:insert", insErr);
+    return NextResponse.json({ error: "The file uploaded but could not be saved to the vault. Nothing was kept — try again." }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

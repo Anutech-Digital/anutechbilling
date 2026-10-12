@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { raiseDueInstalmentsForQuote } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,9 +31,14 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   if (!user) return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json({ error: "Your account is not linked to a workspace yet." }, { status: 403 });
+  }
+  /* R-880: this raises a tax invoice through the admin client — money roles only (R-718),
+     checked BEFORE any read or write with the admin client. */
+  if (!mayDo((me as { role?: string | null }).role, "money.record")) {
+    return NextResponse.json({ error: forbiddenMessage("money.record") }, { status: 403 });
   }
 
   const admin = createAdminClientFor(user.id);

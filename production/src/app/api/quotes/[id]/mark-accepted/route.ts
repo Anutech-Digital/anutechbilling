@@ -25,6 +25,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
 import { createdBeforeRequest } from "@/lib/quotes/accepted-toast";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,6 +36,18 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  /* R-880: accept_quote makes no invoice, payment or subscription (see above), so this stays
+     a sales action — but support, delivery, partner agents and accountants do not accept
+     quotes. The tenant match is accept_quote's own (current_tenant_id vs quote.tenant_id). */
+  const { data: me } = await supabase
+    .from("users").select("tenant_id, role").eq("id", authData.user.id).maybeSingle();
+  if (!me?.tenant_id) {
+    return NextResponse.json({ error: "Your account is not linked to a workspace yet." }, { status: 403 });
+  }
+  if (!mayDo((me as { role?: string | null }).role, "quote.accept")) {
+    return NextResponse.json({ error: forbiddenMessage("quote.accept") }, { status: 403 });
   }
 
   const requestStartedMs = Date.now();

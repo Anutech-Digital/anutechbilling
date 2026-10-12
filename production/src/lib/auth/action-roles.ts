@@ -20,6 +20,18 @@ export const ACTION_ROLES = {
   "contacts.import": ["owner", "manager"],
   /** company-wide ad / Business Profile accounts. */
   "integration.company": ["owner", "manager"],
+  /** R-880: raise an instalment invoice, attach / replace a payment receipt. Same list as
+   *  MONEY_RECORD_ROLES in roles.ts (R-718, Pardeep's table: record = O/M/A/B). */
+  "money.record": ["owner", "manager", "accountant", "billing"],
+  /** R-880: "customer said yes" — quote → accepted, lead → customer. accept_quote makes no
+   *  invoice, payment or subscription, so it stays a sales action. Accountant has no Quotes
+   *  page; support, delivery and the partner agent do not sell. */
+  "quote.accept": ["owner", "manager", "sales_senior", "sales", "billing"],
+  /** R-880: upload to the document vault — R-724's storage rule (vault = owner, manager). */
+  "vault.upload": ["owner", "manager"],
+  /** R-880: change a support ticket's status / resolution note. The ticket's assigned agent
+   *  may too — that is per ticket, so the route checks it. */
+  "support.update": ["owner", "manager", "support"],
 } as const satisfies Record<string, readonly UserRole[]>;
 
 export type GuardedAction = keyof typeof ACTION_ROLES;
@@ -29,6 +41,10 @@ const WHAT: Record<GuardedAction, string> = {
   "campaign.send": "send a campaign",
   "contacts.import": "import contacts",
   "integration.company": "connect company accounts",
+  "money.record": "record money (instalment invoices, payment receipts)",
+  "quote.accept": "mark a quote accepted",
+  "vault.upload": "upload to the document vault",
+  "support.update": "update support tickets",
 };
 
 export function mayDo(role: string | null | undefined, action: GuardedAction): boolean {
@@ -37,6 +53,6 @@ export function mayDo(role: string | null | undefined, action: GuardedAction): b
 
 /** The 403 body: says who can, so the person knows whom to ask. */
 export function forbiddenMessage(action: GuardedAction): string {
-  const who = ACTION_ROLES[action].map((r) => r[0].toUpperCase() + r.slice(1)).join(", ");
+  const who = ACTION_ROLES[action].map((r) => (r[0].toUpperCase() + r.slice(1)).replace(/_/g, " ")).join(", ");
   return `Only ${who} can ${WHAT[action]}. Ask one of them to do it.`;
 }

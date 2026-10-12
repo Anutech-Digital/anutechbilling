@@ -10,6 +10,8 @@ import { NextResponse } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform";
 import type { TablesUpdate } from "@/lib/supabase/database.types";
+import { mayDo } from "@/lib/auth/action-roles";
+import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
 
 const ANUTECH_PRIMARY_TENANT_ID = "fbb976f1-9090-4f10-9726-0901bd144e42";
 
@@ -83,33 +85,76 @@ export async function GET(request: Request) {
   return NextResponse.json({ tickets: filteredTickets, counts, scopeCounts });
 }
 
+/** R-880: the only values PATCH may write. Anything else is refused, not stored. */
+const TICKET_STATUSES = ["open", "in_progress", "awaiting_customer", "resolved", "closed"] as const;
+type TicketStatus = (typeof TICKET_STATUSES)[number];
+
+/**
+ * PATCH — change a ticket's status and/or resolution note. Nothing else is writable here.
+ *
+ * R-880: before this any signed-in member (sales, delivery…) could close or re-open any
+ * ticket of the company. Now: owner, manager, support — or the agent the ticket is assigned
+ * to (support_tickets.assigned_agent). The ticket is looked up inside the caller's tenant
+ * first, so another company's ticket id reads as "not found". A platform admin (Anutech
+ * staff, isPlatformAdmin) still works across tenants — that is the cross-tenant desk.
+ */
 export async function PATCH(request: Request) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const isAdmin = isPlatformAdmin(user.email);
-  const client = isAdmin ? createAdminClientFor(user.id) : supabase;
 
   const body = await request.json().catch(() => ({}));
-  const { id, status, resolution_note } = body;
+  const { id, status, resolution_note } = (body ?? {}) as { id?: unknown; status?: unknown; resolution_note?: unknown };
 
-  if (!id) return NextResponse.json({ error: "Missing ticket ID" }, { status: 400 });
+  if (!id || typeof id !== "string") return NextResponse.json({ error: "Missing ticket ID" }, { status: 400 });
+  if (status !== undefined && status !== null && status !== "" &&
+      !(typeof status === "string" && (TICKET_STATUSES as readonly string[]).includes(status))) {
+    return NextResponse.json({ error: "Unknown ticket status." }, { status: 400 });
+  }
+  if (resolution_note !== undefined && resolution_note !== null && typeof resolution_note !== "string") {
+    return NextResponse.json({ error: "Resolution note must be text." }, { status: 400 });
+  }
+  if (typeof resolution_note === "string" && resolution_note.length > 5000) {
+    return NextResponse.json({ error: "Resolution note is too long (max 5000 characters)." }, { status: 400 });
+  }
+
+  let tenantId: string | null = null;
+  if (!isAdmin) {
+    const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+    tenantId = me?.tenant_id ?? null;
+    if (!tenantId) {
+      return NextResponse.json({ error: "Your account is not linked to a workspace yet." }, { status: 403 });
+    }
+    const { data: ticket } = await supabase
+      .from("support_tickets").select("id, assigned_agent").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+    if (!ticket) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
+    const assignedToMe = !!ticket.assigned_agent && ticket.assigned_agent === user.id;
+    if (!mayDo((me as { role?: string | null }).role, "support.update") && !assignedToMe) {
+      return NextResponse.json(
+        { error: "Only Owner, Manager, Support or the person this ticket is assigned to can update it. Ask one of them to do it." },
+        { status: 403 },
+      );
+    }
+  }
+
+  const client = isAdmin ? createAdminClientFor(user.id) : supabase;
 
   const updates: TablesUpdate<"support_tickets"> = {};
-  if (status) updates.status = status;
-  if (resolution_note !== undefined) updates.resolution_note = resolution_note;
+  if (status) updates.status = status as TicketStatus;
+  if (resolution_note !== undefined) updates.resolution_note = resolution_note as string | null;
   if (status === "resolved" || status === "closed") {
     updates.resolved_at = new Date().toISOString();
   }
 
-  const { data: updated, error } = await client
-    .from("support_tickets")
-    .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+  let q = client.from("support_tickets").update(updates).eq("id", id);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data: updated, error } = await q.select().single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    logDbError("support/tickets:patch", error);
+    return NextResponse.json({ error: safeDbMessage(error, "Could not update the ticket. Reload and try again.") }, { status: 500 });
+  }
   return NextResponse.json({ success: true, ticket: updated });
 }
