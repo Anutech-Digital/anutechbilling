@@ -1,61 +1,49 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Canonical ResellerOS production deploy — the ONE way to ship.
+# ResellerOS live deploy — gated (R-884, 12 Oct 2026).
 #
-# Why this exists: on 25 Jul 2026 several deploys were wasted because the
-# project id and gcloud account were guessed from stale docs. This script
-# hard-codes the correct values and PRE-FLIGHT CHECKS them (account, project
-# access, right directory) BEFORE the 3–5 min Cloud Build — so a wrong config
-# fails in ~2 seconds with a clear message instead of a slow, confusing error.
+# Ships ONE exact sha through Cloud Build (cloudbuild.yaml: tsc + vitest gate, Auth.js /
+# gateway build args, image tagged with the sha) by fast-forwarding the `deploy` branch on
+# the anutech remote. It NEVER runs `gcloud run deploy --source .` any more: that path
+# skipped CI and built the image with Dockerfile defaults (Supabase-era live image).
 #
-# Usage:  bash deploy.sh          (run from anywhere; it cd's itself)
-# Auth:   Pardeep runs `gcloud auth login` (interactive) himself first.
+# Refuses unless scripts/ops/deploy-gate.mjs passes:
+#   working tree clean · sha pushed to anutech · GitHub "CI" + "SQL tests" green on that sha.
+#
+# Usage (from anywhere; it cd's itself):
+#   bash deploy.sh --dry-run [<sha>]     check only, push nothing  ← use this first
+#   bash deploy.sh [<sha>]               gate, then push <sha> to `deploy` (default: HEAD)
+#   bash deploy.sh --emergency [<sha>]   red CI may be overridden by typing the phrase it
+#                                        shows; logged to ~/.reselleros/deploy-overrides.log
+# Rules (docs/LIVE-OPERATIONS.md): live only on deploy days after 17:00 IST, with Pardeep's
+# haan for this exact sha. Workers never run this.
 # ============================================================================
 set -euo pipefail
 
-# ── Canonical target (do NOT change without verifying in gcloud console) ──────
-ACCOUNT="pardeep@anutech.in"       # owns the project below. NOT exceltechnologies.
-PROJECT="resellsubsos-prod"        # LIVE project. NOT "resellersos-prod" (that is a
-                                   # different, unrelated project — stale in old docs).
-REGION="asia-southeast1"           # Singapore — the service moved here on 5 Sep 2026 (cloudbuild.yaml _REGION)
-SERVICE="resellersos"
+cd "$(dirname "$0")"               # production/
+REMOTE="anutech"
+DEPLOY_BRANCH="deploy"
 
-cd "$(dirname "$0")"               # always run from production/ (has the Dockerfile)
+DRY=0
+for a in "$@"; do [ "$a" = "--dry-run" ] && DRY=1; done
 
-echo "── Pre-flight ─────────────────────────────────────────────"
-
-# 1. Right directory? The Dockerfile must be here or Cloud Build falls back to
-#    buildpacks and fails with "no buildpack groups passed detection".
-[ -f Dockerfile ]  || { echo "✗ No Dockerfile in $(pwd) — run from production/"; exit 1; }
-[ -f package.json ] || { echo "✗ No package.json in $(pwd)"; exit 1; }
-echo "✓ In production/ (Dockerfile present)"
-
-# 2. Correct account active.
-gcloud config set account "$ACCOUNT" >/dev/null 2>&1
-ACTIVE="$(gcloud config get-value account 2>/dev/null)"
-[ "$ACTIVE" = "$ACCOUNT" ] || { echo "✗ Active account is '$ACTIVE', expected '$ACCOUNT'"; exit 1; }
-echo "✓ Account: $ACCOUNT"
-
-# 3. That account can actually see the service in the project. Catches BOTH a
-#    permission problem (wrong account/project) AND an expired token — in ~1s,
-#    not after a 5-min build.
-if ! gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
-        --format="value(metadata.name)" >/tmp/ros_preflight.txt 2>&1; then
-  echo "✗ Cannot access $SERVICE in $PROJECT:"
-  sed 's/^/    /' /tmp/ros_preflight.txt
-  echo "    → If PERMISSION_DENIED: wrong project/account (see values above)."
-  echo "    → If reauth/token error: ask Pardeep to run 'gcloud auth login' ($ACCOUNT)."
+# Gate: its last stdout line is SHA=<full sha> when allowed. pipefail (above) keeps the
+# gate's exit code through tee; stdin stays the terminal for the emergency prompt.
+OUT_FILE="$(mktemp)"
+trap 'rm -f "$OUT_FILE"' EXIT
+if ! node scripts/ops/deploy-gate.mjs "$@" | tee "$OUT_FILE"; then
+  echo "✗ Deploy refused by the gate. Nothing was pushed."
   exit 1
 fi
-echo "✓ Can reach $SERVICE in $PROJECT ($REGION)"
 
-echo "── Deploying (3–5 min) ────────────────────────────────────"
-# No pipe here — we must NOT mask gcloud's real exit code.
-# --timeout=600: Cloud Scheduler gives each cron request --attempt-deadline=540s
-# (scripts/setup-cloud-scheduler.sh). Cloud Run's default request timeout is 300s, so a
-# long cron was cut off halfway and Scheduler retried it from the top. The service
-# timeout must be >= the scheduler deadline (S22; cloudbuild.yaml carries the same flag,
-# src/lib/ops/cloud-run-timeout.test.ts keeps the three in step).
-gcloud run deploy "$SERVICE" --source . --project "$PROJECT" --region "$REGION" --timeout=600 --quiet
+SHA="$(grep '^SHA=' "$OUT_FILE" | tail -1 | cut -d= -f2)"
+if [ "$DRY" = "1" ] || [ -z "$SHA" ]; then
+  echo "(dry-run) Nothing pushed."
+  exit 0
+fi
 
-echo "✓ Deploy finished. Confirm the revision line above says 'serving 100 percent'."
+echo "── Shipping $SHA via Cloud Build (push to $REMOTE/$DEPLOY_BRANCH, fast-forward only) ──"
+# No --force: a non-fast-forward is refused by git, which is what we want.
+git push "$REMOTE" "$SHA:refs/heads/$DEPLOY_BRANCH"
+echo "✓ Pushed. Cloud Build trigger resellersos-deploy-on-push builds + deploys it (3–5 min)."
+echo "  Then: npm run verify:deploy (must show ${SHA:0:8})."
