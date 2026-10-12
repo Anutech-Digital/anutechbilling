@@ -22,8 +22,10 @@ insert into public.tenants (id, name, email, state_code) values
 insert into auth.users (id, email) values
   ('d3300000-0000-0000-0000-0000000000a2', 's33-user-a@example.test'),
   ('d3300000-0000-0000-0000-0000000000c2', 's33-orphan@example.test');
-insert into public.users (id, tenant_id, email) values
-  ('d3300000-0000-0000-0000-0000000000a2', 'd3300000-0000-0000-0000-0000000000a1', 's33-user-a@example.in');
+-- R-1004: the day-book reader is an accountant. users.role defaults to 'sales', and since
+-- R-1004 sales reads only payments of customers its team manages.
+insert into public.users (id, tenant_id, email, role) values
+  ('d3300000-0000-0000-0000-0000000000a2', 'd3300000-0000-0000-0000-0000000000a1', 's33-user-a@example.in', 'accountant');
 
 insert into public.customers (id, tenant_id, name) values
   ('d3300000-0000-0000-0000-00000000c001', 'd3300000-0000-0000-0000-0000000000a1', 'S33 Customer'),
