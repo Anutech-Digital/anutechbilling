@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { Customer } from "@/lib/supabase/database.types";
 import { fetchAllRows, fetchAllRowsIn, idsKey } from "@/lib/ops/fetch-all";
+import { CUSTOMER_COLUMNS } from "@/lib/queries/columns";
 
 type Client = ReturnType<typeof createClient>;
 
@@ -50,7 +51,7 @@ export async function fetchGroupMembers(supabase: Client, groupId: string): Prom
   return fetchAllRows<Customer>((from, to) =>
     supabase
       .from("customers")
-      .select("*")
+      .select(CUSTOMER_COLUMNS)
       .eq("group_id", groupId)
       .order("name", { ascending: true })
       .order("id", { ascending: true })

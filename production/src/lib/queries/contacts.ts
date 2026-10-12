@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { CONTACT_COLUMNS } from "@/lib/queries/columns";
 import { primaryContactsFor, type PrimaryContact } from "@/lib/contacts/primary";
 import {
   buildContactSearchIndex,
@@ -241,7 +242,7 @@ export function useContact(id: string | undefined) {
     enabled: Boolean(id),
     queryFn: async (): Promise<Contact | null> => {
       const supabase = createClient();
-      const { data, error } = await supabase.from("contacts").select("*").eq("id", id!).maybeSingle();
+      const { data, error } = await supabase.from("contacts").select(CONTACT_COLUMNS).eq("id", id!).maybeSingle();
       if (error) throw error;
       return (data ?? null) as Contact | null;
     },
@@ -432,7 +433,7 @@ export function useCustomerContacts(customerId: string | undefined) {
          same human can be the accountant here and the owner elsewhere. */
       const { data, error } = await supabase
         .from("customer_contacts")
-        .select("role, is_primary, contacts(*)")
+        .select(`role, is_primary, contacts(${CONTACT_COLUMNS})`)
         .eq("customer_id", customerId!)
         /* Primary first, then alphabetical — the person who gets the invoice should
            never be somewhere down a list. */

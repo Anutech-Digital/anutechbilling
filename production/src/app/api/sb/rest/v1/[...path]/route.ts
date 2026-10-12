@@ -9,6 +9,9 @@ import { handlePostgrest } from "@/server/postgrest/handler";
 import { identityFromHeaders } from "@/server/postgrest/identity";
 import { gatewayEnabled } from "@/server/postgrest/fetch";
 import { PgrstError } from "@/server/postgrest/parse";
+import {
+  addGatewayRows, gatewayGuard, gatewayRole, isGatewayLimitedRole, logRefusal, refusalResponse, rowsFromContentRange,
+} from "@/server/postgrest/gateway-limits";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,14 +21,34 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   const { path } = await ctx.params;
   try {
     const identity = identityFromHeaders(req.headers, { allowService: false });
+    const joined = path.join("/");
+    /* R-1005: low roles (sales, sales_senior, support, delivery, partner_agent) get a per-user
+       rate, a daily row budget, paging caps and no select=* on customers/contacts/payments —
+       src/server/postgrest/gateway-limits.ts. Owner/manager/accountant/billing pass untouched. */
+    let limitedUser: string | null = null;
+    if (identity.mode === "user") {
+      const role = await gatewayRole(identity.userId);
+      if (isGatewayLimitedRole(role)) {
+        limitedUser = identity.userId;
+        const refusal = await gatewayGuard(identity.userId, req.method, joined, req.nextUrl.searchParams);
+        if (refusal) {
+          logRefusal(refusal, { userId: identity.userId, role, method: req.method, path: joined });
+          return refusalResponse(refusal);
+        }
+      }
+    }
     const res = await handlePostgrest({
       method: req.method,
-      path: path.join("/"),
+      path: joined,
       search: req.nextUrl.searchParams,
       headers: req.headers,
       body: req.method === "GET" || req.method === "HEAD" ? null : await req.text(),
     }, identity);
     res.headers.set("Cache-Control", "no-store");
+    if (limitedUser && req.method !== "HEAD" && res.ok) {
+      const rows = rowsFromContentRange(res.headers.get("content-range"));
+      if (rows > 0) await addGatewayRows(limitedUser, rows);
+    }
     return res;
   } catch (e) {
     const err = e instanceof PgrstError ? e : new PgrstError(500, "PGRST000", (e as Error).message);

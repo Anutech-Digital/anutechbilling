@@ -12,6 +12,7 @@ import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import type { Customer, Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { CUSTOMER_COLUMNS } from "@/lib/queries/columns";
 import { mergeNameOnly, type NameOnlyCustomerRow } from "@/lib/customers/name-only";
 import { missingInvoiceState, withStateCode } from "@/lib/gst/gstin-state";
 import { flattenPages } from "@/lib/queries/keyset";
@@ -41,7 +42,7 @@ export async function fetchAllCustomers(supabase: Client): Promise<Customer[]> {
     fetchAllRows<Customer>((from, to) =>
       supabase
         .from("customers")
-        .select("*")
+        .select(CUSTOMER_COLUMNS)
         .order("name", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to)),
@@ -121,7 +122,7 @@ export interface CustomerPage { rows: Customer[]; total: number }
 export async function fetchCustomersPage(
   supabase: Client, f: CustomerPageFilters, from: number, limit = CUSTOMERS_PAGE_SIZE,
 ): Promise<CustomerPage> {
-  let q = supabase.from("customers").select("*", { count: "exact" });
+  let q = supabase.from("customers").select(CUSTOMER_COLUMNS, { count: "exact" });
   q = f.archived ? q.eq("is_active", false) : q.not("is_active", "is", false);
   const or = customerSearchOr(f.search, f.contactIds);
   if (or) q = q.or(or);
@@ -222,7 +223,7 @@ export function useCustomer(id: string | undefined) {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("customers")
-        .select("*")
+        .select(CUSTOMER_COLUMNS)
         .eq("id", id!)
         .maybeSingle();
       if (error) {

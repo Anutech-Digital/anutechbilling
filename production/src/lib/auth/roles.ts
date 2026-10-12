@@ -271,3 +271,28 @@ export function canDeleteMoney(role: string | null | undefined): boolean {
   if (!role) return true;
   return (MONEY_DELETE_ROLES as readonly string[]).includes(role);
 }
+
+/**
+ * R-1005 (12 Oct 2026, data-leak audit item e, Pardeep's decision): who the data gateway
+ * (/api/sb/rest/v1) puts per-user limits on — rate per minute, rows per day, offset cap and
+ * no `select=*` on customers / contacts / payments (src/server/postgrest/gateway-limits.ts).
+ *
+ * Every role is stated, so a new role fails the type check until someone decides. A missing
+ * or unknown role (no users row, stale session) counts as limited — fail closed.
+ */
+export const GATEWAY_LIMITED_BY_ROLE: Record<UserRole, boolean> = {
+  owner:         false,
+  manager:       false,
+  accountant:    false,
+  billing:       false,
+  sales_senior:  true,
+  sales:         true,
+  support:       true,
+  delivery:      true,
+  partner_agent: true,
+};
+
+export function isGatewayLimitedRole(role: string | null | undefined): boolean {
+  if (!isUserRole(role)) return true;
+  return GATEWAY_LIMITED_BY_ROLE[role];
+}

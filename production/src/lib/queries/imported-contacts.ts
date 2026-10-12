@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { CONTACT_COLUMNS } from "@/lib/queries/columns";
 import type { ContactRow, ContactStatus } from "@/lib/supabase/database.types";
 
 /** All contacts in the standalone table (any status). */
@@ -24,7 +25,7 @@ export function useImportedContacts() {
       /* R-294: paged past the 1000-row cap; order ends on the unique id. */
       const data = await fetchAllRows((from, to) => supabase
         .from("contacts")
-        .select("*")
+        .select(CONTACT_COLUMNS)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, to));

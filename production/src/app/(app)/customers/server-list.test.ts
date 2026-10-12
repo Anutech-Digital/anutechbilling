@@ -21,6 +21,7 @@ import {
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
 import { countsAsNoBusiness, type ProjectLike } from "@/lib/customers/portfolio-status";
 import type { ViewCtx } from "./server-list";
+import { CUSTOMER_COLUMNS } from "@/lib/queries/columns";
 
 /* A copy of page.tsx VIEW_DEFS (a page file cannot export it). The wiring test at the bottom
    checks the page passes its own list in. */
@@ -171,7 +172,7 @@ describe("fetchCustomersPage — 50 rows, filters on the server, exact total", (
     const page = await fetchCustomersPage(client, { search: "", archived: false }, 0);
     expect(page.total).toBe(1234);
     expect(page.rows).toHaveLength(50);
-    expect(calls).toContainEqual(["select", "*", { count: "exact" }]);
+    expect(calls).toContainEqual(["select", CUSTOMER_COLUMNS, { count: "exact" }]);
     expect(calls).toContainEqual(["not", "is_active", "is", false]);
     expect(calls).toContainEqual(["range", 0, CUSTOMERS_PAGE_SIZE - 1]);
     expect(calls.filter((c) => c[0] === "order")).toEqual([
