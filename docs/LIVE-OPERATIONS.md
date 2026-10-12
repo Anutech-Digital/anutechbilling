@@ -65,6 +65,7 @@ All must be ✓ before asking Pardeep for haan. The manager posts this list with
 | 7 | **Point-in-time recovery** is on (7 days) | `gcloud sql instances describe resellersos-db --project=resellsubsos-prod --format="value(settings.backupConfiguration.pointInTimeRecoveryEnabled,settings.backupConfiguration.transactionLogRetentionDays)"` → `True 7` |
 | 8 | **Release notes** written | One short list in chat + on each card: card id, one line in plain words, any migration, anything Pardeep/team must do after. No separate tool exists today |
 | 9 | Previous revision name written down | `gcloud run services describe resellersos --region=asia-southeast1 --project=resellsubsos-prod --format="value(status.traffic)"` — this is the rollback target |
+| 10 | **Human final test** on staging, signed by a named tester | On the train's "🧪 Train jaancho" checklist (board collection `checklists`, doc `train-<sha>`), a FINAL line signed by name, time, the build sha (= the sha going live), the roles tested in a real browser, and the result. No sign-off means no deploy. Money, security and data cards still need Pardeep's own ✓ (row 1). The AI tester's pass does not replace this line. |
 
 **Order on deploy day:** live DB step (Pardeep runs `production/supabase/cloudsql/live/deploy-db-<day>.sh` in his terminal)
 → "DB READY" → push `deploy` → build SUCCESS → `npm run verify:deploy` (shows the live sha) → quick browser check
