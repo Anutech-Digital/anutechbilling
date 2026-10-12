@@ -33,6 +33,7 @@ import { refreshAccessToken, googleOAuthCreds } from "@/lib/google/oauth";
 import { listRecentMessageIds, fetchMessage, toIngestPayload } from "@/lib/email/gmail-read";
 import { ingestInboundEmail } from "@/lib/inbound/ingest";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,6 +95,7 @@ async function handle(req: NextRequest) {
   const errors: string[] = [];
 
   for (const acct of readable) {
+    /* R-897 */ if (!cronTenantAllowed(acct.tenant_id)) continue;
     try {
       const token = await refreshAccessToken(acct.refresh_token as string, creds);
       const access = token.access_token;
@@ -160,5 +162,7 @@ async function handle(req: NextRequest) {
   }));
 }
 
-export const GET = handle;
-export const POST = handle;
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("gmail-inbox", handle);
+export const GET = gated;
+export const POST = gated;

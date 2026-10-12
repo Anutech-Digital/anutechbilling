@@ -22,6 +22,7 @@ import { dunningLogStatus } from "@/lib/invoices/dunning-log-status";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { rupee, formatDate } from "@/lib/utils";
+import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   SUSPEND_NOTICE_STEP,
   decideOverdueSuspension,
@@ -127,6 +128,7 @@ export async function runOverdueSuspension(
   const noticedThisRun = new Set<string>();
 
   for (const sub of subs) {
+    /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
     const tenant = tenantById.get(sub.tenant_id);
     if (!tenant) continue;
     result.subscriptions_checked++;

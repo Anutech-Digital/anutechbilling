@@ -35,6 +35,7 @@ import { addDaysISO } from "@/lib/dates/ist";
 import { loadSalesCatalog } from "@/lib/ai/sales-agent.server";
 import { dispatchTelecall } from "@/lib/ai/actions/telecall-dispatcher";
 import { loadSubscriptionSubject } from "@/lib/telecall/subject.server";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -74,12 +75,10 @@ interface CronResult {
   outcomes: CallOutcome[];
 }
 
-export async function GET(req: Request) {
-  return handle(req);
-}
-export async function POST(req: Request) {
-  return handle(req);
-}
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("ai-telecall-renewals", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<CronResult | { error: string }>> {
   /* ── Auth — FAIL CLOSED ──────────────────────────────────────────────────
@@ -155,6 +154,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
      forty simultaneous rings out of one caller ID, which is what a vendor's abuse detection is
      built to stop. Slower is the correct shape here. */
   for (const sub of batch) {
+    /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
     let catalogue = catalogues.get(sub.tenant_id);
     if (!catalogue) {
       catalogue = await loadSalesCatalog(admin, sub.tenant_id);

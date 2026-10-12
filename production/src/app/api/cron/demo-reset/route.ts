@@ -25,6 +25,7 @@ import { reportCron } from "@/lib/ops/cron-report";
 import { istToday } from "@/lib/dates/ist";
 import { DEMO_SEEDER_EMAIL, demoEnabled } from "@/lib/demo/demo-account";
 import { ensureDemoTenant, resetDemoData, signInAs } from "@/lib/demo/demo-account.server";
+import { gatedCron } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,5 +60,7 @@ async function handle(req: Request) {
   return NextResponse.json(reportCron("demo-reset", body), { status: r.ok ? 200 : 500 });
 }
 
-export const GET = handle;
-export const POST = handle;
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("demo-reset", handle);
+export const GET = gated;
+export const POST = gated;

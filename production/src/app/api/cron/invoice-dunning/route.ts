@@ -44,6 +44,7 @@ import { loadLateCharges } from "@/lib/late-charges/load";
 import { lateChargesSentence } from "@/lib/late-charges/charges";
 import { istToday } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -224,6 +225,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
   const wa = createReminderSender();
 
   for (const inv of invoices) {
+    /* R-897 */ if (!cronTenantAllowed(inv.tenant_id)) continue;
     result.considered++;
     if (inv.quote_id && creditQuoteIds.has(inv.quote_id)) { result.skipped++; continue; }  // R-346
     const tenant = tenantById.get(inv.tenant_id);
@@ -441,5 +443,7 @@ automatically. Decide whether to call them, agree a plan, or pause the service.`
   return NextResponse.json(reportCron("invoice-dunning", result));
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("invoice-dunning", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }

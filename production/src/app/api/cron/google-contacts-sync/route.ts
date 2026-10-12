@@ -12,6 +12,7 @@ import { syncUserContacts } from "@/lib/google/contacts";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { CONTACT_IMPORT_RETIRED, contactImportRetired } from "@/lib/contacts/retired";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,6 +42,7 @@ async function handle(req: NextRequest) {
   const errors: string[] = [];
   const totals = { pulled: 0, pushed: 0, created: 0, deleted: 0 };
   for (const r of rows ?? []) {
+    /* R-897 */ if (!cronTenantAllowed(r.tenant_id)) continue;
     try {
       const res = await syncUserContacts(admin, r.user_id, r.tenant_id);
       totals.pulled += res.pulled;
@@ -64,5 +66,7 @@ async function handle(req: NextRequest) {
   }));
 }
 
-export async function GET(req: NextRequest) { return handle(req); }
-export async function POST(req: NextRequest) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("google-contacts-sync", handle);
+export async function GET(req: NextRequest) { return gated(req); }
+export async function POST(req: NextRequest) { return gated(req); }

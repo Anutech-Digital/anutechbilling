@@ -43,6 +43,7 @@ import { localDateISO } from "@/lib/leads/outcomes";
 import { syncSubscriptionInstalments, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -74,8 +75,10 @@ interface BillingCronResult {
   errors:               ErrorRow[];
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("billing", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<BillingCronResult | { error: string }>> {
   const expected = process.env.CRON_SECRET?.trim();
@@ -151,6 +154,7 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   }
 
   for (const sub of subs) {
+    /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
     try {
       const quote = sub.quote_id ? quoteById.get(sub.quote_id) : undefined;
       /* R-527: the per-subscription work lives in lib/billing/sync-instalments.server.ts so a

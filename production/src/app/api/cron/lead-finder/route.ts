@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { runAllLeadFinders } from "@/lib/leads/lead-finder.server";
+import { gatedCron } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,5 +18,7 @@ async function handle(req: NextRequest) {
   return NextResponse.json(reportCron("lead-finder", { ok: true, ...r, failed: r.errors.length }));
 }
 
-export async function GET(req: NextRequest) { return handle(req); }
-export async function POST(req: NextRequest) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("lead-finder", handle);
+export async function GET(req: NextRequest) { return gated(req); }
+export async function POST(req: NextRequest) { return gated(req); }

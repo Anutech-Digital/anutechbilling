@@ -6,6 +6,13 @@
  * with 2,500 of them the month's snapshot silently held 1,000.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+/* R-897: route logic under test — the automation gate is passed through here; it has its own tests (_lib/automation-gate.test.ts). */
+vi.mock("@/lib/automation/cron-gate", () => ({
+  gatedCron: (_job: string, h: unknown) => h,
+  cronTenantAllowed: () => true,
+  isCronDryRun: () => false,
+  noteWouldSend: () => {},
+}));
 import { fakePostgrest } from "@/lib/ops/fake-postgrest.testutil";
 
 const db = vi.hoisted(() => ({ current: null as null | ReturnType<typeof import("@/lib/ops/fake-postgrest.testutil").fakePostgrest> }));

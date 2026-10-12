@@ -26,6 +26,7 @@ import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,8 +80,10 @@ ${tenantName}`,
   };
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("birthday-greetings", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<GreetingResult | { error: string }>> {
   // ── Auth — FAIL CLOSED ────────────────────────────────────────────────
@@ -150,6 +153,7 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
   };
 
   for (const c of contacts) {
+    /* R-897 */ if (!cronTenantAllowed(c.tenant_id)) continue;
     const kinds: Kind[] = [];
     if (isToday((c as { birthday?: string | null }).birthday ?? null))    kinds.push("birthday");
     if (isToday((c as { anniversary?: string | null }).anniversary ?? null)) kinds.push("anniversary");
@@ -159,6 +163,8 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
       result.matched += 1;
 
       if (!c.email) { result.skipped_no_email += 1; continue; }
+      /* R-897: practice run — note who would get it, claim nothing, send nothing. */
+      if (isCronDryRun()) { noteWouldSend({ tenantId: c.tenant_id, to: c.email, channel: "email", kind: `greeting_${kind}` }); continue; }
 
       // ── Idempotency claim: unique (tenant, contact, kind, channel, year) ──
       const { data: claimed, error: claimErr } = await admin

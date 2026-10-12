@@ -15,6 +15,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   indiamartImportArgs, indiamartUrl, parseIndiamartResponse, pullWindow, RATE_LIMIT_BACKOFF_MINUTES,
 } from "./indiamart";
@@ -59,6 +60,7 @@ export async function runIndiamartPull(opts: {
   if (rows.length === 0) { result.disabled = true; return result; }
 
   for (const row of rows) {
+    /* R-897 */ if (!cronTenantAllowed(row.tenant_id)) continue;
     result.tenants++;
     const tenantId = row.tenant_id;
     try {

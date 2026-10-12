@@ -37,6 +37,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { runSweepWithRetry } from "@/lib/backup/sweep-retry";
 import { runPerTenantBackup, type TenantBackupInfo } from "@/lib/backup/per-tenant";
 import { reportCron } from "@/lib/ops/cron-report";
+import { gatedCron } from "@/lib/automation/cron-gate";
 import {
   OFFSITE_BUCKET,
   offsiteObjectName,
@@ -203,7 +204,7 @@ async function legacySweep(admin: Admin, upload: ReturnType<typeof makeUploader>
   }));
 }
 
-export async function GET(req: NextRequest) {
+async function runCron(req: NextRequest) {
   const secret = process.env.CRON_SECRET?.trim();
   if (!secret) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
 
@@ -298,3 +299,6 @@ export async function GET(req: NextRequest) {
     errors: report.offsite_errors.map((e) => `off-site copy: ${e}`),
   }));
 }
+
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+export const GET = gatedCron("backup", runCron);

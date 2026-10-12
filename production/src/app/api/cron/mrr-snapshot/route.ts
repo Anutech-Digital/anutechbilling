@@ -24,6 +24,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
 import { chunk } from "@/lib/ops/p-limit";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -95,6 +96,7 @@ async function handle(req: Request): Promise<NextResponse<SnapshotResult | { err
   const tenantIds = new Set<string>();
 
   for (const s of subs) {
+    /* R-897 */ if (!cronTenantAllowed(s.tenant_id)) continue;
     if (!s.customer_id) {
       /* A subscription with no customer cannot be attributed, and guessing would put
          revenue against the wrong retention cohort. Counted so the gap is visible. */
@@ -140,5 +142,7 @@ async function handle(req: Request): Promise<NextResponse<SnapshotResult | { err
   return NextResponse.json(reportCron("mrr-snapshot", result));
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("mrr-snapshot", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
