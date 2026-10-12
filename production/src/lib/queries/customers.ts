@@ -12,6 +12,7 @@ import { attachPrimaryContact } from "@/lib/contacts/attach";
 import { requireTenantId } from "@/lib/queries/require-tenant";
 import type { Customer, Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { mergeNameOnly, type NameOnlyCustomerRow } from "@/lib/customers/name-only";
 import { missingInvoiceState, withStateCode } from "@/lib/gst/gstin-state";
 import { flattenPages } from "@/lib/queries/keyset";
 
@@ -36,13 +37,26 @@ export async function fetchAllCustomers(supabase: Client): Promise<Customer[]> {
      fetchAllRows pages until a short page comes back. The order ENDS ON id because an
      offset page over an order with ties can repeat or skip a row across a page
      boundary — see the helper header; name alone is not a total order. */
-  return await fetchAllRows<Customer>((from, to) =>
-    supabase
-      .from("customers")
-      .select("*")
-      .order("name", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to));
+  const [full, nameOnly] = await Promise.all([
+    fetchAllRows<Customer>((from, to) =>
+      supabase
+        .from("customers")
+        .select("*")
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)),
+    /* R-1004: sales / support / delivery read only their own or linked customers in full; the
+       rest arrive here by NAME ONLY (no phone, email, GSTIN) so pickers still list every
+       company. Empty for owner / manager / accountant / billing. A database without the RPC
+       yet (rollout order) gives the old list rather than an error. */
+    fetchAllRows<NameOnlyCustomerRow>((from, to) =>
+      supabase
+        .rpc("customers_name_only")
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)).catch((): NameOnlyCustomerRow[] => []),
+  ]);
+  return mergeNameOnly(full, nameOnly);
 }
 
 export function useCustomers(opts: { enabled?: boolean } = {}) {

@@ -21,6 +21,8 @@ import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { isNameOnlyCustomer } from "@/lib/customers/name-only";
 import { toastError } from "@/lib/errors/toast-error";
 import { canSend, requiredApproval } from "@/lib/quotes/approval";
 import { lineEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
@@ -1853,6 +1855,7 @@ export function QuoteBuilder() {
                   country + place-of-supply needed to get GST right. */}
               {customerId ? (
                 <div className="rounded-lg border border-hairline bg-paper-2/40 px-3 py-2.5">
+                  {isNameOnlyCustomer(customer) && <ClaimCustomerNotice customerId={customerId} />}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
                     <div className="min-w-0">
                       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-0.5">Website</div>
@@ -3253,5 +3256,39 @@ function CompanyStateFix() {
         {COMPANY_STATE_FIX.label} →
       </Link>
     </span>
+  );
+}
+
+/**
+ * R-1004: a customer with no account manager reaches sales BY NAME ONLY — no phone, email or
+ * GSTIN. Claiming it (claim_customer) makes the caller its account manager; the list then
+ * reloads with the full row, so the quote can be sent and taxed from the real record.
+ */
+function ClaimCustomerNotice({ customerId }: { customerId: string }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = React.useState(false);
+  const claim = async () => {
+    setBusy(true);
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const { error } = await createClient().rpc("claim_customer", { p_customer_id: customerId });
+      if (error) throw error;
+      await qc.invalidateQueries({ queryKey: ["customers"] });
+      toast.success("Customer claimed — you are now its account manager");
+    } catch (e) {
+      toastError(e, { fallback: "Could not claim this customer." });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mb-2.5 pb-2.5 border-b border-hairline/70 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-2xs text-ink-2">
+        Contact details hidden — this customer has no account manager yet.
+      </p>
+      <Button size="sm" variant="outline" onClick={claim} disabled={busy}>
+        {busy ? "Claiming…" : "Claim customer"}
+      </Button>
+    </div>
   );
 }

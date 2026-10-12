@@ -14068,6 +14068,7 @@ export type Database = {
         }
         Returns: Json
       }
+      claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
         Returns: {
@@ -14216,6 +14217,20 @@ export type Database = {
       current_user_is_owner: { Args: never; Returns: boolean }
       customer_name_key: { Args: { p_name: string }; Returns: string }
       customer_names_agree: { Args: { a: string; b: string }; Returns: boolean }
+      customers_name_only: {
+        Args: never
+        Returns: {
+          account_manager_id: string
+          country: string
+          customer_number: string
+          display_name: string
+          has_gstin: boolean
+          id: string
+          is_active: boolean
+          name: string
+          state_code: string
+        }[]
+      }
       decide_invoice_write_off: {
         Args: { p_decision: string; p_draft_id: string }
         Returns: string
@@ -14670,6 +14685,7 @@ export type Database = {
         }[]
       }
       my_attendance_today: { Args: never; Returns: Json }
+      my_customer_ids: { Args: never; Returns: string[] }
       my_employee_link_choices: { Args: never; Returns: Json }
       my_employee_profile: { Args: never; Returns: Json }
       nav_badges: { Args: { p_approval_tiers?: string[] }; Returns: Json }

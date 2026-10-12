@@ -34,9 +34,12 @@ insert into public.users (id, tenant_id, email, role, is_active) values
   ('71900000-0000-4000-8000-0000000000a7', '71900000-0000-4000-8000-000000000002', 'r719-other@example.in',      'owner',      true);
 
 /* Seed rows of our tenant, written as the migration owner (RLS does not apply here).
-   The customer is backdated so it is not "just created" for the delete-undo window. */
-insert into public.customers (id, tenant_id, name, gstin, created_at) values
-  ('71900000-0000-4000-8000-0000000000c1', '71900000-0000-4000-8000-000000000001', 'R719 Customer', '07AAAAA0000A1Z5', now() - interval '2 days');
+   The customer is backdated so it is not "just created" for the delete-undo window.
+   R-1004: the sales login is this customer's account manager — since 20261012023458 sales
+   reads (and so can update) only customers it or its team manages. */
+insert into public.customers (id, tenant_id, name, gstin, created_at, account_manager_id) values
+  ('71900000-0000-4000-8000-0000000000c1', '71900000-0000-4000-8000-000000000001', 'R719 Customer', '07AAAAA0000A1Z5', now() - interval '2 days',
+   '71900000-0000-4000-8000-0000000000a5');
 insert into public.quotes (id, tenant_id, customer_name, customer_id) values
   ('R719-Q-1', '71900000-0000-4000-8000-000000000001', 'R719 Customer', '71900000-0000-4000-8000-0000000000c1');
 insert into public.payments (id, tenant_id, quote_id, customer_id, amount, method) values
