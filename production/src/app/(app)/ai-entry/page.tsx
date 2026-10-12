@@ -128,6 +128,7 @@ export default function AiEntryPage() {
               us={us}
               todayIST={today}
               userId={me.userId}
+              role={me.role}
               onDone={(state) => { if (state === "discarded") setGone((g) => new Set(g).add(i)); }}
             />
           ))}

@@ -67,7 +67,7 @@ import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome } from "@/lib/accounting/tds-receipt";
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
-import { isReplayResult, paymentTagPatch, replayToast } from "@/lib/payments/record-payment-replay";
+import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
 
 const schema = z.object({
@@ -523,116 +523,62 @@ export function RecordPaymentDialog({
       // reseller's PAN — it's a receivable from govt, not from the customer.
       const tdsActive = !!data.tdsDeducted;
 
-      // Redeem advance credit FIRST (atomic + row-locked) so it can never be
-      // double-spent if the payment insert below fails. Use the amount the RPC
-      // actually consumed, not the requested amount.
-      let appliedCredit = 0;
-      if (appliedCreditAmount > 0 && customerId) {
-        const { data: consumed, error: rErr } = await supabase.rpc("redeem_customer_credits", {
-          p_customer_id: customerId,
-          p_amount:      appliedCreditAmount,
-          p_note:        `Applied to quote ${quoteId}`,
-        });
-        if (rErr) throw new Error(rErr.message);
-        appliedCredit = consumed ?? 0;
-      }
-
-      const settledAmount = (tdsActive ? data.amount + tdsAmount : data.amount) + appliedCredit;
-
-      // ── 2. Single atomic RPC — replaces 7-9 chained client mutations.
-      // When TDS is deducted, call record_payment_with_tds so the TDS receivable
-      // row commits in the SAME transaction (audit #22). Otherwise the plain
-      // record_payment path is completely unchanged.
+      /* ── 2. ONE call, ONE transaction (R-895). record_desk_payment redeems the advance
+         credit, records the payment for (amount + credit actually consumed) — through
+         record_payment_with_tds when TDS was deducted, so the TDS receivable commits with it
+         (audit #22) — tags the receipt date + bank account (R-1118), and moves the settled
+         invoice's paid_date to that date (R-015). Any failure rolls ALL of it back, credit
+         included; a replay (R-374: reference already recorded) consumes no credit and leaves
+         the earlier payment untouched. Before this the page redeemed credit first, as its own
+         committed call, and tried to put it back by hand when the payment failed — a put-back
+         R-719 refuses and a dropped connection skips, so the credit was lost. */
+      const settledAmount = tdsActive ? data.amount + tdsAmount : data.amount;
       const method = data.method as "upi" | "razorpay" | "bank_transfer" | "cheque" | "cash" | "other";
       const notes  = [
         data.notes || null,
         tdsActive
           ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(quotePreGST)}`
           : null,
-        appliedCredit > 0 ? `Advance credit applied ${rupee(appliedCredit)}` : null,
       ].filter(Boolean).join(" · ") || null;
+      const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
 
-      const { data: r, error } = tdsActive
-        ? await supabase.rpc("record_payment_with_tds", {
-            p_quote_id:     quoteId,
-            p_amount:       settledAmount,
-            p_method:       method,
-            p_reference:    data.reference,
-            p_notes:        notes,
-            p_tds_amount:   tdsAmount,
-            p_tds_gross:    quotePreGST,
-            p_tds_net_paid: data.amount,
-            p_tds_section:  data.tdsSection ?? "194J",
-            p_tds_rate_pct: tdsRatePct,
-            p_customer_tan: data.customerTan?.trim() || null,
-            p_invoice_id:   invoiceId ?? null,
-            /* R-025, and the expensive one. This read the WALL CLOCK in UTC, so a
-               payment recorded at 01:00 IST on 1 April was stamped with 31 March —
-               the previous financial year — and the TDS certificate for it then never
-               matches the customer's 26AS.
-
-               Two things were wrong and only one of them was the timezone: it also
-               ignored the date the operator actually chose. A payment received on
-               28 March and entered on 2 April belongs to FY 2025-26, whatever today
-               is. The FY follows the PAYMENT date; `istToday()` is only the fallback
-               for the impossible case of an empty field. */
-            p_fiscal_year:  fiscalYearFromDate(data.receivedDate || istToday()),
-          })
-        : await supabase.rpc("record_payment", {
-            p_quote_id:  quoteId,
-            p_amount:    settledAmount,
-            p_method:    method,
-            p_reference: data.reference,
-            p_notes:     notes,
-          });
-      /* Put redeemed advance credit back. Credit is redeemed BEFORE record_payment, so
-         when nothing is recorded — the RPC failed, or (R-374) the reference was already
-         recorded — the customer must not silently lose it. */
-      const restoreAppliedCredit = async (why: string) => {
-        if (appliedCredit <= 0 || !customerId) return;
-        try {
-          const { data: authC } = await supabase.auth.getUser();
-          const meC = authC?.user
-            ? (await supabase.from("users").select("tenant_id").eq("id", authC.user.id).maybeSingle()).data
-            : null;
-          if (meC) {
-            await supabase.from("customer_credits").insert({
-              tenant_id:       meC.tenant_id,
-              customer_id:     customerId,
-              amount:          appliedCredit,
-              source:          "overpayment",
-              source_quote_id: quoteId,
-              note:            `Restored — ${why} after ₹${appliedCredit} credit was applied to quote ${quoteId}`,
-              status:          "open",
-            });
-          }
-        } catch (compErr) {
-          console.error("[record-payment] credit compensation failed — advance credit may be lost, restore manually:", compErr);
-        }
-      };
-
-      if (error) {
-        // Compensation: record_payment failed AFTER advance credit was redeemed
-        // above → put the credit back so the customer never silently loses it.
-        // (The proper long-term fix is folding redemption into record_payment's
-        // transaction; this saga keeps it safe without touching the money RPC.)
-        await restoreAppliedCredit("payment failed");
-        throw error;
-      }
-      if (!r) throw new Error("record_payment returned no result");
+      const { data: r, error } = await supabase.rpc("record_desk_payment", {
+        p_quote_id:           quoteId,
+        p_amount:             settledAmount,
+        p_method:             method,
+        p_reference:          data.reference,
+        p_notes:              notes,
+        p_credit_customer_id: appliedCreditAmount > 0 && customerId ? customerId : null,
+        p_credit_amount:      appliedCreditAmount > 0 && customerId ? appliedCreditAmount : 0,
+        p_received_on:        tagArgs.p_received_on,
+        p_bank_account_id:    tagArgs.p_bank_account_id,
+        ...(tdsActive
+          ? {
+              p_tds_amount:   tdsAmount,
+              p_tds_gross:    quotePreGST,
+              p_tds_net_paid: data.amount,
+              p_tds_section:  data.tdsSection ?? "194J",
+              p_tds_rate_pct: tdsRatePct,
+              p_customer_tan: data.customerTan?.trim() || null,
+              p_invoice_id:   invoiceId ?? null,
+              /* R-025: the FY follows the PAYMENT date the operator chose, not the wall
+                 clock — a payment received on 28 March and entered on 2 April belongs to the
+                 earlier FY. `istToday()` is only the fallback for an empty field. */
+              p_fiscal_year:  fiscalYearFromDate(data.receivedDate || istToday()),
+            }
+          : {}),
+      });
+      if (error) throw error;
+      if (!r) throw new Error("record_desk_payment returned no result");
 
       // Idempotent replay (same reference re-submitted / RQ retry): the payment
-      // already exists and record_payment did NOT insert a new row.
+      // already exists and nothing new was recorded — no credit was used either.
       const isReplay = isReplayResult(r);
 
       /* R-374: on a replay NOTHING after this point may run. The payment_id is the EARLIER
-         payment's row — patching its date/bank account, stamping a domain, moving an
-         invoice's paid_date or attaching a receipt would all rewrite that payment with this
-         form's values, and the old "Payment recorded" toast hid that the new amount was
-         never saved (a cheque number reused for a second instalment). Give back any credit
-         redeemed for this submit, read what IS recorded, and stop. */
+         payment's row — stamping a domain or attaching a receipt would rewrite that payment
+         with this form's values. Read what IS recorded, and stop. */
       if (isReplay) {
-        await restoreAppliedCredit("payment reference already recorded");
         const { data: prior } = r.payment_id
           ? await supabase.from("payments").select("amount, received_at").eq("id", r.payment_id).maybeSingle()
           : { data: null };
@@ -647,35 +593,6 @@ export function RecordPaymentDialog({
          is said out loud — never a silently blank "+ Add domain". */
       const domainConflict = domainConflictMessage(r);
       if (domainConflict) toast.warning(domainConflict.title, { description: domainConflict.description, duration: 12_000 });
-
-      // ── 2b. Tag date + bank account that received this money ──────
-      const tagPatch = paymentTagPatch({ isReplay, receivedDate: data.receivedDate, bankAccountId });
-      if (r.payment_id && tagPatch) {
-        const { error: bankErr } = await supabase
-          .from("payments")
-          .update(tagPatch)
-          .eq("id", r.payment_id);
-        if (bankErr) console.error("[record-payment] date/bank tag failed (payment still recorded):", bankErr);
-      }
-
-      /* R-015. `record_payment` stamps `invoices.paid_date` with the day it SETTLED,
-         because it has no received-date parameter to read — the date the operator
-         actually chose only arrives here, a moment later. When this payment is the one
-         that closed the invoice, move paid_date onto that date so the invoice agrees
-         with the receipt behind it.
-
-         Best-effort and last, like the writes above: the money is already recorded and
-         the invoice is already marked paid, so a failure here is a wrong DATE on a
-         correct invoice — worth logging loudly, not worth failing the payment over.
-         `paid_date` is deliberately mutable on an issued invoice (the freeze trigger
-         lists it as lifecycle rather than a Rule 46 particular), so this is allowed. */
-      if (r.invoice_paid && invoiceId && data.receivedDate) {
-        const { error: dateErr } = await supabase
-          .from("invoices")
-          .update({ paid_date: data.receivedDate })
-          .eq("id", invoiceId);
-        if (dateErr) console.error("[record-payment] invoice paid_date not moved to the receipt date:", dateErr);
-      }
 
       // ── 2c. Attach the optional payment-receipt file (best-effort) ───────
       // Uploaded AFTER the money is recorded, via the admin server route. A

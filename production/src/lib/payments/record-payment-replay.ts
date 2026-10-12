@@ -48,6 +48,23 @@ export function paymentTagPatch(a: {
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+/**
+ * R-895 / R-1118: the date + bank-account arguments of record_desk_payment, which tags the
+ * new payment inside the same transaction that records it (the replay rule lives in SQL
+ * now: a replay is never re-tagged). Same filters as paymentTagPatch — a YYYY-MM-DD date
+ * only, and only a real bank_accounts id (R-404) — so a bad value is dropped, not sent.
+ */
+export function deskPaymentTagArgs(a: {
+  receivedDate: string | null | undefined;
+  bankAccountId: string | null | undefined;
+}): { p_received_on: string | null; p_bank_account_id: string | null } {
+  const d = (a.receivedDate ?? "").trim();
+  return {
+    p_received_on:     /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null,
+    p_bank_account_id: isBankAccountId(a.bankAccountId) ? a.bankAccountId.trim() : null,
+  };
+}
+
 export interface ReplayToast {
   tone: "warning";
   title: string;

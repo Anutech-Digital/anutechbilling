@@ -8,6 +8,7 @@ import type { EntryProposal, LeadFields, CustomerFields, ExpenseFields, VendorBi
 import { checkExpense, checkVendorBill, checkPayment, checkCustomer, type LawWarning, type Party } from "@/lib/compliance/entry-rules";
 import { stateCodeFromGstin, stateCodeFromName } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { canRecordMoney } from "@/lib/auth/roles";
 
 export interface Me { userId: string }
 
@@ -114,4 +115,19 @@ export function warningsFor(p: EntryProposal, us: Party, todayIST: string, ctx: 
     case "customer": return checkCustomer({ gstinTyped: p.gstinTyped ?? null, gstinValid: false });
     default: return [];
   }
+}
+
+/**
+ * R-895 (Pardeep's R-718 money table): sales, sales_senior, support and delivery take no money
+ * action. AI Entry may still READ a vendor bill or a payment out of a chat, but for those roles
+ * the card offers no Save / no link into Invoices — it says who records it instead. (The
+ * vendor_bills insert policy refuses them too since migration r895_money_policies.) An
+ * unknown role (still loading) is allowed, like canRecordMoney.
+ */
+export function moneyEntryBlockedNote(kind: EntryProposal["kind"], role: string | null | undefined): string | null {
+  if (kind !== "vendor_bill" && kind !== "payment") return null;
+  if (canRecordMoney(role)) return null;
+  return kind === "vendor_bill"
+    ? "Only an owner, manager, accountant or billing user can book a vendor bill — send it to them."
+    : "Only an owner, manager, accountant or billing user can record money received — send it to them.";
 }
