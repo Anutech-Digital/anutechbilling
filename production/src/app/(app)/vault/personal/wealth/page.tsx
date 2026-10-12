@@ -110,14 +110,14 @@ export default function PersonalWealthPage() {
     const investedP = parseRupees(form.invested);
     const currentP = parseRupees(form.current_value);
     // R-1419: a huge number used to reach the bigint column as "1e+21" and fail with a 400.
-    const tooBig = { description: `Up to ₹${MAX_RUPEES.toLocaleString("en-IN")} (₹1 lakh crore). Check for extra zeros.` };
+    const tooBigWhy = `Up to ₹${MAX_RUPEES.toLocaleString("en-IN")} (₹1 lakh crore). Check for extra zeros.`;
     if (!investedP.ok) {
-      if (investedP.reason === "too_big") toast.error("Amount invested is too large", tooBig);
+      if (investedP.reason === "too_big") toast.error("Amount invested is too large", { description: tooBigWhy });
       else toast.error("Amount invested must be a number", { description: "Type digits only, e.g. 50000. No commas or ₹ sign needed." });
       return;
     }
     if (!currentP.ok) {
-      if (currentP.reason === "too_big") toast.error("Current value is too large", tooBig);
+      if (currentP.reason === "too_big") toast.error("Current value is too large", { description: tooBigWhy });
       else toast.error("Current value must be a number", { description: "Type digits only, e.g. 56000. No commas or ₹ sign needed." });
       return;
     }
