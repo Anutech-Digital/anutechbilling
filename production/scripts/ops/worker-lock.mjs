@@ -234,6 +234,10 @@ async function pushWithTurn(card) {
       console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
       process.exit(5);
     }
+    /* R-1430 (12 Oct): the repo is PUBLIC — scan the lines this push adds for secrets / client data.
+       Prints file:line + rule only, never the value. */
+    try { execFileSync(process.execPath, [path.join("scripts", "ops", "secret-scan.mjs"), "--diff", "anutech/manager-pardeep"], { stdio: "inherit" }); }
+    catch { console.error("✗ secret-scan ne push roka — upar wali file:line se value hatao (env var use karo). Asli secret kabhi push hua ho to ROTATE karo."); process.exit(6); }
     /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
     sh("git push -q anutech HEAD:manager-pardeep");
