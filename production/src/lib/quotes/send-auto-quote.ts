@@ -29,7 +29,7 @@
  * way. An automated send that fails silently is worse than one that never ran: the operator
  * sees "quote sent" in the pipeline and stops chasing.
  */
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -230,7 +230,7 @@ export async function sendAutoQuote(
   const tenantState = (tenant as { state?: string | null }).state ?? null;
 
 
-  const result = await sendEmail({
+  const result = await sendCustomerEmail({
     to:      args.recipient,
     from:    args.fromEmail,
     /* ── THE MAILBOX THE APP READS, not simply "a person" ────────────────────

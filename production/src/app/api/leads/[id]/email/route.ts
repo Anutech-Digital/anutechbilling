@@ -25,7 +25,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
 
 export const dynamic = "force-dynamic";
@@ -80,7 +80,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     );
   }
 
-  const sent = await sendEmail({
+  const sent = await sendCustomerEmail({
     to:      lead.contact_email,
     subject: parsed.subject,
     text:    parsed.body,

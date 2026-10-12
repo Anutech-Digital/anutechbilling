@@ -19,7 +19,7 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { razorpayMode } from "./razorpay-readiness";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import {
   decidePaymentLink,
   paymentLinkMessage,
@@ -154,7 +154,7 @@ export async function createAndSendPaymentLink(args: {
       };
     }
 
-    const sent = await sendEmail({
+    const sent = await sendCustomerEmail({
       to: args.customerEmail.trim(),
       from: args.fromEmail,
       subject: `Payment link for quote ${args.quoteId}`,

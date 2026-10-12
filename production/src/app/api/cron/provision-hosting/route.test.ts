@@ -13,6 +13,7 @@ vi.mock("@/lib/automation/cron-gate", () => ({
   cronTenantAllowed: () => true,
   isCronDryRun: () => false,
   noteWouldSend: () => {},
+  currentCronRun: () => null,
 }));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -21,7 +21,7 @@ import { reportCron } from "@/lib/ops/cron-report";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { resolveOwnerAlert, type TenantContact } from "@/lib/email/owner-alert";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
@@ -205,7 +205,7 @@ async function handle(req: Request) {
       if (isHosting) {
         if (mayMailCustomer(lead.id) && lead.contact_email && owner.ok) {
           try {
-            await sendEmail({
+            await sendCustomerEmail({
               to:        lead.contact_email,
               from:      FROM_EMAIL,
               replyTo:   voice ? voice.replyTo : owner.to,
@@ -236,7 +236,7 @@ ${sellerPhone ? `Prefer to talk? WhatsApp ${contactWho} on ${sellerPhone}.\n\n` 
          sees it. So this now requires `owner.ok`, and the skip is counted. */
       if (!isHosting && mayMailCustomer(lead.id) && lead.contact_email && owner.ok) {
         try {
-          await sendEmail({
+          await sendCustomerEmail({
             to:      lead.contact_email,
             from:    FROM_EMAIL,
             replyTo: voice ? voice.replyTo : owner.to,

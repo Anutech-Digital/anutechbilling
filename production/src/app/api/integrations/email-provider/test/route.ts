@@ -17,7 +17,7 @@
  */
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,7 +40,7 @@ export async function POST() {
 
   const stamp = new Date().toISOString();
 
-  const result = await sendEmail({
+  const result = await sendInternalEmail({
     to: user.email,              // ← session, never the body
     subject: `ResellerOS test email · ${stamp.slice(0, 16).replace("T", " ")} UTC`,
     text:

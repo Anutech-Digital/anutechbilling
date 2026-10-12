@@ -27,9 +27,8 @@
  * morning into a customer discovering we never answered.
  */
 import type { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail, sendCustomerWhatsApp, sendInternalEmail } from "@/lib/messaging";
 import { replySubject } from "@/lib/email/reply-subject";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { resolveAutonomy } from "../autonomy";
 import { loadAutonomyPolicy, logAiAction } from "../autonomy.server";
@@ -221,7 +220,7 @@ async function notifySupportDesk(args: SupportDispatchArgs, reason: string): Pro
     "Nothing has been sent to the customer.",
   ];
 
-  const res = await sendEmail({
+  const res = await sendInternalEmail({
     to: alert.to,
     from: args.fromEmail,
     subject: `[${decision.severity_level}] Support ticket ${ticketId} needs a person — ${args.customerName}`,
@@ -379,7 +378,7 @@ async function sendAnswer(args: SupportDispatchArgs): Promise<SupportDispatchRes
   }
 
   if (args.channel === "email") {
-    const res = await sendEmail({
+    const res = await sendCustomerEmail({
       to: args.customerContact,
       from: args.fromEmail,
       /* `Re: <the customer's subject>` — see lib/email/reply-subject.ts. */
@@ -438,7 +437,7 @@ async function sendAnswer(args: SupportDispatchArgs): Promise<SupportDispatchRes
   }
 
   try {
-    await sendWhatsApp({
+    await sendCustomerWhatsApp({
       tenantId,
       to: args.customerContact,
       message: { kind: "text", text: decision.generated_response.whatsapp_summary },

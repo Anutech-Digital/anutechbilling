@@ -32,7 +32,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { recordDraftFeedback } from "@/lib/ai/draft-feedback.server";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
 
@@ -105,7 +105,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     );
   }
 
-  const sent = await sendEmail({
+  const sent = await sendCustomerEmail({
     to:      enquiry.from_email,
     subject: parsed.subject,
     text:    parsed.body,

@@ -3,12 +3,22 @@
  * Notice first (once), then pause with reason + actor, logged; switch off = nothing.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+/* R-897: customer messages switched ON for these tests (the gate has its own tests). */
+vi.mock("@/lib/automation/gate.server", () => ({
+  automationState: async () => "on",
+  cronTenants: async () => ({ on: [], dry: [] }),
+  recordRun: async () => {},
+  readJobRow: async () => null,
+  ensureDefaultOnRow: async () => {},
+  readTenantJobs: async () => [],
+}));
 /* R-897: route logic under test — the automation gate is passed through here; it has its own tests (_lib/automation-gate.test.ts). */
 vi.mock("@/lib/automation/cron-gate", () => ({
   gatedCron: (_job: string, h: unknown) => h,
   cronTenantAllowed: () => true,
   isCronDryRun: () => false,
   noteWouldSend: () => {},
+  currentCronRun: () => null,
 }));
 import { fakePostgrest } from "@/lib/ops/fake-postgrest.testutil";
 

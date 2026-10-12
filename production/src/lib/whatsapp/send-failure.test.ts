@@ -61,3 +61,10 @@ describe("WhatsAppNotConfiguredError", () => {
     expect(e.message).toBe(LIVE_MESSAGE);
   });
 });
+
+describe("R-897: customer messages switched off", () => {
+  it("is a 409 warning, not a 502", () => {
+    const e = Object.assign(new Error("Customer messages are switched off for this company. The owner can turn them on in Automation."), { name: "CustomerMessageRefusedError" });
+    expect(classifySendFailure(e)).toMatchObject({ status: 409, level: "warn" });
+  });
+});

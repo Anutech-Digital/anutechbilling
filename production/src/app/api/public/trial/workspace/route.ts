@@ -21,7 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 
@@ -202,7 +202,7 @@ export async function POST(request: NextRequest) {
          know is held. Absent details are omitted, never invented. */
       /* Sent whatever the owner-alert lookup returns — it used to need it (owner.ok), so a
          workspace with no owner address sent the customer nothing. */
-      sendEmail({
+      sendCustomerEmail({
         to:      email,
         from:    FROM_EMAIL,
         ...(customerReplyTo ? { replyTo: customerReplyTo } : {}),

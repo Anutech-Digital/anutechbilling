@@ -10,7 +10,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 
 /** How long a link works. Long enough for "I'll check my mail tomorrow". */
 export const VERIFY_TTL_HOURS = 48;
@@ -57,7 +57,7 @@ export async function startEmailVerification(
   });
   if (error) return { sent: false, reason: error.message };
   const mail = verificationEmail(input.name, verifyLink(input.origin, token));
-  const res = await sendEmail({ to: input.email, ...mail, kind: "email_verification" });
+  const res = await sendInternalEmail({ to: input.email, ...mail, kind: "email_verification" });
   return res.status === "sent" ? { sent: true } : { sent: false, reason: res.errorMessage ?? res.status };
 }
 

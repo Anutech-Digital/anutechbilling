@@ -18,7 +18,7 @@ import type { NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import type { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { makeTrialToken } from "@/lib/hosting/trial-token";
@@ -351,7 +351,7 @@ ${signOff}`;
      on "Starting your trial…" while the owner was emailed (25 s of a 30 s wait, measured),
      and a workspace with no owner alert address sent the customer no link at all while
      the page still said "We sent a link". */
-  const confirmation = await sendEmail({
+  const confirmation = await sendCustomerEmail({
     to: email,
     from: FROM_EMAIL,
     ...(customerReplyTo ? { replyTo: customerReplyTo } : {}),

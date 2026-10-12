@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
 
 export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
     );
   }
 
-  await sendEmail({
+  await sendInternalEmail({
     /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
           me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
     route: { tenantId: quote.tenant_id },

@@ -53,7 +53,7 @@ import { reportCron } from "@/lib/ops/cron-report";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { buildDigest, digestText, type Digest, type LogRow } from "@/lib/ops/health-digest";
 import { errorMessage } from "@/lib/ops/fetch-all";
 import { buildOwnerDigest, ownerDigestSubject, ownerDigestText, type OwnerDigest } from "@/lib/digest/owner-digest";
@@ -197,7 +197,7 @@ async function handle(req: Request) {
     ? ownerDigestSubject(owner_digest) + (worst ? " · app needs a look" : "")
     : `ResellerOS — ${worst ? worst.what.slice(0, 60) : "morning digest (numbers missing)"}`;
 
-  const sent = await sendEmail({ to, subject, text: parts.join("\n") });
+  const sent = await sendInternalEmail({ to, subject, text: parts.join("\n") });
 
   return NextResponse.json(reportCron("health-digest", {
     ok: true, clean: logs.digest?.clean ?? false, emailed: sent.status === "sent", to,

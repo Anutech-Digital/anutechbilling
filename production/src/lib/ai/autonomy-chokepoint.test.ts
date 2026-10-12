@@ -126,7 +126,7 @@ describe("every gateable action in the registry is actually wired somewhere", ()
        name only — and the kill switch is what somebody reaches for when a wrong price has
        already gone out. */
     const code = strip(read("lib/ai/actions/quote-dispatcher.ts"));
-    const waAt = code.indexOf("sendWhatsApp({");
+    const waAt = code.indexOf("sendCustomerWhatsApp({");   // R-897: the WhatsApp send now goes through lib/messaging
     const gateAt = code.indexOf("resolveAutonomy(args.sendAction, policy)");
     expect(waAt).toBeGreaterThan(0);
     expect(gateAt).toBeGreaterThan(0);

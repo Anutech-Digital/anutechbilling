@@ -28,7 +28,7 @@ import type { NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { reflect, type ReflectionInput } from "@/lib/ai/reflection";
 import { reflectionEmail, type ReflectionReport } from "@/lib/ai/reflection-digest";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { createAdminClient } from "@/lib/supabase/server";
 import "@/lib/sentry";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
@@ -222,7 +222,7 @@ async function runCron(req: NextRequest) {
     noteWouldSend({ tenantId: reports[0].tenantId, to, channel: "email", kind: "ai_reflection" });
     return NextResponse.json({ ok: true, dryRun: true, windowHours: WINDOW_HOURS, tenants: reports.length, emailed: false });
   }
-  const sent = await sendEmail({
+  const sent = await sendInternalEmail({
     to, subject: mail.subject, text: mail.text,
     route: { tenantId: reports[0].tenantId },
   });

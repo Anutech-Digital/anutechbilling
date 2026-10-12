@@ -21,7 +21,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
+import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
       });
       const buffer = Buffer.from(await blob.arrayBuffer());
 
-      const result = await sendWhatsApp({
+      const result = await sendCustomerWhatsApp({
         tenantId: me.tenant_id,
         to,
         message: {
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Plain text or template branch (no attachment)
-    const result = await sendWhatsApp({
+    const result = await sendCustomerWhatsApp({
       tenantId: me.tenant_id,
       to,
       message: text

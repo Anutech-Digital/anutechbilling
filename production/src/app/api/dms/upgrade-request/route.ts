@@ -19,7 +19,7 @@ import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { checkPanelKey } from "@/lib/dms-engine/panel-auth";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 
 export const dynamic = "force-dynamic";
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
   try {
     const { alert } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);
     if (alert.ok) {
-      await sendEmail({
+      await sendInternalEmail({
         to: alert.to, from: FROM_EMAIL, kind: "dms_upgrade_request_owner", route: { tenantId: BUY_PAGE_TENANT_ID }, replyTo: r.email,
         subject: `Hosting upgrade requested — ${domain}: ${r.currentPlan} → ${r.targetPlan}`,
         text: `${notes}\n\nContact: ${r.fullName} <${r.email}>${r.phone ? ` · ${r.phone}` : ""}\nLead: ${`${trustedOrigin(request.headers)}/leads/${leadId}`}\n\n— ResellerOS`,

@@ -22,7 +22,8 @@ import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, errorMessage } from "@/lib/ops/fetch-all";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
@@ -185,7 +186,7 @@ async function handle(req: Request): Promise<NextResponse<GreetingResult | { err
       const tenant = await getTenant(c.tenant_id);
       const { subject, text } = greetingCopy(kind, c.full_name, tenant?.name ?? "Your team");
 
-      const send = await sendEmail({
+      const send = await sendCustomerEmail({
         to:      c.email,
         subject,
         text,

@@ -28,7 +28,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { decideDunning, dunningMessage, dunningRank, type DunningStep } from "@/lib/invoices/dunning";
 import { upiPayLink } from "@/lib/invoices/pay-link";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { dunningLogStatus, reachedNobody } from "@/lib/invoices/dunning-log-status";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
@@ -327,7 +328,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
            The ESCALATION mail below is deliberately NOT gated: it goes to the reseller, not
            to a customer, and a switch that silenced the app's own alarms would turn one bad
            afternoon into a missed suspension. */
-        const r = await sendEmail({
+        const r = await sendCustomerEmail({
           /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
                 me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
           route: { tenantId: inv.tenant_id },
@@ -351,7 +352,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
            without opening anything — §24: a notification that only says
            "something needs attention" costs a login to find out what. */
         if (tenant?.email) {
-          await sendEmail({
+          await sendInternalEmail({
             /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
                   me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
             route: { tenantId: inv.tenant_id },

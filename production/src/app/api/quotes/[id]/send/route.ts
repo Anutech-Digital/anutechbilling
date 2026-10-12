@@ -25,7 +25,8 @@ import { NextResponse } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { logoDataUri } from "@/lib/pdf/logo";
@@ -284,7 +285,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
   }
 
   // ── 8. Send ──────────────────────────────────────────────────────
-  const sendResult = await sendEmail({
+  const sendResult = await sendCustomerEmail({
     to:      recipient,
     /* Bina `route` ke sendEmail default Resend par jata hai — send.ts:26 khud kehta
        hai "Callers that omit `route` … still go through Resend." Resend test mode me

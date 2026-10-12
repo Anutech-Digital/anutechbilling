@@ -41,7 +41,8 @@ import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
@@ -580,7 +581,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         }
 
         // 5. Send
-        const sendResult = await sendEmail({
+        const sendResult = await sendCustomerEmail({
           to:      recipient,
           subject: tpl.subject,
           text:    tpl.body,

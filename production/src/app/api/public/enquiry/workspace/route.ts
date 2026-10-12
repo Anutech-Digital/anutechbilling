@@ -41,7 +41,8 @@ import { z } from "zod";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { decideAutoSend } from "@/lib/quotes/auto-send-quote";
 import { sendAutoQuote } from "@/lib/quotes/send-auto-quote";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
@@ -382,7 +383,7 @@ export async function POST(request: NextRequest) {
       /* ── EMAIL 1: owner alert — not for a trial request (owner, 30 Sep 2026: "Remove
          this feature completely. That will just annoy the owner."). Staff still see the
          trial as a lead. ─────────────────────────────────────────────────── */
-      owner.ok && !trial && sendEmail({
+      owner.ok && !trial && sendInternalEmail({
         to:      owner.to,
         from:    FROM_EMAIL,
         kind:    "buy_page_lead_alert",
@@ -419,7 +420,7 @@ ${autoSent
          out rather than guessed. Needs a reply-to because a customer told to reply
          is owed somewhere for the reply to land: support for the storefront
          (lib/email/storefront-voice.ts), the owner for a reseller tenant. */
-      customerReplyTo && sendEmail({
+      customerReplyTo && sendCustomerEmail({
         to:      email,
         from:    FROM_EMAIL,
         replyTo: customerReplyTo,

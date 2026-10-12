@@ -34,7 +34,8 @@ import { buildComplianceRows } from "@/lib/compliance/obligations";
 import { isMissingColumnError, profileFromRow, type PgErrorLike } from "@/lib/compliance/profile-row";
 import { dueReminders, renderReminder, type PlannedReminder } from "@/lib/compliance/reminders";
 import { noTdsDeductedPredicate, tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { toIstDate } from "@/lib/dates/ist";
@@ -220,7 +221,7 @@ async function handle(req: Request) {
           let errorMessage: string | null = null;
           try {
             /* `route` ke bina default Resend — test mode. Tenant ka apna transport chahiye. */
-            const r = await sendEmail({
+            const r = await sendInternalEmail({
               to, subject: msg.subject, text: msg.body,
               route: { tenantId: tenant.id },
             });

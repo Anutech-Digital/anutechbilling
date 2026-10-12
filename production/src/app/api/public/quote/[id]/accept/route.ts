@@ -10,7 +10,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { isQuoteExpired, rupee } from "@/lib/utils";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { buildSalesAcknowledgementHtml } from "@/lib/email/quote-template";
 import { configureQuote, describeChanges, type LineChoice } from "@/lib/quotes/configure";
 import { grossAmount } from "@/lib/quotes/amounts";
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
       const { data: tenant } = await supabase
         .from("tenants").select("name, email").eq("id", quote.tenant_id).single();
       if (tenant?.email) {
-        await sendEmail({
+        await sendInternalEmail({
           /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
                 me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
           route: { tenantId: quote.tenant_id },
@@ -224,7 +224,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
         acceptedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       });
 
-      await sendEmail({
+      await sendInternalEmail({
         /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
               me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
         route: { tenantId: quote.tenant_id },
