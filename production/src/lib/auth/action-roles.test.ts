@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mayDo, forbiddenMessage, ACTION_ROLES } from "./action-roles";
+import { MONEY_RECORD_ROLES } from "./roles";
 
 describe("mayDo (S19)", () => {
   it("seats: owner, manager, billing — not sales, support, delivery, accountant", () => {
@@ -32,7 +33,22 @@ const ROUTES: [string, keyof typeof ACTION_ROLES][] = [
   ["app/api/integrations/google-ads/connect/route.ts", "integration.company"],
   ["app/api/integrations/google-business/connect/route.ts", "integration.company"],
   ["app/api/integrations/meta-ads/connect/route.ts", "integration.company"],
+  /* R-880 */
+  ["app/api/quotes/[id]/raise-instalments/route.ts", "money.record"],
+  ["app/api/payments/[id]/receipt/route.ts", "money.record"],
+  ["app/api/quotes/[id]/mark-accepted/route.ts", "quote.accept"],
+  ["app/api/documents/route.ts", "vault.upload"],
+  ["app/api/support/tickets/route.ts", "support.update"],
 ];
+
+describe("R-880 money.record is R-718's table", () => {
+  it("same roles as MONEY_RECORD_ROLES — one list, never two that drift", () => {
+    expect([...ACTION_ROLES["money.record"]].sort()).toEqual([...MONEY_RECORD_ROLES].sort());
+  });
+  it("multi-word roles read as words in the 403", () => {
+    expect(forbiddenMessage("quote.accept")).toBe("Only Owner, Manager, Sales senior, Sales, Billing can mark a quote accepted. Ask one of them to do it.");
+  });
+});
 describe("guarded routes call mayDo", () => {
   for (const [file, action] of ROUTES) {
     it(`${file} → ${action}`, () => {

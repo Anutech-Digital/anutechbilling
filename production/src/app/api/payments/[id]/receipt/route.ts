@@ -15,6 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,13 +31,21 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", authData.user.id).single();
   if (!me?.tenant_id) return NextResponse.json({ error: "No tenant" }, { status: 400 });
 
+  /* R-880: the upload below goes through the admin client with upsert, so before this any
+     member (sales, support…) could replace a payment's proof. Money roles only (R-718:
+     record = owner, manager, accountant, billing) — the same roles R-724 lets read it. */
+  if (!mayDo((me as { role?: string | null }).role, "money.record")) {
+    return NextResponse.json({ error: forbiddenMessage("money.record") }, { status: 403 });
+  }
+
   // The payment must exist AND belong to the caller's tenant — never let one
-  // tenant attach a file to another tenant's payment id.
+  // tenant attach a file to another tenant's payment id. Checked BEFORE any admin write;
+  // filtered on tenant_id too so a cross-tenant id reads as "not found", never as a row.
   const { data: pay } = await supabase
-    .from("payments").select("id, tenant_id").eq("id", paymentId).single();
+    .from("payments").select("id, tenant_id").eq("id", paymentId).eq("tenant_id", me.tenant_id).maybeSingle();
   if (!pay || pay.tenant_id !== me.tenant_id) {
     return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   }
