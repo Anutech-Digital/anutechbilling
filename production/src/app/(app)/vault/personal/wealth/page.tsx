@@ -42,6 +42,7 @@ import {
   type AssetClass,
 } from "@/lib/vault/personal/net-worth";
 import { formatDate, rupee } from "@/lib/utils";
+import { parseRupees, MAX_RUPEES, MAX_UNITS } from "@/lib/vault/personal/parse-rupees";
 
 interface FormState {
   id?: string;
@@ -63,14 +64,6 @@ const EMPTY: FormState = {
   asset_class: "mutual_fund", name: "", invested: "", current_value: "",
   units: "", valued_on: todayIso(), notes: "",
 };
-
-function parseRupees(value: string): number | null {
-  const cleaned = value.replace(/[,\s₹]/g, "");
-  if (cleaned === "") return 0;
-  if (!/^\d+(\.\d+)?$/.test(cleaned)) return null;
-  const n = Math.round(Number(cleaned));
-  return Number.isFinite(n) && n >= 0 ? n : null;
-}
 
 /** How stale is one holding's figure? Returns null when it is fresh enough to say nothing. */
 function stalenessNote(valuedOn: string | null, now: Date): string | null {
@@ -114,13 +107,26 @@ export default function PersonalWealthPage() {
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error("Enter the investment name", { description: "For example \"HDFC Flexi Cap\" or \"SBI FD\"." }); return; }
 
-    const invested = parseRupees(form.invested);
-    const current = parseRupees(form.current_value);
-    if (invested === null) { toast.error("Amount invested must be a number", { description: "Type digits only, e.g. 50000. No commas or ₹ sign needed." }); return; }
-    if (current === null) { toast.error("Current value must be a number", { description: "Type digits only, e.g. 56000. No commas or ₹ sign needed." }); return; }
+    const investedP = parseRupees(form.invested);
+    const currentP = parseRupees(form.current_value);
+    // R-1419: a huge number used to reach the bigint column as "1e+21" and fail with a 400.
+    const tooBig = { description: `Up to ₹${MAX_RUPEES.toLocaleString("en-IN")} (₹1 lakh crore). Check for extra zeros.` };
+    if (!investedP.ok) {
+      if (investedP.reason === "too_big") toast.error("Amount invested is too large", tooBig);
+      else toast.error("Amount invested must be a number", { description: "Type digits only, e.g. 50000. No commas or ₹ sign needed." });
+      return;
+    }
+    if (!currentP.ok) {
+      if (currentP.reason === "too_big") toast.error("Current value is too large", tooBig);
+      else toast.error("Current value must be a number", { description: "Type digits only, e.g. 56000. No commas or ₹ sign needed." });
+      return;
+    }
+    const invested = investedP.value;
+    const current = currentP.value;
 
     const units = form.units.trim() === "" ? null : Number(form.units);
     if (units !== null && !Number.isFinite(units)) { toast.error("Units must be a number", { description: "Leave it blank if you don't track units." }); return; }
+    if (units !== null && Math.abs(units) >= MAX_UNITS) { toast.error("Units is too large", { description: "Check for extra zeros, or leave it blank." }); return; }
 
     try {
       await save.mutateAsync({
