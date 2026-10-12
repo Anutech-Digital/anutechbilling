@@ -168,6 +168,30 @@ describe("GET /api/agent/feedback-queue", () => {
     expect(r.status).toBe(500);
   });
 
+  it("R-1412: logs the read error's code + message (no row data) before the 500", async () => {
+    db.error = { code: "PGRST000", message: "Timed out fetching a new connection" } as { message: string };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const r = await call("q-token");
+      expect(r.status).toBe(500);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(spy.mock.calls[0][0]))).toEqual({
+        event: "feedback_queue_read_failed", card: "R-1412",
+        code: "PGRST000", message: "Timed out fetching a new connection",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("R-1412: the data gateway's unknown-column error still takes the fallback read", async () => {
+    const { isMissingColumnError } = await import("@/lib/feedback/auto-send");
+    // What src/server/postgrest/build.ts throws for a column its catalog lacks (HTTP 400).
+    expect(isMissingColumnError({ code: "42703", message: "column feedback.urgent_at does not exist" })).toBe(true);
+    expect(isMissingColumnError({ code: null, message: "column feedback.agent_claimed_at does not exist" })).toBe(true);
+    expect(isMissingColumnError({ code: "PGRST000", message: "Timed out fetching a new connection" })).toBe(false);
+  });
+
   it("R-397: urgent reports come first (earliest marked first), with urgent: true", async () => {
     db.rows = [
       { id: "f1", title: "old", agent_claimed_at: null, urgent_at: null },

@@ -1,0 +1,5 @@
+# R-1412 queue-watch: the token file and the seen-ids state stay on this machine.
+.queue-watch.env
+.queue-watch-state.json
+.queue-watch-state.json.tmp
+!.queue-watch.env.example

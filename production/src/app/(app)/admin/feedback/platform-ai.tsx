@@ -70,7 +70,7 @@ export function useSendPlatformToAi() {
     },
     onSuccess: (r) => {
       toast.success(dispatchSummary(r.queued.length, r.skipped.length), {
-        description: r.queued.length > 0 ? "It becomes a card on the work board within the hour." : undefined,
+        description: r.queued.length > 0 ? "It becomes a card on the work board. Urgent: in a few minutes; others: within 30 min." : undefined,
       });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not send to the AI."),

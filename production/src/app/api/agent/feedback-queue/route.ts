@@ -72,7 +72,18 @@ export async function GET(req: Request) {
   let res = await read(`${COLS}, ${AGENT_CLAIMED_AT_COLUMN}, ${URGENT_AT_COLUMN}`, true);
   if (res.error && isMissingColumnError(res.error)) res = await read(`${COLS}, ${AGENT_CLAIMED_AT_COLUMN}`, false);
   if (res.error && isMissingColumnError(res.error)) res = await read(COLS, false);
-  if (res.error) return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
+  if (res.error) {
+    /* R-1412: staging logged these 500s with nothing beside them. Code + message only — never
+       row data. (The 10–18 s 500s seen on staging 11–12 Oct were not this line: the instance
+       ran out of JS heap mid-request and Cloud Run answered 500 for the request in flight.) */
+    console.error(JSON.stringify({
+      event: "feedback_queue_read_failed",
+      card: "R-1412",
+      code: res.error.code ?? null,
+      message: String(res.error.message ?? "").slice(0, 300),
+    }));
+    return NextResponse.json({ error: "could not read the queue" }, { status: 500 });
+  }
 
   const picked = urgentFirst(res.rows.filter((r) => !r[AGENT_CLAIMED_AT_COLUMN])).slice(0, LIMIT);
 

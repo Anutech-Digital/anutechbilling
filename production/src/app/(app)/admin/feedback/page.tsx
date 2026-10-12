@@ -67,8 +67,8 @@ const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: s
 
 /** What the buttons on a report do, by status — shown under them. */
 const ACTION_HELP: Record<string, string> = {
-  open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board within the hour. Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
-  agent_queued: "Waiting for the AI worker — it becomes a card on the work board within the hour, and the fix is made from there. Reopen takes it back to Open.",
+  open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min). Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
+  agent_queued: "Waiting for the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min), and the fix is made from there. Reopen takes it back to Open.",
   fixed: "Done, waiting for a browser test? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
   wont_fix: "Closed without a fix. Reopen if it matters again.",
   duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
@@ -331,7 +331,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = fals
       toast.success(copied ? "Moved to Queued for agent — directive copied." : "Moved to Queued for agent.", {
         description: copied
           ? "Not fixed yet: paste it into Claude Code to make the fix. The report waits in the Queued for agent tab."
-          : "Not fixed yet. The browser blocked copying — the AI worker will still put it on the board within the hour.",
+          : "Not fixed yet. The browser blocked copying — the AI worker will still put it on the board (urgent: in a few minutes; others: within 30 min).",
         duration: 10_000,
       });
     } catch (err) {
@@ -454,7 +454,7 @@ function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = fals
         {/* 6 Oct 2026 (Pardeep, Fixed tab): Auto-Fix on a fixed / won't-fix / already queued
             report only re-queued it. It is for open reports; Reopen first to send one again. */}
         {row.status === "open" && (
-          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy} title="Send to the AI worker — it becomes a card on the work board within the hour">
+          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy} title="Send to the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min)">
             <Icon name="sparkles" size={14} className="mr-1.5" />
             Run AI Auto-Fix
           </Button>
@@ -693,7 +693,7 @@ export default function AdminFeedbackPage() {
         <p className="text-xs text-ink-2 leading-relaxed">
           <b>Run AI Auto-Fix</b> writes the directive, copies it to your clipboard and marks the report queued.
           It does <b>not</b> change any code by itself — this app runs on a server with no access to the
-          repository. The AI worker picks up queued reports within the hour and puts each one on the
+          repository. The AI worker picks up queued reports (urgent: in a few minutes; others: within 30 min) and puts each one on the
           work board as a card; the fix is made from there. You can also paste the directive into
           Claude Code yourself.
         </p>
