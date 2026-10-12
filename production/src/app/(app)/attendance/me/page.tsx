@@ -40,6 +40,15 @@ import { ThisDeviceCard, useDeviceSignature } from "./device-card";
 import { dayStatus, formatGap, formatWorked, type ShiftRules } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { minutesToTimeValue, parseTimeToMinutes } from "@/lib/attendance/reminders";
+import Link from "next/link";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import {
+  canPickEmployee,
+  linkCardMode,
+  EMPLOYEES_HREF,
+  NO_EMPLOYEES_MESSAGE,
+  NOT_LINKED_MESSAGE,
+} from "@/lib/attendance/self-profile";
 
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
@@ -699,12 +708,30 @@ function CheckInCard({
 
 function LinkEmployeeCard() {
   /* R-1001: names come from my_employee_link_choices() — employees itself is owner / manager /
-     accountant only, so a sales or support login would see an empty list. */
-  const empQ = useMyEmployeeLinkChoices();
+     accountant only. R-1414: only those three roles get the picker; any other role sees a
+     plain "ask the owner" message instead of an empty dropdown. */
+  const userQ = useCurrentUser();
+  const role = userQ.data?.role ?? null;
+  const empQ = useMyEmployeeLinkChoices(canPickEmployee(role));
   const setEmp = useSetMyEmployee();
   const [selectedId, setSelectedId] = React.useState<string>("");
 
   const rows = empQ.data ?? [];
+  const mode = linkCardMode(role, rows.length);
+
+  if (userQ.isLoading) return <Skeleton className="h-48 w-full rounded-xl" />;
+
+  if (mode === "ask-owner") {
+    return (
+      <Card className="p-6 md:p-8 text-center">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft">
+          <Icon name="user" className="h-6 w-6 text-amber-ink" />
+        </div>
+        <h2 className="font-serif text-xl">Profile not linked</h2>
+        <p className="text-sm text-ink-3 mt-2">{NOT_LINKED_MESSAGE}</p>
+      </Card>
+    );
+  }
 
   return (
     <Card className="p-6 md:p-8 text-center">
@@ -720,9 +747,12 @@ function LinkEmployeeCard() {
         <Skeleton className="mt-5 h-10 w-full rounded-md" />
       ) : empQ.error ? (
         <p className="mt-4 text-xs text-rose">Could not load employees.</p>
-      ) : rows.length === 0 ? (
+      ) : mode === "no-employees" ? (
         <p className="mt-4 text-sm text-ink-3">
-          No profile is waiting for you. Ask the owner to add you in Payroll → Employees with your login e-mail.
+          {NO_EMPLOYEES_MESSAGE}{" "}
+          <Link href={EMPLOYEES_HREF} className="text-amber-ink underline">
+            Open Employees
+          </Link>
         </p>
       ) : (
         <div className="mt-5 space-y-3">
