@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Secret / client-data scan (R-1430, 12 Oct 2026). The repo is PUBLIC: one pasted key, tenant id
  * or client record leaks the moment it is pushed. This runs in the worker push guard

@@ -6,9 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import {
-  scanText, fileNameRule, parseDiff, loadAllowlist, isAllowed, formatHits, fingerprint, loadDenyTerms, run,
-} from "../scripts/ops/secret-scan.mjs";
+// @ts-expect-error — plain .mjs ops script, no types
+import { scanText, fileNameRule, parseDiff, loadAllowlist, isAllowed, formatHits, fingerprint, loadDenyTerms, run } from "../scripts/ops/secret-scan.mjs";
 
 const ALNUM = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 const rnd = (n: number, set = ALNUM) => Array.from(crypto.randomBytes(n), (b) => set[b % set.length]).join("");
