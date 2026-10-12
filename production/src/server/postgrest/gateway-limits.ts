@@ -21,8 +21,9 @@
  *                  payments, top level or embedded. Name the columns you need.
  *   Every refusal is a plain-English JSON 429 / 400 and one `gateway_refused` log line.
  *
- * Embedded child rows are not counted in the row budget (Content-Range counts the top level);
- * the explicit-limit cap and the star block bound what one embed can carry.
+ * R-1400: embedded child rows count in the row budget too (embeddedRowCount — Content-Range only
+ * counts the top level), and an embed written by its FK column (`customer_id(*)`) is resolved to
+ * the table it points at, so it meets the same star block as `customers(*)`.
  */
 import "server-only";
 import { withIdentity } from "@/server/db/gateway";
@@ -30,6 +31,7 @@ import { rateLimitShared } from "@/lib/security/rate-limit";
 import { isGatewayLimitedRole } from "@/lib/auth/roles";
 import { MAX_ROWS } from "./build";
 import { parseSelect, type SelectItem } from "./parse";
+import { getCatalog, type Catalog } from "./catalog";
 
 function envInt(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -90,23 +92,80 @@ function hasStar(items: SelectItem[]): boolean {
   return items.some((i) => i.kind === "star");
 }
 
+/** The catalog parts the shape check needs to resolve an embed. */
+export type EmbedCatalog = Pick<Catalog, "tables" | "fks">;
+
+/**
+ * The table an embed reads. `customers(...)` names it; `customer_id(...)` (PostgREST's
+ * column-name embedding) names the parent's FK column, so follow that FK. Without a catalog —
+ * or when the name is unknown — `x_id` is read as table `xs`, which errs toward blocking.
+ */
+export function embedTarget(parent: string | null, relation: string, cat?: EmbedCatalog): string {
+  if (cat?.tables.has(relation)) return relation;
+  if (cat && parent) {
+    const fk = cat.fks.find((f) => f.table === parent && f.columns.length === 1 && f.columns[0] === relation);
+    if (fk) return fk.refTable;
+  }
+  if (relation.endsWith("_id")) return `${relation.slice(0, -3)}s`;
+  return relation;
+}
+
 /** First blocked table reached with `*` — top level (`table`) or through an embed. */
-function starOnBlocked(table: string | null, items: SelectItem[]): string | null {
+function starOnBlocked(table: string | null, items: SelectItem[], cat?: EmbedCatalog): string | null {
   if (table && STAR_BLOCKED_TABLES.has(table) && hasStar(items)) return table;
   for (const i of items) {
     if (i.kind === "embed") {
-      const found = starOnBlocked(i.relation, i.items);
+      const found = starOnBlocked(embedTarget(table, i.relation, cat), i.items, cat);
       if (found) return found;
     }
   }
   return null;
 }
 
+type EmbedItem = Extract<SelectItem, { kind: "embed" }>;
+
+/** Rows carried by embeds (to-many: each element; to-one: 1), at every depth. */
+export function embeddedRowCount(items: SelectItem[], body: unknown): number {
+  const embeds = items.filter((i): i is EmbedItem => i.kind === "embed");
+  if (embeds.length === 0 || body === null || typeof body !== "object") return 0;
+  const rows: unknown[] = Array.isArray(body) ? body : [body];
+  let n = 0;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    for (const e of embeds) {
+      const v = (row as Record<string, unknown>)[e.alias ?? e.relation];
+      if (Array.isArray(v)) n += v.length + embeddedRowCount(e.items, v);
+      else if (v && typeof v === "object") n += 1 + embeddedRowCount(e.items, v);
+    }
+  }
+  return n;
+}
+
+/** True when the request's select embeds another table (then its body must be counted). */
+export function selectHasEmbeds(search: URLSearchParams): boolean {
+  try {
+    return parseSelect(search.get("select")).some((i) => i.kind === "embed");
+  } catch {
+    return false;
+  }
+}
+
+/** Embedded rows in a response body (JSON text) for this request's select. 0 if unreadable. */
+export function embeddedRowsInBody(search: URLSearchParams, bodyText: string): number {
+  try {
+    return embeddedRowCount(parseSelect(search.get("select")), JSON.parse(bodyText));
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Paging / column checks for a limited user. `path` is what follows /rest/v1/
  * ("customers", "rpc/foo"). Returns null when the request may go ahead.
  */
-export function checkGatewayShape(method: string, path: string, search: URLSearchParams): GatewayRefusal | null {
+export function checkGatewayShape(
+  method: string, path: string, search: URLSearchParams, cat?: EmbedCatalog,
+): GatewayRefusal | null {
   const lim = gatewayLimits();
   for (const [key, value] of search) {
     const last = key.split(".").pop();
@@ -135,7 +194,7 @@ export function checkGatewayShape(method: string, path: string, search: URLSearc
   } catch {
     return null; // the handler answers a bad select with its own 400
   }
-  const table = starOnBlocked(path, items);
+  const table = starOnBlocked(path, items, cat);
   if (table) {
     return {
       status: 400, code: "ROS_SELECT_STAR", reason: "star",
@@ -238,7 +297,11 @@ export async function gatewayGuard(
       message: `Too many requests — please wait ${rate.retryAfterSec} seconds and try again.`,
     };
   }
-  const shape = checkGatewayShape(method, path, search);
+  let cat: EmbedCatalog | undefined;
+  if (selectHasEmbeds(search)) {
+    try { cat = await getCatalog(); } catch { cat = undefined; } // unresolved → the x_id rule
+  }
+  const shape = checkGatewayShape(method, path, search, cat);
   if (shape) return shape;
   const m = method.toUpperCase();
   // Reads only: a low role who used up the day's reads can still save their work.
