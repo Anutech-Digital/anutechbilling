@@ -2,7 +2,23 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { isReplayResult, paymentTagPatch, replayToast } from "./record-payment-replay";
+import { deskPaymentTagArgs, isReplayResult, paymentTagPatch, replayToast } from "./record-payment-replay";
+
+describe("deskPaymentTagArgs (R-895 / R-1118)", () => {
+  const BANK = "5b0c1f6e-2a7d-4c1e-9f3a-0d2e4b6a8c10";
+  it("passes the chosen date and a real bank account id", () => {
+    expect(deskPaymentTagArgs({ receivedDate: "2026-10-07", bankAccountId: ` ${BANK} ` }))
+      .toEqual({ p_received_on: "2026-10-07", p_bank_account_id: BANK });
+  });
+  it("drops an empty / malformed date and a made-up account id instead of sending them", () => {
+    expect(deskPaymentTagArgs({ receivedDate: "", bankAccountId: "hdfc_primary" }))
+      .toEqual({ p_received_on: null, p_bank_account_id: null });
+    expect(deskPaymentTagArgs({ receivedDate: "07/10/2026", bankAccountId: null }))
+      .toEqual({ p_received_on: null, p_bank_account_id: null });
+    expect(deskPaymentTagArgs({ receivedDate: undefined, bankAccountId: undefined }))
+      .toEqual({ p_received_on: null, p_bank_account_id: null });
+  });
+});
 
 describe("isReplayResult", () => {
   it("reads either flag the RPC sets on a replay", () => {
@@ -79,8 +95,6 @@ describe("record-payment-dialog replay wiring (R-374)", () => {
 
   it("every post-save write comes AFTER the replay return", () => {
     for (const marker of [
-      '.from("payments")\n          .update(',
-      '.from("invoices")\n          .update({ paid_date',
       '.from("subscriptions")\n            .update({ domain',
       "/api/payments/${r.payment_id}/receipt",
     ]) {
@@ -89,13 +103,23 @@ describe("record-payment-dialog replay wiring (R-374)", () => {
     }
   });
 
-  it("the date/bank tag goes through paymentTagPatch", () => {
-    expect(src).toMatch(/paymentTagPatch\(\{ isReplay, receivedDate: data\.receivedDate, bankAccountId \}\)/);
+  /* R-895 / R-1118: credit, payment, date + bank tag and paid_date are ONE database call. */
+  it("records through record_desk_payment with the credit, date and bank account in the same call", () => {
+    const call = src.slice(src.indexOf('supabase.rpc("record_desk_payment", {'), replayAt);
+    expect(call).toMatch(/p_credit_customer_id:/);
+    expect(call).toMatch(/p_credit_amount:/);
+    expect(call).toMatch(/p_received_on:\s+tagArgs\.p_received_on/);
+    expect(call).toMatch(/p_bank_account_id:\s+tagArgs\.p_bank_account_id/);
+    expect(src).toMatch(/deskPaymentTagArgs\(\{ receivedDate: data\.receivedDate, bankAccountId \}\)/);
   });
 
-  it("redeemed advance credit is restored on a replay, as on an RPC error", () => {
-    expect(replayBlock).toMatch(/await restoreAppliedCredit\(/);
-    expect(src).toMatch(/if \(error\) \{[\s\S]{0,400}await restoreAppliedCredit\("payment failed"\);\s*throw error;/);
+  it("no separate credit redemption, no hand-made credit put-back, no second payment / invoice write", () => {
+    expect(src).not.toMatch(/rpc\("redeem_customer_credits"/);
+    expect(src).not.toMatch(/from\("customer_credits"\)\s*\.insert/);
+    expect(src).not.toMatch(/restoreAppliedCredit/);
+    expect(src).not.toMatch(/from\("payments"\)\s*\.update\(/);
+    expect(src).not.toMatch(/from\("invoices"\)\s*\.update\(/);
+    expect(src).not.toMatch(/rpc\("record_payment(_with_tds)?"/);
   });
 
   it("onSuccess shows the replay toast and does not close the sheet or show 'Payment recorded'", () => {

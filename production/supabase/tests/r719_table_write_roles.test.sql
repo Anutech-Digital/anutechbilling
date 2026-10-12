@@ -238,16 +238,15 @@ begin
     insert into public.payments (tenant_id, quote_id, customer_id, amount, method) values (c_seller, 'R719-Q-1', c_cust, 5000, 'cash');
   exception when insufficient_privilege then v_err := true; end;
   if not v_err then raise exception 'FAIL 26: a sales login inserted a payment directly'; end if;
-  v_code := null;
-  begin
-    update public.payments set amount = 1 where id = '71900000-0000-4000-8000-0000000000f2';
-  exception when insufficient_privilege then v_code := 'refused'; end;
-  if v_code is null then raise exception 'FAIL 27: a sales login changed a payment amount'; end if;
-  /* record-payment dialog step 2b: tag the receipt date + bank account. */
+  /* R-895: sales writes no payment column at all now (the record-payment sheet tags date +
+     bank inside record_desk_payment, which sales may not call). Refused = 0 rows. */
+  update public.payments set amount = 1 where id = '71900000-0000-4000-8000-0000000000f2';
+  get diagnostics v_n = row_count;
+  if v_n <> 0 then raise exception 'FAIL 27: a sales login changed a payment amount (% rows)', v_n; end if;
   update public.payments set received_at = now() - interval '1 day', bank_account_id = '71900000-0000-4000-8000-0000000000b1'
    where id = '71900000-0000-4000-8000-0000000000f2';
   get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL 28: sales could not tag date / bank on its payment (% rows)', v_n; end if;
+  if v_n <> 0 then raise exception 'FAIL 28: a sales login tagged date / bank on a payment (% rows) — R-895', v_n; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', u_supp, 'role', 'authenticated')::text, true);
   update public.payments set notes = 'R719 support' where id = '71900000-0000-4000-8000-0000000000f2';
@@ -261,14 +260,13 @@ begin
 
   -- ════ invoices ═══════════════════════════════════════════════════════════
   perform set_config('request.jwt.claims', json_build_object('sub', u_sales, 'role', 'authenticated')::text, true);
-  v_code := null;
-  begin
-    update public.invoices set amount = 1 where id = 'R719-INV-1';
-  exception when insufficient_privilege then v_code := 'refused'; end;
-  if v_code is null then raise exception 'FAIL 31: a sales login changed an invoice amount'; end if;
+  update public.invoices set amount = 1 where id = 'R719-INV-1';
+  get diagnostics v_n = row_count;
+  if v_n <> 0 then raise exception 'FAIL 31: a sales login changed an invoice amount (% rows)', v_n; end if;
+  /* R-895: paid_date moves inside record_desk_payment now — sales has no invoice update. */
   update public.invoices set paid_date = current_date - 1 where id = 'R719-INV-1';
   get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL 32: sales could not move paid_date to the receipt date (% rows)', v_n; end if;
+  if v_n <> 0 then raise exception 'FAIL 32: a sales login moved an invoice paid_date (% rows) — R-895', v_n; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', u_supp, 'role', 'authenticated')::text, true);
   update public.invoices set paid_date = current_date where id = 'R719-INV-1';
@@ -289,7 +287,12 @@ begin
   if not v_err then raise exception 'FAIL 35: a support login booked a vendor bill'; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', u_sales, 'role', 'authenticated')::text, true);
-  insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, total) values ('R719-BILL-AI', c_seller, 'R719 AI Entry', current_date, 100);
+  /* R-895: AI Entry no longer offers a vendor bill to sales; the table refuses it too. */
+  v_err := false;
+  begin
+    insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, total) values ('R719-BILL-AI', c_seller, 'R719 AI Entry', current_date, 100);
+  exception when insufficient_privilege then v_err := true; end;
+  if not v_err then raise exception 'FAIL 35b: a sales login booked a vendor bill — R-895'; end if;
   update public.vendor_bills set total = 1 where id = 'R719-BILL-1';
   get diagnostics v_n = row_count;
   if v_n <> 0 then raise exception 'FAIL 36: a sales login changed a vendor bill total (% rows)', v_n; end if;

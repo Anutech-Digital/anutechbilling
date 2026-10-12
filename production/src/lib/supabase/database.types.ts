@@ -1214,6 +1214,7 @@ type ArgNullable = {
   create_site_promo: "p_subheadline" | "p_badge_text" | "p_applies_to_tier" | "p_max_seats" | "p_valid_until" | "p_created_by";
   record_payment: "p_notes";
   record_payment_with_tds: "p_notes" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
+  record_desk_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_account_transfer: "p_note";
   create_project_sale: "p_customer_id" | "p_description";
   record_project_payment: "p_method" | "p_reference" | "p_bank_txn_id";
@@ -1398,6 +1399,30 @@ type FunctionReturnPatches = {
             tds_saved?:              boolean;
             /** record_payment se hokar aata hai — migration 20260901110000 (audit A5). */
             overpaid_credit?:        number;
+          };
+  /** R-895: the record-payment sheet's one call — record_payment(_with_tds)'s result plus
+   *  the advance credit actually consumed (0 on a replay) and whether date/bank were tagged. */
+  record_desk_payment: {
+            payment_id:           string;
+            receipt_voucher_no:   string | null;
+            customer_id:          string | null;
+            total_received:       number;
+            expected:             number;
+            outstanding:          number;
+            is_first_payment:     boolean;
+            is_fully_paid:        boolean;
+            converted_now:        boolean;
+            subscription_created: boolean;
+            invoice_paid:         boolean;
+            has_existing_invoice: boolean;
+            is_renewal_quote:        boolean;
+            renewal_rolled_forward:  boolean;
+            idempotent_replay?:      boolean;
+            already_recorded?:       boolean;
+            tds_saved?:              boolean;
+            overpaid_credit?:        number;
+            credit_applied:          number;
+            tagged:                  boolean;
           };
   suggest_bank_transaction_matches: BankMatchSuggestionRow[];
   book_bank_txn_as_vendor_bill: { bill_id: string; replaced_synthetic: string | null; amount: number };

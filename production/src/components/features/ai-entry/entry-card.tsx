@@ -15,7 +15,7 @@ import { cn, rupee } from "@/lib/utils";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import type { EntryProposal } from "@/lib/ai/data-entry";
 import type { ProposalWithMatches } from "@/app/api/ai/data-entry/route";
-import { advanceFormHref, warningsFor, missingFor, leadInsert, customerInsert, expenseInsert, vendorBillInsert, taskInsert } from "@/lib/ai/entry-save";
+import { advanceFormHref, warningsFor, missingFor, leadInsert, customerInsert, expenseInsert, vendorBillInsert, taskInsert, moneyEntryBlockedNote } from "@/lib/ai/entry-save";
 import { hasStop, type Party } from "@/lib/compliance/entry-rules";
 import { useCreateLead } from "@/lib/queries/leads";
 import { useCreateCustomer } from "@/lib/queries/customers";
@@ -81,11 +81,13 @@ const invoicesHref = (payer: string | null): Route => (payer ? `/invoices?q=${en
 const MATCH_HREF = (m: { type: string; id: string }) =>
   (m.type === "lead" ? `/leads?lead=${m.id}` : m.type === "customer" ? `/customers/${m.id}` : `/accounting/vendors`) as Route;
 
-export function EntryCard({ initial, us, todayIST, userId, onDone }: {
+export function EntryCard({ initial, us, todayIST, userId, role, onDone }: {
   initial: ProposalWithMatches;
   us: Party;
   todayIST: string;
   userId: string;
+  /** R-895: the signed-in role — a vendor bill / payment card offers no Save or Invoices link to a non-money role. */
+  role?: string | null;
   onDone: (state: "saved" | "discarded", label?: string) => void;
 }) {
   const [p, setP] = React.useState<EntryProposal>(initial);
@@ -102,6 +104,7 @@ export function EntryCard({ initial, us, todayIST, userId, onDone }: {
   const warnings = warningsFor(p, us, todayIST, initial.context);
   const stop = hasStop(warnings);
   const missing = missingFor(p);
+  const blockedNote = moneyEntryBlockedNote(p.kind, role);
   const fields = p.fields as unknown as Record<string, string | number | null>;
 
   const setField = (key: string, def: FieldDef, raw: string) => {
@@ -206,6 +209,9 @@ export function EntryCard({ initial, us, todayIST, userId, onDone }: {
       <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
         {saved ? (
           <span className="text-sm text-emerald">✓ Saved · <Link href={saved.href} className="underline">{saved.label}</Link></span>
+        ) : blockedNote ? (
+          /* R-895: sales / support / delivery take no money action (R-718 table). */
+          <span className="text-2xs text-ink-3">{blockedNote}</span>
         ) : p.kind === "employee_advance" ? (
           <>
             {/* Straight to the real entry (Pardeep: "seedha entry par bhi to le ja sakta hai"):

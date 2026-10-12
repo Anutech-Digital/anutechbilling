@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { advanceFormHref, leadInsert, customerInsert, expenseInsert, vendorBillInsert, taskInsert, missingFor, warningsFor } from "./entry-save";
+import fs from "node:fs";
+import path from "node:path";
+import { advanceFormHref, leadInsert, customerInsert, expenseInsert, vendorBillInsert, taskInsert, missingFor, warningsFor, moneyEntryBlockedNote } from "./entry-save";
 import type { EntryProposal } from "./data-entry";
 
 const TODAY = "2026-10-02";
@@ -47,5 +49,36 @@ describe("AI Entry → the insert the normal form would make", () => {
   it("an employee advance opens the Give advance form, filled", () => {
     expect(advanceFormHref({ employee_name: "Prashant", amount: 5000, date: "2026-10-02", method: null, purpose: "Office expenses" }))
       .toBe("/accounting/advances?give=1&name=Prashant&amount=5000&date=2026-10-02&purpose=Office+expenses");
+  });
+});
+
+/* R-895 (Pardeep's R-718 money table): no money action for sales / sales_senior / support / delivery. */
+describe("AI Entry money cards by role (R-895)", () => {
+  it("a vendor bill or payment card is blocked for the non-money roles", () => {
+    for (const role of ["sales", "sales_senior", "support", "delivery", "partner_agent"]) {
+      expect(moneyEntryBlockedNote("vendor_bill", role), role).toMatch(/owner, manager, accountant or billing/);
+      expect(moneyEntryBlockedNote("payment", role), role).toMatch(/owner, manager, accountant or billing/);
+    }
+  });
+  it("money roles (and a still-loading role) keep Save / the Invoices link", () => {
+    for (const role of ["owner", "manager", "accountant", "billing", null, undefined]) {
+      expect(moneyEntryBlockedNote("vendor_bill", role), String(role)).toBeNull();
+      expect(moneyEntryBlockedNote("payment", role), String(role)).toBeNull();
+    }
+  });
+  it("non-money kinds are never blocked by this rule", () => {
+    for (const kind of ["lead", "customer", "expense", "task", "employee_advance"] as const) {
+      expect(moneyEntryBlockedNote(kind, "sales")).toBeNull();
+    }
+  });
+  it("the card shows the note INSTEAD of Save / the Invoices link, and the page passes the role", () => {
+    const card = fs.readFileSync(path.join(process.cwd(), "src/components/features/ai-entry/entry-card.tsx"), "utf8");
+    expect(card).toContain("const blockedNote = moneyEntryBlockedNote(p.kind, role);");
+    const at = card.indexOf(") : blockedNote ? (");
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(card.indexOf(") : p.kind === \"payment\" ? ("));
+    expect(at).toBeLessThan(card.indexOf("Save {KIND_LABEL[p.kind].toLowerCase()}"));
+    const page = fs.readFileSync(path.join(process.cwd(), "src/app/(app)/ai-entry/page.tsx"), "utf8");
+    expect(page).toContain("role={me.role}");
   });
 });

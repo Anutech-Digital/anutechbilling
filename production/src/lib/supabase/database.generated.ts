@@ -14976,6 +14976,28 @@ export type Database = {
         }
         Returns: string
       }
+      record_desk_payment: {
+        Args: {
+          p_amount: number
+          p_bank_account_id?: string
+          p_credit_amount?: number
+          p_credit_customer_id?: string
+          p_customer_tan?: string
+          p_fiscal_year?: string
+          p_invoice_id?: string
+          p_method: string
+          p_notes?: string
+          p_quote_id: string
+          p_received_on?: string
+          p_reference: string
+          p_tds_amount?: number
+          p_tds_gross?: number
+          p_tds_net_paid?: number
+          p_tds_rate_pct?: number
+          p_tds_section?: string
+        }
+        Returns: Json
+      }
       record_emi_payment: {
         Args: {
           p_amount: number
