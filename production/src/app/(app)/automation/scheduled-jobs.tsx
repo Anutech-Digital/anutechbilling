@@ -101,7 +101,7 @@ export function ScheduledJobs() {
     <section className="mb-6" aria-labelledby="scheduled-jobs-title">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="scheduled-jobs-title" className="font-serif text-xl text-ink">Scheduled jobs</h2>
-        <span className="text-2xs text-ink-3">Every job starts off. Only the owner can turn one on.</span>
+        <span className="text-2xs text-ink-3">Every job starts off, except the nightly backup. Only the owner can change them.</span>
       </div>
 
       <Card className="mb-3 border-amber/40 p-4">

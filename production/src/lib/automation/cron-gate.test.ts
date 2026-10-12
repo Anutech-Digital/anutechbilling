@@ -7,8 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
 const h = vi.hoisted(() => ({
   cronTenants: vi.fn(async () => ({ on: [] as string[], dry: [] as string[] })),
   recordRun: vi.fn(async (..._a: unknown[]) => {}),
+  readJobRow: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+  ensureDefaultOnRow: vi.fn(async (..._a: unknown[]) => {}),
 }));
-vi.mock("@/lib/automation/gate.server", () => ({ cronTenants: h.cronTenants, recordRun: h.recordRun }));
+vi.mock("@/lib/automation/gate.server", () => ({
+  cronTenants: h.cronTenants, recordRun: h.recordRun, readJobRow: h.readJobRow, ensureDefaultOnRow: h.ensureDefaultOnRow,
+}));
 
 import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend, currentCronRun, summarise } from "./cron-gate";
 
@@ -73,9 +77,9 @@ describe("gatedCron", () => {
   });
 
   it("platform job: only the platform company's switch counts", async () => {
-    h.cronTenants.mockResolvedValueOnce({ on: [A], dry: [] });   // some other company turned backup on
+    h.cronTenants.mockResolvedValueOnce({ on: [A], dry: [] });   // some other company turned it on
     const handler = vi.fn(async () => NextResponse.json({}));
-    const res = await gatedCron("backup", handler)(call());
+    const res = await gatedCron("demo-reset", handler)(call());
     expect(handler).not.toHaveBeenCalled();
     expect(await res.json()).toMatchObject({ skipped: "off" });
   });
@@ -84,8 +88,36 @@ describe("gatedCron", () => {
     process.env.BUY_PAGE_TENANT_ID = A;
     h.cronTenants.mockResolvedValueOnce({ on: [A], dry: [] });
     const handler = vi.fn(async () => { expect(cronTenantAllowed(B)).toBe(true); return NextResponse.json({}); });
+    await gatedCron("demo-reset", handler)(call());
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("backup is ON by default (SAFETY_JOBS_DEFAULT_ON)", () => {
+  it("no row → the backup runs, and an explicit ON row is written before the run is stamped", async () => {
+    h.readJobRow.mockResolvedValueOnce(null);
+    const handler = vi.fn(async () => NextResponse.json({ ok: 3 }));
     await gatedCron("backup", handler)(call());
     expect(handler).toHaveBeenCalledTimes(1);
+    expect(h.ensureDefaultOnRow).toHaveBeenCalledWith(expect.any(String), "backup");
+    expect(h.cronTenants).not.toHaveBeenCalled();
+    expect(h.ensureDefaultOnRow.mock.invocationCallOrder[0]).toBeLessThan(h.recordRun.mock.invocationCallOrder[0]);
+  });
+
+  it("the switch cannot be read → the backup still runs", async () => {
+    h.readJobRow.mockResolvedValueOnce(undefined);
+    const handler = vi.fn(async () => NextResponse.json({}));
+    await gatedCron("backup", handler)(call());
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("the owner turned it off → skipped", async () => {
+    h.readJobRow.mockResolvedValueOnce({ job: "backup", enabled: false, dry_run: false });
+    const handler = vi.fn(async () => NextResponse.json({}));
+    const res = await gatedCron("backup", handler)(call());
+    expect(handler).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ skipped: "off" });
+    expect(h.ensureDefaultOnRow).not.toHaveBeenCalled();
   });
 
   it("outside a cron, nothing is filtered", () => {

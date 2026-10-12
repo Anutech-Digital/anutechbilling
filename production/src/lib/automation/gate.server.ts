@@ -94,3 +94,38 @@ export async function recordRun(job: string, tenantIds: readonly string[], resul
     console.error(`[automation] recording the ${job} run crashed:`, (e as Error).message);
   }
 }
+
+/** One company's row for one job. null = no row; undefined = could not read. */
+export async function readJobRow(tenantId: string, job: string): Promise<AutomationJobRow | null | undefined> {
+  const db = bare();
+  if (!db) return undefined;
+  const { data, error } = await db
+    .from("automation_jobs")
+    .select("job, enabled, dry_run, last_run_at, last_result, changed_by, changed_at")
+    .eq("tenant_id", tenantId)          // <- the only tenant boundary on this read
+    .eq("job", job)
+    .maybeSingle();
+  if (error) {
+    console.error(`[automation] could not read the ${job} switch:`, error.message);
+    return undefined;
+  }
+  return (data ?? null) as AutomationJobRow | null;
+}
+
+/**
+ * A default-ON safety job with no row gets an explicit ON row before its first run is stamped —
+ * otherwise automation_record_run() would create the row as enabled = false and the next run
+ * would read "off". Only for SAFETY_JOBS_DEFAULT_ON (the caller checks). Never throws.
+ */
+export async function ensureDefaultOnRow(tenantId: string, job: string): Promise<void> {
+  const db = bare();
+  if (!db) return;
+  try {
+    const { error } = await db
+      .from("automation_jobs")
+      .upsert({ tenant_id: tenantId, job, enabled: true }, { onConflict: "tenant_id,job", ignoreDuplicates: true });
+    if (error) console.error(`[automation] could not write the default-on row for ${job}:`, error.message);
+  } catch (e) {
+    console.error(`[automation] default-on row for ${job} crashed:`, (e as Error).message);
+  }
+}

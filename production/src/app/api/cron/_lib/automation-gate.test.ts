@@ -24,6 +24,9 @@ vi.mock("@/lib/automation/gate.server", () => ({
   cronTenants: h.cronTenants,
   recordRun: h.recordRun,
   readTenantJobs: vi.fn(),
+  /* backup is default-ON (SAFETY_JOBS_DEFAULT_ON); here the owner has turned it off too. */
+  readJobRow: vi.fn(async () => ({ job: "backup", enabled: false, dry_run: false, last_run_at: null, last_result: null, changed_by: null, changed_at: null })),
+  ensureDefaultOnRow: vi.fn(async () => {}),
   automationState: vi.fn(async () => "off"),
 }));
 vi.mock("@/lib/email/send", () => ({ sendEmail: h.sendEmail, isEmailConfigured: () => true }));
@@ -62,7 +65,7 @@ describe("every cron route is gated", () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ skipped: "off", job });
     }
-    expect(h.cronTenants).toHaveBeenCalledWith(job);
+    if (job !== "backup") expect(h.cronTenants).toHaveBeenCalledWith(job);
     expect(h.recordRun).toHaveBeenCalledWith(job, expect.any(Array), "Skipped — turned off");
     expect(h.sendEmail).not.toHaveBeenCalled();
     expect(h.sendWhatsApp).not.toHaveBeenCalled();
