@@ -21,6 +21,9 @@ import { ResendVerification } from "@/components/features/auth/resend-verificati
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
 import { LocalTestLogin } from "./local-test-login";
 import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
+import {
+  EMAIL_UNVERIFIED_ERROR, EMAIL_UNVERIFIED_MESSAGE, LINK_CONFLICT_ERROR, LINK_CONFLICT_MESSAGE,
+} from "../callback/link-guard";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -209,6 +212,13 @@ function LoginPageInner() {
       {searchParams.get("error") === DEACTIVATED_ERROR && (
         <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
           {DEACTIVATED_MESSAGE}
+        </div>
+      )}
+
+      {/* R-1301: the Google callback refused to attach this sign-in to an existing profile. */}
+      {(searchParams.get("error") === LINK_CONFLICT_ERROR || searchParams.get("error") === EMAIL_UNVERIFIED_ERROR) && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          {searchParams.get("error") === LINK_CONFLICT_ERROR ? LINK_CONFLICT_MESSAGE : EMAIL_UNVERIFIED_MESSAGE}
         </div>
       )}
 
