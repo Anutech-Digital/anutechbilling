@@ -117,7 +117,7 @@ export function eligibleApprovers(
 }
 
 /**
- * "Deepak Sharma or Sriganga Technologies can clear this."
+ * "Deepak Sharma or Omega Co can clear this."
  *
  * Returns null when NOBODY can — which is a real state worth surfacing rather than
  * printing an empty list: a one-owner tenant where the owner raised the quote has nobody

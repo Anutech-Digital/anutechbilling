@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parseSearch, matchesSearch, isEmptySearch, type SearchableEmail } from "./search";
 
 const email = (over: Partial<SearchableEmail> = {}): SearchableEmail => ({
-  from_email:      "sujay@sahakarglobal.com",
-  from_name:       "Sujay Rao",
+  from_email:      "user1@betaco.test",
+  from_name:       "testuser1 Rao",
   to_email:        "sales@anutech.in",
   subject:         "Renewal quote for 14 seats",
   body_text:       "We need Google Workspace renewed for 14 seats before August.",
@@ -16,8 +16,8 @@ const email = (over: Partial<SearchableEmail> = {}): SearchableEmail => ({
 
 describe("parseSearch", () => {
   it("reads the operators a rep actually types", () => {
-    const p = parseSearch("from:sujay is:unread label:workspace seats");
-    expect(p.from).toEqual(["sujay"]);
+    const p = parseSearch("from:testuser1 is:unread label:workspace seats");
+    expect(p.from).toEqual(["testuser1"]);
     expect(p.read).toBe(false);
     expect(p.label).toEqual(["workspace"]);
     expect(p.text).toEqual(["seats"]);
@@ -28,9 +28,9 @@ describe("parseSearch", () => {
     /* The whole point. A box that silently ignores is:important returns every email
        and looks like it filtered — the rep reads the top twenty believing they are
        the important ones. */
-    const p = parseSearch("is:important from:sujay");
+    const p = parseSearch("is:important from:testuser1");
     expect(p.unknown).toEqual(["is:important"]);
-    expect(p.from).toEqual(["sujay"]);
+    expect(p.from).toEqual(["testuser1"]);
   });
 
   it("does not smuggle an unknown operator in as free text", () => {
@@ -41,16 +41,16 @@ describe("parseSearch", () => {
   });
 
   it("keeps quoted phrases together", () => {
-    const p = parseSearch('from:"Sujay Rao" "renewal quote"');
-    expect(p.from).toEqual(["sujay rao"]);
+    const p = parseSearch('from:"testuser1 Rao" "renewal quote"');
+    expect(p.from).toEqual(["testuser1 rao"]);
     expect(p.text).toEqual(["renewal quote"]);
   });
 
   it("treats a bare email address as free text, not an operator", () => {
     /* Pasting an address into the box is the commonest thing a rep does. The colon
        check has to survive it. */
-    const p = parseSearch("sujay@sahakarglobal.com");
-    expect(p.text).toEqual(["sujay@sahakarglobal.com"]);
+    const p = parseSearch("user1@betaco.test");
+    expect(p.text).toEqual(["user1@betaco.test"]);
     expect(p.unknown).toEqual([]);
   });
 
@@ -82,13 +82,13 @@ describe("matchesSearch", () => {
 
   it("from: matches the sender's name as well as the address", () => {
     /* A rep types the name they remember, not the address they do not. */
-    expect(matchesSearch(email(), parseSearch("from:sujay"))).toBe(true);
-    expect(matchesSearch(email(), parseSearch('from:"sujay rao"'))).toBe(true);
+    expect(matchesSearch(email(), parseSearch("from:testuser1"))).toBe(true);
+    expect(matchesSearch(email(), parseSearch('from:"testuser1 rao"'))).toBe(true);
     expect(matchesSearch(email(), parseSearch("from:deepak"))).toBe(false);
   });
 
   it("two from: terms mean EITHER sender", () => {
-    const p = parseSearch("from:sujay from:deepak");
+    const p = parseSearch("from:testuser1 from:deepak");
     expect(matchesSearch(email(), p)).toBe(true);
   });
 
@@ -99,8 +99,8 @@ describe("matchesSearch", () => {
   });
 
   it("operators combine with AND", () => {
-    expect(matchesSearch(email({ read_at: null }), parseSearch("from:sujay is:unread"))).toBe(true);
-    expect(matchesSearch(email({ read_at: "2026-08-17T00:00:00Z" }), parseSearch("from:sujay is:unread"))).toBe(false);
+    expect(matchesSearch(email({ read_at: null }), parseSearch("from:testuser1 is:unread"))).toBe(true);
+    expect(matchesSearch(email({ read_at: "2026-08-17T00:00:00Z" }), parseSearch("from:testuser1 is:unread"))).toBe(false);
   });
 
   it("has:attachment needs an actual attachment", () => {

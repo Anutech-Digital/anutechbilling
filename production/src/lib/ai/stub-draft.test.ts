@@ -42,7 +42,7 @@ describe("stubDraft", () => {
        lib/whatsapp.ts fixed exactly this and its test still guards it; the fix
        never reached this function. Brand-agnostic on purpose: a guard naming one
        retired brand passes the day somebody hardcodes the current one. */
-    for (const { purpose, channel, draft } of everyDraft("Delfos Technologies")) {
+    for (const { purpose, channel, draft } of everyDraft("Gamma Co")) {
       const text = `${draft.subject}\n${draft.message}`;
       expect(text, `${purpose}/${channel}`).not.toMatch(denyTermsRe());
       expect(text, `${purpose}/${channel}`).not.toMatch(/anutech/i);
@@ -52,8 +52,8 @@ describe("stubDraft", () => {
 
   it("signs every EMAIL draft with the sign-off it was given", () => {
     for (const purpose of PURPOSES) {
-      const d = stubDraft({ ...base, purpose, channel: "email", signOff: "Delfos Technologies" });
-      expect(d.message, purpose).toContain("Delfos Technologies");
+      const d = stubDraft({ ...base, purpose, channel: "email", signOff: "Gamma Co" });
+      expect(d.message, purpose).toContain("Gamma Co");
     }
   });
 
@@ -62,8 +62,8 @@ describe("stubDraft", () => {
        noise — and these three variants never had one, which is precisely why the
        email gap survived unnoticed. */
     for (const purpose of PURPOSES) {
-      const d = stubDraft({ ...base, purpose, channel: "whatsapp", signOff: "Delfos Technologies" });
-      expect(d.message, purpose).not.toContain("Delfos Technologies");
+      const d = stubDraft({ ...base, purpose, channel: "whatsapp", signOff: "Gamma Co" });
+      expect(d.message, purpose).not.toContain("Gamma Co");
       expect(d.subject, purpose).toBe("");
     }
   });
@@ -116,7 +116,7 @@ describe("an absent sign-off", () => {
   });
 
   it("trims a padded name rather than signing with the padding", () => {
-    const d = stubDraft({ ...base, purpose: "followup", channel: "email", signOff: "  Delfos  " });
-    expect(d.message).toContain("Thanks,\nDelfos");
+    const d = stubDraft({ ...base, purpose: "followup", channel: "email", signOff: "  Gammaco  " });
+    expect(d.message).toContain("Thanks,\nGammaco");
   });
 });

@@ -83,7 +83,7 @@ export function useCommandPalette() {
  * The order was backwards. Slicing happened BEFORE cmdk filtered, so only the
  * first ten rows of each group were ever rendered and therefore only those ten
  * could ever be matched. With 340 records across the groups, roughly 70 were
- * searchable and 270 were invisible — searching "excel" returned a different
+ * searchable and 270 were invisible — searching "democo" returned a different
  * customer entirely, because Demo Co was the 30-somethingth row and
  * never made it into the DOM.
  *
@@ -186,8 +186,8 @@ export function CommandPalette({
   // slice of it. See PREVIEW_PER_GROUP for why this is conditional.
   const searching = query.trim().length > 0;
   /* The palette filters itself (2 Oct 2026): every typed word must be in the row.
-     cmdk's fuzzy scoring matched letters scattered across a line ("Muskaan" found
-     "Sachin KUmar TAkSh…") and hid leads that arrived from the server after the
+     cmdk's fuzzy scoring matched letters scattered across a line ("Thetaco" found
+     "Test User 3 Etaco…") and hid leads that arrived from the server after the
      keystroke — Pardeep: "search button kaam hi nahi kar raha". */
   const pick = <T,>(rows: T[] | undefined | null, fields: (r: T) => (string | number | null | undefined)[]): T[] =>
     !rows ? [] : searching ? rows.filter((r) => matchesAllTerms(fields(r), query)) : rows.slice(0, PREVIEW_PER_GROUP);

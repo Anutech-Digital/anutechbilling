@@ -57,7 +57,7 @@ describe("AI data entry — the model's JSON is untrusted", () => {
   });
 
   it("a payment is kept as a proposal with a known method only", () => {
-    const [p] = sanitizeEntries({ entries: [{ kind: "payment", fields: { payer: "Muskaan Dentals", amount: 31053, method: "UPI", reference: "UTR123" } }] }, TODAY);
+    const [p] = sanitizeEntries({ entries: [{ kind: "payment", fields: { payer: "Thetaco Dentals", amount: 31053, method: "UPI", reference: "UTR123" } }] }, TODAY);
     expect(p.fields).toMatchObject({ amount: 31053, method: "upi" });
     const [q] = sanitizeEntries({ entries: [{ kind: "payment", fields: { amount: 10, method: "bitcoin" } }] }, TODAY);
     expect((q.fields as { method: string | null }).method).toBeNull();

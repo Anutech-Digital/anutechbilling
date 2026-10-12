@@ -30,7 +30,7 @@
 -- So after this runs, the subscription (₹2,700/month) will disagree with the quote and
 -- payment that created it (₹32,400 for one month). That is accepted deliberately: the
 -- future renewal becomes correct, the history stays wrong, and the history is SANDBOX
--- data (Q-TEST prefix, tenant Delfos, domain "xyz.cloudsolutions"), so no real customer
+-- data (Q-TEST prefix, tenant Gammaco, domain "xyz.cloudsolutions"), so no real customer
 -- was overcharged. Editing a paid quote to match would mean rewriting what was charged,
 -- which is a different and much worse thing to do.
 --

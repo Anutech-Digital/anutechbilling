@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { dunningLogStatus, reachedNobody } from "./dunning-log-status";
 
 /* The real rows, from invoice_dunning_log on 22 Aug 2026. Both said "sent" and both
-   reached nobody: INV-3BBD-2026-27-0002's customer (SAHAKAR INFRACON PROJECTS PRIVATE
+   reached nobody: INV-3BBD-2026-27-0002's customer (BETA CO PROJECTS PRIVATE
    LIMITED) has no contact_email, and the route only sends when it has an address. */
 const REAL_ROW = { recipient: null, hasMessage: true, emailConfigured: true };
 
@@ -32,14 +32,14 @@ describe("dunningLogStatus", () => {
 
   it("still says sent when a real address really was emailed", () => {
     /* The no-regression half. A truthful status is only useful if the true case is intact. */
-    expect(dunningLogStatus({ recipient: "accounts@sahakar.example", hasMessage: true, emailConfigured: true }))
+    expect(dunningLogStatus({ recipient: "accounts@betaco.example", hasMessage: true, emailConfigured: true }))
       .toBe("sent");
   });
 
   it("still says stubbed when the provider is off but an address existed", () => {
     /* Kept distinct from no_recipient on purpose: "we would have emailed them, the server
        cannot" is a different problem from "we have nowhere to email". */
-    expect(dunningLogStatus({ recipient: "accounts@sahakar.example", hasMessage: true, emailConfigured: false }))
+    expect(dunningLogStatus({ recipient: "accounts@betaco.example", hasMessage: true, emailConfigured: false }))
       .toBe("stubbed");
   });
 

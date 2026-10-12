@@ -8,8 +8,8 @@ const XYZ: RenewalTermInput = {
   mrr: 32_400, termMonths: 1, seats: 10, catalogPerSeatMonth: 270,
 };
 
-/** SAHAKAR — the healthy shape: 14 seats at ₹3,780 is exactly ₹270/seat/month. */
-const SAHAKAR: RenewalTermInput = {
+/** BETACO — the healthy shape: 14 seats at ₹3,780 is exactly ₹270/seat/month. */
+const BETACO: RenewalTermInput = {
   mrr: 3_780, termMonths: 12, seats: 14, catalogPerSeatMonth: 270,
 };
 
@@ -26,7 +26,7 @@ describe("renewalTerm — the term is read, never assumed", () => {
   });
 
   it("quotes an ANNUAL subscription for twelve months, as before", () => {
-    const r = renewalTerm(SAHAKAR);
+    const r = renewalTerm(BETACO);
     expect(r.ok && r.subtotal).toBe(45_360);        // 3,780 x 12
     expect(r.ok && r.perSeatRate).toBe(3_240);      // 270 x 12, per seat per year
     expect(r.ok && r.commitment).toBe("annual_yearly");
@@ -35,15 +35,15 @@ describe("renewalTerm — the term is read, never assumed", () => {
   it("labels a one-month renewal 'monthly', not an annual commitment", () => {
     /* record_payment reads `commitment` to decide what subscription to build on the way
        back in, so calling a monthly renewal "annual_yearly" produces the wrong one. */
-    expect(renewalTerm({ ...SAHAKAR, termMonths: 1, mrr: 3_780 }).ok
-      && renewalTerm({ ...SAHAKAR, termMonths: 1, mrr: 3_780 }).ok).toBe(true);
-    const r = renewalTerm({ ...SAHAKAR, termMonths: 1 });
+    expect(renewalTerm({ ...BETACO, termMonths: 1, mrr: 3_780 }).ok
+      && renewalTerm({ ...BETACO, termMonths: 1, mrr: 3_780 }).ok).toBe(true);
+    const r = renewalTerm({ ...BETACO, termMonths: 1 });
     expect(r.ok && r.commitment).toBe("monthly");
   });
 
   it("handles other real terms — quarterly, half-yearly", () => {
-    expect(renewalTerm({ ...SAHAKAR, termMonths: 3 }).ok && renewalTerm({ ...SAHAKAR, termMonths: 3 }).ok).toBe(true);
-    const q = renewalTerm({ ...SAHAKAR, termMonths: 3 });
+    expect(renewalTerm({ ...BETACO, termMonths: 3 }).ok && renewalTerm({ ...BETACO, termMonths: 3 }).ok).toBe(true);
+    const q = renewalTerm({ ...BETACO, termMonths: 3 });
     expect(q.ok && q.subtotal).toBe(11_340);        // 3,780 x 3
     expect(q.ok && q.commitment).toBe("annual_yearly");
   });
@@ -53,7 +53,7 @@ describe("renewalTerm — the term is read, never assumed", () => {
        historical behaviour — this change must not move the price of an existing
        annual renewal. */
     for (const t of [null, undefined, 0, -3, 999]) {
-      const r = renewalTerm({ ...SAHAKAR, termMonths: t as number | null });
+      const r = renewalTerm({ ...BETACO, termMonths: t as number | null });
       expect(r.ok && r.termMonths, String(t)).toBe(12);
       expect(r.ok && r.subtotal, String(t)).toBe(45_360);
     }
@@ -97,7 +97,7 @@ describe("renewalTerm — an annual figure in a monthly field is refused, not re
 
   it("does not block a bespoke plan that has no catalogue price", () => {
     /* JIVA holds "ANUTECH DIGITAL PVT LTD Free Support" at a catalogue msrp of 0, and
-       SAHAKAR a plan with no catalogue row at all. Refusing those would stop real
+       BETACO a plan with no catalogue row at all. Refusing those would stop real
        renewals over a check that cannot apply. */
     for (const catalog of [null, undefined, 0]) {
       const r = renewalTerm({ mrr: 99_999, termMonths: 12, seats: 1, catalogPerSeatMonth: catalog });
@@ -109,7 +109,7 @@ describe("renewalTerm — an annual figure in a monthly field is refused, not re
 describe("renewalTerm — refuses what cannot be priced", () => {
   it("refuses zero or missing seats", () => {
     for (const seats of [0, null, -2]) {
-      const r = renewalTerm({ ...SAHAKAR, seats: seats as number | null });
+      const r = renewalTerm({ ...BETACO, seats: seats as number | null });
       expect(r.ok, String(seats)).toBe(false);
       expect(r.ok === false && r.reason).toMatch(/seat count/i);
     }
@@ -117,7 +117,7 @@ describe("renewalTerm — refuses what cannot be priced", () => {
 
   it("refuses zero or missing mrr", () => {
     for (const mrr of [0, null, -100]) {
-      const r = renewalTerm({ ...SAHAKAR, mrr: mrr as number | null });
+      const r = renewalTerm({ ...BETACO, mrr: mrr as number | null });
       expect(r.ok, String(mrr)).toBe(false);
       expect(r.ok === false && r.reason).toMatch(/monthly rate/i);
     }
@@ -127,8 +127,8 @@ describe("renewalTerm — refuses what cannot be priced", () => {
     /* CLAUDE.md §24 — a guard on the money path that only refuses sends the operator to
        the database. */
     const reasons = [
-      renewalTerm({ ...SAHAKAR, seats: 0 }),
-      renewalTerm({ ...SAHAKAR, mrr: 0 }),
+      renewalTerm({ ...BETACO, seats: 0 }),
+      renewalTerm({ ...BETACO, mrr: 0 }),
       renewalTerm(XYZ),
     ];
     for (const r of reasons) {
@@ -141,7 +141,7 @@ describe("renewalTerm — refuses what cannot be priced", () => {
 describe("suspectAnnualMrr", () => {
   it("is true for the Xyz row and false for the healthy ones", () => {
     expect(suspectAnnualMrr(XYZ)).toBe(true);
-    expect(suspectAnnualMrr(SAHAKAR)).toBe(false);
+    expect(suspectAnnualMrr(BETACO)).toBe(false);
   });
 
   it("is false whenever it has nothing to compare against", () => {

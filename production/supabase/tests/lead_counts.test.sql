@@ -744,8 +744,8 @@ insert into phone_cases values
 create temp table company_cases (c text, want text) on commit drop;
 insert into company_cases values
 -- >>> COMPANY CASES
-  ('Dogma Soft', 'dogma soft'),
-  ('Dogma Soft Pvt. Ltd', 'dogma soft'),
+  ('Zeta Soft', 'zeta soft'),
+  ('Zeta Soft Pvt. Ltd', 'zeta soft'),
   ('Softaid Co.', 'softaid'),
   ('The India Company', ''),
   ('A.B.C Technologies', 'a b c'),
@@ -817,8 +817,8 @@ insert into public.users (id, tenant_id, email, role) values
 -- functions read the IST day from the clock; every fixture sits well away from a day edge
 -- except L40-01 (1 minute old), which is "today" by construction.
 --   O = the owner, R = the rep, - = unowned. d = the IST date today.
---   01 Dogma Soft          new     high   O  ₹5,000    follow-up d-2   moved 1d ago   created 1 min ago
---   02 Dogma Soft Pvt Ltd  contact medium R  ₹1,50,000 follow-up d     moved 10d ago  (dup of 01 by company)
+--   01 Zeta Soft          new     high   O  ₹5,000    follow-up d-2   moved 1d ago   created 1 min ago
+--   02 Zeta Soft Pvt Ltd  contact medium R  ₹1,50,000 follow-up d     moved 10d ago  (dup of 01 by company)
 --   03 Kappa Traders       quote   low    -  ₹90,000   follow-up d+5   moved 8d ago   (dup of 01 by phone)
 --   04 Lambda Co           demo    medium R  ₹2,00,000 project enquiry, AI handed over (requires_human_attention)
 --   05 Mu Industries       won     high   O  ₹70,000   follow-up d-3 (won: not overdue), created 2 min ago
@@ -830,8 +830,8 @@ insert into public.users (id, tenant_id, email, role) values
 insert into public.leads (id, tenant_id, company, contact_name, contact_email, contact_phone, stage, priority, is_junk,
                           owner_id, value, enquiry_type, follow_up_date, expected_close_date, requires_human_attention,
                           notes, created_at) values
-  ('L40-01', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Dogma Soft',         'Asha',  'asha@dogma.in', '+91 98100 00001', 'new',     'high',   false, 'aaaaaaaa-0000-4000-8000-00000040a001', 5000,   'subscription', (now() at time zone 'Asia/Kolkata')::date - 2, null, false, 'notes', now() - interval '1 minute'),
-  ('L40-02', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Dogma Soft Pvt Ltd', 'Bina',  'bina@dogma.in', '98100 00002',     'contact', 'medium', false, 'aaaaaaaa-0000-4000-8000-00000040a002', 150000, 'subscription', (now() at time zone 'Asia/Kolkata')::date,     null, false, null,    now() - interval '3 days'),
+  ('L40-01', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Zeta Soft',         'Asha',  'asha@dogma.in', '+91 98100 00001', 'new',     'high',   false, 'aaaaaaaa-0000-4000-8000-00000040a001', 5000,   'subscription', (now() at time zone 'Asia/Kolkata')::date - 2, null, false, 'notes', now() - interval '1 minute'),
+  ('L40-02', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Zeta Soft Pvt Ltd', 'Bina',  'bina@dogma.in', '98100 00002',     'contact', 'medium', false, 'aaaaaaaa-0000-4000-8000-00000040a002', 150000, 'subscription', (now() at time zone 'Asia/Kolkata')::date,     null, false, null,    now() - interval '3 days'),
   ('L40-03', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Kappa Traders',      'Chetan','c@kappa.in',    '098100 00001',    'quote',   'low',    false, null,                                   90000,  'subscription', (now() at time zone 'Asia/Kolkata')::date + 5, (now() at time zone 'Asia/Kolkata')::date + 400, false, null, now() - interval '4 days'),
   ('L40-04', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Lambda Co',          'Dev',   'd@lambda.in',   '+91 90000 00004', 'demo',    'medium', false, 'aaaaaaaa-0000-4000-8000-00000040a002', 200000, 'project',      null, null, true,  null, now() - interval '5 days'),
   ('L40-05', 'aaaaaaaa-0000-0000-0000-0000000040a0', 'Mu Industries',      'Esha',  'e@mu.in',       '+91 90000 00005', 'won',     'high',   false, 'aaaaaaaa-0000-4000-8000-00000040a001', 70000,  'subscription', (now() at time zone 'Asia/Kolkata')::date - 3, null, false, null, now() - interval '2 minutes'),
@@ -859,7 +859,7 @@ insert into public.lead_activities (tenant_id, lead_id, kind, created_at) values
   ('aaaaaaaa-0000-0000-0000-0000000040a0', 'L40-10', 'note', now() - interval '9 days');
 
 insert into public.leads (id, tenant_id, company, contact_email, contact_phone, stage, created_at) values
-  ('L40-B1', 'bbbbbbbb-0000-0000-0000-0000000040b0', 'Dogma Soft', 'b@dogma.in', '+91 98100 00001', 'new', now() - interval '1 minute');
+  ('L40-B1', 'bbbbbbbb-0000-0000-0000-0000000040b0', 'Zeta Soft', 'b@dogma.in', '+91 98100 00001', 'new', now() - interval '1 minute');
 
 -- Capture everything that needs the connection role BEFORE the switch (AGENTS.md L14).
 do $$ begin
@@ -983,8 +983,8 @@ begin
   perform pg_temp.expect_ids('dup_of: the merge cluster of 01 (02 by company, 03 by phone)',
     pg_temp.all_lead_ids('{"junk":"any","dup_of":"L40-01"}', 1), array['L40-02','L40-03']);
   perform pg_temp.expect_ids('dup_of a lead with no match', pg_temp.all_lead_ids('{"junk":"any","dup_of":"L40-09"}', 5), '{}');
-  perform pg_temp.expect_ids('dup_like: a new lead typed as "DOGMA SOFT (India)"',
-    pg_temp.all_lead_ids('{"junk":"any","dup_like":{"company":"DOGMA SOFT (India)"}}', 5), array['L40-01','L40-02']);
+  perform pg_temp.expect_ids('dup_like: a new lead typed as "ZETA SOFT (India)"',
+    pg_temp.all_lead_ids('{"junk":"any","dup_like":{"company":"ZETA SOFT (India)"}}', 5), array['L40-01','L40-02']);
   perform pg_temp.expect_ids('dup_like: by phone, editing 03 does not match itself',
     pg_temp.all_lead_ids('{"junk":"any","dup_like":{"contact_phone":"9810000001","exclude_id":"L40-03"}}', 5), array['L40-01']);
   perform pg_temp.expect_ids('dup_like: nothing typed matches nothing',

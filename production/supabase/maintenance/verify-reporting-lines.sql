@@ -40,7 +40,7 @@ declare
   expected constant jsonb := jsonb_build_object(
     'pardeep@anutech.in',            19,   -- owner: whole pipeline
     'deepak@anutech.in',             19,   -- second owner: the tree does not touch owners
-    'info@srigangatechnologies.com', 19,   -- third owner (ANUTECH's own console id)
+    'info@omegaco.test', 19,   -- third owner (ANUTECH's own console id)
     'ananya@anutech.in',             15,   -- Darshan's book, via the 20 Aug line
     'hitesh@anutech.in',              1,   -- 4 direct reports, but they own no leads
     'sales@anutech.in',              15,   -- own book

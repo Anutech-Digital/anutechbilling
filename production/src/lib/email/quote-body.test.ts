@@ -45,7 +45,7 @@ const TERMS = {
 
 const base = {
   quoteId: "Q-ADPL-2026-27-0087",
-  customerName: "Sri Ganga Technologies",
+  customerName: "Omega Co",
   supplier: SUPPLIER,
   discountPct: 0,
   discount: 0,

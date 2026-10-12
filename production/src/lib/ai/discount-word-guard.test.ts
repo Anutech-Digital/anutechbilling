@@ -66,7 +66,7 @@ describe("prompt model se aankda dohrane ko kehta hai", () => {
   const built = buildSalesAgentPrompt({
     lead: {
       leadId: "L-TEST",
-      company: "Sri Ganga Technologies", contactName: "Pardeep", seats: 70,
+      company: "Omega Co", contactName: "Pardeep", seats: 70,
       plan: "Google Workspace Business Starter", customerContact: "p@x.in",
       channel: "email" as const, existingQuoteId: null, deliveredQuoteId: null,
     },

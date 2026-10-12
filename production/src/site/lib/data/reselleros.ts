@@ -17,7 +17,7 @@ export const OS_QUOTES = [
   { no: "Q-2026-27-0005", who: "Manoj", amount: "₹2.4L", status: "SENT", color: "#5C6672" },
   { no: "Q-2026-27-0004", who: "Sunil Loza", amount: "₹28.9K", status: "ACCEPTED", color: "#0F7B4F" },
   { no: "Q-2026-27-0003", who: "TechVista", amount: "₹6.3L", status: "PAID", color: "#0F7B4F" },
-  { no: "Q-2026-27-0002", who: "Excel", amount: "₹54K", status: "DRAFT", color: "#5C6672" },
+  { no: "Q-2026-27-0002", who: "Demo Co", amount: "₹54K", status: "DRAFT", color: "#5C6672" },
 ] as const;
 
 export const OS_FACTS = [
@@ -55,7 +55,7 @@ export const OS_MODULES: readonly OsModule[] = [
     rows: [
       { a: "TechVista · GW Business", b: "50 seats", c: "ANNUAL", color: "#0F7B4F" },
       { a: "Sunil Loza · M365 Biz", b: "12 seats", c: "MONTHLY", color: "#5C6672" },
-      { a: "Excel · Zoho One", b: "9 seats", c: "+3 MID-TERM", color: "#C2410C" },
+      { a: "Demo Co · Zoho One", b: "9 seats", c: "+3 MID-TERM", color: "#C2410C" },
       { a: "MRR across 4 subs", b: "₹69.4K", c: "LIVE", color: "#1668E3" },
     ],
   },

@@ -1,27 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { scopeToCustomer, paymentTotals, paymentsSummaryLine } from "./customer-scope";
 
-/* R-533 — the staging case: Delhom and delfos each paid ₹38,232. With ?customer=Delhom the
-   page showed Delhom's one card but "Received 2 · ₹76,464 collected all-time". */
-const DELHOM = "cust-delhom";
-const DELFOS = "cust-delfos";
+/* R-533 — the staging case: Deltaco and gammaco each paid ₹38,232. With ?customer=Deltaco the
+   page showed Deltaco's one card but "Received 2 · ₹76,464 collected all-time". */
+const DELTACO = "cust-deltaco";
+const GAMMACO = "cust-gammaco";
 
 const payments = [
-  { id: "p1", customer_id: DELHOM, quote_id: "Q-1", status: "received", amount: 38232 },
-  { id: "p2", customer_id: DELFOS, quote_id: "Q-2", status: "received", amount: 38232 },
+  { id: "p1", customer_id: DELTACO, quote_id: "Q-1", status: "received", amount: 38232 },
+  { id: "p2", customer_id: GAMMACO, quote_id: "Q-2", status: "received", amount: 38232 },
 ];
 const quotes = [
-  { id: "Q-1", customer_id: DELHOM, payment_status: "received", amount: 38232 },
-  { id: "Q-2", customer_id: DELFOS, payment_status: "partial", amount: 50000 },
-  { id: "Q-3", customer_id: DELFOS, payment_status: "received", amount: 1000 },
+  { id: "Q-1", customer_id: DELTACO, payment_status: "received", amount: 38232 },
+  { id: "Q-2", customer_id: GAMMACO, payment_status: "partial", amount: 50000 },
+  { id: "Q-3", customer_id: GAMMACO, payment_status: "received", amount: 1000 },
 ];
-const projectPayments = [{ id: "j1", customer_id: DELFOS, amount: 5000 }];
-const outstanding = [{ subscription_id: "s1", customer_id: DELFOS, outstanding_amount: 11768 }];
+const projectPayments = [{ id: "j1", customer_id: GAMMACO, amount: 5000 }];
+const outstanding = [{ subscription_id: "s1", customer_id: GAMMACO, outstanding_amount: 11768 }];
 const lists = { payments, projectPayments, quotes, outstanding };
 
 describe("scopeToCustomer (R-533)", () => {
   it("narrows every list to the one customer", () => {
-    const s = scopeToCustomer(lists, DELHOM);
+    const s = scopeToCustomer(lists, DELTACO);
     expect(s.payments.map((p) => p.id)).toEqual(["p1"]);
     expect(s.quotes.map((q) => q.id)).toEqual(["Q-1"]);
     expect(s.projectPayments).toEqual([]);
@@ -31,7 +31,7 @@ describe("scopeToCustomer (R-533)", () => {
   it("counts a receipt with no customer_id through its quote", () => {
     const s = scopeToCustomer(
       { ...lists, payments: [...payments, { id: "p3", customer_id: null, quote_id: "Q-1", status: "received", amount: 100 }] },
-      DELHOM,
+      DELTACO,
     );
     expect(s.payments.map((p) => p.id)).toEqual(["p1", "p3"]);
   });
@@ -46,8 +46,8 @@ describe("scopeToCustomer (R-533)", () => {
 });
 
 describe("paymentTotals on the scoped slice (R-533)", () => {
-  it("Delhom: All 1 / Received 1 / Refunded 0, ₹38,232 collected", () => {
-    const s = scopeToCustomer(lists, DELHOM);
+  it("Deltaco: All 1 / Received 1 / Refunded 0, ₹38,232 collected", () => {
+    const s = scopeToCustomer(lists, DELTACO);
     const t = paymentTotals(s.payments, s.projectPayments);
     expect(t.counts.all).toBe(1);
     expect(t.counts.received).toBe(1);
@@ -76,13 +76,13 @@ describe("paymentTotals on the scoped slice (R-533)", () => {
 
 describe("paymentsSummaryLine (R-533)", () => {
   it("names the customer and drops 'N of M' when nothing else narrows it", () => {
-    expect(paymentsSummaryLine({ shown: 1, total: 1, collected: "₹38,232", customerName: "Delhom" }))
-      .toBe("1 payment · ₹38,232 collected from Delhom");
+    expect(paymentsSummaryLine({ shown: 1, total: 1, collected: "₹38,232", customerName: "Deltaco" }))
+      .toBe("1 payment · ₹38,232 collected from Deltaco");
   });
 
   it("keeps 'N of M' when a tab or search narrows the customer's list", () => {
-    expect(paymentsSummaryLine({ shown: 1, total: 3, collected: "₹9,000", customerName: "Delhom" }))
-      .toBe("1 of 3 payments · ₹9,000 collected from Delhom");
+    expect(paymentsSummaryLine({ shown: 1, total: 3, collected: "₹9,000", customerName: "Deltaco" }))
+      .toBe("1 of 3 payments · ₹9,000 collected from Deltaco");
   });
 
   it("is unchanged without a customer", () => {

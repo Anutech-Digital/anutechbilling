@@ -41,14 +41,14 @@ describe("threadKey", () => {
   it("puts the sender in the key so two customers can never merge", () => {
     /* Both wrote "Quote please". Merging them would show one customer another
        customer's enquiry. */
-    const a = mail("1", "sujay@sahakar.com", "Quote please", "2026-08-17T09:00:00Z");
+    const a = mail("1", "user1@betaco.test", "Quote please", "2026-08-17T09:00:00Z");
     const b = mail("2", "arun@othercorp.com", "Quote please", "2026-08-17T10:00:00Z");
     expect(threadKey(a)).not.toBe(threadKey(b));
   });
 
   it("matches a reply to its original", () => {
-    const a = mail("1", "sujay@sahakar.com", "Quote please", "2026-08-17T09:00:00Z");
-    const b = mail("2", "Sujay@Sahakar.com", "Re: Quote please", "2026-08-17T10:00:00Z");
+    const a = mail("1", "user1@betaco.test", "Quote please", "2026-08-17T09:00:00Z");
+    const b = mail("2", "user1@betaco.test", "Re: Quote please", "2026-08-17T10:00:00Z");
     expect(threadKey(a)).toBe(threadKey(b));
   });
 
@@ -63,16 +63,16 @@ describe("threadKey", () => {
 
 describe("groupIntoThreads", () => {
   const emails = [
-    mail("1", "sujay@sahakar.com",  "Quote please",        "2026-08-10T09:00:00Z"),
-    mail("2", "sujay@sahakar.com",  "Re: Quote please",    "2026-08-17T08:00:00Z"),
+    mail("1", "user1@betaco.test",  "Quote please",        "2026-08-10T09:00:00Z"),
+    mail("2", "user1@betaco.test",  "Re: Quote please",    "2026-08-17T08:00:00Z"),
     mail("3", "arun@othercorp.com", "New M365 licences",   "2026-08-15T09:00:00Z"),
   ];
 
   it("puts a reply with its original", () => {
     const threads = groupIntoThreads(emails);
     expect(threads).toHaveLength(2);
-    const sujay = threads.find((t) => t.messages.length === 2)!;
-    expect(sujay.messages.map((m) => m.id)).toEqual(["1", "2"]);
+    const testuser1 = threads.find((t) => t.messages.length === 2)!;
+    expect(testuser1.messages.map((m) => m.id)).toEqual(["1", "2"]);
   });
 
   it("reads oldest first, because a conversation reads downwards", () => {
@@ -101,7 +101,7 @@ describe("groupIntoThreads", () => {
        customer, which is the worse failure. */
     const withColleague = [
       ...emails,
-      mail("4", "deepak@sahakar.com", "Re: Quote please", "2026-08-17T09:00:00Z"),
+      mail("4", "deepak@betaco.test", "Re: Quote please", "2026-08-17T09:00:00Z"),
     ];
     expect(groupIntoThreads(withColleague)).toHaveLength(3);
   });
@@ -114,8 +114,8 @@ describe("groupIntoThreads", () => {
 describe("threadFor", () => {
   it("finds the thread holding a given email, including a middle message", () => {
     const threads = groupIntoThreads([
-      mail("1", "sujay@sahakar.com", "Quote please",     "2026-08-10T09:00:00Z"),
-      mail("2", "sujay@sahakar.com", "Re: Quote please", "2026-08-17T08:00:00Z"),
+      mail("1", "user1@betaco.test", "Quote please",     "2026-08-10T09:00:00Z"),
+      mail("2", "user1@betaco.test", "Re: Quote please", "2026-08-17T08:00:00Z"),
     ]);
     expect(threadFor(threads, "1")?.messages).toHaveLength(2);
     expect(threadFor(threads, "2")?.messages).toHaveLength(2);

@@ -1,5 +1,5 @@
 /**
- * The Gmail-style search box: `from:sujay is:unread label:workspace seats`.
+ * The Gmail-style search box: `from:testuser1 is:unread label:workspace seats`.
  *
  * Pure, so the parser can be tested without a mailbox — and so the page never has to
  * grow its own copy of "what does is:unread mean".
@@ -48,13 +48,13 @@ const EMPTY: ParsedSearch = {
 const VALUE_OPS = new Set(["from", "to", "label"]);
 
 /**
- * Split on whitespace, but keep "quoted phrases" together — `from:"Sujay Rao"` and
+ * Split on whitespace, but keep "quoted phrases" together — `from:"testuser1 Rao"` and
  * `"renewal quote"` are both single terms a rep would reasonably type.
  */
 function tokenise(q: string): string[] {
   const out: string[] = [];
-  /* The quoted part has to survive ATTACHED to its operator: `from:"Sujay Rao"` is
-     one token, not `from:"Sujay` and `Rao"`. A regex that only recognises a quote at
+  /* The quoted part has to survive ATTACHED to its operator: `from:"testuser1 Rao"` is
+     one token, not `from:"testuser1` and `Rao"`. A regex that only recognises a quote at
      the START of a token gets that wrong, because this token starts with `f`. */
   const re = /(?:[^\s:"]+:)?"[^"]*"|\S+/g;
   let m: RegExpExecArray | null;
@@ -81,7 +81,7 @@ export function parseSearch(query: string): ParsedSearch {
   for (const raw of tokenise(q)) {
     const colon = raw.indexOf(":");
     /* No colon, or a colon at the very start ( ":foo" ), is free text. An email
-       address typed bare — sujay@x.com — has no colon and stays free text, which is
+       address typed bare — user1@x.com — has no colon and stays free text, which is
        what a rep pasting an address expects to work. */
     /* A token that STARTS with a quote is a phrase, whatever is inside it — so
        `"re: renewal quote"` searches for that text and is not read as an operator
@@ -145,7 +145,7 @@ function has(hay: string | null | undefined, needle: string): boolean {
 /**
  * Does this email satisfy the whole query?
  *
- * Every clause is AND — `from:sujay is:unread` means both, the way Gmail behaves.
+ * Every clause is AND — `from:testuser1 is:unread` means both, the way Gmail behaves.
  * Repeated operators are OR within themselves (`from:a from:b` = either sender),
  * because a rep listing two people means "either of them", not "a message from both".
  *

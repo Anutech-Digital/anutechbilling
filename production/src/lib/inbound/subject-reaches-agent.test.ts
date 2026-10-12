@@ -8,7 +8,7 @@ import { join } from "node:path";
    Pardeep ne sales@ ko mail kiya jisme poori baat SUBJECT me thi aur body me kuch nahi:
 
      Subject: mujhe 60 email ke liye quote chahiye google workspace business starter
-     Body:    "--  Regards, Pardeep Sharma | Sales Co-ordinator | sales@sriganga.com"
+     Body:    "--  Regards, Pardeep Sharma | Sales Co-ordinator | sales@omegaco.test"
 
    Mail 63 second me app me aa gaya, lead ban gayi — aur phir kuch nahi. `ai_action_log`:
 

@@ -16,8 +16,8 @@ function csv(...rows: string[]) {
 
 const lookups = {
   // existing customer with number C-100 and domain link.com
-  byNumber: new Map([["c-100", { id: "cust-1", name: "Linkable Pvt Ltd" }]]),
-  byDomain: new Map([["link.com", { id: "cust-1", name: "Linkable Pvt Ltd" }]]),
+  byNumber: new Map([["c-100", { id: "cust-1", name: "Kappa Pvt Ltd" }]]),
+  byDomain: new Map([["link.com", { id: "cust-1", name: "Kappa Pvt Ltd" }]]),
   // an app subscription already exists on tracked.com
   appSubDomains: new Set(["tracked.com"]),
 };

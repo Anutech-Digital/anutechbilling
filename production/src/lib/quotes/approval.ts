@@ -202,7 +202,7 @@ export type SendGate =
  *   • `null`      — the team IS loaded and nobody is eligible. Usually the only owner is
  *                   the person who asked, and they cannot approve their own quote. That is
  *                   a dead end worth naming, not an empty list to print.
- *   • a string    — "Deepak Sharma or Sriganga Technologies", from approverSentence().
+ *   • a string    — "Deepak Sharma or Omega Co", from approverSentence().
  * Build it with eligibleApprovers() + approverSentence() in ./awaiting-approval, so the
  * banner and the approvals queue can never name different people.
  */

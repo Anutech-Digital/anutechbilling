@@ -14,7 +14,7 @@ import {
 
    Users (10) — the five that reach the name filter are marked ►
        deepak@anutech.in              Deepak Sharma          owner
-       info@srigangatechnologies.com  Sriganga Technologies  owner
+       info@omegaco.test  Omega Co  owner
        pardeep@anutech.in             Pardeep Sharma         owner
        ananya@anutech.in              Ananya Sharma          manager
        hitesh@anutech.in              Hitesh Baghel          manager
@@ -100,7 +100,7 @@ describe("isOwnAdvance — the collisions the old substring rule let through", (
        anyone whose address contained "sales" every advance named "darshan". A
        hardcoded grant cannot be expressed here at all now. */
     expect(isOwnAdvance("Pratik Sharma", "Darshan")).toBe(false);
-    expect(isOwnAdvance("Sriganga Technologies", "Darshan")).toBe(false);
+    expect(isOwnAdvance("Omega Co", "Darshan")).toBe(false);
   });
 });
 

@@ -101,7 +101,7 @@ describe("cleanGstin — the strictest rule here, on purpose", () => {
 
 describe("mapScannedCard", () => {
   const card = {
-    company_name: "  A SQUARE   TECHNOLOGIES ",
+    company_name: "  A IOTA   TECHNOLOGIES ",
     contact_name: "Vinay Kumar",
     designation:  "Director",
     email:        "VINAY@truhomes.in",
@@ -116,7 +116,7 @@ describe("mapScannedCard", () => {
 
   it("normalises everything it can", () => {
     const f = mapScannedCard(card);
-    expect(f.name).toBe("A SQUARE TECHNOLOGIES");   // collapsed whitespace
+    expect(f.name).toBe("A IOTA TECHNOLOGIES");   // collapsed whitespace
     expect(f.contact_email).toBe("vinay@truhomes.in");
     expect(f.contact_phone).toBe("+919876543210");
     expect(f.domain).toBe("truhomes.in");

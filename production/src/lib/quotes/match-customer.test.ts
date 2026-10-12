@@ -3,8 +3,8 @@ import { matchLeadToCustomer, matchNote, type MatchableCustomer } from "./match-
 
 /** ANUTECH's four real customers. */
 const BOOK: MatchableCustomer[] = [
-  { id: "c-sahakar", name: "SAHAKAR INFRACON PROJECTS PRIVATE LIMITED", contact_email: "accounts@sahakar.in" },
-  { id: "c-excel",   name: "Demo Co",  contact_email: "pardeep@example.test" },
+  { id: "c-betaco", name: "BETA CO PROJECTS PRIVATE LIMITED", contact_email: "accounts@betaco.test" },
+  { id: "c-democo",   name: "Demo Co",  contact_email: "pardeep@example.test" },
   { id: "c-jijo",    name: "Jijo corprotion",     contact_email: "jijo@example.in" },
   { id: "c-ab",      name: "AB corprotion",       contact_email: null },
 ];
@@ -20,7 +20,7 @@ describe("a lead that is already a customer", () => {
   it("is found by email, which is the near-identifier", () => {
     const m = matchLeadToCustomer(
       { company: "Demo Co", contactEmail: "pardeep@example.test" }, BOOK);
-    expect(m).toEqual({ kind: "email", customerId: "c-excel" });
+    expect(m).toEqual({ kind: "email", customerId: "c-democo" });
   });
 
   it("is found by email even when the company name was typed differently", () => {

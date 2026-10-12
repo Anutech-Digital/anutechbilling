@@ -6,7 +6,7 @@
 --   These two took money under the old rule, so their workflow status never caught up:
 --
 --     Q-3BBD-2026-27-0001  Demo Co  Rs 54,938  payment_status=invoiced status=sent
---     Q-ADPL-2026-27-0024  ANUTECH (delhom)    Rs 20,000  payment_status=partial  status=sent
+--     Q-ADPL-2026-27-0024  ANUTECH (deltaco)    Rs 20,000  payment_status=partial  status=sent
 --
 --   The first is the one that matters: a GST tax invoice has been issued against a quote
 --   the app still describes as merely "sent". Under CGST that invoice is a real document;

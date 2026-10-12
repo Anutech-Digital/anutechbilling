@@ -16,7 +16,8 @@
  *
  * Client-specific terms (customer names, real tenant ids) are NOT written in this public repo.
  * They come from SECRET_SCAN_DENY_TERMS (comma/newline separated; a CI secret) and/or the file in
- * SECRET_SCAN_DENY_FILE (default ~/.secret-scan-deny.txt, one term per line, # comments). Matched
+ * SECRET_SCAN_DENY_FILE (default: ~/.secret-scan-deny.txt AND the gitignored
+ * scripts/ops/.secret-scan-deny.local next to this script; one term per line, # comments). Matched
  * case-insensitively; reported as `deny-term`.
  */
 import fs from "node:fs";
@@ -108,12 +109,17 @@ export function fingerprint(rule, value) {
   return crypto.createHash("sha256").update(`${rule}\u0000${value}`).digest("hex").slice(0, 16);
 }
 
-/** Deny terms: env SECRET_SCAN_DENY_TERMS + file SECRET_SCAN_DENY_FILE (default ~/.secret-scan-deny.txt). */
+/** Deny terms: env SECRET_SCAN_DENY_TERMS + file SECRET_SCAN_DENY_FILE, or by default ~/.secret-scan-deny.txt
+ *  plus the gitignored scripts/ops/.secret-scan-deny.local (R-1432; never committed). */
+export const LOCAL_DENY_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), ".secret-scan-deny.local");
 export function loadDenyTerms(env = process.env) {
   const out = [];
   if (env.SECRET_SCAN_DENY_TERMS) out.push(...env.SECRET_SCAN_DENY_TERMS.split(/[,\n]/));
-  const f = env.SECRET_SCAN_DENY_FILE || path.join(os.homedir(), ".secret-scan-deny.txt");
-  try { out.push(...fs.readFileSync(f, "utf8").split(/\r?\n/).filter((l) => !l.trim().startsWith("#"))); } catch { /* optional */ }
+  const files = env.SECRET_SCAN_DENY_FILE ? [env.SECRET_SCAN_DENY_FILE]
+    : [path.join(os.homedir(), ".secret-scan-deny.txt"), LOCAL_DENY_FILE];
+  for (const f of files) {
+    try { out.push(...fs.readFileSync(f, "utf8").split(/\r?\n/).filter((l) => !l.trim().startsWith("#"))); } catch { /* optional */ }
+  }
   return [...new Set(out.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 4))];
 }
 

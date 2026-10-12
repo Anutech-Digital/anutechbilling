@@ -106,8 +106,8 @@ describe("bouncedAddress — kaunsa pata refuse hua", () => {
   it("Final-Recipient akela bhi kaafi hai — prose na ho tab bhi", () => {
     expect(bouncedAddress({
       from_email: "mailer-daemon@x.in", subject: "Undeliverable",
-      body_text: "Final-Recipient: rfc822; sujay@bigcorp.co.in\nAction: failed",
-    })).toBe("sujay@bigcorp.co.in");
+      body_text: "Final-Recipient: rfc822; user1@bigcorp.co.in\nAction: failed",
+    })).toBe("user1@bigcorp.co.in");
   });
 
   it("prose akela bhi kaafi hai — delivery-status block na ho tab bhi", () => {

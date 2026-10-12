@@ -3,8 +3,8 @@ import { decideMembership, normalizeEmail } from "./membership";
 
 describe("decideMembership — first-time sign-in tenant assignment", () => {
   it("joins the inviting tenant when an invite matches", () => {
-    const d = decideMembership({ tenant_id: "tenant-excel", role: "owner" });
-    expect(d).toEqual({ mode: "join", tenantId: "tenant-excel", role: "owner" });
+    const d = decideMembership({ tenant_id: "tenant-democo", role: "owner" });
+    expect(d).toEqual({ mode: "join", tenantId: "tenant-democo", role: "owner" });
   });
 
   it("creates a NEW tenant when there is no invite (no tenant leak)", () => {
@@ -24,7 +24,7 @@ describe("decideMembership — first-time sign-in tenant assignment", () => {
 
 describe("normalizeEmail", () => {
   it("lower-cases and trims", () => {
-    expect(normalizeEmail("  Info@SriGanga.com ")).toBe("info@sriganga.com");
+    expect(normalizeEmail("  Info@omegaco.test ")).toBe("info@omegaco.test");
   });
   it("handles null/undefined", () => {
     expect(normalizeEmail(null)).toBe("");

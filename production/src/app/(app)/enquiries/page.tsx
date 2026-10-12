@@ -405,7 +405,7 @@ export default function EnquiriesPage() {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search mail — try from:sujay, is:unread, has:attachment"
+            placeholder="Search mail — try from:testuser1, is:unread, has:attachment"
             className="pl-9"
             aria-label="Search enquiries"
           />

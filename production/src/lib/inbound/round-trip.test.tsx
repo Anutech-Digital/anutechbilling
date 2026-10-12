@@ -126,7 +126,7 @@ async function walk(opts: { subject: string; body: string }) {
   const quote = plan.ok
     ? ({
         id: "Q-ADPL-2026-27-0099",
-        customer_name: "Sri Ganga Technologies",
+        customer_name: "Omega Co",
         subtotal: plan.subtotal,
         discount_pct: plan.discountPct,
         tax_rate: 18,
@@ -286,6 +286,6 @@ describe("chakkar band hai — jo bahar jata hai wo wapas aata hai", () => {
     /* 31 Aug — AI ne apna subject bana liya tha, Gmail ne alag conversation bana di, aur
        Pardeep ke liye wo "koi jawab nahi aaya" ke barabar tha. */
     const theirs = "mujhe 32 email id ke liye quote chahiye google business starter";
-    expect(replySubject(theirs, "Re: Google Workspace quotation - Sri Ganga")).toBe(`Re: ${theirs}`);
+    expect(replySubject(theirs, "Re: Google Workspace quotation - Omega")).toBe(`Re: ${theirs}`);
   });
 });

@@ -13,14 +13,14 @@ import { replySubject, MAX_SUBJECT } from "./reply-subject";
    nahi tha. 13 second me jawab bhi chala gaya — `email_log`: provider gmail, status sent.
 
    Pardeep ko wo jawab MILA HI NAHI. Agent ne apna subject bana liya tha —
-   "Re: Google Workspace Business Starter quotation - Sri Ganga Technologies" — to Gmail ne
+   "Re: Google Workspace Business Starter quotation - Omega Co" — to Gmail ne
    use us thread me joda hi nahi. Jawab inbox me ek alag baat-cheet ban kar padi thi.
 
    Jo insaan intezaar kar raha hai, uske liye "galat thread me jawab" aur "koi jawab nahi" —
    dono ek hi cheez hai.
    ───────────────────────────────────────────────────────────────────────────── */
 
-const AI = "Re: Google Workspace Business Starter quotation - Sri Ganga Technologies";
+const AI = "Re: Google Workspace Business Starter quotation - Omega Co";
 const REAL = "mujhe 32 email id ke liye quote chahiye google business starter";
 
 describe("customer ka subject jeetta hai, model ka nahi", () => {
@@ -30,7 +30,7 @@ describe("customer ka subject jeetta hai, model ka nahi", () => {
 
   it("model ka subject use hi nahi hota jab grahak ka maujood hai", () => {
     /* Model body likhta hai; baat-cheet ka naam wo nahi rakhta. */
-    expect(replySubject(REAL, AI)).not.toContain("Sri Ganga Technologies");
+    expect(replySubject(REAL, AI)).not.toContain("Omega Co");
   });
 });
 

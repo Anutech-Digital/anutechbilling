@@ -7,7 +7,7 @@
 // It exists because this cannot be browser-verified from this machine — the single pending
 // quote in the live books was raised by the only login available, and nobody may approve
 // their own quote, so the real app correctly shows this strip to no one. The count query
-// was measured against the live database instead (Deepak 1, Sriganga 1, Pardeep 0), and
+// was measured against the live database instead (Deepak 1, Omegaco 1, Pardeep 0), and
 // this covers the rendering that measurement cannot see.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";

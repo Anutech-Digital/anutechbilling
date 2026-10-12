@@ -3,7 +3,7 @@
  *
  * ─── THE ROW THAT PROMPTED THIS ─────────────────────────────────────────────
  * `invoice_dunning_log`, 19 and 21 Aug 2026, invoice INV-3BBD-2026-27-0002
- * (SAHAKAR INFRACON PROJECTS PRIVATE LIMITED, ₹55,885):
+ * (BETA CO PROJECTS PRIVATE LIMITED, ₹55,885):
  *
  *     dunning_step  reminder   days_overdue 1   status sent   recipient_email NULL
  *     dunning_step  retry      days_overdue 3   status sent   recipient_email NULL

@@ -136,8 +136,8 @@ describe("netCostLines — what the agent is allowed to say", () => {
 
   it("uses the seller name it was given, not a hardcoded one", () => {
     /* This deployment can serve a second reseller; their quote must not carry ANUTECH's name. */
-    const other = netCostLines(computeNetCost({ ...REAL_DEAL, buyerGstin: GSTIN }), "Delfos Technologies");
-    expect(other.join("\n")).toContain("Delfos Technologies");
+    const other = netCostLines(computeNetCost({ ...REAL_DEAL, buyerGstin: GSTIN }), "Gamma Co");
+    expect(other.join("\n")).toContain("Gamma Co");
     expect(other.join("\n")).not.toContain("ANUTECH");
   });
 });

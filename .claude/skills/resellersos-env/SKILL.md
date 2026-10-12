@@ -286,7 +286,7 @@ claimed until today:
 |---|---|---|---|
 | ANUTECH DIGITAL PVT LTD | `fbb976f1-9090-4f10-9726-0901bd144e42` | 10 | the live business (`distributor`) |
 | Client A | (id on the board / DB) | 1 | historical, and **still holds real money** |
-| Delfos Technologies | `7e57e57e-0000-4000-8000-000000000001` | 1 | `reseller` |
+| Client C | `7e57e57e-0000-4000-8000-000000000001` | 1 | `reseller` |
 
 **Do not read "historical" as "empty".** Client A holds `Q-2026-9776` — the quote
 whose missing ₹8,165 of GST was repaired on 24 Aug. A tenant nobody logs into is exactly where

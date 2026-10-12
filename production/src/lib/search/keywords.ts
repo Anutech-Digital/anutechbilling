@@ -173,7 +173,7 @@ export function contactKeywords(c: ContactLike): string[] {
  * Does every word typed appear somewhere in these fields? (2 Oct 2026)
  *
  * The palette used cmdk's fuzzy scoring, which matches letters in order with gaps —
- * "Muskaan" found "Sachin KUmar TAkSh … solutions" (m-u-s-k-a-a-n spread across the
+ * "Thetaco" found "Test User 3 Etaco … solutions" (m-u-s-k-a-a-n spread across the
  * line) and listed it beside the real match. People search for a name or a number;
  * each word they type must be in the row as typed. Digits also match a number written
  * with spaces or dashes ("98765 43210" ↔ "+919876543210").
