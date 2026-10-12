@@ -108,6 +108,11 @@ jobs:
           # Cloud Build runs the Docker build with its own resources and has been green
           # throughout. It is CI, and only CI, that needed the bigger heap.
           NODE_OPTIONS: --max-old-space-size=4096
+          # R-1102 (11 Oct 2026): `next build` pre-renders the marketing pages, which read the
+          # price list (site/lib/live-catalog.ts). No app runs here, so without this the build
+          # called the LIVE domain and logged 503s there from Azure runner IPs. A closed local
+          # port fails at once and the pages build with the typed fallback prices.
+          CATALOG_ORIGIN: "http://127.0.0.1:9"
         run: npm run build
 
   # ── No-auth E2E smoke ──────────────────────────────────────────────

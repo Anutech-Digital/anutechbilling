@@ -37,11 +37,29 @@ export interface LiveWorkspaceItem {
   vendor?: SuiteVendor;
 }
 
+/**
+ * R-1102 (11 Oct 2026): where the price list is read from. The website is served BY the app,
+ * so it must read THIS deployment, not the live domain. Before this, staging, local dev and
+ * CI builds all called reselleros.anutech.in — hundreds of 503s a day in the live logs while
+ * live was off, and staging never showed its own catalogue.
+ *
+ * Read at request time through an alias: `next build` inlines `process.env.NEXT_PUBLIC_*`,
+ * so a direct read would freeze the build machine value into the bundle. Order:
+ * CATALOG_ORIGIN (explicit override, e.g. CI) → AUTH_URL (set on staging) →
+ * NEXT_PUBLIC_APP_URL (runtime env) → RESELLEROS_URL (the custom domain; live keeps this).
+ */
+export function catalogOrigin(): string {
+  const env = process.env;
+  const raw =
+    env.CATALOG_ORIGIN?.trim() || env.AUTH_URL?.trim() || env.NEXT_PUBLIC_APP_URL?.trim() || RESELLEROS_URL;
+  return raw.replace(/\/+$/, "");
+}
+
 const VENDORS: readonly SuiteVendor[] = ["google", "microsoft", "zoho"];
 
 export async function fetchLiveWorkspace(): Promise<LiveWorkspaceItem[] | null> {
   try {
-    const res = await fetch(`${RESELLEROS_URL}/api/public/catalog/workspace`, {
+    const res = await fetch(`${catalogOrigin()}/api/public/catalog/workspace`, {
       next: { revalidate: 600 },
       signal: AbortSignal.timeout(6_000),
     });
