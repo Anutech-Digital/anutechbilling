@@ -26,7 +26,7 @@ type AuthUser = { id: string; email: string; email_confirmed_at: string | null; 
 const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   auth: new Map<string, { id: string; email: string; email_confirmed_at: string | null; user_metadata: Record<string, unknown> }>(),
-  sessionUser: null as null | { id: string; email: string; user_metadata: Record<string, unknown> },
+  sessionUser: null as null | { id: string; email: string; email_confirmed_at?: string | null; user_metadata: Record<string, unknown> },
 }));
 
 function likeToRegex(pattern: string): RegExp {
@@ -225,9 +225,12 @@ describe("email signup at a company domain (R-822)", () => {
   });
 });
 
+/** R-1301: Google proves the address — GoTrue / Auth.js set email_confirmed_at; the callback refuses without it. */
+const GOOGLE_VERIFIED = "2026-10-10T00:00:00Z";
+
 describe("Google first login → /callback (R-822; same body as the Auth.js branch on staging)", () => {
   it("company domain → join request + /welcome?pending, no workspace", async () => {
-    db.sessionUser = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", email: "pawan@anutech.in", user_metadata: { full_name: "Pawan" } };
+    db.sessionUser = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", email: "pawan@anutech.in", email_confirmed_at: GOOGLE_VERIFIED, user_metadata: { full_name: "Pawan" } };
     const res = await callback(new NextRequest("https://app.example/callback?code=x", { headers: H }));
     expect(res.headers.get("location")).toBe("https://app.example/welcome?pending=ANUTECH%20DIGITAL%20PVT%20LTD");
     expect(openRequests()).toHaveLength(1);
@@ -235,14 +238,14 @@ describe("Google first login → /callback (R-822; same body as the Auth.js bran
   });
 
   it("an existing member logs in unchanged — no join request", async () => {
-    db.sessionUser = { id: OWNER, email: "pardeep@anutech.in", user_metadata: {} };
+    db.sessionUser = { id: OWNER, email: "pardeep@anutech.in", email_confirmed_at: GOOGLE_VERIFIED, user_metadata: {} };
     const res = await callback(new NextRequest("https://app.example/callback?code=x&next=/dashboard", { headers: H }));
     expect(res.headers.get("location")).toBe("https://app.example/dashboard");
     expect(openRequests()).toHaveLength(0);
   });
 
   it("free-mail Google login is asked on /welcome, not routed", async () => {
-    db.sessionUser = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", email: "someone@gmail.com", user_metadata: {} };
+    db.sessionUser = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", email: "someone@gmail.com", email_confirmed_at: GOOGLE_VERIFIED, user_metadata: {} };
     const res = await callback(new NextRequest("https://app.example/callback?code=x", { headers: H }));
     expect(res.headers.get("location")).toContain("/welcome?suggested=");
     expect(openRequests()).toHaveLength(0);

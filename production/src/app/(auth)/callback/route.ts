@@ -34,6 +34,12 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { authProvider } from "@/server/auth/authjs";
 import { currentAuthUser } from "@/server/auth/compat";
 import { initials } from "@/lib/utils";
+import {
+  EMAIL_UNVERIFIED_ERROR,
+  LINK_CONFLICT_ERROR,
+  isEmailVerified,
+  linkRefusedLogRow,
+} from "./link-guard";
 import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
 import {
@@ -99,7 +105,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=no_code`);
   }
 
-  let authUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> };
+  let authUser: {
+    id: string;
+    email?: string | null;
+    email_confirmed_at?: string | null;
+    user_metadata?: Record<string, unknown>;
+  };
   if (authjsUser) {
     authUser = authjsUser.user;
   } else {
@@ -141,6 +152,12 @@ export async function GET(request: NextRequest) {
   }
 
   // ─── First-time sign-in with Google OAuth ──────────────────────────────────────────────────
+  /* R-1301: every decision below is keyed on the email address (profile, invite, domain).
+     None of them may run for an address the login layer has not confirmed. */
+  if (!isEmailVerified(authUser)) {
+    try { await createClient().auth.signOut(); } catch { /* the error page still explains */ }
+    return NextResponse.redirect(`${origin}/login?error=${EMAIL_UNVERIFIED_ERROR}`);
+  }
   const email = authUser.email ?? "";
   const fullName =
     (authUser.user_metadata?.full_name as string | undefined) ||
@@ -152,8 +169,8 @@ export async function GET(request: NextRequest) {
   //
   // `.eq`, not `.ilike`. Both `_` and `%` are ILIKE wildcards AND legal characters
   // in an email local part, so an address containing one matched patterns rather
-  // than itself — in the one branch that then REBINDS that row to a different auth
-  // uid. Emails are stored lower-cased, and the input is normalised, so an exact
+  // than itself — in the branch that (before R-1301) rebound that row to a different
+  // auth uid. Emails are stored lower-cased, and the input is normalised, so an exact
   // comparison is both correct and the only one that cannot match a stranger.
   const { data: preExistingUser } = await admin
     .from("users")
@@ -162,17 +179,23 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
 
   if (preExistingUser) {
-    // Re-link pre-existing user profile to this new Auth UID
-    await admin
-      .from("users")
-      .update({
-        id: authUser.id,
-        full_name: fullName,
-        initials: initials(fullName),
-      })
-      .eq("id", preExistingUser.id);
-
-    return NextResponse.redirect(`${origin}${next}`);
+    /* R-1301: this used to `update users set id = <new uid>` — unchecked, against 26 FKs with
+       no ON UPDATE CASCADE — and stranded the person (see link-guard.ts). The profile keeps its
+       id; the disagreement is recorded and the fresh session is closed so they are not left
+       signed in as a login with no profile. Same in both login layers: under Auth.js,
+       linkOAuthUser has already mapped a verified Google address to this profile's id, so
+       reaching here means the two disagree and only an operator should reconcile them. */
+    const { error: logErr } = await admin.from("activity_log").insert(linkRefusedLogRow({
+      tenantId:  preExistingUser.tenant_id,
+      profileId: preExistingUser.id,
+      newAuthId: authUser.id,
+      provider:  "google",
+      layer:     authjsUser ? "authjs" : "gotrue",
+    }));
+    if (logErr) console.error("[oauth/callback] R-1301 link-refused log failed:", logErr.message);
+    console.warn(`[oauth/callback] R-1301 refused to re-link profile ${preExistingUser.id} to login ${authUser.id}`);
+    try { await createClient().auth.signOut(); } catch { /* the error page still explains */ }
+    return NextResponse.redirect(`${origin}/login?error=${LINK_CONFLICT_ERROR}`);
   }
 
   // Was this email invited to an existing tenant by its owner? If so, JOIN that

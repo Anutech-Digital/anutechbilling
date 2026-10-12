@@ -210,7 +210,25 @@ MODE=fingerprint INSTANCE=resellersos-staging-db     RUN=1 bash scripts/ops/r909
 MODE=compare A=<clone folder printed above> B=<staging folder> bash scripts/ops/r909-live-db.sh
 ```
 
-Rehearsal is done when: DB READY on the clone, **compare = SAME SCHEMA** (or every remaining line is written down with
+**Rehearsal checklist — Google sign-in keeps the account (R-1301).** On the clone: an existing user with linked rows
+signs in with Google → same users.id, profile and data intact.
+- [ ] Pick one real live user who has history (owner is fine). Before: on the clone, note
+      `select id, tenant_id, role from public.users where lower(email) = '<their email>'` and
+      `select count(*) from public.activity_log where user_id = '<that id>'` (plus `leads where owner_id = '<that id>'`).
+- [ ] Point a LOCAL app at the clone (cloud-sql-proxy to `resellersos-r909-rehearsal`, `AUTH_PROVIDER=authjs`, the
+      live Google client from section 3 with `http://localhost:3000/api/auth/callback/google` added for the rehearsal
+      only). That user clicks **Sign in with Google**.
+- [ ] Lands on the dashboard of THEIR workspace (not /welcome, not "Loading…", not `/login?error=account_link_conflict`).
+- [ ] After: the same three queries return the same id, tenant, role and counts. `select count(*) from auth.users where
+      lower(email) = '<their email>'` = 1 (no second login). No `auth.oauth_link_refused` row in activity_log.
+- [ ] If any line differs: STOP the cutover plan — the login and the profile disagree for this user; repair with
+      `db/ops/22-r529-merge-duplicate-google-login.sql` on the clone first and record it in this file.
+- [ ] Remove the localhost redirect URI from the live Google client afterwards.
+
+The callback never rewrites `users.id` any more (it used to, unchecked, and failed on the 26 FKs → stranded user); a
+mismatch now ends on `/login?error=account_link_conflict` with an `auth.oauth_link_refused` row in activity_log.
+
+Rehearsal is done when: DB READY on the clone, the R-1301 Google sign-in check above passes, **compare = SAME SCHEMA** (or every remaining line is written down with
 its decision), the clone's `rowcounts.csv` has been read to list what setup/test rows live really holds (input for the
 18–19 Oct cleanup), and `max_connections` on the clone is known (section 9, F16). Then delete the clone:
 `gcloud sql instances delete resellersos-r909-rehearsal --project=resellsubsos-prod` (Pardeep ki haan).
