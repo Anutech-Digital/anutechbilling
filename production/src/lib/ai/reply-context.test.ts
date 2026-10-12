@@ -116,8 +116,8 @@ describe("buildReplyContext — identity", () => {
   it("uses the tenant's own name, never a hardcoded company", () => {
     /* L20. Three routes shipped with "Demo Co" baked into customer-facing
        text; the system prompt says sign off with the given name and nothing else. */
-    const c = buildReplyContext({ thread: THREAD, facts: { ...FACTS, sellerName: "Delfos Technologies" } });
-    expect(c.contextText).toContain("Delfos Technologies");
+    const c = buildReplyContext({ thread: THREAD, facts: { ...FACTS, sellerName: "Gamma Co" } });
+    expect(c.contextText).toContain("Gamma Co");
     expect(c.contextText).not.toMatch(denyTermsRe());
   });
 

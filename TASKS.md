@@ -1027,7 +1027,7 @@ node scripts/apply-migration.mjs supabase/migrations/20260822200000_fix_project_
 **Nateeja:** 53 quotes me `payment_terms_days` null hai, aur **DB ki saari 41 invoices me
 `due_date = invoice_date` hai.** Yaani is business ki har invoice bante hi due thi.
 
-**Aur isse ek asli customer chase hua:** `INV-3BBD-2026-27-0002` — SAHAKAR INFRACON PROJECTS
+**Aur isse ek asli customer chase hua:** `INV-3BBD-2026-27-0002` — CLIENT B PROJECTS
 PRIVATE LIMITED, ₹55,885, 18 Aug ko bani. `invoice_dunning_log` me 19 Aug par "reminder"
 (`days_overdue = 1`) aur 21 Aug par "retry" (`days_overdue = 3`).
 
@@ -1063,10 +1063,10 @@ counter, taaki jis raat kisi tak kuch na pahuncha wo raat normal na dikhe. **9 t
 > gayi". Wo galat tha — log ne wahi jhooth bola tha jo ab theek hua hai. Code padhne par pata
 > chala ki kuch nahi bheja gaya.
 
-### 🔴 Sandbox tenant ka naam badal gaya hai — ab "Delfos Technologies"
+### 🔴 Sandbox tenant ka naam badal gaya hai — ab "Client C"
 
 Naapa hua, 22 Aug: tenant `7e57e57e-0000-4000-8000-000000000001` ka `name` ab
-**`Delfos Technologies`** hai. Ye wahi tenant hai jo jaan-boojh kar
+**`Client C`** hai. Ye wahi tenant hai jo jaan-boojh kar
 `ZZ TESTING SANDBOX — not a real company` naam se banaya gaya tha, aur wajah is file me hi
 likhi hai: *"company jaisa naam wala tenant company jaisa hi padha jata hai"* — usi galti ne
 ek "Client A" tenant me do din ka asli kaam aur ₹21,240 ka payment chhupa rakha tha.
@@ -1217,9 +1217,9 @@ renewal 2026-08-27. Verify alag run me kiya gaya.
 >
 > Rokna ho to: `update subscriptions set auto_renew = false where id = 'c398e832-0b58-4d78-a5b7-a2fdd1871fc9';`
 >
-> **Aur ye ek email ka mamla nahi hai.** Usi sandbox tenant (`Delfos Technologies`) me `auto_renew`
+> **Aur ye ek email ka mamla nahi hai.** Usi sandbox tenant (`Client C`) me `auto_renew`
 > wali paanch aur subscriptions asli lagne wale email par baithi hain —
-> `itadmin@jiva-designs.com` (JIVA DESIGNS PVT LTD, ×3), `sarvesh.k@dcmnvlchem.co.in`
+> `itadmin@clientj.com` (CLIENT J PVT LTD, ×3), `user4@clientk.co.in`
 > (DCM NOUVELLE SPECIALTY CHEMICALS), `ceo@prop.guide` (NS PROPERTY GUIDE ADVISORS),
 > `printer.test@yahoo.com` (a printer shop). Ye `example.com` jaise nakli address
 > nahi hain. Unki renewal 2027 ki hai, to jaldi nahi — par ek test tenant me live Resend key
@@ -1365,9 +1365,9 @@ Us **asli session** ki seat par baith kar ginwaya (synthetic user par nahi): lea
 
 **1. `/vault` par nahi bana — `/vault/personal` par bana.** `/vault` pehle se ek chalta hua feature hai: customer console ka Password Vault, jisme encryption, access log aur reveal API hai, aur **manager ko bhi chahiye**. Use replace karna ek live feature mitana hota; use owner-only karna manager ko customer passwords se kaat deta. Isliye private vault uske neeche baitha hai, aur dono ka na table prefix milta hai na policy. Table prefix bhi `vault_*` nahi hai (wo password vault ka hai) — `personal_*` hai.
 
-**2. 🔴 RLS `tenant_id` par nahi, `auth.uid()` par hai — aur yahi is poore feature ki jaan hai.** Goal ka hard rule #3 kehta hai "har query me tenant_id + current_tenant_id() RLS". Baaki har table ke liye wo sahi hai. **Yahan wahi rule, akela, ek data breach hai.** Naapa hua: ANUTECH tenant me **teen** log `role = 'owner'` hain — Pardeep, Deepak, aur `info@srigangatechnologies.com`. Tenant-scoped ya role-scoped policy ek owner ka bank balance, ghar ka kharcha aur net worth baaki do ko de deti.
+**2. 🔴 RLS `tenant_id` par nahi, `auth.uid()` par hai — aur yahi is poore feature ki jaan hai.** Goal ka hard rule #3 kehta hai "har query me tenant_id + current_tenant_id() RLS". Baaki har table ke liye wo sahi hai. **Yahan wahi rule, akela, ek data breach hai.** Naapa hua: ANUTECH tenant me **teen** log `role = 'owner'` hain — Pardeep, Deepak, aur `info@clientd.example`. Tenant-scoped ya role-scoped policy ek owner ka bank balance, ghar ka kharcha aur net worth baaki do ko de deti.
 
-> Teeno account sahi hain — Sriganga wala ANUTECH ka apna Workspace console id hai (Pardeep ne 19 Aug ko confirm kiya). **Phir bhi kuch nahi badalta**, aur wajah likhna zaroori hai: khatra kabhi ye tha hi nahi ki koi ajnabi ho. Pardeep aur Deepak dono asli director hain, dono ko company ka poora data dekhna chahiye — aur **kisi ko doosre ka bank balance nahi**. "Personal" ka matlab ek insaan hai, ek company nahi. Upar se shared console address wo account hai jisme ek se zyada log login kar sakte hain.
+> Teeno account sahi hain — Client D wala ANUTECH ka apna Workspace console id hai (Pardeep ne 19 Aug ko confirm kiya). **Phir bhi kuch nahi badalta**, aur wajah likhna zaroori hai: khatra kabhi ye tha hi nahi ki koi ajnabi ho. Pardeep aur Deepak dono asli director hain, dono ko company ka poora data dekhna chahiye — aur **kisi ko doosre ka bank balance nahi**. "Personal" ka matlab ek insaan hai, ek company nahi. Upar se shared console address wo account hai jisme ek se zyada log login kar sakte hain.
 
 **Isliye policy hai `tenant_id = current_tenant_id() and owner_user_id = auth.uid()`** — tenant wala bahari daayra hai, `auth.uid()` wala asli kaam karta hai. Kisi bhi policy me `role` ka zikr nahi hai: role doosra owner badal sakta hai, aur "owner hona" aur "yahi insaan hona" do alag baatein hain.
 
@@ -1637,7 +1637,7 @@ Pardeep Sharma (owner)
 
 **Aur ab ye sach me chalta hai, kyunki red hona bhi sabit kiya:** expected `15 → 99` karke → `MISMATCH: ananya@anutech.in sees 15 leads, expected 99`; aur purani bug wapas daal kar → `VACUOUS RUN: measured 0 people, expected 10`. Dono baar exit 1.
 
-**Asli, naapa hua nateeja (chaaron file ab imaandar hain) — 10 me se 10 log:** Pardeep 19 · Deepak 19 · Sriganga 19 · Pratik/Ranjeet/Pawan/Abhishek 19 · Ananya **15** · Darshan 15 · Hitesh **1**. Leads 19, owned 19, unowned 0. **Jo aankde pehle bataye the wo sahi the — kami saboot me thi, ginti me nahi.**
+**Asli, naapa hua nateeja (chaaron file ab imaandar hain) — 10 me se 10 log:** Pardeep 19 · Deepak 19 · Client D 19 · Pratik/Ranjeet/Pawan/Abhishek 19 · Ananya **15** · Darshan 15 · Hitesh **1**. Leads 19, owned 19, unowned 0. **Jo aankde pehle bataye the wo sahi the — kami saboot me thi, ginti me nahi.**
 
 **📊 [dashboard.html](dashboard.html) ka `Org` tab ab generate hota hai:** `cd production && npm run org:sync` ([org-chart-sync.mjs](production/scripts/org-chart-sync.mjs)) live DB se naap kar `>>> ORG DATA` markers ke beech ka block khud likhta hai — tareekh, tenant ka naam, poora tree, aur dono number. `--check` sirf batata hai (exit 2 = purana), aur wo **tareekh ko nazarandaz karta hai**, warna har naye din jhoothi warning aati.
 
@@ -1664,7 +1664,7 @@ Wajah samajhne layak hai: us bug se note **contradiction bolta nahi, chup ho jaa
 **Gate:** typecheck 0 · **164 files / 3186 tests pass** · lint 0 errors (6 purani warning, chhui hui file me ek bhi nahi) · `npm run build` **nahi** chalayi (doosre session ka dev server chal raha hai, aur aaj ka koi badlav Next route ko chhuta hi nahi — deploy se pehle chalani zaroori hai).
 
 
-**3. ~~`info@srigangatechnologies.com` kaun hai~~ ✅ JAWAB MIL GAYA (19 Aug 2026) — ye ANUTECH ka apna hi email hai.** Pardeep ne confirm kiya: yahi login Google Workspace sales console ka user id bhi hai. Chaar baar pooche jaane ke baad ye sawaal **band**. Role `owner` sahi hai, koi badlav nahi chahiye — aage ke session isko dobara flag na karein.
+**3. ~~`info@clientd.example` kaun hai~~ ✅ JAWAB MIL GAYA (19 Aug 2026) — ye ANUTECH ka apna hi email hai.** Pardeep ne confirm kiya: yahi login Google Workspace sales console ka user id bhi hai. Chaar baar pooche jaane ke baad ye sawaal **band**. Role `owner` sahi hai, koi badlav nahi chahiye — aage ke session isko dobara flag na karein.
 
 > Ek baat phir bhi yaad rahe: ye ek **shared console address** hai, yaani ek se zyada log ismein sign in kar sakte hain. Company data ke liye theek hai. Par kisi bhi *vyaktigat* (personal) data ke liye ye maayne rakhta hai — isiliye Owner Vault ki RLS `role = 'owner'` par nahi, `auth.uid()` par tiki hai.
 
@@ -1684,7 +1684,7 @@ Chaaro haath se padhi aur **unka asar data me** dhoonda — yahi asli sawaal hai
 - ❌ `20260817210000_dunning_pre_due_comments` — **kabhi nahi chali.** Ye sirf do `comment on column` karti hai, jinme koi shart nahi hai — to "shayad skip ho gaya" ka bahana bhi nahi. `invoice_dunning_log` par sirf `action_taken` ka comment hai (kisi purani migration se); `dunning_step` aur `days_overdue` dono khaali.
 - 🔴 `20260817100000_fix_missing_gst_on_onboarded_quotes` — **asar nahi hua, aur usme paisa hai.** Poore DB me ek quote is haalat me hai:
 
-  > **`Q-2026-9776` — SAHAKAR INFRACON PROJECTS PRIVATE LIMITED · status `accepted`** · subtotal ₹45,360 · tax_rate 18 · **amount ₹45,360 jabki ₹53,525 hona chahiye — ₹8,165 GST gayab.** Na invoice bani hai, na payment aayi hai (isliye abhi sudharna surakshit hai).
+  > **`Q-2026-9776` — CLIENT B PROJECTS PRIVATE LIMITED · status `accepted`** · subtotal ₹45,360 · tax_rate 18 · **amount ₹45,360 jabki ₹53,525 hona chahiye — ₹8,165 GST gayab.** Na invoice bani hai, na payment aayi hai (isliye abhi sudharna surakshit hai).
 
 **Iska matlab kya hai:** handoff ki baat 26 files ke liye sahi thi, par **saari 30 par `migration repair` chala dete to do na-chali migrations "chal gayi" mark ho jaatin — aur ye ₹8,165 wali GST hamesha ke liye dab jaati.** Ledger jhooth bolne lagta aur agla banda usi par bharosa karta. `db push` ab bhi khatarnak hai (28 already-lagi files dobara chalayega).
 
@@ -1902,7 +1902,7 @@ Found by auditing all **110 SECURITY DEFINER functions** in prod (read-only MCP)
 
 **The one real hole:** `bank_account_current_balance(p_account_id uuid)` is `SECURITY DEFINER` — so **RLS does not apply inside it** — and it took an arbitrary account UUID with **no ownership check at all**. EXECUTE is granted to `authenticated`, so any signed-in user of any tenant holding or guessing a `bank_accounts.id` could read another tenant's balance. The only protection was UUID secrecy: obscurity, not isolation.
 
-**Impact today is nil** — exactly one tenant has bank accounts (2 rows). It is a **latent** hole that goes live the moment a second tenant adds one, and prod already hosts other real tenants (Delfos). `0226_bank_balance_tenant_guard.sql` scopes **both** halves (account row *and* its transactions — filtering only the account row would still leak, because a foreign id would then sum ITS transactions). Grants stay `authenticated`-only; **not** granted to service_role, since `current_tenant_id()` is null there and it would return a silent 0 — a wrong number is worse than a missing one. Both callers are authenticated client reads, so no app change is needed.
+**Impact today is nil** — exactly one tenant has bank accounts (2 rows). It is a **latent** hole that goes live the moment a second tenant adds one, and prod already hosts other real tenants (Client C). `0226_bank_balance_tenant_guard.sql` scopes **both** halves (account row *and* its transactions — filtering only the account row would still leak, because a foreign id would then sum ITS transactions). Grants stay `authenticated`-only; **not** granted to service_role, since `current_tenant_id()` is null there and it would return a silent 0 — a wrong number is worse than a missing one. Both callers are authenticated client reads, so no app change is needed.
 
 **Also worth a look, not fixed:** `accept_project_quote(uuid)` has no tenant scoping. Its sibling functions (`create_project_quote`, `raise_project_milestone_invoice`) both scope by `current_tenant_id()`, and in the normal flow it only ever receives a project id created moments earlier in the same transaction — but called directly with a foreign id it would accept another tenant's quote. Worth an explicit guard.
 
@@ -2051,7 +2051,7 @@ Fixed in `useBalanceSheetAuto()` — query-layer only, **no migration**. Two pur
 - `0225` created a table the feature never uses — Employee Advances deliberately runs on `expenses` ("zero-migration compatibility"). It also used `NUMERIC(14,2)` where all money is `integer` ₹, and inlined its RLS tenant check instead of `current_tenant_id()` (**150 prod policies use the function**) — which would have silently kept single-tenant behaviour when multi-company lands.
 - **My own error, recorded:** I first called this a P0 broken feature. All 4 "references" to that table were TanStack **cache keys**, not DB calls. Third time this session that grep pointed the wrong way — see [UX-AUDIT §6](docs/UX-AUDIT.md).
 
-**Tenancy question SETTLED — my analysis held.** RLS is enabled on every core table (4–6 policies each) and `record_payment` is not anon-callable, so **no live cross-tenant leak** and the `.or()` fallbacks are **confirmed dead code**. But prod has **5 tenants** and `use-workspace.ts` is worse than described: `606a7ae7` is hardcoded as "Client A" and is actually **Delfos Technologies — a real separate tenant with its own user, invoice and payment**; the real Client A (`13a364c7`) isn't in the hook at all, so its data displays under Anutech. All real business (34 customers / 62 leads / 39 quotes / 26 invoices / 8 users) sits in **one** tenant, Anutech Digital.
+**Tenancy question SETTLED — my analysis held.** RLS is enabled on every core table (4–6 policies each) and `record_payment` is not anon-callable, so **no live cross-tenant leak** and the `.or()` fallbacks are **confirmed dead code**. But prod has **5 tenants** and `use-workspace.ts` is worse than described: `606a7ae7` is hardcoded as "Client A" and is actually **Client C — a real separate tenant with its own user, invoice and payment**; the real Client A (`13a364c7`) isn't in the hook at all, so its data displays under Anutech. All real business (34 customers / 62 leads / 39 quotes / 26 invoices / 8 users) sits in **one** tenant, Anutech Digital.
 
 **Still open from this session:** off-database backup (dashboard shows **`No backups`**; the in-app snapshots live *inside* the same DB, so they're an undo, not a backup) · `tenants.doc_code = 'ET'` sits on **Anutech Digital**, and 4 of 5 tenants have `doc_code = NULL` — worth confirming GST invoice series are labelled with the right legal entity.
 
@@ -2416,7 +2416,7 @@ Closed the deferred mobile gaps from sweep #1 (§20: no table should horizontal-
 Verified LIVE on mobile viewport (375px): payments Project-payments card renders clean ("Client A · Custom accounting software · ₹5,40,000", no horizontal scroll). typecheck clean. Files: payments/invoices/quotes/contacts `page.tsx`. Polish sweep now COMPLETE (empty + error + mobile). Deferred to a future consistency pass: ₹/label/date micro-consistency audit across pages.
 
 ### 🤖 AI next-best-action on leads — 1-tap Gemini follow-up draft (the moat) — ✅ BUILT (✅ DEPLOYED rev 00170)
-Roadmap P1 differentiator vs pre-AI incumbents (RackNap/Zoho). Customers already had an AI draft in their next-best-action; Leads did NOT — the "what do I say?" gap. Added a full-width **"✨ Draft follow-up with AI"** button to the lead detail drawer (between Call/WhatsApp/Email and the smart next-action CTA), reusing existing infra: `AiDraftButton` + `/api/ai/draft-followup` (Gemini Flash, stub fallback). Channel auto = WhatsApp if phone else email; purpose = followup (lead mode never touches money figures — money-safe for prospects). Draft is editable, Copy / Open WhatsApp, ZERO auto-send (human-in-the-loop). Small change to `ai-draft-button.tsx` (added `className` prop for full-width in drawer). Verified LIVE on localhost: opened "Dogma Soft Ltd" → button drafted a contextual Hinglish WhatsApp message referencing real contact (S.Godara), company, plan (Google Workspace Business Starter) + 10 seats; API 200, mode=gemini. typecheck clean. Files: `app/(app)/leads/page.tsx` (import + drawer button), `components/shared/ai-draft-button.tsx` (className prop). Closes fast-follow 171(b) for Leads.
+Roadmap P1 differentiator vs pre-AI incumbents (RackNap/Zoho). Customers already had an AI draft in their next-best-action; Leads did NOT — the "what do I say?" gap. Added a full-width **"✨ Draft follow-up with AI"** button to the lead detail drawer (between Call/WhatsApp/Email and the smart next-action CTA), reusing existing infra: `AiDraftButton` + `/api/ai/draft-followup` (Gemini Flash, stub fallback). Channel auto = WhatsApp if phone else email; purpose = followup (lead mode never touches money figures — money-safe for prospects). Draft is editable, Copy / Open WhatsApp, ZERO auto-send (human-in-the-loop). Small change to `ai-draft-button.tsx` (added `className` prop for full-width in drawer). Verified LIVE on localhost: opened "Client G Ltd" → button drafted a contextual Hinglish WhatsApp message referencing real contact (S.Godara), company, plan (Google Workspace Business Starter) + 10 seats; API 200, mode=gemini. typecheck clean. Files: `app/(app)/leads/page.tsx` (import + drawer button), `components/shared/ai-draft-button.tsx` (className prop). Closes fast-follow 171(b) for Leads.
 
 ### 🚀 First-run onboarding — Getting Started checklist (world-class polish) — ✅ BUILT (✅ DEPLOYED rev 00170)
 Strategic review verdict: app niche me strong (tested money-spine, GST, international) par world-class polish + trust se ~1 layer door. Pardeep chose FIRST-RUN ONBOARDING. Built `GettingStartedCard` on the dashboard: 4-step guided path (set up GST profile → add first customer → create first quote → record first payment), each step ✓ from REAL data (no fake ticks), next step spotlighted (amber CTA), progress % + bar, auto-hides once all done. Fills the gap where a new tenant landed on an empty dashboard with no path. Verified (temporarily nulled setup_completed_at → card showed 75%/3-of-4, restored). File: `components/features/dashboard/getting-started-card.tsx` + dashboard wire.
@@ -2585,7 +2585,7 @@ All money movement via atomic SECURITY DEFINER RPCs (§17b) and verified in **ro
 - [ ] **🎯 Operator next-actions (Pardeep) — priority order:**
   1. ~~Set Gemini key~~ ✅ **DONE (4 Jun)** — AI is LIVE. Key set **in-app** (Settings → Integrations → AI assistant, no Cloud Run needed), billing on, model `gemini-2.5-flash`. Verified live: real Hinglish drafts on a customer (₹1 reminder, amount correct) + a lead (ACB India follow-up). All 3 AI surfaces now real (customer/lead drafts + inbound-email extraction + campaigns).
   2. **Dogfood with REAL data** — import 5–10 real Excel customers (CSV importer ready) + run one full real money-cycle (lead → quote → pay → invoice). Surfaces hidden bugs + proves value. This is the compass line (Excel = first customer).
-  3. **Pick a "first user"** — Excel fully on the app, or one friendly reseller. Polish has diminishing returns without a real user.
+  3. **Pick a "first user"** — Client A fully on the app, or one friendly reseller. Polish has diminishing returns without a real user.
   4. **P0 launch-blockers when taking real money:** Razorpay live keys; GST e-invoice if needed (see `LAUNCH_READINESS.md`).
   5. **Inbound email — set up the Gmail forwarder**: follow `docs/inbound-email-apps-script.md` (paste script + `INBOUND_EMAIL_SECRET` into Apps Script Script Properties + 5-min trigger). ERP display side is DONE + deployed (Enquiries Inbox). ⚠️ Also **rotate `INBOUND_EMAIL_SECRET`** — current prod value is the committed dev test value; rotate in Cloud Run + Script Property together.
 - [ ] **🎙️ AI voice-calling agent — DESIGN APPROVED, build deferred** (4 Jun) — full design + cost + compliance in `docs/VOICE-AGENT-PLAN.md`. Managed Hindi platform (Sarvam/Bolna), phased: **Phase 0 = WhatsApp voice-note (cheapest, no telephony) ship first** → Phase 1 outbound reminder calls (money-safe script, customers-only) → Phase 2 lead-qual/callback → Phase 3 inbound IVR. Build greenlight pending 4 owner decisions (budget / provider / DLT+KYC / consent source). Money-correctness: agent never speaks an unverified ₹ figure.

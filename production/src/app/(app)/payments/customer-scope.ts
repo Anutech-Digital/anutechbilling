@@ -3,8 +3,8 @@
    The filter used to narrow only the payment list. Tab counts, the "N of M payments ·
    ₹X collected" line, the analytics strip (Collected MTD, Partial Quotes, Awaiting GST
    Invoice, Top method), the subscription dues card and the All / Subscription / Project
-   counts stayed company-wide — so with Delhom picked the page showed one ₹38,232 card
-   beside "Received 2 · ₹76,464 collected", and the owner read it as Delhom paying twice.
+   counts stayed company-wide — so with Deltaco picked the page showed one ₹38,232 card
+   beside "Received 2 · ₹76,464 collected", and the owner read it as Deltaco paying twice.
 
    Pure: the page passes its loaded lists in, gets the customer's slice back, and computes
    every number from that slice. No customer → the lists come back untouched. */
@@ -68,7 +68,7 @@ export function paymentTotals(
 
 /** The line above the list.
  *  Company-wide: "3 of 47 payments · ₹X collected all-time" (unchanged).
- *  One customer: "1 payment · ₹38,232 collected from Delhom" — or "1 of 2 payments · …"
+ *  One customer: "1 payment · ₹38,232 collected from Deltaco" — or "1 of 2 payments · …"
  *  when a tab or search narrows that customer's list further. */
 export function paymentsSummaryLine(opts: {
   shown: number;

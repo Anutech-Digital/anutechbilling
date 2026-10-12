@@ -6,7 +6,7 @@ import { dealQuoteRows } from "./deal-quotes";
    ₹59,00,000 project, two ₹5,90,000 milestones invoiced and paid (₹5,40,000 bank + ₹50,000
    TDS each), two milestones not yet invoiced. */
 const PID = "proj-1";
-const excel: DealHistorySources = {
+const sample: DealHistorySources = {
   projects: [{
     id: PID, title: "Complete Billing System", status: "active", total_amount: 5_900_000,
     created_at: "2026-09-26T05:11:45Z", accepted_at: "2026-09-26T05:11:46Z", updated_at: "2026-09-26T05:18:11Z",
@@ -32,7 +32,7 @@ const excel: DealHistorySources = {
 
 describe("dealMoney — project quotation", () => {
   it("sums project invoices and project_payments (TDS counted as settled)", () => {
-    const m = dealMoney(excel);
+    const m = dealMoney(sample);
     expect(m.invoiced).toBe(1_180_000);
     expect(m.paid).toBe(1_180_000);
     expect(m.outstanding).toBe(0);
@@ -120,7 +120,7 @@ describe("dealMoney — both kinds of quote, no double counting", () => {
 });
 
 describe("buildDealHistory — project quotation events", () => {
-  const h = buildDealHistory(excel);
+  const h = buildDealHistory(sample);
   const byId = (id: string) => h.events.find((e) => e.id === id)!;
 
   it("quote created, accepted, invoice issued and each payment, all under Quotes & payments", () => {

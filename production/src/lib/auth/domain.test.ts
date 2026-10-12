@@ -109,7 +109,7 @@ describe("decideOnboarding", () => {
     // Had example.test been a verified domain of the real workspace:
     const d = decideOnboarding({
       invite,
-      domainMatch: { tenant_id: "t-excel", tenant_name: "Demo Co" },
+      domainMatch: { tenant_id: "t-democo", tenant_name: "Demo Co" },
     });
     // He waits for an owner instead of getting a private company of his own.
     expect(d.mode).toBe("request_approval");

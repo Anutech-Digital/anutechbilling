@@ -19,7 +19,7 @@ import type { AiLawNote } from "@/lib/ai/data-entry";
 const EXAMPLES = [
   "Sharma Traders se Ramesh ji ka call aaya, 15 seat Google Workspace chahiye, number 98765 43210. Kal 11 baje call karna.",
   "Paid ₹12,500 cash to Gupta Electricals for office AC repair today",
-  "Muskaan Dentals ne ₹31,053 UPI se bheja, UTR 4271839XXXX",
+  "Thetaco Dentals ne ₹31,053 UPI se bheja, UTR 4271839XXXX",
 ];
 
 const MAX_FILE = 6 * 1024 * 1024;

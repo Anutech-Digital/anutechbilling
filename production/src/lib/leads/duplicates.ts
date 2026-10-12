@@ -6,8 +6,8 @@
  * its own. Two signals:
  *   • phone  — same last-10-digit number (strong signal)
  *   • company — same normalised company name, ignoring case, punctuation and
- *     common suffixes (Pvt / Ltd / Technologies …) so "Dogma Soft" and
- *     "Dogma Soft Pvt Ltd" match.
+ *     common suffixes (Pvt / Ltd / Technologies …) so "Zeta Soft" and
+ *     "Zeta Soft Pvt Ltd" match.
  *
  * Because the operator confirms every merge, an occasional false flag is
  * harmless (they just skip it) — so we err slightly toward catching more.

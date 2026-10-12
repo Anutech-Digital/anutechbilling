@@ -6,7 +6,7 @@ import {
 
 const lead = (over: Partial<QualifiableLead> = {}): QualifiableLead => ({
   contact_phone: "+91 98765 43210",
-  contact_email: "sujay@sahakarglobal.com",
+  contact_email: "user1@betaco.test",
   plan: "Google Workspace Business Starter",
   seats: 14,
   expected_close_date: "2026-09-01",
@@ -109,7 +109,7 @@ describe("qualification — derived from the row, never ticked", () => {
   });
 
   it("rejects an email that is not an email", () => {
-    expect(qualification(lead({ contact_email: "sujay@" })).qualified).toBe(false);
+    expect(qualification(lead({ contact_email: "user1@" })).qualified).toBe(false);
     expect(qualification(lead({ contact_email: "not an email" })).qualified).toBe(false);
   });
 

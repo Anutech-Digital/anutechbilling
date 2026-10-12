@@ -988,7 +988,7 @@ status: isEmailConfigured() ? "sent" : "stubbed",
 `status` and is read as *"did this message reach the customer"*. Two different questions, and
 the wrong one was cheaper to ask.
 
-The result, on real rows: INV-3BBD-2026-27-0002 (SAHAKAR INFRACON PROJECTS PRIVATE LIMITED,
+The result, on real rows: INV-3BBD-2026-27-0002 (CLIENT B PROJECTS PRIVATE LIMITED,
 ₹55,885) has a `reminder` step logged on 19 Aug and a `retry` on 21 Aug, both `status = 'sent'`,
 both `recipient_email = NULL`. **Nothing was sent** — the route only sends when it has an
 address (`if (to && msg)`), and that customer has no `contact_email`.

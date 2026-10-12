@@ -23,7 +23,7 @@ const SERIES: SeriesState = {
 
 const quote = (over: Partial<QuoteToInvoice> = {}): QuoteToInvoice => ({
   id: "Q-ADPL-2026-27-0040",
-  customerName: "Sri Ganga Technologies",
+  customerName: "Omega Co",
   amount: 363204,
   paymentTermsDays: 30,
   ...over,
@@ -36,7 +36,7 @@ describe("GSTIN na ho to YAAD dilata hai", () => {
   it("null par reminder aata hai, aur customer ka naam leta hai", () => {
     const t = textOf(quote({ customerGstin: null }));
     expect(t).toMatch(/GSTIN/);
-    expect(t).toMatch(/Sri Ganga Technologies/);
+    expect(t).toMatch(/Omega Co/);
   });
 
   it("khaali string bhi 'nahi hai' hi hai", () => {

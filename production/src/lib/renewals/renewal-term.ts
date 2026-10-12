@@ -24,7 +24,7 @@
  *
  *   1. **The term is assumed.** A 1-month subscription must be quoted for 1 month.
  *   2. **`mrr` on that row holds an ANNUAL figure.** Every other subscription stores a
- *      genuine per-month rate — SAHAKAR is 14 seats at ₹3,780, exactly ₹270/seat/month,
+ *      genuine per-month rate — BETACO is 14 seats at ₹3,780, exactly ₹270/seat/month,
  *      matching the catalogue. That one row stores ₹3,240/seat, which is ₹270 x 12. A
  *      per-seat rate more than about twice the catalogue price cannot be a monthly rate,
  *      and `suspectAnnualMrr` says so rather than quietly multiplying it again.

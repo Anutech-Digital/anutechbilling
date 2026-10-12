@@ -88,7 +88,7 @@ export function useLeads() {
       // (verified on prod: enabled on `leads` with 4 policies) applies to both
       // queries, so the retry returns exactly the same rows. All it did was make
       // "no leads yet" indistinguishable from "auth/tenant is broken". One of the
-      // three UUIDs also belonged to Delfos Technologies, an unrelated tenant.
+      // three UUIDs also belonged to Gamma Co, an unrelated tenant.
       /* R-294: paged past the 1000-row cap; order ends on the unique id. */
       return fetchAllRows((from, to) => supabase
         .from("leads")

@@ -22,7 +22,7 @@ export function grossAmount(subtotal: number, taxRatePct = 18): number {
  *
  * ─── WHY THIS EXISTS ────────────────────────────────────────────────────────
  * Migration `20260817100000_fix_missing_gst_on_onboarded_quotes` never ran, and one
- * quote is still carrying its consequence: `Q-2026-9776` (SAHAKAR INFRACON, accepted)
+ * quote is still carrying its consequence: `Q-2026-9776` (BETA CO, accepted)
  * holds subtotal ₹45,360 at 18% with `amount` ₹45,360 — ₹8,165 of GST missing. Measured
  * 21 Aug 2026: across all 27 quotes in production it is the ONLY one off by more than a
  * rupee. So this check costs nothing on real work and catches exactly the broken row.

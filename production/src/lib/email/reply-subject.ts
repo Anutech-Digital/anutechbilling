@@ -12,7 +12,7 @@
  *
  * Pardeep never saw it. The agent had invented its own subject —
  *
- *     "Re: Google Workspace Business Starter quotation - Sri Ganga Technologies"
+ *     "Re: Google Workspace Business Starter quotation - Omega Co"
  *
  * — so Gmail did not group it with the thread he was looking at. The reply was sitting in his
  * inbox as a separate conversation. From where he sat, the app had simply not answered.

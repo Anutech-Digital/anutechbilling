@@ -368,7 +368,7 @@ function LeadsPageInner() {
 
   // Workspace keyword filter removed 2026-08-13. It classified rows by company-name
   // keywords (customer-name fragments) against hardcoded tenant UUIDs — one of which was
-  // Delfos Technologies, a real separate tenant, badged as "Demo Co". RLS already
+  // Gamma Co, a real separate tenant, badged as "Demo Co". RLS already
   // scopes every read to the caller's tenant, so the filter only ever hid the
   // tenant's own leads. Name kept: it is referenced throughout this page.
   /* ── Whose leads ──────────────────────────────────────────────────────────

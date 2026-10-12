@@ -126,7 +126,7 @@ describe("R-837 renewals: rate × qty = subtotal", () => {
     expect(r.ok && [r.perSeatRate, r.subtotal]).toEqual([333, 999]);
   });
 
-  it("even cases unchanged: SAHAKAR 14 × ₹270, XYZ monthly 10 × ₹270", () => {
+  it("even cases unchanged: BETACO 14 × ₹270, XYZ monthly 10 × ₹270", () => {
     const a = renewalTerm({ mrr: 3_780, seats: 14, termMonths: 12 });
     expect(a.ok && [a.perSeatRate, a.subtotal]).toEqual([3_240, 45_360]);
     const b = renewalTerm({ mrr: 2_700, seats: 10, termMonths: 1 });

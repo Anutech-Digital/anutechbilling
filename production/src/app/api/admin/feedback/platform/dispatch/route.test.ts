@@ -75,15 +75,15 @@ beforeEach(() => {
   db.email = "owner@platform.test";
   db.adminCreated = 0; db.patches = []; db.updateFilters = [];
   db.rows = [
-    { id: A, tenant_id: "tenant-excel", status: "open", dispatched_at: null },
-    { id: B, tenant_id: "tenant-delfos", status: "agent_queued", dispatched_at: "2026-10-07T05:00:00Z" },
-    { id: C, tenant_id: "tenant-delfos", status: "fixed", dispatched_at: null },
+    { id: A, tenant_id: "tenant-democo", status: "open", dispatched_at: null },
+    { id: B, tenant_id: "tenant-gammaco", status: "agent_queued", dispatched_at: "2026-10-07T05:00:00Z" },
+    { id: C, tenant_id: "tenant-gammaco", status: "fixed", dispatched_at: null },
   ];
 });
 
 describe("POST /api/admin/feedback/platform/dispatch — R-366", () => {
   it("403 for a signed-in user who is not the platform owner, before the service role exists", async () => {
-    db.email = "abhishek@excel.test";
+    db.email = "abhishek@democo.test";
     const r = await call({ id: A });
     expect(r.status).toBe(403);
     expect(db.adminCreated).toBe(0);
@@ -104,7 +104,7 @@ describe("POST /api/admin/feedback/platform/dispatch — R-366", () => {
     expect(db.rows[0]).toMatchObject({ status: "agent_queued", dispatched_by: "caller-1" });
     expect(db.rows[0].dispatched_at).toEqual(expect.any(String));
     const f = db.updateFilters[0];
-    expect(f).toContainEqual(["eq", "tenant_id", "tenant-excel"]);
+    expect(f).toContainEqual(["eq", "tenant_id", "tenant-democo"]);
     expect(f).toContainEqual(["eq", "status", "open"]);
     expect(f).toContainEqual(["is", "dispatched_at", null]);
     expect(Object.keys(db.patches[0]).sort()).toEqual(["dispatched_at", "dispatched_by", "status", "updated_at"]);

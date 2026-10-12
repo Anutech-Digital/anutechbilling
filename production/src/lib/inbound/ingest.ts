@@ -229,7 +229,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
    * sales@ with the whole request in the SUBJECT and nothing in the body:
    *
    *   Subject: mujhe 60 email ke liye quote chahiye google workspace business starter
-   *   Body:    "--  Regards, Pardeep Sharma | Sales Co-ordinator | sales@sriganga.com"
+   *   Body:    "--  Regards, Pardeep Sharma | Sales Co-ordinator | sales@omegaco.test"
    *
    * The mail arrived in 63 seconds and became a lead. Then nothing. `ai_action_log` said
    * `reply.send / held — "Qualifier requested a colleague to take over the lead"`.

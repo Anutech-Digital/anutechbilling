@@ -197,10 +197,10 @@ describe("canSend — §24, never a bare refusal", () => {
   it("names the actual approvers when the caller knows them", () => {
     /* "the owner" is wrong in this workspace — there are three, and the one reading the
        banner is usually the one who cannot approve it. */
-    const g = canSend(rec({ status: "pending" }), need, "Deepak Sharma or Sriganga Technologies");
+    const g = canSend(rec({ status: "pending" }), need, "Deepak Sharma or Omega Co");
     expect(g.allowed).toBe(false);
     if (!g.allowed) {
-      expect(g.reason).toBe("Waiting for Deepak Sharma or Sriganga Technologies to approve.");
+      expect(g.reason).toBe("Waiting for Deepak Sharma or Omega Co to approve.");
       expect(g.nextStep).toMatch(/approvals queue/);
     }
   });

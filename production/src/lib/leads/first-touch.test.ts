@@ -14,15 +14,15 @@ describe("firstTouchDue — business hours IST", () => {
 });
 
 describe("firstTouchTask", () => {
-  const c = { company: "Taksh IT", pitch: "Workspace se trust badhega", fit_reason: "Basic email", domain: "taksh.in" };
+  const c = { company: "Etaco IT", pitch: "Workspace se trust badhega", fit_reason: "Basic email", domain: "etaco.test" };
   it("phone → call task with number and pitch in notes", () => {
-    const t = firstTouchTask(c, { phone: "+919560602339", email: "sales@taksh.in" });
+    const t = firstTouchTask(c, { phone: "+919876500001", email: "sales@etaco.test" });
     expect(t.kind).toBe("call");
-    expect(t.title).toBe("Call karo: Taksh IT");
-    expect(t.notes).toContain("Phone: +919560602339");
+    expect(t.title).toBe("Call karo: Etaco IT");
+    expect(t.notes).toContain("Phone: +919876500001");
     expect(t.notes).toContain("Kya bolna hai: Workspace se trust badhega");
   });
-  it("email only → email task", () => expect(firstTouchTask(c, { phone: null, email: "a@taksh.in" }).kind).toBe("email"));
+  it("email only → email task", () => expect(firstTouchTask(c, { phone: null, email: "a@etaco.test" }).kind).toBe("email"));
 });
 
 describe("firstTouchTask — contact person", () => {

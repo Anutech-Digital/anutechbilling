@@ -21,15 +21,15 @@ import { leadDisplayName, leadContactLines, leadCompanyCell } from "./display-na
 
 describe("leadDisplayName — contact pehle", () => {
   it("contact ka naam ho to wahi, chahe company bhi ho — ASLI FAISLA", () => {
-    const d = leadDisplayName({ company: "Sri Ganga Technologies", contact_name: "Raj Kumar" });
+    const d = leadDisplayName({ company: "Omega Co", contact_name: "Raj Kumar" });
     expect(d).toEqual({ label: "Raj Kumar", source: "contact", hint: null });
   });
 
   it("contact na ho to company, aur us par WAJAH likhi hoti hai", () => {
     /* Company ko chup-chaap contact ki jagah dikhana jhooth hota — padhne wala use aadmi
-       ka naam samajh kar "Hello Sri Ganga Technologies" likh dega. */
-    const d = leadDisplayName({ company: "Sri Ganga Technologies", contact_name: "" });
-    expect(d.label).toBe("Sri Ganga Technologies");
+       ka naam samajh kar "Hello Omega Co" likh dega. */
+    const d = leadDisplayName({ company: "Omega Co", contact_name: "" });
+    expect(d.label).toBe("Omega Co");
     expect(d.source).toBe("company");
     expect(d.hint).toBeTruthy();
   });

@@ -53,7 +53,7 @@ describe("helpers per extension length", () => {
 describe("public accept page", () => {
   const view = (months: number, title: string) => {
     const q: PublicQuote = {
-      id: "Q-5F40-27-0011", status: "sent", customer_name: "delfos", subtotal: 8100, discount_pct: 0,
+      id: "Q-5F40-27-0011", status: "sent", customer_name: "gammaco", subtotal: 8100, discount_pct: 0,
       tax_rate: 18, amount: 9558, expires_date: null, notes: null, billing_cycle: "yearly",
       currency: "INR", exchange_rate: null, service_period: null,
       one_time: isOneTimeQuote(flags(months)), extension_title: extensionTitle(flags(months)),
@@ -80,7 +80,7 @@ describe("public accept page", () => {
 describe("quote PDF", () => {
   const pdf = (months: number, title: string) => {
     const { container } = render(
-      <QuotePDF tenantName="ANUTECH" quoteId="Q-5F40-27-0011" customerName="delfos" validityDays={7}
+      <QuotePDF tenantName="ANUTECH" quoteId="Q-5F40-27-0011" customerName="gammaco" validityDays={7}
         interState={false} billingCycle="yearly" lineItems={[lineFor(title)]} {...amounts} isRenewal
         oneTime={isOneTimeQuote(flags(months))} extensionTitle={extensionTitle(flags(months))} />,
     );
@@ -107,7 +107,7 @@ describe("in-app quote preview", () => {
   const preview = (months: number, title: string) => {
     render(
       <QuotePreviewDialog
-        open onOpenChange={() => {}} tenantName="ANUTECH" quoteId="Q-5F40-27-0011" customerName="delfos"
+        open onOpenChange={() => {}} tenantName="ANUTECH" quoteId="Q-5F40-27-0011" customerName="gammaco"
         lineItems={[lineFor(title)]} {...amounts} interState={false} billingCycle="yearly" validityDays={7} notes=""
         oneTime={isOneTimeQuote(flags(months))} extensionTitle={extensionTitle(flags(months))}
       />,

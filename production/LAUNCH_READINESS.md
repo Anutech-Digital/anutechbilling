@@ -146,7 +146,7 @@ For each, here's the **why**, **how to get it**, and **how long**.
 
 ### 🔴 #1 — Hosting (in progress)
 - Vercel account loop fixed via Firebase migration
-- **Status**: Pardeep upgrading `cloudhosting-excel` to Blaze plan
+- **Status**: Pardeep upgrading `cloudhosting-demo` to Blaze plan
 - **Next**: App Hosting setup + env vars + first deploy
 
 ### 🔴 #2 — `RESEND_API_KEY` invalid

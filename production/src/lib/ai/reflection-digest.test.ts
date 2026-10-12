@@ -21,12 +21,12 @@ const base = (over: Partial<ReflectionReport> = {}): ReflectionReport => ({
 
 describe("kehne ko kuch na ho to CHUP — sabse zaroori", () => {
   it("aaj ki asli halat par koi mail nahi", () => {
-    /* Live naapa gaya: ANUTECH 3 lead, Excel 0, Delfos 0 — koi ranking nahi, koi block
+    /* Live naapa gaya: ANUTECH 3 lead, Demo Co 0, Gammaco 0 — koi ranking nahi, koi block
        nahi. Is halat me mail aana hi galat hoga. */
     expect(reflectionEmail([
       base({ leadsSeen: 3 }),
-      base({ tenantId: "excel", tenantName: "Demo Co", leadsSeen: 0 }),
-      base({ tenantId: "delfos", tenantName: "Delfos Technologies", leadsSeen: 0 }),
+      base({ tenantId: "democo", tenantName: "Demo Co", leadsSeen: 0 }),
+      base({ tenantId: "gammaco", tenantName: "Gamma Co", leadsSeen: 0 }),
     ])).toBeNull();
   });
 
@@ -75,10 +75,10 @@ describe("kehne ko kuch ho to bolta hai", () => {
   it("jo tenant chup hai wo mail me aata hi nahi", () => {
     const m = reflectionEmail([
       base({ tenantName: "ANUTECH", topStall: "price", stalledCount: 9, withheld: "" }),
-      base({ tenantId: "delfos", tenantName: "Delfos Technologies", leadsSeen: 0 }),
+      base({ tenantId: "gammaco", tenantName: "Gamma Co", leadsSeen: 0 }),
     ])!;
     expect(m.text).toContain("ANUTECH");
-    expect(m.text).not.toContain("Delfos");
+    expect(m.text).not.toContain("Gammaco");
   });
 });
 

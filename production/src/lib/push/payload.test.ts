@@ -18,8 +18,8 @@ describe("what a push says", () => {
   });
 
   it("never collapses two payments, because they are two facts", () => {
-    const a = pushPayload({ kind: "payment_received", amount: 20000, customer: "delhom" });
-    const b = pushPayload({ kind: "payment_received", amount: 18232, customer: "delhom" });
+    const a = pushPayload({ kind: "payment_received", amount: 20000, customer: "deltaco" });
+    const b = pushPayload({ kind: "payment_received", amount: 18232, customer: "deltaco" });
     expect(a.tag).not.toBe(b.tag);
   });
 

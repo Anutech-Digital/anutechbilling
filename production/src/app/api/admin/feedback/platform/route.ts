@@ -2,7 +2,7 @@
  * GET /api/admin/feedback/platform — every tenant's feedback, for the platform owner.
  *
  * ─── WHY THIS ROUTE EXISTS AT ALL ───────────────────────────────────────────
- * A tester was given his own tenant (Delfos Technologies) precisely so he could file bug
+ * A tester was given his own tenant (Gamma Co) precisely so he could file bug
  * reports against the app. He filed one on 22 Aug. Nobody could read it: `feedback` carries
  * `feedback_select USING (tenant_id = current_tenant_id())`, so /admin/feedback shows the
  * signed-in workspace and nothing else. Reporting worked, reading did not, and the feature

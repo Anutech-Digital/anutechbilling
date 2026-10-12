@@ -9,10 +9,10 @@ const CATALOGUE: CatalogueEntry[] = [
 ];
 
 const run = (over: Partial<Parameters<typeof extractEntities>[0]> = {}) => extractEntities({
-  fromName:  "Sujay Rao",
-  fromEmail: "sujay@sahakarglobal.com",
+  fromName:  "Testuser Rao",
+  fromEmail: "user1@betaco.test",
   subject:   "Quote for Google Workspace Business Starter",
-  body:      "Hello,\n\nWe need 14 seats before August. Call me on +91 98765 43210.\n\nRegards,\nSujay Rao",
+  body:      "Hello,\n\nWe need 14 seats before August. Call me on +91 98765 43210.\n\nRegards,\nTestuser Rao",
   catalogue: CATALOGUE,
   ...over,
 });
@@ -20,8 +20,8 @@ const run = (over: Partial<Parameters<typeof extractEntities>[0]> = {}) => extra
 describe("the ordinary enquiry", () => {
   it("reads all five", () => {
     const e = run();
-    expect(e.name.value).toBe("Sujay Rao");
-    expect(e.email.value).toBe("sujay@sahakarglobal.com");
+    expect(e.name.value).toBe("Testuser Rao");
+    expect(e.email.value).toBe("user1@betaco.test");
     expect(e.phone.value).toBe("9876543210");
     expect(e.seats.value).toBe(14);
     expect(e.product.value?.id).toBe("GW-STR");
@@ -164,7 +164,7 @@ describe("name", () => {
 describe("email", () => {
   it("prefers the address the mail arrived from", () => {
     const e = run({ body: "Write to me at other@elsewhere.com instead." });
-    expect(e.email.value).toBe("sujay@sahakarglobal.com");
+    expect(e.email.value).toBe("user1@betaco.test");
   });
 
   it("falls back to one in the body when the header has none", () => {

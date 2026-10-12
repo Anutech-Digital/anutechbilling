@@ -7,7 +7,7 @@
 --   holding Rs 50,000 of Rs 50,027 sat at 'sent', the lifecycle bar said "Waiting for the
 --   customer to accept", and the page offered a "Mark accepted" button whose stated job
 --   -- "convert the lead into a customer" -- had already been done. Found by Pardeep on
---   Q-ADPL-2026-27-0026 (delhom), 21 Aug 2026.
+--   Q-ADPL-2026-27-0026 (deltaco), 21 Aug 2026.
 --
 --   This is a SECURITY DEFINER money RPC. Nothing in the TypeScript suite executes it, so
 --   a green `npm run test` says nothing at all about this change. This file is the test.

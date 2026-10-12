@@ -68,7 +68,7 @@ describe("payInstruction — the sentence", () => {
 describe("dunningMessage — no step may promise a link it does not have", () => {
   const steps = ["pre_due", "due_today", "reminder", "retry", "grace_warning", "final"] as const;
   const args = {
-    invoiceId: "INV-1", customerName: "Sahakar Infracon", amountDue: "₹55,885",
+    invoiceId: "INV-1", customerName: "Beta Co", amountDue: "₹55,885",
     dueDate: "19 Aug 2026", sellerName: "ANUTECH DIGITAL",
   };
 

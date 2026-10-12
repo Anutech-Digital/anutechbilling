@@ -106,7 +106,7 @@ describe("findCompany — Indian legal suffixes", () => {
     ["main Ravi from Bright Path Consulting LLP", "Bright Path Consulting LLP"],
     ["Acme Infotech Pvt. Ltd.", "Acme Infotech Pvt. Ltd"],
     ["Company: Shree Balaji Enterprises", "Shree Balaji Enterprises"],
-    ["company name - Taksh IT Solutions\nphone 9876543210", "Taksh IT Solutions"],
+    ["company name - Etaco IT Solutions\nphone 9876543210", "Etaco IT Solutions"],
     ["hi gupta traders pvt ltd se", "Gupta Traders Pvt Ltd"],
     ["Hello Team, Nova Labs Ltd needs 10 users", "Nova Labs Ltd"],
   ])("%s → %s", (text, want) => {

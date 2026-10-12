@@ -27,7 +27,7 @@ insert into public.users (id, tenant_id, email, role) values
 
 -- The service role (public unsubscribe route) records one opt-out for each company.
 insert into public.email_suppressions (tenant_id, email) values
-  ('aaaaaaaa-0000-0000-0000-0000000000d8', 'gone@excel.in'),
+  ('aaaaaaaa-0000-0000-0000-0000000000d8', 'gone@democo.test'),
   ('bbbbbbbb-0000-0000-0000-0000000000d8', 'other@b.in');
 
 -- 5. Stored normalised
@@ -64,7 +64,7 @@ do $$
 declare n int;
 begin
   begin
-    insert into public.email_suppressions (tenant_id, email) values ('aaaaaaaa-0000-0000-0000-0000000000d8', 'victim@excel.in');
+    insert into public.email_suppressions (tenant_id, email) values ('aaaaaaaa-0000-0000-0000-0000000000d8', 'victim@democo.test');
     raise exception 'FAIL 4a: a signed-in user added an opt-out';
   exception when insufficient_privilege then null;
   end;
@@ -79,7 +79,7 @@ declare t int; l int; s int;
 begin
   select count(*) into t from public.marketing_tools;
   select count(*) into l from public.tracking_links;
-  select count(*) into s from public.email_suppressions where email = 'gone@excel.in';
+  select count(*) into s from public.email_suppressions where email = 'gone@democo.test';
   if t <> 0 or l <> 0 or s <> 0 then raise exception 'FAIL 2: B sees tools %, links %, A opt-outs %', t, l, s; end if;
   begin
     insert into public.marketing_tools (tenant_id, tool_key, name) values ('aaaaaaaa-0000-0000-0000-0000000000d8', 'google-ads', 'x');
@@ -87,7 +87,7 @@ begin
   exception when insufficient_privilege then null;
   end;
   -- B deleting A's opt-out does nothing
-  delete from public.email_suppressions where email = 'gone@excel.in';
+  delete from public.email_suppressions where email = 'gone@democo.test';
 end $$;
 
 -- 4c. A can remove its own opt-out (someone who asked back in); B's delete above did nothing
@@ -95,10 +95,10 @@ select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-
 do $$
 declare n int;
 begin
-  select count(*) into n from public.email_suppressions where email = 'gone@excel.in';
+  select count(*) into n from public.email_suppressions where email = 'gone@democo.test';
   if n <> 1 then raise exception 'FAIL 4c: B removed A''s opt-out'; end if;
-  delete from public.email_suppressions where email = 'gone@excel.in';
-  select count(*) into n from public.email_suppressions where email = 'gone@excel.in';
+  delete from public.email_suppressions where email = 'gone@democo.test';
+  select count(*) into n from public.email_suppressions where email = 'gone@democo.test';
   if n <> 0 then raise exception 'FAIL 4d: A could not remove its own opt-out'; end if;
 end $$;
 

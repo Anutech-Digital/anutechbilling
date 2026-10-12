@@ -3,3 +3,6 @@
 .queue-watch-state.json
 .queue-watch-state.json.tmp
 !.queue-watch.env.example
+
+# R-1432: local client deny terms (never committed)
+.secret-scan-deny.local

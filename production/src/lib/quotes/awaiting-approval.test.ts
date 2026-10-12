@@ -7,7 +7,7 @@ import {
    requested by Pardeep. ANUTECH has three owners, and Pardeep cannot clear his own. */
 const PARDEEP = "3caa0f07-44d1-42ee-91b3-2123e04853b1";
 const DEEPAK  = "deepak-id";
-const SRIGANGA = "sriganga-id";
+const OMEGACO = "omegaco-id";
 const HITESH  = "hitesh-id";
 
 const theRealQuote = {
@@ -19,7 +19,7 @@ const theRealQuote = {
 const OWNERS_AND_MANAGERS = [
   { id: PARDEEP,  full_name: "Pardeep Sharma",        email: "pardeep@anutech.in",            role: "owner" },
   { id: DEEPAK,   full_name: "Deepak Sharma",         email: "deepak@anutech.in",             role: "owner" },
-  { id: SRIGANGA, full_name: "Sriganga Technologies", email: "info@srigangatechnologies.com", role: "owner" },
+  { id: OMEGACO, full_name: "Omega Co", email: "info@omegaco.test", role: "owner" },
   { id: HITESH,   full_name: "Hitesh Baghel",         email: "hitesh@anutech.in",             role: "manager" },
 ];
 
@@ -32,7 +32,7 @@ describe("whose queue a pending quote belongs in", () => {
 
   it("is the other owners' queue", () => {
     expect(awaitsMyApproval(theRealQuote, { id: DEEPAK, role: "owner" })).toBe(true);
-    expect(awaitsMyApproval(theRealQuote, { id: SRIGANGA, role: "owner" })).toBe(true);
+    expect(awaitsMyApproval(theRealQuote, { id: OMEGACO, role: "owner" })).toBe(true);
   });
 
   it("is not a manager's queue when the tier says owner", () => {
@@ -102,12 +102,12 @@ describe("the badge's tier list agrees with the page's predicate", () => {
 describe("naming the people who can clear it", () => {
   it("names the other two owners, not the requester", () => {
     const people = eligibleApprovers(OWNERS_AND_MANAGERS, theRealQuote);
-    expect(people.map((p) => p.full_name)).toEqual(["Deepak Sharma", "Sriganga Technologies"]);
+    expect(people.map((p) => p.full_name)).toEqual(["Deepak Sharma", "Omega Co"]);
   });
 
   it("reads as a sentence a person would say", () => {
     const people = eligibleApprovers(OWNERS_AND_MANAGERS, theRealQuote);
-    expect(approverSentence(people)).toBe("Deepak Sharma or Sriganga Technologies");
+    expect(approverSentence(people)).toBe("Deepak Sharma or Omega Co");
     expect(approverSentence([OWNERS_AND_MANAGERS[1]])).toBe("Deepak Sharma");
     expect(approverSentence([])).toBeNull();
   });
@@ -128,6 +128,6 @@ describe("naming the people who can clear it", () => {
 
   it("includes owners as well as managers for a manager-tier quote", () => {
     const people = eligibleApprovers(OWNERS_AND_MANAGERS, { ...theRealQuote, approval_tier: "manager" });
-    expect(people.map((p) => p.full_name).sort()).toEqual(["Deepak Sharma", "Hitesh Baghel", "Sriganga Technologies"]);
+    expect(people.map((p) => p.full_name).sort()).toEqual(["Deepak Sharma", "Hitesh Baghel", "Omega Co"]);
   });
 });

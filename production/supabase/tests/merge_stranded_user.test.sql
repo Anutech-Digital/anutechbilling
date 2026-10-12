@@ -125,7 +125,7 @@ insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) value
   ('2222aaaa-0000-0000-0000-000000000005','3333bbbb-0000-0000-0000-000000000006','ranjeet@m4.in','manual');
 -- One real customer is enough. This is the ₹21,240 shape.
 insert into public.customers (id,tenant_id,name,contact_email) values
-  ('4444cccc-0000-0000-0000-000000000006','2222aaaa-0000-0000-0000-000000000006','A SQUARE TECHNOLOGIES','vinay@x.in');
+  ('4444cccc-0000-0000-0000-000000000006','2222aaaa-0000-0000-0000-000000000006','A IOTA TECHNOLOGIES','vinay@x.in');
 
 do $$ declare msg text; tid uuid; t int; begin
   perform set_config('request.jwt.claims',

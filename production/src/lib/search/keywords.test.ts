@@ -164,7 +164,7 @@ describe("R-821: companyPaletteMeta — the Ctrl+K subtitle under a company", ()
   const UUID = "17e61b78-9450-4849-ad93-9834d2281647";
   const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   it("prefers the domain, then city/state, then the contact name", () => {
-    expect(companyPaletteMeta({ id: UUID, domain: "excel.in", city: "Pune", contact_name: "Ravi" })).toBe("excel.in");
+    expect(companyPaletteMeta({ id: UUID, domain: "democo.test", city: "Pune", contact_name: "Ravi" })).toBe("democo.test");
     expect(companyPaletteMeta({ id: UUID, city: "Pune", state: "Maharashtra", contact_name: "Ravi" })).toBe("Pune, Maharashtra");
     expect(companyPaletteMeta({ id: UUID, state: "Delhi" })).toBe("Delhi");
     expect(companyPaletteMeta({ id: UUID, contact_name: "Ravi Kumar" })).toBe("Ravi Kumar");

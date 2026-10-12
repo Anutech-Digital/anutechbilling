@@ -705,7 +705,7 @@ function DashboardMockup() {
               <QuoteRow id="Q-2026-27-0005" who="Manoj"        plan="GW Starter"  amount="₹2.4L"  status="sent" />
               <QuoteRow id="Q-2026-27-0004" who="sunil loza"   plan="M365 Biz"    amount="₹28.9K" status="accepted" />
               <QuoteRow id="Q-2026-27-0003" who="TechVista"    plan="GW Business" amount="₹6.3L"  status="paid" />
-              <QuoteRow id="Q-2026-27-0002" who="Excel"        plan="Zoho One"    amount="₹54K"   status="draft" />
+              <QuoteRow id="Q-2026-27-0002" who="Demo Co"        plan="Zoho One"    amount="₹54K"   status="draft" />
             </tbody>
           </table>
         </div>
