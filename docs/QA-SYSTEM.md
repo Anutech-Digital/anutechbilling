@@ -55,6 +55,25 @@ Jo bug ek baar pakda gaya, wo dobara chupke se wapas na aaye — isliye:
 - **AI tester (`reselleros-qa-now`) aur `reselleros-qa` jo bug card banaate hain, unme spec ka reference hota hai**: jis workflow (W1–W15) ka bug hai uska spec file naam, aur agar us spec ne hi pakda to test ka title. Fix ke baad retest = wahi spec chalana.
 - Hafte ka sudhaar (neeche) dekhta hai ki kaunse fixed bugs bina test ke band hue.
 
+## 3b. AI tester — har role mein login (sirf LOCAL, R-878)
+
+Desktop AI tester apna dev server chalata hai (`npm run dev:local -- -p 3006` … `3012`; 3001/3005 nahi)
+aur har role ke liye ek one-time link banata hai. Sab `production/` folder se:
+
+```bash
+E2E_ALLOW_SEED=1 node e2e/fixtures/seed-e2e-tenant.mjs   # ek baar: "E2E Test Co" + 4 role users (.env.test passwords)
+node scripts/dev/seed-e2e-catalog.mjs                   # ek baar: 5 products (google/microsoft/zoho) + 2 suppliers
+node scripts/dev/local-login-link.mjs e2e-manager@example.test --host tester1.localhost:3008
+#   → sirf ek line: http://tester1.localhost:3008/api/dev/login-link?token_hash=…  — browser mein kholo
+```
+
+- Roles: `e2e-owner@`, `e2e-manager@`, `e2e-sales@`, `e2e-accountant@example.test`. `--next /leads` = seedha us page par.
+- Har tester ka apna host `testerN.localhost:<port>` — cookies port nahi dekhti, alag host = alag login.
+- Link ek baar chalta hai, 1 ghante mein khatam. Dobara chahiye to command dobara.
+- Mana karta hai: `@example.test` ke bina koi email, localhost / 127.0.0.1 / *.localhost ke bina koi host,
+  local Supabase ke bina koi DB. App ka route (`/api/dev/login-link`) `dev:local` ke bina 404 deta hai — staging/live par hai hi nahi.
+- Local auth GoTrue hai (default). `AUTH_PROVIDER=authjs` wale server par login page ke "Local test login" buttons use karo.
+
 ## 4. Bug ka safar
 
 bug mila (AI QA / error routine / team / customer) → board par owner ke naam card (steps, expected, actual) → owner fix + **test** → push, CI green → Review → AI retest (ya bug batane wala) pass → Done.
