@@ -1,4 +1,4 @@
--- deploy-peek: (to_regprocedure('public.storage_object_allowed(text,text,text,uuid)') is not null and exists(select 1 from pg_policy where polrelid = to_regclass('storage.objects') and polname = 'r724 private files select') and not exists(select 1 from pg_policy where polrelid = to_regclass('storage.objects') and polname = 'employee-docs tenant read'))
+-- deploy-peek: (to_regprocedure('public.storage_object_allowed(text,text,text,uuid)') is not null and exists(select 1 from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'storage' and c.relname = 'objects' and p.polname = 'r724 private files select') and not exists(select 1 from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'storage' and c.relname = 'objects' and p.polname = 'employee-docs tenant read'))
 -- deploy-key: r724storage
 -- deploy-user: postgres
 -- 20261011133000_r724_storage_roles.sql
