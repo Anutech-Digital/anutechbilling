@@ -13,6 +13,7 @@ import {
   addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, logRefusal, refusalResponse,
   rowsFromContentRange, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
+import { BodyTooLargeError, bodyTooLargeJson, readBodyCapped } from "@/server/postgrest/body-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,19 @@ export const runtime = "nodejs";
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   if (!gatewayEnabled()) return NextResponse.json({ message: "data gateway is off" }, { status: 404 });
   const { path } = await ctx.params;
+  /* R-1411: rows are small JSON; never buffer an unbounded body (a big POST OOM-crashed the
+     staging container). Content-Length first, then a byte cap while reading. */
+  let body: string | null = null;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    try {
+      body = await readBodyCapped(req);
+    } catch (e) {
+      if (e instanceof BodyTooLargeError) {
+        return NextResponse.json(bodyTooLargeJson(e.limit), { status: 413, headers: { "Cache-Control": "no-store" } });
+      }
+      throw e;
+    }
+  }
   try {
     const identity = identityFromHeaders(req.headers, { allowService: false });
     const joined = path.join("/");
@@ -43,7 +57,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
       path: joined,
       search: req.nextUrl.searchParams,
       headers: req.headers,
-      body: req.method === "GET" || req.method === "HEAD" ? null : await req.text(),
+      body,
     }, identity);
     res.headers.set("Cache-Control", "no-store");
     if (limitedUser && req.method !== "HEAD" && res.ok) {
