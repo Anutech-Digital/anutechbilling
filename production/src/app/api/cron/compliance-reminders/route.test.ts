@@ -15,6 +15,7 @@ vi.mock("@/lib/automation/cron-gate", () => ({
   cronTenantAllowed: () => true,
   isCronDryRun: () => false,
   noteWouldSend: () => {},
+  currentCronRun: () => null,
 }));
 import { fakePostgrest } from "@/lib/ops/fake-postgrest.testutil";
 

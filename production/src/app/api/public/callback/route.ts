@@ -15,7 +15,7 @@ import { rateLimit, clientIp } from "@/lib/security/rate-limit";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 
 const BUY_PAGE_TENANT_ID = process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
   const { alert: owner } = await loadOwnerAlert(admin, BUY_PAGE_TENANT_ID);
   if (owner.ok) {
-    await sendEmail({
+    await sendInternalEmail({
       to: owner.to,
       from: FROM_EMAIL,
       kind: "ads_callback_alert",

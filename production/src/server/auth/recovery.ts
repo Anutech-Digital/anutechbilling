@@ -8,7 +8,7 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { withAuthStore } from "@/server/db/auth-store";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { normalise, updateUser } from "./accounts";
 
 const TTL_MINUTES = 60;
@@ -26,7 +26,7 @@ export async function sendRecoveryLink(email: string, origin: string): Promise<v
       returning id::text as id, email`, normalise(email), sha256(token)));
   if (!rows[0]) return; // same outward answer either way
   const link = `${origin.replace(/\/+$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
-  await sendEmail({
+  await sendInternalEmail({
     to: rows[0].email,
     subject: "Reset your ResellerOS password",
     text: `Someone asked to reset the password for this account.\n\nChoose a new password: ${link}\n\nThe link works once, for ${TTL_MINUTES} minutes. If it was not you, ignore this email — nothing changes.`,

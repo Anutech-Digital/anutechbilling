@@ -58,10 +58,10 @@ describe("wired into the storefront's customer emails", () => {
     expect(src).toMatch(/voice \? voice\.signOff/);
   });
   it("the payment-received owner alerts honour the local switch", () => {
-    expect(read("src/app/api/webhooks/razorpay/route.ts")).toMatch(/owner\.ok && ownerPaymentAlertAllowed\(\) && sendEmail\(\{\s*to:\s*owner\.to/);
-    expect(read("src/app/api/public/checkout/workspace/route.ts")).toMatch(/owner\.ok && ownerPaymentAlertAllowed\(\) && sendEmail\(\{\s*to:\s*owner\.to/);
+    expect(read("src/app/api/webhooks/razorpay/route.ts")).toMatch(/owner\.ok && ownerPaymentAlertAllowed\(\) && sendInternalEmail\(\{\s*to:\s*owner\.to/);
+    expect(read("src/app/api/public/checkout/workspace/route.ts")).toMatch(/owner\.ok && ownerPaymentAlertAllowed\(\) && sendInternalEmail\(\{\s*to:\s*owner\.to/);
   });
   it("the paid-order customer email no longer waits on the owner address", () => {
-    expect(read("src/app/api/webhooks/razorpay/route.ts")).toContain("customerEmail && customerReplyTo && sendEmail({");
+    expect(read("src/app/api/webhooks/razorpay/route.ts")).toContain("customerEmail && customerReplyTo && sendCustomerEmail({");
   });
 });

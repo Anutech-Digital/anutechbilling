@@ -10,7 +10,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { isValidReviewLink, reviewEmail, tooSoon, REVIEW_COOLDOWN_DAYS } from "@/lib/marketing/review-request";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -60,7 +60,7 @@ export const POST = withRoute(
       sender, link,
     });
 
-    const result = await sendEmail({
+    const result = await sendCustomerEmail({
       to,
       from: process.env.RESEND_FROM_DEFAULT?.trim() || undefined,
       replyTo: replyToAddress(boxes, tenant?.email),

@@ -21,8 +21,8 @@ describe("trials never email the owner", () => {
   for (const f of FILES) {
     it(f, () => {
       const c = code(f);
-      if (SENDS_CUSTOMER_EMAIL.has(f)) expect(c).toContain("sendEmail("); // guard: the customer's email is still there to scan
-      else expect(c).not.toContain("sendEmail(");
+      if (SENDS_CUSTOMER_EMAIL.has(f)) expect(c).toContain("sendCustomerEmail("); // guard: the customer's email is still there to scan
+      else expect(c).not.toMatch(/send(Customer|Internal)?Email\(/);
       expect(c).not.toMatch(/buy_page_trial_owner/);
       expect(c).not.toMatch(/to:\s*owner\.to/);
     });
@@ -39,14 +39,14 @@ describe("a trial request through the enquiry routes does not email the owner", 
   it("general route: the owner alert is skipped for a trial, the customer's copy is not", () => {
     const c = code("src/app/api/public/enquiry/general/route.ts");
     expect(c).toMatch(/trial:\s*z\.boolean\(\)\.optional\(\)/);
-    expect(c).toMatch(/ownerEmail && !trial\s*\?\s*sendEmail\(\{[\s\S]{0,400}to:\s*ownerEmail/);
-    expect(c).toMatch(/sendEmail\(\{[\s\S]{0,300}to:\s*email,/);
+    expect(c).toMatch(/ownerEmail && !trial\s*\?\s*sendInternalEmail\(\{[\s\S]{0,400}to:\s*ownerEmail/);
+    expect(c).toMatch(/sendCustomerEmail\(\{[\s\S]{0,300}to:\s*email,/);
   });
   it("workspace route: the same", () => {
     const c = code("src/app/api/public/enquiry/workspace/route.ts");
     expect(c).toMatch(/trial:\s*z\.boolean\(\)\.optional\(\)/);
-    expect(c).toMatch(/owner\.ok && !trial && sendEmail\(\{\s*to:\s*owner\.to/);
+    expect(c).toMatch(/owner\.ok && !trial && sendInternalEmail\(\{\s*to:\s*owner\.to/);
     // The customer still gets the acknowledgement — addressed by its reply-to (support for the storefront).
-    expect(c).toMatch(/customerReplyTo && sendEmail\(\{\s*to:\s*email,/);
+    expect(c).toMatch(/customerReplyTo && sendCustomerEmail\(\{\s*to:\s*email,/);
   });
 });

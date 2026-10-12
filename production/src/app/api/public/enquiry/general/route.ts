@@ -23,7 +23,7 @@ import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { enquiryStateName } from "@/app/(public)/enquiry/enquiry-outcome";
 
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
          "Remove this feature completely. That will just annoy the owner." Staff still see
          the trial as a lead. */
       ownerEmail && !trial
-        ? sendEmail({
+        ? sendInternalEmail({
             /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
                   me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
             route: { tenantId: tenantId },
@@ -176,7 +176,7 @@ ${APP_URL}/leads/${leadId}
         : Promise.resolve({ status: "skipped" as const }),
 
       // 2. Customer acknowledgement
-      sendEmail({
+      sendCustomerEmail({
         /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
               me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
         route: { tenantId: tenantId },

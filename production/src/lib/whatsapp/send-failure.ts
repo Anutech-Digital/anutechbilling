@@ -63,5 +63,14 @@ export function classifySendFailure(err: unknown): SendFailureResponse {
     return { status: 409, level: "warn", message };
   }
 
+  /* R-897: the owner has "Customer messages" (or this job) switched off in Automation — a
+     setting, not an outage. Same reasoning as above: the owner can fix it, a retry cannot. */
+  const refused =
+    (err instanceof Error && err.name === "CustomerMessageRefusedError") ||
+    /customer messages are switched off|is not on for this company/i.test(message);
+  if (refused) {
+    return { status: 409, level: "warn", message };
+  }
+
   return { status: 502, level: "error", message };
 }

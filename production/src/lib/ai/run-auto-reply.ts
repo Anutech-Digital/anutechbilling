@@ -36,7 +36,7 @@
  * not quietly become the second place customer mail accumulates.
  */
 import { createBareClient } from "@/lib/supabase/bare";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { resolveAutonomy } from "./autonomy";
 import { loadAutonomyPolicy, logAiAction } from "./autonomy.server";
 import { draftReplyForLead } from "./draft-reply.server";
@@ -213,7 +213,7 @@ export async function runAutoReply(args: RunAutoReplyArgs): Promise<void> {
     return;
   }
 
-  const result = await sendEmail({
+  const result = await sendCustomerEmail({
     to:      args.recipient,
     from:    args.fromEmail,
     subject: drafted.draft.subject || "Re: your enquiry",

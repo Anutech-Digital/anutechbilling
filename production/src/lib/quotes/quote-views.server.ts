@@ -18,7 +18,7 @@
 import crypto from "node:crypto";
 import { createBareClient } from "@/lib/supabase/bare";
 import type { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import {
   HOT_LEAD_WINDOW_MINUTES,
@@ -193,7 +193,7 @@ export async function maybeAlertHotLead(input: {
     verdict,
   });
 
-  const sent = await sendEmail({
+  const sent = await sendInternalEmail({
     to: alert.to,
     from: process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>",
     subject: `[HOT] ${message.subject}`,

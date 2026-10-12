@@ -14,8 +14,7 @@
  */
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail, sendInternalWhatsApp } from "@/lib/messaging";
 import {
   emailDomain,
   isPublicEmailDomain,
@@ -266,7 +265,7 @@ export async function notifyOwnerOfJoinRequest(input: {
   let whatsapp: "sent" | "skipped" = "skipped";
   if (tenant?.phone) {
     try {
-      await sendWhatsApp({
+      await sendInternalWhatsApp({
         tenantId: input.tenantId,
         to:       tenant.phone,
         message:  { kind: "text", text: body },
@@ -290,7 +289,7 @@ export async function notifyOwnerOfJoinRequest(input: {
   const to = owner?.email ?? tenant?.email ?? null;
   if (to) {
     try {
-      const res = await sendEmail({
+      const res = await sendInternalEmail({
         to,
         subject: `${who} is waiting to join ${input.tenantName}`,
         text:    body,

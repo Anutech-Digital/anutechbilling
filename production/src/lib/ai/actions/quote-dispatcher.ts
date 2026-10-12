@@ -23,10 +23,9 @@
  * path resolves the dial and writes the log here, in the same shape send.ts uses.
  */
 import type { createAdminClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail, sendCustomerWhatsApp } from "@/lib/messaging";
 import { replySubject } from "@/lib/email/reply-subject";
 import { quotePdfAttachment, mentionsQuote } from "@/lib/quotes/quote-pdf-attachment";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
 import { autoQuoteForLead, agentMaySendSeparateReply } from "@/lib/quotes/auto-quote-for-lead";
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { resolveAutonomy, type AiAction } from "../autonomy";
@@ -211,7 +210,7 @@ async function sendReply(args: DispatchArgs): Promise<DispatchResult> {
       ? await quotePdfAttachment(args.admin, args.tenantId, args.deliveredQuoteId as string)
       : null;
 
-    const res = await sendEmail({
+    const res = await sendCustomerEmail({
       to: args.customerContact,
       from: args.fromEmail,
       attachments: attach ? [attach] : undefined,
@@ -287,7 +286,7 @@ async function sendReply(args: DispatchArgs): Promise<DispatchResult> {
   }
 
   try {
-    await sendWhatsApp({
+    await sendCustomerWhatsApp({
       tenantId: args.tenantId,
       to: args.customerContact,
       message: { kind: "text", text: decision.generated_response.whatsapp_summary },

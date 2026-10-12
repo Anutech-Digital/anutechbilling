@@ -13,6 +13,15 @@
  */
 import crypto from "node:crypto";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/* R-897: customer messages switched ON for these tests (the gate has its own tests). */
+vi.mock("@/lib/automation/gate.server", () => ({
+  automationState: async () => "on",
+  cronTenants: async () => ({ on: [], dry: [] }),
+  recordRun: async () => {},
+  readJobRow: async () => null,
+  ensureDefaultOnRow: async () => {},
+  readTenantJobs: async () => [],
+}));
 import { NextRequest } from "next/server";
 
 type Row = Record<string, unknown>;

@@ -27,7 +27,8 @@ import { z } from "zod";
 import { createAdminClientFor } from "@/lib/supabase/server";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
 import { withRoute, dbFail } from "@/lib/api/with-route";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail } from "@/lib/messaging";
 import { unsubscribeUrl, unsubscribeFooter, normaliseEmail } from "@/lib/marketing/unsubscribe-token";
 import { fillName, greetingName, NO_NAME } from "@/lib/marketing/greeting-name";
 import { cleanPitch } from "@/lib/leads/lead-finder";
@@ -236,7 +237,7 @@ export const POST = withRoute(
     let errorMessage: string | null = null;
 
     try {
-      const result = await sendEmail({
+      const result = await sendCustomerEmail({
         to:      r.contact_email,
         from:    fromAddress,
         replyTo: replyToAddress(ingestBoxes, tenant?.email),

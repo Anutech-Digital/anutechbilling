@@ -15,7 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { synthesizeSpeech } from "@/lib/voice/tts";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
+import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
 
 const bodySchema = z.object({
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await sendWhatsApp({
+    const result = await sendCustomerWhatsApp({
       tenantId: me.tenant_id,
       to: customer.contact_phone,
       message: {

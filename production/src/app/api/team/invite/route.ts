@@ -23,7 +23,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { rateLimitShared } from "@/lib/security/rate-limit";
 import { TEMP_PASSWORD_RATE, checkTypedTempPassword } from "@/lib/auth/temp-password";
 import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
      saboot hai — bina iske signup 409 deta hai (audit 1 Sep 2026). */
   const signupUrl = inviteToken && !memberCreated ? `${base}/signup?invite=${inviteToken}` : null;
 
-  const emailRes = await sendEmail({
+  const emailRes = await sendInternalEmail({
     /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
           me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
     route: { tenantId: me.tenant_id },

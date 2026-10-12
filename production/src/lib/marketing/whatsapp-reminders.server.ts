@@ -15,7 +15,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import { sendWhatsApp } from "@/lib/whatsapp/client";
+import { sendCustomerWhatsApp, type WhatsAppSendOpts } from "@/lib/messaging";
 import { WhatsAppNotConfiguredError } from "@/lib/whatsapp/send-failure";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
@@ -67,7 +67,7 @@ export interface ReminderStore {
 export interface ReminderDeps {
   store: ReminderStore;
   automationAllows(tenantId: string, kind: ReminderKind): Promise<boolean>;
-  send(opts: Parameters<typeof sendWhatsApp>[0]): Promise<{ wamid: string | null }>;
+  send(opts: WhatsAppSendOpts): Promise<{ wamid: string | null }>;
   now(): Date;
 }
 
@@ -241,7 +241,7 @@ function defaultDeps(): ReminderDeps {
       if (!p) { p = loadAutonomyPolicy(tenantId); policies.set(tenantId, p); }
       return resolveAutonomy(reminderAction(kind), await p).mode === "auto";
     },
-    send: (opts) => sendWhatsApp(opts),
+    send: (opts) => sendCustomerWhatsApp(opts),
     now: () => new Date(),
   };
 }

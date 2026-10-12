@@ -20,7 +20,8 @@ import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { payInstruction, upiPayLink } from "@/lib/invoices/pay-link";
 import { dunningLogStatus } from "@/lib/invoices/dunning-log-status";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
+import { isEmailConfigured } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { rupee, formatDate } from "@/lib/utils";
 import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
@@ -179,7 +180,7 @@ export async function runOverdueSuspension(
         let status: string = dunningLogStatus({ recipient: resolved.email, hasMessage: true, emailConfigured: isEmailConfigured() });
         let errorMessage: string | null = null;
         if (resolved.email) {
-          const r = await sendEmail({
+          const r = await sendCustomerEmail({
             route: { tenantId: sub.tenant_id },
             to: resolved.email, subject: msg.subject, text: msg.text,
             kind: "invoice_dunning",
@@ -229,7 +230,7 @@ export async function runOverdueSuspension(
       if (logErr) console.error("[overdue-suspension] ai_action_log insert failed:", logErr.message);
 
       if (tenant.email) {
-        await sendEmail({
+        await sendInternalEmail({
           route: { tenantId: sub.tenant_id },
           to: tenant.email,
           subject: `Paused: ${sub.customer_name} — ${service}`,

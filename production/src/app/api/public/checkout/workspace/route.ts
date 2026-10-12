@@ -32,7 +32,7 @@ import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
 import { buyPageTenantIdOrEmpty, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
@@ -476,7 +476,7 @@ export async function POST(request: NextRequest) {
       const customerReplyTo = voice ? voice.replyTo : owner.ok ? owner.to : null;
       await Promise.allSettled([
         // Customer copy
-        customerReplyTo && sendEmail({
+        customerReplyTo && sendCustomerEmail({
           to:      email,
           from:    FROM_EMAIL,
           replyTo: customerReplyTo,
@@ -504,7 +504,7 @@ ${voice ? voice.signOff : `— ${sellerPerson}`}
    (Simulated email — system test only)`,
         }),
         // Lead owner — the employee this order was dealt to (R-111), same as the webhook
-        leadOwner && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendEmail({
+        leadOwner && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendInternalEmail({
           to:      leadOwner.email,
           from:    FROM_EMAIL,
           kind:    "buy_page_checkout_sim_lead_owner",
@@ -517,7 +517,7 @@ ${voice ? voice.signOff : `— ${sellerPerson}`}
           }),
         }),
         // Owner alert — flagged clearly as test (switched off on a developer machine only)
-        owner.ok && ownerPaymentAlertAllowed() && sendEmail({
+        owner.ok && ownerPaymentAlertAllowed() && sendInternalEmail({
           to:      owner.to,
           from:    FROM_EMAIL,
           kind:    "buy_page_checkout_sim_owner",

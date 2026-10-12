@@ -28,7 +28,7 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
@@ -79,7 +79,7 @@ async function alertOwner(tenantId: string, subject: string, text: string) {
     return;
   }
   // Internal, to the owner: deliberately NOT gated by the automation switch (L64).
-  await sendEmail({ to: alert.to, from: FROM_EMAIL, kind: "domain_renewal_owner", route: { tenantId }, subject, text }).catch((e) =>
+  await sendInternalEmail({ to: alert.to, from: FROM_EMAIL, kind: "domain_renewal_owner", route: { tenantId }, subject, text }).catch((e) =>
     console.error("[renew-domains] owner alert failed:", e),
   );
 }

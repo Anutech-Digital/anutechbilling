@@ -18,7 +18,8 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { withRoute, RouteError, dbFail } from "@/lib/api/with-route";
 import { ACTION_ROLES, forbiddenMessage } from "@/lib/auth/action-roles";
-import { sendWhatsApp, resolveWhatsAppCreds } from "@/lib/whatsapp/client";
+import { resolveWhatsAppCreds } from "@/lib/whatsapp/client";
+import { sendCustomerWhatsApp } from "@/lib/messaging";
 import {
   slotValues, bodyComponents, renderBody, normalizeWaPhone, firstName, templateProblem,
 } from "@/lib/marketing/whatsapp-broadcast";
@@ -113,7 +114,7 @@ export const POST = withRoute({
   for (const r of capped) {
     try {
       const values = slotValues(paramMap, { first_name: r.first, company: r.company, sender });
-      const res = await sendWhatsApp({
+      const res = await sendCustomerWhatsApp({
         tenantId, to: r.phone,
         message: { kind: "template", name: tpl.name, language: tpl.language, components: bodyComponents(values) },
         related: { leadId: r.leadId },

@@ -33,7 +33,7 @@ import crypto from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { rupee } from "@/lib/utils";
-import { sendEmail } from "@/lib/email/send";
+import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
@@ -671,7 +671,7 @@ export async function POST(request: NextRequest) {
 
   await Promise.allSettled([
     // Customer order confirmation
-    customerEmail && customerReplyTo && sendEmail({
+    customerEmail && customerReplyTo && sendCustomerEmail({
       to:      customerEmail,
       from:    FROM_EMAIL,
       replyTo: customerReplyTo,
@@ -699,7 +699,7 @@ ${customerSignOff}`,
     }),
 
     // Seller alert — money in the bank (switched off on a developer machine only)
-    owner.ok && ownerPaymentAlertAllowed() && sendEmail({
+    owner.ok && ownerPaymentAlertAllowed() && sendInternalEmail({
       to:      owner.to,
       from:    FROM_EMAIL,
       kind:    "razorpay_payment_owner",
@@ -733,7 +733,7 @@ Open quote:  ${publicBase}/quotes/${quote.id}${leadOwner
     /* R-120: the employee who owns the lead (R-111 deals new leads round-robin) gets the
        order and the next steps — not only the tenant inbox. Skipped when that person IS the
        tenant inbox, so nobody gets the same order twice. */
-    leadOwner && !isHostingOrder && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendEmail({
+    leadOwner && !isHostingOrder && leadOwner.email.toLowerCase() !== (owner.ok ? owner.to.toLowerCase() : "") && sendInternalEmail({
       to:      leadOwner.email,
       from:    FROM_EMAIL,
       kind:    "razorpay_payment_lead_owner",
@@ -856,7 +856,7 @@ async function handlePaymentFailed(
     const { alert: owner, tenant: seller } = await loadOwnerAlert(admin, quote.tenant_id);
     const sellerName = seller?.name?.trim() || "your reseller";
     const voice = storefrontVoice(quote.tenant_id);
-    const r = await sendEmail({
+    const r = await sendCustomerEmail({
       to,
       from: FROM_EMAIL,
       replyTo: voice ? voice.replyTo : owner.ok ? owner.to : undefined,

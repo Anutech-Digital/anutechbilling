@@ -10,6 +10,7 @@ vi.mock("@/lib/automation/cron-gate", () => ({
   cronTenantAllowed: () => true,
   isCronDryRun: () => false,
   noteWouldSend: () => {},
+  currentCronRun: () => null,
 }));
 
 const prov = vi.hoisted(() => ({

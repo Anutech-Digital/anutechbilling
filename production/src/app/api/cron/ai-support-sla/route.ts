@@ -25,7 +25,7 @@ import { reportCron } from "@/lib/ops/cron-report";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
-import { sendEmail } from "@/lib/email/send";
+import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { lastCustomerMessageAt } from "@/lib/ai/support-agent.server";
@@ -267,7 +267,7 @@ async function alertDesk(
     `${APP_URL}/support`,
   ];
 
-  const res = await sendEmail({
+  const res = await sendInternalEmail({
     to: alert.to,
     from: FROM_EMAIL,
     subject: `[SLA] ${t.ticketId} unassigned ${waitedMinutes} min — ${t.customerName}`,
