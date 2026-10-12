@@ -29,7 +29,7 @@ V2 PRD (2026-05-19) described a single-product Google Workspace reseller CRM on 
 | Partner channel | Not in scope | **Distributor → reseller hierarchy built** |
 | Banking | Not in scope | **Multi-bank CSV import + AA scaffold** |
 
-V3 is not an aspirational doc — it documents what's already in production at Excel Technologies (the dogfooding tenant) and Anutech Digital (the partner tenant).
+V3 is not an aspirational doc — it documents what's already in production at Client A (the dogfooding tenant) and Anutech Digital (the partner tenant).
 
 ---
 
@@ -61,8 +61,8 @@ TDS receivable cycle → Form 26AS reconcile at year-end
 
 | Persona | Permissions | Daily surface |
 |---|---|---|
-| **Owner** (Pardeep at Excel Tech) | Full access — billing, settings, all data, partner channel | Dashboard → Leads/Deals → Quotes → Invoices → Renewals → Banking → Reports |
-| **Sales rep** (Darshan at Excel Tech) | Owned leads + own deals + own quotes; read-only customers; cannot delete; no Import CSV; no campaigns | /leads → /deals → /tasks → /support |
+| **Owner** (Pardeep at Client A) | Full access — billing, settings, all data, partner channel | Dashboard → Leads/Deals → Quotes → Invoices → Renewals → Banking → Reports |
+| **Sales rep** (Darshan at Client A) | Owned leads + own deals + own quotes; read-only customers; cannot delete; no Import CSV; no campaigns | /leads → /deals → /tasks → /support |
 | **Support/Ops** | Customers + subscriptions + invoices (no quote pricing edit) | /customers → /subscriptions → /support |
 | **Accountant / Finance** | Invoices + payments + TDS + banking + GST reports | /invoices → /payments → /banking → /reports |
 | **Customer portal user** (the reseller's own customers) | Magic-link login; their own subscriptions/invoices/tickets only | /portal/* (separate origin / brandable) |
@@ -123,7 +123,7 @@ CREATE POLICY tenant_isolation ON <table>
 
 This means a logged-in user CAN ONLY see/modify rows in their own tenant. Cross-tenant leakage is impossible at the database layer, regardless of bugs in app code.
 
-**Multi-tenant SaaS pattern**: Each `tenant` is one reseller business. Excel Technologies and Anutech Digital are two real tenants today; both have their own catalog, leads, quotes, customers, etc.
+**Multi-tenant SaaS pattern**: Each `tenant` is one reseller business. Client A and Anutech Digital are two real tenants today; both have their own catalog, leads, quotes, customers, etc.
 
 **Partner channel exception**: When a distributor (parent tenant) issues an invoice to its child reseller (downstream tenant), a `vendor_bill` row is auto-created in the child's tenant via a `SECURITY DEFINER` RPC that bypasses RLS in a controlled way. This is the only sanctioned cross-tenant write.
 
@@ -284,7 +284,7 @@ Document numbering format: `{PREFIX}-{YYYY}-{YY}-{NNNN}` (e.g., `INV-2025-26-000
 #### B2. Quote send + PDF
 - Server-rendered PDF via `@react-pdf/renderer`
 - Multi-tenant branding (tenant logo + brand color in PDF)
-- Send via email (Resend with Excel Tech sender until resellersos.in is bought)
+- Send via email (Resend with Client A sender until resellersos.in is bought)
 - Send via WhatsApp Business as document attachment (Gupshup BSP)
 - Send audit log per quote (`activities` row)
 - Public accept page at `/quote/[id]/accept` (no login required)
@@ -527,7 +527,7 @@ Document numbering format: `{PREFIX}-{YYYY}-{YY}-{NNNN}` (e.g., `INV-2025-26-000
 - Liability cap = 12 months fees
 
 #### L5. About page
-- Founder story (Pardeep at Excel Technologies, 12+ years reseller)
+- Founder story (Pardeep at Client A, 12+ years reseller)
 - Mission + dogfooding badge
 - Company facts (legal entity, GCP Mumbai, DPDP compliant)
 
@@ -583,7 +583,7 @@ Document numbering format: `{PREFIX}-{YYYY}-{YY}-{NNNN}` (e.g., `INV-2025-26-000
 |---|---|---|
 | Supabase | ✅ Live (project `ontpnqjoysjgrlsukecm`) | Postgres + Auth + Storage |
 | Razorpay | 🟡 Test mode | Payments; production needs KYC + live keys |
-| Resend | 🟡 Wired, key pending | Email; needs `exceltechnologies.in` DNS verification |
+| Resend | 🟡 Wired, key pending | Email; needs `example.test` DNS verification |
 | Gupshup BSP | ✅ Live (with WhatsApp credentials) | WhatsApp send + webhook |
 | Setu AA | 🟡 Mock active | Bank account aggregator; needs Setu API keys |
 | Sandbox.co.in | ✅ Live | GSTIN verification |
@@ -686,7 +686,7 @@ Goal: ResellerOS can accept money.
 - Demo data seed (`seed_demo_data` RPC)
 - Knowledge base seed (20 articles)
 - DPA template (legal review)
-- First case study (Excel Tech itself)
+- First case study (Client A itself)
 - Cold outreach to ICP list (10 → 30 resellers)
 
 ### Days 46-90 (Aug 2026) — Scale to 20 customers
@@ -721,7 +721,7 @@ See `docs/WORLD_CLASS_GAP_ANALYSIS.md` for the full 595-line gap analysis with e
 | 6 | Hindi i18n timing | Defer until 100+ paying customers |
 | 7 | Native mobile app — Capacitor or React Native? | Capacitor (wraps existing PWA, less work) |
 | 8 | AI provider for features (Gemini vs Claude vs OpenAI) | Gemini Flash (cost) for routine tasks; Claude/GPT for complex reasoning |
-| 9 | First case study — Excel Tech only or invite a friendly reseller? | Excel Tech first (ground truth); external second |
+| 9 | First case study — Client A only or invite a friendly reseller? | Client A first (ground truth); external second |
 | 10 | Knowledge base hosting (Mintlify / GitBook / Notion+Super) | Mintlify (free for OSS-style docs, fast) |
 
 ---

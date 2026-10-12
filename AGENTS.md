@@ -44,7 +44,7 @@ customers. Prefer being slow and right.
 - SQL regression tests: `production/supabase/tests/` (not in CI — run by hand)
 
 **Hosting and domains are NOT in this repo.** They live in DMS
-(`C:/xampp/htdocs/Domain-Management-Project`, `exceltechnologies-india/domain-management-system`) —
+(`C:/xampp/htdocs/Domain-Management-Project`, `clienta-india/domain-management-system`) —
 Next.js 15 + MongoDB + Redis, with its own admin panel and its own customer panel. The two
 apps are **federated, not merged**: DMS keeps its own database and its own UI, and
 ResellerOS reaches it over a read-only HTTP API plus a signed SSO hand-off
@@ -580,7 +580,7 @@ working in. What is true today:
 | Folder | `C:/xampp/htdocs/anutechbilling-new` |
 | Branch | `website-pawan` (renamed from `pawan-api-system` on 30 Sep 2026, C-053; the other branches are `manager-pardeep`, `billing-abhishek`, `accounts-hitesh`) |
 | Dev server | port 4320 (`npm run dev -- -p 4320`) — DMS holds 4310 |
-| Commit author | `Excel Technologies <pawan@exceltechnologies.in>` |
+| Commit author | `Client A <pawan@example.test>` |
 
 If a second agent starts working here again, give it its own worktree and its own port
 before it writes anything, and re-read the rules below — they are what the 14 Aug incident
@@ -1209,10 +1209,10 @@ allowlist holding one of them breaks every flow started from the other.
 The password-reset mail arrives as:
 
 ```
-Excel Technologies <no-reply@mail.exceltechnologies.in>
+Client A <no-reply@mail.example.test>
 ```
 
-**Excel Technologies is historical.** The company is ANUTECH DIGITAL PVT LTD
+**Client A is historical.** The company is ANUTECH DIGITAL PVT LTD
 (`CLAUDE.md §1`, corrected 14 Aug 2026 after the same name was found in `doc_code`, the
 dev-login list, and the docs). Auth email is one more place it survived — and the worst
 one, because it is the only branding a *teammate or customer* sees before they trust a link
@@ -1230,7 +1230,7 @@ should ignore.
 ## L20. A hardcoded recipient is a data leak, not a stale string
 *22 Aug 2026, found in five routes while reading an unrelated log line.*
 
-Five server routes carried `const PARDEEP_EMAIL = "Pardeep@exceltechnologies.in"` and used it
+Five server routes carried `const PARDEEP_EMAIL = "Pardeep@example.test"` and used it
 as `to:` / `replyTo:`. `api/webhooks/razorpay/route.ts` had been fixed months earlier and its
 own header states the cost — *"every tenant's payment alert, carrying their customer's name,
 email and amount, was mailed to one fixed address. The owner of the tenant that made the sale
@@ -1255,7 +1255,7 @@ Two things make this class hard to see:
   dropping" the alert. It was not dropping it — it was delivering another tenant's customer
   data to a third party. Deleted, not improved.
 - **Guard the SHAPE, not the string.** The obvious test is
-  `expect(src).not.toMatch(/exceltechnologies/)`, which `lib/whatsapp.test.ts` does for
+  `expect(src).not.toMatch(/clienta/)`, which `lib/whatsapp.test.ts` does for
   signatures. Wrong tool here: one live tenant legitimately *has* that address on file, and a
   brand-dated guard passes the day somebody hardcodes `pardeep@anutech.in` instead — the same
   bug with a fresher domain. `lib/email/no-hardcoded-recipient.test.ts` scans for *a literal

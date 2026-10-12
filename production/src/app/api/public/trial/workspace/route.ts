@@ -194,8 +194,8 @@ export async function POST(request: NextRequest) {
       /* No owner email for a trial (owner, 30 Sep 2026: "that will just annoy the owner").
          The request is a lead with its follow-up task, where staff see it. */
       /* Customer trial acknowledgement.
-         Named from the tenant row. This body previously said "through Excel
-         Technologies", "Pardeep will WhatsApp you", a fixed phone number, and
+         Named from the tenant row. This body previously said "through Demo
+         Co", "Pardeep will WhatsApp you", a fixed phone number, and
          "Google Premier Partner · since 2014" — on a storefront owned by any other
          tenant, four statements about a company and a person the customer has no
          relationship with, one of them a partner certification this code cannot

@@ -10,7 +10,7 @@
  *
  * The signal was exactly inverted. A bounce means a quote we sent never reached the
  * customer; ANUTECH's four all name `darshan@anutech.in`, an address that does not
- * exist, while the customer's real address is at exceltechnologies. Someone was waiting
+ * exist, while the customer's real address is at democo. Someone was waiting
  * for a quote that had already failed to arrive, and the screen said "ignored".
  *
  * ─── WHY NOT REUSE `follow-up.ts`'S LIST ────────────────────────────────────

@@ -3,7 +3,7 @@
  *
  * Logically classifies:
  * 1. Tenant / Customer Feedback: All tickets & bug reports submitted by external Resellers/Tenants
- *    (e.g., ranjeetraj@exceltechnologies.in, support@veraciouscreate.com, it-head@apexglobal.com).
+ *    (e.g. someone@customer.example.test).
  * 2. Internal Team Reports: Bug reports submitted by internal Anutech Digital team employees.
  */
 import { NextResponse } from "next/server";
@@ -14,6 +14,15 @@ import { mayDo } from "@/lib/auth/action-roles";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
 
 const ANUTECH_PRIMARY_TENANT_ID = "fbb976f1-9090-4f10-9726-0901bd144e42";
+
+/** R-1432: words that mark a ticket body / reporter as an outside tenant. They used to be a
+ *  hard-coded regex of real customer names; now an optional comma list in env (empty = off). */
+function externalMarkers(): RegExp | null {
+  const words = (process.env.SUPPORT_EXTERNAL_MARKERS ?? "")
+    .split(",").map((w) => w.trim()).filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return words.length ? new RegExp(words.join("|"), "i") : null;
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -48,6 +57,7 @@ export async function GET(request: Request) {
   const counts: Record<string, number> = { all: 0, open: 0, in_progress: 0, awaiting_customer: 0, resolved: 0, closed: 0 };
   const scopeCounts = { tenant_feedback: 0, team_testing: 0 };
 
+  const markers = externalMarkers();
   const filteredTickets = (allTickets ?? []).filter((t) => {
     // A ticket is from an Internal Team Employee if it comes from the primary Anutech Digital tenant AND has a team bug tag AND raised by internal employee
     const isInternalTag = t.subject && (t.subject.includes("[BUG]") || t.subject.includes("[FEATURE]") || t.subject.includes("[UI_IMPROVEMENT]"));
@@ -56,11 +66,10 @@ export async function GET(request: Request) {
     // Check if the ticket explicitly belongs to an external tenant (by email, body text, or reporter name)
     const isExternalTenant = Boolean(
       (t.raised_by_email && !t.raised_by_email.endsWith("@anutechdigital.com") && !t.raised_by_email.endsWith("@anutech.in")) ||
-      (t.body && /exceltechnologies|ranjeetraj|veraciouscreate|apexglobal/i.test(t.body)) ||
-      (t.customer_name && /ranjeet|veracious|apex/i.test(t.customer_name))
+      Boolean(markers && ((t.body && markers.test(t.body)) || (t.customer_name && markers.test(t.customer_name))))
     );
     
-    // External Tenants (e.g. ranjeetraj@exceltechnologies.in) ALWAYS belong in tenant_feedback even if they report a bug
+    // External tenants ALWAYS belong in tenant_feedback even if they report a bug
     const isTeamScope = isInternalTenant && isInternalTag && !isExternalTenant;
 
     if (isTeamScope) scopeCounts.team_testing += 1;

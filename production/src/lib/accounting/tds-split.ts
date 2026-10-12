@@ -6,7 +6,7 @@
  *
  *     net = taxable × (1 + gst%) − taxable × tds%   →   taxable = net ÷ (1 + gst% − tds%)
  *
- * Excel Technologies: ₹5,40,000 ÷ (1 + 0.18 − 0.10) = ₹5,00,000 taxable → ₹5,90,000 invoice,
+ * Demo Co: ₹5,40,000 ÷ (1 + 0.18 − 0.10) = ₹5,00,000 taxable → ₹5,90,000 invoice,
  * ₹50,000 TDS. TDS is taken as gross − net, so the three always add up to the rupee.
  */
 

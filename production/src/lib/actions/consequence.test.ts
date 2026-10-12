@@ -31,7 +31,7 @@ describe("formatDocumentNumber", () => {
   });
 
   it("omits a missing doc code instead of printing 'null'", () => {
-    /* Excel Technologies' tenant row has doc_code null. */
+    /* Demo Co' tenant row has doc_code null. */
     expect(formatDocumentNumber({ ...S, docCode: null }, 3)).toBe("RV-27-0003");
     expect(formatDocumentNumber({ ...S, docCode: "  " }, 3)).toBe("RV-27-0003");
   });

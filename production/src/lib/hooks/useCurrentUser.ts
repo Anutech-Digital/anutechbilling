@@ -1,6 +1,6 @@
 /**
  * useCurrentUser — fetches the logged-in user + their tenant name.
- * Used by Sidebar and TopBar to show real names instead of hardcoded "Excel Technologies".
+ * Used by Sidebar and TopBar to show real names instead of hardcoded "Demo Co".
  */
 "use client";
 

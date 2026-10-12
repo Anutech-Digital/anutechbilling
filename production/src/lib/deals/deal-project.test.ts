@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildDealHistory, filterDealHistory, dealMoney, formatIstDateTime, type DealHistorySources } from "./timeline";
 import { dealQuoteRows } from "./deal-quotes";
 
-/* Shaped on the local Excel Technologies deal (L-MUHV91JQ → "Complete Billing System"):
+/* Shaped on the local Demo Co deal (L-MUHV91JQ → "Complete Billing System"):
    ₹59,00,000 project, two ₹5,90,000 milestones invoiced and paid (₹5,40,000 bank + ₹50,000
    TDS each), two milestones not yet invoiced. */
 const PID = "proj-1";

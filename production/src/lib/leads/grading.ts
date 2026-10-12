@@ -6,7 +6,7 @@
  * priority. Two independent signals are bundled into one grade there, and separating them
  * reverses half of it.
  *
- * WE SELL BUSINESS EMAIL. A company writing from `sharmatraders@gmail.com` has not bought what
+ * WE SELL BUSINESS EMAIL. A company writing from `traders.test@gmail.com` has not bought what
  * we sell — the entire need is unmet, and there is no incumbent, no migration, and nobody else's
  * contract in the way. A company writing from `rahul@sharmatraders.in` ALREADY has business
  * email, from a competitor, and winning them means a switch: moving live mailboxes, unpicking a

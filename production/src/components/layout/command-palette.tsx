@@ -84,7 +84,7 @@ export function useCommandPalette() {
  * first ten rows of each group were ever rendered and therefore only those ten
  * could ever be matched. With 340 records across the groups, roughly 70 were
  * searchable and 270 were invisible — searching "excel" returned a different
- * customer entirely, because Excel Technologies was the 30-somethingth row and
+ * customer entirely, because Demo Co was the 30-somethingth row and
  * never made it into the DOM.
  *
  * The old comment claimed "cmdk's filter then narrows further as they type",

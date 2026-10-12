@@ -5,7 +5,7 @@
  * `decideMembership()` answers one question — "is there an invite for this exact
  * address?" — and when the answer is no it says "new tenant". That is correct as
  * far as it goes, and it is why a colleague who signed in as
- * `ranjeetraj@exceltechnologies.in` (invited as `ranjeet@anutech.in`) was handed a
+ * `staff@example.test` (invited as `ranjeet@anutech.in`) was handed a
  * private company of his own, named after his real employer, which he then used
  * for two days.
  *

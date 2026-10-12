@@ -60,7 +60,7 @@
 --
 --  ─── OTHER TENANTS ────────────────────────────────────────────────────────
 --  Every statement is scoped by tenant_id. The other four tenants
---  (Exceltechnologies, Delfos, Excel Technologies, Anutech) are untouched.
+--  (Democo, Delfos, Demo Co, Anutech) are untouched.
 --
 --  ─── TIMING ───────────────────────────────────────────────────────────────
 --  Six Cloud Scheduler jobs hit this database. The earliest is

@@ -11,7 +11,7 @@ Copy everything between the `═══` markers below and paste it into a new Cl
 
 # Brief — design a marketing landing page for "ResellerOS"
 
-I run a multi-tenant SaaS called **ResellerOS** — an operating system for Indian cloud resellers (people who resell Google Workspace, Microsoft 365, and Zoho to other businesses). I'm the first customer (Excel Technologies Pvt Ltd, Mumbai). Now I'm targeting other resellers.
+I run a multi-tenant SaaS called **ResellerOS** — an operating system for Indian cloud resellers (people who resell Google Workspace, Microsoft 365, and Zoho to other businesses). I'm the first customer (Client A Pvt Ltd, Mumbai). Now I'm targeting other resellers.
 
 My current landing page is text-heavy and doesn't communicate the product's depth visually. **I want you to design a substantially better, more visual landing page.** Output as a single React HTML artifact with Tailwind CSS so I can preview it.
 
@@ -106,17 +106,17 @@ Below the 4 detailed rows, add a compact grid (3 cols × 4 rows) of the remainin
 ### Section 6 — Why pick us
 H2: **"Why pick ResellerOS over a generic CRM"**
 3-column grid of cards on desktop, stacked on mobile. Each card has a serif title + body copy:
-1. **"Built by a reseller"** — "12+ years running Excel Technologies — a Mumbai-based GW/M365/Zoho reseller. Every workflow comes from real operational pain, not feature-list bingo."
+1. **"Built by a reseller"** — "12+ years running Client A — a Mumbai-based GW/M365/Zoho reseller. Every workflow comes from real operational pain, not feature-list bingo."
 2. **"GST-first by design"** — "HSN 998313, CGST §31 invoice numbering, intra/inter-state tax split, advance receipts — built into the schema, not bolted on as plugins."
-3. **"No drift from Excel Tech"** — "Excel Technologies is our first customer. If a feature doesn't work for us in production, it doesn't ship. Zero theoretical features."
+3. **"No drift from Client A"** — "Client A is our first customer. If a feature doesn't work for us in production, it doesn't ship. Zero theoretical features."
 
 **Add a small visual treatment to each card** — e.g., a numeric icon, or a relevant lucide-react icon in amber-soft tile.
 
 ### Section 7 — Founder section (NEW — currently missing)
 Replace stock "team photos" with an honest founder card.
 - Section background: `bg-paper`, two-column layout.
-- Left: Big serif quote treatment — "I built the OS I wished I'd had on day one." in DM Serif Display, ~3xl. Below the quote: "Pardeep A · Founder" in sans + "Excel Technologies Pvt Ltd · Mumbai" in mono.
-- Right: A simple founder card — circular avatar with initials "PA" on amber-soft background, bio paragraph (~50 words): "12+ years running Excel Technologies. Built ResellerOS from the real constraints of operating his own business — payments missed, renewals slipped, GST filings done at the eleventh hour. Now sharing the tool with other resellers."
+- Left: Big serif quote treatment — "I built the OS I wished I'd had on day one." in DM Serif Display, ~3xl. Below the quote: "Pardeep A · Founder" in sans + "Client A Pvt Ltd · Mumbai" in mono.
+- Right: A simple founder card — circular avatar with initials "PA" on amber-soft background, bio paragraph (~50 words): "12+ years running Client A. Built ResellerOS from the real constraints of operating his own business — payments missed, renewals slipped, GST filings done at the eleventh hour. Now sharing the tool with other resellers."
 - CTA below: "Read the full story →" linking to /about
 
 ### Section 8 — Beta pricing
@@ -132,14 +132,14 @@ Body: "Create your tenant, import your existing customers via CSV, and run your 
 Dual CTA (lg size): amber primary "Start free trial →" + outline "Read the founder story"
 
 Footer (hairline-bordered):
-Left: "ResellerOS · Excel Technologies Pvt Ltd · Mumbai · Made in India" in mono-12.
+Left: "ResellerOS · Client A Pvt Ltd · Mumbai · Made in India" in mono-12.
 Right: Nav links to About, Privacy, Terms, Contact (`mailto:hello@resellersos.in`)
 
 ## 4. Visual direction
 
 **This is what makes-or-breaks the design:**
 
-- **Product mockups, not stock photos.** Use stylized browser frames containing realistic-looking product screenshots. Show actual Indian data: ₹ amounts (e.g., ₹69,400 MRR, ₹2.4L pipeline), Indian company names (Excel Technologies, Manoj's Co, etc.), Mumbai timezone dates.
+- **Product mockups, not stock photos.** Use stylized browser frames containing realistic-looking product screenshots. Show actual Indian data: ₹ amounts (e.g., ₹69,400 MRR, ₹2.4L pipeline), Indian company names (Client A, Manoj's Co, etc.), Mumbai timezone dates.
 - **No generic SaaS gradients.** The brand is editorial + restrained. Use subtle textures, hairline borders, paper-2 backgrounds — not vibrant rainbow gradients.
 - **Use CSS-only illustrations** where appropriate. SVG line icons (lucide-react style), simple geometric shapes, no external images needed.
 - **Restrained motion.** No parallax. No big scroll animations. Maybe subtle on-scroll fade-ins for cards, that's it.

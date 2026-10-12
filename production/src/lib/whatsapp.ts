@@ -3,7 +3,7 @@
  * sends by hand from the app.
  *
  * ─── THESE MESSAGES WERE SIGNED WITH THE WRONG COMPANY ──────────────────────
- * All three used to end with a hardcoded `*Excel Technologies*`. Excel Technologies is
+ * All three used to end with a hardcoded `*Demo Co*`. Demo Co is
  * HISTORICAL — the same tenant row was renamed to ANUTECH DIGITAL PVT LTD in Aug 2026
  * (CLAUDE.md §1). So every payment reminder, follow-up and renewal notice reaching a
  * customer's phone named a company they have no relationship with, over an invoice

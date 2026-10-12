@@ -70,7 +70,7 @@ const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <o
 /*
  * There is deliberately NO fallback recipient here any more.
  *
- * A `FALLBACK_OWNER_EMAIL = "Pardeep@exceltechnologies.in"` used to sit at this
+ * A `FALLBACK_OWNER_EMAIL = "Pardeep@example.test"` used to sit at this
  * line, reached via `seller.email?.trim() || FALLBACK_OWNER_EMAIL`. Its comment
  * argued it was better than "silently dropping" the alert. That reasoning does not
  * survive being written down: the alert was not dropped, it was DELIVERED — to a

@@ -255,7 +255,7 @@ function TemplateDialog({ draft, onClose }: { draft: Draft; onClose: () => void 
       : { ...cur, param_map: Array.from({ length: n }, (_, i) => cur.param_map[i] ?? "first_name") });
   }, [n]);
   const problem = !isValidTemplateName(d.name) ? "Name: lowercase letters, numbers and _ only (e.g. festival_offer)." : templateProblem(d.body, d.param_map);
-  const sample = renderBody(d.body, slotValues(d.param_map, { first_name: "Deepak", company: "Excel Technologies", sender: "Anutech" }));
+  const sample = renderBody(d.body, slotValues(d.param_map, { first_name: "Deepak", company: "Demo Co", sender: "Anutech" }));
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

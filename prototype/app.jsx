@@ -72,7 +72,7 @@ function Sidebar({ mobileOpen, onClose }) {
         <div className="rail-mark">R</div>
         <div>
           <div className="rail-brand-name">ResellerOS</div>
-          <div className="rail-brand-sub">Excel Technologies</div>
+          <div className="rail-brand-sub">Demo Co</div>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ function Sidebar({ mobileOpen, onClose }) {
         <Avatar initials="PA" color="amber" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500 }}>Pardeep A</div>
-          <div style={{ fontSize: 11, color: "var(--ink-3)" }}>Owner · Excel Tech</div>
+          <div style={{ fontSize: 11, color: "var(--ink-3)" }}>Owner · Demo Co</div>
         </div>
         <IconBtn icon="logout" title="Sign out" />
       </div>

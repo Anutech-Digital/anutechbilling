@@ -14,7 +14,7 @@ const ok = (r: ReturnType<typeof buildUpiIntent>) => {
 
 describe("isValidVpa", () => {
   it("accepts real-world handles", () => {
-    for (const v of ["exceltech@okhdfcbank", "pardeep.a@ybl", "9876543210@paytm", "a_b-c@okaxis"]) {
+    for (const v of ["democo@okhdfcbank", "pardeep.a@ybl", "9876543210@paytm", "a_b-c@okaxis"]) {
       expect(isValidVpa(v), v).toBe(true);
     }
   });
@@ -30,9 +30,9 @@ describe("isValidVpa", () => {
 
 describe("buildUpiIntent", () => {
   it("emits the NPCI params an app expects", () => {
-    const u = ok(buildUpiIntent({ vpa: "exceltech@okhdfcbank", payeeName: "Excel Technologies", amount: 11_800 }));
-    expect(u.searchParams.get("pa")).toBe("exceltech@okhdfcbank");
-    expect(u.searchParams.get("pn")).toBe("Excel Technologies");
+    const u = ok(buildUpiIntent({ vpa: "democo@okhdfcbank", payeeName: "Demo Co", amount: 11_800 }));
+    expect(u.searchParams.get("pa")).toBe("democo@okhdfcbank");
+    expect(u.searchParams.get("pn")).toBe("Demo Co");
     expect(u.searchParams.get("cu")).toBe("INR");
   });
 
@@ -94,7 +94,7 @@ describe("buildUpiIntent", () => {
 describe("invoiceUpiIntent", () => {
   it("builds a payable intent from an invoice", () => {
     const uri = invoiceUpiIntent({
-      vpa: "exceltech@okhdfcbank", payeeName: "Excel Technologies",
+      vpa: "democo@okhdfcbank", payeeName: "Demo Co",
       invoiceId: "INV-ET-2026-27-0006", amountDue: 11_800,
     })!;
     const u = new URL(uri.replace("upi://", "https://"));

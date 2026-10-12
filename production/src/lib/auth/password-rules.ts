@@ -54,7 +54,7 @@ export function checkNewPassword(password: string, confirm?: string): PasswordPr
   }
   /* R-059: "<Company>@<year>" passwords were found in this repo. A name everyone in the
      company knows is the first thing anyone tries. */
-  if (/reseller\s*os|anutech|excel\s*tech/i.test(password)) {
+  if (/reseller\s*os|anutech/i.test(password)) {
     return { message: "Don't use the company or product name in your password — it is the first thing anyone guesses." };
   }
   if (/^(.)\1+$/.test(password)) {

@@ -24,8 +24,8 @@
  *
  * ─── THE DOMAIN CHECK OVERRIDES THE FORM ON PURPOSE ──────────────────────────
  * This form asks for a company name, so filling it in looks like an explicit "I am
- * a new business". It is not reliable evidence: the person who typed "Excel
- * Technologies" into it while his colleagues already had an Excel Technologies
+ * a new business". It is not reliable evidence: the person who typed "Demo
+ * Co" into it while his colleagues already had an Demo Co
  * workspace was not lying, he simply did not know. The domain knows. So a verified
  * domain match wins over the typed name, and the response says exactly why —
  * `pending_approval` is not a failure and must not be shown as one.

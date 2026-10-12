@@ -27,7 +27,7 @@ export function DealSummaryCard({ lead, latestQuote }: { lead: Lead; latestQuote
   /* leads.value is the ANNUAL deal value (lib/leads/deal-rules.ts#autoDealValue = seats ×
      price × 12), so price per seat per month is value ÷ seats ÷ 12. */
   /* A project deal is one-time work, not a yearly seat subscription — no seats, no price/seat,
-     and its value is not "per year" (1 Oct 2026, Excel Technologies showed "Deal value (saal)"). */
+     and its value is not "per year" (1 Oct 2026, Demo Co showed "Deal value (saal)"). */
   const isProject = lead.enquiry_type === "project" || !!lead.project_id;
   const perSeat = !isProject && lead.value && lead.seats ? Math.round(lead.value / lead.seats / 12) : null;
   const cycle = latestQuote?.billing_cycle ?? null;

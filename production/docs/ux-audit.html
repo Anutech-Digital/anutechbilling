@@ -142,7 +142,7 @@
         <li><b>Notification bell 100% nakli</b> — brand-new khaali workspace me bhi "₹3.05L from Acme Corp", "New lead Maple Studios" jaise 10 fake events. <span class="mono">notification-panel.tsx:36</span></li>
         <li><b>Online Orders page mock data</b> — fake orders (Acme, Echo Pharma) real ke saath mila deta hai; "Revenue MTD" aur "+3 vs yesterday" sab fiction. <span class="mono">online-orders/page.tsx:75,688</span></li>
         <li><b>"Closed this month" asal me all-time hai</b> — accepted quotes par koi date filter nahi. Hero money number galat label. <span class="mono">dashboard/page.tsx:124</span></li>
-        <li><b>Har tenant ke reminder me "Excel Technologies" hardcoded</b> — doosra reseller apne customer ko aapke naam se message bhejega. <span class="mono">aging/page.tsx:258</span></li>
+        <li><b>Har tenant ke reminder me "Client A" hardcoded</b> — doosra reseller apne customer ko aapke naam se message bhejega. <span class="mono">aging/page.tsx:258</span></li>
         <li><b>Nakli "ho gaya" toasts</b> — "Bulk reminder sent", "renewal reminders sent to 12 customers", Subscriptions "Renew"/"Bulk email" button — <b>kuch nahi bhejta</b>, phir bhi success. <span class="mono">renewals · subscriptions · online-orders · command-palette</span></li>
         <li><b>Churn-risk reasons invente kiye hue</b> — "NPS 3/10", "5 support tickets" lead ke ID se banaye gaye, real nahi. <span class="mono">renewals/page.tsx:61</span></li>
         <li><b>Setup checklist ke green ticks</b> — sab skip karo tab bhi "Company verified ✓ / Data imported ✓" dikhata hai. <span class="mono">setup/page.tsx:515</span></li>
@@ -269,7 +269,7 @@
         <ol>
           <li>Saara nakli data hatao (bell, online-orders, churn reasons, setup ticks)</li>
           <li>Nakli success toasts band — ya asli kaam, ya "coming soon"</li>
-          <li>"Excel Technologies" → tenant naam (multi-tenant bug)</li>
+          <li>"Client A" → tenant naam (multi-tenant bug)</li>
           <li>"Closed this month" ko sach me is-mahine karo (ya label badlo)</li>
           <li>Silent money-fail (TDS/subscription) honestly dikhao</li>
         </ol>

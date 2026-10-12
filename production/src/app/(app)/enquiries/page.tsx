@@ -155,8 +155,8 @@ function quoteHref(e: InboundEmailRow, ent: ExtractedEntities | null): string {
 
   /* A PERSON IS NOT A COMPANY
      This was `ent?.name.value ?? e.from_name`, and `ent.name` is the SENDER’S name --
-     so both quotes above went out addressed to "Pardeep Sharma" rather than to Excel
-     Technologies. On a document that becomes a tax invoice, the bill-to party is not a
+     so both quotes above went out addressed to "Pardeep Sharma" rather than to Demo
+     Co. On a document that becomes a tax invoice, the bill-to party is not a
      courtesy field.
 
      With the lead id passed the builder loads the lead and uses its company. Where

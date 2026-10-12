@@ -454,7 +454,7 @@ function BuyCloudScreen({ productKey }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 32, height: 32, background: ink, color: bgPaper, borderRadius: 6, display: "grid", placeItems: "center", fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>R</div>
             <div>
-              <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, lineHeight: 1 }}>Excel Technologies</div>
+              <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, lineHeight: 1 }}>Demo Co</div>
               <div style={{ fontSize: 10, color: ink3, marginTop: 2 }}>Authorised Cloud Reseller · India</div>
             </div>
           </div>
@@ -518,7 +518,7 @@ function BuyCloudScreen({ productKey }) {
                 Or get a custom quote
               </button>
               <span>·</span>
-              <button onClick={() => toast("Opening WhatsApp chat with Excel Tech sales…")} style={{ background: "transparent", color: ink, border: "none", padding: 0, cursor: "pointer", fontSize: 12, textDecoration: "underline", textUnderlineOffset: 3, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => toast("Opening WhatsApp chat with Demo Co sales…")} style={{ background: "transparent", color: ink, border: "none", padding: 0, cursor: "pointer", fontSize: 12, textDecoration: "underline", textUnderlineOffset: 3, display: "inline-flex", alignItems: "center", gap: 4 }}>
                 <I name="whatsapp" size={12} style={{ color: "#25D366" }} /> Chat on WhatsApp
               </button>
             </div>
@@ -969,7 +969,7 @@ function BuyCloudScreen({ productKey }) {
       <div style={{ background: "#fff", borderTop: "1px solid " + hair, padding: "60px 24px" }}>
         <div style={{ maxWidth: 1080, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 36 }}>
-            <div style={{ fontSize: 12, color: ink3, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>Excel Tech vs Buying Direct</div>
+            <div style={{ fontSize: 12, color: ink3, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>Demo Co vs Buying Direct</div>
             <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 32, margin: 0, lineHeight: 1.15 }}>
               Same {cfg.brand.split(" ")[0]}. Better experience. Same price.
             </h2>
@@ -981,7 +981,7 @@ function BuyCloudScreen({ productKey }) {
                 <tr style={{ background: cfg.accentSoft }}>
                   <th style={{ padding: "14px 16px", textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: cfg.accent, fontWeight: 700, width: "40%" }}>What you get</th>
                   <th style={{ padding: "14px 16px", textAlign: "center", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: ink, fontWeight: 700, background: "#fff", borderLeft: "2px solid " + cfg.accent, borderRight: "2px solid " + cfg.accent }}>
-                    <div style={{ fontSize: 12, marginBottom: 2 }}>Excel Tech</div>
+                    <div style={{ fontSize: 12, marginBottom: 2 }}>Demo Co</div>
                     <div style={{ fontSize: 10, color: cfg.accent, fontWeight: 600 }}>★ Premier Partner</div>
                   </th>
                   <th style={{ padding: "14px 16px", textAlign: "center", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: ink3, fontWeight: 700 }}>
@@ -1040,7 +1040,7 @@ function BuyCloudScreen({ productKey }) {
             </p>
           </div>
 
-          {/* Source vendors → Excel Tech flow */}
+          {/* Source vendors → Demo Co flow */}
           <div style={{ background: "#FAF8F2", borderRadius: 16, padding: 32, marginBottom: 32 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 24, alignItems: "center", marginBottom: 28 }}>
               <div>
@@ -1096,7 +1096,7 @@ function BuyCloudScreen({ productKey }) {
             <div style={{ background: "#FAF8F2", borderRadius: 12, padding: 24, display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <div style={{ display: "inline-block", background: "#166534", color: "#fff", padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, marginBottom: 12, alignSelf: "flex-start" }}>80 users migrated · zero downtime</div>
               <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 19, fontStyle: "italic", lineHeight: 1.5, color: ink, marginBottom: 14 }}>
-                "Excel Tech ne hamara M365 to Workspace migration ek weekend mein complete kara diya. Friday raat shutdown, Monday subah team live. Pure 60 users, koi email lost nahi, GST invoice every month."
+                "Demo Co ne hamara M365 to Workspace migration ek weekend mein complete kara diya. Friday raat shutdown, Monday subah team live. Pure 60 users, koi email lost nahi, GST invoice every month."
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 36, height: 36, borderRadius: "50%", background: cfg.accentSoft, color: cfg.accent, display: "grid", placeItems: "center", fontWeight: 600, fontSize: 13 }}>EV</div>
@@ -1141,7 +1141,7 @@ function BuyCloudScreen({ productKey }) {
             </div>
             <div style={{ background: "#FAF8F2", border: "1px solid " + hair, borderRadius: 8, padding: 16, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.7 }}>
               <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px dashed " + hair, paddingBottom: 8, marginBottom: 8 }}>
-                <span><b>EXCEL TECHNOLOGIES PVT LTD</b></span>
+                <span><b>DEMO CO PVT LTD</b></span>
                 <span>INV-2026-0089</span>
               </div>
               <div style={{ color: ink3 }}>GSTIN: 27AABCE9876D1Z3 · PAN: AABCE9876D</div>
@@ -1197,11 +1197,11 @@ function BuyCloudScreen({ productKey }) {
         </div>
       </div>
 
-      {/* Why Excel Tech */}
+      {/* Why Demo Co */}
       <div style={{ background: "#fff", borderTop: "1px solid " + hair, borderBottom: "1px solid " + hair, padding: "60px 24px" }}>
         <div style={{ maxWidth: 1180, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 36 }}>
-            <div style={{ fontSize: 12, color: ink3, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>Why Excel Technologies</div>
+            <div style={{ fontSize: 12, color: ink3, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 6 }}>Why Demo Co</div>
             <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 32, margin: 0 }}>Same {cfg.brand.split(" ")[0]}. Better experience.</h2>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
@@ -1423,7 +1423,7 @@ function BuyCloudScreen({ productKey }) {
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: 12, color: ink3 }}>
-            <div>© 2026 Excel Technologies Pvt Ltd · GSTIN 27AABCE9876D1Z3 · Mumbai, Maharashtra</div>
+            <div>© 2026 Demo Co Pvt Ltd · GSTIN 27AABCE9876D1Z3 · Mumbai, Maharashtra</div>
             <div style={{ display: "flex", gap: 16 }}>
               <a href="#" style={{ color: ink3 }}>Privacy</a>
               <a href="#" style={{ color: ink3 }}>Terms</a>
@@ -1629,7 +1629,7 @@ function SavingsCalculator({ cfg, ink, ink3, hair }) {
             Calculate your savings vs your current setup
           </h2>
           <p style={{ fontSize: 14, color: ink3, lineHeight: 1.6, marginBottom: 0 }}>
-            Most Indian SMEs overpay 30–60% with their current reseller or vendor-direct setup. Plug in your numbers — see what you'd save with Excel Tech.
+            Most Indian SMEs overpay 30–60% with their current reseller or vendor-direct setup. Plug in your numbers — see what you'd save with Demo Co.
           </p>
         </div>
 
@@ -1651,7 +1651,7 @@ function SavingsCalculator({ cfg, ink, ink3, hair }) {
               <span className="tnum" style={{ color: ink }}>{rupee(monthlyCurrent)}/mo</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: ink3 }}>
-              <span>With Excel Tech ({targetTier.name} ×{users})</span>
+              <span>With Demo Co ({targetTier.name} ×{users})</span>
               <span className="tnum" style={{ color: cfg.accent, fontWeight: 600 }}>{rupee(monthlyOurs)}/mo</span>
             </div>
             <div style={{ borderTop: "1px dashed " + (isSaving ? "#16A34A" : "#92400E"), paddingTop: 10, marginTop: 4 }}>
@@ -1666,7 +1666,7 @@ function SavingsCalculator({ cfg, ink, ink3, hair }) {
               <div style={{ fontSize: 11, color: ink3, marginTop: 4, fontStyle: "italic" }}>
                 {isSaving
                   ? `That's ${rupee(monthlySavings)}/month back in your pocket · plus free migration worth ₹50K`
-                  : `Excel Tech doesn't make sense if you're already this low — let's chat about premium tiers`}
+                  : `Demo Co doesn't make sense if you're already this low — let's chat about premium tiers`}
               </div>
             </div>
           </div>

@@ -17,7 +17,7 @@ begin;
 insert into public.tenants (id, name, email, state_code) values
   ('aaaaaaaa-0000-0000-0000-0000000000a9', 'REFPRJ TEST', 'rp@example.in', '07');
 insert into public.customers (id, tenant_id, name) values
-  ('aaaaaaaa-0000-0000-0000-0000000c0009', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'Excel Technologies'),
+  ('aaaaaaaa-0000-0000-0000-0000000c0009', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'Demo Co'),
   ('aaaaaaaa-0000-0000-0000-0000000c0010', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'Fixed Fee Co'),
   ('aaaaaaaa-0000-0000-0000-0000000c0011', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'Once Co');
 insert into public.referral_partners (id, tenant_id, name) values
@@ -27,7 +27,7 @@ insert into public.referral_agreements (id, tenant_id, partner_id, customer_id, 
   ('aaaaaaaa-0000-0000-0000-0000000a0902', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000e0009', 'aaaaaaaa-0000-0000-0000-0000000c0010', 'Fixed', 'fixed', 0, 10000, 'recurring', false, 'active'),
   ('aaaaaaaa-0000-0000-0000-0000000a0903', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000e0009', 'aaaaaaaa-0000-0000-0000-0000000c0011', 'Once', 'percent', 10, 0, 'one_time', false, 'active');
 insert into public.project_sales (id, tenant_id, customer_id, customer_name, title, taxable_amount, gst_amount, total_amount, gst_rate) values
-  ('aaaaaaaa-0000-0000-0000-0000000b0901', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000c0009', 'Excel Technologies', 'Complete Billing System', 5000000, 900000, 5900000, 18),
+  ('aaaaaaaa-0000-0000-0000-0000000b0901', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000c0009', 'Demo Co', 'Complete Billing System', 5000000, 900000, 5900000, 18),
   ('aaaaaaaa-0000-0000-0000-0000000b0902', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000c0010', 'Fixed Fee Co', 'App', 1000000, 180000, 1180000, 18),
   ('aaaaaaaa-0000-0000-0000-0000000b0903', 'aaaaaaaa-0000-0000-0000-0000000000a9', 'aaaaaaaa-0000-0000-0000-0000000c0011', 'Once Co', 'Site', 1000000, 180000, 1180000, 18);
 

@@ -265,7 +265,7 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
   // INTERIM (until the tenant's sending domain is verified on Resend): when set,
   // RESEND_FROM_OVERRIDE forces the From on EVERY email, ignoring the caller's
   // `from` (which is the tenant's own @-domain and 403s on Resend until verified).
-  // Set it to e.g. "Excel Technologies <onboarding@resend.dev>" to unblock sends
+  // Set it to e.g. "Demo Co <onboarding@resend.dev>" to unblock sends
   // today; UNSET it the moment the real domain is verified to revert to per-tenant
   // From. Reply-To stays the tenant's address, so customer replies still route right.
   const fromOverride = process.env.RESEND_FROM_OVERRIDE?.trim();

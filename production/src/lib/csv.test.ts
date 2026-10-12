@@ -27,7 +27,7 @@ describe("deFormula — spreadsheet injection guard", () => {
   });
 
   it("leaves ordinary text untouched", () => {
-    expect(deFormula("Excel Technologies Pvt Ltd")).toBe("Excel Technologies Pvt Ltd");
+    expect(deFormula("Demo Co Pvt Ltd")).toBe("Demo Co Pvt Ltd");
     expect(deFormula("")).toBe("");
   });
 });

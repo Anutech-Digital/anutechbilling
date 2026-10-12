@@ -131,10 +131,10 @@ describe("quoteKeywords — operators quote the tail, not the whole id", () => {
 
 describe("the remaining categories", () => {
   it("invoices match by id, tail, customer and status", () => {
-    const k = invoiceKeywords({ id: "INV-ET-2026-27-0013", customer_name: "Excel Technologies", status: "pending" });
+    const k = invoiceKeywords({ id: "INV-ET-2026-27-0013", customer_name: "Demo Co", status: "pending" });
     expect(k).toContain("inv-et-2026-27-0013");
     expect(k).toContain("0013");
-    expect(k).toContain("excel technologies");
+    expect(k).toContain("demo co");
     expect(k).toContain("pending");
   });
 

@@ -10,7 +10,7 @@
 --   BILLDKPLAYSTOREGOOGL    2 lines  "DHDF23P1QTMPV7/BILLDKPLAYSTOREGOOGL"
 --   PAYUFACEBOOK            1 line   "K4UHU5ENAJ52FPOTCU/PAYUFACEBOOK"
 --   STAFF WELFARE           1 line   "Petty cash: Staff Welfare"
---   ACCOUNTING SOFTWARE     1 line   "...-TPT-ACCOUNTING SOFTWARE-EXCEL TECHNOLOGI..."
+--   ACCOUNTING SOFTWARE     1 line   "...-TPT-ACCOUNTING SOFTWARE-DEMO CO..."
 --
 -- WHY 'SALARY' IS THE ONE THAT MATTERS. It covers 15 of the 39 lines on this account, and
 -- the built-in keyword list in lib/queries/expenses.ts deliberately REFUSES to answer it
@@ -30,7 +30,7 @@
 --   would silently change it to something else. Those lines want reconciling against a
 --   payroll record, which is the matcher's job, not this one's.
 --
---   'EXCEL TECHNO LOGIES' — a vendor, and vendor payments are not one category. Same
+--   'DEMO CO' — a vendor, and vendor payments are not one category. Same
 --   counterparty can be a PO, software, or a reimbursement; the narration says which, so
 --   a per-vendor rule would be confidently wrong.
 --

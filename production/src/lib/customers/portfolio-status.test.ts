@@ -1,7 +1,7 @@
 /**
  * R-005 — a customer who buys custom software is not a dead account.
  *
- * The case that matters is Excel Technologies: one active ₹10,80,000 project, no
+ * The case that matters is Demo Co: one active ₹10,80,000 project, no
  * subscription. The list called it "No subscription, ₹0" and filed it under the filter
  * an owner uses to find churn.
  */
@@ -52,7 +52,7 @@ describe("customerPortfolioStatus", () => {
 
 describe("countsAsNoBusiness — what the 'No subscription' filter should catch", () => {
   it("excludes a customer doing project work", () => {
-    // THE BUG. Excel Technologies appeared in this filter beside dead accounts.
+    // THE BUG. Demo Co appeared in this filter beside dead accounts.
     expect(countsAsNoBusiness({ projects: [ACTIVE_ERP], hasActiveSub: false })).toBe(false);
   });
 

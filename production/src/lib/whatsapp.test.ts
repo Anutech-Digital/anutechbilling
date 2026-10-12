@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { denyTermsRe } from "@/test/deny-terms";
 import {
   getInvoiceWhatsAppUrl, getLeadWhatsAppUrl, getRenewalWhatsAppUrl,
   formatWhatsAppPhone, signOff, payLine, invoiceWhatsAppTarget, type WhatsAppSender,
@@ -21,8 +22,8 @@ describe("no message is ever signed with a company that is not the sender's", ()
       .toContain("ANUTECH DIGITAL PVT LTD");
   });
 
-  it("NEVER says Excel Technologies — the name these messages used to carry", () => {
-    /* Excel Technologies is the tenant's historical name (CLAUDE.md §1). Hardcoded in
+  it("NEVER says Demo Co — the name these messages used to carry", () => {
+    /* Demo Co is the tenant's historical name (CLAUDE.md §1). Hardcoded in
        all three messages, it named a company the customer has no relationship with,
        beside a real invoice number — which reads as a scam. In a multi-tenant app it
        was also wrong for every other reseller from day one. */
@@ -33,7 +34,7 @@ describe("no message is ever signed with a company that is not the sender's", ()
       /* And with no sender at all — the fallback must not reintroduce it. */
       body(getInvoiceWhatsAppUrl(invoice, "9876543210")),
     ];
-    for (const m of all) expect(m).not.toMatch(/excel technologies/i);
+    for (const m of all) expect(m).not.toMatch(denyTermsRe());
   });
 
   it("goes UNSIGNED rather than guessing when the sender is unknown", () => {

@@ -15,7 +15,7 @@
 --   a credit note under CGST s.34.
 --
 -- WHY BY ID AND NOT BY NAME
---   This book contains "AB corprotion", "abc corporaton" and "Excel Technologies", and one
+--   This book contains "AB corprotion", "abc corporaton" and "Demo Co", and one
 --   of those — AB corprotion — is NOT in this list: it has a state already (32) and a
 --   broken GSTIN, which is a different problem needing a different answer. Matching on
 --   names that differ by two characters is how the wrong customer gets a tax attribute.
@@ -35,7 +35,7 @@ update public.customers
    and (state_code is null or trim(state_code) = '')
    and id in (
      'c1aa8318-d57f-4633-b0fa-976b221f1966',   -- abc corporaton        1 invoice
-     'fcc098c1-cca6-40ca-a794-3acf39200dc4',   -- Excel Technologies    2 invoices
+     'fcc098c1-cca6-40ca-a794-3acf39200dc4',   -- Demo Co    2 invoices
      '2084e1af-36ce-4669-b9cf-b43ac5484563',   -- Jijo corprotion       3 invoices
      '00d38be0-05f0-468d-81f9-b44f12c2b246',   -- Joel                  1 invoice
      'a688a035-2d5f-439c-af35-72e75133b94f',   -- KAILASH CORPROTION    2 invoices

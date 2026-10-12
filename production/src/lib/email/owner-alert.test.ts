@@ -13,16 +13,16 @@ describe("resolveOwnerAlert", () => {
   });
 
   it("does NOT block a tenant whose own address is on the historical domain", () => {
-    /* Tenant 3bbd2280 really does have pardeep@exceltechnologies.in on file. CLAUDE.md §1
+    /* Tenant <client-tenant-id> really does have pardeep@example.test on file. CLAUDE.md §1
        calls that brand historical, but the tenant's contact address is the operator's data.
        Banning the domain here would silence a real tenant's own mail — and would also miss
        the identical bug the day somebody hardcodes pardeep@anutech.in instead. */
     const r = resolveOwnerAlert(
-      { name: "Excel Technologies", email: "pardeep@exceltechnologies.in", contact_name: "Pardeep Sharma" },
-      "3bbd2280-b8e3-4e70-98c9-6916d85708fb",
+      { name: "Demo Co", email: "pardeep@example.test", contact_name: "Pardeep Sharma" },
+      "<client-tenant-id>",
     );
     expect(r.ok).toBe(true);
-    expect(r.ok && r.to).toBe("pardeep@exceltechnologies.in");
+    expect(r.ok && r.to).toBe("pardeep@example.test");
   });
 
   it("reports a missing tenant row instead of substituting an address", () => {

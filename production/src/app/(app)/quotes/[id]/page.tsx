@@ -1908,7 +1908,7 @@ export default function QuoteDetailPage() {
             `You can also review and accept it online:\n` +
             `${typeof window !== "undefined" ? window.location.origin : ""}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}\n\n` +
             /* Sign-off ka fallback HATA diya gaya, badla nahi. Pehle yahan
-               `?? "Excel Technologies"` tha — yaani `me` load na hone par ye WhatsApp
+               `?? "Demo Co"` tha — yaani `me` load na hone par ye WhatsApp
                grahak ke paas ek AISI company ke naam se jaata jo use bheji hi nahi.
                Wahi shreni jo lib/invoices/supplier-identity.ts poore comment ke saath
                likhti hai: galat company ka naam likhne se behtar hai naam na likhna.

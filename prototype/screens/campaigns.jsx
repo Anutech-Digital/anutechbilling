@@ -17,28 +17,28 @@ const CAMPAIGN_TEMPLATES = {
     channel: "email",
     audience: "all",
     subject: "What's new in Google Workspace this month",
-    body: "Hi {{customer_name}},\n\nGoogle has rolled out new features for Workspace this month: improved Gemini integration in Docs, faster Meet recording, and enhanced admin policies.\n\nWant a 15-min walkthrough? Reply to this email and we'll set it up.\n\n— Team Excel Technologies",
+    body: "Hi {{customer_name}},\n\nGoogle has rolled out new features for Workspace this month: improved Gemini integration in Docs, faster Meet recording, and enhanced admin policies.\n\nWant a 15-min walkthrough? Reply to this email and we'll set it up.\n\n— Team Demo Co",
   },
   festive: {
     name: "Diwali Special — 15% off renewals",
     channel: "both",
     audience: "renewals_60",
     subject: "Diwali offer — extend now, save 15%",
-    body: "Hi {{customer_name}},\n\nYour {{plan}} renewal is on {{renewal_date}}. Renew before Diwali (12 Nov) and get 15% off the full annual amount — that's ₹{{discount_amount}} saved.\n\nReply YES to lock it in. Offer valid till 8 Nov.\n\n— Pardeep, Excel Technologies",
+    body: "Hi {{customer_name}},\n\nYour {{plan}} renewal is on {{renewal_date}}. Renew before Diwali (12 Nov) and get 15% off the full annual amount — that's ₹{{discount_amount}} saved.\n\nReply YES to lock it in. Offer valid till 8 Nov.\n\n— Pardeep, Demo Co",
   },
   nps: {
     name: "NPS Q2 2026 Survey",
     channel: "email",
     audience: "all",
     subject: "Quick question — how are we doing?",
-    body: "Hi {{customer_name}},\n\nOn a scale of 0–10, how likely are you to recommend Excel Technologies to a peer?\n\n[ 0 ][ 1 ][ 2 ][ 3 ][ 4 ][ 5 ][ 6 ][ 7 ][ 8 ][ 9 ][ 10 ]\n\nOne click. We read every response.\n\n— Pardeep",
+    body: "Hi {{customer_name}},\n\nOn a scale of 0–10, how likely are you to recommend Demo Co to a peer?\n\n[ 0 ][ 1 ][ 2 ][ 3 ][ 4 ][ 5 ][ 6 ][ 7 ][ 8 ][ 9 ][ 10 ]\n\nOne click. We read every response.\n\n— Pardeep",
   },
   referral: {
     name: "Referral Program — Earn ₹5,000",
     channel: "both",
     audience: "high_value",
     subject: "Refer a peer — earn ₹5,000",
-    body: "Hi {{customer_name}},\n\nKnow another business that's spending too much on cloud licenses or struggling with vendor support?\n\nRefer them. When they sign up, you get ₹5,000 credit on your next renewal — they get free onboarding.\n\nReply with the contact, or share this link: exceltech.in/refer\n\n— Pardeep",
+    body: "Hi {{customer_name}},\n\nKnow another business that's spending too much on cloud licenses or struggling with vendor support?\n\nRefer them. When they sign up, you get ₹5,000 credit on your next renewal — they get free onboarding.\n\nReply with the contact, or share this link: example.test/refer\n\n— Pardeep",
   },
 };
 

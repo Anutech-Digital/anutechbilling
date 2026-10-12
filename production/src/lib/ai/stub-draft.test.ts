@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { stubDraft, type StubDraftArgs } from "./stub-draft";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const PURPOSES = ["followup", "reminder", "renewal"] as const;
 const CHANNELS = ["whatsapp", "email"] as const;
@@ -36,14 +37,14 @@ describe("stubDraft", () => {
   });
 
   it("NEVER names a company the caller did not supply", () => {
-    /* The bug. Three email variants ended "Thanks,\nExcel Technologies" — a
+    /* The bug. Three email variants ended "Thanks,\nDemo Co" — a
        hardcoded company in text the operator sends to their own customer.
        lib/whatsapp.ts fixed exactly this and its test still guards it; the fix
        never reached this function. Brand-agnostic on purpose: a guard naming one
        retired brand passes the day somebody hardcodes the current one. */
     for (const { purpose, channel, draft } of everyDraft("Delfos Technologies")) {
       const text = `${draft.subject}\n${draft.message}`;
-      expect(text, `${purpose}/${channel}`).not.toMatch(/excel technolog/i);
+      expect(text, `${purpose}/${channel}`).not.toMatch(denyTermsRe());
       expect(text, `${purpose}/${channel}`).not.toMatch(/anutech/i);
       expect(text, `${purpose}/${channel}`).not.toMatch(/pardeep/i);
     }

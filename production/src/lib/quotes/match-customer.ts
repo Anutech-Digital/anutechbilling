@@ -20,7 +20,7 @@
  *
  * ─── MATCH ON EMAIL FIRST, NAME SECOND ──────────────────────────────────────
  * An email address is a near-identifier: two businesses do not share one. A company NAME
- * is not — "Excel Technologies" is a lead here and also a customer, and this tenant's own
+ * is not — "Demo Co" is a lead here and also a customer, and this tenant's own
  * history (CLAUDE.md §4a) is a case of two records sharing a name and not being the same
  * organisation.
  *

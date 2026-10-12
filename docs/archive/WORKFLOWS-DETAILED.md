@@ -279,7 +279,7 @@ TOTAL:       ₹4,90,644
 
 ### 7.6 Send
 - "Send via Email + WhatsApp" click
-- PDF auto-generate with Excel Tech letterhead, GSTIN, T&Cs
+- PDF auto-generate with Client A letterhead, GSTIN, T&Cs
 - Email + WhatsApp message:
   ```
   Hi Rajesh,
@@ -526,7 +526,7 @@ Annual cost: ₹1,98,720 + GST
 Want to upgrade, downgrade, or add seats?
 👉 [Get Renewal Quote] [Talk to Amit]
 
-— Excel Technologies
+— Client A
 ```
 
 ### 1.2 Task for Account Manager (Auto)
@@ -606,7 +606,7 @@ Quote: ₹2,34,490 (incl. GST)
 Pay now to avoid service disruption:
 👉 https://portal.gw-pro.com/q/Q-2026-0089
 
-— Excel Technologies"
+— Client A"
 ```
 
 ### 3.2 Phone Call Task — URGENT
@@ -717,7 +717,7 @@ Customer pays via Razorpay link!
 
 - **Customer:** Delta Pvt Ltd
 - **Subscription:** Workspace Plus, 50 seats
-- **State:** Delhi (07) — same state as Excel Technologies
+- **State:** Delhi (07) — same state as Client A
 - **GSTIN:** 07AABCD1234D1Z5
 - **Annual amount:** ₹8,28,000 + GST
 
@@ -847,7 +847,7 @@ await firestore.collection('invoices').doc(invoice.invoiceNumber).set(invoice);
 ```
 
 **PDF AUTO-GENERATED:**
-- Excel Technologies letterhead
+- Client A letterhead
 - GSTIN: 07AABCE1234D1Z9
 - Bill To: Delta Pvt Ltd + GSTIN: 07AABCD1234D1Z5
 - Line items with HSN codes
@@ -874,7 +874,7 @@ Due: 30 May 2026 (Net 18 days)
 Pay online: [Razorpay link]
 Pay via NEFT: HDFC Bank A/c 50100xxxxxxxxx
 
-— Excel Technologies
+— Client A
 ```
 
 **WHATSAPP:**
@@ -1230,7 +1230,7 @@ include:_spf.google.com
 Can I jump on a 10-min Google Meet to fix this?
 [Meet Link]
 
-— Priya R, Excel Technologies"
+— Priya R, Client A"
 ```
 
 **ACTIVITY LOG:**

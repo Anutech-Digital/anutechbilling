@@ -5,14 +5,14 @@
  * The invoice dialog used to do this:
  *
  *     const meTenant = me || {
- *       tenantName: "Excel Technologies Pvt Ltd",
+ *       tenantName: "Demo Co Pvt Ltd",
  *       tenantGstin: "27AABCE9876D1Z3",
  *       tenantStateCode: "27", …
  *     };
  *
  * A fallback that looks harmless and is not. Three separate problems, worst last:
  *
- *   1. Wrong company. Excel Technologies is HISTORICAL (CLAUDE.md §1) — the entity
+ *   1. Wrong company. Demo Co is HISTORICAL (CLAUDE.md §1) — the entity
  *      is ANUTECH DIGITAL PVT LTD. A customer receiving that invoice sees a supplier
  *      they have no relationship with.
  *

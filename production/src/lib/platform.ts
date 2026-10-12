@@ -2,7 +2,7 @@
  * PLATFORM_OPERATOR — ResellerOS ko chalane wali company, ek hi jagah.
  *
  * ─── YE CONSTANT KYUN BANA ──────────────────────────────────────────────────
- * 26 Aug 2026. "Excel Technologies" 98 jagah, 55 file me likha hua tha — landing page ke
+ * 26 Aug 2026. "Demo Co" 98 jagah, 55 file me likha hua tha — landing page ke
  * footer se lekar Privacy Policy aur Terms of Service tak, jahan wo SERVICE CHALANE WALI
  * ENTITY ke roop me naamzad thi. Wo galat hai: ResellerOS ANUTECH DIGITAL PVT LTD
  * chalati hai (CLAUDE.md §1).
@@ -10,7 +10,7 @@
  * Aur ye do naam ek company ke do naam NAHI hain — DB me naapa gaya:
  *
  *     ANUTECH DIGITAL PVT LTD   07ABDCA0298H1ZP   PAN ka 4th char 'C' → Company
- *     Excel Technologies        07BMOPS5609G1ZM   PAN ka 4th char 'P' → Person
+ *     Demo Co        07AAAAP0000A1Z5   PAN ka 4th char 'P' → Person
  *
  * Yaani ek Pvt Ltd hai aur doosri proprietorship. Privacy Policy me galat entity ka naam
  * hona rename ki galti nahi hai — wo kehta hai ki aapka data kisi aur ke paas hai.
@@ -49,7 +49,8 @@ export const PLATFORM_OPERATOR = {
  *
  * Override in prod with PLATFORM_ADMIN_EMAILS="a@x.com,b@y.com".
  */
-const DEFAULT_PLATFORM_ADMINS = ["pardeep@anutech.in", "pardeep@exceltechnologies.in"];
+// R-1432: only the operator's own address is a default; any other admin comes from env.
+const DEFAULT_PLATFORM_ADMINS = ["pardeep@anutech.in"];
 
 export function platformAdminEmails(): string[] {
   const env = process.env.NEXT_PUBLIC_PLATFORM_ADMIN_EMAILS || process.env.PLATFORM_ADMIN_EMAILS;

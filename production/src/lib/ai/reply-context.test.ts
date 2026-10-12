@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildReplyContext, REPLY_SYSTEM_PROMPT, type ThreadTurn, type ReplyFacts } from "./reply-context";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const FACTS: ReplyFacts = {
   sellerName: "ANUTECH DIGITAL PVT LTD",
@@ -113,11 +114,11 @@ describe("buildReplyContext — stale stored facts are withheld, not stated", ()
 
 describe("buildReplyContext — identity", () => {
   it("uses the tenant's own name, never a hardcoded company", () => {
-    /* L20. Three routes shipped with "Excel Technologies" baked into customer-facing
+    /* L20. Three routes shipped with "Demo Co" baked into customer-facing
        text; the system prompt says sign off with the given name and nothing else. */
     const c = buildReplyContext({ thread: THREAD, facts: { ...FACTS, sellerName: "Delfos Technologies" } });
     expect(c.contextText).toContain("Delfos Technologies");
-    expect(c.contextText).not.toMatch(/excel technolog/i);
+    expect(c.contextText).not.toMatch(denyTermsRe());
   });
 
   it("degrades to a neutral phrase rather than a placeholder company", () => {

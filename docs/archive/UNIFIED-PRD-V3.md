@@ -2,7 +2,7 @@
 
 > **Version:** 3.0 (Unified)
 > **Date:** 2026-05-19
-> **Author:** Pardeep / Excel Technologies
+> **Author:** Pardeep / Client A
 > **Status:** Decision-pending
 > **Replaces:** `LEADOS-FIREBASE-REBUILD-GUIDE.md` (V1), `LEADOS-RESELLER-CRM-V2-PRD.md` (V2)
 
@@ -219,7 +219,7 @@ Aap teen alag projects me kaam kar rahe ho — `gw-pro` (production), `ResellerO
 │                                                                │
 ├────────────────────────────────────────────────────────────────┤
 │                                                                │
-│   Why Excel Technologies?                                      │
+│   Why Client A?                                      │
 │                                                                │
 │   ✓ Google Authorized Reseller (10+ years)                     │
 │   ✓ 500+ businesses migrated                                   │
@@ -475,7 +475,7 @@ Legend: RB = Rahul, PR = Priya, AM = Amit (sales rep initials)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Excel Technologies                                                         │
+│ Client A                                                         │
 ├────────────────────────────────────────────────────────────────────────────┤
 │                                                                            │
 │  Hi Rajesh,                                                                │

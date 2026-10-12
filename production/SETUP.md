@@ -91,7 +91,7 @@ If you want Google login:
 
 Open `http://localhost:3000/signup` and fill in:
 
-- **Company name**: `Excel Technologies Pvt Ltd`
+- **Company name**: `Client A Pvt Ltd`
 - **GSTIN**: `27AABCE9876D1Z3` (optional)
 - **Your name**: `Pardeep A`
 - **Email**: your real email

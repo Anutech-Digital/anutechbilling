@@ -2,7 +2,7 @@
  * What happened when someone pressed "Connect" for Gmail — as a plain sentence on screen.
  *
  * ─── WHY (R-160, 7 Oct 2026) ────────────────────────────────────────────────
- * A second tenant (Excel Technologies) reported "error while connecting Google for email".
+ * A second tenant (Demo Co) reported "error while connecting Google for email".
  * The callback already knew the reason — it redirects to `?gmail=denied|badstate|noscope|…`
  * — but no screen read `gmail=`, so every failure looked like nothing happened. And Google's
  * own error code (`admin_policy_enforced`, `redirect_uri_mismatch`, `invalid_grant`) was

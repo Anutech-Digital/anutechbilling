@@ -2,7 +2,7 @@
  * What a customer IS, on the customers list — R-005 (Pardeep, 25 Sep 2026).
  *
  * ─── WHY ────────────────────────────────────────────────────────────────────
- * The list read subscriptions and nothing else. So Excel Technologies — an active
+ * The list read subscriptions and nothing else. So Demo Co — an active
  * ₹10,80,000 ERP build, `project_sales.customer_id` correctly set — showed as
  * **"No subscription", Monthly ₹0, Yearly ₹0**, and fell under the "No subscription"
  * filter beside genuinely dead accounts.

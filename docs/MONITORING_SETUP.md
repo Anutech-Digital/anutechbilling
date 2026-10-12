@@ -36,7 +36,7 @@ Check in Cloud Monitoring → Uptime checks, and delete the duplicate if so.
 > Sentry was set up before 1 Sep 2026; the "🔴 Sentry" section below is a **record of how
 > it was set up, not an open task** — skip straight to verification (`/api/sentry-test`,
 > needs `ALLOW_SENTRY_TEST=1` in production) if you're checking it still works. Org/email
-> references say "Excel Tech" — historical; the company is **ANUTECH DIGITAL PVT LTD** now
+> references say "Client A" — historical; the company is **ANUTECH DIGITAL PVT LTD** now
 > (CLAUDE.md §1).
 
 Two services give us full production visibility:
@@ -56,8 +56,8 @@ Code-side is fully wired — both products activate the moment you set env vars 
 
 URL: **https://sentry.io/signup/**
 
-- Use your Excel Tech email
-- Organization name: `excel-technologies` (or anything)
+- Use your Client A email
+- Organization name: `client-a` (or anything)
 - Choose plan: **Developer (Free)** — 5,000 errors/month
 - Platform: **Next.js**
 
@@ -98,7 +98,7 @@ gcloud run services update resellersos \
   --update-env-vars \
 NEXT_PUBLIC_SENTRY_DSN=https://abc123@o4506789.ingest.sentry.io/4506789,\
 SENTRY_DSN=https://abc123@o4506789.ingest.sentry.io/4506789,\
-SENTRY_ORG=excel-technologies,\
+SENTRY_ORG=client-a,\
 SENTRY_PROJECT=resellersos,\
 SENTRY_AUTH_TOKEN=YOUR_TOKEN_HERE
 ```
@@ -130,7 +130,7 @@ Once verified, set `ALLOW_SENTRY_TEST=` (empty) to disable the test route again.
 
 URL: **https://betterstack.com/users/sign-up**
 
-- Sign up with Excel Tech email
+- Sign up with Client A email
 - Choose **Uptime** product (NOT Logs)
 - Plan: **Free** — 10 monitors, 3-min check intervals, unlimited team
 

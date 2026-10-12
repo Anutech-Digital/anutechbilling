@@ -3,7 +3,7 @@
 
 const LEAD_SOURCES = [
   { id: "whatsapp",  label: "WhatsApp Business",   icon: "whatsapp", count: 12, conv: 33, status: "active",   note: "Highest volume source" },
-  { id: "website",   label: "Website form",        icon: "globe",    count: 8,  conv: 25, status: "active",   note: "exceltech.in/get-quote" },
+  { id: "website",   label: "Website form",        icon: "globe",    count: 8,  conv: 25, status: "active",   note: "example.test/get-quote" },
   { id: "referral",  label: "Referral program",    icon: "award",    count: 5,  conv: 60, status: "active",   note: "Best conversion · ₹5K credit per ref" },
   { id: "cold",      label: "Cold outreach",       icon: "send",     count: 4,  conv: 20, status: "active",   note: "Apollo + Lemlist sequences" },
   { id: "ads",       label: "Google Ads",          icon: "target",   count: 3,  conv: 13, status: "active",   note: "₹15K/mo spend · ₹5K/lead" },
@@ -15,7 +15,7 @@ const WEBHOOKS = [
     id: "website",
     method: "POST", path: "/api/leads/website",
     label: "Website form",
-    sub: "Public form on exceltech.in/get-quote",
+    sub: "Public form on example.test/get-quote",
     icon: "globe", count: 18, lastFired: "2h ago", live: true,
     sample: `{
   "company": "Acme Corp Pvt Ltd",
@@ -46,7 +46,7 @@ const WEBHOOKS = [
     id: "email",
     method: "POST", path: "/api/leads/email",
     label: "Email parser",
-    sub: "IMAP poll on sales@exceltech.in",
+    sub: "IMAP poll on sales@example.test",
     icon: "mail", count: 4, lastFired: "1d ago", live: true,
     sample: `{
   "from": { "name": "Suresh P", "email": "suresh@novaprint.in" },
@@ -60,7 +60,7 @@ const WEBHOOKS = [
     id: "referral",
     method: "POST", path: "/api/leads/referral",
     label: "Customer referrals",
-    sub: "Portal links — exceltech.in/r/{customer-slug}",
+    sub: "Portal links — example.test/r/{customer-slug}",
     icon: "award", count: 5, lastFired: "3d ago", live: true,
     sample: `{
   "company": "Maple Studios",
@@ -221,7 +221,7 @@ function LeadGenScreen() {
               Get my quote
             </button>
             <div style={{ fontSize: 10, color: "var(--ink-3)", textAlign: "center", marginTop: 8 }}>
-              Live at <span className="mono">exceltech.in/get-quote</span>
+              Live at <span className="mono">example.test/get-quote</span>
             </div>
           </div>
         </Card>
@@ -540,7 +540,7 @@ function ImportLeadsModal({ onClose, onImported }) {
 }
 
 function ShareFormModal({ onClose, onCopy }) {
-  const url = "https://exceltech.in/get-quote";
+  const url = "https://example.test/get-quote";
   const embed = `<iframe src="${url}?embed=1" width="100%" height="640" frameborder="0"></iframe>`;
   return (
     <div className="modal-backdrop" onClick={onClose}>

@@ -36,7 +36,7 @@ describe("formatDocumentNumber", () => {
   });
 
   it("omits the doc code when the tenant has none", () => {
-    /* Excel Technologies' row has doc_code null. A literal "INV-null-…" on a tax
+    /* Demo Co' row has doc_code null. A literal "INV-null-…" on a tax
        document would be worse than the missing segment. */
     const noCode: SeriesState = { ...HEALTHY, docCode: null };
     expect(formatDocumentNumber(noCode, 3)).toBe("INV-27-0003");

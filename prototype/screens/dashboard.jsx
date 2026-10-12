@@ -40,7 +40,7 @@ function DashboardScreen() {
           <div>
             <div className="page-eyebrow">Tuesday · 20 May 2026</div>
             <h1 className="page-title">Good morning, Pardeep.</h1>
-            <p className="page-sub">Here's what's happening at Excel Technologies today.</p>
+            <p className="page-sub">Here's what's happening at Demo Co today.</p>
           </div>
           <div className="page-head-actions">
             <Btn icon="plus" kind="primary" onClick={() => toast("Quick-add opened")}>Quick add</Btn>

@@ -32,7 +32,7 @@
  * ─── WHAT IS DELIBERATELY *NOT* SUPPRESSED ───────────────────────────────────
  * Email from the tenant's own domain. It looks like an obvious self-send to
  * ignore, but the real data shows `sales@anutech.in` and
- * `pardeep@exceltechnologies.in` arriving as senders and correctly producing
+ * `pardeep@example.test` arriving as senders and correctly producing
  * leads — staff forward customer enquiries in. Suppressing own-domain would have
  * broken a path that works today.
  */

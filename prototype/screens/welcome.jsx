@@ -41,7 +41,7 @@ function WelcomeScreen() {
           color: "var(--amber)", fontWeight: 600,
           border: "1px solid var(--amber)", padding: "3px 10px", borderRadius: 999, marginBottom: 18,
         }}>
-          Project Demo · Excel Technologies × Anutech
+          Project Demo · Demo Co × Anutech
         </div>
         <h1 className="serif" style={{ fontSize: 72, letterSpacing: "-0.025em", lineHeight: 1.02, margin: "0 0 20px" }}>
           Welcome to <em style={{ fontStyle: "italic", color: "var(--amber)" }}>ResellerOS.</em>

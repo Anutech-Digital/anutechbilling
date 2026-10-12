@@ -3,7 +3,7 @@
 > Exhaustive list of test angles for the core flow, with concrete examples. Use this as the manual + automated test checklist before launch. Pair with `docs/MONEY-FLOW-TEST-MATRIX.md` (bug-focused) — this doc is scenario/use-case-focused.
 >
 > **Standing test fixtures (use these in examples):**
-> - **Seller (reseller tenant):** Excel Technologies — Delhi, state code **07**, GSTIN `07AABCE1234D1Z9`.
+> - **Seller (reseller tenant):** Client A — Delhi, state code **07**, GSTIN `07AABCE1234D1Z9`.
 > - **Customer A — Acme Corp:** Maharashtra, state **27** → **inter-state → IGST 18%**.
 > - **Customer B — Delta Pvt Ltd:** Delhi, state **07** → **intra-state → CGST 9% + SGST 9%**.
 > - **Products (real Google India retail, ₹/user/month, annual):** Starter **₹270**, Standard **₹864**, Plus **₹1380**, Enterprise **₹2400**. GST **18%**, HSN **998313**.

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { tdsSplitFromNet, TDS_SECTIONS } from "./tds-split";
 
 describe("tdsSplitFromNet — back from the bank receipt to the invoice", () => {
-  it("the Excel Technologies receipt: ₹5,40,000 at 18% GST, 10% TDS = ₹5,00,000 + GST, ₹50,000 TDS", () => {
+  it("the Demo Co receipt: ₹5,40,000 at 18% GST, 10% TDS = ₹5,00,000 + GST, ₹50,000 TDS", () => {
     expect(tdsSplitFromNet(540_000, 18, 10)).toEqual({ taxable: 500_000, gst: 90_000, gross: 590_000, tds: 50_000, net: 540_000 });
   });
 

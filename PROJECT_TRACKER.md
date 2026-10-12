@@ -11,7 +11,7 @@
 | Field | Value |
 |---|---|
 | **Product** | ResellerOS — multi-tenant SaaS for Indian cloud resellers (Google Workspace, M365, Zoho) |
-| **Owner** | Pardeep A (Excel Technologies Pvt Ltd) |
+| **Owner** | Pardeep A (Client A Pvt Ltd) |
 | **Stack** | Next.js 14 + Supabase Postgres + Cloud Run + Razorpay + Resend |
 | **Live URL** | https://reselleros.anutech.in |
 | **Repo** | https://github.com/Pardeep-byte1/resellersos |
@@ -33,7 +33,7 @@
   - [x] Client ID + Secret already in Supabase
   - [x] Supabase Auth Providers → Google already toggled ON
   - [x] Live test confirmed: 4 users signed in via Google (pardeep×2, webmaster, hitesh)
-  - [x] **Hitesh's stranded account recovered** — Excel Tech + sales role manually provisioned
+  - [x] **Hitesh's stranded account recovered** — Client A + sales role manually provisioned
   - [x] New users from now on: callback auto-provisions tenant + users row (live on revision 00047-rg6)
 - [x] **Day 1: Privacy + Terms + About pages** — DPDP Act 2023 compliant, shipped 2026-05-29 (commit `6158742`)
 - [x] **Day 4 (server side): Sentry FULLY WORKING** — events landing in dashboard confirmed 2026-05-29 (Issue `JAVASCRIPT-NEXTJS-2`, 3 events, ₹0 spent). Root cause: Next.js 14.2 standalone on Cloud Run silently skips `instrumentation.ts register()` hook even with `experimental.instrumentationHook: true`. Workaround: `src/lib/sentry.ts` side-effect helper called via `import "@/lib/sentry"` from any server file that needs guaranteed init. `ALLOW_SENTRY_TEST` env var disabled — smoke route now 403 in prod.
@@ -66,7 +66,7 @@
 | Update GitHub PAT with `workflow` scope | ⏳ pending | Push `.github/workflows/ci.yml` |
 | GitHub PAT secret in Cloud Run env | ⏳ pending | CI workflow |
 | Privacy policy + Terms content (legal review) | ✅ done | DPDP Act 2023 compliant pages shipped 2026-05-29 |
-| Sentry account + DSN | ✅ done | Org `excel-technologies`, project `javascript-nextjs`, DSN live on Cloud Run |
+| Sentry account + DSN | ✅ done | Org `client-a`, project `javascript-nextjs`, DSN live on Cloud Run |
 | Sentry visual verification | ✅ done | Issue `JAVASCRIPT-NEXTJS-2` with 3 events confirmed in dashboard 2026-05-29 |
 | BetterStack signup + monitor | ✅ done | Free tier · HTTP monitor for live URL · 3min interval · 10s timeout · email alerts · Mumbai region |
 | `ALLOW_SENTRY_TEST` env var disabled | ✅ done | Removed from Cloud Run revision `00058-8wh` — smoke route now 403 in prod |
@@ -294,9 +294,9 @@ experience now.
 
 | Email | Password | Tenant | Role |
 |---|---|---|---|
-| `pardeep@exceltechnologies.in` | (apne paas — code/docs mein nahi) | Excel Technologies (distributor) | owner |
-| `darshan@exceltechnologies.in` | (apne paas — code/docs mein nahi) | Excel Technologies | sales |
-| `pardeep.webmaster@gmail.com` | (in DB) | Excel Technologies | sales |
+| `pardeep@example.test` | (apne paas — code/docs mein nahi) | Client A (distributor) | owner |
+| `darshan@example.test` | (apne paas — code/docs mein nahi) | Client A | sales |
+| `owner.test@gmail.com` | (in DB) | Client A | sales |
 | `pardeep@anutech.in` | (apne paas — code/docs mein nahi) | Anutech Digital (reseller) | owner |
 
 ---
@@ -307,7 +307,7 @@ experience now.
 |---|---|
 | Google OAuth not yet enabled in Supabase | Use email/password login until OAuth Client configured |
 | Setu AA real-time fetch | Use CSV upload monthly (or mock mode for demos) |
-| Cross-tenant ID collision on quotes/POs | Currently mitigated with renamed prefixes (e.g. PO-ET-...) — composite PK migration pending |
+| Cross-tenant ID collision on quotes/POs | details on the board (R-1432) |
 | Screenshot tool timeout on first-compile pages | Wait 5-8 sec after navigate, retry once |
 | Browser Chrome MCP can't navigate to Cloud Run URL | Localhost works fine; Chrome extension domain permission limitation |
 
@@ -408,7 +408,7 @@ evidence the feature exists.
 - Customer GSTIN verification + auto-fill
 
 ### Phase 14 — Roles + Sales workspace v2 (Week 16)
-- Restricted sales role (Darshan @ Excel Tech)
+- Restricted sales role (Darshan @ Client A)
 - Split Leads/Deals UX
 - Today Strip + Smart Views + Pipeline Pulse
 - Dense lead rows + slim KPI strip
@@ -432,7 +432,7 @@ evidence the feature exists.
 ### Phase 18 — Monitoring (Week 18, **today**)
 - Sentry NextJS SDK 10.55 wired: `instrumentation.ts` + `sentry.{server,client,edge}.config.ts`
 - `next.config.mjs` wrapped with `withSentryConfig` (silent + hidden source maps)
-- Sentry env vars live on Cloud Run: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG=excel-technologies`, `SENTRY_PROJECT=javascript-nextjs`
+- Sentry env vars live on Cloud Run: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG=client-a`, `SENTRY_PROJECT=javascript-nextjs`
 - **🐛 Bug found + worked around**: Next.js 14.2.15 + `output: "standalone"` + Cloud Run silently skips `instrumentation.ts register()` even with `experimental.instrumentationHook: true`. Diagnosed via boot-log instrumentation showing register never fires. Workaround: `src/lib/sentry.ts` side-effect helper with idempotent guard (`!Sentry.getClient()`) — imported via `import "@/lib/sentry"` from any server file that needs guaranteed init. When Next.js fixes this upstream, helper can be deleted.
 - Comprehensive setup doc at `docs/MONITORING_SETUP.md` (Sentry signup + BetterStack signup + troubleshooting)
 - ✅ Visual verification: 3 events landed in Sentry dashboard (Issue `JAVASCRIPT-NEXTJS-2`)

@@ -4,6 +4,7 @@ import {
   ledgerWhatsAppText, ledgerWhatsAppUrl, LEDGER_CSV_HEADERS,
 } from "./ledger-export";
 import { buildLedger, fyPeriod, type LedgerEntry } from "./ledger";
+import { denyTermsRe } from "@/test/deny-terms";
 
 const FY26 = fyPeriod(2026);
 
@@ -200,7 +201,7 @@ describe("WhatsApp message", () => {
     expect(ledgerWhatsAppText({ partyName: "M", statement: cust, sellerName: "ANUTECH DIGITAL PVT LTD" }))
       .toContain("ANUTECH DIGITAL PVT LTD");
     const unsigned = ledgerWhatsAppText({ partyName: "M", statement: cust, sellerName: null });
-    expect(unsigned).not.toMatch(/excel technologies/i);
+    expect(unsigned).not.toMatch(denyTermsRe());
     expect(unsigned.trimEnd().endsWith("trace it.")).toBe(true);
   });
 });

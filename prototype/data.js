@@ -2,12 +2,12 @@
 // Sample data for ResellerOS — from the brief, expanded for realism
 
 const RESELLER = {
-  name: "Excel Technologies Pvt Ltd",
+  name: "Demo Co Pvt Ltd",
   gstin: "27AABCE9876D1Z3",
   state: "Maharashtra (27)",
   stateCode: "27",
   address: "Mumbai, Maharashtra 400001",
-  email: "pardeep@exceltechnologies.in",
+  email: "pardeep@example.test",
   phone: "+91 98765 00000",
 };
 

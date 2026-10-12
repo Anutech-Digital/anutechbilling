@@ -195,4 +195,4 @@ invoices, payments); **Pawan** — customer-facing pages, checkout, public API. 
 
 ## 📜 License
 
-Proprietary. © 2026 Excel Technologies Pvt Ltd. All rights reserved.
+Proprietary. © 2026 Client A Pvt Ltd. All rights reserved.

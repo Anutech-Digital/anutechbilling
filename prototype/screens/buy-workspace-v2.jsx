@@ -209,7 +209,7 @@ function BuyWorkspaceV2() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 32, height: 32, background: ink, color: bg, borderRadius: 6, display: "grid", placeItems: "center", fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>R</div>
               <div>
-                <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 16, lineHeight: 1 }}>Excel Technologies</div>
+                <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 16, lineHeight: 1 }}>Demo Co</div>
                 <div style={{ fontSize: 9, color: ink3, marginTop: 2 }}>Cloud Reseller · India</div>
               </div>
             </div>
@@ -1024,7 +1024,7 @@ function BuyWorkspaceV2() {
       {/* MINIMAL FOOTER */}
       <div style={{ background: card, borderTop: "1px solid " + hair, padding: "20px 24px" }}>
         <div style={{ maxWidth: 1120, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: 12, color: ink3 }}>
-          <div>© 2026 Excel Technologies Pvt Ltd · GSTIN 27AABCE9876D1Z3 · Mumbai</div>
+          <div>© 2026 Demo Co Pvt Ltd · GSTIN 27AABCE9876D1Z3 · Mumbai</div>
           <div style={{ display: "flex", gap: 14 }}>
             <a href="#" style={{ color: ink3 }}>Privacy</a>
             <a href="#" style={{ color: ink3 }}>Terms</a>
@@ -1444,7 +1444,7 @@ function GooglePricingSection({ openTrial, onWhatsApp, accent }) {
             <I name="info" size={14} style={{ color: gBlue, flexShrink: 0, marginTop: 2 }} />
             <div>
               <b style={{ color: gInk }}>How users are counted:</b> Each business user (mailbox) needs their own license. Shared aliases don't count. Pricing shown is exclusive of 18% GST.
-              Bought through <b style={{ color: gInk }}>Excel Technologies · Google Premier Partner</b> — same Google pricing, plus free hands-on migration, dedicated Indian support, and direct escalation to Google engineering.
+              Bought through <b style={{ color: gInk }}>Demo Co · Google Premier Partner</b> — same Google pricing, plus free hands-on migration, dedicated Indian support, and direct escalation to Google engineering.
             </div>
           </div>
         </div>

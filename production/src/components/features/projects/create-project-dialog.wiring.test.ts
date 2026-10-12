@@ -4,8 +4,8 @@
  * A source scan, because the defect was WIRING: the dialog rendered a perfectly good
  * text input and passed `customerId: null` to a mutation that accepts an id. Nothing
  * about that fails a unit test, and the damage only appears later — in a Ledger that
- * never shows the sale, and in "Excel Tech" quietly being a different party from
- * "Excel Technologies".
+ * never shows the sale, and in "Demo Co" quietly being a different party from
+ * "Demo Co".
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";

@@ -27,7 +27,7 @@ insert into public.users (id, tenant_id, email, role) values
   ('aaaaaaaa-0000-0000-0000-00000000a0a4', 'aaaaaaaa-0000-0000-0000-0000000000a4', 'ur-a-user@example.in', 'owner'),
   ('bbbbbbbb-0000-0000-0000-00000000b0b4', 'bbbbbbbb-0000-0000-0000-0000000000b4', 'ur-b-user@example.in', 'owner');
 insert into public.customers (id, tenant_id, name, state_code) values
-  ('aaaaaaaa-0000-0000-0000-0000000c0004', 'aaaaaaaa-0000-0000-0000-0000000000a4', 'Excel Technologies', '07');
+  ('aaaaaaaa-0000-0000-0000-0000000c0004', 'aaaaaaaa-0000-0000-0000-0000000000a4', 'Demo Co', '07');
 insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
   ('aaaaaaaa-0000-0000-0000-0000000ba004', 'aaaaaaaa-0000-0000-0000-0000000000a4', 'Test HDFC', 'HDFC', 0, '2026-04-01');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source) values

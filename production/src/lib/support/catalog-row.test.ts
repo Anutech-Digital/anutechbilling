@@ -64,8 +64,8 @@ describe("the price field", () => {
 
 describe("naming", () => {
   it("brands with the reseller's name like the seed, and falls back when there is none", () => {
-    expect(supportCatalogName(std, "monthly", "Excel Technologies")).toBe("Excel Technologies Standard Support");
-    expect(supportCatalogName(std, "yearly", "Excel Technologies")).toBe("Excel Technologies Standard Support (Yearly)");
+    expect(supportCatalogName(std, "monthly", "Demo Co")).toBe("Demo Co Standard Support");
+    expect(supportCatalogName(std, "yearly", "Demo Co")).toBe("Demo Co Standard Support (Yearly)");
     expect(supportCatalogName(ent, "monthly", null)).toBe("Support Enterprise (Monthly)");
   });
 });

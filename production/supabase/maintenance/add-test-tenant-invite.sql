@@ -73,7 +73,7 @@ begin
   end if;
 
   -- The live tenant's own membership must be untouched. TEN, not eleven: eleven is
-  -- the DB-wide user count and one of them belongs to Excel Technologies. Written
+  -- the DB-wide user count and one of them belongs to Demo Co. Written
   -- wrong the first time here too, and caught by this same assertion — the global
   -- figure is always the one that comes to mind.
   select count(*) into n from public.users where tenant_id = v_live;

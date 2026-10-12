@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { pillsFor, pillDraft, replySubject, type PillContext } from "./reply-pills";
+import { denyTermsRe } from "@/test/deny-terms";
 
 /** The live enquiry: Pardeep, 20 seats, Google Workspace Standard, no phone number. */
 const LIVE: PillContext = {
@@ -118,7 +119,7 @@ describe("the sign-off", () => {
     /* Same rule as lib/whatsapp.ts: no name beats the wrong name. */
     const d = pillDraft("quote", { ...LIVE, sellerName: null });
     expect(d).not.toMatch(/best regards/i);
-    expect(d).not.toMatch(/excel technologies/i);
+    expect(d).not.toMatch(denyTermsRe());
   });
 });
 

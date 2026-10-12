@@ -9,7 +9,7 @@
 
 ## TL;DR — where you actually stand
 
-**Build quality**: 8/10. The product is dense, multi-tenant, GST-aware, mobile-ready, and battle-tested against Excel Tech's own ops. Few Indian SaaS startups have this depth at v0.
+**Build quality**: 8/10. The product is dense, multi-tenant, GST-aware, mobile-ready, and battle-tested against Client A's own ops. Few Indian SaaS startups have this depth at v0.
 
 **Business readiness**: 4/10. You can't actually charge money yet (no live Razorpay, no enforced tiers, no DPA, no GST e-Invoice IRP). The pricing page is a beautiful billboard with no checkout behind it.
 
@@ -44,7 +44,7 @@ These prevent you from accepting your first ₹1 of revenue. Fix these before Da
 
 **ROI**: Unlocks revenue. Without this you literally cannot charge.
 
-**Why we don't have it**: Honest dogfooding-first stance — Pardeep ran the product on Excel Tech for free before charging. Now it's time.
+**Why we don't have it**: Honest dogfooding-first stance — Pardeep ran the product on Client A for free before charging. Now it's time.
 
 **To-do list**:
 - Move Razorpay from test to live mode (new keys, KYC complete)
@@ -301,7 +301,7 @@ These compound over time. Start during Day 60-90.
 **ROI**: 2-3x growth multiplier when done right.
 
 **To-do list**:
-- Settings → Referrals → Get your link (`resellersos.in/?ref=excel-tech`)
+- Settings → Referrals → Get your link (`resellersos.in/?ref=client-a`)
 - Track referral source on signup
 - Auto-credit referrer ₹999 (or 1 month free) when referee pays first invoice
 - Public leaderboard
@@ -409,7 +409,7 @@ These are what makes Stripe / Linear / Vercel feel different from a competent Sa
 
 ### 5.5 — Customer success stories + case studies
 
-**What's missing**: Excel Tech is the first customer but no published story. World-class SaaS has 10+ case studies on landing.
+**What's missing**: Client A is the first customer but no published story. World-class SaaS has 10+ case studies on landing.
 
 **Effort**: S (1 day per story once you have a customer)
 
@@ -586,7 +586,7 @@ Your next 60 days should be **business-readiness**, not product-readiness. Charg
 2. **Wire Razorpay live mode + enforce tiers** (3 days)
 3. **Get e-Invoice IRP working** (3 days, via ClearTax GSP)
 4. **Add audit logs + data export** (2 days)
-5. **Write your first case study** (1 day — interview yourself about Excel Tech's results)
+5. **Write your first case study** (1 day — interview yourself about Client A's results)
 
 Everything else can wait.
 

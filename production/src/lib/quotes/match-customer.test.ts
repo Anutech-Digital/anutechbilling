@@ -4,7 +4,7 @@ import { matchLeadToCustomer, matchNote, type MatchableCustomer } from "./match-
 /** ANUTECH's four real customers. */
 const BOOK: MatchableCustomer[] = [
   { id: "c-sahakar", name: "SAHAKAR INFRACON PROJECTS PRIVATE LIMITED", contact_email: "accounts@sahakar.in" },
-  { id: "c-excel",   name: "Excel Technologies",  contact_email: "pardeep@exceltechnologies.in" },
+  { id: "c-excel",   name: "Demo Co",  contact_email: "pardeep@example.test" },
   { id: "c-jijo",    name: "Jijo corprotion",     contact_email: "jijo@example.in" },
   { id: "c-ab",      name: "AB corprotion",       contact_email: null },
 ];
@@ -19,20 +19,20 @@ const BOOK: MatchableCustomer[] = [
 describe("a lead that is already a customer", () => {
   it("is found by email, which is the near-identifier", () => {
     const m = matchLeadToCustomer(
-      { company: "Excel Tech", contactEmail: "pardeep@exceltechnologies.in" }, BOOK);
+      { company: "Demo Co", contactEmail: "pardeep@example.test" }, BOOK);
     expect(m).toEqual({ kind: "email", customerId: "c-excel" });
   });
 
   it("is found by email even when the company name was typed differently", () => {
     /* The whole point of preferring email: names drift, addresses do not. */
     const m = matchLeadToCustomer(
-      { company: "EXCEL TECHNOLOGIES PVT LTD", contactEmail: "pardeep@exceltechnologies.in" }, BOOK);
+      { company: "DEMO CO PVT LTD", contactEmail: "pardeep@example.test" }, BOOK);
     expect(m.kind).toBe("email");
   });
 
   it("ignores case and stray spacing in the address", () => {
     expect(matchLeadToCustomer(
-      { contactEmail: "  Pardeep@ExcelTechnologies.IN " }, BOOK).kind).toBe("email");
+      { contactEmail: "  Pardeep@example.test " }, BOOK).kind).toBe("email");
   });
 
   it("falls back to an EXACT name match when there is no email", () => {
@@ -55,20 +55,20 @@ describe("what it will not guess", () => {
     /* "Demo1 Company" — the live case. Stage `contact`, and none of the four customers is
        it. The caller must open the New prospect tab, not an empty dropdown. */
     const m = matchLeadToCustomer(
-      { company: "Demo1 Company", contactEmail: "hb1@exceltechnologies.in" }, BOOK);
+      { company: "Demo1 Company", contactEmail: "hb1@example.test" }, BOOK);
     expect(m.kind).toBe("none");
   });
 
   it("does NOT match on a shared email DOMAIN", () => {
-    /* hb1@exceltechnologies.in and pardeep@exceltechnologies.in are the same company and
+    /* hb1@example.test and pardeep@example.test are the same company and
        different people — and on this tenant, a domain-based guess is exactly the mistake
        that produced a duplicate workspace (CLAUDE.md §4a). */
-    const m = matchLeadToCustomer({ contactEmail: "hb1@exceltechnologies.in" }, BOOK);
+    const m = matchLeadToCustomer({ contactEmail: "hb1@example.test" }, BOOK);
     expect(m.kind).toBe("none");
   });
 
   it("is NOT fuzzy on names", () => {
-    for (const near of ["Excel Technology", "Excel Technologies Ltd", "Excel"]) {
+    for (const near of ["Demo Cos", "Demo Co Ltd", "Demo"]) {
       expect(matchLeadToCustomer({ company: near }, BOOK).kind).toBe("none");
     }
   });

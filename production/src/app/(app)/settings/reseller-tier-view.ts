@@ -3,7 +3,7 @@
  * (get_my_tenant_with_parent), never from hard-coded names.
  *
  * Before: every new owner saw "Master Distributor: Anutech Digital" and "Managed Subsidiary:
- * Excel Technologies" — our own two companies, printed for strangers. The fetched row was
+ * Demo Co" — our own two companies, printed for strangers. The fetched row was
  * read only for the badge.
  *
  * Rules:

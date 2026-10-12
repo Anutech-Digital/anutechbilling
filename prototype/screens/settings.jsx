@@ -31,7 +31,7 @@ function SettingsScreen() {
         <div className="grid grid-2" style={{ marginBottom: 24 }}>
           <Card title="Company information">
             <div className="stack-12">
-              <Field label="Legal name"><input className="input" defaultValue="Excel Technologies Pvt Ltd" /></Field>
+              <Field label="Legal name"><input className="input" defaultValue="Demo Co Pvt Ltd" /></Field>
               <div className="grid grid-2" style={{ gap: 12 }}>
                 <Field label="GSTIN"><input className="input mono" defaultValue="07AABCE1234D1Z9" /></Field>
                 <Field label="PAN"><input className="input mono" defaultValue="AABCE1234D" /></Field>

@@ -1,8 +1,8 @@
 /**
  * R-278 — who a quote is FOR, when the buyer is a lead with no company.
  *
- * Measured 6 Oct 2026 (local): a lead with an empty company and contact "Pardeep Sharma"
- * (pardeep.webmaster@gmail.com) was quoted, and Q-FBB9-27-0009 was saved and listed as
+ * Measured 6 Oct 2026 (local): a lead with an empty company and contact "Test Owner"
+ * (owner.test@gmail.com) was quoted, and Q-FBB9-27-0009 was saved and listed as
  * "Prospect". Searching the Quotes list by that email found nothing, because the list
  * searched only id / customer_name / plan.
  *

@@ -321,7 +321,7 @@ export const ROLE_HOME: Record<UserRole, string> = {
 //   • Sales-only users see ONLY the items explicitly tagged with "sales"
 //     (sales_senior sees what sales sees — filterNavForRole).
 //   • Lead Pipeline + Tasks include "sales" because that's the day-to-day
-//     surface for lead-only sellers (per Darshan's role at Excel Tech).
+//     surface for lead-only sellers (per Darshan's role at Demo Co).
 // Zoho-Books-style navigation: a few top-level EXPANDABLE groups (icon + label
 // + chevron) instead of one long always-open wall. Every group starts collapsed and
 // auto-opens when you're inside it.

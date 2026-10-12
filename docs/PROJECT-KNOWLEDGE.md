@@ -42,7 +42,7 @@
 **The operating loop (core flow):** Lead inbound → Qualify → GST-compliant Quote → Send (email/WhatsApp/PDF) → Accept (with/without payment) → Customer auto-created + Subscription seeded → Invoice (CGST §31) → Razorpay collect → Receipt voucher → Renewal cadence → Auto-suspend with grace → Bank reconciliation → Accounting/GST prep → TDS receivable cycle → Form 26AS reconcile.
 
 **Who for (personas / RBAC via `users.role`):**
-- **Owner** (Pardeep @ Excel Technologies) — full access, billing, partner channel.
+- **Owner** (Pardeep @ Client A) — full access, billing, partner channel.
 - **Sales rep** — owned leads/deals/quotes; read-only customers; no delete, no CSV import, no campaigns.
 - **Support/Ops** — customers + subscriptions + invoices.
 - **Accountant/Finance** — invoices, payments, TDS, banking, GST reports.
@@ -52,7 +52,7 @@ Note: code-level `user_role` enum is `owner | sales | accountant | support` (mig
 
 **Business model:** SaaS subscription (Model B below). Currently **0 paying tenants**; target 10 in 90 days, 100 in 12 months. North-star = paying tenants × average MRR. Beta is free for the first 10 resellers OR until 2026-09-01; beta tenants get grandfathered 50% off for 12 months.
 
-**Owner / live tenants:** Owner is **Excel Technologies** (Pardeep, `Pardeep@exceltechnologies.in`), distributor tier, dogfooding. Second live tenant **Anutech Digital**, reseller tier (partner). `BUY_PAGE_TENANT_ID` defaults to `8ff50dbf-e17e-4210-a580-0df7b1a6f71b` (Excel Tech) across all public APIs — the storefront is single-tenant for v1.
+**Owner / live tenants:** Owner is **Client A** (Pardeep, `Pardeep@example.test`), distributor tier, dogfooding. Second live tenant **Anutech Digital**, reseller tier (partner). `BUY_PAGE_TENANT_ID` defaults to `8ff50dbf-e17e-4210-a580-0df7b1a6f71b` (Client A) across all public APIs — the storefront is single-tenant for v1.
 
 **V3 vs V2:** V3 diverged substantially from the archived V2 plan (`docs/archive/LEADOS-RESELLER-CRM-V2-PRD.md`): renamed LeadOS V2 → ResellerOS; single-product → GW+M365+Zoho; single-agency → multi-tenant RLS; Firestore/Firebase → Supabase Postgres + Cloud Run; Algolia → Postgres queries; 6 modules → 17 shipped modules; added customer portal, public buy pages, partner channel, banking. Authoritative current-state docs: `RESELLEROS-PRD-V3.md` and `PROJECT_TRACKER.md` (both 2026-05-29).
 
@@ -304,7 +304,7 @@ Schedule **09:00 IST (03:30 UTC)** (`vercel.json` cron `30 3 * * *`; under Cloud
 
 ### 7.4 Trial automation
 - Public trial (`/api/public/trial/workspace`): 14-day trial, lead `stage='trial'`, `trial_started_at`/`trial_expires_at`, seats cap 300, auto-creates 3 follow-up tasks (Day 7/12/14). No quote (free).
-- Trial-expiry cron (`api/cron/trial-expiry/route.ts`): **10:00 IST (04:30 UTC)**. Leads `stage='trial'`, not converted/expired, `trial_expires_at <= now()` → stamp `trial_expired_at` (idempotency marker). **Stage stays `trial`** (not auto-`lost` — operator decides). Two best-effort emails (customer "we miss you" + internal alert to `Pardeep@exceltechnologies.in`).
+- Trial-expiry cron (`api/cron/trial-expiry/route.ts`): **10:00 IST (04:30 UTC)**. Leads `stage='trial'`, not converted/expired, `trial_expires_at <= now()` → stamp `trial_expired_at` (idempotency marker). **Stage stays `trial`** (not auto-`lost` — operator decides). Two best-effort emails (customer "we miss you" + internal alert to `Pardeep@example.test`).
 - `trials.ts` query module is read-only derived from leads (`bucketize()` → in_flight / expiring_soon ≤7d / expired_unconverted / converted).
 
 ### 7.5 Pages

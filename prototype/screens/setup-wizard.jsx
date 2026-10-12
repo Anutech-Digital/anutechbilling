@@ -170,7 +170,7 @@ function StepCompany({ data, update }) {
       </div>
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Legal company name">
-          <input className="input" placeholder="Excel Technologies Pvt Ltd" defaultValue={RESELLER.name} onChange={(e) => update("companyName", e.target.value)} />
+          <input className="input" placeholder="Demo Co Pvt Ltd" defaultValue={RESELLER.name} onChange={(e) => update("companyName", e.target.value)} />
         </Field>
         <Field label="GSTIN">
           <input className="input mono" placeholder="27AABCE9876D1Z3" defaultValue={RESELLER.gstin} onChange={(e) => update("gstin", e.target.value)} />

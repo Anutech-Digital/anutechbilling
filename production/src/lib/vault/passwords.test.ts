@@ -137,7 +137,7 @@ describe("reuseFingerprint", () => {
 
 describe("vaultHealth", () => {
   const e = (over: Partial<VaultEntryHealth> = {}): VaultEntryHealth => ({
-    id: "v1", title: "Excel Tech — Google Admin", category: "google_admin",
+    id: "v1", title: "Demo Co — Google Admin", category: "google_admin",
     customerId: "c1", fingerprint: "aaaaaaaaaaaaaaaa",
     lastRotatedAt: "2026-08-01",
     ...over,

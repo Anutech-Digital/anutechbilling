@@ -6,7 +6,7 @@
 > belongs in manual smoke vs automated CI.
 >
 > **How to use:**
-> 1. Dogfooding at Excel Tech → run the **🔴 Critical** rows manually before
+> 1. Dogfooding at Client A → run the **🔴 Critical** rows manually before
 >    handing the system to a real customer.
 > 2. Future Playwright suite → start with the cases marked **🤖 Automate**.
 > 3. Risk register → cases marked **❌ Not built** define the gap to MVP.
@@ -42,7 +42,7 @@
 | Symbol | Meaning |
 |---|---|
 | 🔴 | **Critical** — must pass before any customer touches the system |
-| 🟡 | **High** — should pass before dogfood at Excel Tech |
+| 🟡 | **High** — should pass before dogfood at Client A |
 | 🟢 | **Nice** — polish; can ship with these failing |
 | ✅ | Currently working & verified |
 | ⚠️ | Partial — works for happy path, edge cases unknown |
@@ -77,7 +77,7 @@
 | **TC-204** | 🔴 | ✅ | 🤖 | **Optimistic UI rolls back on error.** Force RLS error (fake stage value) → UI reverts to original position + toast error. |
 | **TC-205** | 🟡 | ✅ | 🤖 | **Edit lead.** Click lead → drawer → Edit → change company/contact/notes → save → row reflects new values. |
 | **TC-206** | 🟡 | ✅ | 🤖 | **Delete lead.** Drawer → Delete → confirm → row gone from kanban, DB row deleted. |
-| **TC-207** | 🟡 | ✅ | 🤖 | **"Send via email" mailto signature is tenant-specific.** Click email → mailto opens with body ending in "— Anutech Digital" (not Excel Tech). |
+| **TC-207** | 🟡 | ✅ | 🤖 | **"Send via email" mailto signature is tenant-specific.** Click email → mailto opens with body ending in "— Anutech Digital" (not Client A). |
 | **TC-208** | 🟢 | ⚠️ | 🤖 | **Deep-link `/leads?lead=L-XXX`.** Pasting URL with the param scrolls + opens that lead's drawer. **Status:** wired in skill notes, needs manual verify. |
 | **TC-209** | 🟡 | ⚠️ | 👀 | **Search filters across company/contact/email.** Type in search box → only matching lead cards remain. **Status:** UI present, behaviour not regression-tested. |
 
@@ -170,7 +170,7 @@
 | **TC-801** | 🔴 | ✅ | 🤖 | **Quote PDF generates valid file.** Click Download PDF on /quotes/Q-XXX → blob with %PDF magic + %EOF tail. |
 | **TC-802** | 🔴 | ✅ | 🤖 | **Invoice PDF generates valid file.** Same on /invoices View → blob valid. |
 | **TC-803** | 🔴 | ✅ | 🤖 | **Receipt voucher PDF generates valid file.** Same on /payments Receipt → blob valid. |
-| **TC-804** | 🔴 | ✅ | 👀 | **Tenant branding pulled correctly.** Logged in as Anutech Digital → all 3 PDFs show "Anutech Digital", not "Excel Technologies". |
+| **TC-804** | 🔴 | ✅ | 👀 | **Tenant branding pulled correctly.** Logged in as Anutech Digital → all 3 PDFs show "Anutech Digital", not "Client A". |
 | **TC-805** | 🟡 | ✅ | 👀 | **GST split (CGST+SGST vs IGST) correct in PDFs.** Per interState flag. |
 | **TC-806** | 🟡 | ✅ | 👀 | **Advance adjustment block renders in Invoice PDF.** If `adjusted_advances` non-empty → emerald block with each voucher + net payable. |
 | **TC-807** | 🟡 | ✅ | 👀 | **Long product names wrap in PDF.** Description column flex:4 → wraps without breaking rate/amount alignment. (fx-1024 in test catalog.) |
@@ -273,9 +273,9 @@
 
 # How to run the manual smoke (pre-dogfood)
 
-In one ~30-min sitting at Excel Tech, execute these in order. Each step roughly maps to a critical case above.
+In one ~30-min sitting at Client A, execute these in order. Each step roughly maps to a critical case above.
 
-1. **Auth** — sign up `excel-test-1@exceltechnologies.in`, confirm tenant created, log out + log back in.
+1. **Auth** — sign up `excel-test-1@example.test`, confirm tenant created, log out + log back in.
 2. **Catalog** — go to /items, verify 3-5 seeded items (Google Workspace tiers, M365). If empty, run `seed.sql`.
 3. **Lead** — /leads → Add Lead "Smoke Test Co" Rajesh@smoketest.in plan="Google Workspace Standard" 25 seats. Drag through Kanban to "Quote".
 4. **Quote** — Click lead → "Send quote" → /quotes/new pre-filled. Verify line item rate is right (~₹4,080/seat/yr if Standard). Discount 10%. Save as Draft.
@@ -308,5 +308,5 @@ Order of impact for automated suites once test users + service-role key are sort
 # Notes
 
 - **121 total cases** across 14 angles. **92 pass today**, 14 partial, 15 not built. The not-built bucket is mostly external integrations + the Playwright harness — both are tracked in TASKS (#8-12, #1401-1408).
-- **Use this doc before customer #2.** When Excel Tech's run is stable, walk through critical (🔴) + high (🟡) cases as the bar for adding a second customer.
+- **Use this doc before customer #2.** When Client A's run is stable, walk through critical (🔴) + high (🟡) cases as the bar for adding a second customer.
 - **Refresh cadence:** Update the coverage matrix at the top after every significant feature ship. Each new RPC / page / integration gets new TC-XXX entries.

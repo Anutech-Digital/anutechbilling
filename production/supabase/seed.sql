@@ -10,15 +10,15 @@
 -- See SETUP.md "Seeding" section.
 -- ============================================================
 
--- Tenant 1: Excel Technologies
+-- Tenant 1: Demo Co
 insert into public.tenants (id, name, gstin, state, state_code, address, email, phone) values
 ('11111111-1111-1111-1111-111111111111',
- 'Excel Technologies Pvt Ltd',
+ 'Demo Co Pvt Ltd',
  '27AABCE9876D1Z3',
  'Maharashtra',
  '27',
  'Mumbai, Maharashtra 400001',
- 'pardeep@exceltechnologies.in',
+ 'pardeep@example.test',
  '+91 98765 00000');
 
 -- Items catalog (from prototype data.js)

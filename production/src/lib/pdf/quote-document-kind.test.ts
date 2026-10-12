@@ -25,7 +25,7 @@ describe("quoteIsPaid", () => {
     expect(quoteIsPaid({ payment_status: "invoiced", amount: 11800, payment_amount: 11799 } as unknown as Q)).toBe(true);
   });
 
-  /* R-159 (Hitesh, Excel Technologies, 5 Oct 2026): "I converted a Quote into Invoice
+  /* R-159 (Hitesh, Demo Co, 5 Oct 2026): "I converted a Quote into Invoice
      without payment. Why is it showing quote paid?" generate_invoice writes 'invoiced'
      whether or not money arrived — an invoice is not a payment. */
   it("is NOT paid when it was invoiced before the money came", () => {

@@ -128,8 +128,8 @@ begin
      below was already scoped, and case 2 already scopes `items` — so this is the file's own
      idiom, applied to the seven lines that were missed.
 
-     `<> v_sandbox` rather than `= v_live` on purpose: there is a third tenant (Excel
-     Technologies), and "not mine" catches a leak from any of them, not just the big one. */
+     `<> v_sandbox` rather than `= v_live` on purpose: there is a third tenant (Demo
+     Co), and "not mine" catches a leak from any of them, not just the big one. */
   select count(*) into n from public.customers where tenant_id <> v_sandbox;
   if n <> 0 then raise exception 'FAIL 1: a sandbox tester can read % customer(s) belonging to another tenant', n; end if;
 
