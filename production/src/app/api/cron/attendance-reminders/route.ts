@@ -38,6 +38,7 @@ import { isWorkingDay, SIX_DAY_WEEK_SUNDAY_OFF } from "@/lib/attendance/working-
 import { sendPushToUsers } from "@/lib/push/send";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,8 +50,10 @@ interface Due {
   kind: "check_in" | "check_out";
 }
 
-export async function GET(req: Request) { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("attendance-reminders", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request) {
   /* Fail closed, exactly like the renewals cron: this route sends notifications under the
@@ -146,6 +149,7 @@ async function handle(req: Request) {
   const skipped: { userId: string; reason: string }[] = [];
 
   for (const u of users) {
+    /* R-897 */ if (!cronTenantAllowed(u.tenant_id)) continue;
     const row = u.employee_id ? byEmployee.get(u.employee_id) : undefined;
     const decision = decideAttendanceReminder({
       now,

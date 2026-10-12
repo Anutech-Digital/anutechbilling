@@ -32,6 +32,7 @@ import { sendEmail } from "@/lib/email/send";
 import { createAdminClient } from "@/lib/supabase/server";
 import "@/lib/sentry";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,7 +50,7 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-export async function GET(req: NextRequest) {
+async function runCron(req: NextRequest) {
   /* ── Auth — FAIL CLOSED ──
      503 rather than 401 when the secret is absent: "this deployment has no cron secret" is a
      missing-infrastructure fact, and reporting it as unauthorized sends whoever is deploying to
@@ -93,6 +94,7 @@ export async function GET(req: NextRequest) {
   const reports: ReflectionReport[] = [];
 
   for (const tenantId of tenantIds) {
+    /* R-897 */ if (!cronTenantAllowed(tenantId)) continue;
     const [turnRows, actionRows] = await Promise.all([
       fetchAllRows<{ lead_id: string | null; content: string | null }>((from, to) => db
         .from("ai_sales_conversations")
@@ -215,6 +217,11 @@ export async function GET(req: NextRequest) {
 
   /* `route` ke bina ye default Resend par jata hai (send.ts:26), aur wo test mode me hai —
      isliye ops mail SPAM me girti thi. Tenant ne Gmail chuna hai to wahi se jaye. */
+  /* R-897: practice run — say who would get it, send nothing. */
+  if (isCronDryRun()) {
+    noteWouldSend({ tenantId: reports[0].tenantId, to, channel: "email", kind: "ai_reflection" });
+    return NextResponse.json({ ok: true, dryRun: true, windowHours: WINDOW_HOURS, tenants: reports.length, emailed: false });
+  }
   const sent = await sendEmail({
     to, subject: mail.subject, text: mail.text,
     route: { tenantId: reports[0].tenantId },
@@ -225,3 +232,6 @@ export async function GET(req: NextRequest) {
     failed: sent.status === "sent" ? 0 : 1, reports,
   }));
 }
+
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+export const GET = gatedCron("ai-reflection", runCron);

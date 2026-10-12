@@ -14,6 +14,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { istToday, addDaysISO } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,8 +27,10 @@ interface RetentionResult {
   errors: string[];
 }
 
-export async function GET(req: Request) { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("attendance-retention", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<RetentionResult | { error: string }>> {
   const expected = process.env.CRON_SECRET?.trim();
@@ -48,6 +51,7 @@ async function handle(req: Request): Promise<NextResponse<RetentionResult | { er
   const today = istToday();
 
   for (const s of settings ?? []) {
+    /* R-897 */ if (!cronTenantAllowed(s.tenant_id)) continue;
     result.tenants += 1;
     const days = s.selfie_retention_days ?? 180;
     const cutoff = addDaysISO(today, -days);

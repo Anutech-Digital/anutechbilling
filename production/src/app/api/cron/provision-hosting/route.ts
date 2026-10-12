@@ -45,6 +45,7 @@ import {
   noteProvisioning,
 } from "@/lib/provisioning/provisioning.server";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   hostingLineFor,
   hostingProvisioningEnabled,
@@ -75,8 +76,10 @@ async function authorized(req: Request): Promise<boolean> {
   }
 }
 
-export async function GET(req: Request) { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("provision-hosting", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function alertOwner(tenantId: string, subject: string, text: string) {
   const admin = createAdminClient();
@@ -135,6 +138,7 @@ async function handle(req: Request) {
   const summary = { considered: rows.length, activated: 0, held: 0, reconciling: 0, refused: 0, skipped: 0 };
 
   for (const row of rows) {
+    /* R-897 */ if (!cronTenantAllowed(row.tenant_id)) continue;
     const policy = await loadAutonomyPolicy(row.tenant_id);
     if (policy.killSwitch) {
       await noteProvisioning(row.id, "Waiting: automation is switched off for this workspace (Automation page). Nothing was created.");

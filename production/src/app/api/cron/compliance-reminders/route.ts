@@ -39,6 +39,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { toIstDate } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -64,8 +65,10 @@ interface RunResult {
   details: Sent[];
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("compliance-reminders", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request) {
   const expected = process.env.CRON_SECRET?.trim();
@@ -124,6 +127,7 @@ async function handle(req: Request) {
   result.tenants = tenants.length;
 
   for (const tenant of tenants) {
+    /* R-897 */ if (!cronTenantAllowed(tenant.id)) continue;
     try {
       // Recipients: the owner(s) and the CA. `accountant` is an existing role, so
       // the CA is whoever the operator already invited as one — no shadow contact

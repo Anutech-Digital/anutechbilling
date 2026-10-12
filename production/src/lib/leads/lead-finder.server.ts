@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveGeminiConfig, geminiJson, geminiGroundedText } from "@/lib/ai/gemini";
 import { resolveDoh, DNS_TYPE } from "@/lib/dns/doh";
+import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   discoveryPrompt, parseDiscovery, mxProvider, siteNote, baselineScore, scoringPrompt, mergeScores, spreadByIndustryCity,
   type FinderProfile, type DiscoveredCompany, type ScoreInput, type SiteAudit, type MxProvider,
@@ -359,6 +360,7 @@ export async function runAllLeadFinders(admin: Admin): Promise<{ profiles: numbe
   const { data: profiles } = await admin.from("lead_finder_profiles").select("id, tenant_id").eq("enabled", true);
   const out = { profiles: 0, saved: 0, errors: [] as string[] };
   for (const p of profiles ?? []) {
+    /* R-897 */ if (!cronTenantAllowed(p.tenant_id)) continue;
     try { const r = await runLeadFinder(admin, p.tenant_id, p.id, "cron"); out.profiles++; out.saved += r.saved; out.errors.push(...r.errors); }
     catch (e) { out.errors.push(`${p.id}: ${(e as Error).message}`); }
   }

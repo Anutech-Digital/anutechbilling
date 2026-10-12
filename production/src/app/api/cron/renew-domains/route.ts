@@ -42,6 +42,7 @@ import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands
 import { getEngineServices } from "@/lib/dms-engine/client";
 import { coverFromPaid } from "@/lib/provisioning/domain-registration";
 import { domainRenewalEnabled, expiryEpochSeconds, renewalCommandId } from "@/lib/domains/renewal";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,8 +66,10 @@ async function authorized(req: Request): Promise<boolean> {
   }
 }
 
-export async function GET(req: Request) { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("renew-domains", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function alertOwner(tenantId: string, subject: string, text: string) {
   const admin = createAdminClient();
@@ -96,6 +99,7 @@ async function handle(req: Request) {
   const summary = { considered: rows.length, renewed: 0, held: 0, reconciling: 0, refused: 0, skipped: 0 };
 
   for (const row of rows) {
+    /* R-897 */ if (!cronTenantAllowed(row.tenant_id)) continue;
     const domain = (row.domain ?? "").trim().toLowerCase();
 
     const policy = await loadAutonomyPolicy(row.tenant_id);

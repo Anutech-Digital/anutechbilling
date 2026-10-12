@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { reportCron } from "@/lib/ops/cron-report";
 import { syncTenantAds } from "@/lib/marketing/ad-sync";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,6 +27,7 @@ async function handle(req: NextRequest) {
   const errors: string[] = [];
   const totals = { accounts: 0, rowsWritten: 0 };
   for (const tenantId of tenants) {
+    /* R-897 */ if (!cronTenantAllowed(tenantId)) continue;
     try {
       const r = await syncTenantAds(admin, tenantId, "cron");
       totals.accounts += r.accounts; totals.rowsWritten += r.rowsWritten;
@@ -35,5 +37,7 @@ async function handle(req: NextRequest) {
   return NextResponse.json(reportCron("ads-sync", { ok: true, tenants: tenants.length, synced: ok, failed, errors, totals }));
 }
 
-export async function GET(req: NextRequest) { return handle(req); }
-export async function POST(req: NextRequest) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("ads-sync", handle);
+export async function GET(req: NextRequest) { return gated(req); }
+export async function POST(req: NextRequest) { return gated(req); }

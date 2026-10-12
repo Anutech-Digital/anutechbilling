@@ -30,6 +30,7 @@ import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { lastCustomerMessageAt } from "@/lib/ai/support-agent.server";
 import { shouldAlertUnassigned, shouldAutoClose } from "@/lib/ai/support-sla";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   closeTicketForSilence,
   loadEscalatedUnassigned,
@@ -67,12 +68,10 @@ interface CronResult {
   outcomes: TicketOutcome[];
 }
 
-export async function GET(req: Request) {
-  return handle(req);
-}
-export async function POST(req: Request) {
-  return handle(req);
-}
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("ai-support-sla", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<CronResult | { error: string }>> {
   /* ── Auth — FAIL CLOSED ──────────────────────────────────────────────────
@@ -124,6 +123,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
   result.awaiting_reply_examined = awaiting.length;
 
   for (const t of awaiting) {
+    /* R-897 */ if (!cronTenantAllowed(t.tenantId)) continue;
     try {
       /* The transcript is read per ticket, and it is the query that stops the worst failure this
          sweep could have: closing a ticket underneath the customer's own reply. `shouldAutoClose`
@@ -174,6 +174,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
   result.escalated_examined = stranded.length;
 
   for (const t of stranded) {
+    /* R-897 */ if (!cronTenantAllowed(t.tenantId)) continue;
     try {
       const verdict = shouldAlertUnassigned(t, now);
       if (!verdict.alert) {

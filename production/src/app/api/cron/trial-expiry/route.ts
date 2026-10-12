@@ -26,6 +26,7 @@ import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { resolveOwnerAlert, type TenantContact } from "@/lib/email/owner-alert";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed, isCronDryRun, noteWouldSend } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,8 +62,10 @@ function checkAuth(req: Request): NextResponse | null {
   return null;
 }
 
-export async function GET(req: Request)  { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("trial-expiry", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request) {
   const auth = checkAuth(req);
@@ -155,6 +158,13 @@ async function handle(req: Request) {
   const mayMailCustomer = (leadId: string) => !quoteTrialLookupFailed && !quoteTrialLeads.has(leadId);
 
   for (const lead of leads) {
+    /* R-897 */ if (!cronTenantAllowed(lead.tenant_id)) continue;
+    /* R-897: practice run — count it and note the customer mail; stamp nothing, send nothing. */
+    if (isCronDryRun()) {
+      result.total_expired++;
+      if (mayMailCustomer(lead.id) && lead.contact_email) noteWouldSend({ tenantId: lead.tenant_id, to: lead.contact_email, channel: "email", kind: "trial_expiry_customer" });
+      continue;
+    }
     try {
       // Stamp expiry
       const { error: updErr } = await admin

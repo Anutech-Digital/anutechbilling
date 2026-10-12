@@ -44,6 +44,7 @@ import {
   scheduleSalesLoop,
 } from "@/lib/ai/sales-loops.server";
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -161,12 +162,10 @@ interface CronResult {
   outcomes: LoopOutcome[];
 }
 
-export async function GET(req: Request) {
-  return handle(req);
-}
-export async function POST(req: Request) {
-  return handle(req);
-}
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("ai-sales-loop", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<CronResult | { error: string }>> {
   /* ── Auth — FAIL CLOSED ──────────────────────────────────────────────────
@@ -213,6 +212,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
   const valueDropByTenant = new Map<string, string | null>();
 
   for (const loop of due) {
+    /* R-897 */ if (!cronTenantAllowed(loop.tenantId)) continue;
     try {
       /* Bare client, because `requires_human_attention` is not in the generated Database type
          — see loadLoopLead. That flag is the reason this read exists at all. */

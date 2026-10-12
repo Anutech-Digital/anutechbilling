@@ -60,6 +60,7 @@ import { buildOwnerDigest, ownerDigestSubject, ownerDigestText, type OwnerDigest
 import { loadOwnerDigestFacts, type DigestDb } from "@/lib/digest/owner-digest-facts";
 import { buildDigestEmail } from "@/lib/digest/owner-digest-html";
 import { getCurrentUser } from "@/lib/tenant";
+import { gatedCron } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -117,8 +118,10 @@ const toRows = (e: Entry[]): LogRow[] => e.map((x) => ({
   text: x.textPayload ?? null,
 }));
 
-export async function GET(req: Request) { return handle(req); }
-export async function POST(req: Request) { return handle(req); }
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("health-digest", handle);
+export async function GET(req: Request) { return gated(req); }
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request) {
   const params = new URL(req.url).searchParams;

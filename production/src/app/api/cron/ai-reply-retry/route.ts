@@ -38,6 +38,7 @@ import { shouldRetryReply, GIVE_UP_AFTER_HOURS, type RetryCandidate } from "@/li
 import { runSalesAgentForLead } from "@/lib/ai/run-sales-agent";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -107,6 +108,7 @@ async function handle(req: NextRequest) {
   type Seen = { tenantId: string; failedAt: string | null; failures: number; resolvedAt: string | null };
   const byLead = new Map<string, Seen>();
   for (const a of actions) {
+    /* R-897 */ if (!cronTenantAllowed(a.tenant_id)) continue;
     if (!a.entity_id) continue;
     const s = byLead.get(a.entity_id) ?? { tenantId: a.tenant_id, failedAt: null, failures: 0, resolvedAt: null };
     if (a.outcome === "failed") {
@@ -226,5 +228,7 @@ async function handle(req: NextRequest) {
   }));
 }
 
-export const GET = handle;
-export const POST = handle;
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("ai-reply-retry", handle);
+export const GET = gated;
+export const POST = gated;

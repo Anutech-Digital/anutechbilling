@@ -8,6 +8,13 @@
  * alert, refusal → failed + owner alert.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/* R-897: route logic under test — the automation gate is passed through here; it has its own tests (_lib/automation-gate.test.ts). */
+vi.mock("@/lib/automation/cron-gate", () => ({
+  gatedCron: (_job: string, h: unknown) => h,
+  cronTenantAllowed: () => true,
+  isCronDryRun: () => false,
+  noteWouldSend: () => {},
+}));
 
 const prov = vi.hoisted(() => ({
   listReadyDomainRequests: vi.fn(),

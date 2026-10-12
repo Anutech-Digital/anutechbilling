@@ -56,6 +56,7 @@ import { renewalReminderKind } from "@/lib/marketing/whatsapp-reminders";
 import { rupee } from "@/lib/utils";
 import { istToday, toIstDate, addDaysISO } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -99,13 +100,11 @@ interface CronResult {
   whatsapp?:        { sent: number; skipped: number; failed: number; disabled: number };
 }
 
-export async function GET(req: Request) {
-  return handle(req);
-}
+/* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
+const gated = gatedCron("renewals", handle);
+export async function GET(req: Request) { return gated(req); }
 
-export async function POST(req: Request) {
-  return handle(req);
-}
+export async function POST(req: Request) { return gated(req); }
 
 async function handle(req: Request): Promise<NextResponse<CronResult | DryRunResult | { error: string }>> {
   // ── Auth check — FAIL CLOSED (SEC-3) ─────────────────────────────
@@ -195,6 +194,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   } catch (e) {
     return cronDbFailure("renewals", e, `subs fetch failed: ${errorMessage(e)}`);
   }
+  /* R-897 */ allSubs = allSubs.filter((s) => cronTenantAllowed(s.tenant_id));
   result.total_active = allSubs.length;
 
   /* ── S22: look-ups fetched ONCE, not three round trips per subscription ──
@@ -748,6 +748,7 @@ async function planOnly(
   let splitRolls = 0;
   let splitHeld = 0;
   for (const sub of eligible) {
+    /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
     /* R-808: billed in parts → no reminder, no quote; the term rolls on its first day. */
     const split = splitBilledRenewalStep(sub, toIstDate(asOf));
     if (split.kind !== "not_split_billed") {
