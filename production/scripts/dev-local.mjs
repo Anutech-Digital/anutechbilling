@@ -93,7 +93,7 @@ console.log(`  band kiye  →  ${[...new Set(blanked)].filter((k) => !k.startsWi
    dropped from 5–58 s (webpack) to 1–2 s — e.g. /invoices 4.6–58 s → 2 s, /projects/[id]
    19 s → 1 s. Every browser check waited on those compiles. `--webpack` brings the old
    bundler back (next build still uses webpack, so a build-only problem shows in the build). */
-const rest = args.filter((_, i) => i !== portIdx && i !== portIdx + 1);
+const rest = portIdx >= 0 ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1) : args; // no -p: keep every arg (the old filter dropped args[0], e.g. --webpack)
 
 /* --prod (7 Oct 2026, R-321): same safe env, but `next build` + `next start` instead of dev.
    Measured on this laptop: dev mode first visit /accounting/gst 15.2 s, repeat 1.7 s with
