@@ -140,7 +140,12 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           variant="primary"
           className="h-10"
           loading={claim.isPending}
-          onClick={() => claim.mutate({ email: email.trim(), role })}
+          onClick={() => {
+            // R-1421: never send an empty box to the server (that was the bare 400).
+            const e = email.trim();
+            if (!e) { setBlocked("Type their email address first — the one they sign in with."); return; }
+            claim.mutate({ email: e, role });
+          }}
         >
           Claim &amp; merge
         </Button>
@@ -151,6 +156,13 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           <Icon name="alert" size={15} className="mt-0.5 flex-shrink-0 text-amber-ink" />
           <p className="text-xs leading-relaxed text-amber-ink">{blocked}</p>
         </div>
+      )}
+
+      {stranded.isSuccess && list.length === 0 && (
+        <p className="mt-3 text-xs text-ink-3">
+          Nobody is waiting to be claimed right now. People show up here only after they ask
+          to join this workspace, or sign in after your invite.
+        </p>
       )}
 
       {list.length > 0 && (

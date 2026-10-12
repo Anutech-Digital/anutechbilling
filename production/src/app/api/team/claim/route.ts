@@ -41,9 +41,20 @@ export async function GET() {
   return NextResponse.json({ users: data ?? [] });
 }
 
+// R-1421: the only 400s this route gives are these. Each says what to fix in words
+// an owner understands. Pawan hit one on staging by pressing "Claim & merge" with the
+// email box empty (R-721 narrowed the list, so there was no name to tap).
+const EMAIL_MISSING = "Type their email address first — the one they sign in with.";
 const schema = z.object({
-  email: z.string().email("Enter a valid email address").max(200),
-  role:  z.enum(INVITABLE_ROLES as unknown as [InvitableRole, ...InvitableRole[]]),
+  email: z
+    .string({ required_error: EMAIL_MISSING, invalid_type_error: EMAIL_MISSING })
+    .trim()
+    .min(1, EMAIL_MISSING)
+    .email("That doesn't look like an email address. Check it and try again.")
+    .max(200, "That email address is too long."),
+  role: z.enum(INVITABLE_ROLES as unknown as [InvitableRole, ...InvitableRole[]], {
+    errorMap: () => ({ message: "Pick a role for them from the list." }),
+  }),
 });
 
 export async function POST(request: NextRequest) {
@@ -53,10 +64,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const parsed = schema.safeParse(await request.json().catch(() => null));
+  // A missing/broken body reads as "nothing typed" so the owner gets the same plain message.
+  const body = await request.json().catch(() => null);
+  const parsed = schema.safeParse(body && typeof body === "object" ? body : {});
   if (!parsed.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Enter an email address and a role." },
+      { error: parsed.error.issues[0]?.message ?? "Type their email address and pick a role." },
       { status: 400 },
     );
   }
