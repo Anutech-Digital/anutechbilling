@@ -51,6 +51,8 @@ import {
   type ExpenseClaim,
 } from "@/lib/queries/expense-claims";
 import { toast } from "sonner";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canDeleteMoney } from "@/lib/auth/roles";
 import { istToday as todayISO } from "@/lib/dates/ist";
 
 const METHOD_LABEL: Record<LoanRepaymentMethod, string> = {
@@ -83,6 +85,8 @@ function EmployeeLoansInner() {
   const [rejectClaimFor, setRejectClaimFor] = React.useState<ExpenseClaim | null>(null);
   const [editClaimFor, setEditClaimFor] = React.useState<ExpenseClaim | null>(null);
   const deleteLoan = useDeleteEmployeeLoan();
+  /* R-885: deleting a staff loan or a claim is owner / accountant only (the database refuses the rest). */
+  const canDelete = canDeleteMoney(useCurrentUser().data?.role);
   const confirm = useConfirm();
   const pendingClaimsQ = useExpenseClaims("pending");
   const pendingClaims = pendingClaimsQ.data ?? [];
@@ -150,6 +154,7 @@ function EmployeeLoansInner() {
           claims={pendingClaims}
           onReject={(c) => setRejectClaimFor(c)}
           onEdit={(c) => setEditClaimFor(c)}
+          canDelete={canDelete}
         />
       )}
 
@@ -248,7 +253,7 @@ function EmployeeLoansInner() {
                           primaryLabel={l.status === "active" ? actionLabel(l) : undefined}
                           onHistory={() => setHistoryFor(l)}
                           onEdit={l.repaid === 0 ? () => setEditFor(l) : undefined}
-                          onDelete={l.repaid === 0 ? () => confirmDelete(l) : undefined}
+                          onDelete={canDelete && l.repaid === 0 ? () => confirmDelete(l) : undefined}
                         />
                       </div>
                     </td>
@@ -295,7 +300,7 @@ function EmployeeLoansInner() {
                       primaryLabel={l.status === "active" ? actionLabel(l) : undefined}
                       onHistory={() => setHistoryFor(l)}
                       onEdit={l.repaid === 0 ? () => setEditFor(l) : undefined}
-                      onDelete={l.repaid === 0 ? () => confirmDelete(l) : undefined}
+                      onDelete={canDelete && l.repaid === 0 ? () => confirmDelete(l) : undefined}
                     />
                   </div>
                 </Card>
@@ -321,11 +326,12 @@ function EmployeeLoansInner() {
 
 /** Pending employee expense claims — owner approves (settles the advance) or rejects. */
 function PendingClaimsPanel({
-  claims, onReject, onEdit,
+  claims, onReject, onEdit, canDelete,
 }: {
   claims: ExpenseClaim[];
   onReject: (c: ExpenseClaim) => void;
   onEdit: (c: ExpenseClaim) => void;
+  canDelete: boolean;
 }) {
   const approve = useApproveClaim();
   const del     = useDeleteClaim();
@@ -365,7 +371,7 @@ function PendingClaimsPanel({
             <div className="flex items-center gap-1.5">
               {c.receipt_path && <ReceiptLink path={c.receipt_path} />}
               <Button variant="ghost" size="sm" icon="edit" aria-label="Edit claim" onClick={() => onEdit(c)} />
-              <Button variant="ghost" size="sm" icon="trash" aria-label="Delete claim" onClick={() => confirmDeleteClaim(c)} />
+              {canDelete && <Button variant="ghost" size="sm" icon="trash" aria-label="Delete claim" onClick={() => confirmDeleteClaim(c)} />}
               <Button variant="ghost" size="sm" onClick={() => onReject(c)}>Reject</Button>
               <Button variant="primary" size="sm" loading={approve.isPending} onClick={() => approve.mutate(c.id)}>
                 Approve

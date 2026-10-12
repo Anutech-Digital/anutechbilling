@@ -45,10 +45,12 @@ interface CustomersBulkBarProps {
   busy?: boolean;
   /** R-255: a view-only role (the accountant) gets Export and nothing that changes data. */
   readOnly?: boolean;
+  /** R-885: delete_customer is owner / accountant only (Pardeep's role table). */
+  canDelete?: boolean;
 }
 
 export function CustomersBulkBar({
-  count, groups, onExport, onArchive, onReactivate, onSetGroup, onDelete, onDeselectAll, busy, readOnly = false,
+  count, groups, onExport, onArchive, onReactivate, onSetGroup, onDelete, onDeselectAll, busy, readOnly = false, canDelete = true,
 }: CustomersBulkBarProps) {
   return (
     <BulkActionBar count={count} noun="customer" onClear={onDeselectAll}>
@@ -101,9 +103,11 @@ export function CustomersBulkBar({
         Reactivate
       </BulkBarButton>
 
+      {canDelete && (
       <BulkBarConfirmButton icon="trash" onConfirm={onDelete}>
         Delete
       </BulkBarConfirmButton>
+      )}
       </>)}
     </BulkActionBar>
   );

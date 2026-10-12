@@ -64,7 +64,7 @@ import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { canWriteSales } from "@/lib/nav";
-import { canDeleteMoney } from "@/lib/auth/roles";
+import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
@@ -92,6 +92,8 @@ function InvoicesPageInner() {
   const canQuotes    = canOpenQuotes(me?.role);
   /* R-255: the accountant reads invoices; issuing, payments and notes stay with the team. */
   const canWrite     = canWriteSales(me?.role);
+  /* R-885: issuing a GST invoice (generate_invoice) is owner / manager / accountant / billing. */
+  const canIssue     = canWrite && canRecordMoney(me?.role);
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
@@ -367,7 +369,7 @@ function InvoicesPageInner() {
              60+d    = critical — penalty likely
       */}
       {/* R-255: a queue of invoices to issue — nothing a view-only role can act on. */}
-      {canWrite && view !== "project" && pending && pending.length > 0 && (() => {
+      {canIssue && view !== "project" && pending && pending.length > 0 && (() => {
         const now = Date.now();
         const buckets = {
           fresh:   pending.filter((q: any) => { const a = q.first_advance_at ?? q.payment_received_at; return a && (now - new Date(a).getTime()) <= 15 * 86400000; }),
@@ -1096,12 +1098,14 @@ function InvoiceRow({
              as `pending` — so it read as coverage that was not there (L112). */
           const due = invoiceBucket(inv);
           /* R-255: a view-only role gets View on every row, never Record payment. */
+          /* R-718 / R-885: recording a payment (record_payment / record_project_payment) is a money role. */
           const moneyDue = canWrite && (due === "pending" || due === "overdue");
+          const payDue = moneyDue && canRecordMoney(me?.role);
           return (
         <div className="flex gap-1 items-center justify-end">
           {/* One contextual primary action keeps the column tight (no h-scroll).
               Money-due invoices lead with Record payment; everything else with View. */}
-          {moneyDue ? (
+          {payDue ? (
             <Button
               size="sm"
               variant="primary"
@@ -1143,7 +1147,7 @@ function InvoiceRow({
                   <Icon name="edit" size={15} /> Edit underlying quote
                 </DropdownMenuItem>
               )}
-              {moneyDue && (
+              {payDue && (
                 <>
                   <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}>
                     <Icon name="rupee" size={15} /> Record payment

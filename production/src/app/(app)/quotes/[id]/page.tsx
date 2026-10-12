@@ -1375,7 +1375,8 @@ export default function QuoteDetailPage() {
                   and a B2B customer routinely needs it before their accounts team will
                   release the payment at all. Refusing meant the reseller raised that
                   invoice somewhere else and these books never heard about it. */}
-              {money.canGenerateInvoice && (
+              {/* R-885: generate_invoice is owner / manager / accountant / billing. */}
+              {money.canGenerateInvoice && mayRecordMoney && (
                 <Button
                   variant={money.canRecordPayment ? "default" : "primary"}
                   icon="receipt"
