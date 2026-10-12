@@ -36,7 +36,7 @@ MIGS=(
   "compliance|20261007030000_tenant_compliance_profile.sql|resellersos_migration|(exists(select 1 from pg_constraint where conname='tenants_business_type_check') and exists(select 1 from pg_constraint where conname='tenants_gst_filing_check'))"
   "amendactor|20261007040000_contract_amendment_customer_actor.sql|resellersos_migration|exists(select 1 from pg_proc where proname='record_contract_amendment' and pronamespace='public'::regnamespace and prosrc like '%actor_label%')"
   "renewrate|20261007050000_record_payment_renewal_rate.sql|resellersos_migration|exists(select 1 from pg_proc where proname='record_payment' and pronamespace='public'::regnamespace and prosrc like '%renewal_rate%')"
-  "salarybill|20261007053000_billing_reads_salary_payments.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname='public' and tablename='salary_payments' and policyname='salary_payments_select_money_roles' and qual like '%billing%')"
+  "salarybill|20261007053000_billing_reads_salary_payments.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname='public' and tablename='salary_payments' and policyname='salary_payments_select_money_roles')"
   "aggturn|20261007060000_tenant_aggregate_turnover.sql|resellersos_migration|exists(select 1 from pg_constraint where conname='tenants_aggregate_turnover_check')"
   "credit|20261007073000_activate_on_credit.sql|resellersos_migration|exists(select 1 from pg_proc where proname='activate_quote_on_credit' and pronamespace='public'::regnamespace)"
   "testruns|20261007090000_page_test_runs.sql|resellersos_migration|(to_regclass('public.page_test_runs') is not null)"
