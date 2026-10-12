@@ -118,6 +118,13 @@ if (baseOk) {
         console.log(`note: ${fa} edited — allowed, it has never run on production (see NOT_YET_ON_PRODUCTION)`);
         continue;
       }
+      // 12 Oct 2026: a change to the `-- deploy-key/peek/user/skip:` header only tells deploy-db how to
+      // detect the file — the SQL that ran is identical, so it is safe even after the file has run.
+      const body = (t) => t.split(/\r?\n/).filter((l) => !/^--\s*deploy-(peek|key|user|skip):/.test(l)).join("\n");
+      if (body(git("show", `${mergeBase}:${REL}/${fa}`)) === body(git("show", `HEAD:${REL}/${fa}`))) {
+        console.log(`note: ${fa} edited — allowed, only its -- deploy- header changed`);
+        continue;
+      }
       problems.push(`edited an existing migration: ${fa} — it has likely run already; write a new forward migration`);
     } else if (code === "D") {
       problems.push(`deleted an existing migration: ${fa}`);
