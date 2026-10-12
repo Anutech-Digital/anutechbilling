@@ -16,14 +16,31 @@ vi.mock("@/server/db/gateway", () => ({
     fn({ $queryRawUnsafe: async () => [{ role: ROLES[id.userId] ?? null }] }),
 }));
 vi.mock("@/server/postgrest/handler", () => ({
-  handlePostgrest: async (req: { search: URLSearchParams; method: string }) => {
+  handlePostgrest: async (req: { search: URLSearchParams; method: string; path: string }) => {
     handled(req);
     const n = Math.min(Number(req.search.get("limit") ?? 50), 1000);
     const off = Number(req.search.get("offset") ?? 0);
-    return new Response(JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: i }))), {
+    /* R-1400: "quotes" rows carry 99 embedded payments each, plus a to-one customer. */
+    const row = (i: number) => req.path === "quotes"
+      ? { id: i, payments: Array.from({ length: 99 }, (_, k) => ({ id: k })), customer: { name: "x" } }
+      : { id: i };
+    return new Response(JSON.stringify(Array.from({ length: n }, (_, i) => row(i))), {
       status: 200, headers: { "Content-Type": "application/json", "Content-Range": `${off}-${off + n - 1}/*` },
     });
   },
+}));
+
+/* R-1400: a tiny catalog so FK-column embeds (customer_id(*)) resolve to their table. */
+vi.mock("@/server/postgrest/catalog", () => ({
+  getCatalog: async () => ({
+    tables: new Map(["customers", "contacts", "payments", "invoices", "quotes", "leads", "users"].map((n) => [n, {}])),
+    fks: [
+      { name: "invoices_customer_id_fkey", table: "invoices", columns: ["customer_id"], refTable: "customers", refColumns: ["id"] },
+      { name: "invoices_created_by_fkey", table: "invoices", columns: ["created_by"], refTable: "users", refColumns: ["id"] },
+      { name: "quotes_lead_id_fkey", table: "quotes", columns: ["lead_id"], refTable: "leads", refColumns: ["id"] },
+    ],
+    functions: new Map(),
+  }),
 }));
 
 import { GET, HEAD } from "./route";
@@ -164,5 +181,42 @@ describe("R-1005 owner is not limited", () => {
   });
   test("a user with no users row counts as limited (fail closed)", async () => {
     expect((await call(NOROW, "customers", "select=*")).status).toBe(400);
+  });
+});
+
+describe("R-1400 FK-column embeds meet the star block", () => {
+  test("customer_id(*) on invoices resolves to customers — refused", async () => {
+    const r = await call(SALES, "invoices", "select=id,customer_id(*)");
+    expect(r.status).toBe(400);
+    expect((await r.json()).message).toMatch(/all columns of customers/);
+    expect(handled).not.toHaveBeenCalled();
+  });
+  test("aliased and nested FK-column embeds — refused", async () => {
+    expect((await call(SALES, "invoices", "select=id,c:customer_id(*)")).status).toBe(400);
+    expect((await call(DELIVERY, "quotes", "select=id,lead_id(id,contact_id(*))")).status).toBe(400);
+    expect((await call(SALES, "invoices", "select=id,payment_id(*)")).status).toBe(400);
+  });
+  test("named columns through an FK-column embed, and FK embeds to other tables — pass", async () => {
+    expect((await call(SALES, "invoices", "select=id,customer_id(name)")).status).toBe(200);
+    expect((await call(SALES, "invoices", "select=id,created_by(*)")).status).toBe(200);
+    expect((await call(SALES, "quotes", "select=id,lead_id(*)")).status).toBe(200);
+  });
+  test("owner may still embed customer_id(*)", async () => {
+    expect((await call(OWNER, "invoices", "select=id,customer_id(*)")).status).toBe(200);
+  });
+});
+
+describe("R-1400 embedded child rows count in the daily budget", () => {
+  test("200 quotes × (99 payments + 1 customer) = 20,200 rows — the next read is refused", async () => {
+    const q = "select=id,payments(id),customer:customers(name)&limit=100";
+    expect((await call(SALES, "quotes", q)).status).toBe(200); // 100 + 9,900 + 100 = 10,100
+    expect((await call(SALES, "quotes", q)).status).toBe(200); // 20,200
+    const r = await call(SALES, "leads", "select=id&limit=1");
+    expect(r.status).toBe(429);
+    expect((await r.json()).code).toBe("ROS_DAILY_ROWS");
+  });
+  test("without embeds only the top-level rows count", async () => {
+    expect((await call(SALES, "quotes", "select=id&limit=1000")).status).toBe(200);
+    expect((await call(SALES, "leads", "select=id&limit=1")).status).toBe(200);
   });
 });

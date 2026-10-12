@@ -10,7 +10,8 @@ import { identityFromHeaders } from "@/server/postgrest/identity";
 import { gatewayEnabled } from "@/server/postgrest/fetch";
 import { PgrstError } from "@/server/postgrest/parse";
 import {
-  addGatewayRows, gatewayGuard, gatewayRole, isGatewayLimitedRole, logRefusal, refusalResponse, rowsFromContentRange,
+  addGatewayRows, embeddedRowsInBody, gatewayGuard, gatewayRole, isGatewayLimitedRole, logRefusal, refusalResponse,
+  rowsFromContentRange, selectHasEmbeds,
 } from "@/server/postgrest/gateway-limits";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     }, identity);
     res.headers.set("Cache-Control", "no-store");
     if (limitedUser && req.method !== "HEAD" && res.ok) {
-      const rows = rowsFromContentRange(res.headers.get("content-range"));
+      let rows = rowsFromContentRange(res.headers.get("content-range"));
+      // R-1400: child rows inside embeds count too — Content-Range only counts the top level.
+      if (selectHasEmbeds(req.nextUrl.searchParams)) {
+        rows += embeddedRowsInBody(req.nextUrl.searchParams, await res.clone().text());
+      }
       if (rows > 0) await addGatewayRows(limitedUser, rows);
     }
     return res;
