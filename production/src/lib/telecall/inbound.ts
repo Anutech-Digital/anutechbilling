@@ -31,7 +31,7 @@
 import type { PostCallSignals, TelecallType } from "@/lib/ai/telecall";
 
 export interface NormalisedPostCall {
-  provider: "retell" | "vapi";
+  provider: "retell" | "vapi" | "bolna";
   providerCallId: string;
   /** From the metadata WE set when placing the call — never from a top-level body field. */
   tenantId: string | null;
@@ -193,6 +193,76 @@ function fromVapi(body: Record<string, unknown>): NormalisedPostCall | null {
 }
 
 /**
+ * R-1437: the statuses after which a Bolna execution will not change any more. Bolna also
+ * posts `ringing`, `in-progress` and — the trap its docs warn about — `call-disconnected`
+ * before `completed`, when the transcript and extraction are not filled yet. Those are ignored.
+ */
+export const BOLNA_FINAL_STATUSES = [
+  "completed", "no-answer", "busy", "failed", "canceled", "stopped", "error", "balance-low",
+] as const;
+
+/**
+ * Bolna's extraction is whatever the agent on Bolna was set up to extract, either flat
+ * (`{ customer_asked_for_quote: true }`) or grouped (`{ General: { ... } }`). One level of
+ * grouping is flattened so the five keys this app reads are found either way.
+ */
+function flattenExtraction(raw: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const inner = obj(v);
+    if (inner) Object.assign(out, inner);
+    else out[k] = v;
+  }
+  return out;
+}
+
+/** Bolna: the execution object itself (`GET /executions/{id}`, and the agent webhook). */
+function fromBolna(body: Record<string, unknown>): NormalisedPostCall | null {
+  const id = str(body.id).trim();
+  if (!id) return null;
+
+  const status = str(body.status).trim();
+  if (!(BOLNA_FINAL_STATUSES as readonly string[]).includes(status)) return null;
+
+  const telephony = obj(body.telephony_data);
+  /* What this app put in `user_data` comes back as context. Read for the stated-not-enforced
+     tenant check only; the row found by execution id stays the authority. */
+  const ctx = obj(body.context_details) ?? {};
+  const meta = obj(ctx.recipient_data) ?? obj(ctx.user_data) ?? ctx;
+
+  const extraction = flattenExtraction(obj(body.extracted_data));
+  const summary = str(body.summary).trim() || str(extraction?.["Call Summary"]).trim();
+
+  const { signals, analysisMissing } = buildSignals(
+    /* Voicemail is its own outcome even when Bolna calls the call `completed`. */
+    body.answered_by_voice_mail === true ? "voicemail" : status,
+    num(body.conversation_duration) ?? num(telephony?.duration),
+    str(body.transcript),
+    summary,
+    extraction,
+  );
+
+  return {
+    provider: "bolna",
+    providerCallId: id,
+    tenantId: idOrNull(meta.tenant_id),
+    leadId: idOrNull(meta.lead_id),
+    subscriptionId: idOrNull(meta.subscription_id),
+    callType: callTypeOf(meta.call_type),
+    signals,
+    analysisMissing,
+  };
+}
+
+/** A Bolna execution: an `id`, the `agent_id` that ran it and a `status` — no `call`/`message`. */
+export function looksLikeBolnaExecution(raw: unknown): boolean {
+  const body = obj(raw);
+  return !!body && !obj(body.call) && !obj(body.message)
+    && !!str(body.id).trim() && !!str(body.agent_id).trim() && !!str(body.status).trim();
+}
+
+/**
  * Normalise whichever vendor sent this.
  *
  * Chosen by SHAPE rather than by a configured provider name: the deployment may switch vendors
@@ -203,6 +273,7 @@ export function normalisePostCall(raw: unknown): NormalisedPostCall | null {
   if (!body) return null;
   if (obj(body.call)) return fromRetell(body);
   if (obj(body.message)) return fromVapi(body);
+  if (looksLikeBolnaExecution(body)) return fromBolna(body);
   return null;
 }
 
@@ -215,6 +286,12 @@ export function sentimentOf(raw: unknown): string | null {
   if (retell) {
     const s = str(retell.user_sentiment).trim();
     if (s) return s;
+  }
+
+  if (looksLikeBolnaExecution(body)) {
+    const ex = flattenExtraction(obj(body.extracted_data));
+    const s = str(ex?.sentiment).trim();
+    return s || null;
   }
 
   const vapi = obj(obj(body.message)?.analysis);

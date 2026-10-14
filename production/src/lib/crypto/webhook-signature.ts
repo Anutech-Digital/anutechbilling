@@ -121,7 +121,7 @@ export function signatureRefusalReason(reason: Exclude<SignatureVerdict, { ok: t
          which provider the failing request came from — that is precisely what they are trying
          to work out. */
       return "request carried no signature header (x-hub-signature-256 for Meta, " +
-             "x-retell-signature for Retell, x-vapi-secret for Vapi)";
+             "x-retell-signature for Retell, x-vapi-secret for Vapi, ?bolna_secret= for Bolna)";
     case "mismatch":
       return "signature did not match the body — either the secret is wrong or the payload was altered";
   }

@@ -9,6 +9,41 @@ import type { NextAction } from "@/lib/leads/next-action";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { subscriptionFromLeadHref } from "@/lib/subscriptions/lead-prefill";
+import { toast } from "sonner";
+
+/**
+ * R-1437: "AI call" — the voice agent (Bolna) rings this lead now. Only on a press: Abhishek
+ * chose button-only, never automatic. What the call heard comes back on the lead's timeline as a
+ * suggestion; nothing in the lead is changed by it.
+ */
+function AiCallButton({ leadId }: { leadId: string }) {
+  const [busy, setBusy] = React.useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/leads/${encodeURIComponent(leadId)}/ai-call`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string; error?: string };
+      if (res.ok && body.ok) {
+        toast.success("AI call lag rahi hai", {
+          description: "Call khatam hone par baat-cheet aur sujhaav is lead ki Activity me aa jayega.",
+        });
+      } else {
+        toast.error(body.error ?? "AI call nahi lagi", {
+          description: body.detail ?? "Thodi der baad dobara try karo, ya khud Call karo.",
+        });
+      }
+    } catch {
+      toast.error("AI call nahi lagi", { description: "Internet ya server ki dikkat — dobara try karo." });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button icon="sparkles" onClick={run} loading={busy} title="AI voice agent (Bolna) is lead ko abhi call karega">
+      AI call
+    </Button>
+  );
+}
 
 /**
  * R-073: does this won deal's customer already have a subscription? An online purchase gets
@@ -106,6 +141,9 @@ export function LeadDetailFooter({
               >
                 Call
               </Button>
+            )}
+            {lead.contact_phone && lead.stage !== "won" && lead.stage !== "lost" && (
+              <AiCallButton leadId={lead.id} />
             )}
             <Button icon="mail" onClick={handleEmail}>Email</Button>
             {lead.contact_phone && (

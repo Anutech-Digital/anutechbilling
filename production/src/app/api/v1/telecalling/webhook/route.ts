@@ -32,7 +32,8 @@ import {
   verifySharedSecretHeader,
   type SignatureVerdict,
 } from "@/lib/crypto/webhook-signature";
-import { normalisePostCall, sentimentOf } from "@/lib/telecall/inbound";
+import { looksLikeBolnaExecution, normalisePostCall, sentimentOf } from "@/lib/telecall/inbound";
+import { fetchBolnaExecution, resolveTelecallProvider } from "@/lib/telecall/provider";
 import { classifyCall, verifyCallMoney } from "@/lib/ai/telecall";
 import { callTurnFor } from "@/lib/ai/unified-memory";
 import { findTelecallByProviderCallId, recordTelecallOutcome } from "@/lib/ai/telecall.server";
@@ -68,6 +69,14 @@ function verify(req: NextRequest, rawBody: string): SignatureVerdict {
     return verifySharedSecretHeader(vapiHeader, process.env.VAPI_WEBHOOK_SECRET);
   }
 
+  /* R-1437: Bolna documents no webhook signature and no custom headers, so its webhook URL
+     carries a shared secret: `/api/v1/telecalling/webhook?bolna_secret=…`. Weaker than a
+     signature — which is why a Bolna body is never believed: see the fetch-back below. */
+  const bolnaSecret = req.nextUrl.searchParams.get("bolna_secret");
+  if (bolnaSecret) {
+    return verifySharedSecretHeader(bolnaSecret, process.env.BOLNA_WEBHOOK_SECRET);
+  }
+
   return { ok: false, reason: "missing_header" };
 }
 
@@ -87,6 +96,27 @@ export async function POST(req: NextRequest) {
     parsed = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "body must be JSON" }, { status: 400 });
+  }
+
+  /* ── R-1437: a Bolna body is only a pointer ──────────────────────────────
+     Bolna's webhook is authenticated by a URL secret, which proves nothing about the body. So
+     only the execution id is taken from it, and what happened on the call is read back from
+     Bolna's own API with our key. Bolna also posts while the call is still ringing; those
+     intermediate statuses normalise to null below and are acknowledged. */
+  if (looksLikeBolnaExecution(parsed)) {
+    const bolna = resolveTelecallProvider();
+    if (!bolna || bolna.name !== "bolna") {
+      console.warn("[telecall-webhook] Bolna webhook arrived but Bolna is not the configured provider");
+      return NextResponse.json({ ok: true, ignored: "bolna is not configured here" });
+    }
+    const executionId = String((parsed as Record<string, unknown>).id);
+    const fetched = await fetchBolnaExecution(bolna, executionId);
+    if (!fetched.ok) {
+      /* 500: our read failed, Bolna still has the call, and a retry may well succeed. */
+      console.error(`[telecall-webhook] could not read Bolna execution ${executionId}: ${fetched.error}`);
+      return NextResponse.json({ error: "could not read the call from bolna" }, { status: 500 });
+    }
+    parsed = fetched.execution;
   }
 
   const call = normalisePostCall(parsed);
@@ -192,6 +222,11 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!money.ok) noteParts.push(`⚠ ${money.handoverReason}`);
+  /* R-1437: the suggestion, in the line the rep reads. Not written into the lead's fields —
+     a person confirms it (Abhishek, 14 Oct 2026). */
+  if (call.provider === "bolna" && call.signals.seatsDiscussed !== null) {
+    noteParts.push(`Sujhaav: AI ne suna ${call.signals.seatsDiscussed} seats — sahi ho to lead me Edit karke bharo.`);
+  }
 
   if (row.leadId) {
     await admin.from("lead_activities").insert({
@@ -235,6 +270,25 @@ export async function POST(req: NextRequest) {
       reason: handoverReason, mode: "auto", entity: "lead", entityId: row.leadId,
     });
     return NextResponse.json({ ok: true, outcome: classification.status, action: "handed_to_human" });
+  }
+
+  /* ── R-1437: Bolna calls SUGGEST, a person decides ───────────────────────
+     Abhishek's decision (14 Oct 2026): what the voice agent heard is shown to the salesperson
+     and saved only when they confirm it — no quote is drafted off a phone line automatically.
+     So a Bolna call that asked for a quote hands the lead to a person, with what was heard. */
+  if (call.provider === "bolna" && classification.action === "quote_requested" && row.leadId) {
+    const heard = call.signals.seatsDiscussed;
+    const reason =
+      "AI call: customer ne quotation maanga" +
+      (heard !== null ? ` — AI ne suna ${heard} seats` : "") +
+      ". Seats/plan check karke quote banao aur bhejo.";
+    const flagged = await flagLeadForHumanAttention({ tenantId: row.tenantId, leadId: row.leadId, reason });
+    if (!flagged.ok) console.error("[telecall-webhook] could not flag the lead:", flagged.error);
+    await logAiAction({
+      tenantId: row.tenantId, action: "telecall.place", outcome: "held",
+      reason, mode: "auto", entity: "lead", entityId: row.leadId,
+    });
+    return NextResponse.json({ ok: true, outcome: classification.status, action: "suggested_to_human" });
   }
 
   if (classification.action === "quote_requested" && row.leadId && money.ok) {
