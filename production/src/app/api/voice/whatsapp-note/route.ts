@@ -10,6 +10,8 @@
  *
  * STUB-FIRST: needs (a) SARVAM_API_KEY for TTS and (b) WhatsApp Business Cloud
  * API configured for the tenant. Returns a clear 400 when either is missing.
+ * A customer with no phone gets 422 `{ code: "no_phone", error, description, href }`
+ * (R-1452) before any TTS or send is attempted.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -17,6 +19,7 @@ import { createClient } from "@/lib/supabase/server";
 import { synthesizeSpeech } from "@/lib/voice/tts";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
+import { hasPhone, noPhoneNotice, NO_PHONE_STATUS } from "@/lib/voice/voice-note-phone";
 
 const bodySchema = z.object({
   customerId: z.string().min(1),
@@ -42,7 +45,10 @@ export async function POST(request: NextRequest) {
   const { data: customer } = await supabase
     .from("customers").select("id, name, contact_name, contact_phone").eq("id", parsed.customerId).maybeSingle();
   if (!customer) return NextResponse.json({ error: "Customer not found." }, { status: 404 });
-  if (!customer.contact_phone) return NextResponse.json({ error: "This customer has no phone number." }, { status: 400 });
+  // R-1452: no phone → a clear §24 answer (what, why, where to add it), and nothing is sent.
+  if (!hasPhone(customer.contact_phone)) {
+    return NextResponse.json(noPhoneNotice(customer.id, customer.name), { status: NO_PHONE_STATUS });
+  }
 
   const { data: tenant } = await supabase.from("tenants").select("name").eq("id", me.tenant_id).maybeSingle();
   const brand = tenant?.name || "your service provider";
