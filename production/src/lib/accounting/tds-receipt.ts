@@ -39,6 +39,19 @@ export function receiptSplitLine(gross: number, tds: number | null | undefined):
   return `Received ${inr(s.received)} + TDS ${inr(s.tds)} = ${inr(s.gross)}`;
 }
 
+/**
+ * R-1119 — the pre-GST base TDS is deducted on. A customer deducts TDS on the value
+ * before GST, so the GST inside the amount is stripped at the quote's OWN rate. The old
+ * shortcut `amount × 100/118` assumed 18% everywhere, so a 5% or 0% (export/LUT) quote got
+ * a base — and a TDS receivable — that never matched 26AS.
+ * `taxRatePct` null/absent (old rows) → 18%, as before; a negative or non-number rate
+ * also falls back to 18% rather than inflating the base. Whole rupees, rounded once.
+ */
+export function tdsBase(amountInclGst: number, taxRatePct: number | null | undefined): number {
+  const r = typeof taxRatePct === "number" && Number.isFinite(taxRatePct) && taxRatePct >= 0 ? taxRatePct : 18;
+  return Math.round((amountInclGst || 0) * 100 / (100 + r));
+}
+
 /** Sum of TDS per payment id, from tds_receivable rows (one payment can carry more than one). */
 export function tdsByPayment(rows: readonly { payment_id: string | null; tds_amount: number | null }[]): Record<string, number> {
   const out: Record<string, number> = {};

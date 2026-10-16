@@ -31,6 +31,7 @@ import { primaryContactsFor } from "@/lib/contacts/primary";
 import { utcDateISO } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
+import { tdsBase } from "@/lib/accounting/tds-receipt";
 
 // ────────────────────────────────────────────────────────────────
 // Range helpers (Indian FY = Apr 1 → Mar 31)
@@ -129,7 +130,7 @@ function useProfitability(range: DateRange) {
       // multiplying by `qty` gives the true gross profit picture per quote.
       const { data: quotes, error: qErr } = await supabase
         .from("quotes")
-        .select("id, customer_id, customer_name, amount, line_items, seats, created_date, payment_status")
+        .select("id, customer_id, customer_name, amount, tax_rate, line_items, seats, created_date, payment_status")
         .gte("created_date", range.from)
         .lte("created_date", range.to)
         .in("payment_status", ["received", "partial", "invoiced"]);
@@ -154,9 +155,9 @@ function useProfitability(range: DateRange) {
         const key = q.customer_id ?? q.customer_name ?? "unknown";
         let row = grouped.get(key);
 
-        // Revenue: GST-exclusive (we strip the 18% from amount because GST
-        // is pass-through — not real revenue). amount × 100/118.
-        const revenueExGST = Math.round((q.amount ?? 0) * 100 / 118);
+        // Revenue: GST-exclusive (GST is pass-through — not real revenue). R-1119: strip the
+        // quote's own rate (5% / 12% / 0% export), not a fixed 18%.
+        const revenueExGST = tdsBase(q.amount ?? 0, q.tax_rate == null ? null : Number(q.tax_rate));
 
         // COGS: sum of line_items[].cost × qty. cost is stored pre-GST.
         let lineCogs = 0;
