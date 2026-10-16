@@ -21,8 +21,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuLabel,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
 import { buildSidebarApps, appForPath, withoutDistributorOnly } from "@/lib/nav-apps";
@@ -33,6 +31,7 @@ import { useNavBadges } from "@/lib/hooks/useNavBadges";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
+import { AccountMenuItems } from "./account-menu-items";
 
 // ============================================================
 // SidebarContent — shared between desktop + mobile
@@ -453,35 +452,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             <DropdownMenuLabel>
               {me?.authEmail ?? "Account"}
             </DropdownMenuLabel>
-            <DropdownMenuItem asChild>
-              <Link href="/login">
-                <Icon name="user" size={14} /> Login / Switch Account
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/settings">
-                <Icon name="settings" size={14} /> Settings
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Icon name="users" size={14} /> Team
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              destructive
-              onClick={() => {
-                // POST to the server route — it clears the auth COOKIES (the
-                // browser-client signOut left them, so /login bounced back) and
-                // 303-redirects to /login. No client await = can't hang.
-                const form = document.createElement("form");
-                form.method = "POST";
-                form.action = "/auth/sign-out";
-                document.body.appendChild(form);
-                form.submit();
-              }}
-            >
-              <Icon name="logout" size={14} /> Sign out
-            </DropdownMenuItem>
+            <AccountMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
