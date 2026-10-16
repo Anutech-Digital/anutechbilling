@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "About — ResellerOS",
+  title: "About",
   description: "ResellerOS — built by an Indian cloud reseller, for Indian cloud resellers.",
 };
 

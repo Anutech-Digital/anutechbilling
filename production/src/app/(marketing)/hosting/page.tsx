@@ -27,7 +27,7 @@ const SITE_URL = "https://resellersos-njvk4nxhdq-el.a.run.app";
 const PAGE_URL = `${SITE_URL}/hosting`;
 
 export const metadata: Metadata = {
-  title: "Web hosting on Google Cloud — 15-day free trial, no credit card | Anutech Digital",
+  title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
   description:
     `cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ${HOSTING_FROM_MO}/mo. Start a 15-day free trial — no credit card, GST invoice on every order.`,
   keywords: [

@@ -146,7 +146,7 @@ export const HOSTING_WORRIES: readonly { q: string; a: string }[] = [
 /** Proof cards — PARTNERSHIP ("Premier Partner since 2014") removed until verified. */
 export const HOSTING_PROOFS: readonly { k: string; v: string; a: string; href: string }[] = [
   { k: "UPTIME", v: "Live system status page, updated in real time", a: "Check status", href: "/status" },
-  { k: "COMPANY", v: "Anutech Digital Pvt Ltd, Rohini, Delhi · GSTIN 07ABDCA0298H1ZP", a: "About the company", href: "/about" },
+  { k: "COMPANY", v: "Anutech Digital Pvt Ltd, Rohini, Delhi · GSTIN 07ABDCA0298H1ZP", a: "About the company", href: "/why-us" },
   { k: "TERMS", v: "Refund policy and terms published in plain language", a: "Read the refund policy", href: "/refund" },
 ];
 

@@ -23,7 +23,7 @@ import {
 } from "../_components/pricing-sections";
 
 export const metadata: Metadata = {
-  title: "Pricing — ResellerOS",
+  title: "Pricing",
   description:
     "Free during beta. Starter / Growth / Pro tiers launch once we hit ₹15K MRR. All features included today.",
 };
