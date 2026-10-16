@@ -163,8 +163,8 @@ const viewport = () => (typeof window === "undefined" ? { w: 1280, h: 800 } : { 
 
 /* R-1447 (Abhishek, staging: the panel covers the screen underneath while reporting): on a
    desktop the panel can be moved — drag its header (or Tab to the grip and use the arrow keys).
-   The spot is kept in this browser; "Dock" puts it back on the right edge. A phone keeps the
-   full-screen sheet — nothing moves there. */
+   The spot is kept in this browser; "Dock" puts it back on the right edge. A phone does not
+   drag — it picks a Left / Right edge instead (R-1467, below). */
 export interface PanelPos { x: number; y: number }
 const PANEL_POS_KEY = "reselleros.aiHelp.pos";
 /** Below this window width the panel is the phone sheet (Tailwind md). */
@@ -208,6 +208,17 @@ function savePanelPos(p: PanelPos | null) {
     if (p) window.localStorage.setItem(PANEL_POS_KEY, JSON.stringify(p));
     else window.localStorage.removeItem(PANEL_POS_KEY);
   } catch { /* private window — the spot just isn't remembered */ }
+}
+
+/* R-1467 (rest of R-1447): on a phone the panel is a side panel on the left or right edge —
+   a Left / Right toggle in its header, kept in this browser — so the page stays visible beside it. */
+export type PhoneSide = "left" | "right";
+const PHONE_SIDE_KEY = "reselleros.aiHelp.phoneSide";
+function readPhoneSide(): PhoneSide {
+  try { return window.localStorage.getItem(PHONE_SIDE_KEY) === "left" ? "left" : "right"; } catch { return "right"; }
+}
+function savePhoneSide(s: PhoneSide) {
+  try { window.localStorage.setItem(PHONE_SIDE_KEY, s); } catch { /* private window — the side just isn't remembered */ }
 }
 
 /** R-827: narrowest a dialog may be squeezed to beside the docked panel; below this the panel just overlays. */
@@ -400,6 +411,9 @@ export function AiHelp() {
   const isDesktop = viewport().w >= PANEL_DESKTOP_MIN_W;
   const shownPos = pos && isDesktop ? clampPanelPos(pos, shownSize, viewport()) : null;
   const moved = shownPos !== null;
+  const [phoneSide, setPhoneSide] = React.useState<PhoneSide>("right");
+  React.useEffect(() => { setPhoneSide(readPhoneSide()); }, []);
+  const choosePhoneSide = (s: PhoneSide) => { setPhoneSide(s); savePhoneSide(s); };
   const move = React.useRef<{ x: number; y: number; start: PanelPos; last: PanelPos | null } | null>(null);
   const startMove = (e: React.PointerEvent) => {
     if (!isDesktop || e.button !== 0) return;
@@ -743,12 +757,14 @@ export function AiHelp() {
           aria-label="Help"
           data-size={large ? "large" : "normal"}
           data-moved={moved ? "true" : "false"}
+          data-side={isDesktop ? undefined : phoneSide}
           hidden={minimized}
           style={{ "--ai-w": `${shownSize.w}px`, "--ai-h": `${shownSize.h}px`, ...(shownPos ? { "--ai-x": `${shownPos.x}px`, "--ai-y": `${shownPos.y}px` } : {}) } as React.CSSProperties}
           /* R-827: docked to the right edge (not floating over the middle) and above dialog
              overlays (z-50), so a dialog and help can be used side by side.
-             R-1447: once moved, it floats at the person's spot (desktop only). */
-          className={`fixed z-[65] inset-0 md:inset-auto ${moved ? "md:left-[var(--ai-x)] md:top-[var(--ai-y)] md:rounded-2xl md:border" : "md:right-0 md:top-16 md:rounded-l-2xl md:border-y md:border-l"} md:w-[var(--ai-w)] md:h-[var(--ai-h)] ${minimized ? "hidden" : "flex"} flex-col border-hairline bg-paper shadow-2xl overflow-hidden`}
+             R-1447: once moved, it floats at the person's spot (desktop only).
+             R-1467: a phone gets a side panel on the chosen edge, the page visible beside it. */
+          className={`fixed z-[65] ${isDesktop ? "inset-0" : `inset-y-0 w-[88vw] max-w-sm ${phoneSide === "left" ? "left-0 border-r" : "right-0 border-l"}`} md:inset-auto ${moved ? "md:left-[var(--ai-x)] md:top-[var(--ai-y)] md:rounded-2xl md:border" : "md:right-0 md:top-16 md:rounded-l-2xl md:border-y md:border-l"} md:w-[var(--ai-w)] md:h-[var(--ai-h)] ${minimized ? "hidden" : "flex"} flex-col border-hairline bg-paper shadow-2xl overflow-hidden`}
         >
           {/* R-223: drag handles (desktop). The panel is pinned top-right, so its left and bottom edges move. */}
           {/* R-360: the left edge is also a keyboard control (Tab to it, ← / → / Home / End). */}
@@ -790,6 +806,19 @@ export function AiHelp() {
               title={moved ? "Put the panel back on the right edge" : "The panel is docked on the right — drag the header to move it"}
               disabled={!moved}
               onClick={dockPanel}>Dock</button>
+            {/* R-1467: phone only — which edge the side panel sits on. */}
+            {!isDesktop && (
+              <div role="group" aria-label="Help panel side" className="inline-flex rounded border border-hairline">
+                {(["left", "right"] as const).map((s) => (
+                  <button key={s} type="button" aria-pressed={phoneSide === s}
+                    aria-label={`Help panel on the ${s} side`}
+                    onClick={() => choosePhoneSide(s)}
+                    className={`px-1.5 min-h-8 text-2xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber ${phoneSide === s ? "bg-ink text-paper" : "text-ink-3 hover:text-ink"}`}>
+                    {s === "left" ? "Left" : "Right"}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* R-827: fold to a small bar to work on the page; the chat is kept. Phone too. */}
             <button type="button" className="rounded px-1 min-h-8 text-2xs text-ink-3 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
               aria-label="Minimize help"
