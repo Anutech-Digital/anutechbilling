@@ -25,6 +25,9 @@ import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 import { gstBreakup } from "@/lib/quotes/amounts";
+import { isIndianMobile, quoteMissing, quoteMissingMessage, type QuoteMissingKey } from "@/site/lib/quote-missing";
+
+export { isIndianMobile };
 
 /* R-1465: whole rupees, as every site page prints them (₹50, not ₹49.99). Line amounts are
    rounded once per line (quoteLineAmount), so the summary never mixes ₹599.88 with ₹600. */
@@ -59,6 +62,8 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   // submit / doc
   const [submitState, setSubmitState] = useState<"idle" | "sending" | "done" | "failed">("idle");
   const [err, setErr] = useState("");
+  // R-1461: the first missing part to focus once its step is open.
+  const [focusKey, setFocusKey] = useState<QuoteMissingKey | null>(null);
   /* Did the requirement reach our team? The quote is shown either way (it is built here and
      is valid to send by hand), but it must not look sent when it was not (30 Sep 2026: this
      used to clear the error and show the quote as if the team had it). */
@@ -156,11 +161,23 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     ].join("\n");
   };
 
-  const valid = company.trim().length >= 2 && name.trim().length >= 2 && email.includes("@") && isIndianMobile(phone) && selected.length > 0 && (gstin === "" || gstin.length === 15);
+  /* R-1461: name exactly what is missing, in on-screen order — the old fixed message told a
+     visitor with items picked to "add at least one line". */
+  const missing = quoteMissing({ lineCount: selected.length, company, name, phone, email, gstin });
+  const valid = missing.length === 0;
+
+  useEffect(() => {
+    if (!focusKey) return;
+    const el = focusKey === "lines"
+      ? document.querySelector<HTMLElement>('#quote-lines [role="checkbox"]:not([disabled])') ?? document.getElementById("quote-step-plan")
+      : document.getElementById(`quote-${focusKey}`);
+    el?.focus();
+    setFocusKey(null);
+  }, [focusKey, openSec]);
 
   async function generate() {
     setTouched(true); setErr("");
-    if (!valid) { setOpenSec(selected.length === 0 ? "plan" : "details"); setErr("Add at least one line, and a company, name, valid email and 10-digit phone — that's where the formal quotation goes."); return; }
+    if (!valid) { setOpenSec(missing[0].key === "lines" ? "plan" : "details"); setErr(quoteMissingMessage(missing)); setFocusKey(missing[0].key); return; }
     /* R-228: the quote's number is the APP's (draft quote number, else lead id) from
        /api/enquiry — never a per-browser counter, which gave every new visitor AQ-…-001. */
     const now = new Date();
@@ -209,7 +226,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
         {/* Step 1 — What to quote */}
         <div style={card}>
-          <button onClick={() => setOpenSec(openSec === "plan" ? "details" : "plan")} aria-expanded={openSec === "plan"} style={secHead(openSec === "plan")}>
+          <button id="quote-step-plan" onClick={() => setOpenSec(openSec === "plan" ? "details" : "plan")} aria-expanded={openSec === "plan"} style={secHead(openSec === "plan")}>
             <span style={stepMark(selected.length > 0)}>{selected.length > 0 ? "✓" : "1"}</span>
             <span style={{ flex: 1 }}>
               <span style={{ display: "block", fontSize: 16, fontWeight: 700, color: "var(--text)" }}>What to quote</span>
@@ -249,7 +266,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                 </p>
               )}
               {/* rows */}
-              <div style={{ display: "flex", flexDirection: "column" }}>
+              <div id="quote-lines" style={{ display: "flex", flexDirection: "column" }}>
                 {visible.length === 0 && (
                   <p className="meta" style={{ padding: "16px 0" }}>Nothing matches. <button onClick={() => { setQuery(""); setCat("all"); }} style={{ background: "none", border: "none", color: P, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Show all plans</button></p>
                 )}
@@ -314,12 +331,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           {openSec === "details" && (
             /* R-231: data-grid → one column on a phone (two 1fr columns left ~150px boxes). */
             <div style={{ padding: 18, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }} data-grid>
-              <QField label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
-              <QField label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
-              <QField label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
-              <QField label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
+              <QField id="quote-company" label="Company" value={company} set={setCompany} touched={touched} required autoComplete="organization" />
+              <QField id="quote-name" label="Your name" value={name} set={setName} touched={touched} required autoComplete="name" />
+              <QField id="quote-phone" label="Mobile" value={phone} set={setPhone} touched={touched} required kind="tel" autoComplete="tel" inputMode="tel" />
+              <QField id="quote-email" label="Email" value={email} set={setEmail} touched={touched} required kind="email" autoComplete="email" inputMode="email" />
               <div>
-                <QField label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
+                <QField id="quote-gstin" label="GSTIN (optional)" value={gstin} set={(v) => setGstin(v.toUpperCase().slice(0, 15))} touched={touched} />
                 {gstin.length > 0 && gstin.length !== 15 && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{gstin.length}/15 characters</span>}
               </div>
               <QField label="Where does mail run today?" value={mailToday} set={setMailToday} touched={false} placeholder="Gmail, GoDaddy, cPanel…" />
@@ -361,7 +378,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Renews {inr(renewal)}/yr at today&apos;s rates · incl. 18% GST</div>
               </div>
             )}
-            {err && <p style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
+            {err && <p role="alert" style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
             <BusyPanel
               active={submitState === "sending"}
               title="Preparing your quotation"
@@ -439,22 +456,15 @@ function Row({ l, v }: { l: string; v: string }) {
   return <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", color: "var(--text-secondary)" }}><span>{l}</span><span className="mono">{v}</span></div>;
 }
 
-/**
- * R-231: a 10-digit Indian mobile (6–9 first), with or without +91 / 0 in front. The old
- * rule only wanted 2 digits, so "12345" looked fine until the quote button refused it.
- */
-export function isIndianMobile(v: string): boolean {
-  const d = v.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
-  return /^[6-9]\d{9}$/.test(d);
-}
+/* R-231 isIndianMobile now lives in site/lib/quote-missing (R-1461), re-exported above. */
 
-export function QField({ label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
+export function QField({ id, label, value, set, touched, required, kind = "text", placeholder, autoComplete, inputMode }: { id?: string; label: string; value: string; set: (v: string) => void; touched: boolean; required?: boolean; kind?: string; placeholder?: string; autoComplete?: string; inputMode?: "text" | "email" | "tel" }) {
   const bad = touched && required && (kind === "email" ? !value.includes("@") : kind === "tel" ? !isIndianMobile(value) : value.replace(/\s/g, "").length < 2);
   const msg = kind === "tel" && value.trim() ? "Enter a 10-digit mobile number." : label + " is needed here.";
   return (
     <label style={{ fontSize: 13, color: "var(--text-secondary)" }}>
       {label}
-      <input type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
+      <input id={id} type={kind} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} autoComplete={autoComplete} inputMode={inputMode} aria-invalid={bad || undefined}
         style={{ width: "100%", marginTop: 4, minHeight: 44, border: `1.5px solid ${bad ? "var(--warning)" : "var(--border-strong)"}`, borderRadius: 8, padding: "9px 11px", fontSize: 14, fontFamily: "inherit" }} />
       {bad && <span style={{ fontSize: 11.5, color: "var(--warning)" }}>{msg}</span>}
     </label>
