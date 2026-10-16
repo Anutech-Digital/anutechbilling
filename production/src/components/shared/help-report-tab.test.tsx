@@ -24,6 +24,10 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { 
 vi.mock("@/lib/queries/feedback", () => ({ useSubmitFeedback: () => ({ mutateAsync: h.mutateAsync, isPending: false }) }));
 vi.mock("@/lib/ai/page-test-runs", async (orig) => ({ ...(await orig<typeof import("@/lib/ai/page-test-runs")>()), loadLastPageTestRun: async () => null }));
 vi.mock("sonner", () => ({ toast: h.toast }));
+/* R-1417: the matches list reads the DB; here only what the tab hands it is checked (its own test covers the read). */
+vi.mock("./help-report-matches", () => ({
+  HelpReportMatches: ({ text, tenantId }: { text: string; tenantId: string | null }) => <div data-testid="matches-stub" data-text={text} data-tenant={tenantId ?? ""} />,
+}));
 
 import * as React from "react";
 import { AiHelp, AiHelpButton } from "./ai-help";
@@ -163,6 +167,17 @@ describe("R-383 — same payload as the old Report Bug form", () => {
     });
     /* the recorder's last steps go with it — the page open was recorded on mount */
     expect(String(payload.text)).toMatch(/What the app recorded \(last steps\):\n.*OPENED: \/invoices/);
+  });
+});
+
+describe("R-1417 — similar reports while typing", () => {
+  it("the box's words and the caller's own tenant go to the matches list", () => {
+    mount();
+    ctrlShiftB();
+    fireEvent.change(box(), { target: { value: "Invoice PDF download fails" } });
+    const stub = screen.getByTestId("matches-stub");
+    expect(stub.getAttribute("data-text")).toBe("Invoice PDF download fails");
+    expect(stub.getAttribute("data-tenant")).toBe("t1");
   });
 });
 
