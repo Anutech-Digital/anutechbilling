@@ -17,6 +17,32 @@ export function grossAmount(subtotal: number, taxRatePct = 18): number {
 }
 
 /**
+ * R-1438 (16 Oct 2026): GST forward, never backwards.
+ *
+ * The website quote builder (/quote) did `payable = round(subtotal × 1.18)` and then
+ * `gst = payable − subtotal`. With a paise line in the basket (GW Business Starter ₹270 × 12 +
+ * Hosting Starter ₹49.99 × 12 = ₹3,839.88)
+ * that printed GST ₹691.12 while the tax invoice charges 18% of the taxable value directly
+ * (₹691.18). Pawan saw the two documents disagree on staging (15–16 Oct).
+ *
+ * This is the one place a quote screen derives its three figures from a taxable value:
+ *   gst   = round(taxable × rate)   — to the PAISA (2 dp) when the taxable value carries
+ *                                      paise, to the RUPEE when it is whole
+ *   total = taxable + gst
+ * so that what is shown always satisfies subtotal + GST === payable (R-1108 display rule)
+ * and the GST line is the same 18% the invoice computes. Whole-rupee inputs give exactly
+ * what `grossAmount` gives, so app quotes and renewals are unchanged.
+ */
+export function gstBreakup(taxable: number, taxRatePct = 18): { taxable: number; gst: number; total: number } {
+  const base = Math.max(0, Math.round(taxable * 100) / 100);
+  const paise = !Number.isInteger(base);
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const gst = paise ? r2((base * taxRatePct) / 100) : Math.round((base * taxRatePct) / 100);
+  const total = paise ? r2(base + gst) : base + gst;
+  return { taxable: base, gst, total };
+}
+
+/**
  * How far a stored `quotes.amount` is from what its own subtotal and tax rate say it
  * should be. Positive = the quote is billing LESS than its tax rate implies.
  *

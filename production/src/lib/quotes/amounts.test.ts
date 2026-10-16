@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { grossAmount, quoteAmountGap, isQuoteAmountConsistent, QUOTE_AMOUNT_TOLERANCE, taxableAfterDiscount } from "./amounts";
+import { grossAmount, quoteAmountGap, isQuoteAmountConsistent, QUOTE_AMOUNT_TOLERANCE, taxableAfterDiscount, gstBreakup } from "./amounts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 describe("quote amount integrity", () => {
   it("clears the 26 production quotes whose numbers agree", () => {
@@ -76,5 +78,40 @@ describe("coupon / discount quotes (R-082)", () => {
   it("still catches a coupon quote whose GST is missing", () => {
     expect(isQuoteAmountConsistent(600, 18, 540, 10)).toBe(false);
     expect(quoteAmountGap(600, 18, 540, 10)).toBe(97);
+  });
+});
+
+describe("gstBreakup — R-1438: GST forward from the taxable value, never back-solved", () => {
+  it("3,839.88 @ 18% → GST 691.18, payable 4,531.06 (Pawan's staging case, 15–16 Oct 2026)", () => {
+    // GW Business Starter ₹270 × 12 + Hosting Starter ₹49.99 × 12 = ₹3,839.88. The old maths rounded the payable to ₹4,531
+    // first and showed GST ₹691.12; the tax invoice charges 18% directly = ₹691.18.
+    expect(gstBreakup(3839.88, 18)).toEqual({ taxable: 3839.88, gst: 691.18, total: 4531.06 });
+  });
+
+  it("whole-rupee taxable values give exactly what grossAmount gives (app quotes unchanged)", () => {
+    for (const [t, r] of [[103680, 18], [45360, 18], [1000, 5], [600, 18], [207360, 18], [0, 18]] as const) {
+      expect(gstBreakup(t, r).total).toBe(grossAmount(t, r));
+      expect(gstBreakup(t, r).gst).toBe(grossAmount(t, r) - t);
+    }
+  });
+
+  it("shown subtotal + shown GST === shown payable across amounts and rates (R-1108 rule)", () => {
+    const shown = (n: number) => Math.round(n * 100) / 100;
+    const amounts = [3839.88, 49.99, 599.88, 319.99 * 12 + 1080 * 12, 1023.88, 12.5, 0.01, 99999.99, 3840, 1, 7];
+    const rates = [0, 5, 12, 18, 28];
+    for (const a of amounts) for (const r of rates) {
+      const b = gstBreakup(a, r);
+      expect(shown(b.taxable + b.gst)).toBe(shown(b.total));
+      expect(b.gst).toBe(shown(b.gst));
+      // and the GST is the rate applied to the taxable value, within half a unit of rounding
+      expect(Math.abs(b.gst - (a * r) / 100)).toBeLessThanOrEqual(0.5 + 1e-9);
+    }
+  });
+
+  it("the website quote builder no longer back-solves GST from a rounded payable", () => {
+    const src = readFileSync(resolve(__dirname, "../../site/components/quote/QuoteBuilder.tsx"), "utf8");
+    expect(src).not.toContain("payable - subtotal");
+    expect(src).not.toContain("Math.round(subtotal * 1.18)");
+    expect(src).toContain("gstBreakup(subtotal)");
   });
 });

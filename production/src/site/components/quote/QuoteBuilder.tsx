@@ -12,7 +12,8 @@
  *
  * Money maths (WHOLE RUPEES, CLAUDE.md §13): a monthly-cycle line on an annual
  * commitment bills ×12 (a year on this invoice); once-a-year lines (domain, SSL,
- * onsite) bill once. Payable = round(subtotal × 1.18). Renewal annualises every
+ * onsite) bill once. GST = round(subtotal × 18%), payable = subtotal + GST (R-1438,
+ * lib/quotes/amounts.ts gstBreakup — same maths as the tax invoice). Renewal annualises every
  * line at today's rate. Every figure is derived, never hardcoded.
  */
 import { useEffect, useMemo, useState } from "react";
@@ -23,6 +24,7 @@ import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
+import { gstBreakup } from "@/lib/quotes/amounts";
 
 /* R-224: hosting rates carry paise (₹49.99) — print them exactly as /rates does, not rounded. */
 const inr = quoteInr;
@@ -97,9 +99,11 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
   const subtotal = selected.reduce((n, p) => n + amountOf(p, lines[p.name]), 0);
-  const payable = Math.round(subtotal * 1.18);
-  const gst = payable - subtotal;
-  const renewal = Math.round(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0) * 1.18);
+  /* R-1438: GST is 18% OF the subtotal, then payable = subtotal + GST — never payable first
+     and GST back-solved from the rounded total (₹3,839.88 used to show GST ₹691.12 while the
+     tax invoice charges ₹691.18). Same helper as the invoice side (lib/quotes/amounts.ts). */
+  const { gst, total: payable } = gstBreakup(subtotal);
+  const renewal = gstBreakup(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0)).total;
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
   const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
