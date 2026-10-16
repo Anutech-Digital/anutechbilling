@@ -57,3 +57,14 @@ Tum code KABHI nahi badalte, commit/push KABHI nahi karte. Hinglish me chhota ja
 
 7. ANT: 3 line — kitne card, sabse zaroori kaunsa, kya dekha par card nahi banaya (kyun).
 ```
+
+## Card ids: ONE counter (12 Oct 2026)
+
+Every new card id comes from the board, never from "the last id I saw" or a reserved range:
+
+1. Read collection `meta`, doc `nextId`; note its `version`.
+2. Your id is `"R-" + next`.
+3. Update `{next: next + 1}` with `if_version` = that version. On a conflict, re-read and retry.
+4. Only then create the card document `cards/R-<n>`.
+
+Two cards filed on 13–14 Oct skipped step 3 and the counter went stale; the next session nearly reused their ids.
