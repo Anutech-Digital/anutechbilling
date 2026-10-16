@@ -17,9 +17,14 @@ export class BodyTooLargeError extends Error {
 }
 
 export async function readBodyCapped(req: Request, limit = REST_BODY_MAX_BYTES): Promise<string> {
+  return new TextDecoder().decode(await readBytesCapped(req, limit));
+}
+
+/** The same cap as readBodyCapped, as raw bytes (storage uploads — R-1411). */
+export async function readBytesCapped(req: Request, limit: number): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(req.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) throw new BodyTooLargeError(limit);
-  if (!req.body) return "";
+  if (!req.body) return new Uint8Array(0);
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -36,7 +41,7 @@ export async function readBodyCapped(req: Request, limit = REST_BODY_MAX_BYTES):
   const all = new Uint8Array(total);
   let at = 0;
   for (const c of chunks) { all.set(c, at); at += c.byteLength; }
-  return new TextDecoder().decode(all);
+  return all;
 }
 
 /** PostgREST-shaped 413 body. */
