@@ -275,6 +275,10 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
     "/accounting/payroll", "/accounting/salary-register", "/accounting/loans",
     "/accounting/employees", "/accounting/attendance", "/accounting/leave",
     "/accounting/esi-register",
+    /* R-1127 (16 Oct 2026): same lie as the Balance Sheet — these read salary_payments /
+       employees, which RLS hides from billing, so salary + PF/ESI/TDS rows showed Rs 0.
+       Pardeep chose to take them away (menu rows are SALARY_ROLES too). */
+    "/accounting/trial-balance", "/accounting/close", "/accounting/cash-flow",
   ],
   /* R-544: Loans given is owner + accountant only; /accounting admits the manager by prefix. */
   manager: ["/accounting/loans-given"],
@@ -599,7 +603,7 @@ export const APP_NAV: NavSection[] = [
          (in Reports) answers "who owes me, across everyone". The owner must see it — he is
          exactly the person a customer asks for a statement (nav.test.ts). */
       { id: "ledger",              href: "/accounting/ledger",        label: "Ledger (Khata)",      icon: "file", roles: BOOKS },
-      { id: "acc-close",           href: "/accounting/close",         label: "Month-end Close",     icon: "check", roles: BOOKS },
+      { id: "acc-close",           href: "/accounting/close",         label: "Month-end Close",     icon: "check", roles: SALARY_ROLES },
       {
         /* THE REPORTS DIRECTORY (S30). Every report is one click from this page, grouped.
            GST Reports, TDS Receivable and Customer Aging were once missing from the
@@ -609,9 +613,9 @@ export const APP_NAV: NavSection[] = [
         directory: [
           { id: "pnl",                 href: "/accounting/pnl",           label: "P&L Report",          icon: "trending_up", roles: BOOKS, group: "Financial statements" },
           { id: "balance-sheet",       href: "/accounting/balance-sheet", label: "Balance Sheet",       icon: "layout", roles: SALARY_ROLES, group: "Financial statements" },
-          { id: "cash-flow",           href: "/accounting/cash-flow",     label: "Cash Flow",           icon: "rupee", roles: BOOKS, group: "Financial statements" },
+          { id: "cash-flow",           href: "/accounting/cash-flow",     label: "Cash Flow",           icon: "rupee", roles: SALARY_ROLES, group: "Financial statements" },
           /* S33: CA sabse pehle yahi do maangta hai. */
-          { id: "trial-balance",       href: "/accounting/trial-balance", label: "Trial Balance",       icon: "file", roles: BOOKS, group: "Financial statements" },
+          { id: "trial-balance",       href: "/accounting/trial-balance", label: "Trial Balance",       icon: "file", roles: SALARY_ROLES, group: "Financial statements" },
           { id: "day-book",            href: "/accounting/day-book",      label: "Day Book",            icon: "calendar", roles: BOOKS, group: "Financial statements" },
           { id: "profitability",       href: "/accounting/profitability", label: "Customer Profitability", icon: "trending_up", roles: BOOKS, group: "Business" },
           { id: "profit-by-product",   href: "/reports/profit",           label: "Profit by Product",   icon: "chart", roles: OM, group: "Business" },
