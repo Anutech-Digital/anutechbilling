@@ -43,7 +43,6 @@
 import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
@@ -115,13 +114,27 @@ function QueueRow({
 
         {/* The two big ones. Anchors, so the OS handles them — and so a long-press
             gives the rep "copy number" for free. */}
+        {/* R-1426 (Pawan, 12 Oct 2026, on /deals): a number that cannot be dialled ("NA",
+            five digits) used to keep both buttons and answer a tap with an error toast. A
+            button that can only fail is a mystery button (CLAUDE.md §24) — so the row offers
+            the one thing that helps instead: open the lead and add the number. */}
+        {!num ? (
+          <button
+            type="button"
+            onClick={() => onOpen(lead)}
+            title={`No usable phone number on this lead${lead.contact_phone ? ` ("${lead.contact_phone}")` : ""} — open it and add a 10-digit number to call or WhatsApp.`}
+            className={cn(
+              "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-bold",
+              "border-hairline-strong text-ink-2 hover:bg-paper-2",
+            )}
+          >
+            <Icon name="edit" size={14} /> Add phone number
+          </button>
+        ) : (
         <div className="flex items-center gap-2">
           <a
-            href={`tel:${num ?? ""}`}
-            onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then call." }); return; }
-              onLogCall(lead);
-            }}
+            href={`tel:${num}`}
+            onClick={() => onLogCall(lead)}
             className={cn(
               "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 text-xs font-bold",
               "bg-primary text-white hover:opacity-90",
@@ -130,13 +143,10 @@ function QueueRow({
             <Icon name="mobile" size={14} /> Call now
           </a>
           <a
-            href={num ? `https://wa.me/${num}?text=${encodeURIComponent(waMsg)}` : "#"}
+            href={`https://wa.me/${num}?text=${encodeURIComponent(waMsg)}`}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e) => {
-              if (!num) { e.preventDefault(); toast.error(`${leadTitle(lead).label} has no usable phone number.`, { description: "Open the lead and add a 10-digit number, then message on WhatsApp." }); return; }
-              onLogWhatsApp(lead);
-            }}
+            onClick={() => onLogWhatsApp(lead)}
             title={waMsg}
             className={cn(
               "inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-bold",
@@ -146,6 +156,7 @@ function QueueRow({
             <Icon name="whatsapp" size={14} /> WhatsApp
           </a>
         </div>
+        )}
       </div>
 
       {/* Record the outcome without leaving the bar — the whole point of a call list. */}
