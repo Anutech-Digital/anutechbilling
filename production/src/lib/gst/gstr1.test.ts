@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { B2CL_THRESHOLD, buildAdvances, buildGstr1, docHsnLines, lineHsn, gstr1Csv, gstr1Json, gstr3bClass, gstSplit, hsnLines, posFor, GSTR1_HEADERS, type Advance, type Gstr1Doc } from "./gstr1";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { B2CL_THRESHOLD, buildAdvances, buildGstr1, docGstRate, docHsnLines, lineHsn, gstr1Csv, gstr1Json, gstr3bClass, gstSplit, hsnLines, posFor, GSTR1_HEADERS, type Advance, type Gstr1Doc } from "./gstr1";
 import { SAAS_HSN } from "./hsn";
 
 const seller = { stateCode: "07", state: "Delhi", gstin: "07AABCU9603R1ZM" };
@@ -308,5 +310,39 @@ describe("WC-gst: advances (Tables 11A / 11B)", () => {
     const j = gstr1Json(buildGstr1([], seller), seller.gstin, "082026", t);
     expect(j.at).toEqual([{ pos: "07", sply_ty: "INTRA", itms: [{ rt: 18, ad_amt: 10000, iamt: 0, camt: 900, samt: 900, csamt: 0 }] }]);
     expect(j.txpd[0]).toMatchObject({ pos: "07", sply_ty: "INTRA" });
+  });
+});
+
+/* R-1131: a note (or legacy invoice) with no stored tax_rate used to be filed at 18%.
+   The rate now comes from the document's own tax ÷ taxable, snapped to a GST slab;
+   with no tax figure to go on it is flagged "rate missing", never guessed. */
+describe("docGstRate — no hardcoded 18% fallback", () => {
+  it("a stored rate wins", () => {
+    expect(docGstRate(5, -1000, -180)).toEqual({ rate: 5, rateMissing: false });
+  });
+  it("no rate + 0 tax → 0%; no rate + 18% tax → 18% (signed credit-note figures)", () => {
+    expect(docGstRate(null, -1000, 0)).toEqual({ rate: 0, rateMissing: false });
+    expect(docGstRate(null, -1000, -180)).toEqual({ rate: 18, rateMissing: false });
+    expect(docGstRate(undefined, 847, 153)).toEqual({ rate: 18, rateMissing: false });
+    expect(docGstRate(null, 1000, 49)).toEqual({ rate: 5, rateMissing: false });
+    expect(docGstRate(null, 1000, 280)).toEqual({ rate: 28, rateMissing: false });
+  });
+  it("nothing to derive from → flagged, not 18", () => {
+    expect(docGstRate(null, null, null)).toEqual({ rate: 0, rateMissing: true });
+    expect(docGstRate(null, 0, 180)).toEqual({ rate: 0, rateMissing: true });
+  });
+  it("credit notes with no rate land in the 0% and 18% GSTR-1 rows", () => {
+    const zero = docGstRate(null, -1000, 0);
+    const eighteen = docGstRate(null, -1000, -180);
+    const s = buildGstr1([
+      doc({ id: "CN-0", docType: "credit_note", amount: -1000, taxableValue: -1000, gst: 0, taxRate: zero.rate }),
+      doc({ id: "CN-18", docType: "credit_note", amount: -1180, taxableValue: -1000, gst: -180, taxRate: eighteen.rate }),
+    ], seller);
+    const rows = s.b2cs.map((r) => [r.rate, r.taxable]).sort((a, b) => a[0] - b[0]);
+    expect(rows).toEqual([[0, -1000], [18, -1000]]);
+  });
+  it("the GST report source has no `?? 18` rate fallback left", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/(app)/accounting/gst/report.ts"), "utf8");
+    expect(src).not.toMatch(/\?\?\s*18\b/);
   });
 });

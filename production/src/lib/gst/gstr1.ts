@@ -66,6 +66,28 @@ export interface Seller { stateCode: string | null; state: string | null; gstin?
 
 export interface TaxHeads { igst: number; cgst: number; sgst: number }
 
+/** The GST slabs a document's rate is snapped to when it has to be derived. */
+export const GST_SLABS = [0, 5, 12, 18, 28] as const;
+
+/**
+ * R-1131: a document's GST rate. The stored rate wins. With none, the rate is the
+ * document's own tax ÷ taxable (signs ignored, so credit notes work), snapped to the
+ * nearest slab. With no tax figure to go on it is `rateMissing` (rate 0, flagged for
+ * the user) — never an assumed 18%, which put exempt / 0% notes in the 18% row.
+ */
+export function docGstRate(
+  stored: number | null | undefined,
+  taxable: number | null | undefined,
+  tax: number | null | undefined,
+): { rate: number; rateMissing: boolean } {
+  if (stored != null) return { rate: stored, rateMissing: false };
+  if (tax === 0) return { rate: 0, rateMissing: false };
+  if (tax == null || !taxable) return { rate: 0, rateMissing: true };
+  const pct = (Math.abs(tax) / Math.abs(taxable)) * 100;
+  const rate = GST_SLABS.reduce((best, s) => (Math.abs(s - pct) < Math.abs(best - pct) ? s : best), GST_SLABS[0] as number);
+  return { rate, rateMissing: false };
+}
+
 /** Inter-state → all IGST; intra-state → CGST + SGST via the shared rule in tax-split.ts
  *  (CGST = round(tax/2), SGST = tax − CGST — the same split the invoice PDF prints). */
 export function gstSplit(r: { gst: number; interState: boolean }): TaxHeads {
@@ -390,6 +412,8 @@ export interface Advance {
   /** GST-inclusive amount (₹). For 11B: the amount adjusted on the invoice. */
   gross: number;
   rate: number;
+  /** R-1131: the quote/invoice had no GST rate to use — `rate` is 0 and the page warns. */
+  rateMissing?: boolean;
   interState: boolean;
   customerGstin: string | null;
   customerStateCode: string | null;

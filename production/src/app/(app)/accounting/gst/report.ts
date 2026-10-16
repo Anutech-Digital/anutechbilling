@@ -9,7 +9,7 @@ import { expenseGstHeads } from "@/lib/accounting/gst-heads";
 import { gstPaidForPeriods } from "@/lib/accounting/tax-payments";
 import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { splitItc, itcEligibility } from "@/lib/gst/itc";
-import { docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
+import { docGstRate, docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
 import { expenseHeadsByState, type Heads } from "@/lib/gst/gstr3b";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -126,9 +126,15 @@ export function useGstReport(range: DateRange) {
         for (const it of items ?? []) hsnByItem.set(it.id, it.hsn ?? null);
       }
 
+      /* R-1131: an invoice's rate as filed — stored, else derived from its own tax ÷ taxable
+         (lib/gst/gstr1.ts docGstRate); kept so its 11B advance adjustment uses the same rate. */
+      const rateByInvoice = new Map<string, ReturnType<typeof docGstRate>>();
       const outputRows: OutputRow[] = (invoices ?? []).map((i) => {
         const amount       = i.amount ?? 0;
-        const taxRate      = i.tax_rate ?? 18;
+        const knownTax     = i.tax_amount ?? (i.taxable_value != null ? amount - i.taxable_value : null);
+        const r            = docGstRate(i.tax_rate, i.taxable_value ?? (knownTax != null ? amount - knownTax : null), knownTax);
+        rateByInvoice.set(i.id, r);
+        const taxRate      = r.rate;
         // Prefer the breakdown persisted at issue time (migration 0116); fall
         // back to reverse-deriving at the row's rate for any legacy invoice.
         const taxableValue = i.taxable_value ?? Math.round(amount * 100 / (100 + taxRate));
@@ -149,6 +155,7 @@ export function useGstReport(range: DateRange) {
           taxableValue,
           gst,
           taxRate,
+          rateMissing:   r.rateMissing,
           interState:    i.inter_state ?? false,
           docType:       "invoice",
           lines:         docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem),
@@ -158,13 +165,18 @@ export function useGstReport(range: DateRange) {
       // Notes as SIGNED output rows — credit note negative, debit note positive.
       const noteLines = (taxable: number, invoiceId: string | null | undefined) =>
         docHsnLines(taxable, invoiceId ? linesByInvoice.get(invoiceId) : null, hsnByItem);
+      // R-1131: a note with no stored rate takes the rate its own tax ÷ taxable shows — never 18.
+      const noteRate = (n: { tax_rate: number | null; taxable_value: number | null; tax_amount: number | null }) => {
+        const r = docGstRate(n.tax_rate, n.taxable_value, n.tax_amount);
+        return { taxRate: r.rate, rateMissing: r.rateMissing };
+      };
       for (const n of creditNotes ?? []) {
         const c = noteParty(n.invoice_id, custOf(n.customer_id));
         outputRows.push({
           invoiceId: n.id, invoiceDate: n.credit_date, customerName: n.customer_name ?? "—",
           customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           amount: -(n.amount ?? 0), taxableValue: -(n.taxable_value ?? 0), gst: -(n.tax_amount ?? 0),
-          taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "credit_note",
+          ...noteRate(n), interState: n.inter_state ?? false, docType: "credit_note",
           lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
           lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
         });
@@ -175,7 +187,7 @@ export function useGstReport(range: DateRange) {
           invoiceId: n.id, invoiceDate: n.debit_date, customerName: n.customer_name ?? "—",
           customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           amount: n.amount ?? 0, taxableValue: n.taxable_value ?? 0, gst: n.tax_amount ?? 0,
-          taxRate: n.tax_rate ?? 18, interState: n.inter_state ?? false, docType: "debit_note",
+          ...noteRate(n), interState: n.inter_state ?? false, docType: "debit_note",
           lines: noteLines(n.taxable_value ?? 0, n.invoice_id),
         });
       }
@@ -192,7 +204,8 @@ export function useGstReport(range: DateRange) {
           paymentId: p.id, voucherNo: p.receipt_voucher_no ?? null,
           receivedDate: toIstDate(p.received_at),
           adjustedOn: q?.invoiceId ? invDateById.get(q.invoiceId) ?? null : null,
-          gross: p.amount ?? 0, rate: q?.rate ?? 18,
+          /* R-1131: the quote's own rate; a quote with none is flagged, not taxed at 18%. */
+          gross: p.amount ?? 0, rate: q?.rate ?? 0, rateMissing: q?.rate == null,
           interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin }),
           customerGstin: c?.gstin ?? null, customerStateCode: c?.stateCode ?? null, customerState: c?.state ?? null, customerCountry: c?.country ?? null,
         });
@@ -205,7 +218,8 @@ export function useGstReport(range: DateRange) {
           if (receivedDate >= range.from) continue;   // same-period advance: already neither 11A nor 11B
           advances.push({
             paymentId: a.payment_id, voucherNo: a.voucher_no ?? null, receivedDate, adjustedOn: i.invoice_date,
-            gross: a.amount ?? 0, rate: i.tax_rate ?? 18, interState: i.inter_state ?? false,
+            gross: a.amount ?? 0, rate: rateByInvoice.get(i.id)?.rate ?? 0, rateMissing: rateByInvoice.get(i.id)?.rateMissing ?? true,
+            interState: i.inter_state ?? false,
             customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           });
         }
@@ -325,7 +339,10 @@ export function useGstReport(range: DateRange) {
 
       const lateCreditNotes = outputRows.filter((r) => r.lateCreditNote).length;
 
-      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes };
+      // R-1131: documents/advances whose GST rate could not be stored or derived.
+      const rateMissingDocs = outputRows.filter((r) => r.rateMissing).length + advances.filter((a) => a.rateMissing).length;
+
+      return { outputRows, inputRows, outputTotal, outputGST, inputTotal, inputGST, blockedItc, blocked17Heads, rcmRows, sellerStateCode, sellerState, sellerGstin, advances, lateCreditNotes, rateMissingDocs };
     },
   });
 }
