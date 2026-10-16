@@ -16,6 +16,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { listProvisioningQueue } from "@/lib/provisioning/provisioning.server";
+import { isRouteAllowed, type UserRole } from "@/lib/nav";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,12 +30,22 @@ export async function GET() {
 
   const { data } = await supabase
     .from("users")
-    .select("tenant_id")
+    .select("tenant_id, role")
     .eq("id", auth.user.id)
     .single();
-  const tenantId = (data as { tenant_id?: string | null } | null)?.tenant_id;
+  const me = data as { tenant_id?: string | null; role?: UserRole | null } | null;
+  const tenantId = me?.tenant_id;
   if (!tenantId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  /* R-1440: the read below uses the service-role client, so RLS does not narrow it — this is
+     the only role gate. Same rule as the page: the roles whose menu has the Activation Queue
+     (nav.ts), so the two cannot drift apart. */
+  if (!me?.role || !isRouteAllowed(me.role, "/provisioning")) {
+    return NextResponse.json(
+      { error: "The Activation Queue is for owner, manager, support and delivery — ask your workspace owner." },
+      { status: 403 },
+    );
   }
 
   const rows = await listProvisioningQueue(tenantId);

@@ -90,6 +90,14 @@ const PROTECTED_PREFIXES = [
      it "logged in as the owner", so it always had a session. */
   "/vault",
   "/attendance",
+  /* R-1440 (16 Oct 2026): menu pages that were never added here, so the role guard below
+     never ran on them — a Sales user opened Referrals and the Activation Queue by URL.
+     middleware.role-gate.test.ts now walks every APP_NAV page for every role. */
+  "/referrals",
+  "/provisioning",
+  "/documents",
+  "/hosting-domains",
+  "/my-expenses",
   /* Onboarding fork for a signed-in person who has no workspace yet. It is
      PROTECTED (you must be authenticated to see it) but deliberately NOT in
      AUTH_PREFIXES below — those bounce a signed-in user to their role home,
