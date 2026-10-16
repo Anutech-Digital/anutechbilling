@@ -24,8 +24,11 @@ import { hostingSans as manrope, hostingSerif as serif, hostingMono as mono } fr
 import { useCart } from "@/site/components/cart/CartProvider";
 import { isTrialPlan, TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { rupee } from "@/site/lib/money";
 import {
   HOSTING_TIERS,
+  hostingCardPrices,
+  hostingCharge,
   REC_WHY,
   HOSTING_MATRIX,
   HOSTING_TIMELINE,
@@ -52,11 +55,9 @@ const C = {
 const MONO = "var(--hf-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--hf-serif), 'Instrument Serif', serif";
 
-const inr = (n: number) => {
-  const r = Math.round(n * 100) / 100;
-  return "₹" + r.toLocaleString("en-IN", { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
-};
-const gst = (n: number) => inr(n * 1.18);
+/* R-1465: whole rupees through one site formatter (99.98 / 374.40 rupees read as
+   auto-calculated). Billed and pay-today figures come from hostingCardPrices — the numbers
+   checkout charges, not a re-computation with paise. */
 
 export function HostingLanding() {
   const [billing, setBilling] = useState<"Monthly" | "Yearly">("Yearly");
@@ -96,15 +97,15 @@ export function HostingLanding() {
   const plans = HOSTING_TIERS.map((p) => {
     const isRec = p.name === rec;
     const isTop = isRec || (!rec && p.isPopular);
-    const total = yearly ? p.yearlyTotal : p.monthly;
+    const shown = hostingCardPrices(p, yearly);
     return {
       ...p,
       badge: isRec ? "BEST FIT" : (!rec && p.isPopular ? "MOST CHOSEN" : null),
       isTop,
-      priceLabel: inr(yearly ? p.yearlyMo : p.monthly),
-      billingLine: yearly ? `Billed annually · ${inr(p.yearlyTotal)} + GST` : `Billed monthly · ${inr(p.monthly)} + GST`,
-      renewLine: `${inr(yearly ? p.yearlyMo : p.monthly)}/mo — the same price, not a first-year rate`,
-      payToday: `Pay today ${gst(total)} incl. 18% GST`,
+      priceLabel: shown.perMonth,
+      billingLine: `Billed ${yearly ? "annually" : "monthly"} · ${shown.billed} + GST`,
+      renewLine: `${shown.perMonth}/mo — the same price, not a first-year rate`,
+      payToday: `Pay today ${shown.payToday} incl. 18% GST`,
     };
   });
   /* One add-to-cart for both card layouts (trial plan: secondary button; others:
@@ -132,10 +133,12 @@ export function HostingLanding() {
   const anchor = plans.find((p) => p.badge) ?? plans[1];
   const anchorBase = HOSTING_TIERS.find((t) => t.name === anchor.name)!;
 
+  /* Three years incl. GST, as the payments checkout takes: 3 yearly or 36 monthly. */
   const costRows = HOSTING_TIERS.map((p) => {
-    const y = p.yearlyTotal * 3, m = p.monthly * 36;
-    return { name: p.name, yearly: gst(y), monthly: gst(m), save: gst(m - y) };
+    const y = hostingCharge(p, true).inclGst * 3, m = hostingCharge(p, false).inclGst * 36;
+    return { name: p.name, yearly: rupee(y), monthly: rupee(m), save: rupee(m - y) };
   });
+  const anchorShown = hostingCardPrices(anchorBase, yearly);
 
   // Shared style fragments
   const eyebrow = (color = C.accent): React.CSSProperties => ({ fontFamily: MONO, fontSize: 12, letterSpacing: ".1em", color, fontWeight: 700 });
@@ -207,9 +210,9 @@ export function HostingLanding() {
             </div>
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {[
-                ["Billed", yearly ? `${inr(anchorBase.yearlyTotal)} + GST once a year` : `${inr(anchorBase.monthly)} + GST every month`],
-                ["You pay today", `${gst(yearly ? anchorBase.yearlyTotal : anchorBase.monthly)} incl. GST`],
-                ["Renews at", `${inr(yearly ? anchorBase.yearlyMo : anchorBase.monthly)}/mo — same price`],
+                ["Billed", `${anchorShown.billed} + GST ${yearly ? "once a year" : "every month"}`],
+                ["You pay today", `${anchorShown.payToday} incl. GST`],
+                ["Renews at", `${anchorShown.perMonth}/mo — same price`],
               ].map(([k, v], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14.5, paddingBottom: 10, borderBottom: `1px dashed ${C.line}` }}><span style={{ color: C.muted }}>{k}</span><span style={{ fontWeight: 700, textAlign: "right" }}>{v}</span></div>
               ))}

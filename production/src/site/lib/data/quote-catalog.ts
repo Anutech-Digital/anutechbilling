@@ -8,8 +8,9 @@
  *
  * R-224 (7 Oct 2026): hosting used to come from the old HOSTING_PLANS placeholder
  * (Starter ₹159/199, Business ₹359 and a ₹799 third plan — ~3× /hosting, one that does
- * not exist). Hosting rates are paise-precise (₹49.99), so `quoteInr` prints them the
- * way /rates does. `monthly: null` = no flexible tier (a live GW edition can be annual
+ * not exist). R-1465 (16 Oct 2026): the catalogue rate keeps its paise (₹49.99) but the
+ * site never prints them — `quoteInr` is the site's one whole-rupee formatter, and a line's
+ * amount is rounded to whole rupees the way checkout charges it. `monthly: null` = no flexible tier (a live GW edition can be annual
  * only) — the builder must not quote it under "Flexible monthly".
  *
  * `annual` / `monthly` are ₹ per `per`-unit per period. Domain / SSL / onsite
@@ -21,6 +22,7 @@ import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
 import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
 import { SLA } from "../config";
+import { rupee } from "../money";
 import type { MergedEdition } from "../live-catalog";
 
 export interface QuoteProduct {
@@ -126,8 +128,14 @@ export function quoteRate(p: QuoteProduct, term: "annual" | "monthly"): number |
   return term === "annual" ? p.annual : p.monthly;
 }
 
-/** ₹ the way /rates prints it: whole rupees plain, paise to 2 places (₹49.99, ₹1,080). */
-export function quoteInr(n: number): string {
-  const r = Math.round(n * 100) / 100;
-  return "₹" + (Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+/** ₹ the way every site page prints it (R-1465): whole rupees (₹50, ₹1,080), never paise. */
+export const quoteInr: (n: number) => string = rupee;
+
+/**
+ * One quote line's amount, whole rupees — rate × qty × months rounded once, as checkout
+ * charges a hosting line (Math.round of the cycle total, lib/checkout/hosting-prices.ts).
+ * Display only: /quote sends an enquiry, never an amount; the team prices the real quotation.
+ */
+export function quoteLineAmount(rate: number, qty: number, months: number): number {
+  return Math.round(rate * qty * months);
 }

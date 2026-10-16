@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { HostingLanding } from "@/site/components/hosting/HostingLanding";
-import { HOSTING_TIERS, HOSTING_FAQS_V2 } from "@/site/lib/data/hosting-landing-v2";
+import { HOSTING_TIERS, HOSTING_FAQS_V2, HOSTING_FROM_MO, hostingCharge } from "@/site/lib/data/hosting-landing-v2";
+import { rupee } from "@/site/lib/money";
 
 /**
  * /hosting — the conversion-focused hosting landing page (redesign, 2 Sep 2026).
@@ -28,7 +29,7 @@ const PAGE_URL = `${SITE_URL}/hosting`;
 export const metadata: Metadata = {
   title: "Web hosting on Google Cloud — 15-day free trial, no credit card | Anutech Digital",
   description:
-    "cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ₹49.99/mo. Start a 15-day free trial — no credit card, GST invoice on every order.",
+    `cPanel web hosting on Google Cloud from Anutech Digital. Free SSL, daily backups, free migration and real-person support. Plans from ${HOSTING_FROM_MO}/mo. Start a 15-day free trial — no credit card, GST invoice on every order.`,
   keywords: [
     "web hosting India", "cPanel hosting", "Google Cloud hosting", "free website migration",
     "WordPress hosting India", "GST invoice hosting", "15-day free trial hosting", "Anutech Digital",
@@ -41,7 +42,7 @@ export const metadata: Metadata = {
     siteName: "Anutech Digital",
     title: "Web hosting on Google Cloud — 15-day free trial, no credit card",
     description:
-      "cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ₹49.99/mo. 15-day free trial, no credit card.",
+      `cPanel web hosting on Google Cloud. Free SSL, daily backups, free migration, real-person support. Plans from ${HOSTING_FROM_MO}/mo. 15-day free trial, no credit card.`,
   },
   twitter: {
     card: "summary_large_image",
@@ -66,7 +67,8 @@ function structuredData() {
     makesOffer: "Web hosting, domain registration and Google Workspace for Indian businesses",
   };
 
-  const prices = HOSTING_TIERS.map((t) => t.yearlyTotal);
+  /* R-1465: the whole-rupee yearly figure checkout charges (₹600), not ₹599.88. */
+  const prices = HOSTING_TIERS.map((t) => hostingCharge(t, true).exGst);
   const product = {
     "@type": "Product",
     name: "Web hosting on Google Cloud",
@@ -84,8 +86,8 @@ function structuredData() {
         "@type": "Offer",
         name: `${t.name} hosting (billed yearly)`,
         priceCurrency: "INR",
-        price: t.yearlyTotal,
-        description: `${t.storage} NVMe SSD storage, ${t.bandwidth} bandwidth, ${t.sites === "1" ? "1 website" : "multiple websites"}. Renews at ${t.yearlyMo}/mo — the same price.`,
+        price: hostingCharge(t, true).exGst,
+        description: `${t.storage} NVMe SSD storage, ${t.bandwidth} bandwidth, ${t.sites === "1" ? "1 website" : "multiple websites"}. Renews at ${rupee(t.yearlyMo)}/mo — the same price.`,
         availability: "https://schema.org/InStock",
         url: PAGE_URL,
       })),

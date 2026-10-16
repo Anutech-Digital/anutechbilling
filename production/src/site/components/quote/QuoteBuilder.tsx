@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -26,7 +26,8 @@ import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 import { gstBreakup } from "@/lib/quotes/amounts";
 
-/* R-224: hosting rates carry paise (₹49.99) — print them exactly as /rates does, not rounded. */
+/* R-1465: whole rupees, as every site page prints them (₹50, not ₹49.99). Line amounts are
+   rounded once per line (quoteLineAmount), so the summary never mixes ₹599.88 with ₹600. */
 const inr = quoteInr;
 const P = "var(--primary)";
 
@@ -95,7 +96,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     return quoteRate(p, term) ?? p.annual;
   };
   const annualOnly = (p: QuoteProduct) => p.monthly === null;
-  const amountOf = (p: QuoteProduct, qty: number): number => (p.cycle === "mo" ? rateOf(p) * qty * (annual ? 12 : 1) : rateOf(p) * qty);
+  const amountOf = (p: QuoteProduct, qty: number): number => quoteLineAmount(rateOf(p), qty, p.cycle === "mo" && annual ? 12 : 1);
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
   const subtotal = selected.reduce((n, p) => n + amountOf(p, lines[p.name]), 0);
@@ -103,7 +104,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
      and GST back-solved from the rounded total (₹3,839.88 used to show GST ₹691.12 while the
      tax invoice charges ₹691.18). Same helper as the invoice side (lib/quotes/amounts.ts). */
   const { gst, total: payable } = gstBreakup(subtotal);
-  const renewal = gstBreakup(selected.reduce((n, p) => n + (p.cycle === "mo" ? rateOf(p) * lines[p.name] * 12 : rateOf(p) * lines[p.name]), 0)).total;
+  const renewal = gstBreakup(selected.reduce((n, p) => n + quoteLineAmount(rateOf(p), lines[p.name], p.cycle === "mo" ? 12 : 1), 0)).total;
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
   const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length

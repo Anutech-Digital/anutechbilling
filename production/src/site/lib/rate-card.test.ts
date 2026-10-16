@@ -21,11 +21,11 @@ describe("rate card (R-075) — the same numbers the product pages show", () => 
     expect(com.cells).toEqual([`₹${src.reg.toLocaleString("en-IN")}`, `₹${src.renew.toLocaleString("en-IN")}`, `₹${src.transfer.toLocaleString("en-IN")}`]);
   });
 
-  it("hosting rows are HOSTING_TIERS — the /hosting prices, paise kept", () => {
+  it("hosting rows are HOSTING_TIERS — the /hosting prices, whole rupees (R-1465)", () => {
     const h = section("hosting");
     expect(h.rows.map((r) => r.name)).toEqual(HOSTING_TIERS.map((t) => t.name));
     const first = HOSTING_TIERS[0];
-    expect(h.rows[0].cells[1]).toBe(`₹${Number.isInteger(first.yearlyMo) ? first.yearlyMo : first.yearlyMo.toFixed(2)}`);
+    expect(h.rows[0].cells[1]).toBe(`₹${Math.round(first.yearlyMo).toLocaleString("en-IN")}`);
   });
 
   it("email starts with Anutech Mail, then the editions /email shows", () => {
