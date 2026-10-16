@@ -16,6 +16,8 @@ import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel } from "./notification-panel";
 import { useNotifications } from "@/lib/queries/notifications";
 import { QuickActionsPanel } from "./quick-actions-panel";
+import { TopBarBreadcrumb } from "./topbar-breadcrumb";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { getCrumb, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
 import { useTaskCountDueOrOverdue } from "@/lib/queries/tasks";
@@ -34,6 +36,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   // Record a login once per browser session (fire-and-forget) for the activity log.
   React.useEffect(() => { void logLoginOnce(); }, []);
   const crumb = crumbOverride ?? getCrumb(pathname);
+  const { data: me } = useCurrentUser();
   // On phones the breadcrumb is hidden (no room), so detail/sub pages (≥2 path
   // segments, e.g. /quotes/Q-123 or /customers/abc/edit) get a Back chevron so
   // users aren't stranded relying on the OS back gesture.
@@ -103,14 +106,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           gets every free pixel instead of sharing them with an empty div — at 800px it read
           "Boo… > Compliance Calen…". */}
       <nav aria-label="Breadcrumb" className="hidden md:flex flex-1 min-w-0 items-center gap-1.5 text-xs text-ink-3 overflow-hidden">
-        {crumb.map((c, i) => (
-          <React.Fragment key={c}>
-            {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4 flex-shrink-0" />}
-            <span className={i === crumb.length - 1 ? "font-semibold text-ink truncate" : "truncate"}>
-              {c}
-            </span>
-          </React.Fragment>
-        ))}
+        {/* R-1409: parent crumbs are links (role-checked), the last is aria-current text. */}
+        <TopBarBreadcrumb pathname={pathname} crumb={crumb} role={me?.role} />
       </nav>
 
 
