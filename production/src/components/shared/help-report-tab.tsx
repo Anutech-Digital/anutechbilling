@@ -206,8 +206,8 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
           />
         </div>
 
-        {/* R-1417: this company's open reports that look like the same problem. */}
-        <HelpReportMatches text={text} tenantId={currentUser?.tenantId ?? null} />
+        {/* R-1417: this company's open reports that look like the same problem; R-1466: +1 on them. */}
+        <HelpReportMatches text={text} tenantId={currentUser?.tenantId ?? null} userId={currentUser?.userId ?? null} />
 
         {shots.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label={`${shots.length} screenshot(s) attached`}>

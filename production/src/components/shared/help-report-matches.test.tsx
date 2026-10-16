@@ -6,7 +6,8 @@
  *  • a failed read says so, and says the report can still be submitted.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import * as React from "react";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({ calls: [] as [string, ...unknown[]][], rows: [] as unknown[], error: null as unknown }));
 vi.mock("@/lib/supabase/client", () => ({
@@ -88,5 +89,84 @@ describe("HelpReportMatches", () => {
     await flush();
     await act(async () => { vi.advanceTimersByTime(MATCH_DEBOUNCE_MS); });
     expect(screen.getByRole("status").textContent).toMatch(/Could not check for similar reports.*still submit/);
+  });
+});
+
+describe("HelpReportMatches — '+1 / I have this too' (R-1466)", () => {
+  async function shown(props: Partial<React.ComponentProps<typeof HelpReportMatches>> = {}) {
+    const load = vi.fn(async () => rows);
+    const loadVotes = vi.fn(async () => [
+      { feedback_id: "a", user_id: "u2" },
+      { feedback_id: "c", user_id: "u1" },
+      { feedback_id: "c", user_id: "u3" },
+    ]);
+    const saveVote = vi.fn(async () => undefined);
+    render(<HelpReportMatches text="invoice pdf download is broken" tenantId="t1" userId="u1"
+      load={load} loadVotes={loadVotes} saveVote={saveVote} {...props} />);
+    await flush();
+    await act(async () => { vi.advanceTimersByTime(MATCH_DEBOUNCE_MS); });
+    await flush();
+    return { loadVotes, saveVote };
+  }
+  const voteButtons = () => screen.getAllByRole("button", { name: /I have this too/ });
+
+  it("each matching report has a +1 button with its count; my own vote shows as pressed", async () => {
+    const { loadVotes } = await shown();
+    expect(loadVotes).toHaveBeenCalledWith("t1", ["c", "a"]);
+    const buttons = voteButtons();
+    expect(buttons).toHaveLength(2);
+    // c = "PDF download blank for invoice" (first match): 2 votes, one of them mine
+    expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
+    expect(buttons[0].textContent).toContain("2");
+    expect(buttons[1].getAttribute("aria-pressed")).toBe("false");
+    expect(buttons[1].textContent).toContain("1");
+    expect(buttons[0].tagName).toBe("BUTTON"); // keyboard reachable
+    expect(buttons[0].getAttribute("type")).toBe("button"); // never submits the report form
+  });
+
+  it("pressing +1 adds my vote (count up); pressing again takes it back (count down)", async () => {
+    const { saveVote } = await shown();
+    await act(async () => { fireEvent.click(voteButtons()[1]); });
+    expect(saveVote).toHaveBeenLastCalledWith({ tenantId: "t1", userId: "u1", feedbackId: "a", on: true });
+    expect(voteButtons()[1].getAttribute("aria-pressed")).toBe("true");
+    expect(voteButtons()[1].textContent).toContain("2");
+
+    await act(async () => { fireEvent.click(voteButtons()[1]); });
+    expect(saveVote).toHaveBeenLastCalledWith({ tenantId: "t1", userId: "u1", feedbackId: "a", on: false });
+    expect(voteButtons()[1].getAttribute("aria-pressed")).toBe("false");
+    expect(voteButtons()[1].textContent).toContain("1");
+  });
+
+  it("a failed save puts the count back and says what happened and what to do, with a retry", async () => {
+    const saveVote = vi.fn(async (): Promise<void> => { throw new Error("network"); });
+    await shown({ saveVote });
+    await act(async () => { fireEvent.click(voteButtons()[1]); });
+    await flush();
+    expect(voteButtons()[1].getAttribute("aria-pressed")).toBe("false");
+    expect(voteButtons()[1].textContent).toContain("1");
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toMatch(/not saved/i);
+    expect(alert.textContent).toMatch(/try again/i);
+
+    saveVote.mockImplementation(async () => undefined);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /try again/i })); });
+    await flush();
+    expect(saveVote).toHaveBeenCalledTimes(2);
+    expect(voteButtons()[1].getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("without a signed-in user id there is no +1 button (nothing to vote as)", async () => {
+    await shown({ userId: null });
+    expect(screen.queryAllByRole("button", { name: /I have this too/ })).toHaveLength(0);
+    expect(screen.getByTestId("help-report-matches")).toBeTruthy();
+  });
+
+  it("a failed vote read still lists the reports; buttons start at zero", async () => {
+    await shown({ loadVotes: vi.fn(async () => { throw new Error("no table yet"); }) });
+    const buttons = voteButtons();
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].getAttribute("aria-pressed")).toBe("false");
+    expect(buttons[0].textContent).toContain("0");
   });
 });
