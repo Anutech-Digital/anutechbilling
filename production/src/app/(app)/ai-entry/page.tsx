@@ -31,10 +31,13 @@ export default function AiEntryPage() {
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<{ entries: ProposalWithMatches[]; notes: AiLawNote[]; mode: string } | null>(null);
   const [gone, setGone] = React.useState<Set<number>>(new Set());
+  // R-1423: an empty press is not an error — show a plain hint by the box and put the cursor there.
+  const [emptyHint, setEmptyHint] = React.useState(false);
+  const boxRef = React.useRef<HTMLTextAreaElement>(null);
   const today = istToday();
 
   const read = async () => {
-    if (!text.trim() && !file) { toast.error("Nothing to read yet", { description: "Paste a chat, note or email in the box, or add a photo / PDF, then press Read it." }); return; }
+    if (!text.trim() && !file) { setEmptyHint(true); boxRef.current?.focus(); return; }
     if (file && file.size > MAX_FILE) { toast.error("That file is over 6 MB", { description: "Take a smaller photo, or save just the page you need as a PDF, and add it again." }); return; }
     setBusy(true);
     setResult(null);
@@ -77,18 +80,25 @@ export default function AiEntryPage() {
 
       <div className="rounded-lg border border-hairline bg-paper p-4 space-y-3">
         <Textarea
+          ref={boxRef}
           aria-label="What to enter"
+          aria-describedby={emptyHint ? "ai-entry-empty-hint" : undefined}
           rows={5}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); setEmptyHint(false); }}
           placeholder="e.g. Sharma ji ka call aaya, 15 seat chahiye, kal call karna — 98765 43210"
           onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") read(); }}
         />
+        {emptyHint && (
+          <p id="ai-entry-empty-hint" role="status" className="text-xs text-ink-2">
+            Paste or type something first — e.g. a WhatsApp chat, an email or a note — or add a photo / PDF below.
+          </p>
+        )}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <label className="inline-flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
             <Icon name="upload" size={14} />
             <span>{file ? file.name : "Add photo / PDF"}</span>
-            <input type="file" accept="image/*,application/pdf" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept="image/*,application/pdf" className="sr-only" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setEmptyHint(false); }} />
             {file && <button type="button" onClick={(e) => { e.preventDefault(); setFile(null); }} className="text-2xs text-ink-3 hover:text-ink">remove</button>}
           </label>
           <Button variant="primary" icon="sparkles" onClick={read} loading={busy}>Read it</Button>
@@ -97,7 +107,7 @@ export default function AiEntryPage() {
           <div className="flex flex-wrap gap-1.5 pt-1">
             <span className="text-2xs text-ink-3">Try:</span>
             {EXAMPLES.map((x) => (
-              <button key={x} type="button" onClick={() => setText(x)} className="rounded-full border border-hairline px-2.5 py-0.5 text-2xs text-ink-2 hover:bg-paper-2 text-left">
+              <button key={x} type="button" onClick={() => { setText(x); setEmptyHint(false); }} className="rounded-full border border-hairline px-2.5 py-0.5 text-2xs text-ink-2 hover:bg-paper-2 text-left">
                 {x.length > 60 ? x.slice(0, 58) + "…" : x}
               </button>
             ))}
