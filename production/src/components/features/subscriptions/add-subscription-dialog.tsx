@@ -1120,7 +1120,11 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[640px] p-0 max-h-[92vh] flex flex-col overflow-hidden shadow-2xl z-50">
+      {/* R-1448: big by default on desktop. The old `sm:max-w-[640px]` never applied —
+          DialogContent's `md:!max-w-xl` (576px) won — so this long form opened squeezed and
+          cut off. Now: up to max-w-4xl wide and 90vh tall on md+, the form scrolls inside
+          only when it must. Phone keeps DialogContent's bottom sheet. */}
+      <DialogContent className="p-0 md:!p-0 max-h-[90vh] md:!w-full md:!max-w-4xl md:!h-[90vh] flex flex-col overflow-hidden shadow-2xl z-50">
         <DialogHeader className="p-6 pb-4 border-b border-hairline bg-paper/95 backdrop-blur-xs sticky top-0 z-10 flex-shrink-0">
           <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-wider mb-1">
             <Icon name="sparkles" size={16} />
