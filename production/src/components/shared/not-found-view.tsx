@@ -7,11 +7,16 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import type { HostBrand } from "@/site/lib/host-brand";
 
-export function NotFoundView({ inApp = false }: { inApp?: boolean }) {
+/** R-1458: `brand` (root 404 only) — on anutech.in the screen wears Anutech Digital and
+ *  leads back to the site; without it, or on any other host, it is unchanged. */
+export function NotFoundView({ inApp = false, brand }: { inApp?: boolean; brand?: HostBrand }) {
+  const company = !inApp && brand?.site === "company" ? brand : null;
   return (
     <div className={inApp ? "flex min-h-[60vh] items-center justify-center p-6" : "flex min-h-screen items-center justify-center bg-paper p-6"}>
       <div className="w-full max-w-md text-center">
+        {company && <p className="mb-6 text-sm font-semibold text-ink">{company.name}</p>}
         <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft text-amber-ink">
           <Icon name="search" size={22} />
         </div>
@@ -21,13 +26,21 @@ export function NotFoundView({ inApp = false }: { inApp?: boolean }) {
           It may be an old or mistyped link, or the record was deleted. Nothing is lost on your side.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
-          <Button asChild variant="primary" icon="home">
-            <Link href="/dashboard">Go to dashboard</Link>
-          </Button>
-          {!inApp && (
-            <Button asChild variant="outline">
-              <Link href="/">Home page</Link>
+          {company?.back ? (
+            <Button asChild variant="primary" icon="home">
+              <Link href={company.back.href}>{company.back.label}</Link>
             </Button>
+          ) : (
+            <>
+              <Button asChild variant="primary" icon="home">
+                <Link href="/dashboard">Go to dashboard</Link>
+              </Button>
+              {!inApp && (
+                <Button asChild variant="outline">
+                  <Link href="/">Home page</Link>
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
