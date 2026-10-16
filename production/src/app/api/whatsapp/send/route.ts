@@ -18,7 +18,7 @@
  *   with a clear error code (we surface the message).
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { withRoute } from "@/lib/api/with-route";
