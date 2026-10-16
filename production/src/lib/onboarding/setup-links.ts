@@ -7,6 +7,8 @@
  */
 export const SETUP_HREF = {
   company: "/settings?tab=company",
+  /** R-1428: the Registered state select itself (id in settings/page.tsx CompanyTab). */
+  companyState: "/settings?tab=company#settings-registered-state",
   series:  "/settings?tab=company#invoice-numbering",
   payout:  "/settings?tab=company#payment-details",
   email:   "/settings?tab=integrations#email-sending",
@@ -37,6 +39,34 @@ export const COMPANY_STATE_FIX = {
   message: "Your company's state is not set",
   description: "GST needs it to choose CGST + SGST or IGST. Set it once in Settings → Company — nothing on this quote is lost.",
 } as const;
+
+export type CompanyStateFix = {
+  title: string;
+  description: string;
+  action: { label: string; href: string };
+};
+
+/**
+ * R-1428 (Pawan, staging): sending a quote (WhatsApp / email) stopped at "Company state not
+ * set" — the refusal is right (GST place of supply needs it), the dead end was not. Only the
+ * owner can save Settings → Company; anyone else sees it view-only, so they get "ask the
+ * owner" and a link to look, never a "Set" button that cannot set anything.
+ */
+export function companyStateFixFor(role: string | null | undefined): CompanyStateFix {
+  const why = "The quote was not sent — nothing on it is lost. GST place of supply needs your company's state to choose CGST + SGST or IGST.";
+  if (role === "owner") {
+    return {
+      title: COMPANY_STATE_FIX.message,
+      description: `${why} Set it once in Settings → Company, then send again.`,
+      action: { label: COMPANY_STATE_FIX.label, href: SETUP_HREF.companyState },
+    };
+  }
+  return {
+    title: COMPANY_STATE_FIX.message,
+    description: `${why} Only the owner can set it — ask the owner to set the company state in Settings → Company, then send again.`,
+    action: { label: "View company settings", href: SETUP_HREF.company },
+  };
+}
 
 /** True when a thrown error is generate_invoice refusing for a missing company state. */
 export function isCompanyStateMissingError(err: unknown): boolean {

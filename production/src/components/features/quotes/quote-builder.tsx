@@ -30,7 +30,7 @@ import {
   sendQuoteEmail, quoteRecipient, saveAndSendPlan, saveAndSendLabel,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
 } from "@/lib/quotes/send-quote-email";
-import { NUMBERING_FIX, COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
+import { NUMBERING_FIX, COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
 
 /* A fixed, written sentence — not a raw error — so the R-300 toast guard can tell them apart. */
 const COMPANY_STATE_FIX_TITLE = COMPANY_STATE_FIX.message;
@@ -1232,10 +1232,13 @@ export function QuoteBuilder() {
        quote went out "✓ Intra-state" and was paid against, then the invoice came out IGST.
        A draft may wait; anything that reaches the customer may not. */
     if (status === "sent" && sellerStateMissing) {
+      /* R-1428: owner → button to the Registered state field; anyone else → "ask the owner"
+         (Settings → Company is view-only for them). */
+      const fix = companyStateFixFor(currentUser?.role);
       toast.error(COMPANY_STATE_FIX_TITLE, {
-        description: `${COMPANY_STATE_FIX.description} You can still save this as a draft.`,
+        description: `${fix.description} You can still save this as a draft.`,
         duration: 15000,
-        action: { label: COMPANY_STATE_FIX.label, onClick: () => router.push(COMPANY_STATE_FIX.href as never) },
+        action: { label: fix.action.label, onClick: () => router.push(fix.action.href as never) },
       });
       return;
     }
@@ -3246,14 +3249,19 @@ function LineSupportToggle({ line, catalog, lineItems, onAdd }: {
  * Inline (span) so it sits inside the existing status <p> lines.
  */
 function CompanyStateFix() {
+  /* R-1428: only the owner can set it — others are told to ask the owner. */
+  const { data: me } = useCurrentUser();
+  const isOwner = me?.role === "owner";
+  const fix = companyStateFixFor(me?.role);
   return (
     <span className="text-amber-ink" role="alert">
-      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.{" "}
+      ⚠ {COMPANY_STATE_FIX.message} — GST can&apos;t choose CGST + SGST or IGST yet, so this quote can&apos;t be sent.
+      {isOwner ? " " : " Ask the owner to set it. "}
       <Link
-        href={COMPANY_STATE_FIX.href as never}
+        href={fix.action.href as never}
         className="font-semibold underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/40 rounded-sm"
       >
-        {COMPANY_STATE_FIX.label} →
+        {fix.action.label} →
       </Link>
     </span>
   );
