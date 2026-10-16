@@ -300,13 +300,20 @@ function LoginPageInner() {
       </p>
 
       {/* This page is also the site's "Client login", so a customer of Anutech Digital lands
-          here too: the documents they bought under are one click away (30 Sep 2026). */}
+          here too: the documents they bought under are one click away (30 Sep 2026).
+          R-1457: both sets, each named by whose document it is — the software's own pair and
+          the pair for buying from Anutech Digital are different documents, not duplicates. */}
       <p className="mt-3 text-center text-xs text-ink-3">
-        <Link href={"/terms-and-conditions" as never} className="hover:text-ink hover:underline">Terms and conditions</Link>
+        <Link href={"/terms" as never} className="hover:text-ink hover:underline">ResellerOS terms of service</Link>
+        {" · "}
+        <Link href={"/privacy" as never} className="hover:text-ink hover:underline">ResellerOS privacy policy</Link>
+      </p>
+      <p className="mt-1 text-center text-xs text-ink-3">
+        <Link href={"/terms-and-conditions" as never} className="hover:text-ink hover:underline">Anutech Digital terms and conditions</Link>
         {" · "}
         <Link href={"/refund" as never} className="hover:text-ink hover:underline">Refund policy</Link>
         {" · "}
-        <Link href={"/privacy-policy" as never} className="hover:text-ink hover:underline">Privacy policy</Link>
+        <Link href={"/privacy-policy" as never} className="hover:text-ink hover:underline">Anutech Digital privacy policy</Link>
       </p>
     </Card>
   );

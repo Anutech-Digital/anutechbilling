@@ -84,9 +84,9 @@ export function PublicFooter() {
           {/* Two sets of documents (30 Sep 2026): /terms and /privacy are this software's own;
               the terms, refund and privacy policies for BUYING from Anutech Digital are separate. */}
           <Link href={"/terms" as never}   className="hover:text-ink">ResellerOS terms</Link>
-          <Link href={"/terms-and-conditions" as never} className="hover:text-ink">Terms and conditions</Link>
+          <Link href={"/terms-and-conditions" as never} className="hover:text-ink">Anutech Digital terms</Link>
           <Link href={"/refund" as never}  className="hover:text-ink">Refund policy</Link>
-          <Link href={"/privacy-policy" as never} className="hover:text-ink">Privacy policy</Link>
+          <Link href={"/privacy-policy" as never} className="hover:text-ink">Anutech Digital privacy</Link>
           <Link href={"/about" as never}   className="hover:text-ink">About</Link>
           <a href="mailto:hello@resellersos.in" className="hover:text-ink">Contact</a>
         </nav>

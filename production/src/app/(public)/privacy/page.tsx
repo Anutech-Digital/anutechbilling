@@ -20,7 +20,7 @@ import {
 import { PLATFORM_OPERATOR } from "@/lib/platform";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — ResellerOS",
+  title: { absolute: "ResellerOS privacy policy" },
   description: "How ResellerOS collects, uses, and protects your data. DPDP Act 2023 compliant.",
 };
 
@@ -33,7 +33,7 @@ const LAST_UPDATED = "26 Aug 2026";
 
 export default function PrivacyPage() {
   return (
-    <PublicShell title="Privacy Policy" subtitle={`Last updated: ${LAST_UPDATED}`}>
+    <PublicShell title="ResellerOS privacy policy" subtitle={`Last updated: ${LAST_UPDATED}`}>
       <Intro>
         {PLATFORM_OPERATOR.productName} is operated by <b>{PLATFORM_OPERATOR.legalName}</b>{" "}
         (GSTIN {PLATFORM_OPERATOR.gstin}) (&ldquo;ResellerOS&rdquo;,

@@ -84,7 +84,7 @@ export interface LegalPage {
 
 export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> = {
   terms: {
-    title: "Terms and conditions",
+    title: "Anutech Digital terms and conditions",
     updated: "Last updated 30 September 2026",
     intro: "These terms govern services bought from Anutech Digital Pvt Ltd, Rohini, Delhi (GSTIN 07ABDCA0298H1ZP). Placeholder draft — have your counsel review before publishing.",
     blocks: [
@@ -102,7 +102,7 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
     ],
   },
   privacy: {
-    title: "Privacy policy",
+    title: "Anutech Digital privacy policy",
     updated: "Last updated 30 September 2026",
     intro: "How Anutech Digital Pvt Ltd handles personal data, aligned to the Digital Personal Data Protection Act, 2023. Placeholder draft — have your counsel review before publishing.",
     blocks: [
