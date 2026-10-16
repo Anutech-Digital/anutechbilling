@@ -19,10 +19,11 @@ export function PublicShell({
   return (
     <div className="min-h-screen bg-paper">
       <PublicTopBar />
-      <main className="max-w-3xl mx-auto px-5 py-12 md:py-16">
+      {/* R-1456: 16px phone gutter (CLAUDE.md §20); long emails/words break instead of widening the page. */}
+      <main className="max-w-3xl mx-auto px-4 sm:px-5 py-12 md:py-16">
         <h1 className="font-serif text-4xl md:text-5xl leading-tight mb-2">{title}</h1>
         {subtitle && <p className="text-sm text-ink-3 mb-8">{subtitle}</p>}
-        <div className="prose-resellersos space-y-6 text-[15px] leading-relaxed text-ink-2">
+        <div className="prose-resellersos min-w-0 space-y-6 text-[15px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">
           {children}
         </div>
       </main>
@@ -34,9 +35,9 @@ export function PublicShell({
 export function PublicTopBar() {
   return (
     <header className="border-b border-hairline">
-      <div className="max-w-5xl mx-auto px-5 py-4 flex items-center justify-between">
+      <div className="max-w-5xl mx-auto px-4 sm:px-5 py-4 flex items-center justify-between gap-3">
         {/* Landing page ke header jaisa hi lockup — logo, product, phir company. */}
-        <Link href="/" className="flex items-center gap-2.5 text-ink hover:text-amber transition-colors">
+        <Link href="/" className="flex min-w-0 items-center gap-2.5 text-ink hover:text-amber transition-colors">
           <img
             src={PLATFORM_OPERATOR.logo}
             alt=""
@@ -51,7 +52,7 @@ export function PublicTopBar() {
             </span>
           </span>
         </Link>
-        <nav className="flex gap-5 text-sm text-ink-3">
+        <nav className="flex shrink-0 gap-4 sm:gap-5 text-sm text-ink-3">
           <Link href={"/pricing" as never} className="hover:text-ink">Pricing</Link>
           <Link href={"/about" as never}   className="hover:text-ink">About</Link>
           <Link href="/login" className="hover:text-ink">Sign in</Link>
@@ -64,8 +65,8 @@ export function PublicTopBar() {
 export function PublicFooter() {
   return (
     <footer className="border-t border-hairline mt-16">
-      <div className="max-w-5xl mx-auto px-5 py-8 flex flex-col md:flex-row gap-4 md:items-center md:justify-between text-[12px] text-ink-3">
-        <div className="flex items-center gap-2.5">
+      <div className="max-w-5xl mx-auto px-4 sm:px-5 py-8 flex flex-col md:flex-row gap-4 md:items-center md:justify-between text-[12px] text-ink-3">
+        <div className="flex min-w-0 items-center gap-2.5">
           <img
             src={PLATFORM_OPERATOR.logo}
             alt={`${PLATFORM_OPERATOR.legalName} logo`}
@@ -73,11 +74,12 @@ export function PublicFooter() {
             height={24}
             className="h-6 w-6 rounded-full"
           />
-          <span>
+          <span className="min-w-0">
             © {new Date().getFullYear()} {PLATFORM_OPERATOR.legalName} · {PLATFORM_OPERATOR.city}
           </span>
         </div>
-        <nav className="flex gap-4">
+        {/* R-1456: seven links on one unwrapping line made every public page ~470px wide on a phone. */}
+        <nav className="flex flex-wrap gap-x-4 gap-y-2">
           <Link href={"/privacy" as never} className="hover:text-ink">ResellerOS privacy</Link>
           {/* Two sets of documents (30 Sep 2026): /terms and /privacy are this software's own;
               the terms, refund and privacy policies for BUYING from Anutech Digital are separate. */}

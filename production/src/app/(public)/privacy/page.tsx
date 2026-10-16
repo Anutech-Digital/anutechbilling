@@ -99,24 +99,27 @@ export default function PrivacyPage() {
           contractually bound to data protection standards equivalent to or
           stricter than the DPDP Act:
         </p>
-        <table className="w-full mt-3 text-sm">
-          <thead className="border-b border-hairline text-left text-2xs uppercase tracking-wider text-ink-3">
-            <tr>
-              <th className="py-2 pr-3 font-semibold">Provider</th>
-              <th className="py-2 pr-3 font-semibold">Purpose</th>
-              <th className="py-2 font-semibold">Data location</th>
-            </tr>
-          </thead>
-          <tbody className="text-ink-2">
-            {SUB_PROCESSORS.map((s) => (
-              <tr key={s.name} className="border-b border-hairline last:border-b-0">
-                <td className="py-2 pr-3 font-medium text-ink">{s.name}</td>
-                <td className="py-2 pr-3">{s.purpose}</td>
-                <td className="py-2 text-ink-3">{s.location}</td>
+        {/* R-1456: three short columns fit a phone; the box keeps any overflow off the page. */}
+        <div className="mt-3 max-w-full overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-hairline text-left text-2xs uppercase tracking-wider text-ink-3">
+              <tr>
+                <th className="py-2 pr-3 font-semibold">Provider</th>
+                <th className="py-2 pr-3 font-semibold">Purpose</th>
+                <th className="py-2 font-semibold">Data location</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="text-ink-2">
+              {SUB_PROCESSORS.map((s) => (
+                <tr key={s.name} className="border-b border-hairline last:border-b-0">
+                  <td className="py-2 pr-3 font-medium text-ink">{s.name}</td>
+                  <td className="py-2 pr-3">{s.purpose}</td>
+                  <td className="py-2 text-ink-3">{s.location}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Section>
 
       <Section id="data-location" n={4} title="Where we store your data">

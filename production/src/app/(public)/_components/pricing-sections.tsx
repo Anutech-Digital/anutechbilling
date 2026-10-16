@@ -21,7 +21,7 @@ export function PricingHero() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="mx-auto max-w-3xl px-6 pt-16 pb-8 text-center sm:pt-20"
+        className="mx-auto max-w-3xl px-4 sm:px-6 pt-16 pb-8 text-center sm:pt-20"
       >
         <Badge kind="info" dot className="mb-5 shadow-sm">
           Pricing
@@ -50,7 +50,7 @@ export function BetaBanner() {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5, delay: 0.2 }}
-      className="mx-auto max-w-3xl px-6"
+      className="mx-auto max-w-3xl px-4 sm:px-6"
     >
       <div className="relative overflow-hidden rounded-xl border border-amber/30 bg-amber-soft/30 p-5 sm:p-6 shadow-sm">
         <div className="absolute top-0 right-0 h-32 w-32 bg-amber/20 blur-2xl rounded-full pointer-events-none" />
@@ -147,7 +147,7 @@ const TIERS = [
 
 export function TierCards() {
   return (
-    <section className="mx-auto max-w-6xl px-6 py-16 sm:py-20 relative">
+    <section className="mx-auto max-w-6xl px-4 sm:px-6 py-16 sm:py-20 relative">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-6">
         {TIERS.map((t, i) => (
           <TierCard key={t.name} tier={t} index={i} />
@@ -235,11 +235,18 @@ function TierCard({ tier, index }: { tier: (typeof TIERS)[number]; index: number
    Comparison
    ─────────────────────────────────────────────────────────────── */
 
-export function Comparison({ comparisonData }: { comparisonData: any }) {
+type ComparisonValue = string | boolean;
+export type ComparisonGroupData = {
+  group: string;
+  rows: Array<{ feature: string; starter: ComparisonValue; growth: ComparisonValue; pro: ComparisonValue }>;
+};
+export type FaqItem = { q: string; a: string };
+
+export function Comparison({ comparisonData }: { comparisonData: ComparisonGroupData[] }) {
   return (
     <section className="border-y border-hairline bg-paper-2/40 relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(254,215,170,0.05)_0,transparent_100%)] pointer-events-none" />
-      <div className="mx-auto max-w-6xl px-6 py-16 sm:py-20 relative z-10">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 sm:py-20 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -271,7 +278,7 @@ export function Comparison({ comparisonData }: { comparisonData: any }) {
               </tr>
             </thead>
             <tbody>
-              {comparisonData.map((group: any) => (
+              {comparisonData.map((group) => (
                 <ComparisonGroup key={group.group} group={group} />
               ))}
             </tbody>
@@ -285,7 +292,7 @@ export function Comparison({ comparisonData }: { comparisonData: any }) {
 function ComparisonGroup({
   group,
 }: {
-  group: any;
+  group: ComparisonGroupData;
 }) {
   return (
     <>
@@ -297,7 +304,7 @@ function ComparisonGroup({
           {group.group}
         </td>
       </tr>
-      {group.rows.map((row: any) => (
+      {group.rows.map((row) => (
         <tr key={row.feature} className="border-b border-hairline/40 hover:bg-paper-2/60 transition-colors">
           <td className="py-3 pr-4 pl-4 text-sm text-ink-2 font-medium">{row.feature}</td>
           <ComparisonCell value={row.starter} />
@@ -341,9 +348,9 @@ function ComparisonCell({ value }: { value: string | boolean }) {
    FAQ
    ─────────────────────────────────────────────────────────────── */
 
-export function PricingFAQ({ faqItems }: { faqItems: any }) {
+export function PricingFAQ({ faqItems }: { faqItems: FaqItem[] }) {
   return (
-    <section className="mx-auto max-w-3xl px-6 py-16 sm:py-20">
+    <section className="mx-auto max-w-3xl px-4 sm:px-6 py-16 sm:py-20">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -360,7 +367,7 @@ export function PricingFAQ({ faqItems }: { faqItems: any }) {
       </motion.div>
 
       <div className="space-y-3">
-        {faqItems.map((item: any, i: number) => (
+        {faqItems.map((item, i) => (
           <motion.details
             key={item.q}
             initial={{ opacity: 0, y: 10 }}
@@ -412,7 +419,7 @@ export function PricingCTA() {
         whileInView={{ opacity: 1, scale: 1 }}
         viewport={{ once: true }}
         transition={{ duration: 0.5 }}
-        className="mx-auto max-w-3xl px-6 py-16 text-center sm:py-20 relative z-10"
+        className="mx-auto max-w-3xl px-4 sm:px-6 py-16 text-center sm:py-20 relative z-10"
       >
         <h2 className="mb-4 font-serif text-3xl leading-tight tracking-tight sm:text-4xl">
           Free during beta.
