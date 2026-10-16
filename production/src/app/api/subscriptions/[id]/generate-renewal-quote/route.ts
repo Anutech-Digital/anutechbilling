@@ -24,33 +24,24 @@
  */
 
 import { NextResponse } from "next/server";
-import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
+import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(_req: Request, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  // ── 1. Authn ─────────────────────────────────────────────────────
-  const userClient = createClient();
-  const { data: authData } = await userClient.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  const { data: me, error: meErr } = await userClient
-    .from("users")
-    .select("tenant_id")
-    .eq("id", authData.user.id)
-    .single();
-  if (meErr || !me) {
-    return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
-  }
-
+/* R-732: raising a renewal quote is a money action — owner / manager / accountant / billing
+   (R-718), the same roles the Record-payment buttons follow. */
+export const POST = withRoute({
+  route: "api/subscriptions/[id]/generate-renewal-quote",
+  roles: MONEY_RECORD_ROLES,
+  roleHint: "Renewal quote sirf owner / manager / accountant / billing bana sakte hain.",
+}, async ({ user, tenantId, params }) => {
   // ── 2. Load subscription + verify tenant scope ──────────────────
-  const supabase = createAdminClientFor(authData.user.id);
+  const supabase = createAdminClientFor(user.id);
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     .select(
@@ -62,7 +53,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   if (subErr || !sub) {
     return NextResponse.json({ error: "subscription not found" }, { status: 404 });
   }
-  if (sub.tenant_id !== me.tenant_id) {
+  if (sub.tenant_id !== tenantId) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (!sub.renewal_date) {
@@ -141,4 +132,4 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     amount:          result.amount,
     subscriptionId:  sub.id,
   });
-}
+});

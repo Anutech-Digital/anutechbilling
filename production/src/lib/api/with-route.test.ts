@@ -59,6 +59,21 @@ describe("withRoute", () => {
     expect(await ok.json()).toEqual({ ok: true, tenantId: "T1", role: "manager" });
   });
 
+  it("R-732: `permission` asks the PERMISSIONS table — 403 unless can(role, permission)", async () => {
+    const h = vi.fn(async ({ role }: { role: string }) => ({ role }));
+    state.me = { tenant_id: "T1", role: "partner_agent" };
+    const denied = await withRoute({ route: "api/t", permission: "can_contact_customers" }, h)(req("POST"));
+    expect(denied.status).toBe(403);
+    expect(h).not.toHaveBeenCalled();
+    state.me = { tenant_id: "T1", role: "sales" };
+    const ok = await withRoute({ route: "api/t", permission: "can_contact_customers" }, h)(req("POST"));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true, role: "sales" });
+    // both gates apply when both are given
+    const both = await withRoute({ route: "api/t", roles: ["owner"], permission: "can_contact_customers" }, h)(req("POST"));
+    expect(both.status).toBe(403);
+  });
+
   it("validates the body with zod — 400 with the schema's own message", async () => {
     const r = withRoute({ route: "api/t", input: z.object({ id: z.string().min(1, "id chahiye") }) }, async ({ input }) => ({ got: input.id }));
     expect((await r(req("POST", { id: "" }))).status).toBe(400);

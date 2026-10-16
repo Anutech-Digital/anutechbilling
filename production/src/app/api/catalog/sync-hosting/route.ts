@@ -1,5 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+import { withRoute } from "@/lib/api/with-route";
 import { daConfigured, daAllPackages } from "@/lib/directadmin";
 import { LANDING_PLANS } from "@/site/lib/data/hosting-landing";
 
@@ -27,13 +27,13 @@ import { LANDING_PLANS } from "@/site/lib/data/hosting-landing";
  * A DA package with no matching priced plan is SKIPPED (never seeded at ₹0) and
  * named in the response, so nothing is ever put on sale without a real price.
  */
-export async function POST(_request: NextRequest) {
-  const supabase = createClient();
-
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  }
+/* R-732: owner / manager at the door — the RPC is owner-only as well; a seller's session must
+   not even reach DirectAdmin. */
+export const POST = withRoute({
+  route: "api/catalog/sync-hosting",
+  roles: ["owner", "manager"],
+  roleHint: "Catalogue sync sirf owner / manager kar sakte hain.",
+}, async ({ supabase }) => {
 
   if (!daConfigured()) {
     return NextResponse.json(
@@ -100,4 +100,4 @@ export async function POST(_request: NextRequest) {
   }
 
   return NextResponse.json({ synced: count ?? 0, skipped, source: "directadmin+config" });
-}
+});

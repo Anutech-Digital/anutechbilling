@@ -7,17 +7,20 @@
  * the connection row. Returns { inserted, skipped_existing }.
  */
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
+import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { requestFiData, fetchFiData } from "@/lib/aa/setu";
 
 export const runtime = "nodejs";
 
-export async function POST(
-  _req: Request,
-  { params }: { params: Promise<{ connectionId: string }> },
-) {
-  const { connectionId } = await params;
-  const supabase = await createClient();
+/* R-732: a bank-statement pull is a money action — the roles that may record money (R-718).
+   Before this the route did not even check for a sign-in; RLS alone bounded it. */
+export const POST = withRoute({
+  route: "api/aa/setu/fetch/[connectionId]",
+  roles: MONEY_RECORD_ROLES,
+  roleHint: "Bank fetch sirf owner / manager / accountant / billing kar sakte hain.",
+}, async ({ supabase, params }) => {
+  const connectionId = params.connectionId;
 
   const { data: conn, error: connErr } = await supabase
     .from("bank_aa_connections")
@@ -107,4 +110,4 @@ export async function POST(
     skipped_existing: fiData.transactions.length - inserted,
     total_in_window:  fiData.transactions.length,
   });
-}
+});

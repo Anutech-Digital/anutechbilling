@@ -25,7 +25,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { z } from "zod";
 import { Sentry } from "@/lib/sentry";
 import { createClient } from "@/lib/supabase/server";
-import type { UserRole } from "@/lib/auth/roles";
+import { can, type Permissions, type UserRole } from "@/lib/auth/roles";
 
 /** Author ka chuna hua status + wo message jo user ko dikhana safe hai. */
 export class RouteError extends Error {
@@ -72,6 +72,8 @@ type Options<S extends z.ZodTypeAny | undefined> = {
   input?: S;
   /** Sirf ye roles. Na do to koi bhi signed-in workspace member. */
   roles?: readonly UserRole[];
+  /** R-732: ya PERMISSIONS table ka ek sawaal — can(role, permission) false ho to 403. `roles` ke saath bhi de sakte ho (dono lagte hain). */
+  permission?: keyof Permissions;
   /** 403 par dikhne wala "ab kya karo" (role check fail hone par). */
   roleHint?: string;
 };
@@ -124,6 +126,9 @@ export function withRoute<S extends z.ZodTypeAny | undefined = undefined>(opts: 
       const role: UserRole = me.role;
       if (opts.roles && !opts.roles.includes(role)) {
         return fail(403, opts.roleHint ?? `Ye kaam sirf ${opts.roles.join(" / ")} kar sakte hain — unse kahiye.`);
+      }
+      if (opts.permission && !can(role, opts.permission)) {
+        return fail(403, opts.roleHint ?? "Ye kaam aapke role ko allowed nahi hai — workspace owner se kahiye.");
       }
 
       let input: unknown = undefined;

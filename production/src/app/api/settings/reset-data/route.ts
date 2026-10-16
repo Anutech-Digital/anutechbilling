@@ -24,9 +24,9 @@
  * password with the request's own client would mint a fresh session and rotate
  * the caller's tokens as a side effect of a safety check.
  */
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient as createSessionClient } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
 import { createBareClient } from "@/lib/supabase/bare";
 
 const schema = z.object({
@@ -36,20 +36,18 @@ const schema = z.object({
   password:         z.string().min(1, "Enter your password to confirm."),
 });
 
-export async function POST(request: NextRequest) {
-  const supabase = createSessionClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData?.user?.email) {
+/* R-732: owner only, said at the door (withRoute) as well as inside the function — a member's
+   session, even with the member's own password, is refused before anything runs. */
+export const POST = withRoute({
+  route: "api/settings/reset-data",
+  input: schema,
+  roles: ["owner"],
+  roleHint: "Data reset sirf workspace owner kar sakta hai.",
+}, async ({ supabase, user, input }) => {
+  if (!user.email) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
-
-  const parsed = schema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid request" },
-      { status: 400 },
-    );
-  }
+  const parsed = { data: input };
 
   // ── Re-confirm intent. Throwaway client: no cookies, no session written. ──
   const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -59,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
   const check = createBareClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } });
   const { error: pwErr } = await check.auth.signInWithPassword({
-    email:    authData.user.email,
+    email:    user.email,
     password: parsed.data.password,
   });
   if (pwErr) {
@@ -82,4 +80,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, result: data });
-}
+});
