@@ -23,7 +23,12 @@ export async function getTenantSession(): Promise<TenantSession | null> {
   if (!row?.tenant_id) return null;
   if (row.is_active === false) return null; // R-722: a deactivated member has no tenant session
 
-  return { userId: auth.user.id, tenantId: row.tenant_id };
+  // R-731: the second step must also hold on the data path. The level comes from the verified
+  // session (Auth.js cookie via compat, or the GoTrue token) — never from the request.
+  const { data: lvl } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  const aal = lvl?.currentLevel === "aal2" ? "aal2" : "aal1";
+
+  return { userId: auth.user.id, tenantId: row.tenant_id, aal };
 }
 
 /** For route handlers / server actions that must not run without a signed-in tenant user. */

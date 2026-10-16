@@ -17,10 +17,12 @@
 import "server-only";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "./generated/client";
-import { setContext } from "./context";
+import { setContext, type Aal } from "./context";
 import type { Tx } from "./index";
 
-export type Identity = { mode: "anon" } | { mode: "user"; userId: string } | { mode: "service" };
+/** `aal` (R-731): the verified token's authenticator assurance level — passed to the database as
+ *  app.aal so session_mfa_ok() can refuse tenant data to a half-signed-in MFA user. Missing = aal1. */
+export type Identity = { mode: "anon" } | { mode: "user"; userId: string; aal?: Aal } | { mode: "service" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ENV = { user: "DATABASE_URL", anon: "ANON_DATABASE_URL", service: "SERVICE_DATABASE_URL" } as const;
@@ -41,7 +43,7 @@ function pool(mode: Identity["mode"]): PrismaClient {
 export async function withIdentity<T>(id: Identity, fn: (tx: Tx) => Promise<T>): Promise<T> {
   if (id.mode === "user" && !UUID.test(id.userId)) throw new Error("db: gateway user id is not a uuid");
   return pool(id.mode).$transaction(async (tx) => {
-    if (id.mode === "user") await setContext(tx, id.userId, "");
+    if (id.mode === "user") await setContext(tx, id.userId, "", id.aal);
     return fn(tx);
   }, { timeout: 30_000, maxWait: 10_000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }

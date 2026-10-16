@@ -22,7 +22,7 @@
 import "server-only";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "./generated/client";
-import { setContext } from "./context";
+import { setContext, type Aal } from "./context";
 
 export { Prisma };
 export type Tx = Prisma.TransactionClient;
@@ -31,6 +31,8 @@ export type Tx = Prisma.TransactionClient;
 export interface TenantSession {
   userId: string;
   tenantId: string;
+  /** R-731: "aal2" after the second sign-in step. Missing counts as aal1 — an MFA user then gets no tenant data. */
+  aal?: Aal;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -78,7 +80,7 @@ function runtimeClient(): PrismaClient {
 export async function withTenant<T>(session: TenantSession, fn: (tx: Tx) => Promise<T>): Promise<T> {
   assertTenantSession(session);
   return runtimeClient().$transaction(async (tx) => {
-    await setContext(tx, session.userId, session.tenantId);
+    await setContext(tx, session.userId, session.tenantId, session.aal);
     return fn(tx);
   }, TX_OPTIONS);
 }
@@ -102,7 +104,8 @@ export function dbFor(session: TenantSession) {
         async $allOperations({ args, query }) {
           const [, result] = await base.$transaction([
             base.$executeRaw`select set_config('app.user_id', ${session.userId}, true),
-                                    set_config('app.tenant_id', ${session.tenantId}, true)`,
+                                    set_config('app.tenant_id', ${session.tenantId}, true),
+                                    set_config('app.aal', ${session.aal === "aal2" ? "aal2" : "aal1"}, true)`,
             query(args),
           ]);
           return result;
