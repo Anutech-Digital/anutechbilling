@@ -27,6 +27,9 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { ViewOnlyNote } from "@/components/shared/view-only-note";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canWriteMoney } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
@@ -71,6 +74,9 @@ export default function CategoryRulesPage() {
   const update = useUpdateTxnCategoryRule();
   const del = useDeleteTxnCategoryRule();
   const confirm = useConfirm();
+  /* R-1130: billing reads Banking (R-254) — it sees the rules, but only owner / manager /
+   * accountant may add, re-file or delete them (the database refuses the rest). */
+  const canWrite = canWriteMoney(useCurrentUser().data?.role);
 
   // Add form
   const [pattern, setPattern] = React.useState("");
@@ -104,7 +110,7 @@ export default function CategoryRulesPage() {
 
   const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pattern.trim() || !category) return;
+    if (!canWrite || !pattern.trim() || !category) return;
     try {
       await create.mutateAsync({ pattern, category, direction });
       setPattern(""); setCategory("");
@@ -124,7 +130,10 @@ export default function CategoryRulesPage() {
         <code className="font-mono text-xs">…/PAYUFACEBOOK</code>. Rules only suggest; lines already imported are never changed.
       </p>
 
+      {!canWrite && <div className="mt-5"><ViewOnlyNote what="add or change category rules" /></div>}
+
       {/* Add a rule */}
+      {canWrite && (
       <Card className="mt-5 p-4">
         <form onSubmit={onAdd} className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_0.8fr_auto] gap-2 items-end">
           <label className="text-xs text-ink-3 space-y-1">
@@ -167,6 +176,7 @@ export default function CategoryRulesPage() {
           </p>
         )}
       </Card>
+      )}
 
       {/* Test a narration */}
       <Card className="mt-4 p-4">
@@ -222,6 +232,7 @@ export default function CategoryRulesPage() {
                     <tr key={r.id}>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{r.pattern}</td>
                       <td className="px-3 py-2">
+                        {canWrite ? (
                         <select
                           value={r.category}
                           onChange={(e) => update.mutate({ id: r.id, category: e.target.value })}
@@ -232,8 +243,10 @@ export default function CategoryRulesPage() {
                           {!(EXPENSE_CATEGORIES as readonly string[]).includes(r.category) && <option value={r.category}>{r.category}</option>}
                           {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        ) : <span className="text-xs text-ink">{r.category}</span>}
                       </td>
                       <td className="px-3 py-2">
+                        {canWrite ? (
                         <select
                           value={r.direction}
                           onChange={(e) => update.mutate({ id: r.id, direction: e.target.value as TxnRuleDirection })}
@@ -242,6 +255,7 @@ export default function CategoryRulesPage() {
                         >
                           {DIRECTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                         </select>
+                        ) : <span className="text-xs text-ink-2">{directionLabel(r.direction)}</span>}
                       </td>
                       <td className={`px-3 py-2 text-right tabular-nums text-xs ${n === 0 ? "text-amber-ink" : "text-ink-2"}`}
                           title={n === 0 ? "No imported line contains this text on this side" : undefined}>
@@ -249,6 +263,7 @@ export default function CategoryRulesPage() {
                       </td>
                       <td className="px-3 py-2 text-xs text-ink-3 whitespace-nowrap">{formatDate(r.created_at)}</td>
                       <td className="px-3 py-2 text-right">
+                        {canWrite && (
                         <button
                           type="button"
                           aria-label={`Delete rule ${r.pattern}`}
@@ -264,6 +279,7 @@ export default function CategoryRulesPage() {
                         >
                           <Icon name="trash" size={14} />
                         </button>
+                        )}
                       </td>
                     </tr>
                   );
