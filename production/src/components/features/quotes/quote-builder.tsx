@@ -137,7 +137,38 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
   "Plus + Voice add-on":              1800,
 };
 
+/* ─── R-1497: HYDRATE AN EMPTY SHELL, THEN DRAW THE BUILDER ──────────────────────────
+   Staging threw React #418 ("server rendered HTML didn't match the client") on a hard load
+   of /quotes/new. The builder sits under <Suspense> (useSearchParams) and its chunk is big,
+   so the app shell (Sidebar/TopBar) hydrates FIRST and its useCurrentUser() call can land
+   in the shared React Query cache before the builder hydrates. React Query hands that cached
+   row to the builder's first browser render — the server never had it — so the "company
+   state missing" warning, the customer picker, the catalogue chips… come out as different
+   elements than the server sent. Any warm query (customers, items, leads) does the same,
+   including the ones child components read on their own (CustomerCombobox, pickers).
+
+   Gating each query inside the builder would miss those children, so the whole builder
+   waits for hydration instead. `useSyncExternalStore` answers `false` while hydrating
+   (getServerSnapshot) and `true` on every client render after it — so a client-side
+   navigation (no hydration) draws the builder at once with no flash; only a hard load shows
+   the same one-line placeholder the server sent for one frame. The server's builder HTML was
+   a data-less skeleton anyway (every query is pending on the server), so nothing useful is
+   lost. suppressHydrationWarning would only hide the warning on one element and leave the
+   tree regenerated — not used. */
+const noopSubscribe = () => () => {};
+function useHydrated(): boolean {
+  return React.useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
+
 export function QuoteBuilder() {
+  const hydrated = useHydrated();
+  if (!hydrated) {
+    return <div className="p-8 text-sm text-ink-3">Loading quote builder…</div>;
+  }
+  return <QuoteBuilderBody />;
+}
+
+function QuoteBuilderBody() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const pathname     = usePathname();
