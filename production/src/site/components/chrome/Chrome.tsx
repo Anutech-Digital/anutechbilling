@@ -50,10 +50,10 @@ const CRUMBS: Record<string, string> = {
   "/google-workspace/pricing": "Google Workspace pricing",
   "/ssl": "SSL & security",
   "/login": "Log in",
-  "/terms": "Terms of service",
-  "/terms-and-conditions": "Terms and conditions",
-  "/privacy": "Privacy policy",
-  "/privacy-policy": "Privacy policy",
+  "/terms": "ResellerOS terms of service",
+  "/terms-and-conditions": "Anutech Digital terms and conditions",
+  "/privacy": "ResellerOS privacy policy",
+  "/privacy-policy": "Anutech Digital privacy policy",
   "/refund": "Refund policy",
   "/reselleros": "ResellerOS — software for resellers",
   "/reseller": "Reseller program",
@@ -121,7 +121,7 @@ const FOOTER_COLS = [
   { title: "HOSTING", links: [["Shared hosting", "/hosting"], ["Full specification", "/hosting#specs"], ["Client area", CLIENT_AREA_URL], ["System status", "/status"]] },
   { title: "EMAIL & SECURITY", links: [["Compare editions", "/email/compare-editions"], ["Business email", "/email"], ["Google Workspace pricing", "/google-workspace/pricing"], ["Microsoft 365", "/quote"], ["SSL certificates", "/ssl"]] },
   { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#modules"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
-  { title: "COMPANY", links: [["About Anutech", "/about"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["ResellerOS login", "/login"],["Terms", "/terms-and-conditions"], ["Privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
+  { title: "COMPANY", links: [["About Anutech", "/why-us"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["ResellerOS login", "/login"],["Anutech Digital terms", "/terms-and-conditions"], ["Anutech Digital privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
 ] as const;
 
 export function Footer() {

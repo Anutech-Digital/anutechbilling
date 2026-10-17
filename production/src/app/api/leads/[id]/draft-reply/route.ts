@@ -25,7 +25,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { errorResponse, RouteError } from "@/lib/api/with-route";
+import { errorResponse, RouteError, mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import { logAiDecision, formatGuardBlock } from "@/lib/ai/audit";
@@ -42,6 +42,15 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
+
+  /* R-1470: replies are drafted from Sales & Pipeline and Enquiries — only roles that open one of
+     them, checked before the lead, its thread or the model is touched. The row also gives the
+     tenant for the sign-off below. */
+  const { data: me } = await supabase
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  if (!mayOpenPage(me?.role, ["/leads", "/enquiries"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
+  }
 
   const leadId = params.id;
 
@@ -70,8 +79,6 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
   }));
 
   /* The tenant's own name for the sign-off — never a hardcoded company (L20). */
-  const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
   const tenantId = (me as { tenant_id?: string | null } | null)?.tenant_id ?? null;
   const { data: tenant } = tenantId
     ? await supabase.from("tenants").select("name").eq("id", tenantId).maybeSingle()

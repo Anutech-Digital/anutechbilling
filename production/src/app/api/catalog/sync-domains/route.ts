@@ -1,5 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+import { withRoute } from "@/lib/api/with-route";
 import { rcConfigured, rcTldPricing } from "@/lib/resellerclub";
 
 /**
@@ -26,13 +26,13 @@ interface TldRow {
   currency: string;
 }
 
-export async function POST(_request: NextRequest) {
-  const supabase = createClient();
-
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  }
+/* R-732: owner / manager at the door — the RPC is owner-only as well; a seller's session must
+   not even reach the engine. */
+export const POST = withRoute({
+  route: "api/catalog/sync-domains",
+  roles: ["owner", "manager"],
+  roleHint: "Catalogue sync sirf owner / manager kar sakte hain.",
+}, async ({ supabase }) => {
 
   // 1. Fetch the rate card — direct from ResellerClub when the credentials are
   //    on this server (Plan B, 2 Sep 2026: the engine can't be redeployed), else
@@ -87,4 +87,4 @@ export async function POST(_request: NextRequest) {
   }
 
   return NextResponse.json({ synced: count ?? 0 });
-}
+});

@@ -3,7 +3,7 @@
  * `Authorization: Bearer <jwt>` header, verified with the same HS256 secret GoTrue signs with
  * (SUPABASE_JWT_SECRET, the value PostgREST has as PGRST_JWT_SECRET today).
  *
- *   role authenticated → { mode: "user", userId: sub }
+ *   role authenticated → { mode: "user", userId: sub, aal }   (aal2 only when the claim says so, R-731)
  *   role anon / no JWT → { mode: "anon" }
  *   role service_role  → { mode: "service" } — ONLY for in-process calls (createAdminClient);
  *                        the public HTTP route refuses it, so the browser can never reach it.
@@ -63,7 +63,7 @@ export function identityFromHeaders(headers: Headers, opts: { allowService: bool
   }
   if (role === "authenticated") {
     if (typeof claims.sub !== "string") throw new PgrstError(401, "PGRST301", "JWT has no subject");
-    return { mode: "user", userId: claims.sub };
+    return { mode: "user", userId: claims.sub, aal: claims.aal === "aal2" ? "aal2" : "aal1" };
   }
   if (role === "anon") return { mode: "anon" };
   throw new PgrstError(401, "PGRST301", `role "${String(role)}" is not allowed`);

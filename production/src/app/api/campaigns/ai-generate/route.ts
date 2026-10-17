@@ -18,6 +18,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 
 export const dynamic = "force-dynamic";
@@ -159,7 +160,12 @@ export async function POST(req: Request) {
   const { prompt, category, includeOffer } = parsed.data;
 
   // Resolve tenant's Gemini config (tenant key → env → stub)
-  const { data: me } = await userClient.from("users").select("tenant_id").eq("id", authData.user.id).maybeSingle();
+  const { data: me } = await userClient.from("users").select("tenant_id, role").eq("id", authData.user.id).maybeSingle();
+  /* R-1470: a campaign is written for the roles that may send one (ACTION_ROLES campaign.send —
+     owner, manager); the composer's Send campaign item is hidden from sales on Leads too. */
+  if (!mayDo(me?.role, "campaign.send")) {
+    return NextResponse.json({ error: forbiddenMessage("campaign.send") }, { status: 403 });
+  }
   const gemini = await resolveGeminiConfig(userClient, me?.tenant_id ?? null);
 
   // Try Gemini; fall back to stub

@@ -89,15 +89,25 @@ export function isAllowedHost(raw: string | null | undefined): boolean {
  * Uses the request's host only when it is allowlisted; otherwise NEXT_PUBLIC_APP_URL.
  */
 export function trustedOrigin(headers: Pick<Headers, "get">): string {
+  const host = trustedHost(headers);
+  if (!host) return appUrl();
   const env = envOrigin();
+  if (env && new URL(env).host.toLowerCase() === host) return env;
+  if (LOCAL_HOST.test(host)) {
+    return `${headers.get("x-forwarded-proto") === "https" ? "https" : "http"}://${host}`;
+  }
+  return `https://${host}`;
+}
+
+/**
+ * The request's host (`x-forwarded-host`, then `host`), normalised — only when it is
+ * allowlisted, otherwise null. For code that needs the host itself rather than an origin
+ * (R-1468: host-brand picks a logo from it), so it never reads the raw header.
+ */
+export function trustedHost(headers: Pick<Headers, "get">): string | null {
   for (const raw of [headers.get("x-forwarded-host"), headers.get("host")]) {
     const host = normalizeHost(raw);
-    if (!host || !isAllowedHost(host)) continue;
-    if (env && new URL(env).host.toLowerCase() === host) return env;
-    if (LOCAL_HOST.test(host)) {
-      return `${headers.get("x-forwarded-proto") === "https" ? "https" : "http"}://${host}`;
-    }
-    return `https://${host}`;
+    if (host && isAllowedHost(host)) return host;
   }
-  return appUrl();
+  return null;
 }

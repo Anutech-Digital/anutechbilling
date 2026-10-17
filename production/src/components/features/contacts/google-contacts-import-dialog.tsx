@@ -25,16 +25,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
-
-interface FetchedContact {
-  resourceName: string;
-  fullName:     string;
-  email:        string | null;
-  phone:        string | null;
-  company:      string | null;
-  title:        string | null;
-  notes:        string | null;
-}
+import {
+  classifyGoogleFetch, parseJsonBody, type FetchedGoogleContact as FetchedContact,
+} from "@/lib/leads/google-import-response";
 
 type DialogState =
   | { kind: "idle" }
@@ -42,7 +35,12 @@ type DialogState =
   | { kind: "needs-connect"; message: string }
   | { kind: "preview" }
   | { kind: "importing" }
+  /* R-1427: 410 — import is retired. Final: no retry button, nothing to reconnect. */
+  | { kind: "unavailable"; message: string }
   | { kind: "error"; message: string };
+
+/* R-1427: a Google call that never answers must not leave the spinner up for ever. */
+const FETCH_TIMEOUT_MS = 30_000;
 
 interface Props {
   open: boolean;
@@ -54,13 +52,17 @@ export default function GoogleContactsImportDialog({ open, onOpenChange }: Props
   const [state,    setState]    = React.useState<DialogState>({ kind: "idle" });
   const [contacts, setContacts] = React.useState<FetchedContact[]>([]);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  /* R-1427: every request gets a number; closing the dialog or starting another request
+     makes the old one stale, and a stale answer never touches the state. */
+  const requestSeq = React.useRef(0);
 
-  // Auto-fetch when dialog opens
+  // Auto-fetch when dialog opens — once per open; an error never re-triggers it.
   React.useEffect(() => {
     if (open && state.kind === "idle") {
-      fetchContacts();
+      void fetchContacts();
     }
     if (!open) {
+      requestSeq.current += 1;
       // Reset on close
       setState({ kind: "idle" });
       setContacts([]);
@@ -70,28 +72,34 @@ export default function GoogleContactsImportDialog({ open, onOpenChange }: Props
   }, [open]);
 
   async function fetchContacts() {
+    const seq = ++requestSeq.current;
     setState({ kind: "fetching" });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch("/api/contacts/google-fetch");
-      const json = await res.json();
-      if (!res.ok) {
-        if (json.code === "needs_reauth") {
-          setState({ kind: "needs-connect", message: json.error ?? "Connect Google to import" });
-          return;
-        }
-        setState({ kind: "error", message: json.error ?? "Could not fetch contacts" });
+      const res = await fetch("/api/contacts/google-fetch", { signal: ctrl.signal });
+      const body = parseJsonBody(await res.text().catch(() => ""));
+      if (seq !== requestSeq.current) return;
+      const out = classifyGoogleFetch(res.status, body);
+      if (out.kind !== "preview") {
+        setState(out);
         return;
       }
-      setContacts(json.contacts ?? []);
+      setContacts(out.contacts);
       // Pre-select rows with email (best lead candidates)
-      setSelected(new Set(
-        (json.contacts ?? [])
-          .filter((c: FetchedContact) => c.email)
-          .map((c: FetchedContact) => c.resourceName)
-      ));
+      setSelected(new Set(out.contacts.filter((c) => c.email).map((c) => c.resourceName)));
       setState({ kind: "preview" });
     } catch (err) {
-      setState({ kind: "error", message: err instanceof Error ? err.message : "Network error" });
+      if (seq !== requestSeq.current) return;
+      const timedOut = err instanceof DOMException && err.name === "AbortError";
+      setState({
+        kind: "error",
+        message: timedOut
+          ? "Google took too long to answer. Try again in a minute."
+          : "Couldn't reach the server. Check your internet connection and try again.",
+      });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -220,13 +228,22 @@ export default function GoogleContactsImportDialog({ open, onOpenChange }: Props
           </div>
         )}
 
+        {/* UNAVAILABLE — R-1427: import is switched off; say what to do instead, no retry */}
+        {state.kind === "unavailable" && (
+          <div className="py-8 text-center" role="status">
+            <Icon name="info" size={32} className="text-ink-3 mx-auto mb-3" />
+            <h3 className="font-serif text-xl text-ink mb-2">Not available</h3>
+            <p className="text-sm text-ink-3 max-w-md mx-auto">{state.message}</p>
+          </div>
+        )}
+
         {/* ERROR */}
         {state.kind === "error" && (
           <div className="py-8 text-center">
             <Icon name="alert" size={32} className="text-rose mx-auto mb-3" />
             <h3 className="font-serif text-xl text-ink mb-2">Couldn't fetch contacts</h3>
             <p className="text-sm text-ink-3 mb-4">{state.message}</p>
-            <Button icon="refresh" onClick={fetchContacts}>Try again</Button>
+            <Button icon="refresh" onClick={() => { void fetchContacts(); }}>Try again</Button>
           </div>
         )}
 

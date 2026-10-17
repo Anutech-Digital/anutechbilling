@@ -6,5 +6,5 @@
  */
 import type { Metadata } from "next";
 import { LegalDoc } from "@/site/components/legal/LegalDoc";
-export const metadata: Metadata = { title: "Privacy policy" };
+export const metadata: Metadata = { title: { absolute: "Anutech Digital privacy policy" } };
 export default function PrivacyPolicyPage() { return <LegalDoc page="privacy" />; }

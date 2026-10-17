@@ -24,7 +24,9 @@ const R314_FILES = [
   "src/components/features/leads/lead-email-composer.tsx",
   "src/components/features/leads/lead-list-view.tsx",
   "src/components/features/leads/leads-hot-card.tsx",
-  "src/components/features/leads/priority-call-queue.tsx",
+  /* priority-call-queue.tsx left this list in R-1426: it no longer shows ANY error toast
+     (an undialable number now gets an "Add phone number" button instead), so the
+     "still shows error toasts" denominator below cannot hold for it. */
   "src/components/features/projects/project-tasks.tsx",
 ] as const;
 

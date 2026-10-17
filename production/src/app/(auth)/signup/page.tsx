@@ -316,7 +316,7 @@ export default function SignupPage() {
         </Button>
 
         <p className="text-2xs text-ink-3 text-center leading-relaxed">
-          By signing up you agree to our{" "}
+          By signing up you agree to the ResellerOS{" "}
           {/* Were href="#" until 1 Oct 2026 (R-047). ResellerOS's own documents: a reseller
               signing up agrees to the software's terms, not the Anutech shop's. A new tab, so
               the half-filled form is kept. */}

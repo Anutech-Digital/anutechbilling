@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Icon } from "@/components/ui/icon";
-import { Badge } from "@/components/ui/badge";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { toast } from "sonner";
 import { useBackups, useCreateBackup, useDeleteBackup, useRestoreBackup, downloadBackup, autoBackupIfStale, SNAPSHOT_RETENTION } from "@/lib/queries/backups";
@@ -22,6 +21,7 @@ import { IST_TZ } from "@/lib/dates/ist";
 import { ResetDataCard } from "@/components/features/settings/reset-data-card";
 import { LoadError } from "@/components/shared/load-error";
 import { backupListState } from "./backup-list-state";
+import { BackupRow, BACKUP_ROW_BUTTON } from "./backup-row";
 
 function humanSize(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -78,7 +78,7 @@ export default function BackupPage() {
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-3">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Backup &amp; Restore</h1>
@@ -88,7 +88,7 @@ export default function BackupPage() {
             <b> wapas jaa sakte ho</b>. Restore points <b>apne aap roz</b> bhi bante hain (last {SNAPSHOT_RETENTION} rakhe jaate hain).
           </p>
         </div>
-        <Button variant="primary" icon="download" loading={create.isPending || downloadingId != null} onClick={takeBackup} className="shrink-0">
+        <Button variant="primary" icon="download" loading={create.isPending || downloadingId != null} onClick={takeBackup} className="shrink-0 self-start h-11 md:h-9">
           Take backup now
         </Button>
       </div>
@@ -123,21 +123,10 @@ export default function BackupPage() {
         <ul className="space-y-2">
           {rows.map((b) => (
             <li key={b.id}>
-              <Card className="p-3.5 flex items-center justify-between gap-3">
-                <div className="min-w-0 flex items-center gap-3">
-                  <span className="grid place-items-center h-9 w-9 rounded-lg bg-emerald/10 text-emerald shrink-0">
-                    <Icon name="check_circle" size={18} />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium text-ink truncate">{b.label || "Backup"}</span>
-                      <Badge kind={b.kind === "auto" ? "muted" : "info"} size="sm">{b.kind === "auto" ? "Auto" : "Manual"}</Badge>
-                    </div>
-                    <div className="text-2xs text-ink-3">{whenLabel(b.created_at)} · {b.table_count} tables · {humanSize(b.bytes)}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button variant="primary" className="h-8 px-3 text-[12px]" icon="refresh"
+              <BackupRow label={b.label || "Backup"} kind={b.kind}
+                meta={`${whenLabel(b.created_at)} · ${b.table_count} tables · ${humanSize(b.bytes)}`}
+                actions={<>
+                  <Button variant="primary" className={BACKUP_ROW_BUTTON} icon="refresh"
                     loading={restore.isPending} disabled={restore.isPending}
                     onClick={async () => {
                       if (await confirm({
@@ -148,16 +137,15 @@ export default function BackupPage() {
                     }}>
                     Restore
                   </Button>
-                  <Button variant="default" className="h-8 px-3 text-[12px]" icon="download"
+                  <Button variant="default" className={BACKUP_ROW_BUTTON} icon="download"
                     loading={downloadingId === b.id} onClick={() => onDownload(b.id, b.created_at)}>
                     Download
                   </Button>
-                  <Button variant="ghost" className="h-8 px-2 text-[12px]"
+                  <Button variant="ghost" className={BACKUP_ROW_BUTTON}
                     onClick={async () => { if (await confirm({ title: "Delete this backup?", body: "Sirf ye stored copy hategi. Pehle download ki hui file tumhare paas rahegi.", danger: true, confirmLabel: "Delete" })) del.mutate(b.id); }}>
                     Delete
                   </Button>
-                </div>
-              </Card>
+                </>} />
             </li>
           ))}
         </ul>

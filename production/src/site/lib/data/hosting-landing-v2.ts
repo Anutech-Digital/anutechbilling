@@ -25,6 +25,7 @@
  */
 import { LANDING_PLANS } from "./hosting-landing";
 import { SLA, WHATSAPP_URL } from "@/site/lib/config";
+import { rupee, GST_RATE } from "@/site/lib/money";
 
 /* Re-exported so HostingLanding keeps its import. This file used to hold its own copy of
    the placeholder, so setting the real number in config.ts would have left /hosting
@@ -145,7 +146,7 @@ export const HOSTING_WORRIES: readonly { q: string; a: string }[] = [
 /** Proof cards — PARTNERSHIP ("Premier Partner since 2014") removed until verified. */
 export const HOSTING_PROOFS: readonly { k: string; v: string; a: string; href: string }[] = [
   { k: "UPTIME", v: "Live system status page, updated in real time", a: "Check status", href: "/status" },
-  { k: "COMPANY", v: "Anutech Digital Pvt Ltd, Rohini, Delhi · GSTIN 07ABDCA0298H1ZP", a: "About the company", href: "/about" },
+  { k: "COMPANY", v: "Anutech Digital Pvt Ltd, Rohini, Delhi · GSTIN 07ABDCA0298H1ZP", a: "About the company", href: "/why-us" },
   { k: "TERMS", v: "Refund policy and terms published in plain language", a: "Read the refund policy", href: "/refund" },
 ];
 
@@ -186,4 +187,24 @@ export const HOSTING_FAQS_V2: readonly { q: string; a: string }[] = [
  * 2 Oct 2026 those said ₹159 from an old table while /hosting sold Starter at ₹49.99 — two
  * prices for one plan. Derived here so they cannot drift again.
  */
-export const HOSTING_FROM_MO: string = `₹${Math.min(...HOSTING_TIERS.map((t) => t.yearlyMo))}`;
+export const HOSTING_FROM_MO: string = rupee(Math.min(...HOSTING_TIERS.map((t) => t.yearlyMo)));
+
+/**
+ * R-1465 (16 Oct 2026): what a plan card prints, in whole rupees — ₹99.98 / ₹374.40 read as
+ * auto-calculated. `billed` and `payToday` are the very figures checkout charges
+ * (lib/checkout/hosting-prices.ts: Math.round of the cycle total, then Math.round(× 1.18));
+ * `perMonth` is the per-month rate rounded the same way. Display only: LANDING_PLANS and
+ * the charge are untouched (pinned in site/site-price-display.test.ts).
+ */
+export function hostingCardPrices(t: TierPrice, yearly: boolean): { perMonth: string; billed: string; payToday: string } {
+  const c = hostingCharge(t, yearly);
+  return { perMonth: rupee(yearly ? t.yearlyMo : t.monthly), billed: rupee(c.exGst), payToday: rupee(c.inclGst) };
+}
+
+type TierPrice = Pick<HostingTier, "monthly" | "yearlyMo" | "yearlyTotal">;
+
+/** One payment for the cycle, whole rupees — ex-GST and incl. 18% GST, as checkout charges it. */
+export function hostingCharge(t: TierPrice, yearly: boolean): { exGst: number; inclGst: number } {
+  const exGst = Math.round(yearly ? t.yearlyTotal : t.monthly);
+  return { exGst, inclGst: Math.round(exGst * (1 + GST_RATE)) };
+}

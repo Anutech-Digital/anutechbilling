@@ -26,6 +26,7 @@ import { trailForPrompt, type TrailEvent } from "@/lib/ai/test-trail";
 import { cleanSteps, type BugDraft } from "@/lib/ai/app-help";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 import { CropOverlay, captureViewport, toShot } from "@/components/shared/help-shot";
+import { HelpReportMatches } from "@/components/shared/help-report-matches";
 
 /** Recorded steps attached to a report — the same window AI Help sends with a draft. */
 const RECORDED_STEPS = 15;
@@ -204,6 +205,9 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
             className="block w-full resize-y rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber"
           />
         </div>
+
+        {/* R-1417: this company's open reports that look like the same problem; R-1466: +1 on them. */}
+        <HelpReportMatches text={text} tenantId={currentUser?.tenantId ?? null} userId={currentUser?.userId ?? null} />
 
         {shots.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label={`${shots.length} screenshot(s) attached`}>

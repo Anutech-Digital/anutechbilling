@@ -21,6 +21,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import type { Database } from "@/lib/supabase/database.types";
 import { isOwnAdvance, visibleAdvances } from "@/lib/expenses/advance-visibility";
 
@@ -189,6 +190,12 @@ export async function POST(request: NextRequest) {
 
     if (profErr || !profile) {
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+    }
+    /* R-1470: spending against an advance is done on Advances & Expenses — every staff role,
+       never the external partner agent (nor a login without a known role). Which advance is
+       theirs is decided below. */
+    if (!mayOpenPage(profile.role, ["/my-expenses"])) {
+      return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
     }
 
     /* ─── The advance must be one this caller may spend against ────────────────

@@ -32,6 +32,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { recordDraftFeedback } from "@/lib/ai/draft-feedback.server";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
@@ -71,12 +72,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json(
       { error: "Your account is not linked to a workspace yet — an owner can claim it on the Team page." },
       { status: 403 },
     );
+  }
+  /* R-1470: replies go out from Enquiries or a lead's Email tab — only their roles may send. */
+  if (!mayOpenPage(me.role, ["/enquiries", "/leads"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   let parsed: z.infer<typeof bodySchema>;

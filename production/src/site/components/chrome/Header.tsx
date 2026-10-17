@@ -19,6 +19,7 @@ import { useCart } from "@/site/components/cart/CartProvider";
 import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
 import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
+import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import { emailFromRate } from "@/site/lib/live-catalog";
 
 interface MenuItem { label: string; note: string; href: string }
@@ -71,7 +72,7 @@ const MENUS: readonly Menu[] = [
     label: "Hosting", href: "/hosting",
     cols: [
       [
-        { label: "Shared hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
+        { label: "Shared hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
         { label: "Full specification", note: "All 14 rows, nothing hidden", href: "/hosting#specs" },
         { label: "Migration desk", note: "Free, done by us", href: "/contact" },
       ],
@@ -81,7 +82,7 @@ const MENUS: readonly Menu[] = [
         { label: "SSL & security", note: "Free DV on every site", href: "/ssl" },
       ],
     ],
-    promo: { tag: "99.9% SLA, CREDITED", title: "Mumbai and Bengaluru, LiteSpeed on NVMe", body: "If a month falls under the SLA we credit it without being asked.", cta: "See hosting plans", href: "/hosting" },
+    promo: { tag: "99.9% SLA, CREDITED", title: HOSTING_DESCRIPTION, body: "If a month falls under the SLA we credit it without being asked.", cta: "See hosting plans", href: "/hosting" },
   },
   {
     label: "Email & security", href: "/email",
@@ -137,7 +138,7 @@ const MOBILE_PAGES = [
   { label: "Home", note: "Everything Anutech does", href: "/" },
   { label: "Custom software", note: "Office automation, built for you", href: "/#software" },
   { label: "Domains", note: DOMAIN_TEASER.line, href: "/domains" },
-  { label: "Hosting", note: "cPanel on NVMe, from ₹49.99/mo", href: "/hosting" },
+  { label: "Hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
   { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
   { label: "Compare editions", note: "GW, M365 and Zoho side by side", href: "/email/compare-editions" },
   { label: "Google Workspace pricing", note: "Every plan in INR + GST", href: "/google-workspace/pricing" },

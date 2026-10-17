@@ -64,7 +64,7 @@ import { createClient } from "@/lib/supabase/client";
 import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
-import { paymentOutcome } from "@/lib/accounting/tds-receipt";
+import { paymentOutcome, tdsBase } from "@/lib/accounting/tds-receipt";
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
@@ -137,10 +137,10 @@ export function applyPaymentMethod(
   return Promise.resolve(true);
 }
 
-/** Compute TDS amount = pre-GST gross × rate%. */
-function computeTds(quoteAmountInclGst: number, ratePct: number): { preGST: number; tds: number } {
-  // GST is 18% built into the invoice amount → pre-GST = amount × 100/118
-  const preGST = Math.round(quoteAmountInclGst * 100 / 118);
+/** Compute TDS amount = pre-GST gross × rate%. R-1119: GST is stripped at the quote's own
+ *  rate (5% / 12% / 0% export), not a fixed 18%. */
+function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: number | null): { preGST: number; tds: number } {
+  const preGST = tdsBase(quoteAmountInclGst, taxRatePct);
   const tds    = Math.round(preGST * ratePct / 100);
   return { preGST, tds };
 }
@@ -267,12 +267,17 @@ export function RecordPaymentDialog({
      and the owner read it as double billing. Read the flag once when the sheet opens.
      select("*") so a database without the is_add_seats column still loads (flag = false). */
   const [isAddSeatsQuote, setIsAddSeatsQuote] = React.useState(false);
+  /* R-1119: the quote's GST rate, read in the same lookup — TDS is taken on the pre-GST value. */
+  const [quoteTaxRate, setQuoteTaxRate] = React.useState<number | null>(null);
   React.useEffect(() => {
-    if (!open) { setIsAddSeatsQuote(false); return; }
+    if (!open) { setIsAddSeatsQuote(false); setQuoteTaxRate(null); return; }
     let live = true;
     (async () => {
       const { data: q } = await createClient().from("quotes").select("*").eq("id", quoteId).maybeSingle();
-      if (live) setIsAddSeatsQuote((q as { is_add_seats?: boolean | null } | null)?.is_add_seats === true);
+      if (!live) return;
+      const row = q as { is_add_seats?: boolean | null; tax_rate?: number | string | null } | null;
+      setIsAddSeatsQuote(row?.is_add_seats === true);
+      setQuoteTaxRate(row?.tax_rate == null ? null : Number(row.tax_rate));
     })();
     return () => { live = false; };
   }, [open, quoteId]);
@@ -356,8 +361,8 @@ export function RecordPaymentDialog({
 
   // TDS computation — preGST × rate%
   const { preGST: quotePreGST, tds: tdsAmount } = React.useMemo(
-    () => tdsDeducted ? computeTds(expectedAmount, tdsRatePct) : { preGST: 0, tds: 0 },
-    [tdsDeducted, tdsRatePct, expectedAmount],
+    () => tdsDeducted ? computeTds(expectedAmount, tdsRatePct, quoteTaxRate) : { preGST: 0, tds: 0 },
+    [tdsDeducted, tdsRatePct, expectedAmount, quoteTaxRate],
   );
 
   // Advance credit applied to this payment — capped at the remaining balance

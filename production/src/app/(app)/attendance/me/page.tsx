@@ -17,7 +17,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { getDeviceToken } from "@/lib/attendance/device";
@@ -25,8 +24,6 @@ import { useAttendanceNetwork } from "@/lib/queries/payroll";
 import {
   useMyAttendanceToday,
   useMarkSelfAttendance,
-  useSetMyEmployee,
-  useMyEmployeeLinkChoices,
   useMyAttendanceHistory,
   useRecordConsent,
   useWithdrawConsent,
@@ -37,18 +34,11 @@ import {
 } from "@/lib/queries/my-attendance";
 import { LeaveRequestDialog } from "@/components/features/attendance/leave-request-dialog";
 import { ThisDeviceCard, useDeviceSignature } from "./device-card";
+import { LinkEmployeeCard } from "./link-employee-card";
+import { todayLabel } from "./today-label";
 import { dayStatus, formatGap, formatWorked, type ShiftRules } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { minutesToTimeValue, parseTimeToMinutes } from "@/lib/attendance/reminders";
-import Link from "next/link";
-import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import {
-  canPickEmployee,
-  linkCardMode,
-  EMPLOYEES_HREF,
-  NO_EMPLOYEES_MESSAGE,
-  NOT_LINKED_MESSAGE,
-} from "@/lib/attendance/self-profile";
 
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
@@ -72,15 +62,6 @@ function todayIstDate(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-function todayLabel(): string {
-  return new Date().toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-}
-
 export default function MyAttendancePage() {
   const meQ = useMyAttendanceToday();
   const netQ = useAttendanceNetwork();
@@ -94,7 +75,8 @@ export default function MyAttendancePage() {
       <div className="mb-6 text-center">
         <p className="text-2xs uppercase tracking-wider text-ink-3">Payroll &amp; HR</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight mt-1">My Attendance</h1>
-        <p className="text-sm text-ink-3 mt-1">{todayLabel()}</p>
+        {/* suppressHydrationWarning: only the IST-midnight race can differ server vs client (R-1471). */}
+        <p className="text-sm text-ink-3 mt-1" suppressHydrationWarning>{todayLabel()}</p>
 
         {meQ.data?.linked && (
           <div className="mt-3 flex justify-center">
@@ -566,7 +548,7 @@ function CheckInCard({
                 <span>Desktop PC (No Webcam) Mode</span>
               </div>
               <p className="text-xs text-ink-3">
-                System detected desktop PC without webcam. Authenticated via Google Account.
+                No webcam found on this computer, so no photo is taken. Your check-in is recorded against the login you are signed in with.
               </p>
             </div>
           ) : (
@@ -702,82 +684,6 @@ function CheckInCard({
         {" — "}
         your attendance is recorded with these proofs.
       </p>
-    </Card>
-  );
-}
-
-function LinkEmployeeCard() {
-  /* R-1001: names come from my_employee_link_choices() — employees itself is owner / manager /
-     accountant only. R-1414: only those three roles get the picker; any other role sees a
-     plain "ask the owner" message instead of an empty dropdown. */
-  const userQ = useCurrentUser();
-  const role = userQ.data?.role ?? null;
-  const empQ = useMyEmployeeLinkChoices(canPickEmployee(role));
-  const setEmp = useSetMyEmployee();
-  const [selectedId, setSelectedId] = React.useState<string>("");
-
-  const rows = empQ.data ?? [];
-  const mode = linkCardMode(role, rows.length);
-
-  if (userQ.isLoading) return <Skeleton className="h-48 w-full rounded-xl" />;
-
-  if (mode === "ask-owner") {
-    return (
-      <Card className="p-6 md:p-8 text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft">
-          <Icon name="user" className="h-6 w-6 text-amber-ink" />
-        </div>
-        <h2 className="font-serif text-xl">Profile not linked</h2>
-        <p className="text-sm text-ink-3 mt-2">{NOT_LINKED_MESSAGE}</p>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="p-6 md:p-8 text-center">
-      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-soft">
-        <Icon name="user" className="h-6 w-6 text-amber-ink" />
-      </div>
-      <h2 className="font-serif text-xl">Select your profile</h2>
-      <p className="text-sm text-ink-3 mt-1">
-        First time here — pick your name from the list. Once linked, you will not be asked again.
-      </p>
-
-      {empQ.isLoading ? (
-        <Skeleton className="mt-5 h-10 w-full rounded-md" />
-      ) : empQ.error ? (
-        <p className="mt-4 text-xs text-rose">Could not load employees.</p>
-      ) : mode === "no-employees" ? (
-        <p className="mt-4 text-sm text-ink-3">
-          {NO_EMPLOYEES_MESSAGE}{" "}
-          <Link href={EMPLOYEES_HREF} className="text-amber-ink underline">
-            Open Employees
-          </Link>
-        </p>
-      ) : (
-        <div className="mt-5 space-y-3">
-          <Select value={selectedId} onValueChange={setSelectedId}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select your name…" />
-            </SelectTrigger>
-            <SelectContent>
-              {rows.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Button
-            className="w-full"
-            disabled={!selectedId || setEmp.isPending}
-            onClick={() => setEmp.mutate(selectedId)}
-          >
-            {setEmp.isPending ? "Linking…" : "Save & Continue"}
-          </Button>
-        </div>
-      )}
     </Card>
   );
 }

@@ -96,4 +96,16 @@ describe("R-828 join request keeps asked AND given role", () => {
     expect(jr()).toMatchObject({ status: "rejected", granted_role: null, requested_role: "support" });
     expect(db.tables.users.find((u) => u.id === JOINER)).toBeUndefined();
   });
+
+  it("R-1470: a manager (or a deactivated owner) gets 403 and the request is left untouched", async () => {
+    const MGR = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    db.tables.users.push({ id: MGR, tenant_id: TENANT, role: "manager", email: "mgr@example.in" });
+    db.sessionUser = { id: MGR };
+    expect((await call({ action: "approve", role: "owner" })).status).toBe(403);
+    db.sessionUser = { id: OWNER };
+    db.tables.users[0].is_active = false;
+    expect((await call({ action: "approve", role: "sales" })).status).toBe(403);
+    expect(jr()).toMatchObject({ status: "pending_approval", decided_by: null, granted_role: null });
+    expect(db.tables.users.find((u) => u.id === JOINER)).toBeUndefined();
+  });
 });

@@ -13,7 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { errorResponse, RouteError } from "@/lib/api/with-route";
+import { errorResponse, RouteError, mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,11 +41,15 @@ export async function POST(req: NextRequest) {
 
   const { data: me, error: meErr } = await userClient
     .from("users")
-    .select("tenant_id")
+    .select("tenant_id, role")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me?.tenant_id) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: a phoned-in trial is started from Sales & Pipeline — only roles that open it. */
+  if (!mayOpenPage(me.role, ["/leads"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   let body: unknown;

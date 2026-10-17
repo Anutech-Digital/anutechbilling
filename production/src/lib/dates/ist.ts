@@ -157,3 +157,25 @@ export function formatIstDate(at: string | Date | number): string {
   const iso = typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) ? at : toIstDate(at);
   return `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 }
+
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/**
+ * R-1139: "Oct 2026" for a "2026-10" (or "2026-10-17") month — built from the numbers, so the
+ * viewer's time zone can never move it. (`new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(…)`
+ * without timeZone showed "Sep" for October on a device west of UTC.)
+ * `{ year: "2-digit" }` → "Oct 26" (chart axes); `{ month: "long" }` → "October 2026".
+ * Anything that is not a YYYY-MM month comes back unchanged.
+ */
+export function formatMonthLabel(
+  ym: string,
+  opts: { month?: "short" | "long"; year?: "numeric" | "2-digit" } = {},
+): string {
+  const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(ym);
+  if (!match) return ym;
+  const m = Number(match[2]);
+  if (m < 1 || m > 12) return ym;
+  const name = (opts.month === "long" ? MONTHS_LONG : MONTHS)[m - 1];
+  const year = opts.year === "2-digit" ? match[1].slice(2) : match[1];
+  return `${name} ${year}`;
+}

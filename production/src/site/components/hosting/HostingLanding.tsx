@@ -24,8 +24,12 @@ import { hostingSans as manrope, hostingSerif as serif, hostingMono as mono } fr
 import { useCart } from "@/site/components/cart/CartProvider";
 import { isTrialPlan, TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { rupee } from "@/site/lib/money";
+import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import {
   HOSTING_TIERS,
+  hostingCardPrices,
+  hostingCharge,
   REC_WHY,
   HOSTING_MATRIX,
   HOSTING_TIMELINE,
@@ -52,11 +56,9 @@ const C = {
 const MONO = "var(--hf-mono), 'JetBrains Mono', monospace";
 const SERIF = "var(--hf-serif), 'Instrument Serif', serif";
 
-const inr = (n: number) => {
-  const r = Math.round(n * 100) / 100;
-  return "₹" + r.toLocaleString("en-IN", { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
-};
-const gst = (n: number) => inr(n * 1.18);
+/* R-1465: whole rupees through one site formatter (99.98 / 374.40 rupees read as
+   auto-calculated). Billed and pay-today figures come from hostingCardPrices — the numbers
+   checkout charges, not a re-computation with paise. */
 
 export function HostingLanding() {
   const [billing, setBilling] = useState<"Monthly" | "Yearly">("Yearly");
@@ -96,15 +98,15 @@ export function HostingLanding() {
   const plans = HOSTING_TIERS.map((p) => {
     const isRec = p.name === rec;
     const isTop = isRec || (!rec && p.isPopular);
-    const total = yearly ? p.yearlyTotal : p.monthly;
+    const shown = hostingCardPrices(p, yearly);
     return {
       ...p,
       badge: isRec ? "BEST FIT" : (!rec && p.isPopular ? "MOST CHOSEN" : null),
       isTop,
-      priceLabel: inr(yearly ? p.yearlyMo : p.monthly),
-      billingLine: yearly ? `Billed annually · ${inr(p.yearlyTotal)} + GST` : `Billed monthly · ${inr(p.monthly)} + GST`,
-      renewLine: `${inr(yearly ? p.yearlyMo : p.monthly)}/mo — the same price, not a first-year rate`,
-      payToday: `Pay today ${gst(total)} incl. 18% GST`,
+      priceLabel: shown.perMonth,
+      billingLine: `Billed ${yearly ? "annually" : "monthly"} · ${shown.billed} + GST`,
+      renewLine: `${shown.perMonth}/mo — the same price, not a first-year rate`,
+      payToday: `Pay today ${shown.payToday} incl. 18% GST`,
     };
   });
   /* One add-to-cart for both card layouts (trial plan: secondary button; others:
@@ -132,10 +134,12 @@ export function HostingLanding() {
   const anchor = plans.find((p) => p.badge) ?? plans[1];
   const anchorBase = HOSTING_TIERS.find((t) => t.name === anchor.name)!;
 
+  /* Three years incl. GST, as the payments checkout takes: 3 yearly or 36 monthly. */
   const costRows = HOSTING_TIERS.map((p) => {
-    const y = p.yearlyTotal * 3, m = p.monthly * 36;
-    return { name: p.name, yearly: gst(y), monthly: gst(m), save: gst(m - y) };
+    const y = hostingCharge(p, true).inclGst * 3, m = hostingCharge(p, false).inclGst * 36;
+    return { name: p.name, yearly: rupee(y), monthly: rupee(m), save: rupee(m - y) };
   });
+  const anchorShown = hostingCardPrices(anchorBase, yearly);
 
   // Shared style fragments
   const eyebrow = (color = C.accent): React.CSSProperties => ({ fontFamily: MONO, fontSize: 12, letterSpacing: ".1em", color, fontWeight: 700 });
@@ -185,13 +189,13 @@ export function HostingLanding() {
               <span style={{ fontFamily: SERIF, fontWeight: 400, fontStyle: "italic", color: C.accent }}>FREE for {TRIAL_DAYS} Days.</span>
             </h1>
             <p style={{ marginTop: 18, fontSize: 18, lineHeight: 1.55, color: C.ink2, maxWidth: "min(100%,560px)", textWrap: "pretty" } as React.CSSProperties}>
-              Enterprise-grade web hosting powered by Google Cloud. Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
+              {HOSTING_DESCRIPTION} Free SSL, daily backups, free migration and support from real people — and the trial needs no credit card, so your old host stays live until you approve the move.
             </p>
             <div style={{ marginTop: 26, display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button type="button" onClick={startTrialInCart} className="hlp-orange" style={{ background: C.accent, color: "#fff", padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center", border: 0, cursor: "pointer", fontFamily: "inherit" }}>Start the free {TRIAL_PLAN_NAME} trial</button>
               <a href="#move" className="hlp-outline" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.ink, padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center" }}>See how migration works</a>
             </div>
-            <ul style={{ marginTop: 24, display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
+            <ul style={{ display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
               {["No credit card", "Full features during trial", "30-day refund on yearly"].map((t) => (
                 <li key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 600, color: C.ink2 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{t}</li>
               ))}
@@ -207,9 +211,9 @@ export function HostingLanding() {
             </div>
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {[
-                ["Billed", yearly ? `${inr(anchorBase.yearlyTotal)} + GST once a year` : `${inr(anchorBase.monthly)} + GST every month`],
-                ["You pay today", `${gst(yearly ? anchorBase.yearlyTotal : anchorBase.monthly)} incl. GST`],
-                ["Renews at", `${inr(yearly ? anchorBase.yearlyMo : anchorBase.monthly)}/mo — same price`],
+                ["Billed", `${anchorShown.billed} + GST ${yearly ? "once a year" : "every month"}`],
+                ["You pay today", `${anchorShown.payToday} incl. GST`],
+                ["Renews at", `${anchorShown.perMonth}/mo — same price`],
               ].map(([k, v], i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14.5, paddingBottom: 10, borderBottom: `1px dashed ${C.line}` }}><span style={{ color: C.muted }}>{k}</span><span style={{ fontWeight: 700, textAlign: "right" }}>{v}</span></div>
               ))}
@@ -279,7 +283,7 @@ export function HostingLanding() {
           {/* Plan cards */}
           <div style={mob
             ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start" } as React.CSSProperties
-            : { marginTop: 18, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
+            : { margin: "18px 0 0", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
             {plans.map((p) => (
               <div key={p.name} style={{
                 background: "#fff", border: p.isTop ? `1.5px solid ${C.accent}` : `1px solid ${C.line}`, borderRadius: 18,
@@ -310,7 +314,7 @@ export function HostingLanding() {
                           yearly alike. This plan is bought, so buying is the main action. */}
                       <button type="button" onClick={() => addPlanToCart(p)} className={p.isTop ? "hlp-orange" : "hlp-dark"} style={{ textAlign: "center", padding: 15, borderRadius: 11, fontSize: 15, fontWeight: 700, color: "#fff", minHeight: 50, background: p.isTop ? C.accent : C.ink, border: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>Buy {p.name}</button>
                       <div style={{ textAlign: "center", fontSize: 13, lineHeight: 1.45, color: C.muted, minHeight: 46, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>
-                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
+                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: "inherit", lineHeight: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
                       </div>
                     </>
                   )}

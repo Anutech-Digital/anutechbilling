@@ -125,7 +125,10 @@ const R1003_BILLING_REMOVED = [
   "/accounting/attendance", "/accounting/leave", "/accounting/esi-register",
 ];
 const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/accounting/attendance", "/accounting/leave"];
-const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED] };
+/** R-1127 (16 Oct 2026): same reason as R-138 — these read salaries/employees, which RLS hides
+ *  from billing, so salary and PF/ESI/TDS rows showed Rs 0 (Pardeep's call: take them away). */
+const R1127_BILLING_REMOVED = ["/accounting/trial-balance", "/accounting/close", "/accounting/cash-flow"];
+const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED, ...R1127_BILLING_REMOVED] };
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),

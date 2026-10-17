@@ -16,6 +16,7 @@
 import type { Tld, Cert } from "./data/catalog";
 import type { HostingTier } from "./data/hosting-landing-v2";
 import type { MergedEdition } from "./live-catalog";
+import { rupee } from "./money";
 
 export interface RateRow {
   name: string;
@@ -37,7 +38,9 @@ export interface RateSection {
   cta: string;
 }
 
-const inr = (n: number) => "₹" + (Number.isInteger(n) ? n.toLocaleString("en-IN") : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+/* R-1465: whole rupees, the site's one formatter — the yearly total then reads exactly what
+   checkout charges (₹600, not ₹599.88). */
+const inr = rupee;
 
 export function buildRateCard(src: {
   tlds: readonly Tld[];

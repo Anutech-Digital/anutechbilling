@@ -12,6 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 
 export const dynamic = "force-dynamic";
@@ -207,7 +208,9 @@ export async function POST(request: NextRequest) {
   try { body = bodySchema.parse(await request.json()); }
   catch { return NextResponse.json({ error: "Invalid request." }, { status: 400 }); }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open Project Sales — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/projects"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   if (body.action === "questions") {

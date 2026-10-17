@@ -10,13 +10,18 @@
  *
  * STUB-FIRST: needs (a) SARVAM_API_KEY for TTS and (b) WhatsApp Business Cloud
  * API configured for the tenant. Returns a clear 400 when either is missing.
+ * A customer with no phone gets 422 `{ code: "no_phone", error, description, href }`
+ * (R-1452) before any TTS or send is attempted.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { can } from "@/lib/auth/roles";
+import { ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { synthesizeSpeech } from "@/lib/voice/tts";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
+import { hasPhone, noPhoneNotice, NO_PHONE_STATUS } from "@/lib/voice/voice-note-phone";
 
 const bodySchema = z.object({
   customerId: z.string().min(1),
@@ -35,14 +40,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return NextResponse.json({ error: "No tenant." }, { status: 403 });
+  /* R-1470: a voice note goes to a customer's WhatsApp — the same can_contact_customers
+     permission R-732 put on /api/whatsapp/send (every internal role; not the partner agent). */
+  if (!can(me.role, "can_contact_customers")) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
 
   // Customer + tenant + real money context (RLS-scoped to this tenant).
   const { data: customer } = await supabase
     .from("customers").select("id, name, contact_name, contact_phone").eq("id", parsed.customerId).maybeSingle();
   if (!customer) return NextResponse.json({ error: "Customer not found." }, { status: 404 });
-  if (!customer.contact_phone) return NextResponse.json({ error: "This customer has no phone number." }, { status: 400 });
+  // R-1452: no phone → a clear §24 answer (what, why, where to add it), and nothing is sent.
+  if (!hasPhone(customer.contact_phone)) {
+    return NextResponse.json(noPhoneNotice(customer.id, customer.name), { status: NO_PHONE_STATUS });
+  }
 
   const { data: tenant } = await supabase.from("tenants").select("name").eq("id", me.tenant_id).maybeSingle();
   const brand = tenant?.name || "your service provider";

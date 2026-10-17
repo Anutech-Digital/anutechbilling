@@ -56,7 +56,7 @@ import {
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
-import { presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
+import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { Switch } from "@/components/ui/switch";
@@ -69,7 +69,7 @@ import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-det
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
-import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO } from "@/lib/dates/ist";
+import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel } from "@/lib/dates/ist";
 
 /** Previous month (YYYY-MM) — payroll is usually run for the month just ended. */
 function prevPeriod(): string {
@@ -1021,19 +1021,19 @@ export function PayrollTab() {
       {/* Summary — full monthly cost vs what's been run this month */}
       <Card className="mb-4 p-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Estimated monthly cost</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(estimatedMonthly)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(estimatedMonthly)}</div>
             <div className="text-xs text-ink-3 mt-0.5">All {employees.length} active employees&apos; gross</div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Run this month (net)</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(totalNet)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(totalNet)}</div>
             <div className="text-xs text-ink-3 mt-0.5">{runCount} of {employees.length} paid</div>
           </div>
-          <div className="col-span-2 sm:col-span-1">
+          <div className="min-w-0 col-span-2 sm:col-span-1">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Still to run</div>
-            <div className={cn("font-serif text-2xl leading-tight mt-1", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
+            <div className={cn("font-serif text-xl sm:text-2xl leading-tight mt-1 tabular-nums", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
               {employees.length - runCount}
             </div>
             <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone paid 🎉"}</div>
@@ -1328,8 +1328,7 @@ function EmployeePayrollYearDialog({
                 <tbody className="divide-y divide-hairline">
                   {months.map((m) => {
                     const p = byPeriod.get(m.period);
-                    const label = new Date(m.year, m.month - 1, 1)
-                      .toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+                    const label = formatMonthLabel(m.period);
                     return (
                       <tr key={m.period} className="hover:bg-paper-2/40">
                         <td className="px-3 py-2">
@@ -1365,18 +1364,18 @@ function EmployeePayrollYearDialog({
               </table>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
+              <div className="min-w-0 col-span-2 sm:col-span-1 rounded-md border border-hairline bg-paper-2/30 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Months run</div>
-                <div className="font-serif text-lg text-ink">{runCount}/12</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums">{runCount}/12</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Year net</div>
-                <div className="font-serif text-lg text-ink">{rupee(totalEarned)}</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums break-words">{rupee(totalEarned)}</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Cleared</div>
-                <div className="font-serif text-lg text-emerald">{rupee(totalCleared)}</div>
+                <div className="font-serif text-base sm:text-lg text-emerald tabular-nums break-words">{rupee(totalCleared)}</div>
               </div>
             </div>
           </>
@@ -1595,17 +1594,23 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
     const holidaySet = new Set((holQ.data ?? []).map((h) => h.holiday_date));
     nationalHolidaysForYear(yy).forEach((d) => holidaySet.add(d));
     let expected = 0, sundays = 0, holidays = 0;
+    const countedDates = new Set<string>();
     for (const d = new Date(rangeStart); d <= rangeEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const iso = utcDateISO(d);
       if (d.getUTCDay() === 0) sundays++;            // weekly off — paid, never LOP
       else if (holidaySet.has(iso)) holidays++;      // Sunday/holiday clash counts once as Sunday
-      else expected++;                                // working day
+      else { expected++; countedDates.add(iso); }     // working day
     }
     // R-604: a half-day (Pardeep: "half day par salary kaatni hai") counts 0.5 present.
-    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, shiftQ.data ?? DEFAULT_SHIFT);
-    const monthLeaves = (leaveQ.data ?? []).filter((l) => l.employee_id === employee.id && l.from_date <= `${period}-31` && l.to_date >= `${period}-01`);
-    const paidLeave = monthLeaves.filter((l) => l.type !== "unpaid").reduce((s, l) => s + l.days, 0);
-    const unpaidLeave = monthLeaves.filter((l) => l.type === "unpaid").reduce((s, l) => s + l.days, 0);
+    const rules = shiftQ.data ?? DEFAULT_SHIFT;
+    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, rules);
+    // R-780: only the leave's working days inside this month, never on a present day, never twice.
+    const isWorkingDate = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay() !== 0
+      && !holidaySet.has(iso) && !nationalHolidaysForYear(Number(iso.slice(0, 4))).includes(iso);
+    const { paidLeave, unpaidLeave } = leaveDaysInMonth({
+      leaves: leaveQ.data ?? [], employeeId: employee.id, countedDates, isWorkingDate,
+      presentByDate: presentByDate(attQ.data ?? [], employee.id, rules),
+    });
     const { absent, lopDays } = suggestedLopDays({ expected, present, paidLeave, unpaidLeave });
     return { present, halfDays, absent, unpaidLeave, lopDays, workingDays: expected, sundays, holidays };
   }, [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
@@ -2303,7 +2308,7 @@ export function AttendanceTab() {
         </div>
         <Card className="mb-4 p-4">
           <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Attendance register</div>
-          <div className="font-serif text-2xl text-ink leading-tight mt-1">{toTitleCase(focusEmp.name)}</div>
+          <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 break-words">{toTitleCase(focusEmp.name)}</div>
           {focusEmp.designation && <div className="text-xs text-ink-3 mt-0.5">{focusEmp.designation}</div>}
         </Card>
         {attQ.isLoading
@@ -2443,7 +2448,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
   if (!yy || !mm) return null;
   const days = new Date(yy, mm, 0).getDate();          // last day of this month
   const today = todayISO();
-  const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const monthLabel = formatMonthLabel(period, { month: "long" });
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
   const dateFor = (d: number) => `${period}-${String(d).padStart(2, "0")}`;
 

@@ -37,6 +37,7 @@ import { gstAllToDate, gstRangeFromParams, gstThisFy } from "./range";
 import { useGstReport, useGstPaidInRange } from "./report";
 import { gstCashHeadline, gstr3bFromReport, outputTaxBridge, toGstr1Doc } from "./cash-to-pay";
 import { OutputTaxBridgeCard } from "./output-tax-bridge-card";
+import { GstWarnings } from "./gst-warnings";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
@@ -597,13 +598,7 @@ function GstReportInner() {
         </Card>
       ) : (
         <>
-        {data.lateCreditNotes > 0 && (
-          <div role="alert" className="mb-3 rounded-md bg-amber-soft/60 border border-amber/40 px-3 py-2 text-xs text-amber-ink leading-relaxed">
-            <b>{data.lateCreditNotes} late credit note{data.lateCreditNotes === 1 ? "" : "s"}</b> — issued after GST s.34&apos;s
-            limit for the invoice (30 Nov after its financial year, or the annual return date if earlier). They may not
-            reduce output GST; confirm with your CA before filing. Marked &ldquo;Late&rdquo; below.
-          </div>
-        )}
+        <GstWarnings data={data} />
         <Card className="overflow-hidden mb-6">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

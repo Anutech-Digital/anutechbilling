@@ -30,6 +30,8 @@ export interface OutputRow {
   taxableValue: number;        // persisted (migration 0116), else reverse-derived
   gst:          number;        // total GST (persisted, else reverse-derived)
   taxRate:      number;        // GST rate %
+  /** R-1131: no stored rate and no tax figure to derive one from — filed at 0%, shown as "rate missing". */
+  rateMissing?: boolean;
   interState:   boolean;       // true → IGST; false → CGST + SGST
   docType:      "invoice" | "credit_note" | "debit_note";  // credit/debit notes net the output tax
   /** R-335: a credit note issued after its invoice's GST s.34 limit (30 Nov after that FY). Warning only. */
@@ -77,6 +79,8 @@ export interface GstReport {
   advances:        Advance[];
   /** R-335: credit notes in this period issued after their invoice's s.34 time limit. */
   lateCreditNotes: number;
+  /** R-1131: documents + advances whose GST rate is missing (not stored, not derivable). */
+  rateMissingDocs?: number;
 }
 
 

@@ -9,7 +9,7 @@ import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { toast } from "sonner";
-import { useCompleteTask, useDeleteTask, type TaskWithLink } from "@/lib/queries/tasks";
+import { useCompleteTask, useDeleteTask, useReopenTask, type TaskWithLink } from "@/lib/queries/tasks";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -48,6 +48,7 @@ const contactBtn =
 
 export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit: (t: TaskWithLink) => void; assignee?: TeamMember | null }) {
   const completeTask = useCompleteTask();
+  const reopenTask   = useReopenTask();
   const snoozeTask   = useSnoozeTaskTo();
   const deleteTask   = useDeleteTask();
   const [confirmOpen, setConfirmOpen] = React.useState(false);
@@ -93,15 +94,20 @@ export function TaskRow({ task, onEdit, assignee }: { task: TaskWithLink; onEdit
         isDone    && "opacity-60",
       )}
     >
-      {/* One click = done. The hit area is 36px; the visible circle stays small. */}
+      {/* One click = done; R-1416: one click on a ticked circle = not done again (it was
+          disabled, so a Done task could never be reopened). The hit area is 36px; the
+          visible circle stays small. */}
       <button
         type="button"
         role="checkbox"
         aria-checked={isDone}
-        onClick={() => { if (!isDone && !completeTask.isPending) completeTask.mutate(task.id); }}
-        disabled={isDone}
-        title={isDone ? "Completed" : "Mark done"}
-        aria-label={isDone ? `Completed: ${task.title}` : `Mark done: ${task.title}`}
+        onClick={() => {
+          if (completeTask.isPending || reopenTask.isPending) return;
+          if (isDone) reopenTask.mutate(task.id);
+          else completeTask.mutate(task.id);
+        }}
+        title={isDone ? "Mark not done" : "Mark done"}
+        aria-label={isDone ? `Mark not done: ${task.title}` : `Mark done: ${task.title}`}
         className="-ml-1.5 -mt-0.5 h-9 w-9 shrink-0 flex items-center justify-center rounded-full group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
       >
         <span

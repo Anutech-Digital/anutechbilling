@@ -29,7 +29,7 @@ import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscri
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
-import { COMPANY_STATE_FIX } from "@/lib/onboarding/setup-links";
+import { COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button, IconButton } from "@/components/ui/button";
@@ -333,7 +333,15 @@ export default function QuoteDetailPage() {
   const gstBlock: null | { title: string; body: string; href: string; label: string } =
     !quote || quote.invoice_id || !me ? null
     : pos.head.kind === "seller_state_missing"
-      ? { title: COMPANY_STATE_FIX.message, body: `${COMPANY_STATE_FIX.description} Until then the GST invoice can't be issued.`, href: COMPANY_STATE_FIX.href, label: COMPANY_STATE_FIX.label }
+      ? {
+          title: COMPANY_STATE_FIX.message,
+          /* R-1428: Settings → Company is view-only for anyone but the owner — they ask the owner. */
+          body: me.role === "owner"
+            ? `${COMPANY_STATE_FIX.description} Until then the GST invoice can't be issued.`
+            : "GST needs it to choose CGST + SGST or IGST, and only the owner can set it — ask the owner to set the company state in Settings → Company. Until then the GST invoice can't be issued.",
+          href: companyStateFixFor(me.role).action.href,
+          label: companyStateFixFor(me.role).action.label,
+        }
       : pos.head.kind === "buyer_state_missing" && quote.customer_id
         ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }
         : null;

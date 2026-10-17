@@ -137,7 +137,7 @@ export default function TeamPage() {
   const openInvites   = invites.filter((i) => !memberEmails.has(i.email.trim().toLowerCase()));
 
   return (
-    <div className="mx-auto max-w-[1500px] px-4 pb-20 pt-6 md:px-6 md:pt-7 lg:px-8">
+    <div className="mx-auto max-w-[1800px] px-4 pb-20 pt-6 md:px-6 md:pt-7 lg:px-8">
       <div className="mb-6 flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="mb-0.5 text-xs font-medium uppercase tracking-widest text-ink-3">System</p>

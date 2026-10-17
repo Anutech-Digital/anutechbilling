@@ -18,9 +18,10 @@
  *   with a clear error code (we surface the message).
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
@@ -66,30 +67,15 @@ const schema = z.object({
   { message: "Provide exactly one of { text } or { template }; attach_quote_id can pair with text" },
 );
 
-export async function POST(req: NextRequest) {
-  let body: unknown;
-  try { body = await req.json(); } catch { body = {}; }
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: parsed.error.issues.map((i) => i.message).join(", ") },
-      { status: 400 },
-    );
-  }
-
-  // Authenticated only — RLS-scoped tenant
-  const supabase = createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  if (!authData?.user) {
-    return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
-  }
-  const { data: me } = await supabase
-    .from("users").select("tenant_id, role").eq("id", authData.user.id).single();
-  if (!me?.tenant_id) {
-    return NextResponse.json({ ok: false, error: "No tenant context" }, { status: 403 });
-  }
-
-  const { to, text, template, attach_quote_id, related } = parsed.data;
+/* R-732: a message to a customer's phone needs the can_contact_customers permission (every
+   internal role; not the partner agent) — PERMISSIONS in roles.ts, applied by withRoute. */
+export const POST = withRoute({
+  route: "api/whatsapp/send",
+  input: schema,
+  permission: "can_contact_customers",
+  roleHint: "Aapka role customers ko message nahi bhej sakta — workspace owner se kahiye.",
+}, async ({ input, tenantId }) => {
+  const { to, text, template, attach_quote_id, related } = input;
 
   try {
     // ── Attachment branch — render quote PDF server-side, send as
@@ -108,14 +94,14 @@ export async function POST(req: NextRequest) {
       if (qErr || !quote) {
         return NextResponse.json({ ok: false, error: "Quote not found" }, { status: 404 });
       }
-      if (quote.tenant_id !== me.tenant_id) {
+      if (quote.tenant_id !== tenantId) {
         return NextResponse.json({ ok: false, error: "Quote belongs to a different tenant" }, { status: 403 });
       }
 
       const { data: tenant } = await admin
         .from("tenants")
         .select("name, email, phone, gstin, address, state_code, upi_vpa, upi_payee_name, logo_url")
-        .eq("id", me.tenant_id)
+        .eq("id", tenantId)
         .single();
       const { data: customer } = quote.customer_id
         ? await admin
@@ -181,7 +167,7 @@ export async function POST(req: NextRequest) {
       const buffer = Buffer.from(await blob.arrayBuffer());
 
       const result = await sendCustomerWhatsApp({
-        tenantId: me.tenant_id,
+        tenantId: tenantId,
         to,
         message: {
           kind:     "document",
@@ -208,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     // ── Plain text or template branch (no attachment)
     const result = await sendCustomerWhatsApp({
-      tenantId: me.tenant_id,
+      tenantId: tenantId,
       to,
       message: text
         ? { kind: "text", text }
@@ -233,4 +219,4 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: false, error: message }, { status });
   }
-}
+});

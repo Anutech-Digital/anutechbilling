@@ -24,7 +24,8 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { createAdminClientFor } from "@/lib/supabase/server";
+import { withRoute } from "@/lib/api/with-route";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { SENT_REPLY_STATUS } from "@/lib/inbound/sent";
 
@@ -37,36 +38,22 @@ const bodySchema = z.object({
   body:    z.string().trim().min(1).max(20_000),
 });
 
-export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
-  }
-
-  const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
-  if (!me?.tenant_id) {
-    return NextResponse.json(
-      { error: "Your account is not linked to a workspace yet — an owner can claim it on the Team page." },
-      { status: 403 },
-    );
-  }
-
-  let parsed: z.infer<typeof bodySchema>;
-  try {
-    parsed = bodySchema.parse(await req.json());
-  } catch {
-    return NextResponse.json({ error: "A subject and a message are both required." }, { status: 400 });
-  }
+/* R-732: an email to a lead needs the can_contact_customers permission (every internal role;
+   not the partner agent) — PERMISSIONS in roles.ts, applied by withRoute. */
+export const POST = withRoute({
+  route: "api/leads/[id]/email",
+  input: bodySchema,
+  permission: "can_contact_customers",
+  roleHint: "Aapka role leads ko email nahi bhej sakta — workspace owner se kahiye.",
+}, async ({ user, tenantId, params, input }) => {
+  const parsed = input;
 
   const admin = createAdminClientFor(user.id);
   const { data: lead } = await admin
     .from("leads")
     .select("id, tenant_id, company, contact_email")
     .eq("id", params.id)
-    .eq("tenant_id", me.tenant_id)
+    .eq("tenant_id", tenantId)
     .maybeSingle();
 
   if (!lead) {
@@ -87,7 +74,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     /* Routing context. Without it every message would go through Resend from our domain
        instead of the tenant's own connected Gmail — see lib/email/provider.ts. The customer
        seeing a different sender than the one they replied to last time is a real cost. */
-    route:   { tenantId: me.tenant_id },
+    route:   { tenantId: tenantId },
     kind:    "lead_email",
   });
 
@@ -110,7 +97,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   let logged = false;
   if (sent.status === "sent") {
     const { error: logErr } = await admin.from("inbound_emails").insert({
-      tenant_id:  me.tenant_id,
+      tenant_id:  tenantId,
       /* The provider's own id keeps this idempotent against a retried request. */
       message_id: `lead-email:${sent.providerId ?? `${lead.id}:${Date.now()}`}`,
       /* No from_email: it left from the tenant's connected account, whose address belongs
@@ -136,4 +123,4 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
        implying both worked. */
     logged,
   });
-}
+});

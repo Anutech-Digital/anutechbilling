@@ -12,10 +12,29 @@
 
 export const EMPLOYEE_READ_ROLES = ["owner", "manager", "accountant"] as const;
 
-export const NOT_LINKED_MESSAGE =
-  "Your login isn't linked to an employee profile yet. Ask the owner to link it in Team → Employees.";
+/* R-1436: where the owner links SOMEONE ELSE's login to an employee — the owner-only
+   "Logins for attendance" panel on the Employees page. */
+export const LOGIN_LINK_PLACE_LABEL = "Employees → Logins for attendance";
+export const LOGIN_LINK_HREF = "/accounting/employees#logins";
 
-export const NO_EMPLOYEES_MESSAGE = "No employees yet — add one in Employees.";
+/* §24 — what happened, why, what to do next. The card shows a link to LOGIN_LINK_HREF under
+   this text (for the owner to open) and Report a problem as a fallback. */
+export const NOT_LINKED_MESSAGE =
+  "Your login isn't linked to an employee profile yet, so attendance can't be recorded for it. " +
+  `Ask your owner to link your login in ${LOGIN_LINK_PLACE_LABEL}, or report it below if you can't reach them.`;
+
+/* Owner / manager / accountant with nothing in my_employee_link_choices(). That list can be
+   empty even when employees exist (all linked, or their e-mail is someone else's), so never
+   "No employees yet". The reason is the rule set_my_employee enforces. */
+export const NO_EMPLOYEES_MESSAGE = "No employee profile is free to link to your login.";
+
+export function noEmployeesReason(email: string | null | undefined): string {
+  const mine = email ? `yours (${email})` : "the one you sign in with";
+  return (
+    "A profile can be linked only if it is active, not linked to another login, and its e-mail " +
+    `is empty or ${mine}. Add yourself in Employees, or correct the e-mail on your profile there.`
+  );
+}
 
 export const EMPLOYEES_HREF = "/accounting/employees";
 

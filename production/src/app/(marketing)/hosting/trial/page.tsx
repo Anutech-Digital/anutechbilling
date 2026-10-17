@@ -12,7 +12,7 @@ import { HostingTrialStatus } from "@/site/components/hosting/HostingTrialStatus
  * button is. noindex: it is a status page, not a page to rank.
  */
 export const metadata: Metadata = {
-  title: "Your hosting trial | Anutech Digital",
+  title: "Your hosting trial",
   robots: { index: false, follow: true },
 };
 

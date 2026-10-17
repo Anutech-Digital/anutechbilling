@@ -11,6 +11,7 @@ import * as React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
+import { formatMonthLabel } from "@/lib/dates/ist";
 import { salaryBreakdown, type SalaryRecordLike } from "@/lib/accounting/salary-breakdown";
 
 export interface SalaryRecordForBreakdown extends SalaryRecordLike {
@@ -22,10 +23,7 @@ export interface SalaryRecordForBreakdown extends SalaryRecordLike {
   reconciled_txn_id?: string | null;
 }
 
-const monthLabel = (period: string) => {
-  const [y, m] = period.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-};
+const monthLabel = (period: string) => formatMonthLabel(period, { month: "long" });
 
 export function SalaryBreakdownDialog({ name, record, onClose }: {
   name: string;

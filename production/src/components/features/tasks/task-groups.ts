@@ -41,6 +41,24 @@ export interface TaskGroup<T> {
   tasks: T[];
 }
 
+export type TaskTabId = "all" | "overdue" | "today" | "upcoming" | "done";
+
+/**
+ * R-1416 — the count on each /tasks tab, from the same groups the list renders. "All" shows
+ * every group (Done included), so its count is every grouped task — it used to leave Done
+ * out (Pawan: 3 open + 2 done read "All 3").
+ */
+export function taskTabCounts<T>(groups: readonly TaskGroup<T>[]): Record<TaskTabId, number> {
+  const n = (id: TaskGroupId) => groups.find((g) => g.id === id)?.tasks.length ?? 0;
+  return {
+    all: groups.reduce((sum, g) => sum + g.tasks.length, 0),
+    overdue: n("overdue"),
+    today: n("today"),
+    upcoming: n("upcoming"),
+    done: n("done"),
+  };
+}
+
 /**
  * Every group in TASK_GROUP_ORDER (empty ones included — the page decides what to hide).
  * Open groups run soonest-due first; Done runs most recently completed first.

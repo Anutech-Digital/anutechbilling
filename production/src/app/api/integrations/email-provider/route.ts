@@ -21,6 +21,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { canSendWithScopes, type EmailProvider } from "@/lib/email/provider";
+import { googleOAuthCreds } from "@/lib/google/oauth";
 import { listSenderCandidates, type SenderCandidateInput } from "@/lib/email/sender-candidates";
 import { resolveSecretField } from "@/lib/integrations/secret-field";
 import { encryptSecret, isVaultConfigured } from "@/lib/crypto/vault";
@@ -150,6 +151,8 @@ export async function GET() {
     hasResendKey: ctx.hasResendKey,
     /** True when the deployment-wide fallback is available. */
     hasEnvResendKey: Boolean(process.env.RESEND_API_KEY?.trim()),
+    /** R-1425: false when this server has no Google OAuth client, so Connect cannot work. */
+    googleConfigured: googleOAuthCreds() !== null,
     gmail: ctx.gmail,
     senderCandidates: candidates,
     /** Only the owner may switch it — PATCH enforces the same. */
@@ -191,14 +194,20 @@ export async function PATCH(req: NextRequest) {
         .select("refresh_token, scopes")
         .eq("user_id", senderId).maybeSingle();
 
+      /* R-1425: each 409 carries a `code` so the card shows a calm next step, not a raw error. */
       if (!tok?.refresh_token) {
+        const configured = googleOAuthCreds() !== null;
         return NextResponse.json({
-          error: "That account has not connected Google yet. Connect it first, then switch.",
-          next: "/api/integrations/google-gmail/connect",
+          code: configured ? "google_not_connected" : "google_not_configured",
+          error: configured
+            ? "That account has not connected Google yet. Connect it first, then switch."
+            : "Gmail sending is not available on this server yet. The ResellerOS admin sets up Google sign-in.",
+          ...(configured ? { next: "/api/integrations/google-gmail/connect" } : {}),
         }, { status: 409 });
       }
       if (!canSendWithScopes(tok.scopes ?? null)) {
         return NextResponse.json({
+          code: "google_send_scope_missing",
           error: "That Google account is connected but was not granted permission to send. "
                + "Reconnect and leave “Send email on your behalf” ticked.",
           next: "/api/integrations/google-gmail/connect",

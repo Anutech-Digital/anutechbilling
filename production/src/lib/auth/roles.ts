@@ -141,6 +141,9 @@ export interface Permissions {
   can_manage_team: boolean;
   /** API keys, integration secrets, tenant-wide configuration. */
   can_manage_secrets: boolean;
+  /** R-732: write to a lead or customer directly (a WhatsApp or an email sent from the app). Every
+   *  internal seller, support and money role has it; the partner agent (own referred leads only) does not. */
+  can_contact_customers: boolean;
 }
 
 /** The most restrictive possible answer — the base every role is built from. */
@@ -151,6 +154,7 @@ const NONE: Permissions = {
   can_view_financials:      false,
   can_manage_team:          false,
   can_manage_secrets:       false,
+  can_contact_customers:    false,
 };
 
 /**
@@ -166,6 +170,7 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
     can_view_financials:      true,
     can_manage_team:          true,
     can_manage_secrets:       true,
+    can_contact_customers:    true,
   },
   manager: {
     ...NONE,
@@ -173,6 +178,7 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
     can_view_contact_details: true,
     can_reveal_vault:         true,
     can_manage_team:          true,
+    can_contact_customers:    true,
   },
   // Owns named corporate accounts, so needs the real contact details — but a
   // senior seller is also the likeliest person to leave with the book, which is
@@ -180,29 +186,34 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
   sales_senior: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   // The tightest internal role: assigned leads and tasks only. Contact details
   // stay masked until an explicit call/email action, so a browse of the list
   // cannot become a copied phone book.
-  sales: { ...NONE },
+  sales: { ...NONE, can_contact_customers: true },
   billing: {
     ...NONE,
     can_view_contact_details: true,
     can_view_financials:      true,
+    can_contact_customers:    true,
   },
   // Can open the vault (needs to know an account exists) but never sees a
   // secret in clear text.
   delivery: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   accountant: {
     ...NONE,
     can_view_financials: true,
+    can_contact_customers: true,
   },
   support: {
     ...NONE,
     can_view_contact_details: true,
+    can_contact_customers:    true,
   },
   // External-facing internal role: sees only its own referred leads and payouts
   // under /partners. No customer data, no export, nothing else.
