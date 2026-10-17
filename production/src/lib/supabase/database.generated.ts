@@ -14173,6 +14173,7 @@ export type Database = {
         Returns: Json
       }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
+      combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
         Returns: {

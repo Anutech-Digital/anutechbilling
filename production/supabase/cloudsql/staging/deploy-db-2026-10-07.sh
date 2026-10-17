@@ -131,6 +131,7 @@ MIGS=(
   "r1515followups|20261017131246_r1515_payment_followups.sql|resellersos_migration|to_regclass('public.payment_followups') is not null and exists(select 1 from pg_policy where polname = 'payment_followups_select' and polrelid = to_regclass('public.payment_followups'))"
   "r1525multiinvoicepay|20261017152833_r1525_multi_invoice_payment.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1525%')"
   "r1528reassign|20261017153945_r1528_followup_reassign_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_payment_followups_reassign_guard()') and prosrc like '%R-1528%') and exists(select 1 from pg_trigger where tgname = 'trg_payment_followups_reassign_guard' and tgrelid = to_regclass('public.payment_followups'))"
+  "r1527combinequotes|20261017161500_r1527_combine_quotes.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.combine_quotes(text[])') and prosrc like '%R-1527%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

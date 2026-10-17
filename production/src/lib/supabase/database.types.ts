@@ -1442,6 +1442,15 @@ type FunctionReturnPatches = {
               invoice_paid: boolean | null;
             }>;
           };
+  /** R-1527: several accepted, unpaid quotes of one customer → ONE new quote. */
+  combine_quotes: {
+            quote_id:      string;
+            combined:      string[];
+            subtotal:      number;
+            tax:           number;
+            amount:        number;
+            sum_of_quotes: number;
+          };
   suggest_bank_transaction_matches: BankMatchSuggestionRow[];
   book_bank_txn_as_vendor_bill: { bill_id: string; replaced_synthetic: string | null; amount: number };
   book_bank_txn_as_referral_commission: { commission_id: string; replaced_synthetic: string | null; amount: number };
