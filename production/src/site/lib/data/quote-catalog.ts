@@ -18,7 +18,7 @@
  * `domainField` that selects the reg / renew / transfer column of the chosen
  * extension, so the rate follows the TLD the customer picks.
  */
-import { LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
+import { CERTS, LICENCE_EDITIONS, TLDS, type Tld } from "./catalog";
 import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
 import { SLA } from "../config";
@@ -88,9 +88,28 @@ const hosting: QuoteProduct[] = HOSTING_TIERS.map((h) => ({
   annual: h.yearlyMo, monthly: h.monthly, per: "site", cycle: "mo",
 }));
 
+/* R-1504: SSL rates are the ones /ssl prints (CERTS.addPrice) — never typed a second time. A
+   certificate with no fixed price on /ssl (OV / EV, "Talk to us") is quoted as price on request. */
+const SSL_CATEGORY = "SSL & security";
+type SslLineInfo = Pick<QuoteProduct, "name" | "label" | "tags" | "note">;
+const sslLine = (certName: string, p: SslLineInfo): QuoteProduct => {
+  const price = CERTS.find((c) => c.name === certName)?.addPrice ?? null;
+  return {
+    ...p, vendor: SSL_CATEGORY, per: "certificate", cycle: "yr", annual: price ?? 0, monthly: price ?? 0,
+    ...(price === null ? { priceOnRequest: true } : {}),
+  };
+};
+/** /ssl card name → the quote line its "Get a quote" button opens on. Free DV is not sold. */
+const CERT_QUOTE_LINE: Readonly<Record<string, string>> = {
+  "Positive SSL": "SSL Positive",
+  Wildcard: "SSL Wildcard",
+  "OV / EV": "SSL OV/EV",
+};
+
 const ssl: QuoteProduct[] = [
-  { name: "SSL Positive", label: "Positive SSL — DV", vendor: "SSL & security", tags: "ssl certificate https dv secure padlock", note: `Single domain · active ${SLA.sslLive}.`, annual: 899, monthly: 899, per: "certificate", cycle: "yr" },
-  { name: "SSL Wildcard", label: "Wildcard SSL — DV", vendor: "SSL & security", tags: "ssl certificate https wildcard subdomains secure", note: "Unlimited subdomains on one domain.", annual: 4499, monthly: 4499, per: "certificate", cycle: "yr" },
+  sslLine("Positive SSL", { name: "SSL Positive", label: "Positive SSL — DV", tags: "ssl certificate https dv secure padlock", note: `Single domain · active ${SLA.sslLive}.` }),
+  sslLine("Wildcard", { name: "SSL Wildcard", label: "Wildcard SSL — DV", tags: "ssl certificate https wildcard subdomains secure", note: "Unlimited subdomains on one domain." }),
+  sslLine("OV / EV", { name: "SSL OV/EV", label: "OV / EV SSL — organisation validated", tags: "ssl certificate https ov ev organisation extended validation company name vetting", note: "Company name on the certificate · the CA vets your documents, we handle them." }),
 ];
 
 const support: QuoteProduct[] = [
@@ -104,6 +123,34 @@ export const QUOTE_PRODUCTS: readonly QuoteProduct[] = [...editions, ...domains,
 
 /** Category order for the filter, with live counts. */
 export const QUOTE_CATEGORIES: readonly string[] = ["Google Workspace", "Microsoft 365", "Zoho Workplace", "Domains", "Web hosting", "SSL & security", "Support"];
+
+/**
+ * R-1504: what /quote opens on. `?product=ssl` (from /ssl) opens the SSL category with
+ * `?ed=<SSL line>` picked, else Positive SSL; `?ed=` alone keeps the calculator hand-off.
+ * Anything unknown returns {} — the page's own default (Workspace Starter, all plans).
+ */
+const PRODUCT_PARAM: Readonly<Record<string, { cat: string; line: string }>> = {
+  ssl: { cat: SSL_CATEGORY, line: "SSL Positive" },
+};
+export function quotePrefill(
+  params: { get(key: string): string | null },
+  known: ReadonlyMap<string, { vendor: string }>,
+): { ed?: string; cat?: string } {
+  const ed = params.get("ed") ?? params.get("edition");
+  const key = (params.get("product") ?? "").trim().toLowerCase();
+  const product = Object.hasOwn(PRODUCT_PARAM, key) ? PRODUCT_PARAM[key] : undefined;
+  if (product) {
+    const line = ed && known.get(ed)?.vendor === product.cat ? ed : product.line;
+    return known.has(line) ? { ed: line, cat: product.cat } : { cat: product.cat };
+  }
+  return ed && known.has(ed) ? { ed } : {};
+}
+
+/** The /quote link for an /ssl certificate card, or null for one that is not sold (Free DV). */
+export function sslQuoteHref(certName: string): string | null {
+  const line = Object.hasOwn(CERT_QUOTE_LINE, certName) ? CERT_QUOTE_LINE[certName] : undefined;
+  return line ? `/quote?${new URLSearchParams({ product: "ssl", ed: line })}` : null;
+}
 
 /** The extensions the domain picker offers — real reg/renew/transfer from TLDS. */
 export const QUOTE_TLDS: readonly Tld[] = TLDS;
