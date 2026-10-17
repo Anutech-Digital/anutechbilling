@@ -104,8 +104,8 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         </p>
       </section>
 
-      {/* Who it is for */}
-      <section className="border-t border-hairline bg-paper-2/50">
+      {/* Who it is for — id="who": the header menu's "Who it is for" lands here (R-1505) */}
+      <section id="who" className="scroll-mt-20 border-t border-hairline bg-paper-2/50">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.whoTitle}</h2>
           <ul className="mt-6 grid gap-4 md:grid-cols-3">
@@ -154,8 +154,8 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         </section>
       )}
 
-      {/* Steps */}
-      <section className="border-t border-hairline bg-paper-2/50">
+      {/* Steps — id="steps": the header menu's "Start in three steps" lands here (R-1505) */}
+      <section id="steps" className="scroll-mt-20 border-t border-hairline bg-paper-2/50">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.stepsTitle}</h2>
           <ol className="mt-6 grid gap-4 md:grid-cols-3">

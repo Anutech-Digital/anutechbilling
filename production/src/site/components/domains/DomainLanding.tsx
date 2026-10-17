@@ -496,7 +496,7 @@ export function DomainLanding() {
       </section>
 
       {/* ── 6 · INCLUDED ───────────────────────────────────────────────────── */}
-      {/* id="included": the menu's "WHOIS privacy" / "Bulk operations" land here (R-1506). */}
+      {/* id="included": the header menu's "Included free" lands here (R-1506, R-1505). */}
       <section id="included" style={wrap({ paddingTop: mob ? 48 : 62, scrollMarginTop: 84 })}>
         <div style={eyebrow}>Included</div>
         <h2 style={{ ...h2, marginBottom: 20 }}>Included with every domain — hosting or not.</h2>

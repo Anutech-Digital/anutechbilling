@@ -58,12 +58,11 @@ const MENUS: readonly Menu[] = [
       [
         { label: "Search a domain", note: "Live availability, ₹ prices", href: "/domains" },
         { label: "Rate card", note: "Register, renew, transfer — one row", href: "/domains#rates" },
-        { label: "Transfer in", note: "We pull auth codes for you", href: "/domains#rates" },
+        { label: "Questions", note: "Straight answers before you buy", href: "/domains#faq" },
       ],
       [
         { label: "All prices", note: "Every rate on one page", href: "/rates" },
-        { label: "WHOIS privacy", note: "Free where the registry permits", href: "/domains#included" },
-        { label: "Bulk operations", note: "Whole portfolios in one action", href: "/domains#included" },
+        { label: "Included free", note: "WHOIS privacy, DNS, theft lock", href: "/domains#included" },
       ],
     ],
     promo: { tag: `${DOMAIN_TEASER.tld} FROM ${DOMAIN_TEASER.from}/YR`.toUpperCase(), title: "Your name, in rupees", body: `${DOMAIN_TEASER.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" },
@@ -104,14 +103,13 @@ const MENUS: readonly Menu[] = [
     label: "ResellerOS", href: "/reselleros",
     cols: [
       [
-        { label: "Subscription management", note: "Seats, terms, pro-rata, MRR", href: "/reselleros" },
-        { label: "Pipeline & quotes", note: "Lead → quote → invoice, no re-typing", href: "/reselleros" },
-        { label: "See features", note: "Everything it does, one page", href: "/reselleros#features" },
+        { label: "Overview", note: "Software for Indian cloud resellers", href: "/reselleros" },
+        { label: "What you get", note: "Subscriptions, GST invoices, renewals", href: "/reselleros#features" },
+        { label: "Who it is for", note: "GW, M365, Zoho and hosting resellers", href: "/reselleros#who" },
       ],
       [
-        { label: "Renewals on autopilot", note: "T-30 / T-15 / T-7 / T-0 cadence", href: "/reselleros" },
-        { label: "Bank reconciliation", note: "7 Indian bank parsers, Setu AA", href: "/reselleros" },
-        { label: "GST & TDS", note: "HSN 998313, CGST §31, 26AS", href: "/reselleros" },
+        { label: "Start in three steps", note: "Workspace, import a CSV, first quote", href: "/reselleros#steps" },
+        { label: "Pricing", note: "Free during beta, no card", href: "/reselleros#pricing" },
       ],
     ],
     promo: { tag: "FREE DURING BETA", title: "Run your first GST invoice in 10 minutes", body: "Create your workspace, import customers by CSV, send a GST quote. No card needed.", cta: "Get started free", href: "/reselleros", os: true },
@@ -126,7 +124,6 @@ const MENUS: readonly Menu[] = [
       ],
       [
         { label: "GW / M365 / Zoho resellers", note: "Built by one, in Delhi", href: "/reselleros" },
-        { label: "White label", note: "Your brand on the invoice", href: "/reseller" },
         { label: "Why us", note: "Us vs the usual way", href: "/why-us" },
       ],
     ],
