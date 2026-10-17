@@ -131,6 +131,60 @@ export function summarizeDealStrip(rows: readonly DealRow[], now: Date = new Dat
   return out;
 }
 
+// ─── Dashboard pipeline (R-1474) ─────────────────────────────────────────────
+
+/**
+ * Count and summed value per stage — the shape of useLeadStageTotals() (lib/queries/leads.ts),
+ * which reads every non-junk, non-lost lead in full.
+ */
+export type StageCountValues = Partial<Record<Lead["stage"], CountValue>>;
+
+/** Open deal stages in funnel order, as the /deals board shows them. */
+const PIPELINE_ROW_STAGES = ["quote", "demo", "trial"] as const satisfies readonly (typeof OPEN_DEAL_STAGES)[number][];
+
+export interface DashboardPipeline {
+  /** Open deals (quote / demo / trial) at full value — the /deals definition (R-470). */
+  open: CountValue;
+  /** One row per open deal stage, funnel order. Rows add up to `open`. */
+  stages: { stage: (typeof PIPELINE_ROW_STAGES)[number]; count: number; value: number }[];
+  /** Won deals still on the books — shown on their own line, never in `open`. */
+  won: CountValue;
+}
+
+/**
+ * R-1474 (Pawan, 16 Oct): the dashboard showed four pipeline totals — top cards ₹15.6L / 4 open
+ * deals (Deals definition), Pipeline by stage ₹20.1L / 7 (New + Contacted counted too) over rows
+ * that included Won, and Today's focus repeating the ₹20.1L. Every dashboard pipeline figure now
+ * reads this: open = OPEN_DEAL_STAGES at leads.value, Won separate, New / Contacted are leads,
+ * not pipeline.
+ */
+export function dashboardPipeline(totals: StageCountValues | undefined): DashboardPipeline {
+  const stages = PIPELINE_ROW_STAGES.map((stage) => ({
+    stage,
+    count: totals?.[stage]?.count ?? 0,
+    value: totals?.[stage]?.value ?? 0,
+  }));
+  return {
+    open: {
+      count: stages.reduce((n, s) => n + s.count, 0),
+      value: stages.reduce((n, s) => n + s.value, 0),
+    },
+    stages,
+    won: { count: totals?.won?.count ?? 0, value: totals?.won?.value ?? 0 },
+  };
+}
+
+/** Stage totals from rows — what useLeadStageTotals() builds server-side, for tests and callers with rows. */
+export function stageTotalsFromRows(rows: readonly Pick<DealRow, "stage" | "value">[]): StageCountValues {
+  const out: StageCountValues = {};
+  for (const r of rows) {
+    const t = (out[r.stage] ??= { count: 0, value: 0 });
+    t.count += 1;
+    t.value += r.value ?? 0;
+  }
+  return out;
+}
+
 // ─── Reports hub ─────────────────────────────────────────────────────────────
 
 export const REPORT_WINDOW_DAYS = 90;
