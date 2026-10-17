@@ -13,12 +13,13 @@
  * Money maths (WHOLE RUPEES, CLAUDE.md §13): a monthly-cycle line on an annual
  * commitment bills ×12 (a year on this invoice); once-a-year lines (domain, SSL,
  * onsite) bill once. GST = round(subtotal × 18%), payable = subtotal + GST (R-1438,
- * lib/quotes/amounts.ts gstBreakup — same maths as the tax invoice). Renewal annualises every
- * line at today's rate. Every figure is derived, never hardcoded.
+ * lib/quotes/amounts.ts gstBreakup — same maths as the tax invoice). Renewal: quoteRenewal
+ * (R-1483) — flexible monthly = the month's payable × 12, domains at their renewal price.
+ * Every figure is derived, never hardcoded.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -101,7 +102,15 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
     return quoteRate(p, term) ?? p.annual;
   };
   const annualOnly = (p: QuoteProduct) => p.monthly === null;
-  const amountOf = (p: QuoteProduct, qty: number): number => quoteLineAmount(rateOf(p), qty, p.cycle === "mo" && annual ? 12 : 1);
+  /* R-1482: one unit's price for the period it is billed (₹600/site/yr, not ₹50/site), so
+     qty × the unit shown is always the line amount — rounded per unit, as checkout charges. */
+  const monthsOf = (p: QuoteProduct): number => (p.cycle === "mo" && annual ? 12 : 1);
+  const unitOf = (p: QuoteProduct): number => quoteUnitAmount(rateOf(p), monthsOf(p));
+  const periodOf = (p: QuoteProduct): string => (p.cycle === "mo" && !annual ? "mo" : "yr");
+  const amountOf = (p: QuoteProduct, qty: number): number => quoteLineAmount(rateOf(p), qty, monthsOf(p));
+  /* R-1484: a domain renews at its extension's renewal price, not the registration price. */
+  const renewRateOf = (p: QuoteProduct): number =>
+    p.domain ? QUOTE_TLDS.find((t) => t.tld === domainTld)?.renew ?? 0 : rateOf(p);
 
   const selected = products.filter((p) => (lines[p.name] ?? 0) > 0);
   const subtotal = selected.reduce((n, p) => n + amountOf(p, lines[p.name]), 0);
@@ -109,7 +118,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
      and GST back-solved from the rounded total (₹3,839.88 used to show GST ₹691.12 while the
      tax invoice charges ₹691.18). Same helper as the invoice side (lib/quotes/amounts.ts). */
   const { gst, total: payable } = gstBreakup(subtotal);
-  const renewal = gstBreakup(selected.reduce((n, p) => n + quoteLineAmount(rateOf(p), lines[p.name], p.cycle === "mo" ? 12 : 1), 0)).total;
+  /* R-1483: Flexible monthly renews as twelve monthly invoices — the month's payable × 12
+     (+ yearly items once), so ₹1,977 a month reads ₹23,724 a year, never ₹23,716. */
+  const renewal = quoteRenewal(selected.map((p) => ({ cycle: p.cycle, qty: lines[p.name], rate: rateOf(p), renewRate: renewRateOf(p) })), term);
+  const renewalText = renewal.perMonth === null
+    ? `Renews ${inr(renewal.perYear)}/yr`
+    : `Renews ${inr(renewal.perMonth)}/mo × 12${renewal.yearlyOnce > 0 ? ` + ${inr(renewal.yearlyOnce)} yearly items` : ""} = ${inr(renewal.perYear)}/yr`;
   // Saving from annual commitment, over discountable (monthly-cycle) lines only.
   const moLines = selected.filter((p) => p.cycle === "mo" && p.monthly !== null && p.monthly > p.annual);
   const savePct = moLines.length
@@ -144,7 +158,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const quoteText = () => {
     const L = selected.map((p) => p.priceOnRequest
       ? `• ${p.label} — ${lines[p.name]} ${p.per}${lines[p.name] === 1 ? "" : "s"} — price on request (sent with the formal quotation)`
-      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(rateOf(p))}/${p.per}/${p.cycle === "mo" ? (annual ? "mo (×12)" : "mo") : "yr"} = ${inr(amountOf(p, lines[p.name]))}`).join("\n");
+      : `• ${p.label}${p.domain ? " " + domainTld : ""} — ${lines[p.name]} × ${inr(unitOf(p))}/${p.per}/${periodOf(p)} =${inr(amountOf(p, lines[p.name]))}`).join("\n");
     return [
       `Quotation ${quoteNo || "(draft)"} — Anutech Digital`,
       `For: ${company || "—"}${gstin ? " · GSTIN " + gstin : ""}`,
@@ -155,7 +169,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
       `Subtotal ${inr(subtotal)}`,
       `GST 18% ${inr(gst)}`,
       `Payable on this invoice ${inr(payable)}`,
-      `Renews ${inr(renewal)}/yr at today's rates`,
+      `${renewalText} at today's rates`,
       "",
       "Rate held 15 days · ₹0 migration · GST invoice on payment · renewal unchanged (30 days' notice).",
     ].join("\n");
@@ -375,7 +389,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                   <span style={{ fontWeight: 700 }}>Payable on this invoice</span>
                   <span className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{inr(payable)}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Renews {inr(renewal)}/yr at today&apos;s rates · incl. 18% GST</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText} at today&apos;s rates · incl. 18% GST</div>
               </div>
             )}
             {err && <p role="alert" style={{ fontSize: 13, color: "var(--warning)", marginTop: 10 }}>{err}</p>}
@@ -418,7 +432,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
             <div style={{ fontSize: 13, marginBottom: 10 }}><b>Quote for:</b> {company}{gstin ? ` · GSTIN ${gstin}` : ""}</div>
             {selected.map((p) => (
               <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border-hairline)", fontSize: 12.5 }}>
-                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(rateOf(p))}/${p.per}`} · HSN {COMPANY.hsn}</span></span>
+                <span>{p.label}{p.domain ? " " + domainTld : ""} <span className="mono" style={{ color: "var(--text-muted)" }}>{lines[p.name]} × {p.priceOnRequest ? "price on request" : `${inr(unitOf(p))}/${p.per}/${periodOf(p)}`} · HSN {COMPANY.hsn}</span></span>
                 <span className="mono" style={{ whiteSpace: "nowrap" }}>{p.priceOnRequest ? ON_REQUEST : inr(amountOf(p, lines[p.name]))}</span>
               </div>
             ))}
@@ -428,7 +442,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 2px", borderTop: "1px solid var(--border)", marginTop: 4 }}>
                 <b>Payable on this invoice</b><span className="mono" style={{ fontWeight: 700 }}>{inr(payable)}</span>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Renews {inr(renewal)}/yr</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{renewalText}</div>
             </div>
             <ul style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5, margin: "12px 0 0", paddingLeft: 16 }}>
               <li>Rate held for 15 days.</li><li>Migration is ₹0, done by us.</li><li>Setup included.</li><li>GST invoice issued on payment.</li><li>Renewal at the same rate — 30 days&apos; notice of any change.</li>

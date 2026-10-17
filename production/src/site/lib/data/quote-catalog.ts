@@ -23,6 +23,7 @@ import { PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
 import { SLA } from "../config";
 import { rupee } from "../money";
+import { gstBreakup } from "@/lib/quotes/amounts";
 import type { MergedEdition } from "../live-catalog";
 
 export interface QuoteProduct {
@@ -132,10 +133,61 @@ export function quoteRate(p: QuoteProduct, term: "annual" | "monthly"): number |
 export const quoteInr: (n: number) => string = rupee;
 
 /**
- * One quote line's amount, whole rupees — rate × qty × months rounded once, as checkout
- * charges a hosting line (Math.round of the cycle total, lib/checkout/hosting-prices.ts).
+ * One unit's price for one billing period, whole rupees — rate × months rounded once, exactly
+ * as checkout prices a hosting site (hostingRate: Math.round of the cycle total,
+ * lib/checkout/hosting-prices.ts). ₹49.99 × 12 = ₹600 a site.
+ */
+export function quoteUnitAmount(rate: number, months: number): number {
+  return Math.round(rate * months);
+}
+
+/**
+ * One quote line's amount, whole rupees — the unit's period price × qty.
+ *
+ * R-1482 (17 Oct 2026): this used to round rate × qty × months once, so 7 Starter sites a year
+ * came to ₹4,199 (49.99 × 84) while checkout charges ₹600 a site — ₹4,200. Rounding per unit
+ * then multiplying is what checkout does, so the quote line now equals it for any count.
  * Display only: /quote sends an enquiry, never an amount; the team prices the real quotation.
  */
 export function quoteLineAmount(rate: number, qty: number, months: number): number {
-  return Math.round(rate * qty * months);
+  return quoteUnitAmount(rate, months) * qty;
+}
+
+/** A line as the renewal sees it: `rate` = the term's rate, `renewRate` = what a yearly item renews at. */
+export interface QuoteRenewalLine {
+  cycle: QuoteProduct["cycle"];
+  qty: number;
+  rate: number;
+  /** Domains: the extension's renewal price, not its registration/transfer price (R-1484). */
+  renewRate: number;
+}
+
+export interface QuoteRenewal {
+  /** Flexible monthly: one month's invoice incl. GST. Null on an annual commitment. */
+  perMonth: number | null;
+  /** Flexible monthly: the yearly items (domain, SSL…) once a year, incl. GST. 0 on annual. */
+  yearlyOnce: number;
+  /** What a year costs at today's rates, incl. GST. Monthly: perMonth × 12 + yearlyOnce. */
+  perYear: number;
+}
+
+/**
+ * The "Renews ₹X/yr" line on /quote (R-1483, 17 Oct 2026).
+ *
+ * Flexible monthly is billed as twelve monthly invoices, each with its own GST — so a year is
+ * the month's payable × 12, not one year-long line rounded once. Pawan's basket (GW Starter × 3
+ * + Hosting Starter × 7) paid ₹1,977 a month but "renewed" at ₹23,716 a year; ₹1,977 × 12 is
+ * ₹23,724. Yearly items (domain, SSL, onsite) renew once a year at their renewal rate.
+ * An annual commitment is one invoice: monthly-cycle lines × 12 per unit plus yearly items, one GST.
+ */
+export function quoteRenewal(lines: readonly QuoteRenewalLine[], term: "annual" | "monthly"): QuoteRenewal {
+  const yearlyItems = lines.filter((l) => l.cycle === "yr").reduce((n, l) => n + quoteLineAmount(l.renewRate, l.qty, 1), 0);
+  const moLines = lines.filter((l) => l.cycle === "mo");
+  if (term === "annual") {
+    const taxable = moLines.reduce((n, l) => n + quoteLineAmount(l.rate, l.qty, 12), 0) + yearlyItems;
+    return { perMonth: null, yearlyOnce: 0, perYear: gstBreakup(taxable).total };
+  }
+  const perMonth = gstBreakup(moLines.reduce((n, l) => n + quoteLineAmount(l.rate, l.qty, 1), 0)).total;
+  const yearlyOnce = yearlyItems > 0 ? gstBreakup(yearlyItems).total : 0;
+  return { perMonth, yearlyOnce, perYear: perMonth * 12 + yearlyOnce };
 }
