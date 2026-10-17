@@ -44,6 +44,9 @@ import { IFSC_RE, ACCOUNT_RE, UPI_RE, cleanAccountNo, cleanIfsc } from "@/lib/pa
 import { panFromGstin, isPan, deducteeTypeFromPan, DEDUCTEE_LABEL } from "@/lib/accounting/tds-deductor";
 import { UDYAM_RE } from "@/lib/accounting/msme";
 import { toast } from "sonner";
+import type { Route } from "next";
+import { recordBillHref } from "../bills/add-from-url";
+import { isCarryOverClick, clearStraySelection } from "./vendor-popup";
 
 const VENDOR_SUPPLIED_PRODUCTS = [
   "Google Workspace & GCP",
@@ -554,11 +557,17 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
   const [detailExpense, setDetailExpense] = React.useState<ExpenseRow | null>(null);
   const prods = parseSuppliedProducts(vendor.notes);
+  /* R-1511: the click that opened this popup must not leave the header half-selected. */
+  const openedAt = React.useRef(Date.now());
+  React.useEffect(() => { openedAt.current = Date.now(); clearStraySelection(); }, []);
 
   return (
     <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-lg">
+      <DialogContent
+        className="md:!max-w-lg"
+        onMouseDownCapture={(e) => { if (isCarryOverClick(e.detail, Date.now() - openedAt.current)) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {vendor.name}
@@ -600,7 +609,12 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           {isLoading ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (bills ?? []).length === 0 && (vExpenses ?? []).length === 0 ? (
-            <p className="py-6 text-center text-sm text-ink-3">No bills or expenses for this vendor yet.</p>
+            <div className="py-6 text-center space-y-3">
+              <p className="text-sm text-ink-3">No bills or expenses for this vendor yet.</p>
+              <Button asChild variant="primary" icon="receipt" size="sm">
+                <Link href={recordBillHref(vendor.id)}>Record a bill</Link>
+              </Button>
+            </div>
           ) : (
           <>
             {(bills ?? []).length > 0 && (
@@ -663,11 +677,16 @@ function VendorBillsDialog({ vendor, onClose, onEdit }: { vendor: Vendor; onClos
           )}
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button asChild variant="primary" icon="cart" className="w-full sm:w-auto font-bold">
-            <Link href={"/purchase-orders" as never}>🛒 Buy Products from {vendor.name}</Link>
-          </Button>
+        <DialogFooter className="gap-2">
+          {/* R-1511: recording the vendor's bill is the everyday job → primary; buying is a
+              purchase order (a different flow) → secondary, named for what it does. */}
           <Button variant="ghost" icon="edit" onClick={onEdit}>Edit vendor</Button>
+          <Button asChild variant="default" icon="cart" className="w-full sm:w-auto">
+            <Link href={"/purchase-orders" as Route}>Raise purchase order</Link>
+          </Button>
+          <Button asChild variant="primary" icon="receipt" className="w-full sm:w-auto">
+            <Link href={recordBillHref(vendor.id)}>Record a bill</Link>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
