@@ -2,10 +2,10 @@
  * POST /api/collections/followups — log one payment follow-up (R-1517).
  *
  * Why a route and not a browser insert: R-1515's RLS lets any staff role who can see the
- * customer write a follow-up, and does NOT stop a sales person from putting someone else in
- * assigned_to. Pardeep's rule (R-1514 / R-1517 mustDo): only owner / manager / accountant may
- * hand a follow-up to another person. This route is where that is enforced on the server
- * (resolveAssignee, lib/collections/followup-rules.ts); the form also hides the picker.
+ * customer write a follow-up. Pardeep's rule (R-1514 / R-1517 mustDo): only owner / manager /
+ * accountant may hand a follow-up to another person. This route enforces it with a clear 403
+ * (resolveAssignee, lib/collections/followup-rules.ts); the form hides the picker; and since
+ * R-1528 the DB trigger trg_payment_followups_reassign_guard refuses a direct table write too.
  *
  *   • Gate: the roles that can open /collections (nav.ts), like every other R-1470 route.
  *   • tenant_id comes from the caller's users row (withRoute), never from the body; created_by

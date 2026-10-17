@@ -65,6 +65,26 @@ describe("middleware role guard — Referrals and Provisioning (R-1440)", () => 
   });
 });
 
+/* R-1528 (17 Oct 2026): a senior seller works the same customers' money as a seller, so Payment
+   Follow-up (/collections) must open for sales_senior wherever it opens for sales. nav.ts gives
+   it through filterNavForRole (sales_senior sees what sales sees) — this pins it on a typed URL. */
+describe("middleware role guard — Payment Follow-up (R-1528)", () => {
+  it.each(["owner", "manager", "billing", "accountant", "sales", "sales_senior"])(
+    "%s opens /collections", async (role) => {
+      st.role = role;
+      expect((await go("/collections")).status).toBe(200);
+      expect(isRouteAllowed(role as UserRole, "/collections")).toBe(true);
+    },
+  );
+
+  it.each(["support", "delivery", "partner_agent"])("%s is bounced from /collections to its home", async (role) => {
+    st.role = role;
+    const r = await go("/collections");
+    expect(r.status).toBe(307);
+    expect(new URL(r.headers.get("location")!).pathname).toBe(ROLE_HOME[role as UserRole]);
+  });
+});
+
 describe("middleware role guard — every menu page is enforced (R-1440)", () => {
   const roles = Object.keys(ROLE_HOME).filter((r) => r !== "owner" && r !== "manager") as UserRole[];
   const hrefs = [...new Set(flattenNav(APP_NAV).map((e) => e.item.href.split(/[?#]/)[0]))];

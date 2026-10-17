@@ -11,8 +11,9 @@
  *     same); the amount is optional ("will pay the balance"), whole rupees (§13).
  *   • The follow-up belongs to the customer's owner (customers.account_manager_id) unless an
  *     earlier follow-up was handed to someone else. Only owner / manager / accountant may hand
- *     it to another person. The DB does NOT stop a sales person from writing another user into
- *     assigned_to, so the API route checks it (resolveAssignee) and the form hides the picker.
+ *     it to another person. The API route checks it (resolveAssignee), the form hides the picker,
+ *     and since R-1528 the DB says the same (trigger trg_payment_followups_reassign_guard: others
+ *     may only write NULL, themselves or this same default; billing included). Keep them in step.
  *   • created_by / tenant_id / id / created_at are never sent by the browser: created_by
  *     defaults to auth.uid() in the DB (and RLS insists on it), tenant_id comes from the
  *     server's own users row. The request schema is strict, so a body carrying them is refused.

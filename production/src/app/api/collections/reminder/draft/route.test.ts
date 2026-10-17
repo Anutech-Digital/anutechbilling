@@ -100,4 +100,10 @@ describe("reminder draft route", () => {
     st.role = "support";
     expect((await call({ customerId: CUST })).status).toBe(403);
   });
+
+  // R-1528: a senior seller opens Payment Follow-up like a seller, so it can draft a reminder too.
+  it("sales_senior can draft a reminder (200)", async () => {
+    st.role = "sales_senior";
+    expect((await call({ customerId: CUST })).status).toBe(200);
+  });
 });
