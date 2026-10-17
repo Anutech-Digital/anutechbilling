@@ -128,6 +128,7 @@ MIGS=(
   "r1132close|20261017002400_r1132_books_lock_accountant.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.set_books_lock(date)') and prosrc like '%R-1132%')"
   "r731mfaokgrants|20261017020500_r731_mfa_ok_grants.sql|postgres|not exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'session_mfa_ok' and has_function_privilege('anon', p.oid, 'EXECUTE'))"
   "r1475navbadges|20261017085109_r1475_nav_badges_page_counts.sql|resellersos_migration|position('R-1475' in coalesce(obj_description(to_regprocedure('public.nav_badges(text[])'), 'pg_proc'), '')) > 0"
+  "r1515followups|20261017131246_r1515_payment_followups.sql|resellersos_migration|to_regclass('public.payment_followups') is not null and exists(select 1 from pg_policy where polname = 'payment_followups_select' and polrelid = to_regclass('public.payment_followups'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
