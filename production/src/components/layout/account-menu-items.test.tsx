@@ -65,6 +65,23 @@ describe("AccountMenuItems (R-1439)", () => {
     expect(new URL(submitted[0].action, "http://x").pathname).toBe("/auth/sign-out");
   });
 
+  /* R-1453 — Pawan (staging, 15 Oct): no way to open the public homepage from inside the
+     app without signing out. "/" in the app is the company page on staging, so the link goes to
+     the product homepage route, which the live hosts 301 to https://reselleros.anutech.in/. */
+  it("Website opens the public product homepage in a new tab (R-1453)", () => {
+    renderMenu();
+    const link = screen.getByRole("menuitem", { name: /website/i }).closest("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toBe("/reselleros");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("Website says it opens a new tab, for screen readers too (R-1453)", () => {
+    renderMenu();
+    expect(screen.getByRole("menuitem", { name: /website/i }).textContent).toMatch(/new tab/i);
+  });
+
   it("no dead items: Settings and Team are real links", () => {
     renderMenu();
     expect(screen.getByRole("menuitem", { name: /settings/i }).closest("a")?.getAttribute("href")).toBe("/settings");
