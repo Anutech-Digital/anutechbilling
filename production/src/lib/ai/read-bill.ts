@@ -21,13 +21,16 @@ import { geminiJson } from "./gemini";
 import type { ExtractedBill } from "@/app/api/ai/extract-bill/sanitize";
 
 export const BILL_PROMPT =
-  "You are reading a vendor/supplier tax invoice for a cloud reseller's books. The " +
+  "You are reading a vendor/supplier bill for a cloud reseller's books — a tax invoice, " +
+  "or a PROFORMA invoice / quotation from a reseller (the same layout, often only a " +
+  "'Description | Total' table with no qty or rate columns). The " +
   "supplier may be INDIAN (Google Cloud/Workspace, Microsoft, Zoho, etc.) billing in " +
   "rupees with GST (CGST+SGST or IGST), OR a FOREIGN online-service provider (e.g. " +
   "Anthropic, OpenAI, Google LLC) billing in USD/other currency — these carry an India " +
   "GST registration under state code 99 (OIDAR) and may show GST as a single line. " +
   "Extract and return ONLY JSON, no prose:\n" +
   "{\n" +
+  '  "document_type": string|null,      // "tax_invoice", "proforma" (Proforma / Pro-forma Invoice, quotation) or "other", from the document\'s own title\n' +
   '  "vendor_name": string|null,        // the SUPPLIER who issued the bill (the seller, NOT the buyer)\n' +
   '  "vendor_gstin": string|null,       // 15-char India GST/VAT registration of the supplier if printed\n' +
   '  "bill_no": string|null,            // the invoice/bill number\n' +
@@ -68,6 +71,15 @@ export const BILL_PROMPT =
   "}\n" +
   "RULES: Keep amounts in the bill's OWN currency (do NOT convert). Keep decimals (e.g. 265.50). " +
   "Never invent a value — use null (or [] for line_items) if the bill does not clearly show it. " +
+  /* R-1510: a reseller's Proforma ("Google Workspace ( 1 September - 30 September ,
+     2026 )" | "562,110.28 INR") came back without the product name. Spell out the
+     2-column table, the full row text, and the number format, so the row survives. */
+  "line_items: one entry per charged row of the item table, even when the table has only " +
+  "a description and a total column (qty and unit_price null then). description is the FULL " +
+  "row text exactly as printed — product name plus any plan, period or date range, e.g. " +
+  "\"Google Workspace ( 1 September - 30 September , 2026 )\" — never shortened or dropped. " +
+  "Every amount is a plain JSON number: no thousands commas, no currency word or symbol — " +
+  "\"562,110.28 INR\" is 562110.28, \"₹5,62,110.28\" is 562110.28. " +
   "A single foreign 'GST - India' / 'VAT' line goes in igst. " +
   "CREDIT lines are NEGATIVE: a refund / 'unused time' / proration credit / discount row must have a NEGATIVE amount (and negative unit_price), e.g. -61.41 — never 0. " +
   "The line_items amounts must sum to the pre-tax subtotal (total minus tax), so keep signs correct. " +
