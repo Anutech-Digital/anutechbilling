@@ -32,6 +32,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteMoney } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { categoriseByRules, type BankLine } from "@/lib/banking/categorise";
 import {
@@ -56,12 +57,14 @@ function useBankLinesForRules() {
     queryKey: ["bank_transactions", "rule-match-sample"],
     queryFn: async (): Promise<BankLine[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("bank_transactions")
-        .select("description, debit, credit")
-        .limit(10000);
-      if (error) throw error;
-      return (data ?? []).map((t) => ({ description: t.description ?? null, debit: t.debit ?? 0, credit: t.credit ?? 0 }));
+      /* R-1509: paged — `.limit(10000)` came back as 1000 rows, so "Matches" undercounted. */
+      const data = await fetchAllRows<{ description: string | null; debit: number | null; credit: number | null }>(
+        (from, to) => supabase
+          .from("bank_transactions")
+          .select("description, debit, credit")
+          .order("id", { ascending: true })
+          .range(from, to));
+      return data.map((t) => ({ description: t.description ?? null, debit: t.debit ?? 0, credit: t.credit ?? 0 }));
     },
     staleTime: 60_000,
   });

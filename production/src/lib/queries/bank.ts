@@ -287,20 +287,34 @@ export function useRecordTransfer() {
 
 // ─── Bank transactions ─────────────────────────────────────────────────────
 
+type BankClient = ReturnType<typeof createClient>;
+
+/**
+ * Every line of one account, newest first.
+ *
+ * R-1509: paged. The gateway answers at most 1000 rows a request and says nothing when it
+ * cut the answer short — the account page's counts, Balance in bank and statement check
+ * all come from this list, so an account past 1000 lines showed "1000 txns not yet in
+ * books" and made-up "Lines missing". `id` breaks txn_date ties so no page repeats or
+ * skips a line.
+ */
+export async function fetchBankTransactions(supabase: BankClient, accountId: string): Promise<BankTransactionRow[]> {
+  return fetchAllRows<BankTransactionRow>((from, to) => supabase
+    .from("bank_transactions")
+    .select("*")
+    .eq("bank_account_id", accountId)
+    .order("txn_date", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+}
+
 export function useBankTransactions(accountId: string | null | undefined) {
   return useQuery({
     queryKey: ["bank_transactions", accountId],
     enabled:  Boolean(accountId),
     queryFn: async (): Promise<BankTransactionRow[]> => {
       if (!accountId) return [];
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("bank_transactions")
-        .select("*")
-        .eq("bank_account_id", accountId)
-        .order("txn_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as BankTransactionRow[];
+      return fetchBankTransactions(createClient(), accountId);
     },
     staleTime: 30_000,
   });
@@ -456,21 +470,31 @@ export function bankTxnKeys(r: { txn_date?: string | null; debit?: number | null
   return keys;
 }
 
+/**
+ * Every existing bank-line key of an account — what an import must not insert again.
+ * R-1509: paged — `.limit(5000)` came back as 1000 rows, so a re-uploaded statement
+ * inserted every older line a second time. Throws on a failed read: an empty "seen" set
+ * would let the whole statement in as new.
+ */
+export async function fetchExistingTxnKeys(supabase: BankClient, accountId: string): Promise<Set<string>> {
+  const rows = await fetchAllRows<{
+    txn_date: string; debit: number; credit: number; description: string | null;
+    reference: string | null; balance_after: number | null;
+  }>((from, to) => supabase
+    .from("bank_transactions")
+    .select("txn_date, debit, credit, description, reference, balance_after")
+    .eq("bank_account_id", accountId)
+    .order("id", { ascending: true })
+    .range(from, to));
+  return new Set(rows.flatMap((r) => bankTxnKeys(r)));
+}
+
 /** Existing bank-line keys for an account — to flag/skip duplicate imports. */
 export function useExistingTxnKeys(accountId: string | null) {
   return useQuery({
     queryKey: ["bank_transactions", accountId, "keys"],
     enabled: !!accountId,
-    queryFn: async (): Promise<Set<string>> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("bank_transactions")
-        .select("txn_date, debit, credit, description, reference, balance_after")
-        .eq("bank_account_id", accountId as string)
-        .limit(5000);
-      if (error) throw error;
-      return new Set((data ?? []).flatMap((r) => bankTxnKeys(r as never)));
-    },
+    queryFn: async (): Promise<Set<string>> => fetchExistingTxnKeys(createClient(), accountId as string),
     staleTime: 15_000,
   });
 }
@@ -482,69 +506,70 @@ export function useExistingTxnKeys(accountId: string | null) {
  * a statement, or an overlapping date range, never double-counts. Auto-assigns
  * source='csv_upload' for the whole batch.
  */
+export type BankImportInput = {
+  accountId: string;
+  rows: Array<Omit<BankTransactionInsert, "bank_account_id" | "source">>;
+};
+
+export async function importBankTransactions(
+  supabase: BankClient,
+  input: BankImportInput,
+): Promise<{ inserted: number; duplicates: number }> {
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData?.user) throw new Error("Not authenticated");
+  const { data: me, error: meErr } = await supabase
+    .from("users")
+    .select("tenant_id")
+    .eq("id", authData.user.id)
+    .single();
+  if (meErr) throw meErr;
+
+  const cleaned = input.rows
+    .map((r) => {
+      // A bank line is debit XOR credit — coerce to non-negative integers so
+      // a stray minus/decimal can't break the integer column or the
+      // debit_xor_credit CHECK, then keep only clean single-sided rows.
+      const debit  = Math.max(0, Math.round(r.debit  ?? 0));
+      const credit = Math.max(0, Math.round(r.credit ?? 0));
+      return { ...r, debit, credit };
+    })
+    .filter((r) => (r.debit > 0) !== (r.credit > 0));   // exactly one side positive
+
+  // Skip lines already in this account (re-uploaded / overlapping statement).
+  const seen = await fetchExistingTxnKeys(supabase, input.accountId);
+  const fresh: typeof cleaned = [];
+  let duplicates = 0;
+  for (const r of cleaned) {
+    const keys = bankTxnKeys(r as never);
+    if (keys.some((k) => seen.has(k))) { duplicates++; continue; }
+    keys.forEach((k) => seen.add(k));   // also dedup within the same batch
+    fresh.push(r);
+  }
+
+  const validRows = fresh.map((r) => ({
+    ...r,
+    tenant_id:       me!.tenant_id,
+    bank_account_id: input.accountId,
+    source:          "csv_upload" as const,
+  }));
+
+  if (validRows.length === 0) {
+    if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported
+    throw new Error("No valid transactions to import (each row needs exactly one of debit or credit > 0)");
+  }
+
+  const { data, error } = await supabase
+    .from("bank_transactions")
+    .insert(validRows)
+    .select("id");
+  if (error) throw error;
+  return { inserted: data?.length ?? 0, duplicates };
+}
+
 export function useImportBankTransactions() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: {
-      accountId: string;
-      rows: Array<Omit<BankTransactionInsert, "bank_account_id" | "source">>;
-    }) => {
-      const supabase = createClient();
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData?.user) throw new Error("Not authenticated");
-      const { data: me, error: meErr } = await supabase
-        .from("users")
-        .select("tenant_id")
-        .eq("id", authData.user.id)
-        .single();
-      if (meErr) throw meErr;
-
-      const cleaned = input.rows
-        .map((r) => {
-          // A bank line is debit XOR credit — coerce to non-negative integers so
-          // a stray minus/decimal can't break the integer column or the
-          // debit_xor_credit CHECK, then keep only clean single-sided rows.
-          const debit  = Math.max(0, Math.round(r.debit  ?? 0));
-          const credit = Math.max(0, Math.round(r.credit ?? 0));
-          return { ...r, debit, credit };
-        })
-        .filter((r) => (r.debit > 0) !== (r.credit > 0));   // exactly one side positive
-
-      // Skip lines already in this account (re-uploaded / overlapping statement).
-      const { data: existing } = await supabase
-        .from("bank_transactions")
-        .select("txn_date, debit, credit, description, reference, balance_after")
-        .eq("bank_account_id", input.accountId)
-        .limit(5000);
-      const seen = new Set((existing ?? []).flatMap((r) => bankTxnKeys(r as never)));
-      const fresh: typeof cleaned = [];
-      let duplicates = 0;
-      for (const r of cleaned) {
-        const keys = bankTxnKeys(r as never);
-        if (keys.some((k) => seen.has(k))) { duplicates++; continue; }
-        keys.forEach((k) => seen.add(k));   // also dedup within the same batch
-        fresh.push(r);
-      }
-
-      const validRows = fresh.map((r) => ({
-        ...r,
-        tenant_id:       me!.tenant_id,
-        bank_account_id: input.accountId,
-        source:          "csv_upload" as const,
-      }));
-
-      if (validRows.length === 0) {
-        if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported
-        throw new Error("No valid transactions to import (each row needs exactly one of debit or credit > 0)");
-      }
-
-      const { data, error } = await supabase
-        .from("bank_transactions")
-        .insert(validRows)
-        .select("id");
-      if (error) throw error;
-      return { inserted: data?.length ?? 0, duplicates };
-    },
+    mutationFn: (input: BankImportInput) => importBankTransactions(createClient(), input),
     onSuccess: ({ inserted, duplicates }, vars) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
@@ -729,15 +754,18 @@ export function useAutoReconcile() {
   return useMutation({
     mutationFn: async (accountId: string): Promise<{ reconciled: number; review: number }> => {
       const supabase = createClient();
-      const { data: txns, error } = await supabase
+      /* R-1509: every unmatched line, not the first 1000 — read in full before any
+         reconcile, so the pages do not shift under the writes. */
+      const txns = await fetchAllRows<{ id: string }>((from, to) => supabase
         .from("bank_transactions")
         .select("id")
         .eq("bank_account_id", accountId)
-        .is("matched_to_id", null);
-      if (error) throw error;
+        .is("matched_to_id", null)
+        .order("id", { ascending: true })
+        .range(from, to));
 
       let reconciled = 0, review = 0;
-      for (const t of txns ?? []) {
+      for (const t of txns) {
         const { data: sugg } = await supabase.rpc("suggest_bank_transaction_matches", { p_bank_txn_id: t.id });
         const list = (sugg ?? []) as MatchSuggestion[];
         const top = list[0];
