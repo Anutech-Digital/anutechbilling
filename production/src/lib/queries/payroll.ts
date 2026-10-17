@@ -10,6 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
@@ -220,12 +221,13 @@ export function useLeaveEntries() {
     queryKey: ["leave-entries"],
     queryFn: async (): Promise<LeaveEntry[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1519: paged — leave across years passes the gateway's 1000-row cap, and LOP comes from it.
+      return fetchAllRows<LeaveEntry>((from, to) => supabase
         .from("leave_entries")
         .select("*")
-        .order("from_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as LeaveEntry[];
+        .order("from_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
     },
   });
 }
@@ -313,11 +315,12 @@ export function useSalaryPayments(period?: string) {
     queryKey: ["salary-payments", period ?? "all"],
     queryFn: async (): Promise<SalaryPayment[]> => {
       const supabase = createClient();
-      let q = supabase.from("salary_payments").select("*").order("period", { ascending: false });
-      if (period) q = q.eq("period", period);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as SalaryPayment[];
+      // R-1519: paged — every payslip across years passes 1000 rows for a team of 20 in 5 years.
+      return fetchAllRows<SalaryPayment>((from, to) => {
+        let q = supabase.from("salary_payments").select("*").order("period", { ascending: false }).order("id", { ascending: true });
+        if (period) q = q.eq("period", period);
+        return q.range(from, to);
+      });
     },
   });
 }
@@ -336,13 +339,17 @@ export function useUnreconciledSalaries() {
     queryKey: ["salary-payments", "unreconciled"],
     queryFn: async (): Promise<UnreconciledSalary[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1519: paged past the gateway's 1000-row cap.
+      const rows = await fetchAllRows<{
+        id: string; period: string; pay_date: string; net: number; paid_amount: number;
+        paid_status: "unpaid" | "partial" | "paid"; employee_id: string;
+      }>((from, to) => supabase
         .from("salary_payments")
         .select("id, period, pay_date, net, paid_amount, paid_status, employee_id")
         .in("paid_status", ["unpaid", "partial"])
-        .order("pay_date", { ascending: false });
-      if (error) throw error;
-      const rows = data ?? [];
+        .order("pay_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
       const empIds = [...new Set(rows.map((r) => r.employee_id))];
       let names = new Map<string, string>();
       if (empIds.length) {
@@ -452,27 +459,34 @@ export function useDeleteSalaryPayment() {
 }
 
 // ── Statutory dues (withheld TDS/PF/ESI vs paid) ─────────────────────────────
+type SalaryDuesRow = { tds: number | null; pf: number | null; esi: number | null; esi_employer: number | null; pf_employer: number | null };
+
+/**
+ * Salary TDS/PF/ESI (both shares) + TDS withheld on vendor payments (26Q), less every
+ * challan — lib/accounting/tds-deductor.ts. The Balance Sheet uses the same sum.
+ * R-1519: all three reads paged — every payslip ever had no filter at all, so a team past
+ * 1000 payslips showed withheld PF/ESI/TDS (and the amount payable) short.
+ */
+export async function fetchStatutoryDues(supabase: ReturnType<typeof createClient>): Promise<DuesSummary> {
+  const [sal, paid, vt] = await Promise.all([
+    fetchAllRows<SalaryDuesRow>((from, to) => supabase.from("salary_payments")
+      .select("tds, pf, esi, esi_employer, pf_employer").order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<{ kind: string; amount: number | null }>((from, to) => supabase.from("statutory_dues_payments")
+      .select("kind, amount").order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("expenses")
+      .select("tds_amount").gt("tds_amount", 0).order("id", { ascending: true }).range(from, to)),
+  ]);
+  return statutoryDues({
+    salaries: sal,
+    vendorTds: vt.reduce((s, r) => s + (r.tds_amount ?? 0), 0),
+    paid,
+  });
+}
+
 export function useStatutoryDues() {
   return useQuery({
     queryKey: ["statutory-dues"],
-    queryFn: async (): Promise<DuesSummary> => {
-      const supabase = createClient();
-      /* Salary TDS/PF/ESI (both shares) + TDS withheld on vendor payments (26Q), less
-         every challan — lib/accounting/tds-deductor.ts. The Balance Sheet uses the same sum. */
-      const [{ data: sal, error: sErr }, { data: paid, error: pErr }, { data: vt, error: vErr }] = await Promise.all([
-        supabase.from("salary_payments").select("tds, pf, esi, esi_employer, pf_employer"),
-        supabase.from("statutory_dues_payments").select("kind, amount"),
-        supabase.from("expenses").select("tds_amount").gt("tds_amount", 0),
-      ]);
-      if (sErr) throw sErr;
-      if (pErr) throw pErr;
-      if (vErr) throw vErr;
-      return statutoryDues({
-        salaries: sal ?? [],
-        vendorTds: (vt ?? []).reduce((s, r) => s + (r.tds_amount ?? 0), 0),
-        paid: paid ?? [],
-      });
-    },
+    queryFn: (): Promise<DuesSummary> => fetchStatutoryDues(createClient()),
     staleTime: 30_000,
   });
 }
@@ -501,17 +515,22 @@ export function useEsiRegister() {
     queryKey: ["esi-register"],
     queryFn: async (): Promise<EsiRegister> => {
       const supabase = createClient();
-      const { data: sal, error } = await supabase
+      // R-1519: paged — the register (and its accrued total) stopped at the 1000th payslip.
+      const sal = await fetchAllRows<{
+        period: string; esi: number | null; esi_employer: number | null; employee_id: string;
+        gross: number | null; lop_days: number | null; lop_amount: number | null;
+      }>((from, to) => supabase
         .from("salary_payments")
         .select("period, esi, esi_employer, employee_id, gross, lop_days, lop_amount")
         .or("esi.gt.0,esi_employer.gt.0")
-        .order("period", { ascending: false });
-      if (error) throw error;
+        .order("period", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
 
       const { data: emps } = await supabase.from("employees").select("id, name, esi_no");
       const empMap = new Map((emps ?? []).map((e) => [e.id, e]));
 
-      const rows: EsiRegisterRow[] = (sal ?? []).map((r) => {
+      const rows: EsiRegisterRow[] = sal.map((r) => {
         const e = empMap.get(r.employee_id);
         const employeeShare = r.esi ?? 0;
         const employerShare = r.esi_employer ?? 0;
@@ -554,15 +573,20 @@ export function usePfRegister() {
     queryKey: ["pf-register"],
     queryFn: async (): Promise<PfRegister> => {
       const supabase = createClient();
-      const { data: sal, error } = await supabase
+      // R-1519: paged — the register (and the ECR export) stopped at the 1000th payslip.
+      const sal = await fetchAllRows<{
+        period: string; pf: number | null; pf_employer: number | null; pf_wage: number | null; employee_id: string;
+        gross: number | null; lop_days: number | null; lop_amount: number | null;
+      }>((from, to) => supabase
         .from("salary_payments")
         .select("period, pf, pf_employer, pf_wage, employee_id, gross, lop_days, lop_amount")
         .or("pf.gt.0,pf_employer.gt.0")
-        .order("period", { ascending: false });
-      if (error) throw error;
+        .order("period", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to));
       const { data: emps } = await supabase.from("employees").select("id, name, pf_no");
       const empMap = new Map((emps ?? []).map((e) => [e.id, e]));
-      const rows: PfRegisterRow[] = (sal ?? []).map((r) => {
+      const rows: PfRegisterRow[] = sal.map((r) => {
         const e = empMap.get(r.employee_id);
         return {
           period: r.period, employee: e?.name ?? "—", uan: e?.pf_no ?? null,
@@ -586,17 +610,19 @@ export function useAttendance(period?: string) {
     queryKey: ["attendance", period ?? "all"],
     queryFn: async (): Promise<Attendance[]> => {
       const supabase = createClient();
-      let q = supabase.from("attendance").select("*").order("work_date", { ascending: false });
-      /* R-604: was `.lte(`${period}-31`)` — Postgres rejects "2026-09-31" (400), so every
-         30-day month and February loaded NO attendance and payroll suggested a whole month
-         of loss-of-pay. monthBounds gives the real next-month start. */
-      if (period) {
-        const { start, nextStart } = monthBounds(period);
-        q = q.gte("work_date", start).lt("work_date", nextStart);
-      }
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as Attendance[];
+      /* R-1519: paged — a month for 40 people is ~1,200 rows, and the gateway answers 1000
+         and says nothing; a missing day reads as absent, i.e. loss-of-pay. */
+      return fetchAllRows<Attendance>((from, to) => {
+        let q = supabase.from("attendance").select("*").order("work_date", { ascending: false }).order("id", { ascending: true });
+        /* R-604: was `.lte(`${period}-31`)` — Postgres rejects "2026-09-31" (400), so every
+           30-day month and February loaded NO attendance and payroll suggested a whole month
+           of loss-of-pay. monthBounds gives the real next-month start. */
+        if (period) {
+          const { start, nextStart } = monthBounds(period);
+          q = q.gte("work_date", start).lt("work_date", nextStart);
+        }
+        return q.range(from, to);
+      });
     },
     staleTime: 15_000,
   });

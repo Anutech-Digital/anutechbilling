@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
 
@@ -77,17 +78,19 @@ export function useTdsReceivables(opts?: {
     queryKey: ["tds_receivable", { status, fiscalYear, customerId }],
     queryFn: async (): Promise<TdsReceivable[]> => {
       const supabase = createClient();
-      let q = supabase
-        .from("tds_receivable")
-        .select("*")
-        .order("payment_received_date", { ascending: false });
-      if (status === "claimable") q = q.in("status", ["cert_received", "verified_26as"]);
-      else if (status && status !== "all") q = q.eq("status", status);
-      if (fiscalYear)                 q = q.eq("fiscal_year", fiscalYear);
-      if (customerId)                 q = q.eq("customer_id", customerId);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as TdsReceivable[];
+      // R-1519: paged — "All years" past 1000 entries listed only the newest 1000.
+      return fetchAllRows<TdsReceivable>((from, to) => {
+        let q = supabase
+          .from("tds_receivable")
+          .select("*")
+          .order("payment_received_date", { ascending: false })
+          .order("id", { ascending: true });
+        if (status === "claimable") q = q.in("status", ["cert_received", "verified_26as"]);
+        else if (status && status !== "all") q = q.eq("status", status);
+        if (fiscalYear)                 q = q.eq("fiscal_year", fiscalYear);
+        if (customerId)                 q = q.eq("customer_id", customerId);
+        return q.range(from, to);
+      });
     },
   });
 }
@@ -98,12 +101,14 @@ export function useTdsSummary(fiscalYear?: string) {
     queryKey: ["tds_receivable", "summary", fiscalYear],
     queryFn: async () => {
       const supabase = createClient();
-      let q = supabase
-        .from("tds_receivable")
-        .select("status, tds_amount, fiscal_year");
-      if (fiscalYear) q = q.eq("fiscal_year", fiscalYear);
-      const { data, error } = await q;
-      if (error) throw error;
+      // R-1519: paged — the KPI strip and tab counts summed only the first 1000 entries.
+      const data = await fetchAllRows<{ status: string | null; tds_amount: number | null; fiscal_year: string | null }>((from, to) => {
+        let q = supabase
+          .from("tds_receivable")
+          .select("status, tds_amount, fiscal_year");
+        if (fiscalYear) q = q.eq("fiscal_year", fiscalYear);
+        return q.order("id", { ascending: true }).range(from, to);
+      });
 
       const byStatus: Record<TdsStatus, { count: number; amount: number }> = {
         pending_cert:  { count: 0, amount: 0 },
