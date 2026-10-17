@@ -38,6 +38,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
+import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
@@ -72,6 +73,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
+  /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
+  const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
+  const openPayment = () => { setTdsOnly(null); setPayOpen(true); };
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
@@ -156,6 +160,18 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           <Icon name="chevron_left" size={14} /> All invoices
         </Link>
         <EinvoiceBanner notice={einvoiceNotice} className="mb-3" />
+        {/* R-1520: Partial invoice whose remaining due is exactly a common TDS (INV-A378:
+            ₹25,500 = 10% of ₹2,55,000) → say so, and one button to record it as TDS. */}
+        {moneyDue && quote?.id && (
+          <InvoiceTdsBanner
+            className="mb-3"
+            total={total}
+            received={totalReceived(payments ?? [])}
+            gstRatePct={taxRate}
+            preferredSection={customer?.tds_default_section ?? null}
+            onRecordTds={(m) => { setTdsOnly({ section: m.section, ratePct: m.ratePct }); setPayOpen(true); }}
+          />
+        )}
         <div className="rounded-lg border border-hairline bg-paper overflow-hidden">
           {/* R-202. On a 375px phone the three buttons used to sit in one shrink-0 row beside
               the invoice number, making the sheet 446px wide: PDF off-screen, sideways scroll,
@@ -178,7 +194,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               {quote?.id && moneyDue && (
                 /* R-237: record the payment HERE. Billing's only way used to be the quote
                    page, which middleware does not let billing open. */
-                <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayOpen(true)}>
+                <Button size="sm" variant="primary" icon="rupee" onClick={openPayment}>
                   Record payment
                 </Button>
               )}
@@ -360,7 +376,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <InvoicePaymentsAccordion
                     inv={invoice}
                     /* R-238: no receipt yet → the next step is right here. */
-                    onRecordPayment={quote?.id && moneyDue ? () => setPayOpen(true) : undefined}
+                    onRecordPayment={quote?.id && moneyDue ? openPayment : undefined}
                   />
                 </div>
               )}
@@ -426,9 +442,53 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           customerId={invoice.customer_id ?? quote.customer_id}
           askDomain={!quote.is_one_off}
           defaultDomain={quote.domain ?? undefined}
+          tdsOnly={tdsOnly}
         />
       )}
     </>
+  );
+}
+
+/**
+ * R-1520 — "Baaki ₹25,500 = 10% TDS lagta hai". Shown on a part-paid invoice whose remaining
+ * due equals a common TDS of its pre-GST value (matchTdsShortfall, ±₹1). Nothing is saved
+ * here: "Record TDS" hands the match to Record payment, which the operator confirms.
+ */
+export function InvoiceTdsBanner({
+  total,
+  received,
+  gstRatePct,
+  preferredSection = null,
+  onRecordTds,
+  className = "",
+}: {
+  total: number;
+  received: number;
+  gstRatePct: number | null | undefined;
+  preferredSection?: string | null;
+  onRecordTds: (m: TdsShortfallMatch) => void;
+  className?: string;
+}) {
+  const match = matchTdsShortfall({ totalInclGst: total, received, gstRatePct, preferredSection });
+  if (!match) return null;
+  return (
+    <div
+      role="status"
+      data-testid="invoice-tds-banner"
+      className={`rounded-lg border border-amber/40 bg-amber-soft px-4 py-3 text-xs text-amber-ink flex flex-wrap items-center justify-between gap-2 ${className}`}
+    >
+      <span className="flex items-start gap-2 min-w-0">
+        <Icon name="info" size={14} className="shrink-0 mt-0.5" />
+        <span>
+          <b>Baaki {rupee(match.shortfall)} = {match.ratePct}% TDS lagta hai</b>{" "}
+          ({match.section}, {rupee(match.base)} ka {match.ratePct}%). Customer ne TDS kaata ho to
+          ise TDS ki tarah darj karein — invoice Paid ho jayega aur rakam TDS Receivable me jayegi.
+        </span>
+      </span>
+      <Button size="sm" variant="outline" icon="rupee" onClick={() => onRecordTds(match)}>
+        Record TDS
+      </Button>
+    </div>
   );
 }
 

@@ -65,6 +65,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome, tdsBase } from "@/lib/accounting/tds-receipt";
+import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
@@ -73,7 +74,10 @@ import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitEx
 const schema = z.object({
   /* R-449: ₹0 used to stop the form with no message — the browser's own min=1 check
      fired silently. The form is noValidate now and this says it. */
-  amount:       z.coerce.number({ invalid_type_error: "Enter the amount received." }).int("Whole rupees only — no paise.").min(1, "Amount must be more than ₹0."),
+  /* R-1520: ₹0 in bank is allowed ONLY when TDS is ticked — "Record TDS" on a part-paid
+     invoice, where the TDS alone settles the rest (record_payment_with_tds, net_paid 0).
+     Without TDS the old "more than ₹0" rule stands (checked in superRefine below). */
+  amount:       z.coerce.number({ invalid_type_error: "Enter the amount received." }).int("Whole rupees only — no paise.").min(0, "Amount cannot be negative."),
   method:       z.string().min(1, "Method required"),
   // R-248: cash may be left blank — it is saved as cashReference() (date + IST time).
   reference:    z.string(),
@@ -88,6 +92,9 @@ const schema = z.object({
   tdsRatePct:   z.coerce.number().min(0).max(100).optional(),
   customerTan:  z.string().optional(),
 }).superRefine((d, ctx) => {
+  if (d.amount < 1 && !d.tdsDeducted) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amount"], message: "Amount must be more than ₹0." });
+  }
   // Reference sanity — block junk like "dfg" / "asfdgdfgsdfgds". A real UTR /
   // txn id / cheque number always has digits; cash/other can be looser.
   const ref = d.reference.trim();
@@ -137,6 +144,40 @@ export function applyPaymentMethod(
   return Promise.resolve(true);
 }
 
+/**
+ * R-1520: the hint's one click — tick "Customer deducted TDS" and fill section + rate. The
+ * bank amount the operator typed is left alone (it IS the bank amount once TDS is ticked).
+ */
+export function applyTdsSuggestion(
+  form: Pick<UseFormReturn<FormData>, "setValue">,
+  m: Pick<TdsShortfallMatch, "section" | "ratePct">,
+): void {
+  form.setValue("tdsDeducted", true, { shouldDirty: true });
+  form.setValue("tdsSection", m.section, { shouldDirty: true });
+  form.setValue("tdsRatePct", m.ratePct, { shouldDirty: true, shouldValidate: true });
+}
+
+/** R-1520: "Baaki ₹25,500 shayad TDS hai (194J 10%) — TDS deducted tick karein?" + one button.
+ *  Renders nothing without a match; never ticks anything by itself. */
+export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch | null; onApply: () => void }) {
+  if (!match) return null;
+  return (
+    <div
+      role="status"
+      data-testid="tds-shortfall-hint"
+      className="rounded-md border border-amber/40 bg-amber-soft px-3 py-2 text-xs text-amber-ink flex flex-wrap items-center justify-between gap-2"
+    >
+      <span className="flex items-start gap-1.5 min-w-0">
+        <Icon name="info" size={14} className="shrink-0 mt-0.5" />
+        <span>{tdsShortfallLine(match)} — TDS deducted tick karein?</span>
+      </span>
+      <Button type="button" size="sm" variant="outline" onClick={onApply}>
+        Haan, TDS deducted tick karein
+      </Button>
+    </div>
+  );
+}
+
 /** Compute TDS amount = pre-GST gross × rate%. R-1119: GST is stripped at the quote's own
  *  rate (5% / 12% / 0% export), not a fixed 18%. */
 function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: number | null): { preGST: number; tds: number } {
@@ -175,6 +216,13 @@ interface RecordPaymentDialogProps {
   /** Pre-fill the domain field (e.g. from the customer/lead's known domain). */
   defaultDomain?: string | null;
   /**
+   * R-1520 "Record TDS": open with "Customer deducted TDS" already ticked at this section +
+   * rate, method Other, ₹0 in bank and no bank account — the TDS alone settles what is left.
+   * Saved through the same record_desk_payment → record_payment_with_tds call as any TDS
+   * receipt (payment = TDS gross, tds_receivable net_paid 0). The operator still confirms.
+   */
+  tdsOnly?: { section: string; ratePct: number } | null;
+  /**
    * Fired after the payment is saved and every toast has been queued, with the RPC's
    * own result. OPTIONAL and additive — every existing caller keeps its behaviour.
    *
@@ -205,6 +253,7 @@ export function RecordPaymentDialog({
   isRenewal = false,
   lineItems,
   onRecorded,
+  tdsOnly = null,
 }: RecordPaymentDialogProps) {
   const qc = useQueryClient();
   /* The receipt-voucher counter, so the sheet can name the number it will consume. */
@@ -219,8 +268,9 @@ export function RecordPaymentDialog({
   const [accountTouched, setAccountTouched] = React.useState(false);
   React.useEffect(() => {
     if (!open || accountTouched) return;
-    setBankAccountId(defaultDepositAccountId(receiveAccounts, method));
-  }, [open, accountTouched, receiveAccounts, method]);
+    /* R-1520: a TDS-only receipt brought no money to any account — pre-pick none. */
+    setBankAccountId(tdsOnly ? "" : defaultDepositAccountId(receiveAccounts, method));
+  }, [open, accountTouched, receiveAccounts, method, tdsOnly]);
 
   /* R-407: does this quote make a subscription? true / false from its lines (the same rule
      record_payment uses); null when the caller did not pass the lines. The domain field and
@@ -387,6 +437,17 @@ export function RecordPaymentDialog({
      rate that does not fit the section is allowed but warned about. */
   const tdsSectionValue = watch("tdsSection") ?? "194J";
   const tdsRateCheck = checkTdsRate(tdsSectionValue, tdsRatePct);
+  /* R-1520: a short payment whose gap is exactly a common TDS (1/2/10% of the pre-GST
+     total, ±₹1) → one hint above the TDS box. Only while TDS is unticked, and not on a
+     split-billed quote (its "expected" is an instalment, not the invoice the TDS is on). */
+  const tdsShortfall = !tdsDeducted && !split
+    ? matchTdsShortfall({
+        totalInclGst:     expectedAmount,
+        received:         alreadyReceived + watchedAmount + appliedCreditAmount,
+        gstRatePct:       quoteTaxRate,
+        preferredSection: customerTdsDefaults.section,
+      })
+    : null;
 
   /* ── R-378: "Issue GST invoice now" ─────────────────────────────────────────
      The online path invoices the moment money lands (online-invoice.server.ts); the desk
@@ -448,21 +509,25 @@ export function RecordPaymentDialog({
       setAmountEdited(false);
       setReceiptFile(null);
     } else {
+      /* R-1520: "Record TDS" opens ticked, at the suggested section + rate, method Other with
+         a "TDS <section>" reference the operator can overwrite with the 26AS / challan ref.
+         The amount effect below then sets the bank amount to remaining − TDS (₹0). */
       reset({
         amount:       remaining,
-        method:       "upi",
+        method:       tdsOnly ? "other" : "upi",
         /* R-407: named, so a re-opened sheet never carries the last payment's UTR. */
-        reference:    "",
+        reference:    tdsOnly ? `TDS ${tdsOnly.section}` : "",
         notes:        "",
         receivedDate: istToday(),      // R-025 — same UTC trap as the defaults above.
-        tdsDeducted:  false,
-        tdsSection:   customerTdsDefaults.section,
-        tdsRatePct:   customerTdsDefaults.ratePct,
+        tdsDeducted:  !!tdsOnly,
+        tdsSection:   tdsOnly?.section ?? customerTdsDefaults.section,
+        tdsRatePct:   tdsOnly?.ratePct ?? customerTdsDefaults.ratePct,
         customerTan:  customerTdsDefaults.tan ?? "",
       });
+      if (tdsOnly) setMethod("other");
       setAmountEdited(false);
     }
-  }, [open, reset, remaining, customerTdsDefaults]);
+  }, [open, reset, remaining, customerTdsDefaults, tdsOnly]);
 
   /* R-379 (j): the reset above passes no `domain`, and react-hook-form's reset(values)
      replaces ALL values — so the required Domain field opened empty even when the page
@@ -538,6 +603,9 @@ export function RecordPaymentDialog({
          committed call, and tried to put it back by hand when the payment failed — a put-back
          R-719 refuses and a dropped connection skips, so the credit was lost. */
       const settledAmount = tdsActive ? data.amount + tdsAmount : data.amount;
+      /* R-1520: ₹0 in bank passes the form only with TDS ticked; a 0% rate would still leave
+         nothing to record — say so here instead of record_payment's "amount must be > 0". */
+      if (settledAmount <= 0) throw new Error("Nothing to record — enter the amount received, or the TDS rate.");
       const method = data.method as "upi" | "razorpay" | "bank_transfer" | "cheque" | "cash" | "other";
       const notes  = [
         data.notes || null,
@@ -1152,7 +1220,7 @@ export function RecordPaymentDialog({
             <Input
               id="amount"
               type="number"
-              min={1}
+              min={tdsDeducted ? 0 : 1}
               prefix="₹"
               error={errors.amount?.message}
               helper={
@@ -1166,7 +1234,7 @@ export function RecordPaymentDialog({
             />
             {/* Reports a decimal BEFORE submit, and says what it would be saved as —
                 rounding somebody's money without telling them is not a kindness. */}
-            <FieldPill check={watch("amount") === 0
+            <FieldPill check={watch("amount") === 0 && !tdsDeducted
               ? { tone: "error", message: "Amount must be more than ₹0." }
               : checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
@@ -1284,6 +1352,13 @@ export function RecordPaymentDialog({
               B2B customers (Pvt Ltd, LLPs, larger firms) deduct TDS
               before paying. Check the box → fields appear → on submit
               the TDS portion is logged as a receivable from govt. */}
+          <TdsShortfallHint match={tdsShortfall} onApply={() => tdsShortfall && applyTdsSuggestion({ setValue }, tdsShortfall)} />
+          {tdsOnly && tdsDeducted && (
+            <div data-testid="tds-only-note" className="rounded-md border border-hairline bg-paper-2/60 px-3 py-2 text-xs text-ink-2">
+              Sirf TDS darj ho raha hai — bank me ₹0. Ye {rupee(tdsAmount)} TDS Receivable me jayega aur
+              invoice ka baaki band karega. Reference me 26AS / challan number daal sakte hain.
+            </div>
+          )}
           <div className="rounded-md border border-hairline px-3 py-2.5 bg-paper-2/30">
             <label className="flex items-start gap-2 cursor-pointer text-sm">
               <input
