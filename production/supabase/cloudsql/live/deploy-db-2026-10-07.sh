@@ -129,6 +129,7 @@ MIGS=(
   "r731mfaokgrants|20261017020500_r731_mfa_ok_grants.sql|postgres|not exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'session_mfa_ok' and has_function_privilege('anon', p.oid, 'EXECUTE'))"
   "r1475navbadges|20261017085109_r1475_nav_badges_page_counts.sql|resellersos_migration|position('R-1475' in coalesce(obj_description(to_regprocedure('public.nav_badges(text[])'), 'pg_proc'), '')) > 0"
   "r1515followups|20261017131246_r1515_payment_followups.sql|resellersos_migration|to_regclass('public.payment_followups') is not null and exists(select 1 from pg_policy where polname = 'payment_followups_select' and polrelid = to_regclass('public.payment_followups'))"
+  "r1525multiinvoicepay|20261017152833_r1525_multi_invoice_payment.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1525%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

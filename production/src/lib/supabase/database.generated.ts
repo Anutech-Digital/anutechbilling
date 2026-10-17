@@ -15102,6 +15102,20 @@ export type Database = {
         }
         Returns: Json
       }
+      record_multi_invoice_payment: {
+        Args: {
+          p_allocations: Json
+          p_bank_account_id: string
+          p_customer_id: string
+          p_excess_to_credit?: boolean
+          p_method: string
+          p_notes?: string
+          p_received: number
+          p_received_on: string
+          p_reference: string
+        }
+        Returns: Json
+      }
       record_emi_payment: {
         Args: {
           p_amount: number
