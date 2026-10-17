@@ -194,7 +194,7 @@ export function HostingLanding() {
               <button type="button" onClick={startTrialInCart} className="hlp-orange" style={{ background: C.accent, color: "#fff", padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center", border: 0, cursor: "pointer", fontFamily: "inherit" }}>Start the free {TRIAL_PLAN_NAME} trial</button>
               <a href="#move" className="hlp-outline" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.ink, padding: "16px 24px", borderRadius: 12, fontSize: 16, fontWeight: 700, minHeight: 52, display: "inline-flex", alignItems: "center" }}>See how migration works</a>
             </div>
-            <ul style={{ marginTop: 24, display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
+            <ul style={{ display: "flex", gap: "8px 22px", flexWrap: "wrap", listStyle: "none", padding: 0, margin: "24px 0 0" }}>
               {["No credit card", "Full features during trial", "30-day refund on yearly"].map((t) => (
                 <li key={t} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 600, color: C.ink2 }}><span style={{ color: C.success, fontWeight: 800 }}>✓</span>{t}</li>
               ))}
@@ -282,7 +282,7 @@ export function HostingLanding() {
           {/* Plan cards */}
           <div style={mob
             ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start" } as React.CSSProperties
-            : { marginTop: 18, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
+            : { margin: "18px 0 0", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
             {plans.map((p) => (
               <div key={p.name} style={{
                 background: "#fff", border: p.isTop ? `1.5px solid ${C.accent}` : `1px solid ${C.line}`, borderRadius: 18,
@@ -313,7 +313,7 @@ export function HostingLanding() {
                           yearly alike. This plan is bought, so buying is the main action. */}
                       <button type="button" onClick={() => addPlanToCart(p)} className={p.isTop ? "hlp-orange" : "hlp-dark"} style={{ textAlign: "center", padding: 15, borderRadius: 11, fontSize: 15, fontWeight: 700, color: "#fff", minHeight: 50, background: p.isTop ? C.accent : C.ink, border: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>Buy {p.name}</button>
                       <div style={{ textAlign: "center", fontSize: 13, lineHeight: 1.45, color: C.muted, minHeight: 46, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>
-                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
+                        <span>No free trial on {p.name}. <button type="button" onClick={startTrialInCart} style={{ color: C.accentDark, fontWeight: 700, background: "none", border: 0, padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: "inherit", lineHeight: "inherit", textDecoration: "underline" }}>Try {TRIAL_PLAN_NAME} free</button> and move up later.</span>
                       </div>
                     </>
                   )}
