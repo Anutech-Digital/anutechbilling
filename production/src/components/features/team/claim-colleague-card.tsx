@@ -97,7 +97,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
   const list = stranded.data ?? [];
 
   return (
-    <Card className="mb-6">
+    <Card className="mb-6 max-w-3xl">
       <div className="mb-3 flex items-start gap-3">
         <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-soft">
           <Icon name="user" size={16} className="text-indigo-ink" />
@@ -120,7 +120,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
             placeholder="e.g. deepak@anutech.in"
             value={email}
             onChange={(e) => { setEmail(e.target.value); setBlocked(null); }}
-            helper="The exact address they sign in with."
+            aria-describedby="claim-email-helper"
           />
         </FormField>
 
@@ -150,6 +150,9 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           Claim &amp; merge
         </Button>
       </div>
+      {/* R-1408: the helper sits under the row, not inside it — inside, the bottom-aligned
+          row lined the Role select and the button up with this text, not with the box. */}
+      <p id="claim-email-helper" className="mt-1 text-xs text-ink-3">The exact address they sign in with.</p>
 
       {blocked && (
         <div className="mt-3 flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/40 p-3">

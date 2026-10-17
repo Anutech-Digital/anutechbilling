@@ -408,7 +408,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="md:!max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{vendor ? "Edit vendor" : "Add vendor"}</DialogTitle>
           <DialogDescription>Supplier details & product portfolio — select what products this vendor supplies.</DialogDescription>
@@ -499,7 +499,7 @@ function AddEditVendorDialog({ vendor, onClose }: { vendor: Vendor | null; onClo
             <p className="text-xs text-ink-3">Select products this vendor offers so you can buy & source licenses from them.</p>
           </div>
 
-          {/* R-177: three across in a 512px dialog cut the placeholders ("e.g. +91 987…") — two across,
+          {/* R-177: three across in the old 512px dialog (R-1408 widened it to 768px) cut the placeholders ("e.g. +91 987…") — two across,
               email on its own full-width line. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField htmlFor="vendors-contact-name" label="Contact name"><Input id="vendors-contact-name" value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="e.g. Rahul Sharma" /></FormField>

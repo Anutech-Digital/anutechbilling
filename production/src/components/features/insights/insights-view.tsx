@@ -80,7 +80,7 @@ export function InsightsView({ agent }: { agent: Agent }) {
   const count = (s: string) => (data?.insights ?? []).filter((i) => (s === "card" ? i.status === "queued" || i.status === "carded" : i.status === s)).length;
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto space-y-5">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto space-y-5">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">AI</p>
