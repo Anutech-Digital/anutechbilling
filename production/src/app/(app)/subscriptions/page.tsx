@@ -1180,8 +1180,10 @@ export default function SubscriptionsPage() {
       {/* Desktop table — viewports >= 1280px */}
       {!isLoading && !error && filtered.length > 0 && (
         <Card flush className="hidden xl:block">
+            {/* R-1481: own scroll box — Card flush overflow-x-auto never scrolls vertically, so a sticky header needs this to stick. */}
+            <div className="overflow-auto max-h-[calc(100vh-15rem)]">
             <table className="w-full">
-              <thead className="bg-paper-2 border-b border-hairline-strong">
+              <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   {/* ── Select-all covers the rows ON SCREEN, not the whole filtered set ──
                       This list paginates at 60. A checkbox that silently selected 800 rows
@@ -1487,6 +1489,7 @@ export default function SubscriptionsPage() {
                 })}
               </tbody>
             </table>
+            </div>
         </Card>
       )}
       {!isLoading && !error && tab !== "trials" && hasMore && (
@@ -1500,8 +1503,10 @@ export default function SubscriptionsPage() {
       {/* Trials tab — same column layout, virtual-sub rows */}
       {!isLoading && !error && tab === "trials" && filteredTrials.length > 0 && (
         <Card flush className="hidden md:block">
+            {/* R-1481: own scroll box — Card flush overflow-x-auto never scrolls vertically, so a sticky header needs this to stick. */}
+            <div className="overflow-auto max-h-[calc(100vh-15rem)]">
             <table className="w-full">
-              <thead className="bg-paper-2 border-b border-hairline">
+              <thead className="sticky top-0 z-10 bg-paper-2 border-b border-hairline">
                 <tr>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Customer · Domain</th>
                   <th className="text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Plan</th>
@@ -1571,6 +1576,7 @@ export default function SubscriptionsPage() {
                 })}
               </tbody>
             </table>
+            </div>
         </Card>
       )}
 
