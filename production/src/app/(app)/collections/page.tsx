@@ -1,7 +1,7 @@
 /**
  * R-1516 — Payment Follow-up (/collections): everyone who still owes money, whom to chase
- * first, what they promised and who owns the follow-up. Read-only — adding a note / promise
- * is R-1517, AI-drafted reminders R-1518.
+ * first, what they promised and who owns the follow-up. Each row opens the Follow-up dialog
+ * (R-1517: log a call / promise, next date, history); AI-drafted reminders are R-1518.
  *
  * Rules and reads live in lib/queries/collections.ts (tested in ./collections.test.ts):
  * the balance is the same invoiceAmountDue as Customer Aging, every read pages past 1000.
@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,9 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUserNames } from "@/lib/hooks/useUserNames";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { canOpenRoute } from "@/lib/nav";
+import { tdsShortfallLine } from "@/lib/accounting/tds-match";
+import { Button } from "@/components/ui/button";
+import { FollowupDialog } from "@/components/features/collections/followup-dialog";
 import {
   COLLECTION_VIEWS, defaultCollectionView, filterCollectionRows, useCollections,
   type CollectionRow, type CollectionView, type OwedItem,
@@ -50,6 +54,11 @@ export default function CollectionsPage() {
     if (!id) return "Unassigned";
     return names?.get(id)?.label ?? "a colleague";
   };
+
+  /* R-1517: the row whose Follow-up dialog is open. Kept by key so the dialog follows the
+     refreshed row after a save (the list is re-read at once). */
+  const [fuKey, setFuKey] = React.useState<string | null>(null);
+  const fuRow = fuKey ? all.find((r) => r.key === fuKey) ?? null : null;
 
   const total = shown.reduce((s, r) => s + r.amountDue, 0);
   const todayCount = shown.filter((r) => r.followUpDue || r.promiseBroken).length;
@@ -124,6 +133,7 @@ export default function CollectionsPage() {
                     <dd className="min-w-0 break-words">{ownerName(r)}</dd>
                   </dl>
                   {r.lastNote && <p className="mt-2 text-sm text-ink-2 break-words">“{r.lastNote}”</p>}
+                  <FollowupButton r={r} onOpen={setFuKey} className="mt-3 w-full justify-center" />
                 </Card>
               </li>
             ))}
@@ -158,6 +168,7 @@ export default function CollectionsPage() {
                     <td className="px-3 py-3 break-words">
                       <div className="font-medium text-ink"><CustomerName r={r} canOpen={canOpen} /></div>
                       {r.lastNote && <div className="text-xs text-ink-3 mt-0.5 line-clamp-2" title={r.lastNote}>“{r.lastNote}”</div>}
+                      <FollowupButton r={r} onOpen={setFuKey} className="mt-1.5" />
                     </td>
                     <td className="px-3 py-3">
                       <ul className="space-y-1">
@@ -176,7 +187,40 @@ export default function CollectionsPage() {
           </Card>
         </>
       )}
+
+      {fuRow?.customerId && (
+        <FollowupDialog
+          open
+          onOpenChange={(o) => { if (!o) setFuKey(null); }}
+          customerId={fuRow.customerId}
+          customerName={fuRow.customerName}
+          ownerId={fuRow.ownerId}
+          items={fuRow.items}
+          stillOwes={fuRow.amountDue > 0}
+          amountDue={fuRow.amountDue}
+        />
+      )}
     </div>
+  );
+}
+
+/** R-1517: opens the Follow-up dialog. A line with no customer record cannot carry follow-ups. */
+function FollowupButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
+  if (!r.customerId) {
+    return <p className={`text-xs text-ink-3 ${className ?? ""}`}>Link this invoice to a customer to log follow-ups.</p>;
+  }
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="default"
+      icon="phone"
+      className={className}
+      aria-label={`Log a follow-up for ${r.customerName}`}
+      onClick={() => onOpen(r.key)}
+    >
+      Follow-up
+    </Button>
   );
 }
 
@@ -186,7 +230,8 @@ type CanOpen = (href: string) => boolean;
 
 function MaybeLink({ href, canOpen, children, className }: { href: string | null; canOpen: CanOpen; children: React.ReactNode; className?: string }) {
   if (!href || !canOpen(href)) return <span className={className}>{children}</span>;
-  return <Link href={href} className={`${className ?? ""} text-ink hover:underline underline-offset-2`}>{children}</Link>;
+  // Typed routes (Next build, not tsc): a computed href is cast, as in kpi.tsx / academy.
+  return <Link href={href as Route} className={`${className ?? ""} text-ink hover:underline underline-offset-2`}>{children}</Link>;
 }
 
 function CustomerName({ r, canOpen }: { r: CollectionRow; canOpen: CanOpen }) {
@@ -207,10 +252,10 @@ function OwedLine({ item, canOpen }: { item: OwedItem; canOpen: CanOpen }) {
           <MaybeLink href={item.subscriptionHref} canOpen={canOpen} className="text-xs text-ink-3">Subscription</MaybeLink>
         )}
       </div>
-      {item.tdsRate && (
+      {item.tdsHint && (
         <p className="text-xs text-amber-ink mt-0.5">
           <Icon name="info" size={12} className="inline mr-1 align-text-bottom" />
-          Shayad TDS hai ({item.tdsRate}% of pre-GST value) —{" "}
+          {tdsShortfallLine(item.tdsHint)} —{" "}
           <MaybeLink href={item.href} canOpen={canOpen} className="underline">Record payment me TDS darj karo</MaybeLink>
         </p>
       )}

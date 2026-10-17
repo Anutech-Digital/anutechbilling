@@ -32,6 +32,7 @@ import { useCustomerSubscriptions } from "@/lib/queries/subscriptions";
 import { CustomerContactsCard } from "@/components/features/customers/customer-contacts-card";
 import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
+import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { usePayments, useDeletePayment } from "@/lib/queries/payments";
@@ -504,6 +505,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
 
           {/* R-346: may this customer be activated on credit, and up to how much. */}
           <CreditSettingsCard customer={c} isOwner={me?.role === "owner"} />
+
+          {/* R-1517: payment follow-ups — log a call / promise, next date, full history. */}
+          <CustomerFollowupCard customerId={params.id} customerName={c.name} />
 
           {/* R-530: late fee On/Off for this customer + charges building up. */}
           <LateChargesPreview level="customer" id={params.id} />

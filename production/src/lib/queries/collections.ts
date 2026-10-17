@@ -30,6 +30,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -49,6 +50,7 @@ export interface CollectionInvoice {
   quote_id: string | null;
   taxable_value: number | null;
   tax_amount: number | null;
+  tax_rate: number | null;
 }
 
 export interface CollectionSubscription {
@@ -107,8 +109,8 @@ export interface OwedItem {
   subscriptionHref: string | null;
   amountDue: number;
   daysOverdue: number;
-  /** "Shayad TDS hai" — the balance is exactly 2% / 10% of the invoice's pre-GST value. */
-  tdsRate: TdsRate | null;
+  /** "Shayad TDS hai" — the balance equals a common TDS of the invoice's pre-GST value (R-1520 helper). */
+  tdsHint: TdsShortfallMatch | null;
 }
 
 export interface CollectionRow {
@@ -139,36 +141,32 @@ export type CollectionView = (typeof COLLECTION_VIEWS)[number];
 
 // ─── Pure rules ──────────────────────────────────────────────────────────────
 
-export type TdsRate = 2 | 10;
-/** The TDS rates a customer commonly deducts on IT services / professional fees (194J / 194C). */
-const TDS_RATES: readonly TdsRate[] = [10, 2];
-
 /**
- * The invoice's value before GST: taxable_value, else amount − tax_amount. null when neither
- * is known — then no hint, rather than a guess.
+ * The invoice's GST rate for the TDS base: its own tax_rate, else tax_amount ÷ pre-GST value
+ * (taxable_value, or amount − tax_amount). null → matchTdsShortfall / tdsBase assume 18%.
  */
-export function preGstValue(inv: Pick<CollectionInvoice, "amount" | "taxable_value" | "tax_amount">): number | null {
-  if (typeof inv.taxable_value === "number" && inv.taxable_value > 0) return inv.taxable_value;
-  if (typeof inv.amount === "number" && typeof inv.tax_amount === "number" && inv.amount - inv.tax_amount > 0) {
-    return inv.amount - inv.tax_amount;
-  }
-  return null;
+export function invoiceGstRatePct(inv: Pick<CollectionInvoice, "amount" | "taxable_value" | "tax_amount" | "tax_rate">): number | null {
+  if (typeof inv.tax_rate === "number" && Number.isFinite(inv.tax_rate) && inv.tax_rate >= 0) return inv.tax_rate;
+  if (typeof inv.tax_amount !== "number") return null;
+  const base = typeof inv.taxable_value === "number" && inv.taxable_value > 0
+    ? inv.taxable_value
+    : typeof inv.amount === "number" ? inv.amount - inv.tax_amount : 0;
+  return base > 0 ? Math.round((inv.tax_amount / base) * 10_000) / 100 : null;
 }
 
 /**
- * A balance that is exactly 2% or 10% of the pre-GST value (±₹1 for rounding) is almost
- * always TDS the customer deducted and paid to the government — not money still to chase.
- * INV-A378 (Pardeep, 17 Oct): ₹25,500 left = 10% of ₹2,55,000.
+ * "Shayad TDS hai" — the balance equals a common TDS of the invoice's pre-GST value (±₹1),
+ * i.e. TDS the customer deducted and paid to the government, not money still to chase.
+ * R-1520's shared matchTdsShortfall (lib/accounting/tds-match) — the same rule as the Record
+ * payment sheet and the invoice page. total = the invoice amount incl. GST; received = total
+ * minus what is still due (invoiceAmountDue), so advances / credit notes count as settled.
+ * INV-A378 (Pardeep, 17 Oct): ₹25,500 left = 10% (194J) of ₹2,55,000.
  */
-export function tdsHintRate(inv: CollectionInvoice): TdsRate | null {
+export function tdsHint(inv: CollectionInvoice): TdsShortfallMatch | null {
   const due = invoiceAmountDue(inv);
   if (due <= 0) return null;
-  const base = preGstValue(inv);
-  if (base === null) return null;
-  for (const rate of TDS_RATES) {
-    if (Math.abs(due - (base * rate) / 100) <= 1) return rate;
-  }
-  return null;
+  const total = Math.round(inv.amount ?? inv.net_payable ?? 0);
+  return matchTdsShortfall({ totalInclGst: total, received: total - due, gstRatePct: invoiceGstRatePct(inv) });
 }
 
 /** Whole days from `date` (YYYY-MM-DD…) to `today` (YYYY-MM-DD), IST calendar days. */
@@ -259,7 +257,7 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       subscriptionHref: sub ? subscriptionHref(sub) : null,
       amountDue: due,
       daysOverdue: daysSince(inv.due_date ?? inv.invoice_date, today),
-      tdsRate: tdsHintRate(inv),
+      tdsHint: tdsHint(inv),
     });
   }
 
@@ -278,7 +276,7 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       subscriptionHref: href,
       amountDue: due,
       daysOverdue: daysSince(s.payment_due_date ?? s.created_at, today),
-      tdsRate: null,
+      tdsHint: null,
     });
   }
 
@@ -337,25 +335,25 @@ export function defaultCollectionView(role: string | null | undefined): Collecti
 type Client = ReturnType<typeof createClient>;
 
 const INVOICE_COLS =
-  "id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id, taxable_value, tax_amount";
+  "id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id, taxable_value, tax_amount, tax_rate";
 const SUB_COLS = "id, customer_id, customer_name, plan, domain, quote_id, outstanding_amount, payment_due_date, created_at";
 
-/** Every row this page needs — each read paged past PostgREST's 1000-row cap. RLS scopes all of it. */
-export async function fetchCollectionsInput(supabase: Client): Promise<CollectionsInput> {
+/**
+ * Every row this page needs — each read paged past PostgREST's 1000-row cap. RLS scopes all of it.
+ * R-1517: `customerId` narrows it to one customer (the customer page's follow-up card).
+ */
+export async function fetchCollectionsInput(supabase: Client, customerId?: string): Promise<CollectionsInput> {
   const [invoices, subscriptions] = await Promise.all([
-    fetchAllRows<CollectionInvoice>((from, to) => supabase
-      .from("invoices")
-      .select(INVOICE_COLS)
-      .in("status", ["pending", "overdue"])
-      .order("id", { ascending: true })
-      .range(from, to)),
-    fetchAllRows<CollectionSubscription>((from, to) => supabase
-      .from("subscriptions")
-      .select(SUB_COLS)
-      .gt("outstanding_amount", 0)
-      .is("written_off_at", null)
-      .order("id", { ascending: true })
-      .range(from, to)),
+    fetchAllRows<CollectionInvoice>((from, to) => {
+      let q = supabase.from("invoices").select(INVOICE_COLS).in("status", ["pending", "overdue"]);
+      if (customerId) q = q.eq("customer_id", customerId);
+      return q.order("id", { ascending: true }).range(from, to);
+    }),
+    fetchAllRows<CollectionSubscription>((from, to) => {
+      let q = supabase.from("subscriptions").select(SUB_COLS).gt("outstanding_amount", 0).is("written_off_at", null);
+      if (customerId) q = q.eq("customer_id", customerId);
+      return q.order("id", { ascending: true }).range(from, to);
+    }),
   ]);
 
   const invoiceQuoteIds = invoices.map((i) => i.quote_id);
@@ -405,6 +403,21 @@ export function useCollections() {
     queryKey: ["collections"],
     queryFn: async (): Promise<CollectionRow[]> =>
       buildCollectionRows(await fetchCollectionsInput(createClient()), istToday()),
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * R-1517: one customer's row (what they owe, promise, owner, latest assignee), or null when they
+ * owe nothing. Keyed under ["collections"], so saving a follow-up refreshes it with the list.
+ */
+export function useCustomerCollection(customerId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["collections", "customer", customerId],
+    enabled: !!customerId,
+    queryFn: async (): Promise<CollectionRow | null> =>
+      buildCollectionRows(await fetchCollectionsInput(createClient(), customerId ?? undefined), istToday())
+        .find((r) => r.customerId === customerId) ?? null,
     staleTime: 30_000,
   });
 }

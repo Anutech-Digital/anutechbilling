@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCollectionRows, compareCollectionRows, defaultCollectionView, fetchCollectionsInput,
-  filterCollectionRows, tdsHintRate,
+  filterCollectionRows, tdsHint, invoiceGstRatePct,
   type CollectionFollowup, type CollectionInvoice, type CollectionRow, type CollectionsInput,
   type CollectionSubscription,
 } from "@/lib/queries/collections";
@@ -15,7 +15,7 @@ function inv(p: Partial<CollectionInvoice> & { id: string }): CollectionInvoice 
   return {
     customer_id: "c1", customer_name: "Acme", amount: 11800, net_payable: 11800, paid_amount: 0,
     status: "pending", invoice_date: "2026-09-01", due_date: "2026-09-16", quote_id: null,
-    taxable_value: 10000, tax_amount: 1800, ...p,
+    taxable_value: 10000, tax_amount: 1800, tax_rate: null, ...p,
   };
 }
 function sub(p: Partial<CollectionSubscription> & { id: string }): CollectionSubscription {
@@ -164,17 +164,27 @@ describe("filters", () => {
   });
 });
 
+/* R-1517: the hint is R-1520's shared matchTdsShortfall (lib/accounting/tds-match). */
 describe("TDS hint", () => {
-  it("INV-A378: ₹25,500 left on ₹2,55,000 pre-GST = 10%", () => {
-    expect(tdsHintRate(inv({ id: "INV-A378", amount: 300900, net_payable: 300900, taxable_value: 255000, tax_amount: 45900, paid_amount: 275400 }))).toBe(10);
+  it("INV-A378: ₹25,500 left on ₹2,55,000 pre-GST = 194J 10%", () => {
+    expect(tdsHint(inv({ id: "INV-A378", amount: 300900, net_payable: 300900, taxable_value: 255000, tax_amount: 45900, paid_amount: 275400 })))
+      .toMatchObject({ section: "194J", ratePct: 10, tds: 25500, base: 255000, shortfall: 25500 });
   });
-  it("2% (±₹1 rounding), pre-GST from amount − tax when taxable_value is missing", () => {
-    expect(tdsHintRate(inv({ id: "x", amount: 11800, net_payable: 11800, taxable_value: null, tax_amount: 1800, paid_amount: 11601 }))).toBe(2);
+  it("2% (±₹1 rounding), GST rate from tax ÷ (amount − tax) when taxable_value is missing", () => {
+    expect(tdsHint(inv({ id: "x", amount: 11800, net_payable: 11800, taxable_value: null, tax_amount: 1800, paid_amount: 11601 }))?.ratePct).toBe(2);
   });
-  it("no hint for any other balance, or with no pre-GST value", () => {
-    expect(tdsHintRate(inv({ id: "x", paid_amount: 5000 }))).toBeNull();
-    expect(tdsHintRate(inv({ id: "x", taxable_value: null, tax_amount: null, paid_amount: 10800 }))).toBeNull();
-    expect(tdsHintRate(inv({ id: "x", status: "paid", paid_amount: 10800 }))).toBeNull();
+  it("the invoice's own tax_rate wins: at 5% GST, ₹1,000 short on ₹10,500 is 10% TDS", () => {
+    expect(tdsHint(inv({ id: "x", amount: 10500, net_payable: 10500, taxable_value: null, tax_amount: null, tax_rate: 5, paid_amount: 9500 }))?.ratePct).toBe(10);
+    expect(invoiceGstRatePct(inv({ id: "x", tax_rate: 5 }))).toBe(5);
+    expect(invoiceGstRatePct(inv({ id: "x" }))).toBe(18);
+  });
+  it("no GST info at all → the helper's 18% (same as tdsBase everywhere)", () => {
+    expect(tdsHint(inv({ id: "x", taxable_value: null, tax_amount: null, paid_amount: 10800 }))?.ratePct).toBe(10);
+  });
+  it("no hint for any other balance, an unpaid invoice, or a paid one", () => {
+    expect(tdsHint(inv({ id: "x", paid_amount: 5000 }))).toBeNull();
+    expect(tdsHint(inv({ id: "x", paid_amount: 0 }))).toBeNull();
+    expect(tdsHint(inv({ id: "x", status: "paid", paid_amount: 10800 }))).toBeNull();
   });
 });
 
