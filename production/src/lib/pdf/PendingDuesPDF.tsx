@@ -110,7 +110,10 @@ export function PendingDuesPDF(p: PendingDuesPDFProps) {
       <Page size="A4" style={s.page}>
         <View style={s.header}>
           <View style={s.brand}>
-            {logo ? <Image src={logo} style={s.logo} /> : <Text style={s.monogram}>{(p.tenantName.trim()[0] ?? "R").toUpperCase()}</Text>}
+            {logo
+              // eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer's Image draws into a PDF and has no alt prop
+              ? <Image src={logo} style={s.logo} />
+              : <Text style={s.monogram}>{(p.tenantName.trim()[0] ?? "R").toUpperCase()}</Text>}
             <View>
               <Text style={s.brandName}>{pdfText(p.tenantName)}</Text>
               {p.tenantGstin ? <Text style={s.meta}>GSTIN: {p.tenantGstin}</Text> : null}
@@ -172,6 +175,7 @@ export function PendingDuesPDF(p: PendingDuesPDFProps) {
             ) : null}
             {p.upiQrDataUrl ? (
               <View style={[s.payCol, s.qrBlock]}>
+                {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf/renderer's Image draws into a PDF and has no alt prop */}
                 <Image src={p.upiQrDataUrl} style={s.qr} />
                 <View>
                   <Text style={s.label}>Scan to pay the total</Text>

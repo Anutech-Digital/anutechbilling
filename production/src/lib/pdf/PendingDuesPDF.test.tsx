@@ -16,7 +16,8 @@ vi.mock("@react-pdf/renderer", () => {
   const link = ({ children, src }: { children?: React.ReactNode; src?: string }) => <a href={src}>{children}</a>;
   return {
     Document: strip, Page: box, View: box, Text: text, Link: link,
-    Image: ({ src }: { src?: string }) => <img alt="img" src={src} />,
+    /* A span, not <img>: the PDF Image has no DOM equivalent we need — only its src is read. */
+    Image: ({ src }: { src?: string }) => <span data-pdf-image={src} />,
     StyleSheet: { create: <T,>(x: T) => x },
     Font: { register: () => {}, registerHyphenationCallback: () => {} },
   };
@@ -38,7 +39,7 @@ function printed(props: Partial<PendingDuesPDFProps> = {}) {
   const { container } = render(
     <PendingDuesPDF tenantName="Demo Co" tenantGstin="06AAAAA0000A1Z5" customerName="Acme Ltd" asOn="2026-10-17" lines={LINES} total={72300} {...props} />,
   );
-  return { text: container.textContent ?? "", imgs: [...container.querySelectorAll("img")].map((i) => i.getAttribute("src")) };
+  return { text: container.textContent ?? "", imgs: [...container.querySelectorAll("[data-pdf-image]")].map((i) => i.getAttribute("data-pdf-image")) };
 }
 
 describe("PendingDuesPDF", () => {
