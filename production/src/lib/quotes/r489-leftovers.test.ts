@@ -80,11 +80,16 @@ describe("R-457 leftovers", () => {
 });
 
 describe("R-468 (7): no button inside a button on customer Transactions", () => {
-  it("the phone card is a div with role=button", () => {
-    const src = read("components/features/customers/customer-profile.tsx");
-    const table = src.slice(src.indexOf("function RecordTable"));
-    expect(table).toMatch(/role=\{r\.onClick \? "button" : undefined\}/);
+  /* R-1521 (17 Oct 2026): RecordTable moved to customer-record-table.tsx, and a row now
+     carries a real <a> (RowLink) in its reference cell. Such a row must not be role=button
+     either — a link inside a button is the same nesting. role=button stays only for a row
+     that opens via onClick and has no address (so holds no link). */
+  it("the phone card is a div, role=button only when it holds no link", () => {
+    const src = read("components/features/customers/customer-record-table.tsx");
+    const table = src.slice(src.indexOf("export function RecordTable"));
+    expect(table).toMatch(/role=\{!r\.href && r\.onClick \? "button" : undefined\}/);
     expect(table.slice(0, table.indexOf("Desktop / tablet table"))).not.toMatch(/<button/);
+    expect(read("components/features/customers/customer-profile.tsx")).not.toMatch(/function RecordTable/);
   });
 });
 

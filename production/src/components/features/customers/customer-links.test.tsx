@@ -69,10 +69,22 @@ describe("R-1521: a row is a link, on desktop and on the phone", () => {
     open.mockRestore();
   });
 
-  it("the phone card opens with Enter", () => {
-    render(<RecordTable head={["Date", "Type", "Reference"]} rows={rows as never} />);
-    fireEvent.keyDown(screen.getByRole("button", { name: "Open quote Q-1" }), { key: "Enter" });
+  it("a phone card with a link is not a button wrapping it (R-468); a tap opens it", () => {
+    const { container } = render(<RecordTable head={["Date", "Type", "Reference"]} rows={rows as never} />);
+    const card = container.querySelector('ul div[data-href="/quotes/Q-1"]') as HTMLElement;
+    expect(card.getAttribute("role")).toBeNull();
+    for (const a of Array.from(container.querySelectorAll("a"))) {
+      expect(a.closest('[role="button"], button')).toBeNull();
+    }
+    fireEvent.click(within(card).getByText("Quote"));
     expect(push).toHaveBeenCalledWith("/quotes/Q-1");
+  });
+
+  it("a row that only has onClick (no address) keeps role=button and Enter", () => {
+    const go = vi.fn();
+    render(<RecordTable head={["A"]} rows={[{ onClick: go, label: "Open thing", cells: ["x"] }]} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Open thing" }), { key: "Enter" });
+    expect(go).toHaveBeenCalledOnce();
   });
 });
 

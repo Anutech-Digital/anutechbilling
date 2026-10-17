@@ -67,16 +67,20 @@ export function RecordTable({ head, rows }: { head: string[]; rows: RecordRow[] 
       <ul className="md:hidden space-y-2">
         {rows.map((r, i) => (
           <li key={i}>
-            {/* R-468 (7): a div with role="button", not a button element — the cells hold their own
-                buttons (expand chevron, delete payment), and a button inside a button is
-                invalid HTML: React logged a hydration error on every Transactions open. */}
+            {/* R-468 (7): never a button ELEMENT here — the cells hold their own buttons (expand
+                chevron, delete payment), and a button inside a button is invalid HTML (React logged
+                a hydration error on every Transactions open).
+                R-1521: a row with an address is NOT role="button" either — it holds a real <a>
+                (RowLink), and a link inside a button is the same nesting problem for a screen
+                reader. Keyboard users Tab to that link; the card itself only takes the tap.
+                role="button" is kept only for a row that opens via onClick and holds no link. */}
             <div
-              role={opens(r) ? "button" : undefined}
-              tabIndex={opens(r) ? 0 : undefined}
-              aria-label={opens(r) ? r.label : undefined}
+              role={!r.href && r.onClick ? "button" : undefined}
+              tabIndex={!r.href && r.onClick ? 0 : undefined}
+              aria-label={!r.href && r.onClick ? r.label : undefined}
               data-href={r.href ?? undefined}
               onClick={opens(r) ? (e) => { if (!fromInnerControl(e)) activate(r, e.ctrlKey || e.metaKey); } : undefined}
-              onKeyDown={opens(r) ? (e) => {
+              onKeyDown={!r.href && r.onClick ? (e) => {
                 if (e.target !== e.currentTarget) return;
                 if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(r, false); }
               } : undefined}
