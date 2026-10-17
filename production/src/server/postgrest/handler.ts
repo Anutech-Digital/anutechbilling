@@ -11,7 +11,8 @@
 import "server-only";
 import { withIdentity, type Identity } from "@/server/db/gateway";
 import { getCatalog } from "./catalog";
-import { buildDelete, buildInsert, buildRead, buildRpc, buildUpdate, type Built } from "./build";
+import { buildDelete, buildInsert, buildRead, buildRpc, buildUpdate, type Built, type ReadRole } from "./build";
+import { explainMfaPending } from "./mfa-pending";
 import { PgrstError, parseAccept, parsePrefer, parseQuery } from "./parse";
 
 export interface GatewayRequest {
@@ -64,7 +65,7 @@ class Rollback extends Error {
   constructor(readonly response: PgrstError) { super(response.message); }
 }
 
-function build(req: GatewayRequest, cat: Awaited<ReturnType<typeof getCatalog>>): { built: Built; write: boolean; status: number } {
+function build(req: GatewayRequest, cat: Awaited<ReturnType<typeof getCatalog>>, role: ReadRole): { built: Built; write: boolean; status: number } {
   const method = req.method.toUpperCase();
   const prefer = parsePrefer(req.headers.get("prefer"));
   const accept = parseAccept(req.headers.get("accept"));
@@ -96,11 +97,11 @@ function build(req: GatewayRequest, cat: Awaited<ReturnType<typeof getCatalog>>)
     case "HEAD":
       return { built: buildRead(cat, name, pq, { count: Boolean(prefer.count), stripNulls: accept.stripNulls }), write: false, status: 200 };
     case "POST":
-      return { built: buildInsert(cat, name, pq, prefer, body, accept.stripNulls), write: true, status: 201 };
+      return { built: buildInsert(cat, name, pq, prefer, body, accept.stripNulls, role), write: true, status: 201 };
     case "PATCH":
-      return { built: buildUpdate(cat, name, pq, prefer, body, accept.stripNulls), write: true, status: 200 };
+      return { built: buildUpdate(cat, name, pq, prefer, body, accept.stripNulls, role), write: true, status: 200 };
     case "DELETE":
-      return { built: buildDelete(cat, name, pq, prefer, accept.stripNulls), write: true, status: 200 };
+      return { built: buildDelete(cat, name, pq, prefer, accept.stripNulls, role), write: true, status: 200 };
     default:
       throw new PgrstError(405, "PGRST117", `Unsupported HTTP method: ${method}`);
   }
@@ -113,7 +114,8 @@ export async function handlePostgrest(req: GatewayRequest, identity: Identity): 
     const cat = await getCatalog();
     const prefer = parsePrefer(req.headers.get("prefer"));
     const accept = parseAccept(req.headers.get("accept"));
-    const { built, write, status: okStatus } = build(req, cat);
+    const role: ReadRole = identity.mode === "user" ? "authenticated" : identity.mode === "anon" ? "anon" : "service";
+    const { built, write, status: okStatus } = build(req, cat, role);
     const representation = !write || prefer.return === "representation";
 
     const result = await withIdentity(identity, async (tx) => {
@@ -149,6 +151,7 @@ export async function handlePostgrest(req: GatewayRequest, identity: Identity): 
   } catch (e) {
     if (e instanceof Rollback) return errorResponse(e.response);
     if (e instanceof SyntaxError) return errorResponse(new PgrstError(400, "PGRST102", "Empty or invalid json", e.message));
-    return errorResponse(asPgrstError(e, anon));
+    // R-1496: a refusal caused only by a pending second sign-in step says so.
+    return errorResponse(await explainMfaPending(asPgrstError(e, anon), identity));
   }
 }

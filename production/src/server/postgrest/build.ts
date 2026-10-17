@@ -153,11 +153,21 @@ function joinSql(rel: Relationship, parentAlias: string, childAlias: string): st
     : `${childAlias}.${q(c)} = ${parentAlias}.${q(fk.refColumns[i])}`).join(" and ");
 }
 
+/** R-1496: who the statement runs as — decides which columns `select=*` may mean in a write's answer. */
+export type ReadRole = "authenticated" | "anon" | "service";
+
 interface Ctx {
   cat: Catalog;
   p: Params;
   scopes: Map<string, Scope>;
   seq: { n: number };
+  /** Set only for a write's answer: `*` then skips columns this role may not SELECT (R-1496). */
+  role?: ReadRole;
+}
+
+function readableBy(c: Column, role: ReadRole | undefined): boolean {
+  if (!role || role === "service") return true;
+  return c.readable?.[role] ?? true;
 }
 
 const emptyScope: Scope = { filters: [], order: [] };
@@ -168,7 +178,7 @@ function selectList(ctx: Ctx, t: Table, alias: string, items: SelectItem[], path
   const innerExists: string[] = [];
   for (const it of items) {
     if (it.kind === "star") {
-      for (const c of t.columns.values()) cols.push(`${alias}.${q(c.name)}`);
+      for (const c of t.columns.values()) if (readableBy(c, ctx.role)) cols.push(`${alias}.${q(c.name)}`);
     } else if (it.kind === "column") {
       const c = column(t, it.name);
       cols.push(`${alias}.${q(c.name)}${it.cast ? `::${it.cast}` : ""} as ${q(it.alias ?? c.name)}`);
@@ -252,6 +262,34 @@ function payloadColumns(t: Table, rows: Record<string, unknown>[], explicit?: st
   return names;
 }
 
+/**
+ * R-1496: the RETURNING list of a write — only the columns its answer reads: the selected ones
+ * (`*` = those this role may SELECT), the parent side of each embed's join, and the order
+ * columns. Never `a.*`: Postgres checks SELECT on every column RETURNING names, so a single
+ * column-level revoke (employees.pin_hash, R-833) made every browser write to that table fail
+ * with 42501. A column asked for by name is still returned — and still refused by its grant.
+ */
+function returningSql(ctx: Ctx, t: Table, pq: ParsedQuery, prefer: Prefer): string {
+  if (prefer.return !== "representation") return "1";
+  const names = new Set<string>();
+  for (const it of pq.select) {
+    if (it.kind === "star") {
+      for (const c of t.columns.values()) if (readableBy(c, ctx.role)) names.add(c.name);
+    } else if (it.kind === "column") {
+      names.add(column(t, it.name).name);
+    } else {
+      const child = ctx.cat.tables.get(it.relation);
+      if (!child) continue; // selectList raises PGRST200 for it
+      const rel = relationship(ctx.cat, t, child, it.hint);
+      for (const c of rel.dir === "m2o" ? rel.fk.columns : rel.fk.refColumns) names.add(c);
+    }
+  }
+  for (const o of (pq.scopes.get("") ?? emptyScope).order) names.add(column(t, o.column).name);
+  // Keep the table's column order, so the answer's JSON keys come out as before.
+  const ordered = [...t.columns.keys()].filter((n) => names.has(n));
+  return ordered.length ? ordered.map((n) => `a.${q(n)}`).join(", ") : "1";
+}
+
 function representation(ctx: Ctx, t: Table, pq: ParsedQuery, prefer: Prefer, stripNulls: boolean): string {
   if (prefer.return !== "representation") return `select null::text as body, (select count(*)::int from _m) as n`;
   const { cols } = selectList(ctx, t, "a", pq.select, "");
@@ -259,13 +297,13 @@ function representation(ctx: Ctx, t: Table, pq: ParsedQuery, prefer: Prefer, str
   return aggregate(`select ${cols.join(", ") || "null"} from _m a${orderSql(t, "a", base.order)}`, stripNulls);
 }
 
-export function buildInsert(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, body: unknown, stripNulls: boolean): Built {
+export function buildInsert(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, body: unknown, stripNulls: boolean, role?: ReadRole): Built {
   const t = table(cat, tableName);
   if (prefer.missingDefault) throw new PgrstError(400, "PGRST100", "Prefer: missing=default is not supported by this gateway");
   const rows = (Array.isArray(body) ? body : [body]) as Record<string, unknown>[];
   if (!rows.every((r) => r && typeof r === "object" && !Array.isArray(r))) throw new PgrstError(400, "PGRST102", "Empty or invalid json");
   const p = new Params();
-  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 } };
+  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 }, role };
   if (rows.length === 0) {
     return { sql: `select '[]'::text as body, 0 as n`, params: [], offset: 0, shape: "array" };
   }
@@ -282,30 +320,30 @@ export function buildInsert(cat: Catalog, tableName: string, pq: ParsedQuery, pr
       : ` on conflict (${target.map(q).join(", ")}) do update set ${updates.join(", ")}`;
   }
   const src = p.add(JSON.stringify(rows), "json");
-  const write = `insert into public.${q(t.name)} as a (${list}) select ${list} from json_populate_recordset(null::public.${q(t.name)}, ${src}) _src${conflict} returning a.*`;
+  const write = `insert into public.${q(t.name)} as a (${list}) select ${list} from json_populate_recordset(null::public.${q(t.name)}, ${src}) _src${conflict} returning ${returningSql(ctx, t, pq, prefer)}`;
   return { sql: `with _m as (${write}) ${representation(ctx, t, pq, prefer, stripNulls)}`, params: p.values, offset: 0, shape: "array" };
 }
 
-export function buildUpdate(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, body: unknown, stripNulls: boolean): Built {
+export function buildUpdate(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, body: unknown, stripNulls: boolean, role?: ReadRole): Built {
   const t = table(cat, tableName);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new PgrstError(400, "PGRST102", "Empty or invalid json");
   const p = new Params();
-  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 } };
+  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 }, role };
   const names = payloadColumns(t, [body as Record<string, unknown>]);
   const src = p.add(JSON.stringify(body), "json");
   const base = pq.scopes.get("") ?? emptyScope;
   const where = whereSql(t, "a", base.filters, p);
   const set = names.map((n) => `${q(n)} = _src.${q(n)}`).join(", ");
-  const write = `update public.${q(t.name)} as a set ${set} from json_populate_record(null::public.${q(t.name)}, ${src}) _src${where} returning a.*`;
+  const write = `update public.${q(t.name)} as a set ${set} from json_populate_record(null::public.${q(t.name)}, ${src}) _src${where} returning ${returningSql(ctx, t, pq, prefer)}`;
   return { sql: `with _m as (${write}) ${representation(ctx, t, pq, prefer, stripNulls)}`, params: p.values, offset: 0, shape: "array" };
 }
 
-export function buildDelete(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, stripNulls: boolean): Built {
+export function buildDelete(cat: Catalog, tableName: string, pq: ParsedQuery, prefer: Prefer, stripNulls: boolean, role?: ReadRole): Built {
   const t = table(cat, tableName);
   const p = new Params();
-  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 } };
+  const ctx: Ctx = { cat, p, scopes: pq.scopes, seq: { n: 0 }, role };
   const base = pq.scopes.get("") ?? emptyScope;
-  const write = `delete from public.${q(t.name)} as a${whereSql(t, "a", base.filters, p)} returning a.*`;
+  const write = `delete from public.${q(t.name)} as a${whereSql(t, "a", base.filters, p)} returning ${returningSql(ctx, t, pq, prefer)}`;
   return { sql: `with _m as (${write}) ${representation(ctx, t, pq, prefer, stripNulls)}`, params: p.values, offset: 0, shape: "array" };
 }
 
