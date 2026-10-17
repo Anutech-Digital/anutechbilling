@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { CloseDateBadge } from "@/components/features/leads/close-date-badge";
+import { planBulkStage } from "@/components/features/leads/bulk-stage";
 import {
-  autoDealValue, checkBoardMove, closeDateShort, dealFormErrors, isCloseOverdue, needsDealDetails,
+  autoDealValue, checkBoardMove, closeDateShort, dealFormErrors, isCloseOverdue, needsDealDetails, wonOnDate,
   type DealFormInput,
 } from "@/lib/leads/deal-rules";
 
@@ -106,6 +110,40 @@ describe("expected close on cards", () => {
     expect(isCloseOverdue({ stage: "won", expected_close_date: "2026-09-01" }, TODAY)).toBe(false);
     expect(isCloseOverdue({ stage: "lost", expected_close_date: "2026-09-01" }, TODAY)).toBe(false);
     expect(isCloseOverdue({ stage: "quote", expected_close_date: null }, TODAY)).toBe(false);
+  });
+});
+
+/* R-1477 (Pawan, staging 16 Oct): a deal marked Won still read "Close: 12 Nov" — the EXPECTED
+   close date, in the future. A Won deal shows the day it was won (IST) instead. */
+describe("R-1477 — a Won deal shows 'Won on <date>', never a future 'Close:'", () => {
+  const won = {
+    stage: "won" as const, expected_close_date: "2026-11-12",
+    stage_changed_at: "2026-10-16T20:00:00Z", updated_at: "2026-10-17T05:00:00Z",
+  };
+  it("wonOnDate = IST date of the move to Won; null for an open deal", () => {
+    expect(wonOnDate(won)).toBe("2026-10-17"); // 20:00 UTC = 01:30 IST the next day
+    expect(wonOnDate({ ...won, stage: "trial" })).toBeNull();
+  });
+  it("an older Won deal with no stage_changed_at falls back to updated_at", () => {
+    expect(wonOnDate({ ...won, stage_changed_at: null })).toBe("2026-10-17");
+  });
+  it("single Won: the card badge says 'Won on', never 'Close:'", () => {
+    const html = renderToStaticMarkup(createElement(CloseDateBadge, { lead: won }));
+    expect(html).toContain("Won on 17 Oct");
+    expect(html).not.toContain("Close:");
+    expect(html).not.toContain("12 Nov");
+  });
+  it("an open deal still shows its expected close", () => {
+    const html = renderToStaticMarkup(createElement(CloseDateBadge, { lead: { ...won, stage: "trial" } }));
+    expect(html).toContain("Close: 12 Nov");
+  });
+  it("bulk Won moves nothing (R-457), so no bulk path leaves a future close on a Won deal", () => {
+    const rows = [{ id: "a", stage: "trial" as const, company: "Acme", value: 1000, expected_close_date: "2026-11-12" }];
+    expect(planBulkStage(rows, "won").move).toHaveLength(0);
+  });
+  it("the deal detail page labels a Won deal's date 'Won on', not 'Expected close'", () => {
+    const DETAIL = readFileSync(join(process.cwd(), "src", "components", "features", "deals", "deal-detail-view.tsx"), "utf8");
+    expect(DETAIL).toContain('label={wonOn ? "Won on" : "Expected close"}');
   });
 });
 

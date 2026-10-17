@@ -31,7 +31,7 @@ import { useCallLog } from "@/components/features/leads/call-log-dialog";
 import { canSeeDeals } from "@/lib/deals/access";
 import { buildDealHistory, dealMoney } from "@/lib/deals/timeline";
 import { dealQuoteRows } from "@/lib/deals/deal-quotes";
-import { isDealStage, isCloseOverdue, closeDateShort } from "@/lib/leads/deal-rules";
+import { isDealStage, isCloseOverdue, closeDateShort, wonOnDate } from "@/lib/leads/deal-rules";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { leadDisplayName } from "@/lib/leads/display-name";
 import { stageProbability, weightedValue } from "@/lib/leads/forecast";
@@ -196,6 +196,8 @@ export function DealDetailView({ leadId }: { leadId: string }) {
   // ── Derived ──────────────────────────────────────────────────────────────
   const today = istToday();
   const overdue = isCloseOverdue(lead, today);
+  // R-1477: a Won deal shows the day it was won, not its (possibly future) expected close.
+  const wonOn = wonOnDate(lead);
   const prob = stageProbability(lead.stage);
   const daysInStage = daysBetweenISO(toIstDate(lead.stage_changed_at ?? lead.created_at), today);
   const owner = nameOf(lead.owner_id);
@@ -294,10 +296,10 @@ export function DealDetailView({ leadId }: { leadId: string }) {
           <MetricCard label="Deal value" value={lead.value ? rupee(lead.value) : "—"} hint={lead.value ? (lead.enquiry_type === "project" || lead.project_id ? "one-time, ex-GST" : "per year") : "Add via Edit"} />
           <MetricCard label="Weighted" value={lead.value ? rupee(weightedValue(lead)) : "—"} hint={`${prob}% · ${STAGE_LABEL[lead.stage]}`} />
           <MetricCard
-            label="Expected close"
-            value={lead.expected_close_date ? closeDateShort(lead.expected_close_date) : "—"}
+            label={wonOn ? "Won on" : "Expected close"}
+            value={wonOn ? closeDateShort(wonOn) : lead.expected_close_date ? closeDateShort(lead.expected_close_date) : "—"}
             tone={overdue ? "danger" : "default"}
-            hint={overdue ? "Overdue — update date" : lead.expected_close_date ? lead.expected_close_date.slice(0, 4) : "Not set"}
+            hint={wonOn ? wonOn.slice(0, 4) : overdue ? "Overdue — update date" : lead.expected_close_date ? lead.expected_close_date.slice(0, 4) : "Not set"}
           />
           <MetricCard label="In stage" value={`${Math.max(0, daysInStage)}d`} hint={lead.stage_changed_at ? `since ${formatDate(lead.stage_changed_at)}` : "since created"} />
           <MetricCard label="Owner" value={owner ?? "—"} />
