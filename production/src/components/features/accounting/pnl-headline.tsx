@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/card";
 import { rupee } from "@/lib/utils";
 import { cogsBasisNote, type PnlPeriod } from "@/lib/accounting/pnl";
 import { netProfitView } from "@/lib/accounting/pnl-bound";
+import { netFigure } from "@/lib/accounting/net-figure";
 
 interface Props {
   model: PnlPeriod;
@@ -99,8 +100,8 @@ export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, onO
         />
         {view.kind === "known" ? (
           <Tile
-            label={view.value < 0 ? "Net loss" : "Net profit"}
-            value={rupee(Math.abs(view.value))}
+            label={netFigure(view.value).label}
+            value={netFigure(view.value).text}
             tone={view.value >= 0 ? "emerald" : "rose"}
             sub={pctOfRevenue(view.value) === null ? "no revenue this period" : `${pctOfRevenue(view.value)}% of revenue`}
           />

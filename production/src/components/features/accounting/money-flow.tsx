@@ -36,11 +36,16 @@ import * as React from "react";
 import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { cn, rupee } from "@/lib/utils";
+import { signedRupee } from "@/lib/accounting/net-figure";
 
 export interface FlowRow {
   key: string;
   label: string;
-  /** ₹, always positive — `group` carries the direction. */
+  /**
+   * ₹. For "in" and "out" rows always positive — `group` carries the direction. For
+   * "left" rows the SIGNED result: a loss is negative and renders "−₹68,100" in rose
+   * (R-1486 — it used to be passed through Math.abs() and read as a profit).
+   */
   amount: number;
   /** Plain English, under the label. */
   hint?: string | null;
@@ -81,6 +86,7 @@ export function MoneyFlow({ rows, scale }: {
             <div className="space-y-1">
               {inGroup.map((r) => {
                 const clickable = !!r.onOpen;
+                const loss = g.id === "left" && r.amount < 0;
                 const Row = (
                   <>
                     {/* Label column — fixed so every bar starts at the same x. Bars that
@@ -98,9 +104,9 @@ export function MoneyFlow({ rows, scale }: {
 
                     <span className="min-w-0 flex-1">
                       <span
-                        className={cn("block h-4 rounded-sm", g.bar)}
+                        className={cn("block h-4 rounded-sm", loss ? "bg-rose/55" : g.bar)}
                         style={{
-                          width: `${width(r.amount)}%`,
+                          width: `${width(Math.abs(r.amount))}%`,
                           ...(r.estimated
                             ? {
                                 backgroundImage:
@@ -114,8 +120,8 @@ export function MoneyFlow({ rows, scale }: {
                     {/* The number, as TEXT. A 7% row is unreadable as a bar and perfectly
                         readable as "₹66,998 · 7% of sales". */}
                     <span className="shrink-0 text-right">
-                      <span className={cn("block font-mono text-[13px] tabular-nums", g.text)}>
-                        {g.id === "out" ? "−" : ""}{rupee(r.amount)}
+                      <span className={cn("block font-mono text-[13px] tabular-nums", loss ? "text-rose" : g.text)}>
+                        {g.id === "out" ? `−${rupee(r.amount)}` : g.id === "left" ? signedRupee(r.amount) : rupee(r.amount)}
                       </span>
                       {r.ofSalesPct != null && (
                         <span className="block text-xs text-ink-3 tabular-nums">
