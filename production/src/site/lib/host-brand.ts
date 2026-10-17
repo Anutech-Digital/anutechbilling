@@ -8,6 +8,7 @@
  * Display only: the host decides a logo and a title, never a redirect, a cookie or a link
  * origin (those stay on trustedOrigin, R-723).
  */
+import type { Route } from "next";
 import { siteKindForHost } from "./site-split";
 import { COMPANY } from "./config";
 import { trustedHost } from "@/lib/app-url";
@@ -18,7 +19,7 @@ export interface HostBrand {
   /** Image logo with the wordmark in it; null → the "R" monogram. */
   logoSrc: string | null;
   /** Way back to the public site; null on the product (the logo already goes home). */
-  back: { href: string; label: string } | null;
+  back: { href: Route; label: string } | null;
   titleDefault: string;
   titleTemplate: string;
   footer: string;
@@ -28,7 +29,7 @@ const COMPANY_BRAND: HostBrand = {
   site: "company",
   name: COMPANY.short,
   logoSrc: "/lp/anutech-logo.png",
-  back: { href: "/", label: "Back to anutech.in" },
+  back: { href: "/" as Route, label: "Back to anutech.in" },
   titleDefault: `Sign in · ${COMPANY.short}`,
   titleTemplate: `%s · ${COMPANY.short}`,
   footer: COMPANY.name,
