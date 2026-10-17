@@ -10,6 +10,7 @@
  */
 import { siteKindForHost } from "./site-split";
 import { COMPANY } from "./config";
+import { trustedHost } from "@/lib/app-url";
 
 export interface HostBrand {
   site: "company" | "product";
@@ -47,7 +48,10 @@ export function brandForHost(host: string | null | undefined): HostBrand {
   return siteKindForHost(host) === "company" ? COMPANY_BRAND : PRODUCT_BRAND;
 }
 
-/** Same header order as site-split's callers (marketing home). */
+/**
+ * x-forwarded-host first, then host — read through R-723's trustedHost, so only an
+ * allowlisted host counts (anutech.in always is); anything else → null → ResellerOS.
+ */
 export function hostFromHeaders(h: { get(name: string): string | null }): string | null {
-  return h.get("x-forwarded-host") ?? h.get("host");
+  return trustedHost(h);
 }

@@ -16,7 +16,8 @@ export type Aal = "aal1" | "aal2";
 export async function setContext(
   tx: Prisma.TransactionClient, userId: string | null, tenantId: string, aal?: Aal | null,
 ): Promise<void> {
+  const aalValue = aal === "aal2" ? "aal2" : aal === "aal1" ? "aal1" : "";
   await tx.$executeRaw`select set_config('app.user_id', ${userId ?? ""}, true),
                               set_config('app.tenant_id', ${tenantId}, true),
-                              set_config('app.aal', ${aal === "aal2" ? "aal2" : (aal === "aal1" ? "aal1" : "")}, true)`;
+                              set_config('app.aal', ${aalValue}, true)`;
 }
