@@ -334,10 +334,10 @@ export default function AgingPage() {
               <li key={r.customerId ?? r.customerName}>
                 <Card className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="font-medium text-ink leading-tight">{r.customerName}</div>
-                    <div className="font-serif text-xl text-ink leading-none">{rupee(r.total)}</div>
+                    <div className="min-w-0 break-words font-medium text-ink leading-tight">{r.customerName}</div>
+                    <div className="shrink-0 font-serif text-lg sm:text-xl text-ink leading-none tabular-nums whitespace-nowrap">{rupee(r.total)}</div>
                   </div>
-                  <div className="grid grid-cols-4 gap-1.5 text-xs mb-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs mb-3">
                     <Mini label="Current" value={r.buckets.current} />
                     <Mini label="31–60"   value={r.buckets.b30}    tone={r.buckets.b30   > 0 ? "amber" : undefined} />
                     <Mini label="61–90"   value={r.buckets.b60}    tone={r.buckets.b60   > 0 ? "amber" : undefined} />
@@ -408,9 +408,9 @@ function Mini({ label, value, tone }: { label: string; value: number; tone?: "am
                    : tone === "amber" ? "text-amber-ink"
                    : "text-ink-3";
   return (
-    <div className="rounded-md border border-hairline p-1.5 text-center bg-paper">
+    <div className="min-w-0 rounded-md border border-hairline p-1.5 text-center bg-paper">
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold leading-none mb-0.5">{label}</div>
-      <div className={`font-mono leading-none ${colorClass}`}>{value > 0 ? rupee(value) : "—"}</div>
+      <div className={`font-mono leading-none tabular-nums break-words ${colorClass}`}>{value > 0 ? rupee(value) : "—"}</div>
     </div>
   );
 }
@@ -432,14 +432,14 @@ function KPI({
                    : "text-ink";
   const body = (<>
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{label}</div>
-      <div className={`font-serif ${big ? "text-2xl md:text-3xl" : "text-xl md:text-2xl"} ${colorClass} leading-tight`}>
+      <div className={`font-serif ${big ? "text-xl sm:text-2xl md:text-3xl" : "text-lg sm:text-xl md:text-2xl"} ${colorClass} leading-tight tabular-nums break-words`}>
         {value}
       </div>
 </>);
-  if (!onClick) return <Card className="p-3 md:p-4">{body}</Card>;
+  if (!onClick) return <Card className="min-w-0 p-3 md:p-4">{body}</Card>;
   return (
     <button type="button" onClick={onClick} aria-pressed={active ?? undefined}
-      className={`text-left rounded-lg border bg-paper p-3 md:p-4 transition-colors hover:border-amber/60 ${active ? "border-amber" : "border-hairline"}`}>
+      className={`min-w-0 text-left rounded-lg border bg-paper p-3 md:p-4 transition-colors hover:border-amber/60 ${active ? "border-amber" : "border-hairline"}`}>
       {body}
     </button>
   );

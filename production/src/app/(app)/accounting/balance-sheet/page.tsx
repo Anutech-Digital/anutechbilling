@@ -193,18 +193,18 @@ export default function BalanceSheetPage() {
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
       {!loading && !failed && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <Card className="p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+          <Card className="min-w-0 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total assets</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalAssets, { compact: true })}</div>
+            <div className="font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words text-ink">{fmtBS(totalAssets, { compact: true })}</div>
           </Card>
-          <Card className="p-4">
+          <Card className="min-w-0 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Total liabilities</div>
-            <div className="font-serif text-2xl mt-1 tabular-nums text-ink">{fmtBS(totalLiab, { compact: true })}</div>
+            <div className="font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words text-ink">{fmtBS(totalLiab, { compact: true })}</div>
           </Card>
-          <Card className="p-4">
+          <Card className="min-w-0 col-span-2 sm:col-span-1 p-4">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Net worth</div>
-            <div className={`font-serif text-2xl mt-1 tabular-nums ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
+            <div className={`font-serif text-xl sm:text-2xl mt-1 tabular-nums break-words ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>{fmtBS(netWorth, { compact: true })}</div>
           </Card>
         </div>
       )}
@@ -436,7 +436,7 @@ export default function BalanceSheetPage() {
                 Balanced: <b>Assets {fmtBS(totalAssets)}</b> = <b>Liabilities + Equity {fmtBS(totalLiab + netWorth)}</b>
               </span>
             </div>
-            <span className={`font-serif text-2xl ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
+            <span className={`font-serif text-xl sm:text-2xl tabular-nums break-words ${netWorth >= 0 ? "text-emerald" : "text-rose"}`}>
               Net worth {fmtBS(netWorth)}
             </span>
           </Card>

@@ -462,18 +462,18 @@ export default function ProfitabilityPage() {
                       {r.marginPct.toFixed(1)}%
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs mb-2">
-                    <div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs mb-2">
+                    <div className="min-w-0">
                       <div className="text-ink-3 uppercase tracking-wider">Revenue</div>
-                      <div className="font-mono text-ink">{rupee(r.revenue)}</div>
+                      <div className="font-mono tabular-nums break-words text-ink">{rupee(r.revenue)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-ink-3 uppercase tracking-wider">COGS</div>
-                      <div className="font-mono text-rose">{rupee(r.cogs)}</div>
+                      <div className="font-mono tabular-nums break-words text-rose">{rupee(r.cogs)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0 col-span-2 sm:col-span-1">
                       <div className="text-ink-3 uppercase tracking-wider">Margin</div>
-                      <div className={`font-mono font-semibold ${r.margin >= 0 ? "text-emerald" : "text-rose"}`}>
+                      <div className={`font-mono font-semibold tabular-nums break-words ${r.margin >= 0 ? "text-emerald" : "text-rose"}`}>
                         {rupee(r.margin)}
                       </div>
                     </div>
@@ -507,9 +507,9 @@ function KPI({
                    : tone === "amber"   ? "text-amber-ink"
                    : "text-ink";
   return (
-    <Card className="p-3 md:p-4">
+    <Card className="min-w-0 p-3 md:p-4">
       <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{label}</div>
-      <div className={`font-serif ${big ? "text-2xl md:text-3xl" : "text-xl md:text-2xl"} ${colorClass} leading-tight`}>
+      <div className={`font-serif ${big ? "text-xl sm:text-2xl md:text-3xl" : "text-lg sm:text-xl md:text-2xl"} ${colorClass} leading-tight tabular-nums break-words`}>
         {value}
       </div>
       {hint && <div className="text-xs text-ink-3 mt-1">{hint}</div>}

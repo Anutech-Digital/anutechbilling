@@ -1021,19 +1021,19 @@ export function PayrollTab() {
       {/* Summary — full monthly cost vs what's been run this month */}
       <Card className="mb-4 p-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Estimated monthly cost</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(estimatedMonthly)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(estimatedMonthly)}</div>
             <div className="text-xs text-ink-3 mt-0.5">All {employees.length} active employees&apos; gross</div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Run this month (net)</div>
-            <div className="font-serif text-2xl text-ink leading-tight mt-1">{rupee(totalNet)}</div>
+            <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 tabular-nums break-words">{rupee(totalNet)}</div>
             <div className="text-xs text-ink-3 mt-0.5">{runCount} of {employees.length} paid</div>
           </div>
-          <div className="col-span-2 sm:col-span-1">
+          <div className="min-w-0 col-span-2 sm:col-span-1">
             <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Still to run</div>
-            <div className={cn("font-serif text-2xl leading-tight mt-1", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
+            <div className={cn("font-serif text-xl sm:text-2xl leading-tight mt-1 tabular-nums", employees.length - runCount > 0 ? "text-amber-ink" : "text-emerald")}>
               {employees.length - runCount}
             </div>
             <div className="text-xs text-ink-3 mt-0.5">{employees.length - runCount > 0 ? "employees pending" : "everyone paid 🎉"}</div>
@@ -1365,18 +1365,18 @@ function EmployeePayrollYearDialog({
               </table>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
+              <div className="min-w-0 col-span-2 sm:col-span-1 rounded-md border border-hairline bg-paper-2/30 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Months run</div>
-                <div className="font-serif text-lg text-ink">{runCount}/12</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums">{runCount}/12</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Year net</div>
-                <div className="font-serif text-lg text-ink">{rupee(totalEarned)}</div>
+                <div className="font-serif text-base sm:text-lg text-ink tabular-nums break-words">{rupee(totalEarned)}</div>
               </div>
-              <div className="rounded-md border border-hairline bg-paper-2/30 py-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-paper-2/30 px-1 py-2">
                 <div className="text-3xs uppercase tracking-wider text-ink-3">Cleared</div>
-                <div className="font-serif text-lg text-emerald">{rupee(totalCleared)}</div>
+                <div className="font-serif text-base sm:text-lg text-emerald tabular-nums break-words">{rupee(totalCleared)}</div>
               </div>
             </div>
           </>
@@ -2303,7 +2303,7 @@ export function AttendanceTab() {
         </div>
         <Card className="mb-4 p-4">
           <div className="text-2xs uppercase tracking-wider text-ink-3 font-semibold">Attendance register</div>
-          <div className="font-serif text-2xl text-ink leading-tight mt-1">{toTitleCase(focusEmp.name)}</div>
+          <div className="font-serif text-xl sm:text-2xl text-ink leading-tight mt-1 break-words">{toTitleCase(focusEmp.name)}</div>
           {focusEmp.designation && <div className="text-xs text-ink-3 mt-0.5">{focusEmp.designation}</div>}
         </Card>
         {attQ.isLoading
