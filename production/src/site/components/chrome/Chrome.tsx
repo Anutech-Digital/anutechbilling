@@ -1,7 +1,7 @@
 "use client";
 /**
- * The rest of the global chrome: utility bar, breadcrumb, CTA band, footer, the persistent
- * WhatsApp pill and the consent banner. One file, because every piece is a fixed band with
+ * The rest of the global chrome: utility bar, breadcrumb, CTA band, footer and the consent
+ * banner (R-1498: WhatsApp now sits in the AgentChat launcher menu). One file, because every piece is a fixed band with
  * no state of its own except consent — splitting them into six files would scatter what the
  * README describes as one system ("Global Chrome (every route)").
  */
@@ -10,7 +10,7 @@ import Link from "@/site/components/ui/SiteLink";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { COMPANY, WHATSAPP_URL, WHATSAPP_READY, CLIENT_AREA_URL } from "@/site/lib/config";
-import { floatingButtons, hideFloatingOn, useIsMobile } from "./floating";
+import { hideFloatingOn } from "./floating";
 
 export function UtilityBar() {
   const pathname = usePathname();
@@ -122,7 +122,7 @@ const FOOTER_COLS = [
   { title: "DOMAINS", links: [["Search a domain", "/domains"], ["Rate card", "/domains#rates"], ["Transfer in", "/domains"], ["All prices", "/rates"]] },
   { title: "HOSTING", links: [["Shared hosting", "/hosting"], ["Full specification", "/hosting#specs"], ["Client area", CLIENT_AREA_URL], ["System status", "/status"]] },
   { title: "EMAIL & SECURITY", links: [["Compare editions", "/email/compare-editions"], ["Business email", "/email"], ["Google Workspace pricing", "/google-workspace/pricing"], ["Microsoft 365", "/quote"], ["SSL certificates", "/ssl"]] },
-  { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#modules"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
+  { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#features"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
   { title: "COMPANY", links: [["About Anutech", "/why-us"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["ResellerOS login", "/login"],["Anutech Digital terms", "/terms-and-conditions"], ["Anutech Digital privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
 ] as const;
 
@@ -172,44 +172,9 @@ export function Footer() {
 }
 
 /* R-230 (6 Oct 2026): nothing floats on /checkout and /done. R-464 (10 Oct 2026): one floating
-   action below 980px. The rules live in ./floating (shared with the AI launcher); hideFloatingOn
+   action below 980px; R-1498 one launcher at every width. The rules live in ./floating; hideFloatingOn
    is re-exported here because the R-230 callers and tests import it from Chrome. */
 export { hideFloatingOn };
-
-export function WhatsAppButton() {
-  const pathname = usePathname();
-  const isMobile = useIsMobile();
-  /* R-078 (4 Oct 2026): the floating button linked to the placeholder 919800000000 on every
-     page, and sat over the Google Ads landing page price. Hidden until the real number is set
-     in site/lib/config.ts (WHATSAPP_NUMBER), which flips WHATSAPP_READY.
-     R-464: below 980px the pill does not float at all — it covered the homepage form and
-     doubled the hero's own "WhatsApp us" button. The AI launcher is the one floating action on
-     a phone (its panel offers WhatsApp). site.css `.hide-mobile` (server-rendered, !important)
-     hides it from the first paint, before hydration; floatingButtons() is the same rule in JS. */
-  const show = floatingButtons({ pathname, isMobile, avoidOnScreen: false, whatsappReady: WHATSAPP_READY }).whatsapp;
-  if (!show) return null;
-  return (
-    <a
-      href={WHATSAPP_URL}
-      target="_blank"
-      rel="noopener"
-      aria-label="WhatsApp us"
-      className="floating-wa hide-mobile"
-      style={{
-        position: "fixed", right: 22, bottom: 22, zIndex: 90,
-        display: "inline-flex", alignItems: "center", gap: 9,
-        background: "var(--dark)", color: "#fff", borderRadius: 999, padding: "12px 18px",
-        fontSize: 14, fontWeight: 600, boxShadow: "var(--shadow-panel)",
-        transition: "background .15s ease",
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--primary)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--dark)")}
-    >
-      <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: "var(--bar-ok)" }} />
-      WhatsApp us
-    </a>
-  );
-}
 
 export function ConsentBanner() {
   /* null until mounted — the banner must not flash for a visitor who already chose. */

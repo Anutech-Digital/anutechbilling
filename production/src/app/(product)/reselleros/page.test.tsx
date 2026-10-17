@@ -14,6 +14,8 @@ const redirect = vi.fn((to: string) => { throw new Error(`REDIRECT ${to}`); });
 const disk = vi.hoisted(() => ({ files: new Set<string>() }));
 
 vi.mock("next/navigation", () => ({ redirect: (to: string) => redirect(to) }));
+/* R-1508: the page also reads the website-preview cookie; this browser has not opened the preview. */
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: auth.user } }) } }),
 }));

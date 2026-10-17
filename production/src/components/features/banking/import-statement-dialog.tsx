@@ -1,10 +1,13 @@
 /**
- * ImportStatementDialog — paste / upload a bank statement CSV.
+ * ImportStatementDialog — paste / upload a bank statement.
  *
- * Accepts: CSV pasted text, or .csv / .xlsx file upload (file is read in
- * the browser via FileReader). Tries to auto-detect the column mapping
- * from the header row. Supports the column layouts used by HDFC, ICICI,
- * SBI, Axis, Kotak, IndusInd — which all use slightly different names.
+ * Accepts: CSV pasted text; a .csv / .txt file; an Excel .xls / .xlsx file
+ * (first sheet, read in the browser with SheetJS loaded only then — R-1512 —
+ * and turned into the same CSV text); or a PDF / photo (read by AI on the
+ * server). Parsing lives in lib/banking/statement-parse.ts: it finds the real
+ * header row below the bank's info rows and auto-detects the column mapping.
+ * Supports the column layouts used by HDFC, ICICI, SBI, Axis, Kotak,
+ * IndusInd — which all use slightly different names.
  *
  * Phase 1 limitation: the operator may need to nudge the mapping if
  * their bank's header text is unusual. A "Sample row preview" pane
@@ -44,141 +47,16 @@ import { directionOf } from "@/lib/banking/categorise";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { suggestForLine } from "@/lib/banking/categorise";
 import { rupee, formatDate } from "@/lib/utils";
-import { toIstDate } from "@/lib/dates/ist";
+import { parseStatement, rowsToCsv, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
+// Only the small reader module — SheetJS itself is `await import("xlsx")` inside excelToRows,
+// a separate chunk fetched when an Excel file is picked (R-1512).
+import { excelToRows, isExcelFile } from "@/lib/banking/statement-xlsx";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accountId: string;
 }
-
-type ParsedRow = {
-  txn_date:      string;       // ISO YYYY-MM-DD
-  description:   string;
-  debit:         number;       // ₹ integer
-  credit:        number;       // ₹ integer
-  balance_after: number | null;
-  reference:     string | null;
-};
-
-// Common header aliases across Indian banks. Each canonical key maps to
-// possible header names we'll match (lowercase, trimmed).
-const HEADER_ALIASES: Record<keyof ParsedRow, string[]> = {
-  txn_date:      ["date", "txn date", "transaction date", "value date", "post date", "tran date"],
-  description:   ["description", "narration", "particulars", "details", "remarks", "transaction details"],
-  debit:         ["debit", "withdrawal", "withdrawal amt", "withdrawal (dr)", "amount (debit)", "debit (rs.)", "debit amount"],
-  credit:        ["credit", "deposit", "deposit amt", "deposit (cr)", "amount (credit)", "credit (rs.)", "credit amount"],
-  balance_after: ["balance", "closing balance", "running balance", "available balance"],
-  reference:     ["ref no", "ref no./cheque no", "reference no", "chq./ref. no.", "ref.no./cheque no", "utr no"],
-};
-
-// ─── CSV parsing ───────────────────────────────────────────────────────────
-// Naive but reliable for bank statements (no embedded commas in amounts;
-// quoted fields handled). For complex CSV use papaparse later if needed.
-function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
-  let cur: string[] = [];
-  let buf = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (ch === '"' && inQuotes && next === '"') { buf += '"'; i++; continue; }
-    if (ch === '"')              { inQuotes = !inQuotes; continue; }
-    if (ch === "," && !inQuotes) { cur.push(buf); buf = ""; continue; }
-    if ((ch === "\n" || ch === "\r") && !inQuotes) {
-      if (ch === "\r" && next === "\n") i++;
-      cur.push(buf);
-      // Only push non-empty rows
-      if (cur.some((c) => c.trim().length > 0)) rows.push(cur);
-      cur = []; buf = "";
-      continue;
-    }
-    buf += ch;
-  }
-  if (buf || cur.length) {
-    cur.push(buf);
-    if (cur.some((c) => c.trim().length > 0)) rows.push(cur);
-  }
-  return rows;
-}
-
-/** Heuristic date parser — handles DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD. */
-function parseDate(input: string): string | null {
-  const s = input.trim();
-  if (!s) return null;
-  // YYYY-MM-DD already
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  // DD/MM/YYYY or DD-MM-YYYY (Indian convention)
-  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (m) {
-    const dd = m[1].padStart(2, "0");
-    const mm = m[2].padStart(2, "0");
-    let yy = m[3];
-    if (yy.length === 2) yy = (parseInt(yy, 10) > 50 ? "19" : "20") + yy;
-    return `${yy}-${mm}-${dd}`;
-  }
-  // Try Date.parse fallback
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return toIstDate(d);   // "28 Sep 2026" = local midnight; UTC slice din peeche le jata
-  return null;
-}
-
-/** Strip commas / spaces / ₹ from amount string, return integer rupees. */
-function parseAmount(input: string | undefined): number {
-  if (!input) return 0;
-  const cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : Math.round(n);
-}
-
-/**
- * Normalise a header cell so HDFC's "Withdrawal Amt." matches the alias
- * "withdrawal amt", ICICI's "Chq.No./Ref.No." matches "chq./ref. no.", etc.
- * Strips dots, parens, slashes, extra whitespace — collapses to a single
- * lowercase token sequence.
- */
-function normaliseHeader(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[.()/]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Given a parsed CSV (header + data rows), figure out which column index
- * holds which field. Returns null when the basic Date/Debit/Credit columns
- * can't be detected.
- */
-function detectColumns(headerRow: string[]): Record<keyof ParsedRow, number> | null {
-  const normalised = headerRow.map(normaliseHeader);
-  const map: Partial<Record<keyof ParsedRow, number>> = {};
-
-  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[keyof ParsedRow, string[]]>) {
-    const normAliases = aliases.map(normaliseHeader);
-    for (let i = 0; i < normalised.length; i++) {
-      // Match either exact or prefix (covers "withdrawal amt" ↔ "withdrawal amt rs")
-      if (normAliases.some((a) => normalised[i] === a || normalised[i].startsWith(a + " "))) {
-        map[field] = i;
-        break;
-      }
-    }
-  }
-  if (map.txn_date == null || map.description == null) return null;
-  if (map.debit == null && map.credit == null) return null;
-  return {
-    txn_date:      map.txn_date,
-    description:   map.description,
-    debit:         map.debit ?? -1,
-    credit:        map.credit ?? -1,
-    balance_after: map.balance_after ?? -1,
-    reference:     map.reference ?? -1,
-  };
-}
-
-type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string[] };
 
 /**
  * Last gate before the preview (CSV and AI alike): every date must be a real calendar
@@ -198,54 +76,6 @@ function withRealDates(p: ParseResult, serverSwapped = 0): ParseResult {
   return { rows, skipped: p.skipped + dropped, warnings };
 }
 
-function parseStatement(text: string): ParseResult {
-  const raw = parseCSV(text);
-  if (raw.length === 0) return { rows: [], skipped: 0, warnings: ["Empty file"] };
-
-  // Find the first row that looks like a header. Bank statements can have a
-  // LONG preamble (HDFC often runs 20-30 lines of bank name, address, account
-  // details, statement period and opening balance before the table), so scan
-  // the whole file — a data row won't match the date+description+amount header
-  // aliases, so there's no false-positive risk.
-  let headerIdx = -1;
-  let mapping: ReturnType<typeof detectColumns> | null = null;
-  for (let i = 0; i < raw.length; i++) {
-    const m = detectColumns(raw[i]);
-    if (m) { headerIdx = i; mapping = m; break; }
-  }
-  if (headerIdx < 0 || !mapping) {
-    return { rows: [], skipped: raw.length, warnings: [
-      "Couldn't auto-detect column layout. Expected headers like Date, Description, Debit, Credit (or Withdrawal, Deposit).",
-    ] };
-  }
-
-  const out: ParsedRow[] = [];
-  let skipped = 0;
-  for (let i = headerIdx + 1; i < raw.length; i++) {
-    const r = raw[i];
-    const date = parseDate(r[mapping.txn_date] ?? "");
-    if (!date) { skipped++; continue; }
-    // Coerce to non-negative integers — a stray minus sign or a decimal would
-    // otherwise break the integer column or the debit-xor-credit rule.
-    const debit  = Math.max(0, mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0);
-    const credit = Math.max(0, mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0);
-    if (debit === 0 && credit === 0) { skipped++; continue; }
-    // A bank line is debit XOR credit. If a row genuinely has both populated
-    // (a mis-aligned column / reversal line), we can't tell which figure is
-    // right — skip it rather than invent a number or fail the whole batch.
-    if (debit > 0 && credit > 0) { skipped++; continue; }
-    out.push({
-      txn_date:      date,
-      description:   (r[mapping.description] ?? "").trim() || "(no description)",
-      debit, credit,
-      balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
-      reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
-    });
-  }
-
-  return { rows: out, skipped, warnings: [] };
-}
-
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
@@ -258,7 +88,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const importMut = useImportBankTransactions();
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
-  const READ_MSGS = ["PDF khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
+  const READ_MSGS = ["File khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
   React.useEffect(() => {
     if (!reading) { setReadMsgIdx(0); return; }
     const t = setInterval(() => setReadMsgIdx((i) => Math.min(i + 1, READ_MSGS.length - 1)), 1600);
@@ -397,6 +227,28 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       toast.error("File too large (over 8 MB).", { description: "Download a shorter date range, or paste the CSV text instead." });
       return;
     }
+    /* Excel (.xls / .xlsx) → first sheet's rows → the same CSV text the textarea parses,
+       so the header auto-detect, preview and import are exactly the CSV path (R-1512). */
+    if (isExcelFile(file)) {
+      setReading(true);
+      try {
+        const rows = await excelToRows(await file.arrayBuffer());
+        if (rows.length === 0) {
+          toast.error("This Excel file has no rows on its first sheet.", { description: "Open it in Excel, check the statement is on the first sheet, and upload again — or download the CSV instead." });
+          return;
+        }
+        setMode("csv");
+        setCsvText(rowsToCsv(rows));
+      } catch {
+        toast.error("Couldn't read this Excel file.", {
+          description: "If it is password-protected, open it in Excel and Save As without a password — or download the statement as CSV / \"Delimited\" (.txt) from net banking.",
+          duration: 12000,
+        });
+      } finally {
+        setReading(false);
+      }
+      return;
+    }
     // PDF / image → AI reader; CSV / text → parse in the browser.
     if (/pdf|image/i.test(file.type)) { await readPdf(file); return; }
     setMode("csv");
@@ -453,15 +305,15 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         <SheetHeader>
           <SheetTitle>Import bank statement</SheetTitle>
           <SheetDescription>
-            Upload a <b>PDF</b> statement or a <b>.csv</b> file (or paste the text
-            below). PDF ko AI padh ke rows nikaal deta hai; CSV auto-detect hoti
+            Upload a <b>PDF</b> statement, an <b>Excel</b> (.xls / .xlsx) or a <b>.csv</b> file (or paste
+            the text below). PDF ko AI padh ke rows nikaal deta hai; Excel aur CSV auto-detect hoti
             hai (Date / Description / Debit / Credit). Aap import se pehle preview
             check karo.
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* File upload — PDF/photo (AI) or CSV. Shows a live progress state
+          {/* File upload — PDF/photo (AI), Excel or CSV. Shows a live progress state
               while the AI reads, so a multi-second read never looks frozen. */}
           <div className="rounded-md border border-dashed border-hairline-strong bg-paper-2/30 p-4">
             <style>{"@keyframes ros-loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}"}</style>
@@ -477,11 +329,11 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             ) : (
               <label className="cursor-pointer flex flex-col items-center text-center gap-2">
                 <Icon name="upload" size={20} className="text-ink-3" />
-                <span className="text-sm font-medium">Choose file — PDF / CSV</span>
-                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · ya .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
+                <span className="text-sm font-medium">Choose file — PDF / Excel / CSV</span>
+                <span className="text-xs text-ink-3">Bank statement PDF (AI reads it) · Excel .xls / .xlsx · ya .csv / .txt (HDFC &quot;Delimited&quot;) · up to 8 MB</span>
                 <input
                   type="file"
-                  accept=".csv,.txt,text/csv,text/plain,application/pdf,image/*"
+                  accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/*"
                   className="hidden"
                   onChange={onFileChange}
                 />
@@ -719,8 +571,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           )}
 
           <div className="rounded-md bg-indigo-50 border border-indigo/20 px-3 py-2 text-xs text-indigo-ink">
-            <b>Tip:</b> Net banking se statement <b>PDF</b> ya <b>CSV</b> dono chalti hai —
-            PDF ko AI padh leta hai, CSV auto-detect hoti hai (HDFC, ICICI, SBI, Axis,
+            <b>Tip:</b> Net banking se statement <b>PDF</b>, <b>Excel</b> ya <b>CSV</b> — sab chalti hai.
+            PDF ko AI padh leta hai, Excel aur CSV auto-detect hoti hai (HDFC, ICICI, SBI, Axis,
             Kotak, IndusInd, Yes Bank). Import se pehle preview zaroor check karo.
           </div>
         </div>

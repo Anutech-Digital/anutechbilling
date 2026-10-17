@@ -7841,6 +7841,110 @@ export type Database = {
           },
         ]
       }
+      payment_followups: {
+        Row: {
+          assigned_to: string | null
+          created_at: string
+          created_by: string | null
+          customer_id: string
+          id: string
+          invoice_id: string | null
+          kind: string
+          next_follow_up_on: string | null
+          note: string | null
+          outcome: string | null
+          promised_amount: number | null
+          promised_on: string | null
+          quote_id: string | null
+          subscription_id: string | null
+          tenant_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id: string
+          id?: string
+          invoice_id?: string | null
+          kind: string
+          next_follow_up_on?: string | null
+          note?: string | null
+          outcome?: string | null
+          promised_amount?: number | null
+          promised_on?: string | null
+          quote_id?: string | null
+          subscription_id?: string | null
+          tenant_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string
+          id?: string
+          invoice_id?: string | null
+          kind?: string
+          next_follow_up_on?: string | null
+          note?: string | null
+          outcome?: string | null
+          promised_amount?: number | null
+          promised_on?: string | null
+          quote_id?: string | null
+          subscription_id?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_followups_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_followups_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_mandates: {
         Row: {
           auth_link: string | null

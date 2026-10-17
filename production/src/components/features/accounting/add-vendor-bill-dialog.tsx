@@ -39,6 +39,7 @@ import { useCreateVendorBill, uploadBillAttachment, VENDOR_BILL_CATEGORIES } fro
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
+import { fillLineQty } from "@/app/api/ai/extract-bill/sanitize";
 
 const schema = z.object({
   vendor_name:  z.string().min(2, "Vendor name required"),
@@ -178,16 +179,21 @@ export function AddVendorBillDialog({
       const items = Array.isArray((f as Record<string, unknown>).line_items)
         ? ((f as Record<string, unknown>).line_items as Array<Record<string, unknown>>)
         : [];
-      setLines(items.map((it) => ({
+      setLines(items.map((it) => fillLineQty({
         description: String(it.description ?? ""),
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
         amount:      it.amount     != null ? String(it.amount)     : "",
       })));
+      /* R-1510: a Proforma is a request for payment, not a GST tax invoice — no input
+         credit can be claimed on it. Say so; the bill is still saved as typed. */
+      const proformaWarn = (f as Record<string, unknown>).document_type === "proforma"
+        ? " ⚠ Ye PROFORMA hai, tax invoice nahi — iska GST input credit nahi milta; vendor se asli tax invoice maango."
+        : "";
       setAiNote(
-        cur !== "INR"
+        (cur !== "INR"
           ? `AI ne bhar diya · bill ${cur} me hai — neeche exchange rate (₹/${cur}) daalo taaki books ₹ me sahi rahein. 📎 "${file.name}" attach ho jayega.`
-          : `AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`,
+          : `AI ne bhar diya · 📎 "${file.name}" bill ke saath attach ho jayega — amounts bill se milaa ke Save karo.`) + proformaWarn,
       );
     } catch {
       setAiError("Upload failed — try again, ya fields haath se bhar do.");
@@ -239,7 +245,7 @@ export function AddVendorBillDialog({
     if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
 
     if (Array.isArray(prefill.line_items)) {
-      setLines(prefill.line_items.map((it) => ({
+      setLines(prefill.line_items.map((it) => fillLineQty({
         description: String(it.description ?? ""),
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
@@ -286,6 +292,7 @@ export function AddVendorBillDialog({
     // Line items — keep amounts in the bill's OWN currency (faithful to the
     // document); drop blank rows.
     const line_items = lines
+      .map(fillLineQty)   // R-1510: a line typed with only an amount saves as 1 × amount
       .map((l) => ({
         name:   l.description.trim(),
         qty:    l.qty ? Number(l.qty) : undefined,
@@ -506,29 +513,41 @@ export function AddVendorBillDialog({
             {lines.length === 0 ? (
               <p className="text-xs text-ink-3">No items yet — upload a bill to auto-fill, or add rows manually.</p>
             ) : (
-              <div className="space-y-2">
-                <div className="hidden sm:grid grid-cols-12 gap-2 text-3xs uppercase tracking-wider text-ink-3">
-                  <span className="col-span-5">Description</span>
-                  <span className="col-span-2 text-right">Qty</span>
-                  <span className="col-span-2 text-right">Unit price</span>
-                  <span className="col-span-2 text-right">Amount</span>
-                  <span className="col-span-1" />
-                </div>
+              /* R-1510: the description gets the FULL width of its own row and wraps, so a
+                 long name like "Google Workspace ( 1 September - 30 September , 2026 )"
+                 is readable on desktop and phone (it was cut off in a 5/12 column). */
+              <div className="space-y-3">
                 {lines.map((l, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <Input aria-label="Item description" wrapperClassName="col-span-12 sm:col-span-5" placeholder="e.g. Team plan - Premium"
-                      value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
-                    <Input aria-label="Qty" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" min={0} step="any" placeholder="Qty"
-                      value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
-                    <Input aria-label="Unit" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Unit"
-                      value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} />
-                    {/* Amount allows negatives — credit / unused-time lines are refunds. */}
-                    <Input aria-label="Amount" wrapperClassName="col-span-3 sm:col-span-2" className="text-right" type="number" step="any" placeholder="Amount"
-                      value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} />
-                    <button type="button" onClick={() => removeLine(i)} aria-label="Remove item"
-                      className="col-span-3 sm:col-span-1 justify-self-center text-ink-3 hover:text-rose">
-                      <Icon name="x" size={14} />
-                    </button>
+                  <div key={i} className="space-y-1.5 border-b border-hairline pb-3 last:border-b-0 last:pb-0">
+                    <div className="flex items-start gap-2">
+                      <Textarea aria-label="Item description" rows={1} autoGrow maxRows={4} placeholder="e.g. Team plan - Premium"
+                        title={l.description || undefined}
+                        value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                      <button type="button" onClick={() => removeLine(i)} aria-label="Remove item"
+                        className="mt-2 shrink-0 text-ink-3 hover:text-rose">
+                        <Icon name="x" size={14} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 pr-6">
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Qty</span>
+                        <Input aria-label="Qty" className="text-right" type="number" min={0} step="any" placeholder="1"
+                          value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} />
+                      </label>
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Unit price</span>
+                        <Input aria-label="Unit price" className="text-right" type="number" step="any" placeholder="Unit"
+                          value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} />
+                      </label>
+                      {/* Amount allows negatives — credit / unused-time lines are refunds.
+                          Leaving it with no qty fills Qty 1 × this amount (R-1510). */}
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">Amount</span>
+                        <Input aria-label="Amount" className="text-right" type="number" step="any" placeholder="Amount"
+                          value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })}
+                          onBlur={() => setLines((ls) => ls.map((x, idx) => (idx === i ? fillLineQty(x) : x)))} />
+                      </label>
+                    </div>
                   </div>
                 ))}
               </div>

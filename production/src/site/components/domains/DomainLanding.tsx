@@ -496,7 +496,8 @@ export function DomainLanding() {
       </section>
 
       {/* ── 6 · INCLUDED ───────────────────────────────────────────────────── */}
-      <section style={wrap({ paddingTop: mob ? 48 : 62 })}>
+      {/* id="included": the header menu's "Included free" lands here (R-1506, R-1505). */}
+      <section id="included" style={wrap({ paddingTop: mob ? 48 : 62, scrollMarginTop: 84 })}>
         <div style={eyebrow}>Included</div>
         <h2 style={{ ...h2, marginBottom: 20 }}>Included with every domain — hosting or not.</h2>
         <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : mid ? "1fr 1fr" : "repeat(4, 1fr)", gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>

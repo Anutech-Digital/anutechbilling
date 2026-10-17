@@ -18,6 +18,8 @@ import path from "node:path";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { sitePreviewOn, SITE_PREVIEW_COOKIE } from "@/site/lib/site-preview";
 import { createClient } from "@/lib/supabase/server";
 import { HOME, PRICING_LINE, SCREENS } from "@/site/lib/data/reselleros-home";
 import { demoEnabled } from "@/lib/demo/demo-account";
@@ -52,7 +54,10 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
   const searchParams = await props.searchParams;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (user && searchParams.preview !== "1") redirect("/dashboard");
+  /* R-1508: ?preview=1 OR the website-preview cookie keeps a signed-in team member here. */
+  if (user && !(await sitePreviewOn(searchParams.preview, async () => (await cookies()).get(SITE_PREVIEW_COOKIE)?.value))) {
+    redirect("/dashboard");
+  }
 
   const showDemo = demoEnabled();
   const demoMessage = searchParams.demo ? HOME.demoMessages[searchParams.demo] ?? null : null;
@@ -104,8 +109,8 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         </p>
       </section>
 
-      {/* Who it is for */}
-      <section className="border-t border-hairline bg-paper-2/50">
+      {/* Who it is for — id="who": the header menu's "Who it is for" lands here (R-1505) */}
+      <section id="who" className="scroll-mt-20 border-t border-hairline bg-paper-2/50">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.whoTitle}</h2>
           <ul className="mt-6 grid gap-4 md:grid-cols-3">
@@ -154,8 +159,8 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
         </section>
       )}
 
-      {/* Steps */}
-      <section className="border-t border-hairline bg-paper-2/50">
+      {/* Steps — id="steps": the header menu's "Start in three steps" lands here (R-1505) */}
+      <section id="steps" className="scroll-mt-20 border-t border-hairline bg-paper-2/50">
         <div className="mx-auto max-w-5xl px-4 py-12 sm:px-5">
           <h2 className="font-serif text-2xl text-ink sm:text-3xl">{HOME.stepsTitle}</h2>
           <ol className="mt-6 grid gap-4 md:grid-cols-3">

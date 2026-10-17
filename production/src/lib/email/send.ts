@@ -438,6 +438,31 @@ export function isEmailConfigured(): boolean {
 }
 
 /**
+ * R-1503: can the platform sender be reached? For the public /status page. Sends NO mail and
+ * returns only a state — never a host, user or key. Same order as sendEmail: SMTP first (a TCP
+ * connection, closed the moment it opens), else the Resend API host (an unauthenticated GET of
+ * its root; any answer below 500 means it is up). Timeouts are the caller's job; the SMTP
+ * socket also gives up by itself after 3 s.
+ */
+export async function probeEmailTransport(): Promise<"ok" | "error" | "not-configured"> {
+  const smtp = smtpConfigFromEnv(process.env);
+  if (smtp) {
+    const { connect } = await import("node:net");
+    return new Promise((resolve) => {
+      const socket = connect({ host: smtp.host, port: smtp.port });
+      const done = (r: "ok" | "error") => { socket.destroy(); resolve(r); };
+      socket.setTimeout(3_000, () => done("error"));
+      socket.once("connect", () => done("ok"));
+      socket.once("error", () => done("error"));
+    });
+  }
+  if (!process.env.RESEND_API_KEY?.trim()) return "not-configured";
+  const res = await fetch("https://api.resend.com/", { method: "GET", cache: "no-store", redirect: "manual" });
+  await res.body?.cancel().catch(() => {});
+  return res.status < 500 ? "ok" : "error";
+}
+
+/**
  * Load the tenant's routing choice and the sending account's tokens.
  *
  * Separate from `sendEmail` because it is the only part that touches the

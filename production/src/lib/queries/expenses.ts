@@ -246,7 +246,8 @@ export function useUnreconciledExpenses() {
     queryKey: ["expenses", "unreconciled"],
     queryFn: async (): Promise<Expense[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1519: paged — the gateway answers 1000 rows and says nothing; id makes the order total.
+      return fetchAllRows<Expense>((rFrom, rTo) => supabase
         .from("expenses")
         .select("*")
         .is("reconciled_txn_id", null)
@@ -258,9 +259,9 @@ export function useUnreconciledExpenses() {
         // line of their own, so keep them out of the reconcile candidate list.
         // (.or keeps NULL payment_method rows, which a bare .neq would drop.)
         .or("payment_method.is.null,and(payment_method.neq.statutory,payment_method.neq.advance)")
-        .order("expense_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Expense[];
+        .order("expense_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(rFrom, rTo));
     },
   });
 }
@@ -270,14 +271,14 @@ export function useExpensesTotals(opts: { from: string; to: string }) {
     queryKey: ["expenses", "totals", opts],
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1519: paged — a year of expenses past 1000 rows summed only the first 1000.
+      const rows = await fetchAllRows<{ amount: number | null; gst_paid: number | null; category: string | null }>((rFrom, rTo) => supabase
         .from("expenses")
         .select("amount, gst_paid, category")
         .gte("expense_date", opts.from)
-        .lte("expense_date", opts.to);
-      if (error) throw error;
-
-      const rows = data ?? [];
+        .lte("expense_date", opts.to)
+        .order("id", { ascending: true })
+        .range(rFrom, rTo));
       const totals = {
         count:    rows.length,
         amount:   0,
@@ -309,20 +310,26 @@ export type DupCandidate = {
   category?: string | null;    // same bill no. + DIFFERENT category = a split, not a dup
 };
 
-/** Recent expenses (light columns) to check a new bill against. */
+type DupRow = Pick<Expense, "id" | "vendor_id" | "vendor_name" | "bill_no" | "expense_date" | "amount" | "currency" | "category">;
+
+/**
+ * Expenses (light columns) to check a new bill against, newest first.
+ * R-1519: paged. `.limit(2000)` came back as 1000 rows, so a bill entered a second time
+ * after the 1000th expense was never flagged as a duplicate.
+ */
+export async function fetchExpenseDupList(supabase: ReturnType<typeof createClient>): Promise<DupRow[]> {
+  return fetchAllRows<DupRow>((rFrom, rTo) => supabase
+    .from("expenses")
+    .select("id, vendor_id, vendor_name, bill_no, expense_date, amount, currency, category")
+    .order("expense_date", { ascending: false })
+    .order("id", { ascending: true })
+    .range(rFrom, rTo));
+}
+
 export function useExpenseDupList() {
   return useQuery({
     queryKey: ["expenses", "dupList"],
-    queryFn: async (): Promise<Pick<Expense, "id" | "vendor_id" | "vendor_name" | "bill_no" | "expense_date" | "amount" | "currency" | "category">[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("expenses")
-        .select("id, vendor_id, vendor_name, bill_no, expense_date, amount, currency, category")
-        .order("expense_date", { ascending: false })
-        .limit(2000);
-      if (error) throw error;
-      return (data ?? []) as never;
-    },
+    queryFn: (): Promise<DupRow[]> => fetchExpenseDupList(createClient()),
     staleTime: 30_000,
   });
 }
@@ -445,26 +452,31 @@ export function useCreateExpense() {
  *   C) employer statutory   — ESI/PF/etc. postings not yet reconciled to a bank line
  * These three never overlap (payroll rows are paid = true, so they're not in A).
  */
+/**
+ * R-1519: each of the three reads is paged — the KPI summed the first 1000 rows of each
+ * and said nothing. Exported for the unbounded-read test.
+ */
+export async function fetchOutstandingPayable(supabase: ReturnType<typeof createClient>): Promise<{ count: number; amount: number }> {
+  const [op, sal, stat] = await Promise.all([
+    fetchAllRows<{ amount: number | null }>((rFrom, rTo) => supabase.from("expenses").select("amount")
+      .eq("paid", false).order("id", { ascending: true }).range(rFrom, rTo)),
+    fetchAllRows<{ net: number | null; paid_amount: number | null; paid_status: string }>((rFrom, rTo) => supabase.from("salary_payments")
+      .select("net, paid_amount, paid_status").neq("paid_status", "paid").order("id", { ascending: true }).range(rFrom, rTo)),
+    fetchAllRows<{ amount: number | null }>((rFrom, rTo) => supabase.from("expenses").select("amount")
+      .eq("payment_method", "statutory").is("reconciled_txn_id", null).order("id", { ascending: true }).range(rFrom, rTo)),
+  ]);
+
+  let amount = 0, count = 0;
+  for (const r of op)   { amount += r.amount ?? 0; count++; }
+  for (const s of sal)  { const rem = (s.net ?? 0) - (s.paid_amount ?? 0); if (rem > 0) { amount += rem; count++; } }
+  for (const r of stat) { amount += r.amount ?? 0; count++; }
+  return { count, amount };
+}
+
 export function useOutstandingPayable() {
   return useQuery({
     queryKey: ["expenses", "outstanding"],
-    queryFn: async (): Promise<{ count: number; amount: number }> => {
-      const supabase = createClient();
-      const [op, sal, stat] = await Promise.all([
-        supabase.from("expenses").select("amount").eq("paid", false),
-        supabase.from("salary_payments").select("net, paid_amount, paid_status").neq("paid_status", "paid"),
-        supabase.from("expenses").select("amount").eq("payment_method", "statutory").is("reconciled_txn_id", null),
-      ]);
-      if (op.error) throw op.error;
-      if (sal.error) throw sal.error;
-      if (stat.error) throw stat.error;
-
-      let amount = 0, count = 0;
-      for (const r of op.data ?? [])   { amount += r.amount ?? 0; count++; }
-      for (const s of sal.data ?? [])  { const rem = (s.net ?? 0) - (s.paid_amount ?? 0); if (rem > 0) { amount += rem; count++; } }
-      for (const r of stat.data ?? []) { amount += r.amount ?? 0; count++; }
-      return { count, amount };
-    },
+    queryFn: (): Promise<{ count: number; amount: number }> => fetchOutstandingPayable(createClient()),
     staleTime: 15_000,
   });
 }
@@ -670,15 +682,17 @@ export function useVendorTdsThisFy(vendorId: string | null, vendorName: string, 
     queryFn: async (): Promise<{ base: number; baseWithoutTds: number }> => {
       if (!vendorId && name.length < 2) return { base: 0, baseWithoutTds: 0 };
       const supabase = createClient();
-      let q = supabase
-        .from("expenses")
-        .select("id, amount, gst_paid, tds_amount, tds_section")
-        .gte("expense_date", fyStartOf(onDate))
-        .lte("expense_date", onDate.slice(0, 10));
-      q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", name.replace(/[%_\\]/g, (c) => "\\" + c));
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data ?? []).filter((r) => r.id !== excludeId && (!r.tds_section || r.tds_section === sec));
+      // R-1519: paged — a busy vendor's year can pass the gateway's 1000-row cap.
+      const all = await fetchAllRows<{ id: string; amount: number | null; gst_paid: number | null; tds_amount: number | null; tds_section: string | null }>((rFrom, rTo) => {
+        let q = supabase
+          .from("expenses")
+          .select("id, amount, gst_paid, tds_amount, tds_section")
+          .gte("expense_date", fyStartOf(onDate))
+          .lte("expense_date", onDate.slice(0, 10));
+        q = vendorId ? q.eq("vendor_id", vendorId) : q.ilike("vendor_name", name.replace(/[%_\\]/g, (c) => "\\" + c));
+        return q.order("id", { ascending: true }).range(rFrom, rTo);
+      });
+      const rows = all.filter((r) => r.id !== excludeId && (!r.tds_section || r.tds_section === sec));
       const baseOf = (r: { amount: number | null; gst_paid: number | null }) => Math.max(0, (r.amount ?? 0) - (r.gst_paid ?? 0));
       return {
         base: rows.reduce((s, r) => s + baseOf(r), 0),
@@ -696,15 +710,17 @@ export function useCommissionToPayeeThisFy(payee: string, onDate: string, exclud
     enabled: name.length >= 2,
     queryFn: async (): Promise<{ earlier: number; earlierWithoutTds: number }> => {
       const supabase = createClient();
-      const { data, error } = await supabase
+      // R-1519: paged past the gateway's 1000-row cap.
+      const all = await fetchAllRows<{ id: string; amount: number | null; tds_amount: number | null }>((rFrom, rTo) => supabase
         .from("expenses")
         .select("id, amount, tds_amount")
         .eq("category", COMMISSION_CATEGORY)
         .ilike("vendor_name", name.replace(/[%_\\]/g, (c) => "\\" + c))
         .gte("expense_date", fyStartOf(onDate))
-        .lte("expense_date", onDate.slice(0, 10));
-      if (error) throw error;
-      const rows = (data ?? []).filter((r) => r.id !== excludeId);
+        .lte("expense_date", onDate.slice(0, 10))
+        .order("id", { ascending: true })
+        .range(rFrom, rTo));
+      const rows = all.filter((r) => r.id !== excludeId);
       return {
         earlier: rows.reduce((s, r) => s + (r.amount ?? 0), 0),
         earlierWithoutTds: rows.filter((r) => !(r.tds_amount && r.tds_amount > 0)).reduce((s, r) => s + (r.amount ?? 0), 0),

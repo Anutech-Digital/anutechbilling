@@ -124,6 +124,10 @@ const R1003_BILLING_REMOVED = [
   "/accounting/payroll", "/accounting/salary-register", "/accounting/loans", "/accounting/employees",
   "/accounting/attendance", "/accounting/leave", "/accounting/esi-register",
 ];
+/** R-1516 (17 Oct 2026): Payment Follow-up — a new page for owner / manager / billing / accountant /
+ *  sales (sales_senior sees what sales sees); RLS scopes sales to its own customers' money. */
+const ADDED_17OCT_COLLECTIONS = ["/collections"];
+const COLLECTIONS_ROLES = ["owner", "manager", "billing", "accountant", "sales", "sales_senior"];
 const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/accounting/attendance", "/accounting/leave"];
 /** R-1127 (16 Oct 2026): same reason as R-138 — these read salaries/employees, which RLS hides
  *  from billing, so salary and PF/ESI/TDS rows showed Rs 0 (Pardeep's call: take them away). */
@@ -148,6 +152,7 @@ const addedFor = (role: string) => [
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
   ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
+  ...(COLLECTIONS_ROLES.includes(role) ? ADDED_17OCT_COLLECTIONS : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 

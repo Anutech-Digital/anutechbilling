@@ -1,58 +1,86 @@
 import type { Metadata } from "next";
-import { STATUS_SERVICES } from "@/site/lib/data/misc";
+import { IST_TZ } from "@/lib/dates/ist";
+import { getStatusSnapshot, type OverallState, type ServiceState } from "./checks";
 
 export const metadata: Metadata = {
   title: "System status",
-  description: "Ninety days of status per service. SLA credits apply automatically — you never have to file for one.",
+  description: "Live status of our website, database, payment gateway, domain registry API and email — checked every minute.",
 };
 
 /**
- * Six services, each with a dot, its 90-day uptime and 30 bars (3 days per bar; amber =
- * degraded). Static demo data from the handoff — a real status feed replaces
- * STATUS_SERVICES, and nothing on this page needs to change shape for that.
+ * R-1503: what each service is doing NOW, from live server-side checks (checks.ts) — no
+ * invented availability figures. Rendered per request; the checks themselves are cached for 60 s,
+ * so this page cannot be used to hammer the database or a partner API.
  */
-export default function StatusPage() {
-  const anyBad = STATUS_SERVICES.some((s) => s.bad.length > 0);
+export const dynamic = "force-dynamic";
+
+const STATE_LABEL: Record<ServiceState, string> = {
+  operational: "Operational",
+  degraded: "Degraded",
+  down: "Down",
+  "not-configured": "Not configured",
+};
+
+const STATE_COLOR: Record<ServiceState, string> = {
+  operational: "var(--success)",
+  degraded: "var(--warning)",
+  down: "var(--danger)",
+  "not-configured": "var(--text-secondary)",
+};
+
+const BANNER: Record<OverallState, { text: string; color: string; bg: string }> = {
+  operational: { text: "ALL SYSTEMS OPERATIONAL", color: "var(--success)", bg: "#EEF7F0" },
+  degraded: { text: "SOME SYSTEMS ARE SLOW", color: "var(--warning)", bg: "#FdF6E7" },
+  down: { text: "SOME SYSTEMS ARE DOWN", color: "var(--danger)", bg: "#FCEDEC" },
+};
+
+function istTime(d: Date): string {
+  return `${d.toLocaleString("en-IN", {
+    timeZone: IST_TZ, day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  })} IST`;
+}
+
+export default async function StatusPage() {
+  const snap = await getStatusSnapshot();
+  const banner = BANNER[snap.overall];
   return (
     <section className="section rise">
       <div className="wrap" style={{ maxWidth: 860 }}>
         <div
           className="mono-label"
+          role="status"
           style={{
             display: "inline-block", padding: "8px 14px", borderRadius: 999, marginBottom: 24,
-            background: anyBad ? "#FdF6E7" : "#EEF7F0",
-            color: anyBad ? "var(--warning)" : "var(--success)",
-            border: `1px solid ${anyBad ? "var(--warning)" : "var(--success)"}`,
+            background: banner.bg, color: banner.color, border: `1px solid ${banner.color}`,
           }}
         >
-          {anyBad ? "MINOR DEGRADATION IN THE LAST 90 DAYS" : "ALL SYSTEMS OPERATIONAL"}
+          {banner.text}
         </div>
         <h1 className="h1-narrow" style={{ marginBottom: 8 }}>System status</h1>
-        <p className="body-lg" style={{ margin: "0 0 34px" }}>
-          Ninety days per service, three days per bar. SLA credits apply automatically — you never
-          have to file for one.
+        <p className="body-lg" style={{ margin: "0 0 8px" }}>
+          What each service is doing right now, checked live from our servers.
+        </p>
+        <p className="meta" style={{ margin: "0 0 34px" }}>
+          Last checked <time dateTime={snap.checkedAt.toISOString()}>{istTime(snap.checkedAt)}</time>.
+          Checks refresh every minute — reload the page to see the latest.
         </p>
 
-        {STATUS_SERVICES.map((s) => (
-          <div key={s.name} style={{ padding: "18px 0", borderTop: "1px solid var(--border-light)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
+        {snap.services.map((s) => (
+          <div key={s.key} style={{ padding: "18px 0", borderTop: "1px solid var(--border-light)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
               <span
                 aria-hidden
-                style={{ width: 9, height: 9, borderRadius: 999, flex: "none", background: s.bad.length ? "var(--warning)" : "var(--success)" }}
+                style={{ width: 9, height: 9, borderRadius: 999, flex: "none", background: STATE_COLOR[s.state] }}
               />
               <span style={{ fontSize: 16, fontWeight: 700 }}>{s.name}</span>
               <span className="meta">{s.note}</span>
               <span style={{ flex: 1 }} />
-              <span className="mono" style={{ fontSize: 14, fontWeight: 500 }}>{s.uptime}</span>
+              <span className="mono" style={{ fontSize: 14, fontWeight: 600, color: STATE_COLOR[s.state] }}>
+                {STATE_LABEL[s.state]}
+              </span>
             </div>
-            <div style={{ display: "flex", gap: 3 }} aria-label={`${s.name}: ${s.bad.length} degraded period(s) in 90 days`}>
-              {Array.from({ length: 30 }, (_, i) => (
-                <span
-                  key={i}
-                  style={{ flex: 1, height: 26, borderRadius: 2, background: s.bad.includes(i) ? "var(--bar-warn)" : "var(--bar-ok)" }}
-                />
-              ))}
-            </div>
+            <p className="meta" style={{ margin: "0 0 0 19px" }}>{s.explain}</p>
           </div>
         ))}
       </div>

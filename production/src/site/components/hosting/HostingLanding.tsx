@@ -280,10 +280,10 @@ export function HostingLanding() {
             </div>
           </div>
 
-          {/* Plan cards */}
-          <div style={mob
-            ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start" } as React.CSSProperties
-            : { margin: "18px 0 0", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start" }}>
+          {/* Plan cards — id="specs": the menu's and footer's "Full specification" land here (R-1506). */}
+          <div id="specs" style={mob
+            ? { margin: "26px -20px 0", padding: "4px 20px 18px", display: "flex", gap: 14, overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", alignItems: "start", scrollMarginTop: 84 } as React.CSSProperties
+            : { margin: "18px 0 0", display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: mid ? 14 : 20, alignItems: "start", scrollMarginTop: 84 }}>
             {plans.map((p) => (
               <div key={p.name} style={{
                 background: "#fff", border: p.isTop ? `1.5px solid ${C.accent}` : `1px solid ${C.line}`, borderRadius: 18,

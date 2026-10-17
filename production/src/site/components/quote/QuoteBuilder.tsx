@@ -19,7 +19,8 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, type QuoteProduct } from "@/site/lib/data/quote-catalog";
+import { CERTS } from "@/site/lib/data/catalog";
+import { QUOTE_PRODUCTS, QUOTE_CATEGORIES, QUOTE_TLDS, quotePrefill, withLiveEditions, quoteRate, quoteInr, quoteLineAmount, quoteUnitAmount, quoteRenewal, type QuoteProduct } from "@/site/lib/data/quote-catalog";
 import { WHATSAPP_URL, COMPANY } from "@/site/lib/config";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
@@ -34,6 +35,8 @@ export { isIndianMobile };
    rounded once per line (quoteLineAmount), so the summary never mixes ₹599.88 with ₹600. */
 const inr = quoteInr;
 const P = "var(--primary)";
+/* R-1504: the certificate /ssl includes free (its "Included" card) — named, not repriced, here. */
+const FREE_DV = CERTS.find((c) => c.cta === "Included");
 
 export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const params = useSearchParams();
@@ -75,18 +78,18 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
   const [quoteAt, setQuoteAt] = useState<Date | null>(null);
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
 
-  // Prefill from the home/hero deep link (?ed & seats & term).
+  // Prefill from the home/hero deep link (?ed & seats & term), or /ssl's ?product=ssl (R-1504).
   useEffect(() => {
-    const ed = params.get("ed") ?? params.get("edition");
+    const { ed, cat: preCat } = quotePrefill(params, byName);
     const seats = Math.max(1, Math.min(300, parseInt(params.get("seats") ?? "", 10) || 0));
     const t = params.get("term");
     const next: Record<string, number> = {};
-    if (ed && byName.has(ed)) {
+    if (ed) {
       next[ed] = seats || 1;
       /* Open on that product's category, not "All plans" (Pardeep, 4 Oct 2026). */
-      const v = byName.get(ed)?.vendor;
+      const v = preCat ?? byName.get(ed)?.vendor;
       if (v) setCat(v);
-    }
+    } else if (preCat) setCat(preCat);
     if (Object.keys(next).length) setLines(next);
     /* A deep link asking for monthly on an annual-only edition stays annual (R-224). */
     const edAnnualOnly = !!ed && byName.get(ed)?.monthly === null;
@@ -277,6 +280,12 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
               {annualOnlyPicked.length > 0 && (
                 <p id="annual-only-note" className="meta" style={{ margin: "-4px 0 10px", fontSize: 13 }}>
                   {annualOnlyPicked.map((p) => p.label).join(", ")} {annualOnlyPicked.length > 1 ? "are" : "is"} annual only. Remove {annualOnlyPicked.length > 1 ? "them" : "it"} for a monthly quote.
+                </p>
+              )}
+              {/* R-1504: the free certificate /ssl offers is not a quote line — say where it comes from. */}
+              {cat === "SSL & security" && FREE_DV && (
+                <p className="meta" style={{ margin: "0 0 10px", fontSize: 13 }}>
+                  {FREE_DV.name} ({FREE_DV.price}) comes with every site we host — no quote needed. Pick a paid certificate below only when you need one.
                 </p>
               )}
               {/* rows */}

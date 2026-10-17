@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   pushUrl, goBack, goForward, seekTo, currentUrl,
-  canGoBack, canGoForward, resolvePopState, historyOpFor,
+  canGoBack, canGoForward, resolvePopState, historyOpFor, isRouterHistoryEntry,
   emptyHistory, type TabHistory,
 } from "./history";
 
@@ -125,6 +125,19 @@ describe("resolvePopState — what Back actually means", () => {
   it("handles no active tab and an empty workspace", () => {
     expect(resolvePopState("/x", null, {}).kind).toBe("left_workspace");
     expect(resolvePopState("/x", null, histories).kind).toBe("left_workspace");
+  });
+});
+
+describe("isRouterHistoryEntry — R-1506: a #section click is not Back", () => {
+  it("is true only for entries the App Router wrote (__NA: true)", () => {
+    expect(isRouterHistoryEntry({ __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: [] })).toBe(true);
+  });
+
+  it("is false for the null state a plain <a href=\"#move\"> click leaves behind", () => {
+    expect(isRouterHistoryEntry(null)).toBe(false);
+    expect(isRouterHistoryEntry(undefined)).toBe(false);
+    expect(isRouterHistoryEntry({})).toBe(false);
+    expect(isRouterHistoryEntry({ __NA: "yes" })).toBe(false);
   });
 });
 

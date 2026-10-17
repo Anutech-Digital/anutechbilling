@@ -22,7 +22,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { AddFromBillDialog, createFromBill } from "@/components/features/reconcile/add-from-bill";
 import { useItems } from "@/lib/queries/items";
-import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type SubLite, type CustomerLite, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
+import { parseGoogleBill, checkBill, expectedPartnerBill, nameFromDomain, draftFromBill, type RowStatus, type CheckRow } from "@/lib/reconcile/google-bill";
+import { fetchGoogleBillBooks } from "./books";
 
 const inr = (n: number) => rupee(n, { decimals: 2 });
 const STATUS: Record<RowStatus, { label: string; kind: "danger" | "warning" | "success" | "info" }> = {
@@ -62,16 +63,8 @@ async function pdfToText(file: File): Promise<string> {
 function useBooks() {
   return useQuery({
     queryKey: ["google-bill-check", "books"],
-    queryFn: async () => {
-      const supabase = createClient();
-      const [subs, custs] = await Promise.all([
-        supabase.from("subscriptions").select("id, customer_id, customer_name, domain, vendor, status, seats, vendor_seats, mrr, plan").eq("vendor", "google").limit(5000),
-        supabase.from("customers").select("id, name, domain").not("domain", "is", null).limit(10000),
-      ]);
-      if (subs.error) throw new Error(subs.error.message);
-      if (custs.error) throw new Error(custs.error.message);
-      return { subs: (subs.data ?? []) as SubLite[], customers: (custs.data ?? []) as CustomerLite[] };
-    },
+    // R-1519: paged past the gateway's silent 1000-row cap (books.ts).
+    queryFn: () => fetchGoogleBillBooks(createClient()),
     staleTime: 60_000,
   });
 }

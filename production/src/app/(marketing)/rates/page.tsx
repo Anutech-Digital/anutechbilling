@@ -61,16 +61,17 @@ export default async function RatesPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
                 <thead>
                   <tr style={{ borderBottom: "2px solid var(--dark)", textAlign: "left" }}>
-                    <th scope="col" style={{ padding: "10px 12px 10px 0" }}>{s.id === "domains" ? "Extension" : "Plan"}</th>
-                    {s.columns.map((c) => (
-                      <th key={c} scope="col" style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{c}</th>
+                    {/* R-1507: the outer columns sit 16px inside the box border (same as table.rates), never 0. */}
+                    <th scope="col" style={{ padding: "10px 12px 10px 16px" }}>{s.id === "domains" ? "Extension" : "Plan"}</th>
+                    {s.columns.map((c, ci) => (
+                      <th key={c} scope="col" style={{ padding: ci === s.columns.length - 1 ? "10px 16px 10px 12px" : "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{c}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {s.rows.map((r) => (
                     <tr key={r.name} style={{ borderBottom: "1px solid var(--line, rgba(0,0,0,.1))" }}>
-                      <th scope="row" style={{ padding: "12px 12px 12px 0", textAlign: "left", fontWeight: 600 }}>
+                      <th scope="row" style={{ padding: "12px 12px 12px 16px", textAlign: "left", fontWeight: 600 }}>
                         <span className={s.id === "domains" ? "mono" : undefined}>{r.name}</span>
                         <span className="meta" style={{ display: "block", fontWeight: 400 }}>{r.note}</span>
                       </th>
@@ -78,7 +79,7 @@ export default async function RatesPage() {
                         <td
                           key={ci}
                           colSpan={ci === r.cells.length - 1 ? s.columns.length - r.cells.length + 1 : 1}
-                          style={{ padding: "12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
+                          style={{ padding: ci === r.cells.length - 1 ? "12px 16px 12px 12px" : "12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
                         >
                           {c}
                         </td>
