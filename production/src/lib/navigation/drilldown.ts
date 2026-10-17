@@ -68,6 +68,8 @@ export const DRILL = {
   subsExpiring:     d("/subscriptions", "tab", "expiring"),
   subsActive:       d("/subscriptions", "focus", "active"),
   renewalsUrgent:   d("/renewals", "bucket", "urgent"),
+  /* Companies — "Has receivables": the dashboard "to collect" figure's companies (R-1473). */
+  customersUnpaid:  d("/customers", "view", "unpaid"),
   /* Tasks */
   tasksOverdue:     d("/tasks", "tab", "overdue"),
   tasksToday:       d("/tasks", "tab", "today"),

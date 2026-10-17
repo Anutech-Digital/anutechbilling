@@ -118,7 +118,7 @@ function FunctionCard({ title, children }: { title: string; children: React.Reac
 const SHAPE: Array<[string, Array<[string, boolean]>]> = [
   ["Growth", [["New leads", false], ["From the website", true], ["Trials started", true]]],
   ["Sales", [["Won this month", true], ["Pipeline", true]]],
-  ["Money", [["Invoiced", true], ["Collected", false], ["Still owed", true], ["Overdue invoices", false]]],
+  ["Money", [["Invoiced", true], ["Collected", false], ["Still owed (invoices)", true], ["Overdue invoices", false]]],
   ["Customers & Ops", [["New customers", false], ["Monthly revenue (MRR)", true], ["Renewals in 30 days", true], ["Open tickets", false], ["Waiting to activate", false]]],
 ];
 
@@ -201,8 +201,10 @@ function CompanyCards() {
             hint={money ? plural(money.invoicedThisMonth.count, "invoice", "invoices") : undefined} {...state(invoices)} />
           <Metric href="/payments" label="Collected" value={money$(collected)}
             {...state(payments, projectPayments)} />
-          <Metric href={drillHref("invoicesUnpaid")} label="Still owed" value={money$(money?.outstanding.value)} withHint
-            hint={money ? plural(money.outstanding.count, "unpaid invoice", "unpaid invoices") : undefined} {...state(invoices)} />
+          {/* R-1473: billed invoices only (the accrual receivable). Subscription dues not yet
+              invoiced are the Collections card's "to collect" figure — the hint says so. */}
+          <Metric href={drillHref("invoicesUnpaid")} label="Still owed (invoices)" value={money$(money?.outstanding.value)} withHint
+            hint={money ? `${plural(money.outstanding.count, "unpaid invoice", "unpaid invoices")} · sub dues not billed are in Collections` : undefined} {...state(invoices)} />
           <Metric href={drillHref("invoicesOverdue")} label="Overdue invoices" value={money?.overdueCount ?? null}
             {...state(invoices)} />
         </FunctionCard>

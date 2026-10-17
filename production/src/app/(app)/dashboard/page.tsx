@@ -57,6 +57,7 @@ import { LoadErrorBanner } from "@/components/shared/load-error";
 import { leadTitle } from "@/lib/leads/display-name";
 import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 import { COPY } from "@/lib/copy";
+import { toChaseSummary, chaseNote } from "@/lib/accounting/receivables-due";
 
 // ============================================================
 // Helpers
@@ -192,9 +193,10 @@ export default function DashboardPage() {
   // "Chase the cash" — money owed to us. Real receivables = subscription dues +
   // project invoiced-but-unpaid (same basis as the Customers list / Aging), not
   // just accepted-quote balances (which missed projects entirely).
-  const subsOutstanding = (subscriptions ?? []).reduce((s, x) => s + (x.outstanding_amount ?? 0), 0);
-  const projectReceivable = Object.values(projRecv).reduce((s, v) => s + v, 0);
-  const toCollect = subsOutstanding + projectReceivable;
+  /* R-1473: one rule with Companies "To collect" and the Renewals "Unpaid" badge
+     (lib/accounting/receivables-due) — written-off dues were counted here and nowhere else. */
+  const chase = toChaseSummary(subscriptions ?? [], projRecv);
+  const toCollect = chase.total;
   const overdueFollowups = dashLeads?.overdueFollowups ?? 0;
 
   // Subscription aggregates — sum MRR across active subs only
@@ -425,8 +427,8 @@ export default function DashboardPage() {
         <div className="space-y-1">
           {toCollect > 0 && (
             <ChaseRow icon="rupee" tone="emerald" title={`${rupee(toCollect, { compact: true })} to collect`}
-              note={projectReceivable > 0 ? `subscription dues + ${rupee(projectReceivable, { compact: true })} project` : "subscription dues + project invoices"}
-              onClick={() => router.push("/accounting/aging" as any)} />
+              note={chaseNote(chase)}
+              onClick={() => router.push(drillHref("customersUnpaid") as never)} />
           )}
           {overdueFollowups > 0 && (
             <ChaseRow icon="phone" tone="rose" title={`${overdueFollowups} follow-up${overdueFollowups === 1 ? "" : "s"} overdue`}
@@ -634,6 +636,7 @@ export default function DashboardPage() {
         expiringRenewalsValue={urgentRenewals.reduce((s, r) => s + (r.sub.mrr ?? 0) * 12, 0)}
         draftQuotesCount={draftQuotes}
         pendingCollectValue={toCollect}
+        pendingCollectNote={chaseNote(chase)}
       />
 
       {/* KPI — money-first, 2-tier. The three ₹ metrics get big coloured tiles

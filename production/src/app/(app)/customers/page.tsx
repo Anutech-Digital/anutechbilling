@@ -22,6 +22,7 @@ import { useProjectReceivablesByCustomer, useProjectSales, useReceivedThisFyByCu
 import { customerPortfolioStatus, countsAsNoBusiness, projectValue, type ProjectLike } from "@/lib/customers/portfolio-status";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
+import { toChaseSummary } from "@/lib/accounting/receivables-due";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { ImportDomainsDialog } from "@/components/features/customers/import-domains-dialog";
 import { CustomerProfile } from "@/components/features/customers/customer-profile";
@@ -143,20 +144,18 @@ export default function CustomersPage() {
 
   // customer_id → outstanding = subscription dues + project invoiced-but-unpaid,
   // so project receivables show on the list too (matches the customer 360 page).
+  /* R-1473: amounts from toChaseSummary — the dashboard Collections card's rule. This map
+     kept only ONE subscription's due per company (the oldest), so a company with two unpaid
+     subscriptions showed one; now every due is added. Days = the oldest due's age. */
   const outstandingByCustomer = React.useMemo(() => {
-    const map = new Map<string, { days: number; amount: number }>();
+    const days = new Map<string, number>();
     for (const o of outstanding ?? []) {
       if (!o.customer_id) continue;
-      const prev = map.get(o.customer_id);
-      if (!prev || o.days_outstanding > prev.days) {
-        map.set(o.customer_id, { days: o.days_outstanding, amount: o.outstanding_amount });
-      }
+      days.set(o.customer_id, Math.max(days.get(o.customer_id) ?? 0, o.days_outstanding));
     }
-    // Add project receivables (invoiced milestones not yet paid).
-    for (const [custId, amt] of Object.entries(projRecv)) {
-      if (!amt) continue;
-      const prev = map.get(custId);
-      map.set(custId, { days: prev?.days ?? 0, amount: (prev?.amount ?? 0) + amt });
+    const map = new Map<string, { days: number; amount: number }>();
+    for (const [custId, amount] of toChaseSummary(outstanding ?? [], projRecv).byCustomer) {
+      map.set(custId, { days: days.get(custId) ?? 0, amount });
     }
     return map;
   }, [outstanding, projRecv]);
