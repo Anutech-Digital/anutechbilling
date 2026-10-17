@@ -298,7 +298,7 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
                           <span style={{ display: "block", fontSize: 12.5, color: "var(--text-muted)" }}>{p.note}</span>
                         </button>
                         <span id={locked ? lockNoteId : undefined} className="mono" style={{ fontSize: 13.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}`}
+                          {p.priceOnRequest ? ON_REQUEST : !annual && annualOnly(p) ? "Annual only" : rateOf(p) === 0 ? "Free" : `${inr(rateOf(p))}/${p.per}/${p.cycle}`}
                         </span>
                         {on && (
                           <span style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border-strong)", borderRadius: 8, overflow: "hidden", flex: "none" }}>

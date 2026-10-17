@@ -91,6 +91,8 @@ export function CtaBand() {
      licence quote ask, right for every other page. */
   const pathname = usePathname();
   if (pathname === "/") return null;
+  /* R-1478: /quote IS the quote form — a "Get a quote" band under it points at the page itself. */
+  if (pathname === "/quote") return null;
   return (
     <section style={{ background: "var(--dark)", color: "#fff", padding: "56px 0" }}>
       <div className="wrap" style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap" }}>

@@ -77,7 +77,7 @@ editions.splice(plusAt > 0 ? plusAt : editions.length, 0, {
 const domains: QuoteProduct[] = [
   { name: "Domain registration", label: "Domain registration", vendor: "Domains", tags: "domain registration register new name in com net org dns whois", note: "A new name on the extension you pick — first year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "reg" },
   { name: "Domain renewal", label: "Domain renewal", vendor: "Domains", tags: "domain renewal renew expiry extend keep", note: "Extend an existing name by one year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "renew" },
-  { name: "Domain transfer", label: "Domain transfer in", vendor: "Domains", tags: "domain transfer move switch registrar epp code", note: "Move a name to us — no fee, adds a year.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "transfer" },
+  { name: "Domain transfer", label: "Domain transfer in", vendor: "Domains", tags: "domain transfer move switch registrar epp code", note: "Move a name to us — the transfer price includes 1 year renewal.", annual: 0, monthly: 0, per: "domain", cycle: "yr", domain: true, domainField: "transfer" },
 ];
 
 /* Same tiers, names and ₹ as /hosting and /rates: billed yearly → annual, billed monthly → flexible. */
