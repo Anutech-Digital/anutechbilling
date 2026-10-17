@@ -11,7 +11,7 @@
  */
 "use client";
 
-import { istGreeting } from "@/lib/dates/ist";
+import { DashboardGreeting } from "./header-greeting";
 import * as React from "react";
 import { drillHref } from "@/lib/navigation/drilldown";
 import Link from "next/link";
@@ -135,13 +135,8 @@ export default function DashboardPage() {
     try { localStorage.setItem(key, JSON.stringify(order)); } catch {}
   };
 
-  // Time-aware greeting + date
-  const now = new Date();
-  // R-178: by the IST hour on server AND browser (getHours() was UTC on the server).
-  const greeting = istGreeting(now);
-  const dateLabel = now.toLocaleString("en-IN", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata",
-  });
+  // Header date + greeting: <DashboardGreeting> reads the clock in the browser only (R-1472 —
+  // a render-time new Date() here was baked into the build-time static HTML).
   // null (not "there") while the user is loading or has no name — the headline
   // then reads a clean "Good morning." instead of an impersonal "…, there."
   const firstName = currentUser?.fullName?.split(/\s+/)[0] ?? null;
@@ -547,14 +542,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
-          {/* suppressHydrationWarning: only for a render that straddles a minute boundary
-              (e.g. 11:59:59 on the server, 12:00:00 in the browser) — R-178. */}
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1" suppressHydrationWarning>
-            {dateLabel}
-          </p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight" suppressHydrationWarning>
-            {greeting}{firstName ? `, ${firstName}` : ""}.
-          </h1>
+          <DashboardGreeting firstName={firstName} />
           {/* Money one-liner — the greeting row also carries business signal so
               the seller sees "how am I doing" before scanning anything. */}
           <p className="text-sm text-ink-3 mt-1">
