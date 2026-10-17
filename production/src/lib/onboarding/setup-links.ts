@@ -12,6 +12,8 @@ export const SETUP_HREF = {
   series:  "/settings?tab=company#invoice-numbering",
   payout:  "/settings?tab=company#payment-details",
   email:   "/settings?tab=integrations#email-sending",
+  /** R-1451: the Integrations tab (Razorpay, WhatsApp, Google reseller cards) — Dashboard Health card. */
+  integrations: "/settings?tab=integrations",
   team:    "/team",
   /** The checklist itself lives on the Dashboard. */
   checklist: "/dashboard#setup-checklist",

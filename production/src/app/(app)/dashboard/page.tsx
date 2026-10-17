@@ -42,6 +42,7 @@ import { renewalStateLabel, renewalStateTone } from "@/lib/renewals/cadence";
 import { TrialsExpiringCard } from "@/components/features/trials/trials-expiring-card";
 import { GettingStartedCard } from "@/components/features/dashboard/getting-started-card";
 import { useSetupFacts } from "@/lib/onboarding/use-setup-facts";
+import { HealthCard } from "@/components/features/dashboard/health-card";
 import { MoneyHealthCard } from "@/components/features/dashboard/money-health-card";
 import { AiPerformanceCard } from "@/components/features/dashboard/ai-performance-card";
 import { PriorityActionHub } from "@/components/features/dashboard/priority-action-hub";
@@ -353,14 +354,6 @@ export default function DashboardPage() {
       .slice(0, 5);
   }, [dashLeads]);
 
-  const integrations = [
-    { name: "Supabase Auth + DB",         status: "Live",       tone: "ok" as const },
-    { name: "Razorpay",                   status: "Not set up",  tone: "warn" as const },
-    { name: "GST e-Invoice (NIC/IRP)",    status: "Not set up",  tone: "warn" as const },
-    { name: "Google CSP Reseller API",    status: "Not set up",  tone: "warn" as const },
-    { name: "WhatsApp Business (Gupshup)", status: "Not set up", tone: "warn" as const },
-  ];
-
   // ── Draggable dashboard widgets ───────────────────────────────────────────
   // Each card is addressable by id so the two columns can render in the user's
   // saved order. Chase-the-cash only exists when there's something to chase.
@@ -534,21 +527,8 @@ export default function DashboardPage() {
         )}
       </Card>
     ),
-    health: (
-      <Card title="Health" sub="System & integrations">
-        <div className="space-y-2">
-          {integrations.map((s) => (
-            <div key={s.name} className="flex justify-between items-center text-xs">
-              <div className="flex items-center gap-2">
-                <span className={cn("w-1.5 h-1.5 rounded-full", s.tone === "ok" ? "bg-emerald" : "bg-amber")} />
-                <span>{s.name}</span>
-              </div>
-              <span className={cn(s.tone === "ok" ? "text-emerald" : "text-amber-ink")}>{s.status}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-    ),
+    /* R-1451: Not set up rows link to Settings → Integrations (owner/manager), else "ask the owner". */
+    health: <HealthCard />,
   };
 
   // Effective visible order = saved order (minus unavailable) + any new widgets.
