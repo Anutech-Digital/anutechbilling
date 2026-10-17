@@ -1,7 +1,6 @@
 "use client";
 /**
- * Which floating buttons (AI sales agent launcher, WhatsApp pill) the website shows, and when
- * they step aside.
+ * When the website's one floating launcher shows, and when it steps aside.
  *
  * R-230 (6 Oct 2026): nothing floats on /checkout and /done — the page is the whole task.
  * R-464 (10 Oct 2026): at 390px the AI launcher and the WhatsApp pill covered the homepage
@@ -9,7 +8,9 @@
  * hero's own "WhatsApp us" button plus the floating pill). Below 980px the site now floats ONE
  * action — the AI launcher (its panel still offers "WhatsApp us instead") — and that launcher
  * steps aside while any element marked `data-avoid-floating` (the form) is on screen.
- * Desktop is unchanged.
+ * R-1498 (17 Oct 2026, Pawan on staging): on desktop the AI launcher and the WhatsApp pill still
+ * stacked bottom-right and covered content. Now every width floats ONE launcher; pressing it
+ * opens a small menu with "Chat with our AI sales agent" and "WhatsApp us" (AgentChat.tsx).
  */
 import { useEffect, useState } from "react";
 
@@ -30,22 +31,17 @@ export type FloatingInput = {
   isMobile: boolean;
   /** An element marked `data-avoid-floating` is (even partly) on screen. */
   avoidOnScreen: boolean;
-  /** The real WhatsApp number is configured (WHATSAPP_READY). */
-  whatsappReady: boolean;
-  /** The AI chat panel is open — its launcher then stays, so the visitor can close it. */
+  /** The launcher's menu or the AI chat panel is open — the launcher then stays, so the
+   *  visitor can close it. */
   chatOpen?: boolean;
 };
 
-export type FloatingButtons = { agent: boolean; whatsapp: boolean };
-
-/** Pure rule: which floating buttons to show. */
-export function floatingButtons(i: FloatingInput): FloatingButtons {
-  if (hideFloatingOn(i.pathname)) return { agent: false, whatsapp: false };
-  if (i.isMobile) {
-    // One floating action on a phone; it steps aside while the form is on screen.
-    return { agent: !i.avoidOnScreen || Boolean(i.chatOpen), whatsapp: false };
-  }
-  return { agent: true, whatsapp: i.whatsappReady };
+/** Pure rule: does the ONE floating launcher (AI chat + WhatsApp menu) show? */
+export function floatingLauncher(i: FloatingInput): boolean {
+  if (hideFloatingOn(i.pathname)) return false;
+  // On a phone it steps aside while the form / plan cards are on screen (R-464, R-1495).
+  if (i.isMobile) return !i.avoidOnScreen || Boolean(i.chatOpen);
+  return true;
 }
 
 /** True below 980px. False on the server and before mount (desktop = the old behaviour). */

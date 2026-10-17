@@ -4,6 +4,7 @@
  * (left 22 + maxWidth 360, wider than the screen) — covered the bottom of every page, on
  * /checkout the Pay button too. The rule: nothing floats on /checkout and /done, the launcher
  * is a 48px icon below 980px, and the consent banner fits the phone with a 12px gutter.
+ * R-1498 (17 Oct 2026): the launcher and the WhatsApp pill became ONE launcher with a menu.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -31,14 +32,16 @@ describe("floating boxes on a phone", () => {
   const chat = read("src/site/components/agent/AgentChat.tsx");
   const chrome = read("src/site/components/chrome/Chrome.tsx");
 
-  it("AI chat launcher and WhatsApp pill both step aside on /checkout and /done", () => {
+  it("the one floating launcher (AI chat + WhatsApp menu) steps aside on /checkout and /done", () => {
     expect(chat).toMatch(/if \(hideFloatingOn\(pathname\)\) return null;/);
-    // R-464: both go through the shared floatingButtons() rule, which starts with hideFloatingOn.
-    expect(chrome).toMatch(/floatingButtons\(\{ pathname, isMobile, avoidOnScreen: false, whatsappReady: WHATSAPP_READY \}\)\.whatsapp/);
+    // R-1498: no separate floating WhatsApp pill any more — WhatsApp sits in the launcher menu.
+    expect(chrome).not.toMatch(/floating-wa/);
+    expect(chat).toMatch(/floatingLauncher\(\{ pathname, isMobile, avoidOnScreen,/);
   });
 
-  it("the AI launcher becomes a 48px icon below 980px and keeps its accessible name", () => {
-    expect(chat).toMatch(/aria-label="Talk to our live AI sales agent"/);
+  it("the launcher becomes a 48px icon below 980px and keeps its accessible name", () => {
+    expect(chat).toMatch(/aria-label=\{launcherName\}/);
+    expect(chat).toMatch(/"Talk to us: AI sales agent or WhatsApp"/);
     expect(chat).toMatch(/@media \(max-width: 979px\)[\s\S]*\.agent-launcher \{[^}]*width: 48px; height: 48px;/);
     expect(chat).toMatch(/\.agent-launcher-text, \.agent-launcher-dot \{ display: none; \}/);
     // position/size must not sit in the inline style, or it beats the media query
