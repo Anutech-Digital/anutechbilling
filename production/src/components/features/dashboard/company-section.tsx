@@ -116,7 +116,7 @@ function FunctionCard({ title, children }: { title: string; children: React.Reac
    skeleton of the same shape, instead of popping in later and pushing the page down (R-134:
    the UI agent measured the Dashboard's layout shift at 1.07, "poor" is anything over 0.25). */
 const SHAPE: Array<[string, Array<[string, boolean]>]> = [
-  ["Growth", [["New leads", false], ["From the website", true], ["Trials started", true]]],
+  ["Growth", [["Leads added", true], ["From the website", true], ["Trials started", true]]],
   ["Sales", [["Won this month", true], ["Pipeline", true]]],
   ["Money", [["Invoiced", true], ["Collected", false], ["Still owed (invoices)", true], ["Overdue invoices", false]]],
   ["Customers & Ops", [["New customers", false], ["Monthly revenue (MRR)", true], ["Renewals in 30 days", true], ["Open tickets", false], ["Waiting to activate", false]]],
@@ -181,8 +181,11 @@ function CompanyCards() {
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <FunctionCard title="Growth">
-          <Metric href="/lead-gen" label="New leads" value={growth?.newLeads ?? null}
-            {...state(leads)} />
+          {/* R-1475: was "New leads" — it counts leads ADDED this month in any stage (the
+              sum of /lead-gen's channel rows), not the "New" stage or the sidebar's "All
+              leads"; Pawan read three different counts as one list. The label says which. */}
+          <Metric href="/lead-gen" label="Leads added" value={growth?.newLeads ?? null}
+            hint="This month, any stage" {...state(leads)} />
           <Metric href="/lead-gen" label="From the website" value={growth?.fromWebsite ?? null}
             hint="Enquiry, buy and trial forms" {...state(leads)} />
           <Metric href="/subscriptions" label="Trials started" value={trialsStarted} withHint
