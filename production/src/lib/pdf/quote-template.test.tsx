@@ -67,7 +67,7 @@ describe("template = proforma", () => {
     expect(t).toContain("HDFC Bank");
     expect(t).toContain("50200012345678");
     expect(t).toContain("HDFC0001234");
-    expect(t).toContain("Due by");
+    expect(t).toContain("Payment due by this date");
     expect(t).toContain("50% advance, balance on delivery.");
   });
 
@@ -94,6 +94,25 @@ describe("template = proforma", () => {
       />,
     );
     expect(container.querySelector("a[href='https://app.example.in/quote/Q-1/accept?t=abc']")).toBeTruthy();
+  });
+});
+
+describe("paid quote — proforma bhi maange to paise maangne wali koi line nahi", () => {
+  it("Valid until / due / pay link / Net-7 / proforma line sab chhupe", () => {
+    const { container } = render(
+      <QuotePDF
+        isPaid template="proforma" bank={BANK} payLinkUrl="https://app.example.in/quote/Q-1/accept?t=abc"
+        tenantName="Demo Co" quoteId="Q-1" customerName="Acme" validityDays={14}
+        lineItems={lines} subtotal={2000} discountPct={0} discount={0} taxable={2000} taxRate={18} tax={360} total={2360}
+        interState={false} billingCycle="yearly"
+      />,
+    );
+    const t = container.textContent ?? "";
+    expect(t).toContain("Paid order");
+    for (const s of ["Valid until", "Payment due by", "Net 7 days", "Quote validity", "Validity:", "Proforma", PROFORMA_NOTICE, "pay online", "50200012345678"]) {
+      expect(t, s).not.toContain(s);
+    }
+    expect(container.querySelector("a")).toBeNull();
   });
 });
 

@@ -591,7 +591,7 @@ export function QuotePDF(props: QuotePDFProps) {
             {/* R-034: an expiry on a document the customer has already paid reads as
                 "you still have to act". Only an open offer has a validity window. */}
             {!isPaid && (
-              <Text style={s.quoteDate}>{proforma ? "Due by" : "Valid until"}: {formatDate(expires)}</Text>
+              <Text style={s.quoteDate}>Valid until: {formatDate(expires)}{proforma ? " · Payment due by this date" : ""}</Text>
             )}
             {extensionTitle ? (
               <Text style={s.renewalStamp}>{extensionTitle.toUpperCase()}</Text>
