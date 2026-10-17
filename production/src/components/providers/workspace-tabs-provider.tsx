@@ -39,7 +39,7 @@ import {
   type TabsState, type TabsAction, type WorkspaceTab,
 } from "@/lib/workspace/tabs";
 import {
-  seekTo, resolvePopState, historyOpFor,
+  seekTo, resolvePopState, historyOpFor, isRouterHistoryEntry,
   type TabHistory,
 } from "@/lib/workspace/history";
 import { recordAddress, urlForTabSwitch } from "@/lib/workspace/address-sync";
@@ -214,7 +214,11 @@ export function WorkspaceTabsProvider({ children }: { children: React.ReactNode 
 
   // ── Browser Back / Forward ──────────────────────────────────────────────
   React.useEffect(() => {
-    const onPop = () => {
+    const onPop = (e: PopStateEvent) => {
+      // R-1506: a `#section` link (or Back between two of them) is the browser scrolling within
+      // the page, not a router step. Replacing the route here stripped the hash and threw the
+      // page back to the top — every in-page button on the website "flickered and did nothing".
+      if (!isRouterHistoryEntry(e.state)) return;
       const url = window.location.pathname + window.location.search;
       const outcome = resolvePopState(url, stateRef.current.activeId, historiesRef.current);
 
@@ -233,7 +237,9 @@ export function WorkspaceTabsProvider({ children }: { children: React.ReactNode 
         const moved = seekTo(target, outcome.url);
         return moved ? { ...h, [outcome.tabId]: moved } : h;
       });
-      router.replace(outcome.url as never);
+      // Keep the #fragment: a <Link href="/x#y"> entry carries one, and dropping it here
+      // sends the page to the top instead of to the section.
+      router.replace((outcome.url + window.location.hash) as never);
     };
 
     window.addEventListener("popstate", onPop);

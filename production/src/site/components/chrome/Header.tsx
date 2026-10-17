@@ -73,7 +73,7 @@ const MENUS: readonly Menu[] = [
     cols: [
       [
         { label: "Shared hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
-        { label: "Full specification", note: "All 14 rows, nothing hidden", href: "/hosting#specs" },
+        { label: "Full specification", note: "Storage, sites, bandwidth per plan", href: "/hosting#specs" },
         { label: "Migration desk", note: "Free, done by us", href: "/contact" },
       ],
       [

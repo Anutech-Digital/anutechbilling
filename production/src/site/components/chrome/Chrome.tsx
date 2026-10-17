@@ -122,7 +122,7 @@ const FOOTER_COLS = [
   { title: "DOMAINS", links: [["Search a domain", "/domains"], ["Rate card", "/domains#rates"], ["Transfer in", "/domains"], ["All prices", "/rates"]] },
   { title: "HOSTING", links: [["Shared hosting", "/hosting"], ["Full specification", "/hosting#specs"], ["Client area", CLIENT_AREA_URL], ["System status", "/status"]] },
   { title: "EMAIL & SECURITY", links: [["Compare editions", "/email/compare-editions"], ["Business email", "/email"], ["Google Workspace pricing", "/google-workspace/pricing"], ["Microsoft 365", "/quote"], ["SSL certificates", "/ssl"]] },
-  { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#modules"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
+  { title: "RESELLEROS", links: [["What it is", "/reselleros"], ["Modules", "/reselleros#features"], ["Interactive demo", "/reselleros"], ["Pricing — free in beta", "/reselleros#pricing"]] },
   { title: "COMPANY", links: [["About Anutech", "/why-us"], ["Reseller program", "/reseller"], ["Why us", "/why-us"], ["Support", "/contact"], ["Get a quote", "/quote"], ["ResellerOS login", "/login"],["Anutech Digital terms", "/terms-and-conditions"], ["Anutech Digital privacy", "/privacy-policy"], ["Refunds", "/refund"]] },
 ] as const;
 
