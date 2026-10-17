@@ -39,6 +39,10 @@ insert into public.leads (id, tenant_id, company, stage) values
   ('NAVT-A-L4', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'A deal 2',  'trial'),
   ('NAVT-A-L5', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'A won',     'won'),
   ('NAVT-A-L6', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'A lost',    'lost');
+-- R-1475: junk never counts on the pages' "All leads" / "All deals", so not on the badges.
+insert into public.leads (id, tenant_id, company, stage, is_junk) values
+  ('NAVT-A-J1', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'A junk',    'new',  true),
+  ('NAVT-A-J2', 'aaaaaaaa-0000-0000-0000-0000000000c1', 'A junk 2',  'won',  true);
 
 insert into public.inbound_emails (tenant_id, message_id, status, lead_id) values
   ('aaaaaaaa-0000-0000-0000-0000000000c1', 'navt-a-1', 'received', null),         -- counts
@@ -91,9 +95,10 @@ declare
   v_eod timestamptz := (date_trunc('day', now() at time zone 'Asia/Kolkata') + interval '1 day') at time zone 'Asia/Kolkata';
 begin
   -- 1 + 3: known answers for A (B's rows would make every one of these off by one)
-  if (b->>'leads')::int     <> 2 then raise exception 'FAIL 1 leads: %', b; end if;
+  -- R-1475: leads = New + Contacted + Lost (L1, L2, L6); deals = Quote … Won + Lost (L3–L6); no junk
+  if (b->>'leads')::int     <> 3 then raise exception 'FAIL 1 leads: %', b; end if;
   if (b->>'enquiries')::int <> 1 then raise exception 'FAIL 1 enquiries: %', b; end if;
-  if (b->>'deals')::int     <> 2 then raise exception 'FAIL 1 deals: %', b; end if;
+  if (b->>'deals')::int     <> 4 then raise exception 'FAIL 1 deals: %', b; end if;
   if (b->>'tasks')::int     <> 1 then raise exception 'FAIL 1 tasks: %', b; end if;
   if (b->>'renewals')::int  <> 1 then raise exception 'FAIL 1 renewals: %', b; end if;
   if (b->>'invoices')::int  <> 2 then raise exception 'FAIL 1 invoices: %', b; end if;
@@ -102,9 +107,9 @@ begin
   if (b->>'quotes')::int    <> 2 then raise exception 'FAIL 4 quotes (both tiers): %', b; end if;
 
   -- 2: the RPC equals the old hook's queries run directly under this caller's RLS
-  if (b->>'leads')::int     <> (select count(*) from public.leads where stage in ('new','contact'))           then raise exception 'FAIL 2 leads';     end if;
+  if (b->>'leads')::int     <> (select count(*) from public.leads where stage in ('new','contact','lost') and not is_junk) then raise exception 'FAIL 2 leads';     end if;
   if (b->>'enquiries')::int <> (select count(*) from public.inbound_emails where status = 'received' and lead_id is null) then raise exception 'FAIL 2 enquiries'; end if;
-  if (b->>'deals')::int     <> (select count(*) from public.leads where stage in ('quote','demo','trial'))    then raise exception 'FAIL 2 deals';     end if;
+  if (b->>'deals')::int     <> (select count(*) from public.leads where stage in ('quote','demo','trial','won','lost') and not is_junk) then raise exception 'FAIL 2 deals';     end if;
   if (b->>'tasks')::int     <> (select count(*) from public.tasks where status = 'pending' and due_at < v_eod) then raise exception 'FAIL 2 tasks';     end if;
   if (b->>'renewals')::int  <> (select count(*) from public.subscriptions where status = 'active' and renewal_date <= ((now() at time zone 'UTC') + interval '720 hours')::date) then raise exception 'FAIL 2 renewals'; end if;
   if (b->>'invoices')::int  <> (select count(*) from public.invoices where status in ('pending','overdue'))    then raise exception 'FAIL 2 invoices';  end if;

@@ -15,6 +15,7 @@
  */
 import { rupee } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
+import { subscriptionDue } from "@/lib/accounting/receivables-due";
 
 export interface RiskResult {
   score: number;
@@ -25,7 +26,8 @@ export interface RiskResult {
   reasons: string[];
 }
 
-type RiskFields = Pick<Subscription, "used" | "seats" | "outstanding_amount" | "plan" | "used_synced_at">;
+type RiskFields = Pick<Subscription, "used" | "seats" | "outstanding_amount" | "plan" | "used_synced_at">
+  & Partial<Pick<Subscription, "written_off_at">>;
 
 export function renewalRisk(sub: RiskFields): RiskResult {
   let score = 0;
@@ -47,9 +49,14 @@ export function renewalRisk(sub: RiskFields): RiskResult {
 
   // Signal 2: Unpaid balance on the current term — a customer already behind on
   // payment is far more likely to lapse at renewal.
-  if ((sub.outstanding_amount ?? 0) > 0) {
+  /* R-1473: the same due the dashboard Collections card and Companies add up — a
+     written-off balance is no longer "unpaid" here either (lib/accounting/receivables-due). */
+  const due = subscriptionDue({
+    customer_id: null, outstanding_amount: sub.outstanding_amount, written_off_at: sub.written_off_at,
+  });
+  if (due > 0) {
     score += 35;
-    reasons.push(`Unpaid balance (${rupee(sub.outstanding_amount ?? 0, { compact: true })})`);
+    reasons.push(`Unpaid balance (${rupee(due, { compact: true })})`);
   }
 
   // Signal 3: Plan tier — lower tiers churn a little more.

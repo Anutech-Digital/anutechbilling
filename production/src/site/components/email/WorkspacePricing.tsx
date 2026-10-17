@@ -199,7 +199,8 @@ export function WorkspacePricing({ plans, head, intro }: {
 
       <div className="wp">
 
-      <div className="wp-cards" style={{ ["--n" as string]: shown.length }}>
+      {/* R-1495: on a phone the floating AI launcher steps aside while the plans are on screen. */}
+      <div className="wp-cards" data-avoid-floating="" style={{ ["--n" as string]: shown.length }}>
         {shown.map((p) => {
           const t = PLAN_TEXT[p.key];
           const rate = term === "annual" ? p.annual : p.monthly;
@@ -330,7 +331,8 @@ export function WorkspacePricing({ plans, head, intro }: {
 }
 
 const CSS = `
-.wp-root{--wp-blue:#0B57D0;--wp-blue-h:#0842A0;--wp-blue-soft:#D3E3FD;--wp-bg:#F0F4F9;--wp-ink:#1F1F1F;--wp-line:#C4C7C5;--wp-hair:#E1E3E1;--wp-muted:#444746;--wp-green:#146C2E;--wp-green-bg:#C4EED0;color:var(--wp-ink)}
+.wp-root{--wp-blue:#0B57D0;--wp-blue-h:#0842A0;--wp-blue-soft:#D3E3FD;--wp-bg:#F0F4F9;--wp-ink:#1F1F1F;--wp-line:#C4C7C5;--wp-hair:#E1E3E1;--wp-muted:#444746;--wp-green:#146C2E;--wp-green-bg:#C4EED0;color:var(--wp-ink);padding-bottom:calc(88px + env(safe-area-inset-bottom, 0px))}
+body:has(.consent-banner) .wp-root{padding-bottom:calc(200px + env(safe-area-inset-bottom, 0px))}
 .wp{background:var(--wp-bg);border-radius:28px;padding:24px;margin-top:18px}
 .wp-top{position:sticky;top:68px;z-index:30;background:#fff;padding:12px 4px;margin-inline:-4px;box-shadow:0 8px 12px -12px rgba(60,64,67,.35)}
 .anutech-site .wp-top h1{margin:10px 0 12px;font-size:clamp(26px,4vw,40px)}
@@ -346,18 +348,18 @@ const CSS = `
 .wp-users input{width:72px;height:40px;text-align:center;border:1px solid var(--wp-line);border-radius:10px;font:inherit;font-size:16px;font-weight:800}
 .wp-users button:focus-visible,.wp-users input:focus-visible,.wp-term button:focus-visible,.wp-faq summary:focus-visible,.wp-link:focus-visible{outline:3px solid var(--wp-blue);outline-offset:2px}
 .wp-fine{font-size:13px;color:var(--wp-muted);margin:10px 0 0}
-.wp-cards{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:16px;margin-top:22px;align-items:stretch}
+.wp-cards{display:grid;grid-template-columns:1fr;gap:16px;margin-top:22px;align-items:stretch}
 .wp-card{position:relative;background:#fff;border:1px solid var(--wp-hair);border-radius:24px;padding:24px 20px;display:flex;flex-direction:column;gap:10px}
 .wp-pop{border:2px solid var(--wp-blue);box-shadow:0 1px 3px rgba(60,64,67,.15),0 4px 8px 3px rgba(60,64,67,.1)}
 .wp-tag{position:absolute;top:-12px;left:20px;background:var(--wp-blue);color:#fff;font-size:12px;font-weight:800;border-radius:999px;padding:3px 12px}
 .wp-brand{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em;margin-bottom:-6px}
 .wp-table thead .wp-brand{font-size:12px;margin:0 0 2px}
-.wp-card h3{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+.wp-card h3{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
 .wp-for{margin:0;color:var(--wp-muted);font-size:14px;min-height:2.6em}
 .wp-price{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-height:48px}
-.wp-price b{font-size:36px;font-weight:600;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.wp-price b{font-size:30px;font-weight:600;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .wp-price span{color:var(--wp-muted);font-weight:600}
-.wp-price .wp-talk{font-size:28px}
+.wp-price .wp-talk{font-size:20px;line-height:1.2;letter-spacing:-.01em}
 .wp-price small{flex-basis:100%;color:var(--wp-muted);font-size:13px}
 .wp-total{margin:0;font-size:13px;color:var(--wp-muted);font-variant-numeric:tabular-nums}
 .wp-total b{color:var(--wp-ink)}
@@ -400,8 +402,11 @@ const CSS = `
 .wp-faq summary::after{content:"+";float:right;color:var(--wp-blue);font-size:20px;line-height:1}
 .wp-faq details[open] summary::after{content:"−"}
 .wp-faq p{margin:0;padding:0 18px 16px;color:var(--wp-muted)}
-@media(max-width:1000px){.wp-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:620px){.wp{padding:16px 12px;border-radius:20px}.wp-top{padding:8px 4px}.anutech-site .wp-top h1{margin:6px 0 8px;font-size:21px;letter-spacing:-.01em}.wp-controls{gap:8px}.wp-cards{grid-template-columns:1fr}.wp-icons{display:none!important}.wp-term-l small{font-size:10px;white-space:nowrap}.wp-term{gap:2px;padding:3px}.wp-long{display:none}.wp-short{display:inline}.wp-controls{flex-wrap:nowrap;justify-content:space-between}.wp-term button{padding:5px 9px;font-size:14px;min-height:42px;gap:5px}.wp-save{display:none}.wp-users{gap:4px}.wp-users-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.wp-users button{width:30px;height:36px}.wp-users input{width:42px;height:36px}.wp-for{min-height:0}
+/* R-1495: mobile-first plan grid - 1 column, 2 from 768px, all 4 in a row only from 1280px
+   (4 columns down to 1000px left each card a thin strip). Headings step up with the width. */
+@media(min-width:768px){.wp-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.wp-card h3{font-size:22px}.wp-price b{font-size:32px}.wp-price .wp-talk{font-size:22px}}
+@media(min-width:1280px){.wp-cards{grid-template-columns:repeat(var(--n,4),minmax(0,1fr))}.wp-card h3{font-size:24px}.wp-price b{font-size:36px}.wp-price .wp-talk{font-size:24px}}
+@media(max-width:620px){.wp{padding:16px 12px;border-radius:20px}.wp-top{padding:8px 4px}.anutech-site .wp-top h1{margin:6px 0 8px;font-size:21px;letter-spacing:-.01em}.wp-controls{gap:8px}.wp-icons{display:none!important}.wp-term-l small{font-size:10px;white-space:nowrap}.wp-term{gap:2px;padding:3px}.wp-long{display:none}.wp-short{display:inline}.wp-controls{flex-wrap:nowrap;justify-content:space-between}.wp-term button{padding:5px 9px;font-size:14px;min-height:42px;gap:5px}.wp-save{display:none}.wp-users{gap:4px}.wp-users-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.wp-users button{width:30px;height:36px}.wp-users input{width:42px;height:36px}.wp-for{min-height:0}
 .wp-pick{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:#fff;border:1px solid var(--wp-line);border-radius:999px;padding:4px;margin-bottom:12px}
 .wp-pick button{border:0;background:transparent;border-radius:999px;min-height:40px;font:inherit;font-size:13px;font-weight:700;color:var(--wp-muted);cursor:pointer}
 .wp-pick button.on{background:var(--wp-blue);color:#fff}

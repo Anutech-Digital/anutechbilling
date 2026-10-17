@@ -43,6 +43,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { PnlHeadline } from "@/components/features/accounting/pnl-headline";
 import { netProfitView } from "@/lib/accounting/pnl-bound";
+import { netFigure } from "@/lib/accounting/net-figure";
 import { ProjectMarginCard } from "@/components/features/accounting/project-margin-card";
 import { ProjectCostDialog } from "@/components/features/accounting/project-cost-dialog";
 import { ExpenseReportCard } from "@/components/features/accounting/expense-report-card";
@@ -636,8 +637,9 @@ export default function PnLPage() {
                       ofSalesPct: m.grossMarginPct,
                     },
                     {
-                      key: "net", group: "left", label: "Net profit",
-                      amount: Math.abs(m.netProfit ?? 0),
+                      // R-1486: signed, so a loss reads "Net loss −₹68,100" (was Math.abs + "Net profit").
+                      key: "net", group: "left", label: netFigure(m.netProfit ?? 0).label,
+                      amount: m.netProfit ?? 0,
                       hint: (m.netProfit ?? 0) < 0
                         ? "a LOSS — running costs exceeded the margin"
                         : "what the business actually kept",

@@ -17,6 +17,18 @@ import { rupee } from "@/lib/utils";
 import type { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import type { LeadCounts } from "@/lib/leads/list-page";
 import { leadTitle } from "@/lib/leads/display-name";
+import { dialable } from "@/lib/leads/call-queue";
+import type { Lead } from "@/lib/supabase/database.types";
+
+/**
+ * R-1476 (Pawan, 16 Oct 2026, Deals): the button read "Call DEMO" — the first word of the
+ * company label "DEMO · Prospect 5". You call a PERSON, so the label is the contact's first
+ * name; with no contact name it is a plain "Call now", never a fragment of the company.
+ */
+export function hotCallLabel(lead: { contact_name?: string | null }): string {
+  const first = (lead.contact_name ?? "").trim().split(/\s+/)[0];
+  return first ? `Call ${first}` : "Call now";
+}
 
 export interface LeadsHotCardProps {
   /** Quote / trial leads in the current list — lead_counts().list.hot (S40). */
@@ -26,11 +38,13 @@ export interface LeadsHotCardProps {
   currentUser: ReturnType<typeof useCurrentUser>["data"];
   tipsOpen: boolean;
   toggleTips: () => void;
+  /** R-1476: "Add phone number" opens the top lead so the number can be filled in. */
+  onOpenLead: (lead: Pick<Lead, "id">) => void;
 }
 
 /* S40: the count and the top lead come from the server, over the WHOLE list and not the
    page of it that is loaded — same rule as before: quote or trial, highest value first. */
-export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTips }: LeadsHotCardProps) {
+export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTips, onOpenLead }: LeadsHotCardProps) {
   // The new Insight band (KPI pills + pulse) already surfaces "Hot"
   // count at the top of the page. Showing this card with a "0 hot
   // leads" empty state is just noise. Render only when there's
@@ -39,15 +53,9 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
   // tenant info beyond the rep's individual book).
   if (hotCount === 0) return null;
 
-  const handleCallTop = () => {
-    if (!topHot) { toast.info("No hot leads right now"); return; }
-    if (!topHot.contact_phone) {
-      toast.error(`${leadTitle(topHot).label} has no phone on record.`, { description: "Open the lead and add a phone number, then call." });
-      return;
-    }
-    // tel: schemes ignore spaces but be defensive
-    window.location.href = `tel:${topHot.contact_phone.replace(/\s+/g, "")}`;
-  };
+  /* R-1476: same rule as R-1426's call queue — a number that cannot be dialled (none, "NA",
+     five digits) gets no Call button that can only fail (CLAUDE.md §24); it gets the fix. */
+  const num = topHot ? dialable(topHot.contact_phone) : null;
 
   const handleSendNudge = () => {
     if (!topHot) { toast.info("No hot leads right now"); return; }
@@ -75,9 +83,22 @@ export function LeadsHotCard({ hotCount, topHot, currentUser, tipsOpen, toggleTi
           title="Lead intelligence · Today"
           actions={
             <>
-              <Button size="sm" variant="primary" icon="phone" disabled={!topHot} onClick={handleCallTop}>
-                {topHot ? `Call ${leadTitle(topHot).label.split(/\s+/)[0]}` : "Call top lead"}
-              </Button>
+              {!topHot ? (
+                <Button size="sm" variant="primary" icon="phone" disabled>Call top lead</Button>
+              ) : num ? (
+                <Button size="sm" variant="primary" icon="phone" asChild>
+                  <a href={`tel:+${num}`}>{hotCallLabel(topHot)}</a>
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  icon="edit"
+                  onClick={() => onOpenLead(topHot)}
+                  title={`No usable phone number on this lead${topHot.contact_phone ? ` ("${topHot.contact_phone}")` : ""} — open it and add a 10-digit number to call.`}
+                >
+                  Add phone number
+                </Button>
+              )}
               <Button size="sm" icon="mail" disabled={!topHot} onClick={handleSendNudge}>Send nudge</Button>
             </>
           }

@@ -13,6 +13,8 @@
  * string hash — see domain-search.real.test.ts, which pins that regression).
  */
 
+import { WHATSAPP_URL } from "@/site/lib/config";
+
 /** Default TLDs to check — the platform prices whatever it recognises. */
 export const DEFAULT_TLDS = ["in", "com", "co.in", "org", "net"];
 
@@ -33,6 +35,19 @@ export type SearchOutcome =
 
 /** The one message shown when the platform can't answer. Honest, and offers a way on. */
 export const UNREACHABLE = "Couldn't check right now — please try again, or WhatsApp us.";
+
+/**
+ * R-1494: where a visitor goes when the check fails — ONE place, so the /domains page and
+ * the always-on dock offer the same way on (CLAUDE.md §24: a block names the next step).
+ * Staging answered 502 on every search (no registrar configured there) and the /domains
+ * page showed only red text — a dead end in the buying flow.
+ */
+export function domainHelpLinks(name: string): { quoteHref: string; whatsappHref: string } {
+  return {
+    quoteHref: "/quote",
+    whatsappHref: `${WHATSAPP_URL}?text=${encodeURIComponent(`Hi — is ${name} available? What would it cost?`)}`,
+  };
+}
 
 /** Strip a typed name down to what a domain label may contain. */
 export function normaliseName(raw: string): string {

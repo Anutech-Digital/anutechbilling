@@ -20,6 +20,8 @@
  * floating steps.
  */
 
+import { netFigure } from "./net-figure";
+
 export interface WaterfallInput {
   key: string;
   label: string;
@@ -194,6 +196,10 @@ export function pnlWaterfall(p: {
     },
     { key: "gross", label: "Gross margin", delta: 0, isTotal: true, hint: "What resale earns" },
     { key: "opex", label: "Running costs", delta: -p.expenses, hint: "Salaries, hosting, office" },
-    { key: "net", label: "Net profit", delta: 0, isTotal: true, hint: "What the business kept" },
+    // R-1486: a loss month names this bar "Net loss" (the bar text carries the minus).
+    {
+      key: "net", label: netFigure(p.netProfit).label, delta: 0, isTotal: true,
+      hint: p.netProfit < 0 ? "What the business lost" : "What the business kept",
+    },
   ];
 }

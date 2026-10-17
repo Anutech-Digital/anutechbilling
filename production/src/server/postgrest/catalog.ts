@@ -15,6 +15,9 @@ export interface Column {
   type: string;
   hasDefault: boolean;
   generated: boolean;
+  /** R-1496: may this browser role SELECT the column? Absent = yes. False for a column-level
+   *  revoke such as employees.pin_hash (R-833) — a write must not RETURN such a column. */
+  readable?: { authenticated: boolean; anon: boolean };
 }
 
 export interface Table {
@@ -67,7 +70,11 @@ async function load(): Promise<Catalog> {
     const cols = await tx.$queryRawUnsafe<Row[]>(`
       select c.relname as table, case c.relkind when 'v' then 'view' when 'm' then 'view' else 'table' end as kind,
              a.attname as name, format_type(a.atttypid, a.atttypmod) as type,
-             a.atthasdef as has_default, (a.attgenerated <> '' or a.attidentity = 'a') as generated
+             a.atthasdef as has_default, (a.attgenerated <> '' or a.attidentity = 'a') as generated,
+             case when exists (select 1 from pg_roles where rolname = 'authenticated')
+                  then has_column_privilege('authenticated', c.oid, a.attnum, 'SELECT') else true end as sel_auth,
+             case when exists (select 1 from pg_roles where rolname = 'anon')
+                  then has_column_privilege('anon', c.oid, a.attnum, 'SELECT') else true end as sel_anon
         from pg_class c join pg_attribute a on a.attrelid = c.oid
        where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p','v','m')
          and a.attnum > 0 and not a.attisdropped
@@ -109,6 +116,7 @@ async function load(): Promise<Catalog> {
         type: r.type as string,
         hasDefault: Boolean(r.has_default),
         generated: Boolean(r.generated),
+        readable: { authenticated: r.sel_auth !== false, anon: r.sel_anon !== false },
       });
     }
 

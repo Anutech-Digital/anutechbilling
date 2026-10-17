@@ -32,5 +32,16 @@ export function apiNeedsMfaCode(pathname: string): boolean {
   return !OPEN_PREFIXES.some((p) => path.startsWith(p));
 }
 
+/**
+ * R-1496: what the data gateway answers when the database refused a request (42501) only
+ * because this session has not passed the second sign-in step (R-731: an MFA-enrolled user
+ * whose session is not aal2 has no workspace). Without it the browser showed "belongs to
+ * another workspace, or your role doesn't allow it" — the wrong reason and the wrong fix.
+ * lib/errors/toast-error.ts recognises it by MFA_PENDING_MARKER.
+ */
+export const MFA_PENDING_MARKER = "Doosra sign-in step baaki";
+export const MFA_PENDING_DATA_REFUSAL =
+  `${MFA_PENDING_MARKER} — sign out karke dobara login karo aur authenticator app ka code daalo.`;
+
 export const MFA_API_REFUSAL =
   "Enter the code from your authenticator app first. Open /mfa, type the 6-digit code, then try again.";

@@ -11,7 +11,7 @@
  */
 "use client";
 
-import { istGreeting } from "@/lib/dates/ist";
+import { DashboardGreeting } from "./header-greeting";
 import * as React from "react";
 import { drillHref } from "@/lib/navigation/drilldown";
 import Link from "next/link";
@@ -49,7 +49,7 @@ import { PriorityActionHub } from "@/components/features/dashboard/priority-acti
 import { DealsStrip } from "@/components/features/deals/deals-strip";
 import { CompanySection } from "@/components/features/dashboard/company-section";
 import { useDealRows } from "@/lib/queries/deals";
-import { summarizeDealStrip } from "@/lib/deals/pipeline-summary";
+import { summarizeDealStrip, dashboardPipeline } from "@/lib/deals/pipeline-summary";
 import { canSeeDeals } from "@/lib/deals/access";
 import { PendingJoinRequestsCard } from "@/components/features/team/pending-join-requests-card";
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +57,7 @@ import { LoadErrorBanner } from "@/components/shared/load-error";
 import { leadTitle } from "@/lib/leads/display-name";
 import { LEAD_STAGES } from "@/lib/leads/stage-meta";
 import { COPY } from "@/lib/copy";
+import { toChaseSummary, chaseNote } from "@/lib/accounting/receivables-due";
 
 // ============================================================
 // Helpers
@@ -134,23 +135,21 @@ export default function DashboardPage() {
     try { localStorage.setItem(key, JSON.stringify(order)); } catch {}
   };
 
-  // Time-aware greeting + date
-  const now = new Date();
-  // R-178: by the IST hour on server AND browser (getHours() was UTC on the server).
-  const greeting = istGreeting(now);
-  const dateLabel = now.toLocaleString("en-IN", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata",
-  });
+  // Header date + greeting: <DashboardGreeting> reads the clock in the browser only (R-1472 —
+  // a render-time new Date() here was baked into the build-time static HTML).
   // null (not "there") while the user is loading or has no name — the headline
   // then reads a clean "Good morning." instead of an impersonal "…, there."
   const firstName = currentUser?.fullName?.split(/\s+/)[0] ?? null;
   const workspaceName = currentUser?.tenantName ?? "your workspace";
 
   // Aggregates from real data
-  /* Open = not won, not lost (junk excluded — useLeadStageTotals). */
-  const openStageTotals = LEAD_STAGES.filter((s) => s.id !== "won").map((s) => leads?.[s.id]);
-  const activeCount     = openStageTotals.reduce((n, t) => n + (t?.count ?? 0), 0);
-  const totalPipeline   = openStageTotals.reduce((n, t) => n + (t?.value ?? 0), 0);
+  /* R-1474: ONE pipeline for the whole dashboard — the /deals definition (open = quote / demo /
+     trial at leads.value, Won on its own line, New / Contacted are leads not pipeline). The top
+     card, the header line, Pipeline by stage (header, rows, sum) and Today's focus all read
+     `pipeline` (lib/deals/pipeline-summary.ts#dashboardPipeline); they used to show 4 totals. */
+  const pipeline        = dashboardPipeline(leads);
+  const activeCount     = pipeline.open.count;
+  const totalPipeline   = pipeline.open.value;
   const newToday        = dashLeads?.newToday ?? 0;
   const totalCustomers  = customers?.length ?? 0;
   const acceptedQuotes  = (quotes ?? []).filter((q) => q.status === "accepted");
@@ -184,17 +183,16 @@ export default function DashboardPage() {
   const closedTrend = dealStrip
     ? `${closedThisMonthCount} deal${closedThisMonthCount === 1 ? "" : "s"} won`
     : `${closedThisMonthCount} quote${closedThisMonthCount === 1 ? "" : "s"} accepted`;
-  const moneyPipeline = dealStrip ? dealStrip.pipeline.value : totalPipeline;
-  const moneyPipelineTrend = dealStrip
-    ? `${dealStrip.pipeline.count} open deal${dealStrip.pipeline.count === 1 ? "" : "s"}`
-    : `${activeCount} active deals`;
+  const moneyPipeline = totalPipeline;
+  const moneyPipelineTrend = `${activeCount} open deal${activeCount === 1 ? "" : "s"}`;
 
   // "Chase the cash" — money owed to us. Real receivables = subscription dues +
   // project invoiced-but-unpaid (same basis as the Customers list / Aging), not
   // just accepted-quote balances (which missed projects entirely).
-  const subsOutstanding = (subscriptions ?? []).reduce((s, x) => s + (x.outstanding_amount ?? 0), 0);
-  const projectReceivable = Object.values(projRecv).reduce((s, v) => s + v, 0);
-  const toCollect = subsOutstanding + projectReceivable;
+  /* R-1473: one rule with Companies "To collect" and the Renewals "Unpaid" badge
+     (lib/accounting/receivables-due) — written-off dues were counted here and nowhere else. */
+  const chase = toChaseSummary(subscriptions ?? [], projRecv);
+  const toCollect = chase.total;
   const overdueFollowups = dashLeads?.overdueFollowups ?? 0;
 
   // Subscription aggregates — sum MRR across active subs only
@@ -242,9 +240,9 @@ export default function DashboardPage() {
     },
     activeCount > 0 && {
       icon: "target", tone: "indigo",
-      title: `${activeCount} active leads in pipeline`,
+      title: `${activeCount} open deal${activeCount === 1 ? "" : "s"} in pipeline`,
       note: `${rupee(totalPipeline, { compact: true })} pipeline value`,
-      action: "View", cta: drillHref("leadsActive"),
+      action: "View", cta: dealsAllowed ? drillHref("dealsOpen") : drillHref("leadsActive"),
     },
     draftQuotes > 0 && {
       icon: "file", tone: "amber",
@@ -398,10 +396,12 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {LEAD_STAGES.map((s) => {
-              const stageCount = leads?.[s.id]?.count ?? 0;
-              const value = leads?.[s.id]?.value ?? 0;
-              const maxValue = Math.max(1, ...LEAD_STAGES.map((stg) => leads?.[stg.id]?.value ?? 0));
+            {/* R-1474: only the open deal stages — these rows add up to the header. */}
+            {pipeline.stages.map((row) => {
+              const s = LEAD_STAGES.find((m) => m.id === row.stage)!;
+              const stageCount = row.count;
+              const value = row.value;
+              const maxValue = Math.max(1, ...pipeline.stages.map((r) => r.value));
               const pct = (value / maxValue) * 100;
               return (
                 <div key={s.id} className="grid grid-cols-[120px_1fr_90px_36px] items-center gap-3">
@@ -416,6 +416,15 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+            {/* Won sits outside the open total — a count only: won ₹ is revenue only once paid (R-375). */}
+            {pipeline.won.count > 0 && (
+              <div className="flex items-center justify-between gap-3 border-t border-hairline pt-2 text-xs text-ink-3">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald" />Won · not in pipeline
+                </span>
+                <span className="tabular-nums">{pipeline.won.count}</span>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -425,8 +434,8 @@ export default function DashboardPage() {
         <div className="space-y-1">
           {toCollect > 0 && (
             <ChaseRow icon="rupee" tone="emerald" title={`${rupee(toCollect, { compact: true })} to collect`}
-              note={projectReceivable > 0 ? `subscription dues + ${rupee(projectReceivable, { compact: true })} project` : "subscription dues + project invoices"}
-              onClick={() => router.push("/accounting/aging" as any)} />
+              note={chaseNote(chase)}
+              onClick={() => router.push(drillHref("customersUnpaid") as never)} />
           )}
           {overdueFollowups > 0 && (
             <ChaseRow icon="phone" tone="rose" title={`${overdueFollowups} follow-up${overdueFollowups === 1 ? "" : "s"} overdue`}
@@ -545,14 +554,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-end justify-between gap-3 flex-wrap mb-6">
         <div>
-          {/* suppressHydrationWarning: only for a render that straddles a minute boundary
-              (e.g. 11:59:59 on the server, 12:00:00 in the browser) — R-178. */}
-          <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1" suppressHydrationWarning>
-            {dateLabel}
-          </p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight" suppressHydrationWarning>
-            {greeting}{firstName ? `, ${firstName}` : ""}.
-          </h1>
+          <DashboardGreeting firstName={firstName} />
           {/* Money one-liner — the greeting row also carries business signal so
               the seller sees "how am I doing" before scanning anything. */}
           <p className="text-sm text-ink-3 mt-1">
@@ -634,6 +636,7 @@ export default function DashboardPage() {
         expiringRenewalsValue={urgentRenewals.reduce((s, r) => s + (r.sub.mrr ?? 0) * 12, 0)}
         draftQuotesCount={draftQuotes}
         pendingCollectValue={toCollect}
+        pendingCollectNote={chaseNote(chase)}
       />
 
       {/* KPI — money-first, 2-tier. The three ₹ metrics get big coloured tiles

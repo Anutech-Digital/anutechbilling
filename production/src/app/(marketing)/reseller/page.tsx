@@ -4,7 +4,11 @@ import { MarginCalculator } from "@/site/components/reseller/MarginCalculator";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { SWITCH_REASONS } from "@/site/lib/data/copy";
 
-export const metadata: Metadata = { title: "Wholesale reseller program" };
+export const metadata: Metadata = {
+  title: "Wholesale reseller program",
+  description:
+    "Wholesale rates you can read before you join. No advance deposit, no volume slabs, no USD surprise at renewal.",
+};
 
 export default function ResellerPage() {
   return (

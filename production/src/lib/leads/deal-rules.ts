@@ -16,6 +16,7 @@
 import type { Lead } from "@/lib/supabase/database.types";
 import { rowStageOptions } from "@/lib/leads/stage-options";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
+import { toIstDate } from "@/lib/dates/ist";
 
 type Stage = Lead["stage"];
 
@@ -42,6 +43,20 @@ export function closeDateShort(iso: string): string {
   const [, m, d] = iso.split("-").map(Number);
   if (!m || !d) return iso;
   return `${d} ${MONTHS[m - 1]}`;
+}
+
+/**
+ * R-1477: the IST date a Won deal was won — null for any other stage. A Won deal's
+ * `expected_close_date` is only the forecast it carried (often still in the future), so the
+ * card and detail page show this instead. `stage_changed_at` is set by trigger on every stage
+ * move; deals won before that column existed fall back to `updated_at`.
+ */
+export function wonOnDate(
+  l: Pick<Lead, "stage" | "stage_changed_at" | "updated_at">,
+): string | null {
+  if (l.stage !== "won") return null;
+  const at = l.stage_changed_at ?? l.updated_at;
+  return at ? toIstDate(at) : null;
 }
 
 /** An OPEN deal whose expected close date is before today (IST). Won / lost are finished. */

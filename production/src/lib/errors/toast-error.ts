@@ -31,6 +31,7 @@
  */
 
 import { toast } from "sonner";
+import { MFA_PENDING_MARKER } from "@/lib/auth/mfa-gate";
 
 export interface ToastErrorAction {
   label: string;
@@ -68,6 +69,13 @@ const PLUMBING: ReadonlyArray<{
   message: string;
   description: string;
 }> = [
+  {
+    // R-1496: the gateway's answer when only the second sign-in step is missing (R-731).
+    // Checked first — it is a 42501 too, but "another workspace" would be the wrong fix.
+    test: new RegExp(MFA_PENDING_MARKER, "i"),
+    message: `${MFA_PENDING_MARKER}.`,
+    description: "Sign out karke dobara login karo aur authenticator app ka 6-digit code daalo — phir dobara save karo. Abhi kuch save nahi hua.",
+  },
   {
     test: /duplicate key value|already exists.*constraint|violates unique constraint/i,
     message: "This is already saved.",

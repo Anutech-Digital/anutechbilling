@@ -32,7 +32,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { domainSans as manrope, domainSerif as serif, domainMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { searchDomains, normaliseName, type DomainResult } from "@/site/lib/domain-search";
+import { searchDomains, normaliseName, domainHelpLinks, type DomainResult } from "@/site/lib/domain-search";
 import { TLDS, type Tld } from "@/site/lib/data/catalog";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
@@ -81,6 +81,9 @@ export function DomainLanding() {
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState<DomainResult[]>([]);
   const [searchErr, setSearchErr] = useState<string | null>(null);
+  /* R-1494: the name whose check FAILED — the error then offers a way on for it. Null for
+     "Type a name", which needs no help links. */
+  const [helpFor, setHelpFor] = useState<string | null>(null);
   // ── offer selection ─────────────────────────────────────────────────────
   const [hostingOn, setHostingOn] = useState(true);
   const [planName, setPlanName] = useState(ANCHOR_TIER);
@@ -107,12 +110,12 @@ export function DomainLanding() {
 
   async function runSearch(seed?: string) {
     const base = normaliseName(seed ?? q);
-    if (!base) { setSearchErr("Type a name to check."); return; }
+    if (!base) { setSearchErr("Type a name to check."); setHelpFor(null); return; }
     if (seed) setQ(seed);
-    setLoading(true); setSearchErr(null); setSearched(true);
+    setLoading(true); setSearchErr(null); setHelpFor(null); setSearched(true);
     const out = await searchDomains(base);
     setLoading(false);
-    if (!out.ok) { setSearchErr(out.message); setResults([]); return; }
+    if (!out.ok) { setSearchErr(out.message); setHelpFor(base); setResults([]); return; }
     setResults(out.domains);
     // If the picked TLD isn't among the checked set, fall back to the first hit.
     if (!out.domains.some((d) => d.domain.endsWith(tld))) {
@@ -269,6 +272,17 @@ export function DomainLanding() {
                 </div>
               )}
               {!loading && searchErr && <p style={{ marginTop: 22, fontSize: 14, color: C.accentDark }}>{searchErr}</p>}
+              {/* R-1494: a failed check is not a dead end (§24) — same two ways on as the dock. */}
+              {!loading && searchErr && helpFor && (
+                <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  <a href={domainHelpLinks(helpFor).quoteHref} style={{ background: C.accent, color: "#fff", borderRadius: 10, padding: "10px 18px", fontSize: 14.5, fontWeight: 600, textDecoration: "none" }}>
+                    Ask us about {helpFor}
+                  </a>
+                  <a href={domainHelpLinks(helpFor).whatsappHref} target="_blank" rel="noopener" style={{ background: C.card, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 18px", fontSize: 14.5, fontWeight: 600, textDecoration: "none" }}>
+                    WhatsApp us
+                  </a>
+                </div>
+              )}
               {!loading && searched && !searchErr && primary && (
                 <ResultBlock
                   C={C} MONO={MONO} SERIF={SERIF} mob={mob} priceMono={priceMono}

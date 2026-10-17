@@ -6,7 +6,11 @@ import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { PICK_GUIDES } from "@/site/lib/data/catalog";
 import { fetchLiveWorkspace, mergeEditions, suitePriceRows } from "@/site/lib/live-catalog";
 
-export const metadata: Metadata = { title: "Compare editions — GW, M365, Zoho" };
+export const metadata: Metadata = {
+  title: "Compare editions — GW, M365, Zoho",
+  description:
+    "Google Workspace, Microsoft 365 and Zoho side by side, with a plain recommendation for six common situations.",
+};
 
 /* Live prices, re-read every 10 minutes — the same figures /email and checkout use. */
 export const revalidate = 600;

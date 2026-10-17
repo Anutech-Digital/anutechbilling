@@ -17,9 +17,8 @@
 import * as React from "react";
 import Link from "@/site/components/ui/SiteLink";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { WHATSAPP_URL } from "@/site/lib/config";
 import { rupee } from "@/site/lib/money";
-import { searchDomains, normaliseName, type DomainResult } from "@/site/lib/domain-search";
+import { searchDomains, normaliseName, domainHelpLinks, type DomainResult } from "@/site/lib/domain-search";
 
 type State =
   | { kind: "idle" }
@@ -145,11 +144,11 @@ export function DomainSearchDock() {
                 <span className="meta" style={{ color: "var(--danger)" }}>{state.message}</span>
                 {lastTried && (
                   <>
-                    <Link href="/quote" className="btn btn-primary btn-sm" style={{ padding: "6px 14px" }}>
+                    <Link href={domainHelpLinks(lastTried).quoteHref} className="btn btn-primary btn-sm" style={{ padding: "6px 14px" }}>
                       Ask us about {lastTried}
                     </Link>
                     <a
-                      href={`${WHATSAPP_URL}?text=${encodeURIComponent(`Hi — is ${lastTried} available? What would it cost?`)}`}
+                      href={domainHelpLinks(lastTried).whatsappHref}
                       target="_blank"
                       rel="noopener"
                       className="btn btn-outline btn-sm"
