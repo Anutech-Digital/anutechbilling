@@ -26,6 +26,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { triageFeedback, type FeedbackSeverity, type FeedbackType, FEEDBACK_TYPES } from "@/lib/feedback/triage";
 import { buildDirective } from "@/lib/feedback/directive";
@@ -67,12 +68,21 @@ export async function POST(request: NextRequest) {
 
   const { data: row, error: readErr } = await supabase
     .from("feedback")
-    .select("id, tenant_id, reported_type, reported_severity, title, body, page_path, reporter_name, reporter_email, created_at, status, dispatched_at, triaged_at")
+    .select("id, tenant_id, reported_type, reported_severity, title, body, page_path, reporter_name, reporter_email, reported_by, created_at, status, dispatched_at, triaged_at")
     .eq("id", parsed.feedbackId)
     .maybeSingle();
 
   if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 });
   if (!row) return NextResponse.json({ error: "That report no longer exists." }, { status: 404 });
+
+  /* R-1470: the person who just filed this report triages it (Report Bug, every role), and the
+     roles that open Bug Reports & AI Fixes re-run it for any report. Anyone else's report is not
+     theirs to re-score or send to the AI queue. A login without a known role gets neither. */
+  const { data: me } = await supabase.from("users").select("role").eq("id", user.id).maybeSingle();
+  const ownReport = row.reported_by === user.id;
+  if (!mayOpenPage(me?.role, ownReport ? ["/help"] : ["/admin/feedback"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
+  }
 
   const { count: shotCount } = await supabase
     .from("feedback_screenshots")

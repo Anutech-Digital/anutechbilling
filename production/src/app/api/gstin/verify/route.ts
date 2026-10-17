@@ -22,6 +22,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { isValidGstin }      from "@/lib/utils";
 import { mockGstinVerification } from "@/lib/gst/mock-gstin";
 import type { GstinVerification } from "@/lib/supabase/database.types";
@@ -271,7 +272,13 @@ export async function POST(req: NextRequest) {
   }
   const admin = createAdminClientFor(authData.user.id);
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", authData.user.id).single();
+    .from("users").select("tenant_id, role").eq("id", authData.user.id).single();
+  /* R-1470: the Verify GSTIN card sits on the customer forms (Companies, and the add-customer
+     sheet on Quotes, Projects and Banking), Vendors and Settings — only roles that open one of
+     them, checked before the tenant's provider key is read or a paid lookup is made. */
+  if (!mayOpenPage(me?.role, ["/customers", "/quotes", "/projects", "/accounting/banking", "/accounting/vendors", "/settings"])) {
+    return NextResponse.json({ ok: false, error: ROLE_GATE_ERROR }, { status: 403 });
+  }
 
   // Resolve credentials: tenant_secrets → process.env → mock.
   let creds: SandboxCreds | null = null;

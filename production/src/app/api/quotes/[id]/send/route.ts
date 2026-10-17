@@ -24,6 +24,7 @@
 import { NextResponse } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail } from "@/lib/messaging";
@@ -66,11 +67,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   // Resolve current user → tenant_id
   const { data: me, error: meErr } = await userClient
     .from("users")
-    .select("tenant_id, full_name")
+    .select("tenant_id, full_name, role")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: a quote is emailed from the quote page — only roles that open Quotes (owner,
+     manager, sales). Checked before the quote is loaded, rendered or sent. */
+  if (!mayOpenPage(me.role, ["/quotes"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   // ── 2. Parse body ────────────────────────────────────────────────

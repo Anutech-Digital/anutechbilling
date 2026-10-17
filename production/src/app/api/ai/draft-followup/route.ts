@@ -22,6 +22,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { verifyDraftMoney } from "@/lib/ai/money-guard";
 import { logAiDecision, formatGuardBlock } from "@/lib/ai/audit";
@@ -150,7 +151,9 @@ export async function POST(request: NextRequest) {
 
   // Resolve the tenant's Gemini config (tenant key → env → stub). RLS scopes
   // the tenant_secrets read to this user's tenant.
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open Renewals (Nudge) or the customer page (next best action) — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/renewals", "/customers"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   /* Who the draft is FROM. The stub's three email variants used to end

@@ -16,6 +16,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { can } from "@/lib/auth/roles";
+import { ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { synthesizeSpeech } from "@/lib/voice/tts";
 import { sendCustomerWhatsApp } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
@@ -38,8 +40,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return NextResponse.json({ error: "No tenant." }, { status: 403 });
+  /* R-1470: a voice note goes to a customer's WhatsApp — the same can_contact_customers
+     permission R-732 put on /api/whatsapp/send (every internal role; not the partner agent). */
+  if (!can(me.role, "can_contact_customers")) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
 
   // Customer + tenant + real money context (RLS-scoped to this tenant).
   const { data: customer } = await supabase

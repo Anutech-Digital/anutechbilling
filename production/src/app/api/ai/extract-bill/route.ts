@@ -18,6 +18,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { sanitizeExtractedBill } from "./sanitize";
 import { readBillWithGemini, READABLE_BILL_MIME } from "@/lib/ai/read-bill";
@@ -44,7 +45,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Upload a photo (JPG/PNG) or PDF of the bill." }, { status: 400 });
   }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open a page with the vendor bill / expense form that reads a bill — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/accounting/bills", "/accounting/expenses", "/accounting/prepaid", "/accounting/advances", "/accounting/vendors", "/projects", "/marketing/spend"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
   if (!gemini.apiKey) {
     return NextResponse.json(

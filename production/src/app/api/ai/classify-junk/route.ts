@@ -18,6 +18,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { looksLikeJunk } from "@/lib/leads/junk";
 
@@ -116,7 +117,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open Sales & Pipeline (judging leads is a sales job) — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/leads"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   // Fetch the leads via the SESSION client (RLS) — a user only ever sees theirs.

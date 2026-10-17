@@ -11,6 +11,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import type { AssessmentQuestion } from "@/lib/assessments/grade";
 
@@ -164,7 +165,9 @@ export async function POST(request: NextRequest) {
   const language = body.language ?? "en";
   const subject = body.subject ?? "reasoning";
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open Assessments — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/assessments"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
 
   const prompt = subject === "software"

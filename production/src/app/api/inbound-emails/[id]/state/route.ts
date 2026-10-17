@@ -17,6 +17,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +40,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
   }
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json(
       {
@@ -48,6 +49,10 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
       },
       { status: 403 },
     );
+  }
+  /* R-1470: read / star / snooze / archive is done on Enquiries or a lead's Email tab — their roles. */
+  if (!mayOpenPage(me.role, ["/enquiries", "/leads"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   let raw: unknown;

@@ -24,7 +24,8 @@ const schema = z.object({
 });
 
 export const POST = withRoute(
-  { route: "api/marketing/review-request", input: schema },
+  /* R-1470: asked from Google reviews (Marketing) — only the roles that open that page. */
+  { route: "api/marketing/review-request", input: schema, pages: ["/marketing/reviews"] },
   async ({ input, supabase, tenantId, user }) => {
     const { customerId, force } = input;
     // S21: marketing_tools / review_requests ab generated types me — alag untyped handle nahi.

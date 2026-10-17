@@ -27,7 +27,7 @@ import path from "node:path";
 const API = path.resolve(__dirname);
 
 /** Ungated mutating user routes today. Only ever lower this number. */
-const UNGATED_BASELINE = 30; // 16 Oct 2026, after slice 1 (8 routes gated). Next slices: team/*, inbound-emails/*, ai/*, …
+const UNGATED_BASELINE = 0; // 17 Oct 2026, R-1470: the last 30 — 25 gated, 2 team routes' owner checks recognised, 3 listed below as not user routes.
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -55,7 +55,10 @@ const MACHINE_CALLER = new RegExp([
 ].join("|"));
 
 const ROLE_GATE = new RegExp([
-  String.raw`withRoute\s*(<[^>]*>)?\s*\(\s*\{[^}]*\b(roles|permission)\s*:`,
+  String.raw`withRoute\s*(<[^>]*>)?\s*\(\s*\{[^}]*\b(roles|permission|pages)\s*:`,
+  // R-1470: "may this role open the page that calls me" (nav.ts rule, fail-closed) and the
+  // owner checks the team routes already had.
+  String.raw`\bmayOpenPage\s*\(`, String.raw`\bisActiveOwner\s*\(`, String.raw`\bdecideTempPassword\s*\(`,
   String.raw`\bcan\s*\(`, String.raw`\bcanRecordMoney\s*\(`, String.raw`\bcanDeleteMoney\s*\(`,
   String.raw`\bMONEY_(RECORD|DELETE)_ROLES\b`, String.raw`\bvaultGate\s*\(`, String.raw`\bmayDo\s*\(`,
   String.raw`\bACTION_ROLES\b`, String.raw`\bOWNER_ONLY\b`, String.raw`\bisPlatformAdmin\s*\(`,
@@ -107,6 +110,10 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "settings/change-password": "the caller's own password",
   "vault/personal/pin": "the caller's own personal-vault PIN",
   "aa/setu/callback": "Setu redirects the bank's browser here; it only flips the consent row the state token names",
+  // R-1470
+  "agent": "website chat bridge — forwards the visitor's messages to public/agent/chat; no session, no tenant data",
+  "integrations/google-contacts": "DELETE removes the caller's OWN Google token (user_id = caller) — a per-user connection (action-roles.ts)",
+  "integrations/google-contacts/sync": "retired (CONTACT_IMPORT_RETIRED fails closed); synced only the caller's OWN Google token",
 };
 
 const routes = walk(API)
@@ -135,6 +142,18 @@ describe("mutating API routes carry a role gate (R-732 ratchet)", () => {
       "settings/reset-data", "catalog/sync-domains", "catalog/sync-hosting",
       "aa/setu/consent/init", "aa/setu/fetch/[connectionId]",
       "subscriptions/[id]/generate-renewal-quote", "whatsapp/send", "leads/[id]/email",
+    ]) expect(gated.has(r), r).toBe(true);
+  });
+
+  it("the R-1470 routes are gated (role-gate-r1470.test.ts proves each one refuses)", () => {
+    const gated = new Set(routes.filter((r) => ROLE_GATE.test(r.src)).map((r) => r.route));
+    for (const r of [
+      "ai/classify-junk", "ai/data-entry", "ai/draft-followup", "ai/extract-bill", "ai/extract-statement",
+      "ai/generate-assessment", "ai/help", "ai/plan-project", "ai/scan-visiting-card", "campaigns/ai-generate",
+      "contacts/[id]/promote", "feedback/triage", "gstin/verify", "inbound-emails/[id]/convert",
+      "inbound-emails/[id]/reply", "inbound-emails/[id]/state", "leads/[id]/draft-reply", "leads/google-import",
+      "leads/start-trial", "marketing/review-request", "my-advances", "quotes/[id]/send", "renewals/send-now",
+      "support/call-request", "voice/whatsapp-note", "team/join-requests/[id]", "team/members/[id]/temp-password",
     ]) expect(gated.has(r), r).toBe(true);
   });
 });

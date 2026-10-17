@@ -16,6 +16,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { dataEntryPrompt, sanitizeEntries, sanitizeNotes, proposalKeys, MAX_INPUT_CHARS, type EntryProposal, type AiLawNote } from "@/lib/ai/data-entry";
 import { extractEntities } from "@/lib/inbound/extract";
@@ -60,7 +61,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Add a photo (JPG/PNG) or a PDF." }, { status: 400 });
   }
 
-  const { data: me } = await supabase.from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+  const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
+  /* R-1470: only roles that open the AI Entry page — before any read, AI call or spend. */
+  if (!mayOpenPage(me?.role, ["/ai-entry"])) return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   const today = istToday();
   const text = body.text?.trim() ?? "";
 

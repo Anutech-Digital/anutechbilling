@@ -22,6 +22,7 @@
 import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import {
   triggersForTerm,
@@ -65,11 +66,16 @@ export async function POST(req: Request) {
   // Resolve tenant_id from auth user
   const { data: me, error: meErr } = await userClient
     .from("users")
-    .select("tenant_id")
+    .select("tenant_id, role")
     .eq("id", authData.user.id)
     .single();
   if (meErr || !me) {
     return NextResponse.json({ error: "user not linked to a tenant" }, { status: 403 });
+  }
+  /* R-1470: "Send now" lives on Renewals and Subscriptions — only roles that open one of them
+     (owner, manager, billing, support). Checked before the subscription is read or mailed. */
+  if (!mayOpenPage(me.role, ["/renewals", "/subscriptions"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   // Admin client for the cross-table reads/writes (RLS would already protect,

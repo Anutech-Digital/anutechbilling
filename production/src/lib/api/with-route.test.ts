@@ -18,7 +18,7 @@ vi.mock("@/lib/supabase/server", () => ({
 const sentry = vi.hoisted(() => ({ captureException: vi.fn() }));
 vi.mock("@/lib/sentry", () => ({ Sentry: sentry }));
 
-import { withRoute, dbFail, RouteError } from "./with-route";
+import { withRoute, dbFail, RouteError, mayOpenPage } from "./with-route";
 
 const req = (method: string, body?: unknown, url = "https://x.invalid/api/t") =>
   new Request(url, { method, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) }) as unknown as NextRequest;
@@ -72,6 +72,27 @@ describe("withRoute", () => {
     // both gates apply when both are given
     const both = await withRoute({ route: "api/t", roles: ["owner"], permission: "can_contact_customers" }, h)(req("POST"));
     expect(both.status).toBe(403);
+  });
+
+  it("R-1470: `pages` admits only roles that may open one of those pages (nav.ts rule) — else 403, handler never runs", async () => {
+    const h = vi.fn(async ({ role }: { role: string }) => ({ role }));
+    const route = withRoute({ route: "api/t", pages: ["/accounting/banking"] }, h);
+    state.me = { tenant_id: "T1", role: "sales" };
+    expect((await route(req("POST"))).status).toBe(403);
+    state.me = { tenant_id: "T1", role: "billing" };
+    expect((await route(req("POST"))).status).toBe(200);
+    state.me = { tenant_id: "T1", role: "made_up" };
+    expect((await route(req("POST"))).status).toBe(403);
+    expect(h).toHaveBeenCalledTimes(1);
+  });
+
+  it("R-1470: mayOpenPage — any one page is enough, ROUTE_DENY wins, unknown role is false", () => {
+    expect(mayOpenPage("sales", ["/accounting/banking", "/leads"])).toBe(true);
+    expect(mayOpenPage("sales_senior", ["/leads"])).toBe(true);
+    expect(mayOpenPage("support", ["/leads"])).toBe(false);
+    expect(mayOpenPage("billing", ["/accounting/balance-sheet"])).toBe(false);
+    expect(mayOpenPage(null, ["/help"])).toBe(false);
+    expect(mayOpenPage("partner_agent", ["/help"])).toBe(true);
   });
 
   it("validates the body with zod — 400 with the schema's own message", async () => {

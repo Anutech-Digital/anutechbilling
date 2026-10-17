@@ -27,7 +27,7 @@ vi.mock("@/lib/supabase/server", () => ({
           return q;
         },
         maybeSingle: () => Promise.resolve({
-          data: table === "users" ? { tenant_id: "t1" } : table === "tenants" ? { name: "Acme" } : db.customer,
+          data: table === "users" ? { tenant_id: "t1", role: "billing" } : table === "tenants" ? { name: "Acme" } : db.customer,
         }),
       };
       return q;

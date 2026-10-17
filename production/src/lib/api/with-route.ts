@@ -25,7 +25,23 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { z } from "zod";
 import { Sentry } from "@/lib/sentry";
 import { createClient } from "@/lib/supabase/server";
-import { can, type Permissions, type UserRole } from "@/lib/auth/roles";
+import { can, isUserRole, type Permissions, type UserRole } from "@/lib/auth/roles";
+import { isRouteAllowed } from "@/lib/nav";
+
+/**
+ * R-1470: may this role open at least one of these app pages? Same rule as middleware's page
+ * guard (nav.ts menu roles + ROUTE_DENY), so an API behind a page admits exactly the roles that
+ * see that page — a sales login cannot call the bank-statement API from the browser console.
+ * A missing or unknown role answers false (fail closed; canOpenRoute's "still loading → true"
+ * is a UI rule, not a guard).
+ */
+export function mayOpenPage(role: string | null | undefined, pages: readonly string[]): boolean {
+  if (!isUserRole(role)) return false;
+  return pages.some((p) => isRouteAllowed(role, p));
+}
+
+/** The 403 text for a failed role gate (§24: what happened + whom to ask). */
+export const ROLE_GATE_ERROR = "Ye kaam aapke role ko allowed nahi hai — workspace owner se kahiye.";
 
 /** Author ka chuna hua status + wo message jo user ko dikhana safe hai. */
 export class RouteError extends Error {
@@ -74,6 +90,9 @@ type Options<S extends z.ZodTypeAny | undefined> = {
   roles?: readonly UserRole[];
   /** R-732: ya PERMISSIONS table ka ek sawaal — can(role, permission) false ho to 403. `roles` ke saath bhi de sakte ho (dono lagte hain). */
   permission?: keyof Permissions;
+  /** R-1470: un pages ki list jinke peeche ye API hai — caller in me se koi ek page khol sakta ho
+   *  (mayOpenPage), warna 403. `roles` / `permission` ke saath bhi de sakte ho (sab lagte hain). */
+  pages?: readonly string[];
   /** 403 par dikhne wala "ab kya karo" (role check fail hone par). */
   roleHint?: string;
 };
@@ -128,7 +147,10 @@ export function withRoute<S extends z.ZodTypeAny | undefined = undefined>(opts: 
         return fail(403, opts.roleHint ?? `Ye kaam sirf ${opts.roles.join(" / ")} kar sakte hain — unse kahiye.`);
       }
       if (opts.permission && !can(role, opts.permission)) {
-        return fail(403, opts.roleHint ?? "Ye kaam aapke role ko allowed nahi hai — workspace owner se kahiye.");
+        return fail(403, opts.roleHint ?? ROLE_GATE_ERROR);
+      }
+      if (opts.pages && !mayOpenPage(role, opts.pages)) {
+        return fail(403, opts.roleHint ?? ROLE_GATE_ERROR);
       }
 
       let input: unknown = undefined;

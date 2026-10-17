@@ -22,6 +22,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 
 export async function POST(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -32,12 +33,16 @@ export async function POST(_request: NextRequest, props: { params: Promise<{ id:
   }
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) {
     return NextResponse.json(
       { error: "Your account is not attached to a workspace yet." },
       { status: 403 },
     );
+  }
+  /* R-1470: an enquiry becomes a lead from Enquiries or a lead's Email tab — only their roles. */
+  if (!mayOpenPage(me.role, ["/enquiries", "/leads"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
   }
 
   const admin = createAdminClientFor(user.id);
