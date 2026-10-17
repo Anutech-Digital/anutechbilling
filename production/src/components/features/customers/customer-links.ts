@@ -17,8 +17,11 @@
  *    the owner read a company as a person. A contact_name that only repeats the company
  *    name (an import mistake) counts as no contact.
  */
-import type { Route } from "next";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+
+/* Typed routes (CLAUDE.md §25.2): hrefs here are plain strings, cast to Route only where
+   they reach <Link> / router.push. A Route-typed ternary (Route | null) makes next build fail
+   with "Expression produces a union type that is too complex to represent" — tsc does not. */
 
 export type TxnLink =
   | { kind: "invoice"; invoiceId: string }
@@ -27,22 +30,22 @@ export type TxnLink =
   | { kind: "projectPayment"; invoiceId: string | null; projectId: string }
   | { kind: "project"; projectId: string };
 
-export function txnHref(t: TxnLink, opts: { canQuotes: boolean }): Route | null {
+export function txnHref(t: TxnLink, opts: { canQuotes: boolean }): string | null {
   switch (t.kind) {
     case "invoice":
-      return invoiceHref(t.invoiceId) as Route;
+      return invoiceHref(t.invoiceId);
     case "quote":
-      return opts.canQuotes ? (`/quotes/${encodeURIComponent(t.quoteId)}` as Route) : null;
+      return opts.canQuotes ? `/quotes/${encodeURIComponent(t.quoteId)}` : null;
     case "payment":
       return opts.canQuotes && t.quoteId
-        ? (`/quotes/${encodeURIComponent(t.quoteId)}` as Route)
-        : (`/payments?customer=${encodeURIComponent(t.customerId)}` as Route);
+        ? `/quotes/${encodeURIComponent(t.quoteId)}`
+        : `/payments?customer=${encodeURIComponent(t.customerId)}`;
     case "projectPayment":
       return t.invoiceId
-        ? (invoiceHref(t.invoiceId) as Route)
-        : (`/projects/${encodeURIComponent(t.projectId)}` as Route);
+        ? invoiceHref(t.invoiceId)
+        : `/projects/${encodeURIComponent(t.projectId)}`;
     case "project":
-      return `/projects/${encodeURIComponent(t.projectId)}` as Route;
+      return `/projects/${encodeURIComponent(t.projectId)}`;
   }
 }
 

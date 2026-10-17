@@ -24,7 +24,6 @@
 import { projectQuotationView } from "@/lib/projects/quotation-view";
 import * as React from "react";
 import Link from "next/link";
-import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useCustomer, useDeleteCustomer, useSetCustomerActive, useCustomerOpenCredit, customerDeleteBlockReason } from "@/lib/queries/customers";
@@ -252,7 +251,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     date: string; type: "Invoice" | "Payment" | "Refund" | "Quote" | "Project";
     ref: string; amount: number; status: string; due?: number;
     /** R-1521: where this row's document lives (null = nothing this role can open). */
-    href: Route | null;
+    href: string | null;
     /** Set only on rows from the `payments` table → enables the delete action. */
     payId?: string;
   };

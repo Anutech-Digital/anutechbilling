@@ -21,6 +21,10 @@ import type { Route } from "next";
 import { Icon } from "@/components/ui/icon";
 import { cleanDisplayName, cn } from "@/lib/utils";
 
+/* Typed routes (CLAUDE.md §25.2): hrefs here are plain strings, cast to Route only where
+   they reach <Link> / router.push. A Route-typed ternary (Route | null) makes next build fail
+   with "Expression produces a union type that is too complex to represent" — tsc does not. */
+
 export interface SubLinkInput {
   customer_id: string | null;
   quote_id?: string | null;
@@ -28,14 +32,14 @@ export interface SubLinkInput {
 }
 
 export function subscriptionLinks(sub: SubLinkInput, opts: { canQuotes: boolean }): {
-  customerHref: Route | null;
-  quoteHref: Route | null;
+  customerHref: string | null;
+  quoteHref: string | null;
   quoteId: string | null;
 } {
   const quoteId = sub.renewal_quote_id?.trim() || sub.quote_id?.trim() || null;
   return {
-    customerHref: sub.customer_id ? (`/customers/${encodeURIComponent(sub.customer_id)}` as Route) : null,
-    quoteHref: opts.canQuotes && quoteId ? (`/quotes/${encodeURIComponent(quoteId)}` as Route) : null,
+    customerHref: sub.customer_id ? `/customers/${encodeURIComponent(sub.customer_id)}` : null,
+    quoteHref: opts.canQuotes && quoteId ? `/quotes/${encodeURIComponent(quoteId)}` : null,
     quoteId,
   };
 }
@@ -53,7 +57,7 @@ export function SubCustomerLink({ sub, name, className }: {
   if (!customerHref) return <span className={className}>{label}</span>;
   return (
     <Link
-      href={customerHref}
+      href={customerHref as Route}
       onClick={stop}
       onKeyDown={stop}
       title={`Open customer ${label}`}
@@ -73,7 +77,7 @@ export function SubQuoteLink({ sub, canQuotes, className }: {
   const renewal = !!sub.renewal_quote_id?.trim();
   return (
     <Link
-      href={quoteHref}
+      href={quoteHref as Route}
       onClick={stop}
       onKeyDown={stop}
       title={renewal ? `Open renewal quote ${quoteId}` : `Open quote ${quoteId}`}

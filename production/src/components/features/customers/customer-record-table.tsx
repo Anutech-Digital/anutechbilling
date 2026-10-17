@@ -20,18 +20,18 @@ import { cn } from "@/lib/utils";
 export interface RecordRow {
   cells: React.ReactNode[];
   /** Where the row's document lives — preferred over onClick. */
-  href?: Route | null;
+  href?: string | null;
   /** Accessible name for the row when it opens something. */
   label?: string;
   onClick?: () => void;
 }
 
 /** The reference text as a real link. Stops the click so the row does not open it twice. */
-export function RowLink({ href, children }: { href: Route | null | undefined; children: React.ReactNode }) {
+export function RowLink({ href, children }: { href: string | null | undefined; children: React.ReactNode }) {
   if (!href) return <>{children}</>;
   return (
     <Link
-      href={href}
+      href={href as Route}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
       className="text-amber-ink underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
@@ -53,7 +53,7 @@ export function RecordTable({ head, rows }: { head: string[]; rows: RecordRow[] 
   const activate = (r: RecordRow, newTab: boolean) => {
     if (r.href) {
       if (newTab) window.open(r.href, "_blank", "noopener");
-      else router.push(r.href);
+      else router.push(r.href as Route);
       return;
     }
     r.onClick?.();
