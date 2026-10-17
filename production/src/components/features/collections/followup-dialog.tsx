@@ -49,9 +49,11 @@ export interface FollowupDialogProps {
   /** The customer still owes money (a past promise is then broken). */
   stillOwes: boolean;
   amountDue?: number;
+  /** R-1518: switch to the Remind dialog (AI-drafted reminder a person sends). Absent → no button. */
+  onRemind?: () => void;
 }
 
-export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, amountDue }: FollowupDialogProps) {
+export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, amountDue, onRemind }: FollowupDialogProps) {
   const { data: me } = useCurrentUser();
   const { data: names } = useUserNames();
   const history = useCustomerFollowups(open ? customerId : null);
@@ -115,6 +117,13 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             {amountDue && amountDue > 0 ? <>Still owes <b className="text-ink">{rupee(amountDue)}</b>. </> : null}
             Log what happened and when to follow up next — every entry needs a next date, so nobody is forgotten.
           </DialogDescription>
+          {onRemind && stillOwes && (
+            <div>
+              <Button type="button" size="sm" variant="default" icon="send" className="mt-2" onClick={onRemind}>
+                Draft a reminder (WhatsApp / email)
+              </Button>
+            </div>
+          )}
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
