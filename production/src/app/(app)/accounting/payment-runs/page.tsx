@@ -100,7 +100,7 @@ export default function PaymentRunsPage() {
   const msmeLate = free.filter((p) => urgencyOf(p, today).level === "msme_late");
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto pb-32">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto pb-32">
       <div className="mb-6">
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Payment runs</h1>
@@ -195,7 +195,7 @@ export default function PaymentRunsPage() {
           touches the screen edge, so only there is the inset padded. */}
       {canCreate && pickedRows.length > 0 && (
         <div className="fixed left-0 right-0 bottom-[var(--bottom-nav-h,56px)] md:bottom-0 z-40 border-t border-hairline bg-paper/95 backdrop-blur px-4 py-3 md:pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
-          <div className="max-w-[1400px] mx-auto flex flex-wrap items-center gap-3">
+          <div className="max-w-[1800px] mx-auto flex flex-wrap items-center gap-3">
             <div className="text-sm"><b>{pickedRows.length}</b> selected · <b className="tabular-nums">{rupee(pickedTotal)}</b></div>
             <label className="text-xs text-ink-3 flex items-center gap-1.5">Pay from
               <select value={bankId} onChange={(e) => setBankId(e.target.value)} className="text-sm rounded-md border border-hairline bg-paper px-2 py-1">
