@@ -1,27 +1,67 @@
 /**
  * Books lock — the period-close control (migration 20260927120000).
  *
- * The owner sets a date; every money row dated on or before it (expenses, bank lines,
- * salaries, tax payments, invoices, payments, notes…) can no longer be added, edited or
- * deleted from the app. Set it the day a GSTR-3B / TDS return is filed, so the books stay
- * equal to what was filed. Anyone else on the team sees the date, read-only.
+ * The owner or the accountant sets a date (R-1132 — the accountant does the month-end close);
+ * every money row dated on or before it (expenses, bank lines, salaries, tax payments,
+ * invoices, payments, notes…) can no longer be added, edited or deleted from the app. Set it
+ * the day a GSTR-3B / TDS return is filed, so the books stay equal to what was filed. Only the
+ * owner can open the books again (clear the lock or move it back). Anyone else on the team
+ * sees the date, read-only. The database decides through set_books_lock() (migration
+ * 20261017002400); booksLockRights() only shapes the screen.
  */
 "use client";
 
 import * as React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
-import { useUpdateTenant } from "@/lib/queries/tenant";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { toastError } from "@/lib/errors/toast-error";
 import { formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
 
 const KEY = ["books-lock"] as const;
+
+export type BooksLockRights = {
+  /** May set the lock or move it forward. */
+  canLock: boolean;
+  /** May clear the lock or move it to an earlier date. */
+  canUnlock: boolean;
+  /** Earliest date this role may pick (the current lock, for the accountant), or null. */
+  minDate: string | null;
+};
+
+/** Who may change the books lock — the same rule as set_books_lock() in the database. */
+export function booksLockRights(role: string | null | undefined, current: string | null): BooksLockRights {
+  if (role === "owner") return { canLock: true, canUnlock: true, minDate: null };
+  if (role === "accountant") return { canLock: true, canUnlock: false, minDate: current };
+  return { canLock: false, canUnlock: false, minDate: null };
+}
+
+type SetBooksLockRpc = (fn: "set_books_lock", args: { p_until: string | null }) => PromiseLike<{ error: { message: string } | null }>;
+
+/** Sets (or, for the owner, clears) the lock through set_books_lock() and refreshes every reader. */
+export function useSetBooksLock() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (until: string | null) => {
+      const supabase = createClient();
+      const rpc = supabase.rpc as unknown as SetBooksLockRpc;
+      const { error } = await rpc.call(supabase, "set_books_lock", { p_until: until });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ["month-close"] });
+      qc.invalidateQueries({ queryKey: ["current-user"] });
+    },
+    onError: (e) => toastError(e, { fallback: "Could not change the books lock" }),
+  });
+}
 
 export function useBooksLock() {
   return useQuery({
@@ -38,16 +78,16 @@ export function useBooksLock() {
 
 export function BooksLockCard() {
   const lock = useBooksLock();
-  const update = useUpdateTenant();
-  const qc = useQueryClient();
+  const update = useSetBooksLock();
   const confirm = useConfirm();
   const { data: me } = useCurrentUser();
-  const isOwner = me?.role === "owner";
   const [draft, setDraft] = React.useState<string>("");
   React.useEffect(() => { if (lock.data !== undefined) setDraft(lock.data ?? ""); }, [lock.data]);
 
   const today = istToday();
   const current = lock.data ?? null;
+  const rights = booksLockRights(me?.role, current);
+  const movesBack = !!draft && !!current && draft < current;
 
   async function save(next: string | null) {
     const ok = await confirm({
@@ -58,8 +98,7 @@ export function BooksLockCard() {
       confirmLabel: next ? "Haan, lock karo" : "Haan, kholo", cancelLabel: "Nahi",
     });
     if (!ok) return;
-    await update.mutateAsync({ books_locked_until: next });
-    qc.invalidateQueries({ queryKey: KEY });
+    update.mutate(next);
   }
 
   return (
@@ -76,14 +115,15 @@ export function BooksLockCard() {
               : <>Abhi koi lock nahi. GSTR-3B / TDS return file karne ke baad us mahine ki aakhri tareekh tak lock karo, taaki books aur return ek jaise rahein.</>}
           </p>
         </div>
-        {isOwner ? (
+        {rights.canLock ? (
           <div className="flex items-center gap-2 flex-wrap">
-            <Input type="date" value={draft} max={today} onChange={(e) => setDraft(e.target.value)} className="w-[170px]" aria-label="Lock till" />
-            <Button size="sm" disabled={!draft || draft === (current ?? "") || update.isPending} onClick={() => save(draft)}>Lock karo</Button>
-            {current && <Button size="sm" variant="ghost" disabled={update.isPending} onClick={() => save(null)}>Lock hatao</Button>}
+            <Input type="date" value={draft} min={rights.minDate ?? undefined} max={today} onChange={(e) => setDraft(e.target.value)} className="w-[170px]" aria-label="Lock till" />
+            <Button size="sm" disabled={!draft || draft === (current ?? "") || (movesBack && !rights.canUnlock) || update.isPending} onClick={() => save(draft)}>Lock karo</Button>
+            {current && rights.canUnlock && <Button size="sm" variant="ghost" disabled={update.isPending} onClick={() => save(null)}>Lock hatao</Button>}
+            {current && !rights.canUnlock && <span className="text-xs text-ink-3">Lock hatana sirf owner kar sakta hai</span>}
           </div>
         ) : (
-          <span className="text-xs text-ink-3">Sirf owner badal sakta hai</span>
+          <span className="text-xs text-ink-3">Sirf owner ya accountant badal sakta hai</span>
         )}
       </div>
     </Card>

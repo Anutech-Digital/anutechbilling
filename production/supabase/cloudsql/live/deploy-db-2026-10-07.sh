@@ -125,6 +125,7 @@ MIGS=(
   "r731mfadata|20261016103100_r731_mfa_tenant.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.current_tenant_id()') and prosrc like '%R-731%')"
   "r1130txnrules|20261016141000_r1130_txn_rule_write_roles.sql|resellersos_migration|(exists(select 1 from pg_policy where polname = 'txn_category_rules_delete_money_roles' and polrelid = to_regclass('public.txn_category_rules')) and not exists(select 1 from pg_policy where polname = 'txn_category_rules_tenant_delete' and polrelid = to_regclass('public.txn_category_rules')))"
   "r1466votes|20261016150000_r1466_feedback_votes.sql|resellersos_migration|to_regclass('public.feedback_votes') is not null and exists(select 1 from pg_policy where polname = 'feedback_votes_delete_own' and polrelid = to_regclass('public.feedback_votes'))"
+  "r1132close|20261017002400_r1132_books_lock_accountant.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.set_books_lock(date)') and prosrc like '%R-1132%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
