@@ -25,6 +25,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
+import { formatMonthLabel } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryPayment } from "@/lib/queries/payroll";
 import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
@@ -37,8 +38,7 @@ function prevPeriod(): string {
   return d.toISOString().slice(0, 7);
 }
 function monthLabel(period: string): string {
-  const [y, m] = period.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  return formatMonthLabel(period);
 }
 /** TDS quarter (FY-aligned) for a YYYY-MM period → its 3 month strings + label.
  *  Q1 Apr-Jun · Q2 Jul-Sep · Q3 Oct-Dec · Q4 Jan-Mar. */

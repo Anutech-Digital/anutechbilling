@@ -24,7 +24,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
-import { utcDateISO } from "@/lib/dates/ist";
+import { formatMonthLabel, utcDateISO } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
@@ -149,10 +149,7 @@ function lineHref(l: PurchaseLine): string {
     : `/accounting/bills`;
 }
 
-const MONTH_LABEL = (ym: string) => {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-};
+const MONTH_LABEL = (ym: string) => formatMonthLabel(ym, { year: "2-digit" });
 
 export default function PurchasesReportPage() {
   const [range, setRange] = React.useState<RangeKey>("fy");

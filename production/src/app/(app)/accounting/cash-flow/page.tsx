@@ -27,7 +27,7 @@ import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-m
 import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
 import { loadCashFlow, type CashFlowData } from "./load";
 import { monthRows, runway as computeRunway, type MonthRow } from "@/lib/accounting/cash-flow-summary";
-import { utcDateISO } from "@/lib/dates/ist";
+import { formatMonthLabel, utcDateISO } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
@@ -44,10 +44,7 @@ function rangeBounds(key: RangeKey): { from: string | null; to: string | null; l
   if (key === "12m")   return { from: iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1))), to: today, label: "Last 12 months" };
   return { from: null, to: null, label: "All time" };
 }
-const monthLabel = (ym: string) => {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-};
+const monthLabel = (ym: string) => formatMonthLabel(ym, { year: "2-digit" });
 
 function useCashFlow(range: RangeKey) {
   const { from, to } = rangeBounds(range);

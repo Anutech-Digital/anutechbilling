@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee } from "@/lib/utils";
+import { formatMonthLabel } from "@/lib/dates/ist";
 import { ESI_EMPLOYEE_RATE, ESI_EMPLOYER_RATE, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { useEsiRegister, usePfRegister, type EsiRegisterRow, type PfRegisterRow } from "@/lib/queries/payroll";
 import { buildEcr } from "@/lib/payroll/ecr";
@@ -20,9 +21,7 @@ import { pfWageCeiling } from "@/lib/payroll/pf";
 import { toast } from "sonner";
 
 function periodLabel(period: string): string {
-  const [y, m] = period.split("-").map(Number);
-  if (!y || !m) return period;
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  return formatMonthLabel(period);
 }
 
 /** Export one month's rows in the ESIC "Monthly Contribution" bulk-upload

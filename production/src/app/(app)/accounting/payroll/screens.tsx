@@ -69,7 +69,7 @@ import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-det
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
-import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO } from "@/lib/dates/ist";
+import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel } from "@/lib/dates/ist";
 
 /** Previous month (YYYY-MM) — payroll is usually run for the month just ended. */
 function prevPeriod(): string {
@@ -1328,8 +1328,7 @@ function EmployeePayrollYearDialog({
                 <tbody className="divide-y divide-hairline">
                   {months.map((m) => {
                     const p = byPeriod.get(m.period);
-                    const label = new Date(m.year, m.month - 1, 1)
-                      .toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+                    const label = formatMonthLabel(m.period);
                     return (
                       <tr key={m.period} className="hover:bg-paper-2/40">
                         <td className="px-3 py-2">
@@ -2443,7 +2442,7 @@ function AttendanceRegister({ period, employees, attendance }: { period: string;
   if (!yy || !mm) return null;
   const days = new Date(yy, mm, 0).getDate();          // last day of this month
   const today = todayISO();
-  const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const monthLabel = formatMonthLabel(period, { month: "long" });
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
   const dateFor = (d: number) => `${period}-${String(d).padStart(2, "0")}`;
 
