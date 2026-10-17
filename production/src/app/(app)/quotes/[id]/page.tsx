@@ -55,6 +55,7 @@ import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-d
 import { quoteContact } from "@/lib/quotes/quote-contact";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
+import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
 import SendWhatsAppDialog from "@/components/features/whatsapp/send-whatsapp-dialog";
 import { ApprovalDrawer } from "@/components/features/quotes/approval-drawer";
 import { LifecycleStepper } from "@/components/features/quotes/lifecycle-stepper";
@@ -762,6 +763,22 @@ export default function QuoteDetailPage() {
     });
   };
 
+  /** R-1523: open the server-rendered Proforma Invoice (QR + bank + pay link) in a new tab.
+   *  The tab is opened BEFORE the fetch so a pop-up blocker treats it as the click's own. */
+  const openProformaPdf = async (): Promise<void> => {
+    const win = window.open("", "_blank");
+    try {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/pdf-link?template=proforma`);
+      const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!res.ok || !json.url) throw new Error(json.error ?? `Could not make the Proforma PDF (${res.status})`);
+      if (win) win.location.href = json.url;
+      else window.location.href = json.url;
+    } catch (err) {
+      win?.close();
+      toastError(err, { description: "Try again. If it keeps failing, use Download PDF for the Quotation copy." });
+    }
+  };
+
   /** Free wa.me share — opens WhatsApp with a prefilled Hinglish message (quote
    *  no · total · accept link) and downloads the PDF so the owner can attach it.
    *  No Cloud API / keys needed, so it works day one. */
@@ -972,6 +989,14 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="link" size={15} /> Copy customer link
               </DropdownMenuItem>
+              {/* R-1523: the same quote as a Proforma Invoice — server-rendered, so it carries the
+                  UPI QR, bank details and pay link exactly as the emailed copy does. */}
+              <DropdownMenuItem
+                className="gap-2.5 py-2 cursor-pointer"
+                onClick={() => { void openProformaPdf(); }}
+              >
+                <Icon name="file" size={15} /> Proforma Invoice PDF
+              </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 onClick={() => setSendOpen(true)}
@@ -1044,6 +1069,12 @@ export default function QuoteDetailPage() {
           </DropdownMenu>
         </div>
       </div>
+
+      {/* R-1523 (§24): why the customer's PDF has no scan-to-pay QR, and where to fix it.
+          Only while the quote still asks for money — a paid or invoiced quote has no QR by design. */}
+      {!quoteIsPaid(quote) && !quote.invoice_id && quote.status !== "rejected" && me && (
+        <PayQrNotice upiVpa={me.tenantUpiVpa} currency={quote.currency} />
+      )}
 
       {/* Quote-to-cash lifecycle */}
       {lifecycle && (
@@ -1878,6 +1909,9 @@ export default function QuoteDetailPage() {
         amount={quote.amount}
         subtotal={quote.subtotal}
         taxRate={quote.tax_rate}
+        /* R-1523: the "no pay QR — add your UPI ID" line inside the dialog. */
+        upiVpa={me ? me.tenantUpiVpa : undefined}
+        currency={quote.currency}
         validityDays={
           quote.expires_date
             ? Math.max(1, daysBetween(new Date(quote.created_at), quote.expires_date))

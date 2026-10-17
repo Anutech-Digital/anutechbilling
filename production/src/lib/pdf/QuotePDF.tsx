@@ -24,6 +24,7 @@ import {
   View,
   Text,
   Image,
+  Link,
   StyleSheet,
 } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/utils";
@@ -41,6 +42,7 @@ import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invo
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
+import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
@@ -147,6 +149,16 @@ export interface QuotePDFProps {
   upiQrDataUrl?: string | null;
   /** Printed under the QR so a payer whose camera struggles can type it. */
   upiVpa?:       string | null;
+  /**
+   * R-1523. "quotation" (default) or "proforma". A Proforma keeps the QUOTE's own number
+   * ("Proforma No.") — never the GST invoice series (§17a) — and says it is not a tax invoice.
+   * Ignored on a paid quote: that sheet is already the record of a paid order.
+   */
+  template?:     QuoteTemplate;
+  /** R-1523. Bank block (tenant remit_* fields, via proformaBank()) — printed on a Proforma only. */
+  bank?:         ProformaBank | null;
+  /** R-1523. The customer's online review/accept/pay page — printed as a link while money is due. */
+  payLinkUrl?:   string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -405,6 +417,12 @@ const s = StyleSheet.create({
     borderTopColor: COLORS.hairline,
   },
   upiQr:    { width: 78, height: 78, marginRight: 10 },
+  bankBox:  { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.hairline },
+  payLink:  { color: COLORS.amber, textDecoration: "underline" },
+  proformaNotice: {
+    fontSize: 9, fontFamily: PDF_FONT_BOLD, color: COLORS.amber,
+    marginTop: -8, marginBottom: 12,
+  },
   upiText:  { flex: 1 },
   upiTitle: { fontSize: 10, fontFamily: PDF_FONT_BOLD, color: COLORS.ink2, marginBottom: 2 },
   upiSub:   { fontSize: 8, color: COLORS.ink3, lineHeight: 1.4 },
@@ -431,8 +449,11 @@ export function QuotePDF(props: QuotePDFProps) {
     lineItems, subtotal, discountPct, discount, taxable, taxRate, tax, total,
     interState, placeOfSupply, isExport = false, currency, exchangeRate, fxSource = null, fxDate = null, billingCycle, termsConditions, isRenewal,
     isPaid = false, oneTime = false, extensionTitle = null,
-    upiQrDataUrl, upiVpa,
+    upiQrDataUrl, upiVpa, template = "quotation", bank = null, payLinkUrl = null,
   } = props;
+  /* R-1523: a paid quote stays a "Paid order" — a Proforma asks for money that is already in. */
+  const proforma = template === "proforma" && !isPaid;
+  const docLabel = proforma ? PROFORMA_TITLE : quoteDocumentLabel({ paid: isPaid, isRenewal });
   /* R-813: a customer document — never the staff-only audit part of the notes. */
   const notes = customerQuoteNotes(props.notes, lineItems);
   const includedSupport = props.includedSupport !== undefined
@@ -532,9 +553,9 @@ export function QuotePDF(props: QuotePDFProps) {
 
   return (
     <Document
-      title={`${isPaid ? "Paid order" : "Quote"} ${quoteId}`}
+      title={`${proforma ? PROFORMA_TITLE : isPaid ? "Paid order" : "Quote"} ${quoteId}`}
       author={tenantName}
-      subject={`${quoteDocumentLabel({ paid: isPaid, isRenewal })} ${quoteId} for ${customerName}`}
+      subject={`${docLabel} ${quoteId} for ${customerName}`}
     >
       <Page size="A4" style={s.page}>
 
@@ -563,13 +584,14 @@ export function QuotePDF(props: QuotePDFProps) {
             </View>
           </View>
           <View style={s.quoteMetaBlock}>
-            <Text style={s.quoteLabel}>{quoteDocumentLabel({ paid: isPaid, isRenewal })}</Text>
-            <Text style={s.quoteId}>{quoteId}</Text>
+            <Text style={s.quoteLabel}>{docLabel}</Text>
+            {/* R-1523: the Proforma number IS the quote number — no new series (§17a). */}
+            <Text style={s.quoteId}>{proforma ? `Proforma No. ${quoteId}` : quoteId}</Text>
             <Text style={s.quoteDate}>Dated: {formatDate(created)}</Text>
             {/* R-034: an expiry on a document the customer has already paid reads as
                 "you still have to act". Only an open offer has a validity window. */}
             {!isPaid && (
-              <Text style={s.quoteDate}>Valid until: {formatDate(expires)}</Text>
+              <Text style={s.quoteDate}>{proforma ? "Due by" : "Valid until"}: {formatDate(expires)}</Text>
             )}
             {extensionTitle ? (
               <Text style={s.renewalStamp}>{extensionTitle.toUpperCase()}</Text>
@@ -578,6 +600,11 @@ export function QuotePDF(props: QuotePDFProps) {
             )}
           </View>
         </View>
+
+        {/* R-1523: the line that keeps a Proforma from being taken for a tax invoice. */}
+        {proforma && (
+          <Text style={s.proformaNotice}>{PROFORMA_NOTICE}</Text>
+        )}
 
         {/* ── Bill to + Meta ──────────────────────────────────────── */}
         <View style={s.twoCol}>
@@ -852,7 +879,7 @@ export function QuotePDF(props: QuotePDFProps) {
           )}
           {!isPaid && (
             <Text style={s.footerLine}>
-              <Text style={s.footerBold}>Quote validity: </Text>
+              <Text style={s.footerBold}>{proforma ? "Validity: " : "Quote validity: "}</Text>
               {validityDays} days from issue date.
             </Text>
           )}
@@ -864,6 +891,24 @@ export function QuotePDF(props: QuotePDFProps) {
               seller answers it with a Receipt Voucher under CGST §31(3)(d).
               Calling it a payment here would set up the wrong expectation about
               which document the customer gets back. */}
+          {/* R-1523: a Proforma asks for the money, so it says where to send it. */}
+          {proforma && bank ? (
+            <View style={s.bankBox}>
+              <Text style={s.upiTitle}>Bank details for payment</Text>
+              {bank.accountName ? <Text style={s.upiSub}>Account name: {pdfText(bank.accountName)}</Text> : null}
+              {bank.bankName ? <Text style={s.upiSub}>Bank: {pdfText(bank.bankName)}</Text> : null}
+              <Text style={s.upiSub}>Account no.: {bank.accountNumber}</Text>
+              {bank.ifsc ? <Text style={s.upiSub}>IFSC: {bank.ifsc}</Text> : null}
+              {bank.branch ? <Text style={s.upiSub}>Branch: {pdfText(bank.branch)}</Text> : null}
+              <Text style={s.upiSub}>Please quote {quoteId} as the payment reference.</Text>
+            </View>
+          ) : null}
+          {!isPaid && payLinkUrl ? (
+            <Text style={s.footerLine}>
+              <Text style={s.footerBold}>Review, accept &amp; pay online: </Text>
+              <Link src={payLinkUrl} style={s.payLink}>{payLinkUrl}</Link>
+            </Text>
+          ) : null}
           {upiQrDataUrl ? (
             <View style={s.upiRow}>
               <Image src={upiQrDataUrl} style={s.upiQr} />

@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { ConsequenceList } from "@/components/shared/consequence-list";
 import { sendQuoteConsequences } from "@/lib/quotes/send-consequences";
 import { sendQuoteEmail, quoteEmailOutcome, quoteEmailErrorOutcome } from "@/lib/quotes/send-quote-email";
+import { PayQrNotice } from "./pay-qr-notice";
 
 const schema = z.object({
   to:      z.string().email("Invalid email"),
@@ -66,7 +67,15 @@ interface SendQuoteDialogProps {
   subtotal?:          number | null;
   taxRate?:           number | null;
   validityDays?:      number | null;
+  /** R-1523: tenant's UPI ID + the quote's currency → the "why no pay QR" line. Omitted → no line. */
+  upiVpa?:            string | null;
+  currency?:          string | null;
 }
+
+const TEMPLATES = [
+  { id: "quotation", label: "Quotation", hint: "The usual offer" },
+  { id: "proforma",  label: "Proforma Invoice", hint: "Asks for payment — not a tax invoice" },
+] as const;
 
 export function SendQuoteDialog({
   open,
@@ -79,8 +88,13 @@ export function SendQuoteDialog({
   subtotal,
   taxRate,
   validityDays,
+  upiVpa,
+  currency,
 }: SendQuoteDialogProps) {
   const qc = useQueryClient();
+  /* R-1523: per-send choice — nothing is stored on the quote. Reset to Quotation on each open. */
+  const [template, setTemplate] = React.useState<"quotation" | "proforma">("quotation");
+  React.useEffect(() => { if (open) setTemplate("quotation"); }, [open]);
 
   const {
     register,
@@ -115,7 +129,7 @@ export function SendQuoteDialog({
   const sendQuote = useMutation({
     /* R-408: the same call the builder's "Save & send quote" makes — one path. */
     mutationFn: (data: FormData) =>
-      sendQuoteEmail(quoteId, { to: data.to, subject: data.subject, message: data.message }),
+      sendQuoteEmail(quoteId, { to: data.to, subject: data.subject, message: data.message, template }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
@@ -170,10 +184,35 @@ export function SendQuoteDialog({
             />
           </FormField>
 
+          {/* R-1523: which paper goes out. Proforma keeps the quote number (no GST series). */}
+          <fieldset>
+            <legend className="text-xs font-semibold text-ink-2 mb-1.5">Send as</legend>
+            <div role="radiogroup" aria-label="Send as" className="grid grid-cols-2 gap-2">
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={template === t.id}
+                  onClick={() => setTemplate(t.id)}
+                  className={`rounded-md border px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber ${
+                    template === t.id ? "border-ink bg-paper-2 font-semibold text-ink" : "border-hairline text-ink-2 hover:bg-paper-2"
+                  }`}
+                >
+                  {t.label}
+                  <span className="block text-2xs font-normal text-ink-3">{t.hint}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {/* Only when the caller told us the UPI ID — "not passed" must not read as "not set". */}
+          {upiVpa !== undefined && <PayQrNotice upiVpa={upiVpa} currency={currency} />}
+
           <FormField label="Subject (optional)" htmlFor="send-subject">
             <Input
               id="send-subject"
-              placeholder={`Quotation ${quoteId} from your reseller`}
+              placeholder={`${template === "proforma" ? "Proforma Invoice" : "Quotation"} ${quoteId} from your reseller`}
               error={errors.subject?.message}
               {...register("subject")}
             />
