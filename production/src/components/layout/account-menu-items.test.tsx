@@ -72,7 +72,7 @@ describe("AccountMenuItems (R-1439)", () => {
     renderMenu();
     const link = screen.getByRole("menuitem", { name: /website/i }).closest("a");
     expect(link).not.toBeNull();
-    expect(link?.getAttribute("href")).toBe("/reselleros");
+    expect(link?.getAttribute("href")).toBe("/reselleros?preview=1"); // R-1500: signed-in users must not bounce to /dashboard
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
   });
