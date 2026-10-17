@@ -10,7 +10,7 @@ import { MFA_PENDING_DATA_REFUSAL } from "@/lib/auth/mfa-gate";
 import { describeError } from "@/lib/errors/toast-error";
 
 const denied = () => new PgrstError(403, "42501", 'new row violates row-level security policy for table "employees"');
-const user = (aal?: "aal1" | "aal2") => ({ mode: "user" as const, userId: "11111111-1111-1111-1111-111111111111", aal });
+const user = (aal?: "aal1" | "aal2") => ({ mode: "user" as const, userId: "5b1e0c2a-7d4f-4a3e-9c61-2f8d0b7e4a19", aal });
 
 describe("explainMfaPending", () => {
   it("verified factor + aal1 session → clear second-step message, still 403/42501", async () => {
