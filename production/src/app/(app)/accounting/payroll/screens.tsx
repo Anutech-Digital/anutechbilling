@@ -56,7 +56,7 @@ import {
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
 import { buildCorrection, isoToIstHhmm } from "@/lib/attendance/ist-time";
-import { presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
+import { leaveDaysInMonth, presentByDate, presentSummary, suggestedLopDays } from "@/lib/attendance/lop";
 import { DEFAULT_SHIFT, dayStatus, formatGap } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { Switch } from "@/components/ui/switch";
@@ -1594,17 +1594,23 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
     const holidaySet = new Set((holQ.data ?? []).map((h) => h.holiday_date));
     nationalHolidaysForYear(yy).forEach((d) => holidaySet.add(d));
     let expected = 0, sundays = 0, holidays = 0;
+    const countedDates = new Set<string>();
     for (const d = new Date(rangeStart); d <= rangeEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const iso = utcDateISO(d);
       if (d.getUTCDay() === 0) sundays++;            // weekly off — paid, never LOP
       else if (holidaySet.has(iso)) holidays++;      // Sunday/holiday clash counts once as Sunday
-      else expected++;                                // working day
+      else { expected++; countedDates.add(iso); }     // working day
     }
     // R-604: a half-day (Pardeep: "half day par salary kaatni hai") counts 0.5 present.
-    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, shiftQ.data ?? DEFAULT_SHIFT);
-    const monthLeaves = (leaveQ.data ?? []).filter((l) => l.employee_id === employee.id && l.from_date <= `${period}-31` && l.to_date >= `${period}-01`);
-    const paidLeave = monthLeaves.filter((l) => l.type !== "unpaid").reduce((s, l) => s + l.days, 0);
-    const unpaidLeave = monthLeaves.filter((l) => l.type === "unpaid").reduce((s, l) => s + l.days, 0);
+    const rules = shiftQ.data ?? DEFAULT_SHIFT;
+    const { present, halfDays } = presentSummary(attQ.data ?? [], employee.id, rules);
+    // R-780: only the leave's working days inside this month, never on a present day, never twice.
+    const isWorkingDate = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay() !== 0
+      && !holidaySet.has(iso) && !nationalHolidaysForYear(Number(iso.slice(0, 4))).includes(iso);
+    const { paidLeave, unpaidLeave } = leaveDaysInMonth({
+      leaves: leaveQ.data ?? [], employeeId: employee.id, countedDates, isWorkingDate,
+      presentByDate: presentByDate(attQ.data ?? [], employee.id, rules),
+    });
     const { absent, lopDays } = suggestedLopDays({ expected, present, paidLeave, unpaidLeave });
     return { present, halfDays, absent, unpaidLeave, lopDays, workingDays: expected, sundays, holidays };
   }, [period, employee, attQ.data, leaveQ.data, holQ.data, shiftQ.data]);
