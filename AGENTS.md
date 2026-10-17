@@ -31,6 +31,13 @@ one rulebook is the point of it existing.
 
 ---
 
+## 0a. Board card ids — ONE counter (12 Oct 2026)
+
+Before you use a new `R-<n>` anywhere (card, commit message, worker lock): read the board collection `meta`, doc
+`nextId` (note its `version`); your id is `"R-" + next`; update `{next: next + 1}` with `if_version`; on a
+conflict re-read and retry; only then create `cards/R-<n>`. Never pick "the last id I saw" and never reserve a
+range. On 13–14 Oct and again on 16 Oct cards were filed without the bump and the next session nearly reused the ids.
+
 ## 0. What this is
 
 ResellerOS — a multi-tenant SaaS for Indian cloud resellers (Google Workspace, Microsoft
