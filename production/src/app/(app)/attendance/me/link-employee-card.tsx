@@ -16,6 +16,8 @@ import {
   linkCardMode,
   noEmployeesReason,
   EMPLOYEES_HREF,
+  LOGIN_LINK_HREF,
+  LOGIN_LINK_PLACE_LABEL,
   NO_EMPLOYEES_MESSAGE,
   NOT_LINKED_MESSAGE,
 } from "@/lib/attendance/self-profile";
@@ -23,7 +25,8 @@ import {
 /** The one-time "link your login to an employee" card on /attendance/me.
  *  R-1001: names come from my_employee_link_choices() — employees itself is owner / manager /
  *  accountant only. R-1414: only those three roles get the picker; any other role sees a
- *  "not linked" card with Report a problem (no in-app link screen yet — R-1436), and a picker
+ *  "not linked" card pointing at the owner's Employees → Logins for attendance panel (R-1436)
+ *  plus Report a problem, and a picker
  *  role with nothing to pick sees why plus Open Employees — never an empty dropdown. */
 export function LinkEmployeeCard() {
   const userQ = useCurrentUser();
@@ -45,9 +48,14 @@ export function LinkEmployeeCard() {
         </div>
         <h2 className="font-serif text-xl">Profile not linked</h2>
         <p className="text-sm text-ink-3 mt-2">{NOT_LINKED_MESSAGE}</p>
-        <Button icon="bug" className="mt-4" onClick={() => openHelpReport()}>
-          Report a problem
-        </Button>
+        <div className="mt-4 flex flex-col items-center gap-3">
+          <Link href={LOGIN_LINK_HREF} className="text-sm text-amber-ink underline">
+            Owner: open {LOGIN_LINK_PLACE_LABEL}
+          </Link>
+          <Button icon="bug" onClick={() => openHelpReport()}>
+            Report a problem
+          </Button>
+        </div>
       </Card>
     );
   }

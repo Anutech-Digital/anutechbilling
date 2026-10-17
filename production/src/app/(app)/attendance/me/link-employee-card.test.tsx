@@ -2,8 +2,8 @@
 /**
  * R-1414 — /attendance/me must never show a blank "Select your profile" dropdown, and every
  * "not linked" card must say what to do next using only places that exist today (§24).
- * R-1436 (open): there is no screen yet where the owner links someone else's login to an
- * employee — so the low-role card must not send people to "Team → Employees".
+ * R-1436: the owner now links someone else's login on Employees → "Logins for attendance",
+ * so the low-role card names that place and links to it (plus Report a problem).
  */
 import * as React from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -62,15 +62,17 @@ describe("R-1414 LinkEmployeeCard", () => {
   });
 
   it.each(["sales", "support", "delivery", "billing"])(
-    "%s login: no list request, no dropdown, a next step that exists today",
+    "%s login: no list request, no dropdown, points at the owner's link place",
     (role) => {
       state.role = role;
       render(<LinkEmployeeCard />);
       expect(state.choicesEnabled).toBe(false);
       expect(screen.queryByRole("combobox")).toBeNull();
       expect(screen.getByText("Profile not linked")).toBeTruthy();
-      // R-1436: no "Team → Employees" link screen exists yet — never point there.
-      expect(document.body.textContent ?? "").not.toMatch(/Team → Employees/);
+      // R-1436: the owner's link control lives on the Employees page — name it and link it.
+      expect(document.body.textContent ?? "").not.toMatch(/isn't in the app yet/);
+      const link = screen.getByRole("link", { name: /Logins for attendance/ });
+      expect(link.getAttribute("href")).toBe("/accounting/employees#logins");
       fireEvent.click(screen.getByRole("button", { name: "Report a problem" }));
       expect(openHelpReport).toHaveBeenCalledTimes(1);
     },

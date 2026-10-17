@@ -555,7 +555,7 @@ function CheckInCard({
                 <span>Desktop PC (No Webcam) Mode</span>
               </div>
               <p className="text-xs text-ink-3">
-                System detected desktop PC without webcam. Authenticated via Google Account.
+                No webcam found on this computer, so no photo is taken. Your check-in is recorded against the login you are signed in with.
               </p>
             </div>
           ) : (
