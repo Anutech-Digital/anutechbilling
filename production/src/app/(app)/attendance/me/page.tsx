@@ -35,6 +35,7 @@ import {
 import { LeaveRequestDialog } from "@/components/features/attendance/leave-request-dialog";
 import { ThisDeviceCard, useDeviceSignature } from "./device-card";
 import { LinkEmployeeCard } from "./link-employee-card";
+import { todayLabel } from "./today-label";
 import { dayStatus, formatGap, formatWorked, type ShiftRules } from "@/lib/attendance/shift";
 import { useShiftRules } from "@/lib/queries/attendance-shift";
 import { minutesToTimeValue, parseTimeToMinutes } from "@/lib/attendance/reminders";
@@ -61,15 +62,6 @@ function todayIstDate(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-function todayLabel(): string {
-  return new Date().toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-}
-
 export default function MyAttendancePage() {
   const meQ = useMyAttendanceToday();
   const netQ = useAttendanceNetwork();
@@ -83,7 +75,8 @@ export default function MyAttendancePage() {
       <div className="mb-6 text-center">
         <p className="text-2xs uppercase tracking-wider text-ink-3">Payroll &amp; HR</p>
         <h1 className="font-serif text-3xl md:text-4xl tracking-tight mt-1">My Attendance</h1>
-        <p className="text-sm text-ink-3 mt-1">{todayLabel()}</p>
+        {/* suppressHydrationWarning: only the IST-midnight race can differ server vs client (R-1471). */}
+        <p className="text-sm text-ink-3 mt-1" suppressHydrationWarning>{todayLabel()}</p>
 
         {meQ.data?.linked && (
           <div className="mt-3 flex justify-center">
