@@ -18,6 +18,8 @@ import path from "node:path";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { sitePreviewOn, SITE_PREVIEW_COOKIE } from "@/site/lib/site-preview";
 import { createClient } from "@/lib/supabase/server";
 import { HOME, PRICING_LINE, SCREENS } from "@/site/lib/data/reselleros-home";
 import { demoEnabled } from "@/lib/demo/demo-account";
@@ -52,7 +54,10 @@ export default async function ResellerOsHome(props: { searchParams: Promise<{ pr
   const searchParams = await props.searchParams;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (user && searchParams.preview !== "1") redirect("/dashboard");
+  /* R-1508: ?preview=1 OR the website-preview cookie keeps a signed-in team member here. */
+  if (user && !(await sitePreviewOn(searchParams.preview, async () => (await cookies()).get(SITE_PREVIEW_COOKIE)?.value))) {
+    redirect("/dashboard");
+  }
 
   const showDemo = demoEnabled();
   const demoMessage = searchParams.demo ? HOME.demoMessages[searchParams.demo] ?? null : null;

@@ -17,6 +17,7 @@ import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
 import { clearLoginCookies, DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 import { AUTH_OUTAGE_HTML, AUTH_OUTAGE_MESSAGE, authOutageVerdict } from "@/lib/supabase/auth-outage";
 import { decideSite } from "@/site/lib/site-split";
+import { SITE_PREVIEW_COOKIE, SITE_PREVIEW_COOKIE_OPTIONS, sitePreviewCookieAction } from "@/site/lib/site-preview";
 import {
   DEMO_COOKIE, DEMO_REFUSAL, DEMO_REFUSAL_HEADER,
   demoCookieLive, demoEnabled, demoHomePath, demoRequestVerdict, isDemoVisitor,
@@ -154,7 +155,15 @@ export async function middleware(request: NextRequest) {
   if (site.action === "rewrite") {
     const url = request.nextUrl.clone();
     url.pathname = site.pathname;
-    return NextResponse.rewrite(url);
+    const rewritten = NextResponse.rewrite(url);
+    /* R-1508: the live product root ("/" on reselleros.anutech.in) is answered here, before the
+       session is read. A ?preview=1 visit remembers the website preview so the site's own Home
+       link does not bounce a signed-in tester to the dashboard. Harmless for a signed-out
+       visitor: the cookie only stops that bounce, and their next request clears it (below). */
+    if (request.nextUrl.searchParams.get("preview") === "1") {
+      rewritten.cookies.set(SITE_PREVIEW_COOKIE, "1", SITE_PREVIEW_COOKIE_OPTIONS);
+    }
+    return rewritten;
   }
 
   /* ─── Rate limit: unauthenticated public surface (audit A3, 1 Sep 2026) ────
@@ -233,6 +242,18 @@ export async function middleware(request: NextRequest) {
   }
   const { response, user, role, canViewDeals, needsMfa } = session;
   const isAuthed = !!user;
+
+  /* R-1508: website preview for a signed-in team member (site/lib/site-preview.ts). Opened with
+     ?preview=1 → remembered for this browser session, so "/" and /reselleros stop bouncing them
+     to the dashboard while they test the website. Signed out → the cookie is dropped. */
+  const previewCookie = sitePreviewCookieAction({
+    pathname,
+    previewParam: request.nextUrl.searchParams.get("preview"),
+    cookieValue: request.cookies.get(SITE_PREVIEW_COOKIE)?.value,
+    signedIn: isAuthed,
+  });
+  if (previewCookie === "set") response.cookies.set(SITE_PREVIEW_COOKIE, "1", SITE_PREVIEW_COOKIE_OPTIONS);
+  if (previewCookie === "clear") response.cookies.set(SITE_PREVIEW_COOKIE, "", { ...SITE_PREVIEW_COOKIE_OPTIONS, maxAge: 0 });
 
   /* ─── R-722: a deactivated member is signed out on their next request ─────────────
      Owner turned the member off (users.is_active = false) → their login cookies are cleared

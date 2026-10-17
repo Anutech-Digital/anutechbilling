@@ -6,6 +6,7 @@
 import type { Metadata } from "next";
 import { PRODUCT_ORIGIN } from "@/site/lib/site-split";
 import { ProductHeader, ProductFooter } from "@/site/components/product/ProductChrome";
+import { SitePreviewBar } from "@/site/components/chrome/SitePreviewBar";
 
 export const metadata: Metadata = {
   metadataBase: new URL(PRODUCT_ORIGIN),
@@ -19,6 +20,8 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-paper focus:px-3 focus:py-2">
         Skip to content
       </a>
+      {/* R-1508: signed-in team member previewing the site — Back to dashboard + Report a problem. */}
+      <SitePreviewBar />
       <ProductHeader />
       <main id="main">{children}</main>
       <ProductFooter />

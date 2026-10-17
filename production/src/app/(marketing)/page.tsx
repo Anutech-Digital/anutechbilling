@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { siteKindForHost } from "@/site/lib/site-split";
+import { sitePreviewOn, SITE_PREVIEW_COOKIE } from "@/site/lib/site-preview";
 import { HomeCompany } from "@/site/components/home/HomeCompany";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { COMPANY, SITE_URL } from "@/site/lib/config";
@@ -57,7 +58,11 @@ export default async function HomePage(
   const h = await headers();
   if (siteKindForHost(h.get("x-forwarded-host") ?? h.get("host")) !== "company") {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user && searchParams.preview !== "1") redirect("/dashboard");
+    /* R-1508: ?preview=1 OR the website-preview cookie (set by middleware on that visit) keeps a
+       signed-in team member on the website, so the site's own Home link works while testing. */
+    if (user && !(await sitePreviewOn(searchParams.preview, async () => (await cookies()).get(SITE_PREVIEW_COOKIE)?.value))) {
+      redirect("/dashboard");
+    }
   }
 
   // "Business email from ₹…" on the IT card: the cheapest of the live licence rates and

@@ -44,6 +44,7 @@ import { CartDrawer } from "@/site/components/cart/CartDrawer";
 import { Header } from "@/site/components/chrome/Header";
 import { UtilityBar, CtaBand, Footer, ConsentBanner } from "@/site/components/chrome/Chrome";
 import { AgentChat } from "@/site/components/agent/AgentChat";
+import { SitePreviewBar } from "@/site/components/chrome/SitePreviewBar";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 
 
@@ -55,6 +56,8 @@ export default async function MarketingLayout({ children }: { children: React.Re
     <div className={`anutech-site ${archivo.variable} ${plexMono.variable}`}>
       <CartProvider>
         <a href="#main" className="skip-link">Skip to content</a>
+        {/* R-1508: signed-in team member previewing the site — Back to dashboard + Report a problem. */}
+        <SitePreviewBar />
         <UtilityBar />
         <Header emailFrom={emailFrom} />
         <main id="main">{children}</main>
