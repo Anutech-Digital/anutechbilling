@@ -87,6 +87,8 @@ import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
 import { rowTerm, renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
 import { useQuotes } from "@/lib/queries/quotes";
+import { canOpenQuotes } from "@/lib/quotes/access";
+import { SubCustomerLink, SubQuoteLink } from "./sub-links";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -281,6 +283,8 @@ export default function SubscriptionsPage() {
   const delSub = useDeleteSubscription();
   /* R-718: deleting a subscription is owner / accountant only — the database refuses the rest. */
   const canDeleteSub = canDeleteMoney(useCurrentUser().data?.role);
+  /* R-1513: the "Quote" link only for roles that can open /quotes (R-237). */
+  const canQuotesHere = canOpenQuotes(useCurrentUser().data?.role);
   const confirm = useConfirm();
   const handleDeleteSub = async (s: Subscription) => {
     const body = `This removes the subscription (and any draft purchase order for it). `
@@ -1086,7 +1090,11 @@ export default function SubscriptionsPage() {
                 {/* Who they are, and what they pay */}
                 <div className="flex items-start justify-between gap-3 mb-1.5">
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-ink truncate">{cleanDisplayName(s.customer_name)}</p>
+                    <p className="font-medium text-ink truncate">
+                      {/* R-1513: tap the name for the customer, "Quote" for its quote. */}
+                      <SubCustomerLink sub={s} name={s.customer_name} />
+                    </p>
+                    <SubQuoteLink sub={s} canQuotes={canQuotesHere} className="py-1" />
                     <DomainCell sub={s} compact />
                   </div>
                   <div className="text-right shrink-0">
@@ -1340,7 +1348,9 @@ export default function SubscriptionsPage() {
                       </td>
                       <td className="px-3 py-2.5 align-middle">
                         <div className="font-medium text-sm text-ink break-words leading-snug flex items-center gap-2 flex-wrap">
-                          <span>{cleanDisplayName(s.customer_name)}</span>
+                          {/* R-1513: customer name → the customer; "Quote" → the quote behind it. */}
+                          <SubCustomerLink sub={s} name={s.customer_name} />
+                          <SubQuoteLink sub={s} canQuotes={canQuotesHere} />
                         </div>
                         <div onClick={(e) => e.stopPropagation()}>
                           <DomainCell sub={s} />
@@ -1686,6 +1696,16 @@ export default function SubscriptionsPage() {
               <SheetDescription>
                 {scheduleSub.plan}{scheduleSub.domain ? ` · ${scheduleSub.domain}` : ""}
               </SheetDescription>
+              {/* R-1513: one click to the customer and to the quote this subscription came from. */}
+              <div className="flex items-center gap-3 flex-wrap text-sm" data-testid="sub-drawer-links">
+                {scheduleSub.customer_id && (
+                  <span className="inline-flex items-center gap-1 text-ink-3">
+                    <Icon name="users" size={12} className="flex-shrink-0" />
+                    <SubCustomerLink sub={scheduleSub} name={scheduleSub.customer_name} className="text-ink-2" />
+                  </span>
+                )}
+                <SubQuoteLink sub={scheduleSub} canQuotes={canQuotesHere} className="text-xs" />
+              </div>
             </SheetHeader>
             {/* ── The body carries its own padding ──────────────────────────────
                 SheetContent has NO horizontal padding — SheetHeader brings its own p-6

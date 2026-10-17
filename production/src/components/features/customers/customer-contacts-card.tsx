@@ -40,6 +40,10 @@ import {
 interface Props {
   customerId: string;
   customerName: string;
+  /** R-1522: open the add-contact dialog now (the header's "Add contact" asked for it). */
+  autoOpenAdd?: boolean;
+  /** Called once the dialog was opened for `autoOpenAdd`, so it does not reopen. */
+  onAutoOpenHandled?: () => void;
 }
 
 type Draft = {
@@ -53,7 +57,7 @@ type Draft = {
 
 const emptyDraft: Draft = { full_name: "", email: "", phone: "", title: "", role: "poc" };
 
-export function CustomerContactsCard({ customerId, customerName }: Props) {
+export function CustomerContactsCard({ customerId, customerName, autoOpenAdd, onAutoOpenHandled }: Props) {
   const { data: contacts, isLoading } = useCustomerContacts(customerId);
   /* How many customers each of these people serves — drives the "Serves N customers"
      chip. Already cached by the Customers and Subscriptions pages. */
@@ -67,6 +71,12 @@ export function CustomerContactsCard({ customerId, customerName }: Props) {
   const [draft, setDraft] = React.useState<Draft>(emptyDraft);
 
   const startAdd = () => { setDraft(emptyDraft); setOpen(true); };
+  React.useEffect(() => {
+    if (!autoOpenAdd) return;
+    setDraft(emptyDraft);
+    setOpen(true);
+    onAutoOpenHandled?.();
+  }, [autoOpenAdd, onAutoOpenHandled]);
   const startEdit = (c: Contact) => {
     setDraft({
       id: c.id,
