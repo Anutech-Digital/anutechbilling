@@ -429,6 +429,9 @@ export const APP_NAV: NavSection[] = [
       { id: "whatsapp",  href: "/whatsapp",        label: "WhatsApp Inbox",      icon: "whatsapp", roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "support",   href: "/support",         label: "Support Desk",        icon: "ticket",   roles: ["owner", "manager", "billing", "support", "delivery"] },
       { id: "provisioning", href: "/provisioning", label: "Activation Queue", icon: "package", roles: ["owner", "manager", "support", "delivery"], hint: "Seats a customer has paid for that nobody has turned on yet." },
+      /* R-1516: a daily queue (who owes money, whom to chase today), shown in the Billing app (nav-apps.ts).
+         Sales sees only its own customers' money (RLS). Bill already holds 8 rows, the cap. */
+      { id: "collections", href: "/collections", label: "Payment Follow-up", icon: "phone", roles: [...SALES_READ, "sales"], crumbSection: "Billing", hint: "Who owes money, promises to pay, today's follow-ups" },
     ],
   },
   {

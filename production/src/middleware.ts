@@ -99,6 +99,7 @@ const PROTECTED_PREFIXES = [
   "/documents",
   "/hosting-domains",
   "/my-expenses",
+  "/collections",     // R-1516 Payment Follow-up
   /* Onboarding fork for a signed-in person who has no workspace yet. It is
      PROTECTED (you must be authenticated to see it) but deliberately NOT in
      AUTH_PREFIXES below — those bounce a signed-in user to their role home,

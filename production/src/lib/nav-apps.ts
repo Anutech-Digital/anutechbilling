@@ -42,7 +42,7 @@ export const NAV_APPS: NavAppDef[] = [
   {
     /* Money in and money out: what the customer pays, what we pay vendors. */
     id: "billing", label: "Billing", icon: "rupee",
-    itemIds: ["subscriptions", "renewals", "invoices", "payments", "purchase-inbox", "purchase-orders", "vendors", "bills", "bill-payments", "expenses"],
+    itemIds: ["subscriptions", "renewals", "invoices", "payments", "collections", "purchase-inbox", "purchase-orders", "vendors", "bills", "bill-payments", "expenses"],
   },
   {
     id: "accounts", label: "Accounts", icon: "chart",
