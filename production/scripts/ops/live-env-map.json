@@ -1,0 +1,61 @@
+{
+  "$comment": "R-1462 — env var NAME → Secret Manager secret NAME (or a plain, non-secret value). Source: docs/R-909-LIVE-CUTOVER.md sections 2.1–2.3 + 3. NEVER a secret value. `{prefix}`, `{appUrl}`, `{bucket}` are filled from `envs.<env>`. Read by scripts/ops/live-env-commands.mjs and tests/ops/live-env-commands.test.ts.",
+  "envs": {
+    "live": {
+      "project": "resellsubsos-prod",
+      "region": "asia-southeast1",
+      "service": "resellersos",
+      "secretPrefix": "live-",
+      "appUrl": "https://reselleros.anutech.in",
+      "bucket": "resellsubsos-live-files",
+      "memory": "1Gi",
+      "updateFlags": ["--no-traffic", "--tag=r909"],
+      "source": "docs/LIVE-OPERATIONS.md + cloudbuild.yaml substitutions (_SERVICE/_REGION)"
+    },
+    "staging": {
+      "project": "resellsubsos-prod",
+      "region": "asia-southeast1",
+      "service": "resellersos-staging",
+      "secretPrefix": "staging-",
+      "appUrl": "https://resellersos-staging-njvk4nxhdq-as.a.run.app",
+      "bucket": "resellsubsos-staging-files",
+      "memory": "1Gi",
+      "updateFlags": [],
+      "source": "docs/STAGING.md (secret names beyond the 3 listed there are prefix-derived — confirm with --diff)"
+    }
+  },
+  "vars": [
+    { "name": "DATA_GATEWAY", "kind": "plain", "value": "1", "section": "2.1" },
+    { "name": "AUTH_PROVIDER", "kind": "plain", "value": "authjs", "section": "2.1" },
+    { "name": "AUTH_URL", "kind": "plain", "value": "{appUrl}", "section": "2.1" },
+    { "name": "STORAGE_BACKEND", "kind": "plain", "value": "gcs", "section": "2.1" },
+    { "name": "GCS_BUCKET", "kind": "plain", "value": "{bucket}", "section": "2.1" },
+    { "name": "DB_POOL_MAX", "kind": "plain", "value": "3", "section": "2.1" },
+    { "name": "DATABASE_URL", "kind": "secret", "secret": "{prefix}database-url", "section": "2.1" },
+    { "name": "ANON_DATABASE_URL", "kind": "secret", "secret": "{prefix}anon-database-url", "section": "2.1" },
+    { "name": "SERVICE_DATABASE_URL", "kind": "secret", "secret": "{prefix}service-database-url", "section": "2.1" },
+    { "name": "AUTH_DATABASE_URL", "kind": "secret", "secret": "{prefix}auth-database-url", "section": "2.1" },
+    { "name": "JOBS_DATABASE_URL", "kind": "secret", "secret": "{prefix}jobs-database-url", "section": "2.1" },
+    { "name": "SUPABASE_JWT_SECRET", "kind": "secret", "secret": "{prefix}supabase-jwt-secret", "section": "2.1" },
+    { "name": "AUTH_SECRET", "kind": "secret", "secret": "{prefix}auth-secret", "section": "2.1" },
+    { "name": "SUPABASE_SERVICE_ROLE_KEY", "kind": "secret", "secret": "{prefix}service-role-key", "section": "2.1", "removePlainFirst": true, "note": "plain env var on live today — Cloud Run cannot convert in place (2.3)" },
+    { "name": "NEXT_PUBLIC_APP_URL", "kind": "plain", "value": "{appUrl}", "section": "2.3", "note": "live still has the old asia-south1 run.app URL" },
+    { "name": "DMS_SSO_SECRET", "kind": "secret", "secret": "{prefix}dms-sso-secret", "section": "card", "optional": true, "note": "card R-1462 scope (src/lib/dms-engine/sso.ts); not in the runbook table — add only if the DMS link is wanted on day 1" }
+  ],
+  "keep": {
+    "section": "2.2",
+    "names": [
+      "AGENT_QUEUE_TOKEN", "BUY_PAGE_TENANT_ID", "CRON_SECRET",
+      "DIRECTADMIN_URL", "DIRECTADMIN_ADMIN_USER", "DIRECTADMIN_API_KEY", "DIRECTADMIN_IP",
+      "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "HOSTING_TRIAL_LIVE",
+      "INBOUND_EMAIL_SECRET", "INBOUND_REQUIRE_HEADER",
+      "RESELLERCLUB_RESELLER_ID", "RESELLERCLUB_API_KEY", "RESEND_API_KEY", "RESEND_FROM_OVERRIDE",
+      "SECRETS_MASTER_KEY", "SENTRY_DSN", "NEXT_PUBLIC_SENTRY_DSN", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"
+    ]
+  },
+  "googleOAuth": {
+    "section": "3",
+    "redirectPath": "/api/auth/callback/google",
+    "note": "APIs & Services → Credentials → OAuth 2.0 Client IDs → the client in GOOGLE_OAUTH_CLIENT_ID → Edit. AUTH_GOOGLE_ID/SECRET are not needed (authjs.ts falls back to GOOGLE_OAUTH_CLIENT_ID/SECRET)."
+  }
+}

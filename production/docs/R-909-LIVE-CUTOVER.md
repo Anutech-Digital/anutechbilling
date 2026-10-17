@@ -133,6 +133,22 @@ Alternative (not chosen): change the defaults in `cloudbuild.yaml` itself. The s
 would be safe, but it ties the switch to a code merge; the trigger route matches what staging did and rolls back by
 importing the saved YAML.
 
+### 2.5 Printed commands for 2.1–2.3 — `scripts/ops/live-env-commands.mjs` (R-1462)
+
+The names above are also kept as data in `scripts/ops/live-env-map.json` (env var → secret NAME or plain value;
+a vitest pins it to the tables of 2.1–2.3). The script only **prints** — it never runs gcloud and has no apply mode:
+
+```bash
+node scripts/ops/live-env-commands.mjs                 # plan: (a) --update-secrets line, (b) --update-env-vars line,
+                                                       #   (b2) SUPABASE_SERVICE_ROLE_KEY remove + re-add, (b3) --memory, (c) Google redirect URI checklist
+node scripts/ops/live-env-commands.mjs --env staging   # same for resellersos-staging (staging-* secret names)
+gcloud run services describe resellersos --region=asia-southeast1 --project=resellsubsos-prod --format=yaml > describe.yaml
+node scripts/ops/live-env-commands.mjs --diff describe.yaml   # names only: MISSING / PLAIN-but-secret / DIFFERENT secret / EXTRA; exit 0 when it matches
+```
+
+Paste the printed lines yourself (8.6); `r909-live-cutover.mjs run-env` makes the same change with `--run`. Delete
+`describe.yaml` afterwards — it holds the plain values (the script never prints them).
+
 ---
 
 ## 3. Google OAuth (Pardeep — Google Cloud console)
