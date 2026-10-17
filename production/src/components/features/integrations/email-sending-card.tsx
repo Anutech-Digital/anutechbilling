@@ -12,8 +12,10 @@
  * actually going out right now. Keys and accounts are detail underneath it.
  *
  * The switch itself cannot select a transport that cannot send — the server
- * checks the target's scopes and returns 409 with the missing step, and that
- * message is shown verbatim rather than replaced with "Something went wrong".
+ * checks the target's scopes and returns 409 with the missing step. Since R-1425
+ * that 409 (and the same check made before sending) shows as a calm notice on the
+ * card with the next step (Connect, or "not available on this server yet"),
+ * never as a raw error toast.
  */
 "use client";
 
@@ -31,6 +33,9 @@ import { blockerText, type SenderCandidate } from "@/lib/email/sender-candidates
 import {
   gmailConnectMessage, parseGmailConnectOutcome, type GmailConnectMessage,
 } from "@/lib/google/gmail-connect-result";
+import {
+  gmailChoiceBlocker, gmailNoticeForSaveError, type GmailNotice,
+} from "@/lib/google/gmail-sender-state";
 
 interface EmailSettings {
   provider: "resend" | "gmail";
@@ -38,6 +43,8 @@ interface EmailSettings {
   fromName: string | null;
   hasResendKey: boolean;
   hasEnvResendKey: boolean;
+  /** R-1425: false when this server has no Google OAuth client (absent on older servers). */
+  googleConfigured?: boolean;
   gmail: {
     senderId: string | null;
     /** True once a sender has been stored on the tenant, rather than assumed
@@ -54,6 +61,11 @@ interface EmailSettings {
   canSendNow: boolean;
 }
 
+/** A failed save that keeps the status and body, so a 409 can become a calm notice (R-1425). */
+class SaveError extends Error {
+  constructor(message: string, readonly status: number, readonly body: unknown) { super(message); }
+}
+
 export default function EmailSendingCard() {
   const qc = useQueryClient();
   const [fromAddress, setFromAddress] = React.useState("");
@@ -61,6 +73,9 @@ export default function EmailSendingCard() {
   const [resendKey, setResendKey] = React.useState("");
   const [dirty, setDirty] = React.useState(false);
   const [connectResult, setConnectResult] = React.useState<GmailConnectMessage | null>(null);
+  /* R-1425: why Gmail cannot be chosen yet, and the next step — shown on the card, not as an
+     error toast. Set before the PATCH (we already know) or from the server's 409 code. */
+  const [gmailNotice, setGmailNotice] = React.useState<GmailNotice | null>(null);
 
   /* ── What the Google callback said (R-160) ──────────────────────────────────
      The callback has always redirected here with `?gmail=<outcome>`, and nothing read it:
@@ -106,20 +121,29 @@ export default function EmailSendingCard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      const json = await res.json();
+      const json: unknown = await res.json().catch(() => ({}));
       // The server's message names the missing step (connect Google, tick the
       // send permission). Replacing it with a generic failure would throw away
       // the only part that tells the user what to do.
-      if (!res.ok) throw new Error(json.error ?? "Could not save");
+      if (!res.ok) {
+        const msg = (json as { error?: unknown }).error;
+        throw new SaveError(typeof msg === "string" ? msg : "Could not save", res.status, json);
+      }
       return json;
     },
     onSuccess: () => {
       toast.success("Email settings saved");
       setResendKey("");
       setDirty(false);
+      setGmailNotice(null);
       qc.invalidateQueries({ queryKey: ["integrations", "email-provider"] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      /* A 409 is Google not being ready — a setup state with a next step, not an error. */
+      const notice = e instanceof SaveError ? gmailNoticeForSaveError(e.status, e.body) : null;
+      if (notice) { setGmailNotice(notice); return; }
+      toast.error(e.message, { description: "Nothing was changed. Check the fields and save again." });
+    },
   });
 
   if (isLoading) {
@@ -151,6 +175,17 @@ export default function EmailSendingCard() {
   }
 
   const gmailReady = data.gmail.canSend;
+  /* R-1425: absent on an older server → assume Google connect works, as before. */
+  const googleAvailable = data.googleConfigured !== false;
+
+  function chooseProvider(p: "resend" | "gmail") {
+    if (p === "gmail" && data) {
+      const blocker = gmailChoiceBlocker(data);
+      if (blocker) { setGmailNotice(blocker); return; }
+    }
+    setGmailNotice(null);
+    save.mutate({ provider: p });
+  }
 
   return (
     <Card className="p-5">
@@ -189,8 +224,8 @@ export default function EmailSendingCard() {
               key={p}
               type="button"
               aria-pressed={active}
-              onClick={() => save.mutate({ provider: p })}
-              disabled={save.isPending}
+              onClick={() => chooseProvider(p)}
+              disabled={save.isPending || !data.canChooseSender}
               className={[
                 "rounded-lg border p-3 text-left transition-colors",
                 active ? "border-amber bg-amber-soft/40" : "border-hairline hover:bg-paper-2",
@@ -207,12 +242,37 @@ export default function EmailSendingCard() {
                   ? "Reports bounces. Needs a verified domain."
                   : gmailReady
                     ? `Sends as ${data.gmail.email}`
-                    : "Not connected for sending"}
+                    : googleAvailable
+                      ? "Not connected for sending"
+                      : "Not available on this server yet"}
               </p>
             </button>
           );
         })}
       </div>
+
+      {/* Only the owner may switch (PATCH says the same) — say so instead of a 403 toast. */}
+      {!data.canChooseSender && (
+        <p className="-mt-2 mb-4 text-2xs leading-relaxed text-ink-3">
+          Only the workspace owner can change how mail is sent — ask the workspace owner.
+        </p>
+      )}
+
+      {/* R-1425: why Gmail cannot be chosen yet, and the next step. Calm, not an error. */}
+      {gmailNotice && (
+        <div
+          role="status"
+          aria-label="Gmail sender"
+          className="-mt-2 mb-4 flex items-start justify-between gap-3 rounded-lg border border-amber/30 bg-amber-soft/40 p-3"
+        >
+          <p className="text-xs leading-relaxed text-ink-2">{gmailNotice.text}</p>
+          {gmailNotice.connectHref && (
+            <Button asChild variant="primary" size="sm" className="shrink-0">
+              <a href={gmailNotice.connectHref}>Connect</a>
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Stated plainly because it is the reason Resend is the default and it is
           invisible until a customer's address goes dead. */}
@@ -235,16 +295,21 @@ export default function EmailSendingCard() {
             <p className="truncate text-2xs text-ink-3">
               {gmailReady
                 ? `${data.gmail.email} · ready to send${data.gmail.isDesignated ? "" : " (not yet selected)"}`
-                : data.gmail.email
-                  ? `${data.gmail.email} · send permission missing`
-                  : "Not connected"}
+                : !googleAvailable
+                  ? "Not available on this server yet · the ResellerOS admin turns on Google sign-in"
+                  : data.gmail.email
+                    ? `${data.gmail.email} · send permission missing`
+                    : "Not connected"}
             </p>
           </div>
-          <a href="/api/integrations/google-gmail/connect" className="shrink-0">
-            <Button variant="outline" size="sm">
-              {gmailReady ? "Reconnect" : "Connect"}
-            </Button>
-          </a>
+          {/* No Connect where it cannot work: it would only land on "notconfigured". */}
+          {googleAvailable && (
+            <a href="/api/integrations/google-gmail/connect" className="shrink-0">
+              <Button variant="outline" size="sm">
+                {gmailReady ? "Reconnect" : "Connect"}
+              </Button>
+            </a>
+          )}
         </div>
 
         {/* The last connect attempt's result, kept on the card (the toast fades). */}
@@ -266,7 +331,7 @@ export default function EmailSendingCard() {
 
         {/* Some failures never come back here: Google shows its own page (app in testing,
             app not verified, redirect URI not registered). Say what to do with that page. */}
-        {!gmailReady && (
+        {!gmailReady && googleAvailable && (
           <p className="mt-2 text-2xs leading-relaxed text-ink-3">
             If Google shows its own error page (for example &quot;Access blocked&quot; or
             &quot;Error 400&quot;), send a screenshot to the ResellerOS admin — that is fixed in

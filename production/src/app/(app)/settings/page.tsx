@@ -41,6 +41,7 @@ import {
   CONNECT_GOOGLE_RESELLER_PATH, RESELLER_OAUTH_MESSAGES, RESELLER_STATUS_PARAM, resellerCardState,
 } from "@/lib/google/reseller-connect";
 import { mayDo } from "@/lib/auth/action-roles";
+import { geminiStatusText } from "@/lib/ai/gemini-status-text";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import SandboxConfigureDialog  from "@/components/features/integrations/sandbox-configure-dialog";
 import WhatsAppConfigureDialog from "@/components/features/integrations/whatsapp-configure-dialog";
@@ -818,6 +819,7 @@ function GeminiIntegrationCard() {
   });
   const configured = Boolean(status?.configured);
   const envFallback = Boolean(status?.env_fallback);
+  const geminiText = geminiStatusText({ configured, envFallback });
   return (
     <>
       <div className="flex items-center justify-between rounded-lg border border-hairline p-3">
@@ -834,8 +836,9 @@ function GeminiIntegrationCard() {
                   ? <Badge size="sm" kind="info">Shared</Badge>
                   : <Badge size="sm" kind="muted">Stub</Badge>}
             </p>
-            <p className="text-xs text-ink-3 truncate">
-              {configured ? "Real AI drafts + extraction" : envFallback ? "Using shared server key" : "Templates only — add a Gemini key"}
+            {/* R-1425: what "shared" means lives in lib/ai/gemini-status-text.ts (full line on hover). */}
+            <p className="text-xs text-ink-3 truncate" title={geminiText.detail}>
+              {geminiText.card}
             </p>
           </div>
         </div>
@@ -861,7 +864,12 @@ function GoogleResellerIntegrationCard() {
     queryFn: async () => {
       const res = await fetch("/api/integrations/google-reseller/subscriptions?probe=1");
       const body = await res.json().catch(() => ({}));
-      return { ok: res.ok, code: body?.code as string | undefined, connected: Boolean(body?.connected) };
+      return {
+        ok: res.ok,
+        code: body?.code as string | undefined,
+        connected: Boolean(body?.connected),
+        connectAvailable: typeof body?.connectAvailable === "boolean" ? (body.connectAvailable as boolean) : undefined,
+      };
     },
     staleTime: 60_000,
   });
@@ -872,7 +880,12 @@ function GoogleResellerIntegrationCard() {
     const p = url.searchParams.get(RESELLER_STATUS_PARAM);
     if (!p) return;
     const m = RESELLER_OAUTH_MESSAGES[p];
-    if (m) (m.ok ? toast.success : toast.error)(m.text);
+    /* R-1425: "not set up on this server" is a calm notice — the card below says the same. */
+    if (m) {
+      if (m.tone === "ok") toast.success(m.text);
+      else if (m.tone === "calm") toast(m.text);
+      else toast.error(m.text, { description: "Google Reseller is not connected yet. Press Connect Google Reseller below to try again." });
+    }
     url.searchParams.delete(RESELLER_STATUS_PARAM);
     window.history.replaceState({}, "", url.pathname + url.search);
   }, []);
@@ -895,7 +908,9 @@ function GoogleResellerIntegrationCard() {
             Google Reseller API
             {!isLoading && (connected
               ? <Badge size="sm" kind="success">Connected</Badge>
-              : <Badge size="sm" kind="warning">Setup</Badge>)}
+              : card.notAvailable
+                ? <Badge size="sm" kind="muted">Not available</Badge>
+                : <Badge size="sm" kind="warning">Setup</Badge>)}
           </p>
           <p className="text-xs text-ink-3 truncate">{sub}</p>
         </div>
@@ -962,7 +977,7 @@ function GoogleContactsIntegrationCard() {
      bekaar hai — CLAUDE.md §24 kehta hai: kya hua, kyun, ab kya karein. Wo teeno baatein
      `last_error` me pehle se hain, isliye wahi dikhate hain. */
   const sub = state.kind === "unconfigured"
-    ? "Add Google OAuth keys in env to enable"
+    ? "Not available on this server yet · the ResellerOS admin turns on Google sign-in"
     : state.kind === "needs_reconsent"
       ? state.reason
       : state.kind === "ready"
@@ -984,7 +999,7 @@ function GoogleContactsIntegrationCard() {
                 ? <Badge size="sm" kind="success">Connected</Badge>
                 : configured
                   ? <Badge size="sm" kind="warning">Connect</Badge>
-                  : <Badge size="sm" kind="muted">Setup</Badge>}
+                  : <Badge size="sm" kind="muted">Not available</Badge>}
           </p>
           {/* Wajah wali line ko truncate NAHI karte — wahi ek line hai jo batati hai ki
               ab kya karna hai. Baaki haalat me line chhoti hai, to title= kaafi hai. */}

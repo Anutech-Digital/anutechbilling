@@ -27,6 +27,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { classifyGoogleApiError, getGoogleAccessToken, googleReasonMessage } from "@/server/auth/google-token";
+import { googleOAuthCreds } from "@/lib/google/oauth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -80,9 +81,13 @@ export async function GET(req: Request) {
   /* A setup state is not a failure of the probe: the Settings card asks "what is the state?"
      and gets a 200 with the answer, so the browser console stays clean. The full pull (import
      dialog) keeps 403, which its toast logic expects. */
+  /* R-1425: the probe also says whether "Connect Google Reseller" can work here — without an
+     OAuth client it lands on ?greseller=notconfigured, so the card shows that state instead. */
   const notReady = (code: string, error: string, detail?: string) =>
     NextResponse.json(
-      probe ? { connected: false, code, error } : { code, error, ...(detail ? { detail } : {}) },
+      probe
+        ? { connected: false, code, error, connectAvailable: googleOAuthCreds() !== null }
+        : { code, error, ...(detail ? { detail } : {}) },
       { status: probe ? 200 : 403 },
     );
 

@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { formatDate } from "@/lib/utils";
+import { geminiStatusText } from "@/lib/ai/gemini-status-text";
 
 interface Props {
   open: boolean;
@@ -173,12 +174,12 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
             <div className="flex items-center justify-between rounded-md border border-hairline bg-paper-2/40 px-3 py-2">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-ink">Current state</p>
-                <p className="text-2xs text-ink-3 truncate">
+                {/* R-1425: the shared-key line says what "shared" costs — not truncated, it is
+                    the one line that explains why AI can pause. Copy in lib/ai/gemini-status-text.ts. */}
+                <p className={status?.configured ? "text-2xs text-ink-3 truncate" : "text-2xs text-ink-3"}>
                   {status?.configured
                     ? <>Configured · key {status.key_mask} · model {status.model} · saved {status.updated_at ? formatDate(status.updated_at) : "—"}</>
-                    : status?.env_fallback
-                      ? "Using the shared server key (env). Add your own to override."
-                      : "Not configured — AI features run on plain templates (stub)."}
+                    : geminiStatusText({ configured: false, envFallback: Boolean(status?.env_fallback) }).detail}
                 </p>
               </div>
               {status?.configured

@@ -64,9 +64,10 @@ const MESSAGES: Record<GmailConnectOutcome, GmailConnectMessage> = {
     kind: "error",
     text: "The 'Send email on your behalf' permission was not ticked. Connect again and keep the Gmail boxes ticked.",
   },
+  /* R-1425: a setup state of the server, not a failure — said calmly, naming who acts. */
   notconfigured: {
-    kind: "error",
-    text: "Google sign-in is not set up on this server (app keys missing). Ask the ResellerOS admin.",
+    kind: "warn",
+    text: "Google connect is not available on this server yet. The ResellerOS admin turns on Google sign-in; until then Resend sends your mail.",
   },
   vault_missing: {
     kind: "error",
