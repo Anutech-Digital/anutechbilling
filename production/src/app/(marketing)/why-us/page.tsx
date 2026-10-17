@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { COMPARE_ROWS } from "@/site/lib/data/copy";
 
-export const metadata: Metadata = { title: "Why us" };
+export const metadata: Metadata = {
+  title: "Why us",
+  description: "Ten differences between Anutech Digital and the usual way, stated flatly. No competitor named.",
+};
 
 /**
  * Ten rows, us vs "the typical platform" — no competitor is ever named (PROJECT_NOTES:

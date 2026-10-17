@@ -4,7 +4,10 @@ import { SLA } from "@/site/lib/config";
 import { QuoteBuilder } from "@/site/components/quote/QuoteBuilder";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 
-export const metadata: Metadata = { title: "Get a quote" };
+export const metadata: Metadata = {
+  title: "Get a quote",
+  description: `Pick the edition, the commitment and the headcount — the estimate builds itself, and the formal GST quotation follows by email ${SLA.quote}.`,
+};
 
 export const revalidate = 600;
 

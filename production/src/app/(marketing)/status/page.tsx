@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { STATUS_SERVICES } from "@/site/lib/data/misc";
 
-export const metadata: Metadata = { title: "System status" };
+export const metadata: Metadata = {
+  title: "System status",
+  description: "Ninety days of status per service. SLA credits apply automatically — you never have to file for one.",
+};
 
 /**
  * Six services, each with a dot, its 90-day uptime and 30 bars (3 days per bar; amber =

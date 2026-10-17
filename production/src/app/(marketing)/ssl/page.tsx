@@ -3,7 +3,11 @@ import { CertCards } from "@/site/components/ssl/CertCards";
 import { SectionHead, Reveal } from "@/site/components/ui/bits";
 import { SECURITY_FEATURES } from "@/site/lib/data/copy";
 
-export const metadata: Metadata = { title: "SSL & security" };
+export const metadata: Metadata = {
+  title: "SSL & security",
+  description:
+    "Free DV on every site. Paid certificates only when a client needs the paperwork — and we will say so rather than sell you one.",
+};
 
 export default function SslPage() {
   return (

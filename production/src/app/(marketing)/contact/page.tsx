@@ -6,7 +6,10 @@
 import type { Metadata } from "next";
 import { SupportBody } from "@/site/components/support/SupportBody";
 
-export const metadata: Metadata = { title: "Support" };
+export const metadata: Metadata = {
+  title: "Support",
+  description: "Ask anything about a domain, hosting, email or a bill. A person answers, by email.",
+};
 
 export default function ContactPage() {
   return (

@@ -6,5 +6,8 @@
  */
 import type { Metadata } from "next";
 import { LegalDoc } from "@/site/components/legal/LegalDoc";
-export const metadata: Metadata = { title: { absolute: "Anutech Digital terms and conditions" } };
+export const metadata: Metadata = {
+  title: { absolute: "Anutech Digital terms and conditions" },
+  description: "The terms for domains, hosting, email, SSL and licences bought from Anutech Digital.",
+};
 export default function TermsAndConditionsPage() { return <LegalDoc page="terms" />; }
