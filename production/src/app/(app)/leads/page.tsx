@@ -658,7 +658,7 @@ function LeadsPageInner() {
           phone dialer; Send nudge opens the mail client with a pre-written
           follow-up. Both gracefully degrade if the contact info is missing. */}
       {!isLoading && counts && (totalLeads ?? 0) > 0 && !isSales && search.trim() === "" && (
-        <LeadsHotCard hotCount={counts.list.hot} topHot={counts.list.hot_top} currentUser={currentUser} tipsOpen={tipsOpen} toggleTips={toggleTips} />
+        <LeadsHotCard hotCount={counts.list.hot} topHot={counts.list.hot_top} currentUser={currentUser} tipsOpen={tipsOpen} toggleTips={toggleTips} onOpenLead={openLead} />
       )}
 
 
