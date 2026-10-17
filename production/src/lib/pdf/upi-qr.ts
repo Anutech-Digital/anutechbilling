@@ -10,6 +10,7 @@
  * costs the customer their invoice.
  */
 import { invoiceUpiIntent, quoteUpiIntent } from "@/lib/payments/upi";
+import { statementUpiUri } from "@/lib/collections/pending-dues";
 
 export interface UpiQr {
   dataUrl: string;
@@ -47,6 +48,15 @@ export async function buildQuoteUpiQr(args: {
   amountDue: number | null | undefined;
 }): Promise<UpiQr | null> {
   return encodeQr(quoteUpiIntent(args), args.vpa);
+}
+
+/**
+ * R-1526: the QR for a customer's PENDING-DUES STATEMENT — one QR for the whole total. Same
+ * never-throws contract. statementUpiUri() refuses nothing-due, a non-INR bill and a missing
+ * or malformed UPI ID, so each of those prints no QR.
+ */
+export async function buildStatementUpiQr(args: Parameters<typeof statementUpiUri>[0]): Promise<UpiQr | null> {
+  return encodeQr(statementUpiUri(args), args.vpa);
 }
 
 /** Shared encoder. Returns null on every failure path — never throws. */

@@ -29,6 +29,9 @@ import { tdsShortfallLine } from "@/lib/accounting/tds-match";
 import { Button } from "@/components/ui/button";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
 import { ReminderDialog } from "@/components/features/collections/reminder-dialog";
+import { PendingDuesDialog } from "@/components/features/collections/pending-dues-dialog";
+import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
+import { canRecordMoney } from "@/lib/auth/roles";
 import { CollectionsOwnerReport } from "@/components/features/collections/owner-report";
 import { maySeeCollectionsReport } from "@/lib/collections/weekly-report";
 import {
@@ -67,6 +70,13 @@ export default function CollectionsPage() {
   /* R-1518: the row whose Remind dialog is open. */
   const [remKey, setRemKey] = React.useState<string | null>(null);
   const remRow = remKey ? all.find((r) => r.key === remKey) ?? null : null;
+  /* R-1526: the row whose "Send pending dues" dialog is open, and the one whose R-1525
+     "Record payment — multiple invoices" dialog is open (money roles only). */
+  const [duesKey, setDuesKey] = React.useState<string | null>(null);
+  const duesRow = duesKey ? all.find((r) => r.key === duesKey) ?? null : null;
+  const [payKey, setPayKey] = React.useState<string | null>(null);
+  const payRow = payKey ? all.find((r) => r.key === payKey) ?? null : null;
+  const canPay = canRecordMoney(role);
   const showReport = maySeeCollectionsReport(role);
   const owing = React.useMemo(
     () => (rows ?? []).filter((r) => !!r.customerId).map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue })),
@@ -151,6 +161,8 @@ export default function CollectionsPage() {
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <FollowupButton r={r} onOpen={setFuKey} className="w-full justify-center" />
                     <RemindButton r={r} onOpen={setRemKey} className="w-full justify-center" />
+                    <DuesButton r={r} onOpen={setDuesKey} className="w-full justify-center" />
+                    {canPay && <PayButton r={r} onOpen={setPayKey} className="w-full justify-center" />}
                   </div>
                 </Card>
               </li>
@@ -189,6 +201,8 @@ export default function CollectionsPage() {
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         <FollowupButton r={r} onOpen={setFuKey} />
                         <RemindButton r={r} onOpen={setRemKey} />
+                        <DuesButton r={r} onOpen={setDuesKey} />
+                        {canPay && <PayButton r={r} onOpen={setPayKey} />}
                       </div>
                     </td>
                     <td className="px-3 py-3">
@@ -230,6 +244,22 @@ export default function CollectionsPage() {
           customerName={remRow.customerName}
         />
       )}
+      {duesRow?.customerId && (
+        <PendingDuesDialog
+          open
+          onOpenChange={(o) => { if (!o) setDuesKey(null); }}
+          customerId={duesRow.customerId}
+          customerName={duesRow.customerName}
+        />
+      )}
+      {canPay && payRow?.customerId && (
+        <MultiInvoicePaymentDialog
+          open
+          onOpenChange={(o) => { if (!o) setPayKey(null); }}
+          customerId={payRow.customerId}
+          customerName={payRow.customerName}
+        />
+      )}
     </div>
   );
 }
@@ -268,6 +298,42 @@ function RemindButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key
       onClick={() => onOpen(r.key)}
     >
       Remind
+    </Button>
+  );
+}
+
+/** R-1526: preview the statement of pending dues and send it (a person sends — R-1514). */
+function DuesButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
+  if (!r.customerId) return null;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="default"
+      icon="file"
+      className={className}
+      aria-label={`Send pending dues statement to ${r.customerName}`}
+      onClick={() => onOpen(r.key)}
+    >
+      Send pending dues
+    </Button>
+  );
+}
+
+/** R-1526: when the customer pays the total — R-1525's one-payment-many-invoices dialog. */
+function PayButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
+  if (!r.customerId) return null;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="default"
+      icon="rupee"
+      className={className}
+      aria-label={`Record a payment from ${r.customerName} across their invoices`}
+      onClick={() => onOpen(r.key)}
+    >
+      Record payment
     </Button>
   );
 }

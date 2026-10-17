@@ -21,6 +21,7 @@ import { useCustomerCollection } from "@/lib/queries/collections";
 import { useCustomerFollowups, useCustomerOwner } from "@/lib/queries/payment-followups";
 import { FollowupDialog } from "./followup-dialog";
 import { FollowupHistory } from "./followup-history";
+import { PendingDuesDialog } from "./pending-dues-dialog";
 
 export function CustomerFollowupCard({ customerId, customerName }: { customerId: string; customerName: string }) {
   const { data: me } = useCurrentUser();
@@ -30,6 +31,7 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
   const history = useCustomerFollowups(allowed ? customerId : null);
   const { data: names } = useUserNames();
   const [open, setOpen] = React.useState(false);
+  const [duesOpen, setDuesOpen] = React.useState(false);
 
   const stillOwes = (row.data?.amountDue ?? 0) > 0;
   const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], istToday(), stillOwes), [history.data, stillOwes]);
@@ -40,7 +42,16 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
     <Card
       title="Payment follow-up"
       sub={r ? `${rupee(r.amountDue)} due` : row.isLoading ? undefined : "Nothing owed right now"}
-      actions={<Button size="sm" variant="primary" icon="plus" onClick={() => setOpen(true)}>Add follow-up</Button>}
+      actions={
+        <div className="flex flex-wrap gap-2">
+          {/* R-1526: one statement with every open bill + one pay QR (the page's own "Record payment
+              — multiple invoices" button, R-1525, records it when they pay the total). */}
+          {stillOwes && (
+            <Button size="sm" variant="default" icon="file" onClick={() => setDuesOpen(true)}>Send pending dues</Button>
+          )}
+          <Button size="sm" variant="primary" icon="plus" onClick={() => setOpen(true)}>Add follow-up</Button>
+        </div>
+      }
     >
       {r && (r.promisedOn || r.nextFollowUpOn) && (
         <div className="flex flex-wrap gap-1.5 mb-3 text-sm">
@@ -77,6 +88,14 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
         stillOwes={stillOwes}
         amountDue={r?.amountDue}
       />
+      {duesOpen && (
+        <PendingDuesDialog
+          open
+          onOpenChange={setDuesOpen}
+          customerId={customerId}
+          customerName={r?.customerName ?? customerName}
+        />
+      )}
     </Card>
   );
 }
