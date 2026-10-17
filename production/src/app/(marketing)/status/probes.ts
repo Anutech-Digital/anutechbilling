@@ -7,16 +7,16 @@
  *               the API root: no key is sent, no order or payment endpoint is touched.
  *   registrar — ResellerClub credentials are set AND the registrar API host answers. The
  *               request carries NO credentials (they would sit in the URL), so it costs nothing.
- *   email     — a platform sender is configured AND the SMTP server accepts a TCP connection
- *               (closed straight away — no mail is sent) / the Resend API host answers.
+ *   email     — probeEmailTransport() in lib/email/send (only the email transport may talk to
+ *               SMTP/Resend — messaging-chokepoint test): SMTP accepts a TCP connection, closed
+ *               straight away, or the Resend host answers. No mail is sent.
  *
  * A probe never returns an error message or a secret — only a state. Timeouts and "slow"
  * are decided by checks.ts, so every probe is just "did it work".
  */
 import "server-only";
-import { connect } from "node:net";
 import { pingDb } from "@/server/db";
-import { smtpConfigFromEnv } from "@/lib/email/smtp-transport";
+import { probeEmailTransport } from "@/lib/email/send";
 import { rcConfigured } from "@/lib/resellerclub";
 
 export type ProbeResult = { state: "ok" } | { state: "error" } | { state: "not-configured" };
@@ -34,16 +34,6 @@ async function reachable(url: string): Promise<ProbeResult> {
   // Drain nothing we do not need — the body of an API root is irrelevant.
   await res.body?.cancel().catch(() => {});
   return res.status < 500 ? OK : ERROR;
-}
-
-function tcpReachable(host: string, port: number): Promise<ProbeResult> {
-  return new Promise((resolve) => {
-    const socket = connect({ host, port });
-    const done = (r: ProbeResult) => { socket.destroy(); resolve(r); };
-    socket.setTimeout(3_000, () => done(ERROR));
-    socket.once("connect", () => done(OK));
-    socket.once("error", () => done(ERROR));
-  });
 }
 
 async function database(): Promise<ProbeResult> {
@@ -64,11 +54,7 @@ async function registrar(): Promise<ProbeResult> {
 }
 
 async function email(): Promise<ProbeResult> {
-  // Same rule as isEmailConfigured() in lib/email/send: SMTP first, else Resend.
-  const smtp = smtpConfigFromEnv(process.env);
-  if (smtp) return tcpReachable(smtp.host, smtp.port);
-  if (has(process.env.RESEND_API_KEY)) return reachable("https://api.resend.com/");
-  return NOT_CONFIGURED;
+  return { state: await probeEmailTransport() };
 }
 
 export const STATUS_PROBES: Record<ProbeKey, () => Promise<ProbeResult>> = {
