@@ -115,6 +115,15 @@ export function dbFor(session: TenantSession) {
   });
 }
 
+/**
+ * R-1503: liveness for the public /status page — one `select 1` on the app's own pool. No
+ * tenant context is set and no table is read, so it can return nothing but "the database
+ * answered". Throws when it did not.
+ */
+export async function pingDb(): Promise<void> {
+  await runtimeClient().$queryRaw`select 1`;
+}
+
 /** For tests and graceful shutdown only. */
 export async function disconnectDb(): Promise<void> {
   await globalForDb.__rosRuntimeDb?.$disconnect();

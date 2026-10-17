@@ -1,5 +1,5 @@
 /**
- * Support KB, status services, demo client-area data and the legal drafts — from the handoff.
+ * Support KB, demo client-area data and the legal drafts — from the handoff.
  *
  * The legal blocks are marked on-page as counsel-review drafts, exactly as the handoff wrote
  * them ("Placeholder draft — have your counsel review before publishing"). Do not quietly
@@ -27,22 +27,8 @@ export const SUPPORT_CHANNELS = [
   { title: "Renewals", body: "We email you before anything expires. Renew from the client area, or reply to the reminder." },
 ] as const;
 
-export interface StatusService {
-  name: string;
-  note: string;
-  uptime: string;
-  /** Indexes (0–29) of degraded 3-day bars. */
-  bad: readonly number[];
-}
-
-export const STATUS_SERVICES: readonly StatusService[] = [
-  { name: "Shared hosting · Mumbai", note: "LiteSpeed cluster", uptime: "99.98%", bad: [] },
-  { name: "Shared hosting · Bengaluru", note: "LiteSpeed cluster", uptime: "99.99%", bad: [] },
-  { name: "Anutech Mail", note: "IMAP, SMTP, webmail", uptime: "99.96%", bad: [17] },
-  { name: "Anycast DNS", note: "Authoritative resolution", uptime: "100%", bad: [] },
-  { name: "Client area & billing", note: "Panel and invoices", uptime: "99.93%", bad: [4, 22] },
-  { name: "Domain registry API", note: "Register, renew, transfer", uptime: "99.97%", bad: [28] },
-] as const;
+/* R-1503: the hand-written status list (uptime %, 90-day bars) is gone — /status now shows
+   live checks (src/app/(marketing)/status/checks.ts). Nothing records uptime history yet. */
 
 /* ── Demo client area (explicitly demo data in the handoff) ────────────────── */
 
