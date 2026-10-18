@@ -30,7 +30,7 @@ import { rupee } from "@/lib/utils";
 import {
   buildFollowupHistory, defaultAssignee, defaultNextFollowUp, FOLLOWUP_KIND_LABEL, FOLLOWUP_KINDS,
   followupFormSchema, linkOptions, mayReassignFollowup, toFollowupRequest,
-  type FollowupFormData, type FollowupLinkSource,
+  type FollowupFormData, type FollowupLinkSource, type PromisePayment,
 } from "@/lib/collections/followup-rules";
 import { FollowupSaveError, useAddFollowup, useCustomerFollowups } from "@/lib/queries/payment-followups";
 import { FollowupHistory } from "./followup-history";
@@ -48,12 +48,14 @@ export interface FollowupDialogProps {
   items: readonly FollowupLinkSource[];
   /** The customer still owes money (a past promise is then broken). */
   stillOwes: boolean;
+  /** R-1540: this customer's received payments (CollectionRow.payments) — what keeps a promise. */
+  payments?: readonly PromisePayment[];
   amountDue?: number;
   /** R-1518: switch to the Remind dialog (AI-drafted reminder a person sends). Absent → no button. */
   onRemind?: () => void;
 }
 
-export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, amountDue, onRemind }: FollowupDialogProps) {
+export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind }: FollowupDialogProps) {
   const { data: me } = useCurrentUser();
   const { data: names } = useUserNames();
   const history = useCustomerFollowups(open ? customerId : null);
@@ -63,7 +65,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
   const today = istToday();
   const canReassign = mayReassignFollowup(me?.role);
   const links = React.useMemo(() => linkOptions(items), [items]);
-  const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], today, stillOwes), [history.data, today, stillOwes]);
+  const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], today, stillOwes, payments), [history.data, today, stillOwes, payments]);
   const assigneeDefault = defaultAssignee({ latestAssignedTo: entries[0]?.assigned_to, ownerId, meId: me?.userId });
   const team = React.useMemo(
     () => [...(names?.values() ?? [])].filter((u) => !u.inactive || u.id === assigneeDefault).sort((a, b) => a.label.localeCompare(b.label)),

@@ -232,6 +232,7 @@ export default function CollectionsPage() {
           ownerId={fuRow.ownerId}
           items={fuRow.items}
           stillOwes={fuRow.amountDue > 0}
+          payments={fuRow.payments}
           amountDue={fuRow.amountDue}
           onRemind={() => { setFuKey(null); setRemKey(fuRow.key); }}
         />
@@ -388,7 +389,8 @@ function PromiseText({ r }: { r: CollectionRow }) {
     <span className={r.promiseBroken ? "text-rose font-medium" : "text-ink-2"}>
       {formatDate(r.promisedOn)}
       {r.promisedAmount != null && r.promisedAmount > 0 && <span className="tabular-nums"> · {rupee(r.promisedAmount)}</span>}
-      {r.promiseBroken && <span className="block text-xs">Date passed, still owed</span>}
+      {r.promiseBroken && <span className="block text-xs">Date passed, promised amount not paid</span>}
+      {r.promiseStatus === "kept" && <span className="block text-xs text-ink-3">Kept — paid</span>}
     </span>
   );
 }

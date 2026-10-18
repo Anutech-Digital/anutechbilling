@@ -11,6 +11,9 @@
  *   • Validated BEFORE sending (next follow-up date, something owed). Logged only when the email
  *     really left; if it left but the log failed, the answer says so — never a second send.
  *   • The follow-up goes through followup-log.server.ts (R-1517 rules: who it is assigned to).
+ *   • R-1544: ONE email per press of Send — the dialog's requestId is claimed in
+ *     customer_email_sends right before the send (lib/collections/email-send-once.server.ts); a
+ *     timeout + retry answers "already sent" (or 409 while the first is still going).
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -19,6 +22,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { istToday } from "@/lib/dates/ist";
 import { followupRequestSchema, NEXT_REQUIRED } from "@/lib/collections/followup-rules";
 import { logFollowup } from "@/lib/collections/followup-log.server";
+import { claimEmailSend, settleEmailSend } from "@/lib/collections/email-send-once.server";
 import { emailTarget, reminderNote } from "@/lib/collections/reminder-draft";
 import { pendingDuesAbout, pendingDuesFileName } from "@/lib/collections/pending-dues";
 import { pendingDuesPdfFor } from "@/lib/collections/pending-dues.server";
@@ -27,11 +31,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const REOPEN = "Close this statement and open Send pending dues again, then press Send.";
 
 const bodySchema = z.object({
   subject: z.string().trim().min(1, "Write a subject for the email.").max(300, "Keep the subject under 300 characters."),
   message: z.string().trim().min(1, "The message is empty — write a short note first.").max(4000, "Keep the message under 4,000 characters."),
   nextFollowUpOn: z.string({ required_error: NEXT_REQUIRED }).regex(ISO_DATE, NEXT_REQUIRED),
+  /** R-1544: made when the dialog opens — the same id on a retry means the same email. */
+  requestId: z.string({ required_error: REOPEN }).uuid(REOPEN),
 }).strict("Only the email fields may be sent — reload the page and try again.");
 
 const idSchema = z.string().uuid();
@@ -68,6 +75,11 @@ export const POST = withRoute(
     const target = emailTarget((await primaryContactEmail(supabase, customerId)).email);
     if (!target.ok) throw new RouteError(422, target.reason);
 
+    const claim = await claimEmailSend(supabase, { tenantId, requestId: input.requestId, customerId, kind: "pending_dues_statement" });
+    if (!claim.go) {
+      return { sentTo: claim.sentTo ?? target.to, total: out.statement.total, followupId: claim.followupId, logged: !!claim.followupId, alreadySent: true };
+    }
+
     const sent = await sendCustomerEmail({
       to: target.to,
       subject: input.subject,
@@ -80,6 +92,7 @@ export const POST = withRoute(
       route: { tenantId },
       kind: "pending_dues_statement",
     });
+    if (sent.status !== "sent") await settleEmailSend(supabase, claim.claimId, { status: "failed" });
     if (sent.status === "failed") {
       throw new RouteError(502, `${sent.errorMessage ?? "The email could not be sent."} Nothing was sent and nothing was logged — fix that and press Send again, or use WhatsApp.`);
     }
@@ -89,8 +102,10 @@ export const POST = withRoute(
 
     try {
       const row = await logFollowup(supabase, { input: followup, userId: user.id, tenantId, role });
+      await settleEmailSend(supabase, claim.claimId, { status: "sent", sentTo: target.to, followupId: row.id });
       return { sentTo: target.to, total: out.statement.total, followupId: row.id, logged: true };
     } catch (e) {
+      await settleEmailSend(supabase, claim.claimId, { status: "sent", sentTo: target.to, followupId: null });
       if (!(e instanceof RouteError)) console.error("[api/customers/pending-dues/email] email sent, follow-up log failed:", e);
       const why = e instanceof RouteError ? e.publicMessage : "the follow-up could not be saved";
       return {

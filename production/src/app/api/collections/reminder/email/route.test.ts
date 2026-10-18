@@ -25,11 +25,17 @@ vi.mock("@/lib/supabase/server", () => {
   const chain = (table: string) => {
     let inserted: Record<string, unknown> | null = null;
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "order", "limit", "in"]) q[m] = () => q;
-    q.insert = (row: Record<string, unknown>) => { inserted = row; db.inserts.push(row); return q; };
+    for (const m of ["select", "eq", "order", "limit", "in", "update"]) q[m] = () => q;
+    q.insert = (row: Record<string, unknown>) => {
+      inserted = row;
+      if (table !== "customer_email_sends") db.inserts.push(row);   // R-1544's send claim: email-send-once.test.ts
+      return q;
+    };
     const one = async () => {
       if (table === "users") return { data: { tenant_id: "T1", role: db.role }, error: null };
       if (table === "customers") return { data: db.customer, error: null };
+      if (["invoices", "quotes", "subscriptions"].includes(table)) return { data: { customer_id: CUST }, error: null };
+      if (table === "customer_email_sends") return { data: { id: "S1" }, error: null };
       if (table === "payment_followups") {
         if (inserted) return db.insertError ? { data: null, error: db.insertError } : { data: { id: "F1", assigned_to: inserted.assigned_to }, error: null };
         return { data: null, error: null };
@@ -70,7 +76,7 @@ const call = (body: unknown) =>
   }));
 
 const MSG = "Hi Rahul, a gentle reminder from Anutech: ₹72,500 is pending for Sharma Traders, 12 days overdue.\n\n• Invoice INV-101: ₹68,000";
-const base = { customerId: CUST, subject: "Payment reminder: ₹72,500 pending", message: MSG, nextFollowUpOn: "2026-10-20", invoiceId: "INV-101", quoteId: "Q-1" };
+const base = { customerId: CUST, subject: "Payment reminder: ₹72,500 pending", message: MSG, nextFollowUpOn: "2026-10-20", invoiceId: "INV-101", quoteId: "Q-1", requestId: "99999999-9999-4999-8999-999999999999" };
 
 beforeEach(() => {
   db.role = "accountant";

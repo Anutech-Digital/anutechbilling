@@ -19,7 +19,8 @@
  *     server's own users row. The request schema is strict, so a body carrying them is refused.
  */
 import { z } from "zod";
-import { addDaysISO } from "@/lib/dates/ist";
+import { addDaysISO, toIstDate } from "@/lib/dates/ist";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 export const FOLLOWUP_KINDS = ["call", "whatsapp", "email", "meeting", "note", "promise"] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
@@ -222,7 +223,9 @@ export interface FollowupHistoryRow {
 }
 
 export interface FollowupHistoryEntry extends FollowupHistoryRow {
-  /** The promise date has passed and the customer still owes money. */
+  /** R-1540: promiseStatus(...) — null when the entry carries no promise. */
+  promiseStatus: PromiseStatus | null;
+  /** promiseStatus === "broken" — the history shows it red. */
   broken: boolean;
 }
 
@@ -232,12 +235,118 @@ export function compareFollowupsNewestFirst(a: Pick<FollowupHistoryRow, "created
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
-export function isPromiseBroken(promisedOn: string | null | undefined, today: string, stillOwes: boolean): boolean {
-  return !!promisedOn && promisedOn.slice(0, 10) < today && stillOwes;
+// ─── Promise status (R-1540) — THE one rule ──────────────────────────────────
+//
+// /collections (lib/queries/collections.ts), the follow-up history (customer card + dialog) and
+// the owner's weekly report (weekly-report.ts) all ask promiseStatus, so one promise never gets
+// two answers. Before R-1540 the list said "broken" whenever the date had passed and the
+// customer still owed ANYTHING, while the report said "kept" when the promised amount came in.
+//
+//   kept   — the customer paid the promised amount (any amount when none was promised) in CASH
+//            between the day the promise was first logged and the promise date, both IST days
+//            inclusive; or they owe nothing any more (the debt is cleared).
+//   broken — not kept, and the promise date is before today.
+//   due    — not kept, the promise date is today (they still have today).
+//   open   — not kept, the promise date is still ahead.
+// Cash = payments with status "received", amount − credit_applied (R-1565: advance credit
+// applied is not money the customer paid). Money paid after the promise date does not keep it.
+
+export type PromiseStatus = "kept" | "broken" | "due" | "open";
+
+/** A payment row as the screens read it (payments: customer_id, amount, credit_applied, received_at, status). */
+export interface PromisePayment {
+  customer_id: string | null;
+  amount: number | null;
+  /** R-1565: advance credit applied — not cash. */
+  credit_applied?: number | null;
+  received_at: string;
+  status: string;
 }
 
-export function buildFollowupHistory(rows: readonly FollowupHistoryRow[], today: string, stillOwes: boolean): FollowupHistoryEntry[] {
+/** Cash that came in on an IST day, whole rupees. */
+export interface PromiseReceipt {
+  customerId: string;
+  on: string;
+  amount: number;
+}
+
+const wholeRupees = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n) : 0);
+
+/** Received cash, whole rupees, IST day. Refunded / pending rows and pure credit are dropped. */
+export function promiseReceipts(payments: readonly PromisePayment[]): PromiseReceipt[] {
+  const out: PromiseReceipt[] = [];
+  for (const p of payments) {
+    if (p.status !== "received" || !p.customer_id) continue;
+    const amount = wholeRupees(cashReceived({ amount: wholeRupees(p.amount), credit_applied: p.credit_applied }));
+    if (amount > 0) out.push({ customerId: p.customer_id, on: toIstDate(p.received_at), amount });
+  }
+  return out;
+}
+
+/**
+ * The IST day a promise was FIRST logged: the same date promised again later is the same
+ * promise, and money paid since the first entry counts towards it.
+ */
+export function promiseLoggedOn(
+  entries: readonly { customer_id?: string; promised_on: string | null; created_at: string }[],
+  promisedOn: string,
+  customerId?: string,
+): string | null {
+  let first: string | null = null;
+  for (const e of entries) {
+    if (e.promised_on?.slice(0, 10) !== promisedOn) continue;
+    if (customerId !== undefined && e.customer_id !== undefined && e.customer_id !== customerId) continue;
+    const d = toIstDate(e.created_at);
+    if (first === null || d < first) first = d;
+  }
+  return first;
+}
+
+export function promiseStatus(p: {
+  promisedOn: string;
+  promisedAmount: number | null | undefined;
+  /** IST day the promise was first logged (promiseLoggedOn). */
+  loggedOn: string;
+  today: string;
+  /** This customer's received cash (promiseReceipts). */
+  receipts: readonly Pick<PromiseReceipt, "on" | "amount">[];
+  /** The customer still owes money now. */
+  stillOwes: boolean;
+}): { status: PromiseStatus; paid: number; want: number | null } {
+  const on = p.promisedOn.slice(0, 10);
+  const paid = p.receipts.filter((r) => r.on >= p.loggedOn && r.on <= on).reduce((s, r) => s + r.amount, 0);
+  const want = p.promisedAmount != null && p.promisedAmount > 0 ? wholeRupees(p.promisedAmount) : null;
+  const kept = !p.stillOwes || (want === null ? paid > 0 : paid >= want);
+  const status: PromiseStatus = kept ? "kept" : on < p.today ? "broken" : on === p.today ? "due" : "open";
+  return { status, paid, want };
+}
+
+/**
+ * One customer's follow-ups, newest first, each promise with its status. `payments` = this
+ * customer's payments since their oldest promise was logged (CollectionRow.payments); none →
+ * only "debt cleared" can keep a promise.
+ */
+export function buildFollowupHistory(
+  rows: readonly FollowupHistoryRow[],
+  today: string,
+  stillOwes: boolean,
+  payments: readonly PromisePayment[] = [],
+): FollowupHistoryEntry[] {
+  const receipts = promiseReceipts(payments);
   return [...rows]
     .sort(compareFollowupsNewestFirst)
-    .map((r) => ({ ...r, broken: isPromiseBroken(r.promised_on, today, stillOwes) }));
+    .map((r) => {
+      const on = r.promised_on?.slice(0, 10);
+      const status = on
+        ? promiseStatus({
+            promisedOn: on,
+            promisedAmount: r.promised_amount,
+            loggedOn: promiseLoggedOn(rows, on) ?? toIstDate(r.created_at),
+            today,
+            receipts,
+            stillOwes,
+          }).status
+        : null;
+      return { ...r, promiseStatus: status, broken: status === "broken" };
+    });
 }

@@ -15,6 +15,32 @@ import {
   buildFollowupInsert, defaultAssignee, resolveAssignee, type FollowupRequest,
 } from "./followup-rules";
 
+export const NOT_THIS_CUSTOMERS =
+  "That bill is not this customer's — pick an invoice, quote or subscription from this customer's own list and save again.";
+
+/**
+ * R-1544: the invoice / quote / subscription a follow-up is about must belong to THAT customer.
+ * The DB trigger (tg_payment_followups_same_tenant) only checks the company, so without this
+ * customer A's follow-up could point at customer B's invoice. Read on the caller's session: an
+ * id they cannot see is refused the same way (422). Call it BEFORE sending anything.
+ */
+export async function assertFollowupLinks(
+  supabase: ReturnType<typeof createClient>,
+  input: Pick<FollowupRequest, "customerId" | "invoiceId" | "quoteId" | "subscriptionId">,
+): Promise<void> {
+  const checks: Array<["invoices" | "quotes" | "subscriptions", string]> = [];
+  if (input.invoiceId) checks.push(["invoices", input.invoiceId]);
+  if (input.quoteId) checks.push(["quotes", input.quoteId]);
+  if (input.subscriptionId) checks.push(["subscriptions", input.subscriptionId]);
+  for (const [table, id] of checks) {
+    const { data, error } = await supabase.from(table).select("id, customer_id").eq("id", id).maybeSingle();
+    dbFail(error, "Could not check the linked bill — reload the page and try again.");
+    if (!data || (data as { customer_id: string | null }).customer_id !== input.customerId) {
+      throw new RouteError(422, NOT_THIS_CUSTOMERS);
+    }
+  }
+}
+
 export async function logFollowup(
   supabase: ReturnType<typeof createClient>,
   opts: { input: FollowupRequest; userId: string; tenantId: string; role: string },
@@ -29,6 +55,7 @@ export async function logFollowup(
   if (!customer) {
     throw new RouteError(404, "This customer is not in your list any more — reload Payment Follow-up and pick them again.");
   }
+  await assertFollowupLinks(supabase, input);
 
   const { data: latest, error: latestErr } = await supabase
     .from("payment_followups")

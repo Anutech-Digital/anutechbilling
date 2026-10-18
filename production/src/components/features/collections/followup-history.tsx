@@ -1,6 +1,7 @@
 /**
  * R-1517 — one customer's follow-up history: newest first, who / when / kind / note / promise.
- * A promise whose date has passed while money is still owed is shown red ("Promise broken").
+ * A promise's kept / broken comes from promiseStatus (R-1540) — the same rule as the list and
+ * the weekly report: broken (red) = date passed and the promised cash did not come in by then.
  * Order and the broken flag come from buildFollowupHistory (lib/collections/followup-rules).
  */
 "use client";
@@ -51,6 +52,7 @@ export function FollowupHistory({
                 {formatIstDate(e.created_at)} · {formatIstTime(e.created_at)}
               </span>
               {e.broken && <Badge kind="danger" dot>Promise broken</Badge>}
+              {e.promiseStatus === "kept" && <Badge kind="success" dot>Promise kept</Badge>}
             </div>
             {e.note && <p className="mt-1.5 text-ink break-words whitespace-pre-line">{e.note}</p>}
             <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-3">
@@ -60,7 +62,7 @@ export function FollowupHistory({
                   <dd className="inline tabular-nums">
                     {e.promised_amount != null && e.promised_amount > 0 ? `${rupee(e.promised_amount)} by ` : "Pay by "}
                     {formatDate(e.promised_on)}
-                    {e.broken && " — date passed, still owed"}
+                    {e.broken && " — date passed, promised amount not paid"}
                   </dd>
                 </div>
               )}

@@ -11,16 +11,19 @@
  *     (a customer who paid in full this week has left the list but still counts).
  *   • Promises made: follow-ups logged this week that carry a promise date.
  *   • Promises due this week (promise date Monday … today), one per customer + date (a promise
- *     logged twice is one promise; the newest entry's amount counts):
- *       kept   — the customer paid at least the promised amount (any amount when none was
- *                given) between the day the promise was logged and the promise date;
+ *     logged twice is one promise; the newest entry's amount counts). R-1540: kept / broken
+ *     come from promiseStatus (followup-rules.ts) — the very rule /collections and the
+ *     follow-up history use, so the report and the list never disagree:
+ *       kept   — the customer paid at least the promised amount in cash (any amount when none
+ *                was given) between the day the promise was logged and the promise date, or
+ *                owes nothing any more;
  *       broken — not kept and the date has passed (before today);
  *       today  — due today and not paid yet: neither kept nor broken.
  *   • Follow-ups per person: entries logged this week, by who logged them (created_by).
  *   • Gone quiet: customers who owe now and have had no follow-up for 7+ days (or never).
  */
 import { addDaysISO, daysBetweenISO, toIstDate } from "@/lib/dates/ist";
-import { cashReceived } from "@/lib/payments/cash-received";
+import { promiseReceipts, promiseStatus, type PromisePayment } from "./followup-rules";
 
 export const QUIET_DAYS = 7;
 
@@ -38,14 +41,8 @@ export interface ReportFollowup {
   created_at: string;
 }
 
-export interface ReportPayment {
-  customer_id: string | null;
-  amount: number | null;
-  /** R-1565: advance credit applied — not money the customer paid this week. */
-  credit_applied?: number | null;
-  received_at: string;
-  status: string;
-}
+/** R-1565: credit_applied (advance credit) is not money the customer paid this week. */
+export type ReportPayment = PromisePayment;
 
 export interface ReportOwing {
   customerId: string;
@@ -109,10 +106,8 @@ export function buildWeeklyReport(input: WeeklyReportInput): WeeklyReport {
   const inWeek = (d: string) => d >= weekStart && d <= today;
 
   const listed = new Set<string>([...input.owing.map((o) => o.customerId), ...input.followups.map((f) => f.customer_id)]);
-  const received = input.payments
-    .filter((p) => p.status === "received" && p.customer_id && listed.has(p.customer_id))
-    .map((p) => ({ customerId: p.customer_id as string, amount: rupees(cashReceived({ amount: rupees(p.amount), credit_applied: p.credit_applied })), on: toIstDate(p.received_at) }))
-    .filter((p) => p.amount > 0);
+  const received = promiseReceipts(input.payments).filter((p) => listed.has(p.customerId));
+  const owesNow = new Set(input.owing.filter((o) => o.amountDue > 0).map((o) => o.customerId));
 
   const thisWeek = received.filter((p) => inWeek(p.on));
 
@@ -133,14 +128,19 @@ export function buildWeeklyReport(input: WeeklyReportInput): WeeklyReport {
   }
   const outcomes: PromiseOutcome[] = [...seen.values()].map(({ f, firstLogged }): PromiseOutcome => {
     const on = f.promised_on!.slice(0, 10);
-    const paid = received
-      .filter((p) => p.customerId === f.customer_id && p.on >= firstLogged && p.on <= on)
-      .reduce((s, p) => s + p.amount, 0);
-    const want = f.promised_amount != null && f.promised_amount > 0 ? rupees(f.promised_amount) : null;
-    const kept = want === null ? paid > 0 : paid >= want;
+    // R-1540: the same rule as /collections and the follow-up history (followup-rules.ts).
+    const { status, paid, want } = promiseStatus({
+      promisedOn: on,
+      promisedAmount: f.promised_amount,
+      loggedOn: firstLogged,
+      today,
+      receipts: received.filter((p) => p.customerId === f.customer_id),
+      stillOwes: owesNow.has(f.customer_id),
+    });
     return {
       customerId: f.customer_id, promisedOn: on, promisedAmount: want, paid,
-      result: kept ? "kept" : on < today ? "broken" : "today",
+      // A promise due this week is never "open" (its date is today or earlier).
+      result: status === "kept" ? "kept" : status === "broken" ? "broken" : "today",
     };
   }).sort((a, b) => a.promisedOn.localeCompare(b.promisedOn) || a.customerId.localeCompare(b.customerId));
 
