@@ -28,12 +28,12 @@ insert into public.customers (id, tenant_id, name, country, state_code, state) v
 insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
   ('5e450000-0000-4000-8000-0000000000b1', '5e450000-0000-4000-8000-000000000001', 'S45 HDFC', 'HDFC', 0, '2026-04-01');
 
--- 8 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
+-- 10 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate,
                            line_items, status, payment_status, payment_terms_days)
 select 'S45Q-' || n, '5e450000-0000-4000-8000-000000000001', '5e450000-0000-4000-8000-0000000000c1',
        'S45 Cust', 11800, 10000, 18, '[]'::jsonb, 'sent', 'awaiting', 30
-  from generate_series(1, 8) n;
+  from generate_series(1, 10) n;
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '5e450000-0000-4000-8000-0000000000a1', 'role', 'authenticated')::text, true);
@@ -114,6 +114,25 @@ begin
   select id into v_inv from public.invoices where quote_id = 'S45Q-1';
   perform public.issue_credit_note(v_inv, 1180, 'other', 'S45 discount after payment', null);
   g := pg_temp.step('6 credit note on paid invoice', g);
+
+  -- R-1563: since R-1566 that ₹1,180 is a customer_credits row (source credit_note). Its life
+  -- must keep the TB balanced too.
+  -- 6b. Quote 9 paid ₹10,300 cash + ₹1,500 credit: the ₹1,000 overpayment credit of 5b (older)
+  --     and ₹500 of the credit note's credit — a part-used credit-note credit (split row).
+  perform public.record_desk_payment('S45Q-9', 10300, 'upi', 'S45-UTR-9', null,
+    '5e450000-0000-4000-8000-0000000000c1', 1500, null, null);
+  g := pg_temp.step('6b credit-note credit part used on another quote', g);
+
+  -- 6c–6f. Quote 10 paid in full, invoiced (advance adjusted), FULL credit note, then refunded.
+  select (public.record_payment('S45Q-10', 11800, 'upi', 'S45-UTR-10', null)->>'payment_id')::uuid into v_pay;
+  g := pg_temp.step('6c receipt before invoice', g);
+  perform public.generate_invoice('S45Q-10');
+  g := pg_temp.step('6d invoice adjusts it', g);
+  select id into v_inv from public.invoices where quote_id = 'S45Q-10';
+  perform public.issue_credit_note(v_inv, 11800, 'cancellation', 'S45 order cancelled after payment', null);
+  g := pg_temp.step('6e full credit note on paid invoice', g);
+  perform public.refund_payment(v_pay, 'S45 refund against the credit note');
+  g := pg_temp.step('6f refund against the credit note', g);
 
   -- 7. Credit note ₹1,180 on a PENDING invoice.
   perform public.generate_invoice('S45Q-4');
