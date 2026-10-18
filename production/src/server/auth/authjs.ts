@@ -118,7 +118,8 @@ export const authConfig: NextAuthConfig = {
       if (trigger === "update" && t.uid && session && typeof session === "object") {
         const s = session as { mfaCode?: unknown; factorId?: unknown; refreshMfa?: unknown };
         if (typeof s.mfaCode === "string") {
-          const ok = await verifyCode(t.uid, s.mfaCode, typeof s.factorId === "string" ? s.factorId : undefined);
+          // R-1547: the current level decides whether a NEW factor may count as the second step.
+          const ok = await verifyCode(t.uid, s.mfaCode, typeof s.factorId === "string" ? s.factorId : undefined, t.aal === "aal2" ? "aal2" : "aal1");
           if (ok) { t.aal = "aal2"; t.mfa = true; }
         }
         if (s.refreshMfa === true) {
