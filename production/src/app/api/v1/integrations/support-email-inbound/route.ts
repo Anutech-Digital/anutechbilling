@@ -42,6 +42,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { acceptedSecrets, secretMatches, readInboundSecret, querySecretAllowed, querySecretWarning } from "@/lib/inbound/verify-secret";
 import { normaliseSupportEmail } from "@/lib/inbound/support-inbound";
+import { senderDomainVerified, headersFromBody } from "@/lib/inbound/sender-auth";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
 import { localPart } from "@/lib/inbound/routing";
 import { runSupportAgentForMessage } from "@/lib/ai/run-support-agent";
@@ -203,6 +204,8 @@ export async function POST(request: NextRequest) {
     channel: "email",
     subject: mail.subject,
     senderName: mail.fromName,
+    /* R-726: a From line is not proof — only a DKIM/DMARC verdict for its domain is. */
+    senderVerified: senderDomainVerified(body, headersFromBody(body), mail.fromEmail),
     fromEmail: FROM_EMAIL,
     sellerName: SELLER_NAME,
     supportEmail: SUPPORT_EMAIL,

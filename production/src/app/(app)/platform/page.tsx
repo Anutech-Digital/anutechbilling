@@ -123,8 +123,11 @@ export default function PlatformSignupsPage() {
     setIsDeleting(true);
 
     try {
+      /* R-881: the server checks the typed name too — the button's check alone is a UI nicety. */
       const res = await fetch(`/api/platform/signups/${deleteTarget.id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: confirmInput.trim() }),
       });
 
       const data = await res.json();

@@ -226,6 +226,8 @@ export async function POST(req: NextRequest) {
                  a column of "WhatsApp support request". */
               subject: "",
               senderName: profileName,
+              /* R-726: the number is proven — this request passed verifyMetaSignature above. */
+              senderVerified: true,
               fromEmail: FROM_EMAIL,
               sellerName: SELLER_NAME,
               supportEmail: SUPPORT_EMAIL,

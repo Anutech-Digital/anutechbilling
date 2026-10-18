@@ -46,6 +46,7 @@ import { extractAttachments, pickBillAttachment } from "@/lib/inbound/attachment
 import { readBillWithGemini } from "@/lib/ai/read-bill";
 import { sanitizeExtractedBill } from "@/app/api/ai/extract-bill/sanitize";
 import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
+import { senderDomainVerified, headersFromBody } from "@/lib/inbound/sender-auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* The trading name the AI sales agent signs as. Env-overridable because this route already
@@ -370,6 +371,8 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
       channel: "email",
       subject,
       senderName: fromName,
+      /* R-726: a From line is not proof — only a DKIM/DMARC verdict for its domain is. */
+      senderVerified: senderDomainVerified(body, headersFromBody(body), fromEmail),
       fromEmail: FROM_EMAIL,
       sellerName: SELLER_NAME,
       supportEmail: SUPPORT_EMAIL,
