@@ -44,6 +44,9 @@ import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
+import {
+  parseQuoteTemplate, proformaBank, quoteTemplateFileName, quoteTemplateNoun, PROFORMA_NOTICE,
+} from "@/lib/pdf/quote-template";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,6 +56,8 @@ interface SendBody {
   cc?:      string[];
   subject?: string;
   message?: string;
+  /** R-1523: "proforma" → the PDF, subject and body go out as a Proforma Invoice. Default Quotation. */
+  template?: string;
 }
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
@@ -103,7 +108,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
-      prospect_state_code, prospect_country
+      prospect_state_code, prospect_country, currency, terms_conditions
     `)
     .eq("id", params.id)
     .single();
@@ -123,7 +128,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   // ── 4. Tenant + customer info ────────────────────────────────────
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("name, email, phone, gstin, address, state, state_code, upi_vpa, upi_payee_name, logo_url")
+    .select("name, email, phone, gstin, address, state, state_code, upi_vpa, upi_payee_name, logo_url, remit_bank_name, remit_account_name, remit_account_number, remit_ifsc, remit_branch")
     .eq("id", me.tenant_id)
     .single();
   if (!tenant) {
@@ -195,10 +200,31 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       { status: 500 },
     );
   }
+  /* R-1523: per-send choice, nothing stored on the quote. A Proforma keeps the quote number. */
+  const template    = parseQuoteTemplate(body.template);
+  const proforma    = template === "proforma";
+  const docNoun     = quoteTemplateNoun(template);
   const subject     = body.subject?.trim() ||
-                      `Quotation ${quote.id} from ${tenant.name}`;
+                      `${docNoun} ${quote.id} from ${tenant.name}`;
   const greetName   = customer?.contact_name || quote.customer_name;
-  const messageBody = body.message?.trim() || (
+  const messageBody = body.message?.trim() || (proforma
+    ? `Hi ${greetName},
+
+Please find Proforma Invoice ${quote.id} attached as a PDF.
+${PROFORMA_NOTICE}
+
+Total: ${rupee(total)}
+Due by: ${quote.expires_date ?? "within 30 days"}
+
+Bank details and a UPI QR (where available) are on the PDF. You can also review, accept and pay online:
+${customerUrl}
+
+If you have any questions, just reply to this email.
+
+Thanks,
+${me.full_name ?? tenant.name}
+${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${tenant.email}` : ""}`
+    :
 `Hi ${greetName},
 
 Please find your quotation ${quote.id} attached as a PDF.
@@ -226,6 +252,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     expiresDate: quote.expires_date,
     acceptUrl: customerUrl,
     lineItems: lineItems.map((li) => ({ name: li.name, qty: li.qty, rate: li.rate })),
+    documentLabel: proforma ? docNoun : undefined,
   });
 
   // ── 7. Render PDF attachment ─────────────────────────────────────
@@ -270,6 +297,13 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
       placeOfSupply: pos.label,
       validityDays:  30,
+      createdDate:   quote.created_date,
+      expiresDate:   quote.expires_date,
+      termsConditions: quote.terms_conditions ?? null,
+      /* R-1523 */
+      template,
+      bank:          proforma ? proformaBank(tenant) : null,
+      payLinkUrl:    customerUrl,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal,
       oneTime:       isOneTimeQuote({
@@ -280,7 +314,7 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     });
     const arrBuf = await blob.arrayBuffer();
     attachments = [{
-      filename:    `Quote-${quote.id}.pdf`,
+      filename:    quoteTemplateFileName(template, quote.id),
       content:     Buffer.from(arrBuf),
       contentType: "application/pdf",
     }];

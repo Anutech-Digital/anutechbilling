@@ -25,7 +25,8 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { signingSecrets, legacyGraceActive } from "@/lib/security/signing-secrets";
 
-export type PdfDocType = "invoice" | "quote";
+/** R-1526: "statement" = a customer's pending-dues statement (id = customer id). */
+export type PdfDocType = "invoice" | "quote" | "statement";
 
 export const DEFAULT_PDF_TTL_DAYS = 30;
 /* Upar ki seema: ek "hamesha" wala link galti se na ban jaye (ttl=99999). */

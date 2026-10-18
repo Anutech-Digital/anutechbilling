@@ -45,7 +45,7 @@ import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canWriteSales } from "@/lib/nav";
-import { canDeleteMoney } from "@/lib/auth/roles";
+import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { EditPaymentDialog } from "@/components/features/quotes/edit-payment-dialog";
@@ -60,6 +60,7 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
+import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -154,6 +155,8 @@ function PaymentsPageInner() {
   /* R-255: the accountant reads payments; recording, reminders, refunds stay with the team. */
   const canWrite = canWriteSales(me?.role);
   const [payQuoteId, setPayQuoteId] = React.useState<string | null>(null);
+  /* R-1525: one payment across several invoices of a customer. */
+  const [multiPayOpen, setMultiPayOpen] = React.useState(false);
   const [kpiOpen, setKpiOpen] = React.useState(true);
   const confirm = useConfirm();
 
@@ -337,6 +340,11 @@ function PaymentsPageInner() {
         </div>
         <div className="flex gap-2 flex-wrap">
           <BookGatewayFeesButton payments={payments} role={me?.role} />
+          {canRecordMoney(me?.role) && (
+            <Button icon="rupee" onClick={() => setMultiPayOpen(true)}>
+              Record payment — multiple invoices
+            </Button>
+          )}
           <Button icon="download" onClick={handleExportCsv}>
             Export CSV
           </Button>
@@ -876,6 +884,7 @@ function PaymentsPageInner() {
       )}
 
       {/* Edit payment details (safe fields only — amount stays locked) */}
+      <MultiInvoicePaymentDialog open={multiPayOpen && canRecordMoney(me?.role)} onOpenChange={setMultiPayOpen} />
       <RecordQuotePaymentDialog
         quoteId={payQuoteId}
         open={!!payQuoteId}

@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 describe("reassign guard (server)", () => {
-  it.each(["sales", "billing"])("%s giving it to someone else → 403 with whom to ask, nothing written", async (role) => {
+  it.each(["sales", "sales_senior", "billing"])("%s giving it to someone else → 403 with whom to ask, nothing written", async (role) => {
     db.role = role;
     const res = await call({ ...base, assignedTo: OTHER });
     expect(res.status).toBe(403);
@@ -81,6 +81,15 @@ describe("reassign guard (server)", () => {
     const res = await call(base);
     expect(res.status).toBe(403);
     expect(db.inserts).toEqual([]);
+  });
+
+  /* R-1528: a senior seller opens Payment Follow-up like a seller (nav: sales_senior sees what
+     sales sees) and logs follow-ups — but, like sales, only to the person it is with now. */
+  it("sales_senior can log a follow-up (opens /collections) → saved to the customer's owner", async () => {
+    db.role = "sales_senior";
+    const res = await call(base);
+    expect(res.status).toBe(200);
+    expect(db.inserts[0].assigned_to).toBe(OWNER);
   });
 
   it("sales without a pick → saved to the customer's owner", async () => {

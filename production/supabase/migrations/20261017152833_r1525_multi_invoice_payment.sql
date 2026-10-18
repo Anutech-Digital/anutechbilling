@@ -1,0 +1,326 @@
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1525%')
+-- deploy-key: r1525multiinvoicepay
+-- 20261017152833_r1525_multi_invoice_payment.sql
+--
+-- R-1525 (P1, Pardeep 17 Oct 2026 — R-1524 1/3): ONE money receipt from a customer, spread
+-- across several of that customer's open invoices, oldest first; whatever is left over
+-- becomes the customer's advance credit. All of it or none of it.
+--
+-- ══ DESIGN — a wrapper, no new money semantics ══════════════════════════════════════
+--
+--   record_multi_invoice_payment(...) calls the EXISTING per-document path,
+--   record_desk_payment(...) (R-895), once per allocation, inside ONE transaction. So each
+--   invoice gets exactly what a single "Record payment" on it gives today: record_payment
+--   (or record_payment_with_tds when TDS was deducted) → payments row, quote payment_status,
+--   invoice paid_amount / status / paid_date (R-015), TDS receivable (audit #22), receipt
+--   date + bank account tag (R-1118). Any error anywhere rolls ALL lines back.
+--
+--   Invoices only (never an un-invoiced quote): record_payment issues a receipt voucher
+--   (§17a, RV) only for an advance on a quote that has no invoice yet; a payment against an
+--   issued invoice gets none. Restricting allocations to invoices means N lines never mint N
+--   receipt vouchers for one receipt. The invoice must be the one its quote points at
+--   (quotes.invoice_id = invoices.id) — that is the invoice record_payment settles.
+--   Project-milestone invoices (no quote) are paid from the project, not here.
+--
+--   Excess → advance credit through the EXISTING path: the left-over rupees ride on the
+--   payment of the last invoice the receipt pays IN FULL, and record_payment's own
+--   overpayment branch (20260901110000) writes the customer_credits row with
+--   source_payment_id. The cash for the credit therefore sits in a payments row, as it does
+--   for a single overpayment today — no credit without the money behind it. The result of
+--   every line is checked: a line within its due must create no credit and the carrier line
+--   exactly the excess, or the whole receipt is refused (amounts out of step).
+--
+--   Due per invoice = least(invoice: net_payable − paid_amount, quote: amount − received),
+--   0 for a paid / void invoice. Each line (cash + TDS) must be ≤ that.
+--
+--   Replay (R-374): idempotency stays record_payment's — (quote, reference). If EVERY line's
+--   quote already has a received payment with this reference, nothing is written and the
+--   earlier payments are returned (a double-click / retry). If only SOME do, it is refused —
+--   a half-replay is a different receipt reusing a reference, not a retry.
+--
+-- ══ GUARDS (§17c fail-closed) ═══════════════════════════════════════════════════════
+--   R-718 role gate (owner, manager, accountant, billing; service_role / direct DB trusted);
+--   current_tenant_id() must be set — NULL is refused even for a trusted caller, since the
+--   inner record_desk_payment needs a company; the customer, every invoice, every quote and
+--   the bank account must be in the caller's company, and every invoice must be THIS
+--   customer's. Invoices are locked (for update, id order) before any due is read.
+--
+-- Test: supabase/tests/r1525_multi_invoice_payment.test.sql (rolled back).
+
+begin;
+
+create or replace function public.record_multi_invoice_payment(
+  p_customer_id      uuid,
+  p_received_on      date,
+  p_method           text,
+  p_bank_account_id  uuid,
+  p_reference        text,
+  p_received         integer,
+  p_allocations      jsonb,
+  p_excess_to_credit boolean default true,
+  p_notes            text    default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+/* R-1525: one receipt → several invoices of one customer, via record_desk_payment per line. */
+declare
+  v_tenant     uuid := public.current_tenant_id();
+  v_trusted    boolean;
+  v_n          integer;
+  v_alloc      jsonb;
+  v_ids        text[] := array[]::text[];
+  v_inv        record;
+  v_quote      record;
+  v_received   integer;
+  v_inv_due    integer;
+  v_q_due      integer;
+  v_due        integer;
+  v_amt        numeric;
+  v_tds        numeric;
+  v_lines      jsonb := '[]'::jsonb;
+  v_line       jsonb;
+  v_sum        integer := 0;
+  v_excess     integer;
+  v_carrier    integer := null;
+  v_replays    integer := 0;
+  v_idx        integer;
+  v_settle     integer;
+  v_r          jsonb;
+  v_out        jsonb := '[]'::jsonb;
+  v_credit     integer;
+  v_credit_inv text := null;
+  v_notes      text;
+  v_gross      integer;
+  v_want       integer;
+begin
+  /* R-718 role gate — same as record_payment / record_desk_payment. */
+  v_trusted := coalesce(auth.role(), '') = 'service_role'
+               or (auth.role() is null
+                   and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
+  if not v_trusted
+     and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
+    raise exception 'Only an owner, manager, accountant or billing user can record a payment. Ask one of them to record it.'
+      using errcode = '42501';
+  end if;
+  /* §17c fail-closed: no company → nothing. */
+  if v_tenant is null then
+    raise exception 'No company context — sign in again, then record the payment.' using errcode = '28000';
+  end if;
+
+  if p_customer_id is null
+     or not exists (select 1 from public.customers where id = p_customer_id and tenant_id = v_tenant) then
+    raise exception 'That customer is not in your company. Open the customer from Customers and try again.'
+      using errcode = '42501';
+  end if;
+  if p_received is null or p_received <= 0 then
+    raise exception 'Enter the amount received (more than ₹0).';
+  end if;
+  if p_received_on is null then
+    raise exception 'Enter the date the money was received.';
+  end if;
+  if p_method is null or p_method not in ('upi', 'razorpay', 'bank_transfer', 'cheque', 'cash', 'other') then
+    raise exception 'Choose how the money came in (UPI, bank transfer, cheque, cash…).';
+  end if;
+  if p_reference is null or length(trim(p_reference)) = 0 then
+    raise exception 'Enter a reference (UTR / cheque no. / receipt no.) so this payment can be matched later.';
+  end if;
+  if p_bank_account_id is not null
+     and not exists (select 1 from public.bank_accounts where id = p_bank_account_id and tenant_id = v_tenant) then
+    raise exception 'That bank account is not in your company. Choose one of your bank accounts.' using errcode = '42501';
+  end if;
+  if p_allocations is null or jsonb_typeof(p_allocations) <> 'array' or jsonb_array_length(p_allocations) = 0 then
+    raise exception 'Choose at least one invoice to apply this payment to.';
+  end if;
+  v_n := jsonb_array_length(p_allocations);
+  if v_n > 200 then
+    raise exception 'Too many invoices in one payment (% — at most 200). Record it in two parts.', v_n;
+  end if;
+
+  /* Shape + no duplicates, then lock every invoice in id order before reading any due. */
+  for v_alloc in select value from jsonb_array_elements(p_allocations) loop
+    if jsonb_typeof(v_alloc) <> 'object' or coalesce(v_alloc->>'invoice_id', '') = '' then
+      raise exception 'Each line needs an invoice. Refresh the list and try again.';
+    end if;
+    if (v_alloc->>'invoice_id') = any(v_ids) then
+      raise exception 'Invoice % is listed twice. Keep it once with the full amount.', v_alloc->>'invoice_id';
+    end if;
+    v_ids := v_ids || (v_alloc->>'invoice_id');
+  end loop;
+  perform 1 from public.invoices
+   where id = any(v_ids) and tenant_id = v_tenant
+   order by id
+   for update;
+
+  v_idx := 0;
+  for v_alloc in select value from jsonb_array_elements(p_allocations) loop
+    begin
+      v_amt := coalesce((v_alloc->>'amount')::numeric, 0);
+      v_tds := coalesce((v_alloc->>'tds_amount')::numeric, 0);
+    exception when others then
+      raise exception 'The amount for invoice % is not a number.', v_alloc->>'invoice_id';
+    end;
+    if v_amt <> trunc(v_amt) or v_tds <> trunc(v_tds) then
+      raise exception 'Use whole rupees for invoice % (no paise).', v_alloc->>'invoice_id';
+    end if;
+    if v_amt < 0 or v_tds < 0 then
+      raise exception 'The amount for invoice % cannot be negative.', v_alloc->>'invoice_id';
+    end if;
+    if v_amt + v_tds <= 0 then
+      raise exception 'Invoice % has ₹0 against it. Enter an amount or remove the line.', v_alloc->>'invoice_id';
+    end if;
+
+    select i.id, i.tenant_id, i.customer_id, i.amount, i.net_payable, i.paid_amount, i.status,
+           i.quote_id, i.taxable_value
+      into v_inv
+      from public.invoices i
+     where i.id = v_alloc->>'invoice_id' and i.tenant_id = v_tenant;
+    if not found then
+      raise exception 'Invoice % was not found in your company. Refresh the list and try again.', v_alloc->>'invoice_id'
+        using errcode = '42501';
+    end if;
+    if v_inv.customer_id is distinct from p_customer_id then
+      raise exception 'Invoice % belongs to another customer. Record its payment from that customer.', v_inv.id
+        using errcode = '42501';
+    end if;
+
+    select q.id, q.amount, q.invoice_id
+      into v_quote
+      from public.quotes q
+     where q.id = v_inv.quote_id and q.tenant_id = v_tenant and q.invoice_id = v_inv.id;
+    if not found then
+      raise exception 'Invoice % has no quote of its own (project or instalment invoice). Record its payment from the invoice page.', v_inv.id;
+    end if;
+
+    /* Replay: this quote already holds a received payment with this reference. */
+    if exists (select 1 from public.payments p
+                where p.tenant_id = v_tenant and p.quote_id = v_quote.id
+                  and p.reference = p_reference and p.status = 'received') then
+      v_replays := v_replays + 1;
+      v_due := null;
+    else
+      if v_inv.status::text in ('paid', 'void') then
+        v_inv_due := 0;
+      else
+        v_inv_due := greatest(0, coalesce(v_inv.net_payable, v_inv.amount) - coalesce(v_inv.paid_amount, 0));
+      end if;
+      select coalesce(sum(amount), 0)::int into v_received
+        from public.payments where quote_id = v_quote.id and tenant_id = v_tenant and status = 'received';
+      v_q_due := greatest(0, coalesce(v_quote.amount, 0) - v_received);
+      v_due := least(v_inv_due, v_q_due);
+      if v_amt + v_tds > v_due then
+        raise exception 'Invoice % has only ₹% due, but ₹% is applied to it. Lower that line; the rest can stay as advance credit.',
+          v_inv.id, v_due, (v_amt + v_tds)::int;
+      end if;
+    end if;
+
+    v_sum := v_sum + v_amt::int;
+    v_lines := v_lines || jsonb_build_object(
+      'invoice_id', v_inv.id, 'quote_id', v_quote.id,
+      'amount', v_amt::int, 'tds_amount', v_tds::int, 'due', v_due,
+      'tds_gross', coalesce(nullif(v_alloc->>'tds_gross', '')::int, v_inv.taxable_value, v_inv.amount),
+      'tds_section', nullif(trim(coalesce(v_alloc->>'tds_section', '')), ''),
+      'tds_rate_pct', nullif(v_alloc->>'tds_rate_pct', '')::numeric,
+      'customer_tan', nullif(trim(coalesce(v_alloc->>'customer_tan', '')), ''));
+    /* The last line that pays its invoice IN FULL carries any excess. */
+    if v_due is not null and v_amt + v_tds = v_due then
+      v_carrier := v_idx;
+    end if;
+    v_idx := v_idx + 1;
+  end loop;
+
+  /* Whole retry → nothing new; partial retry → refused. */
+  if v_replays = v_n then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'invoice_id', l->>'invoice_id', 'quote_id', l->>'quote_id', 'payment_id', p.id,
+             'amount', p.amount, 'invoice_paid', null)), '[]'::jsonb)
+      into v_out
+      from jsonb_array_elements(v_lines) l
+      join public.payments p
+        on p.tenant_id = v_tenant and p.quote_id = l->>'quote_id'
+       and p.reference = p_reference and p.status = 'received';
+    return jsonb_build_object('idempotent_replay', true, 'already_recorded', true,
+                              'received', p_received, 'allocated', v_sum, 'excess_credit', 0,
+                              'credit_invoice_id', null, 'lines', v_out);
+  elsif v_replays > 0 then
+    raise exception 'Reference % is already recorded on % of these invoices. Use the bank''s own reference for this payment, or leave those invoices out.',
+      p_reference, v_replays;
+  end if;
+
+  v_excess := p_received - v_sum;
+  if v_excess < 0 then
+    raise exception 'The invoice lines add up to ₹% but only ₹% was received. Lower a line so they add up to the amount received.',
+      v_sum, p_received;
+  end if;
+  if v_excess > 0 and not coalesce(p_excess_to_credit, false) then
+    raise exception '₹% of the ₹% received is not applied to any invoice. Apply it to an invoice, or keep it as advance credit.',
+      v_excess, p_received;
+  end if;
+  if v_excess > 0 and v_carrier is null then
+    raise exception '₹% would be left as advance credit while every chosen invoice is still part-paid. Pay at least one invoice in full first (oldest first), then keep the rest as advance.',
+      v_excess;
+  end if;
+
+  v_notes := nullif(concat_ws(' · ',
+               nullif(trim(coalesce(p_notes, '')), ''),
+               'One payment of ₹' || p_received || ' across ' || v_n || ' invoice' || case when v_n = 1 then '' else 's' end || ' (ref ' || trim(p_reference) || ')'), '');
+
+  v_idx := 0;
+  for v_line in select value from jsonb_array_elements(v_lines) loop
+    v_want   := case when v_idx = v_carrier then v_excess else 0 end;
+    v_settle := (v_line->>'amount')::int + (v_line->>'tds_amount')::int + v_want;
+    v_gross := (v_line->>'tds_gross')::int;
+
+    v_r := public.record_desk_payment(
+      v_line->>'quote_id', v_settle, p_method, p_reference, v_notes,
+      null, 0, p_received_on, p_bank_account_id,
+      (v_line->>'tds_amount')::int,
+      case when (v_line->>'tds_amount')::int > 0 then v_gross else 0 end,
+      case when (v_line->>'tds_amount')::int > 0 then (v_line->>'amount')::int else 0 end,
+      case when (v_line->>'tds_amount')::int > 0 then coalesce(v_line->>'tds_section', '194J') end,
+      case when (v_line->>'tds_amount')::int > 0 then (v_line->>'tds_rate_pct')::numeric end,
+      case when (v_line->>'tds_amount')::int > 0 then v_line->>'customer_tan' end,
+      v_line->>'invoice_id',
+      public.indian_fiscal_year(p_received_on));
+
+    if coalesce((v_r->>'already_recorded')::boolean, false)
+       or coalesce((v_r->>'idempotent_replay')::boolean, false) then
+      raise exception 'Invoice % already had this reference recorded a moment ago. Nothing was saved — refresh and check before trying again.',
+        v_line->>'invoice_id';
+    end if;
+    v_credit := coalesce((v_r->>'overpaid_credit')::int, 0);
+    if v_credit <> v_want then
+      raise exception 'Amounts for invoice % are out of step (advance credit ₹%, expected ₹%). Nothing was saved — refresh the page and try again.',
+        v_line->>'invoice_id', v_credit, v_want;
+    end if;
+    if v_idx = v_carrier and v_excess > 0 then
+      v_credit_inv := v_line->>'invoice_id';
+    end if;
+    if (v_line->>'tds_amount')::int > 0 and not coalesce((v_r->>'tds_saved')::boolean, false) then
+      raise exception 'The TDS for invoice % could not be saved. Nothing was saved — try again.', v_line->>'invoice_id';
+    end if;
+
+    v_out := v_out || jsonb_build_object(
+      'invoice_id', v_line->>'invoice_id', 'quote_id', v_line->>'quote_id',
+      'payment_id', v_r->>'payment_id', 'amount', v_settle,
+      'tds_amount', (v_line->>'tds_amount')::int,
+      'invoice_paid', coalesce((v_r->>'invoice_paid')::boolean, false));
+    v_idx := v_idx + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'idempotent_replay', false, 'already_recorded', false,
+    'received', p_received, 'allocated', v_sum, 'excess_credit', v_excess,
+    'credit_invoice_id', v_credit_inv, 'lines', v_out);
+end;
+$function$;
+
+comment on function public.record_multi_invoice_payment(uuid, date, text, uuid, text, integer, jsonb, boolean, text) is
+  'R-1525: one receipt spread over several of one customer''s invoices — record_desk_payment per invoice in one transaction; excess rides on the last fully-paid invoice and becomes advance credit through record_payment''s overpayment branch. Owner/manager/accountant/billing; tenant + customer guarded, fail-closed.';
+
+revoke all on function public.record_multi_invoice_payment(uuid, date, text, uuid, text, integer, jsonb, boolean, text) from public, anon;
+grant execute on function public.record_multi_invoice_payment(uuid, date, text, uuid, text, integer, jsonb, boolean, text) to authenticated, service_role;
+
+commit;

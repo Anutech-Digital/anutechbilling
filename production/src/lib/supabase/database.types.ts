@@ -1216,6 +1216,7 @@ type ArgNullable = {
   record_payment_with_tds: "p_notes" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_desk_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_account_transfer: "p_note";
+  record_multi_invoice_payment: "p_bank_account_id" | "p_notes";
   create_project_sale: "p_customer_id" | "p_description";
   record_project_payment: "p_method" | "p_reference" | "p_bank_txn_id";
   create_project_quote: "p_customer_id" | "p_description";
@@ -1423,6 +1424,23 @@ type FunctionReturnPatches = {
             overpaid_credit?:        number;
             credit_applied:          number;
             tagged:                  boolean;
+          };
+  /** R-1525: one receipt over several invoices of one customer (record_desk_payment per line). */
+  record_multi_invoice_payment: {
+            idempotent_replay:  boolean;
+            already_recorded:   boolean;
+            received:           number;
+            allocated:          number;
+            excess_credit:      number;
+            credit_invoice_id:  string | null;
+            lines: Array<{
+              invoice_id:   string;
+              quote_id:     string;
+              payment_id:   string;
+              amount:       number;
+              tds_amount?:  number;
+              invoice_paid: boolean | null;
+            }>;
           };
   suggest_bank_transaction_matches: BankMatchSuggestionRow[];
   book_bank_txn_as_vendor_bill: { bill_id: string; replaced_synthetic: string | null; amount: number };

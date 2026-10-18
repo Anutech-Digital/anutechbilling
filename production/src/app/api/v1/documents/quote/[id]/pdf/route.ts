@@ -14,6 +14,9 @@ import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteAmountDue } from "@/lib/payments/amount-due";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
+import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/pdf/quote-template";
+import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { trustedOrigin } from "@/lib/app-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,9 +63,8 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     tenant:   tenant ? { ...(tenant as TenantPdfInfo), udyam_number: udyamNumber } : {
       name: q.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
-      /* A quote PDF prints no bank block (R-038 is the invoice footer), but the shared
-         TenantPdfInfo is what forces every caller to think about these — see its
-         comment. Nulls here, not an omission. */
+      /* No tenant row → no bank details to print (a Proforma's bank block, R-1523, is then
+         simply left out). Nulls here, not an omission — see TenantPdfInfo's comment. */
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,
       remit_ifsc: null, remit_branch: null, udyam_number: udyamNumber,
     },
@@ -79,18 +81,26 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     amountDue: quoteAmountDue(q),
   });
 
+  /* R-1523: ?template=proforma → the same quote as a "Proforma Invoice" (quote number, no GST
+     series — §17a). Chosen per download; nothing is stored on the quote. */
+  const template = parseQuoteTemplate(req.nextUrl.searchParams.get("template"));
+  const payLinkUrl = q.public_token ? quoteAcceptUrl(trustedOrigin(req.headers), q.id, q.public_token) : null;
+
   const { renderToBuffer } = await import("@react-pdf/renderer");
   const { QuotePDF } = await import("@/lib/pdf/QuotePDF");
   const buffer = await renderToBuffer(
     createElement(QuotePDF, {
       ...props, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null,
+      template,
+      bank: template === "proforma" ? proformaBank(tenant as Parameters<typeof proformaBank>[0]) : null,
+      payLinkUrl,
     }) as unknown as Parameters<typeof renderToBuffer>[0],
   );
 
   return new Response(new Uint8Array(buffer), {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `inline; filename="${id}.pdf"`,
+      "content-disposition": `inline; filename="${template === "proforma" ? quoteTemplateFileName(template, id) : `${id}.pdf`}"`,
       "cache-control": "private, max-age=300",
     },
   });

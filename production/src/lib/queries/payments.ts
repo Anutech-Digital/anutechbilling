@@ -380,4 +380,98 @@ export function useWriteOffSubscription() {
   });
 }
 
+// ============================================================
+// R-1525 — one receipt over several invoices of one customer
+// ============================================================
+
+/** An open invoice the multi-invoice sheet can apply money to (its own quote is set). */
+export interface MultiPayInvoiceRow {
+  id: string;
+  invoice_date: string;
+  due_date: string | null;
+  amount: number;
+  net_payable: number | null;
+  paid_amount: number | null;
+  status: string;
+  tax_rate: number | null;
+  quote_id: string | null;
+}
+
+/**
+ * The customer's invoices that still owe money AND are the invoice their own quote points
+ * at (quotes.invoice_id = invoices.id) — the only ones record_multi_invoice_payment accepts.
+ * Paged (R-264): no silent 1000-row stop.
+ */
+export function useCustomerOpenInvoices(customerId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["invoices", "open-for-multi-pay", customerId],
+    enabled: !!customerId,
+    queryFn: async (): Promise<MultiPayInvoiceRow[]> => {
+      const supabase = createClient();
+      const invoices = await fetchAllRows<MultiPayInvoiceRow>((from, to) =>
+        supabase
+          .from("invoices")
+          .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id")
+          .eq("customer_id", customerId!)
+          .not("status", "in", "(paid,void)")
+          .not("quote_id", "is", null)
+          .order("invoice_date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to));
+      const quoteIds = [...new Set(invoices.map((i) => i.quote_id).filter((q): q is string => !!q))];
+      const own = new Set<string>();
+      for (let i = 0; i < quoteIds.length; i += 200) {
+        const { data, error } = await supabase
+          .from("quotes")
+          .select("id, invoice_id")
+          .in("id", quoteIds.slice(i, i + 200));
+        if (error) throw error;
+        for (const q of data ?? []) if (q.invoice_id) own.add(`${q.id}|${q.invoice_id}`);
+      }
+      return invoices.filter((i) => i.quote_id && own.has(`${i.quote_id}|${i.id}`));
+    },
+  });
+}
+
+export interface MultiInvoicePaymentInput {
+  customerId: string;
+  receivedOn: string;
+  method: PaymentMethod;
+  bankAccountId: string | null;
+  reference: string;
+  received: number;
+  allocations: Array<{ invoice_id: string; amount: number; tds_amount?: number; tds_section?: string; tds_rate_pct?: number }>;
+  excessToCredit: boolean;
+  notes: string | null;
+}
+
+/** record_multi_invoice_payment — all lines or none (§17b). Errors are the RPC's own words. */
+export function useRecordMultiInvoicePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: MultiInvoicePaymentInput) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("record_multi_invoice_payment", {
+        p_customer_id:      input.customerId,
+        p_received_on:      input.receivedOn,
+        p_method:           input.method,
+        p_bank_account_id:  input.bankAccountId,
+        p_reference:        input.reference.trim(),
+        p_received:         input.received,
+        p_allocations:      input.allocations,
+        p_excess_to_credit: input.excessToCredit,
+        p_notes:            input.notes,
+      });
+      if (error) throw error;
+      if (!data) throw new Error("The payment was not confirmed — refresh Payments to see whether it was saved.");
+      return data;
+    },
+    onSuccess: () => {
+      for (const key of ["payments", "invoices", "quotes", "customers", "customer-credits", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+}
+
 export type { Payment, PaymentMethod };

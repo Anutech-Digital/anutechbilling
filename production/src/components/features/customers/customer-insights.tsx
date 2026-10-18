@@ -30,6 +30,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatPhone, initials, rupee, daysBetween, cn } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 
 // ════════════════════════════════════════════════════════════════════════
@@ -436,8 +437,9 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 }
 
 /** Quick contact action buttons (Call / WhatsApp / Email) — real deep-links. */
-export function CustomerContactActions({ customer }: { customer: Customer }) {
-  const phone = customer.contact_phone?.replace(/\s+/g, "");
+export function CustomerContactActions({ phone: rawPhone, email }: { phone: string | null | undefined; email: string | null | undefined }) {
+  const phone = rawPhone?.replace(/\s+/g, "");
+  if (!phone && !email) return null;
   return (
     <div className="flex flex-wrap gap-2">
       {phone && (
@@ -452,9 +454,9 @@ export function CustomerContactActions({ customer }: { customer: Customer }) {
           </a>
         </Button>
       )}
-      {customer.contact_email && (
+      {email && (
         <Button asChild size="sm" variant="default">
-          <a href={`mailto:${customer.contact_email}`}><Icon name="mail" size={13} className="mr-1.5" />Email</a>
+          <a href={`mailto:${email}`}><Icon name="mail" size={13} className="mr-1.5" />Email</a>
         </Button>
       )}
     </div>
@@ -605,8 +607,14 @@ export function CustomerDetailsGrid({ c }: { c: Customer }) {
  * WHO this customer is (contact + quick actions), WHERE (billing/shipping
  * address), and the tax/billing facts (Other details). All read-only, real data.
  */
-export function CustomerIdentityRail({ c }: { c: Customer }) {
-  const phone = c.contact_phone?.replace(/\s+/g, "");
+export function CustomerIdentityRail({ c, contact, onAddContact }: {
+  c: Customer;
+  /** R-1522: the primary contact PERSON (customer-links.ts primaryContactOf) — never the company. */
+  contact: PrimaryContact | null;
+  /** Opens the existing add-contact dialog (CustomerContactsCard). */
+  onAddContact?: () => void;
+}) {
+  const phone = contact?.phone?.replace(/\s+/g, "");
   const foreign = isExportSupply(c.country);
 
   const billing = [
@@ -630,18 +638,37 @@ export function CustomerIdentityRail({ c }: { c: Customer }) {
 
   return (
     <div className="space-y-4">
-      {/* Contact person + quick actions */}
+      {/* Contact person + quick actions.
+          R-1522 (17 Oct 2026, Pardeep): this card fell back to the COMPANY name when there
+          was no contact ("GL · GREENTIN SOLUTIONS PRIVATE LIMITED"), so a company read as a
+          person. It now shows the primary contact person, or says plainly there is none. */}
+      {!contact ? (
+      <Card>
+        <div className="flex items-start gap-3" data-testid="no-contact-person">
+          <Avatar initials="?" color="muted" size="md" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-ink">Koi contact person nahi</div>
+            <div className="text-2xs text-ink-3 mt-0.5">Invoice aur reminder kisko jaaye — ek contact person jodiye.</div>
+            {onAddContact && (
+              <Button size="sm" variant="outline" icon="plus" className="mt-2" onClick={onAddContact}>
+                Add contact
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+      ) : (
       <Card>
         <div className="flex items-start gap-3">
-          <Avatar initials={initials(c.contact_name || c.name) || "?"} color="amber" size="md" />
+          <Avatar initials={initials(contact.name) || "?"} color="amber" size="md" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink truncate">{c.contact_name || c.name}</div>
-            {c.contact_title && <div className="text-2xs text-ink-3">{c.contact_title}</div>}
+            <div className="font-medium text-ink truncate">{contact.name}</div>
+            {contact.title && <div className="text-2xs text-ink-3">{contact.title}</div>}
             <div className="mt-1.5 space-y-1">
-              {c.contact_email && (
-                <a href={`mailto:${c.contact_email}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
+              {contact.email && (
+                <a href={`mailto:${contact.email}`} className="flex items-center gap-1.5 text-xs text-ink-2 hover:text-amber-ink transition-colors">
                   <Icon name="mail" size={12} className="text-ink-3 flex-shrink-0" />
-                  <span className="font-mono truncate">{c.contact_email}</span>
+                  <span className="font-mono truncate">{contact.email}</span>
                 </a>
               )}
               {phone && (
@@ -653,10 +680,13 @@ export function CustomerIdentityRail({ c }: { c: Customer }) {
             </div>
           </div>
         </div>
+        {(phone || contact.email) && (
         <div className="mt-3 pt-3 border-t border-hairline">
-          <CustomerContactActions customer={c} />
+          <CustomerContactActions phone={phone} email={contact.email} />
         </div>
+        )}
       </Card>
+      )}
 
       {/* Address */}
       <Card title="Address">

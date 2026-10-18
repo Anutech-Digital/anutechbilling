@@ -44,7 +44,8 @@ import {
   type VendorBill,
 } from "@/lib/queries/vendor-bills";
 import { useBankAccounts } from "@/lib/queries/bank";
-import { AddVendorBillDialog } from "@/components/features/accounting/add-vendor-bill-dialog";
+import { AddVendorBillDialog, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
+import { useVendors } from "@/lib/queries/vendors";
 import { InboundBillsQueue } from "@/components/features/accounting/inbound-bills-queue";
 import { BillDetailDialog } from "@/components/features/accounting/bill-detail-dialog";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
@@ -52,6 +53,7 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { istToday, fyBounds } from "@/lib/dates/ist";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { BILL_SORT, billOutstanding, filterBills, readBillsView, type BillStatusFilter } from "./bills-table";
+import { useAddBillFromUrl } from "./add-from-url";
 
 /** Current financial year (Apr 1 → today), IST-safe, in YYYY-MM-DD. Defaulting
  *  to the FY (not just this month) so a freshly-added bill dated in an earlier
@@ -76,6 +78,15 @@ export default function VendorBillsPage() {
   /* R-118: in the URL, so the Outstanding tile (and a link) can open the owed bills. */
   const [statusFilter, setStatusFilter] = useUrlChoice<BillStatusFilter>("status", BILL_STATUSES, "");
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-1511: "Record a bill" on a vendor lands here with ?add=1&vendor=<id> — open Add Bill
+     with that vendor filled in. Manual "Add Bill" opens it empty (prefill cleared on close). */
+  const [addPrefill, setAddPrefill] = React.useState<VendorBillPrefill | undefined>(undefined);
+  const vendorsQ = useVendors();
+  const openAddFromUrl = React.useCallback((prefill: VendorBillPrefill | undefined) => {
+    setAddPrefill(prefill);
+    setAddOpen(true);
+  }, []);
+  useAddBillFromUrl(vendorsQ.data, vendorsQ.isLoading, openAddFromUrl);
   const [payBill, setPayBill] = React.useState<VendorBill | null>(null);
   const [detailBill, setDetailBill] = React.useState<VendorBill | null>(null);
 
@@ -266,7 +277,7 @@ export default function VendorBillsPage() {
       <FAB icon="plus" label="Bill" onClick={() => setAddOpen(true)} ariaLabel="Add Bill" />
 
       {/* Add dialog */}
-      {addOpen && <AddVendorBillDialog onClose={() => setAddOpen(false)} />}
+      {addOpen && <AddVendorBillDialog prefill={addPrefill} onClose={() => { setAddOpen(false); setAddPrefill(undefined); }} />}
       {payBill && <PayBillDialog bill={payBill} onClose={() => setPayBill(null)} />}
       {detailBill && <BillDetailDialog bill={detailBill} onClose={() => setDetailBill(null)} />}
     </div>

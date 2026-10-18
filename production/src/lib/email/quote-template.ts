@@ -15,6 +15,8 @@ export interface QuoteEmailData {
   expiresDate?: string | null;
   acceptUrl: string;
   lineItems?: Array<{ name: string; qty: number; rate: number }>;
+  /** R-1523: "Proforma Invoice" when the quote is sent as one. Omitted → the Quotation wording. */
+  documentLabel?: string;
 }
 
 export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
@@ -52,12 +54,12 @@ export function buildCustomerQuoteHtml(data: QuoteEmailData): string {
   <div class="container">
     <div class="header">
       <h1 class="title">${data.tenantName}</h1>
-      <p class="subtitle">Official Commercial Quotation #${data.quoteId}</p>
+      <p class="subtitle">${data.documentLabel ? `${data.documentLabel} #${data.quoteId} — not a tax invoice` : `Official Commercial Quotation #${data.quoteId}`}</p>
     </div>
 
     <p style="font-size: 15px; color: #374151;">Dear <strong>${data.customerName}</strong>,</p>
     <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
-      Thank you for considering <strong>${data.tenantName}</strong> for your technology and licensing needs. Below is the summary of your customized quotation.
+      Thank you for considering <strong>${data.tenantName}</strong> for your technology and licensing needs. Below is the summary of your ${data.documentLabel ? data.documentLabel.toLowerCase() : "customized quotation"}.
     </p>
 
     <!-- Call To Action Box -->
