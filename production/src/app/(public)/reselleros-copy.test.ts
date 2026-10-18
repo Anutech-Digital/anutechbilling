@@ -9,7 +9,9 @@ import { readFileSync } from "node:fs";
 import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
 
 const FILES = [
-  "src/app/(public)/_components/landing-sections.tsx",
+  /* R-1606: the old landing-sections.tsx (no route rendered it) was deleted — the live
+     ResellerOS homepage is (product)/reselleros/page.tsx. */
+  "src/app/(product)/reselleros/page.tsx",
   "src/app/(public)/_components/pricing-sections.tsx",
   "src/app/(public)/about/page.tsx",
   "src/app/(public)/pricing/page.tsx",

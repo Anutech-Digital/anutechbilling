@@ -73,7 +73,7 @@ let n = 0;
 const key = () => `k${++n}`;
 const starter = HOSTING_TIERS.find((t) => t.name === "Starter")!;
 
-/** A domain line exactly as the site's domain search adds it (DomainSearchDock). */
+/** A domain line exactly as the site's domain search adds it (DomainLanding on /domains). */
 function domainLine(domain: string, years = 1): CartLine {
   const tld = domain.slice(domain.indexOf(".") + 1);
   const r = REG[tld];

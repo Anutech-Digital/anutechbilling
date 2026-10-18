@@ -21,7 +21,7 @@ import { readPoSummaries, readRevenueQuotes } from "@/app/(app)/accounting/profi
 import { readRevenueQuoteLines } from "@/app/(app)/reports/profit/read";
 import { read24Q } from "@/app/(app)/accounting/salary-register/tds-24q";
 import { read26Q } from "@/app/(app)/accounting/expenses/tds-26q";
-import { fetchBillPayments } from "../bill-payments";
+import { fetchMoneyOut } from "../payments-made";
 import { fetchEmployeeLoans } from "../employee-loans";
 import { fetchEmiPurchases } from "../emi";
 import { fetchBusinessLoans } from "../business-loans";
@@ -213,17 +213,21 @@ describe("24Q / 26Q TDS exports read every deductee row (R-1586)", () => {
 });
 
 describe("R-1582: the other money lists read every row", () => {
-  it("bill payments: 1,500 bank lines matched to 1,300 bills — every line, every bill number", async () => {
+  /* R-1606: this used to call fetchBillPayments (lib/queries/bill-payments.ts), which no page
+     read — /accounting/bill-payments lists money out through fetchMoneyOut. The same 1,500
+     vendor-bill lines now go through the query the page really runs. */
+  it("bill payments (Payments Made page): 1,500 bank lines matched to 1,300 bills — every line, every bill number", async () => {
     const bills = Array.from({ length: 1300 }, (_, i) => ({ id: `b${pad(i)}`, bill_no: `VB-${i}`, vendor_name: `V ${i}` }));
     const txns = Array.from({ length: 1500 }, (_, i) => ({
       id: `t${pad(i)}`, txn_date: inQ(i), description: "Bill payment: X", debit: 100, reference: null,
       bank_account_id: "acc1", matched_to_type: "vendor_bill", matched_to_id: `b${pad(i % 1300)}`,
     }));
     const { client } = gatewayClient({ bank_transactions: txns, vendor_bills: bills, bank_accounts: [{ id: "acc1", name: "HDFC" }] });
-    const got = await fetchBillPayments(client);
+    const got = await fetchMoneyOut(client);
     expect(got).toHaveLength(1500);
     expect(got.reduce((s, p) => s + p.amount, 0)).toBe(150_000);
-    expect(got.every((p) => p.bill_no !== null && p.bank_account_name === "HDFC")).toBe(true);
+    expect(got.every((p) => p.what === "Vendor bill" && p.reference === `VB-${Number(p.matched_to_id!.slice(1))}`)).toBe(true);
+    expect(got.every((p) => p.account === "HDFC")).toBe(true);
   });
 
   it("employee loan: 1,100 repayments of ₹10 on a ₹20,000 loan → outstanding ₹9,000, not ₹10,000", async () => {

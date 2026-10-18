@@ -70,7 +70,6 @@ const MONEY_FILES = [
   "src/lib/queries/credit-notes.ts",
   ...GOOGLE_BILL_CHECK,
   // R-1582: the rest of the money lists — outstanding on loans / EMIs is a sum of these rows.
-  "src/lib/queries/bill-payments.ts",
   "src/lib/queries/employee-loans.ts",
   "src/lib/queries/emi.ts",
   "src/lib/queries/business-loans.ts",

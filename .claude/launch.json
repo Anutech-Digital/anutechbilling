@@ -50,17 +50,6 @@
       "port": 3001
     },
     {
-      "name": "website",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--prefix",
-        "website"
-      ],
-      "port": 3100
-    },
-    {
       "name": "dsp-backend",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

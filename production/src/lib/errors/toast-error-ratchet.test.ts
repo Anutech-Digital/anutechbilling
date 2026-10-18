@@ -45,7 +45,7 @@ describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
 const R266_FILES = [
   "assessments", "attendance-biometric", "backups", "balance-sheet", "business-loans",
   "compliance", "contacts", "credit-notes", "customers", "debit-notes", "emi",
-  "employee-loans", "expense-claims", "expenses", "imported-contacts", "inbound-emails",
+  "employee-loans", "expense-claims", "expenses", "inbound-emails", // imported-contacts: deleted, R-1606
   // R-283 — the next 8
   "inbound-purchases", "items", "payroll", "prepaid-advances", "purchase-orders",
   "referral-commissions", "referral-partners", "reimbursements",

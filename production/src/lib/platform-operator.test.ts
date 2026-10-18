@@ -38,7 +38,9 @@ const PUBLIC_FACING = [
      app landing was removed when `/` became the company's face. */
   ["landing",      ["src", "app", "(marketing)", "page.tsx"]],
   ["public shell", ["src", "app", "(public)", "_components", "public-shell.tsx"]],
-  ["landing bits", ["src", "app", "(public)", "_components", "landing-sections.tsx"]],
+  /* R-1606: "landing bits" (landing-sections.tsx) was never rendered and is deleted — the
+     live ResellerOS homepage is checked in its place. */
+  ["ResellerOS home", ["src", "app", "(product)", "reselleros", "page.tsx"]],
   ["privacy",      ["src", "app", "(public)", "privacy", "page.tsx"]],
   ["terms",        ["src", "app", "(public)", "terms", "page.tsx"]],
   ["about",        ["src", "app", "(public)", "about", "page.tsx"]],
@@ -128,8 +130,8 @@ describe("company ka sheher aur server ka region — do alag baatein", () => {
     /* Pehle yahan "Mumbai RAHNA chahiye" tha — par 5-6 Sep 2026 se production Singapore
        (asia-southeast1) me hai, to wo test ek purana sach pakde baitha tha (R-1600, 19 Oct).
        Ab region site/lib/config.ts DATA_LOCATION se aata hai; ye pages use hi padhein. */
-    expect(codeOf(["src", "app", "(public)", "_components", "landing-sections.tsx"]))
-      .toMatch(/DATA_LOCATION/);
+    expect(codeOf(["src", "app", "(public)", "pricing", "page.tsx"]))
+      .toMatch(/DATA_LOCATION\.label/);
     expect(codeOf(["src", "app", "(public)", "about", "page.tsx"]))
       .toMatch(/DATA_LOCATION\.label/);
   });

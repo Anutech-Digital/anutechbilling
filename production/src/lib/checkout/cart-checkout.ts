@@ -172,7 +172,8 @@ const newId = () => globalThis.crypto?.randomUUID() ?? Math.random().toString(36
  * Returns null for anything we can't price server-side.
  *
  *   hosting:<tier>   → HOSTING_TIERS (whole rupees)
- *   domain:<tld>     → TLDS reg price. The ₹0 bundle is NOT applied here — it is
+ *   domain:<tld>     → null here; priced live per name in priceDomainLines() (R-1603: the
+ *                      old "TLDS reg price" note was stale). The ₹0 bundle is NOT applied here — it is
  *                      applied after the whole cart is priced, and ONLY when a
  *                      yearly hosting line is present. A client that sends ₹0 for
  *                      a bare domain still gets charged the real reg price.

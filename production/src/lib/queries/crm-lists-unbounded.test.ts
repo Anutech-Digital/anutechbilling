@@ -24,7 +24,6 @@ const HOOKS = [
   ["src/lib/queries/trials.ts",            "useTrials",                 1],
   ["src/lib/queries/trials.ts",            "useActiveTrials",           1],
   ["src/lib/queries/trials.ts",            "useTrialsExpiringSoon",     1],
-  ["src/lib/queries/imported-contacts.ts", "useImportedContacts",       1],
   ["src/lib/queries/marketing-hub.ts",     "useSpendThisMonth",         1],
   ["src/lib/queries/marketing-hub.ts",     "useTrackingLinks",          2],
   ["src/lib/queries/marketing-hub.ts",     "useEmailSuppressions",      1],

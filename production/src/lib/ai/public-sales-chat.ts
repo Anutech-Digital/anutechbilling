@@ -49,10 +49,8 @@ export interface CompanyFacts {
  * Current promotions the agent may STATE — each with its own expiry, checked per request
  * (the route is force-dynamic, so there is no build-time freeze here).
  *
- * ⚠️ TWIN: website/src/lib/offers.ts carries the same offer for the site's own pages.
- * Two copies because the repos cannot import each other; both self-expire on the same
- * date, so the worst drift is Pardeep editing one and not the other DURING the offer —
- * each file names its twin so that edit finds both.
+ * This is the only copy. The old standalone website/ app (and its offers.ts twin) and the
+ * unused src/site/lib/offers.ts were deleted by R-1607 (19 Oct 2026).
  */
 const PROMOTIONS: readonly { line: string; figures: readonly number[]; until: string }[] = [
   {

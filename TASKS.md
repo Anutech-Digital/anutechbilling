@@ -898,8 +898,9 @@ timeline par likhta hai, **bhejta kuch nahi**. Tum `/automation` se ghumaoge.
 
 **3. `runAutoReply` ab koi nahi bulata.** Dono webhook branch ab sales agent bulate hain — ye
 **badla gaya hai, joda nahi**: do drafter ek webhook par matlab ek customer ko do reply. Purani
-file `src/lib/ai/run-auto-reply.ts` **rakhi hai** (upar banner laga diya hai) kyunki uske test
-abhi bhi wo logic pin karte hain jo naya rasta reuse karta hai. Use delete karna tumhara faisla.
+file `src/lib/ai/run-auto-reply.ts` (aur `draft-reply.server.ts`) **19 Oct 2026 ko R-1606 me
+hata di** — uske tests (`human-touch.test.ts`, `auto-reply.test.ts`) ab `run-sales-agent.ts` ko
+jaanchte hain, jo asli me chalta hai.
 
 ### 🟡 Do cheezein jo maine jaan-boojh kar NAHI ki
 
