@@ -34,7 +34,9 @@ import { useSalaryPayments } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
+import { errorMessage } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
+import { read26Q } from "./tds-26q";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
@@ -275,22 +277,19 @@ export default function ExpensesPage() {
   // FVU); the app can't produce the FVU itself. PAN derived from vendor GSTIN.
   async function export26Q() {
     const supabase = createClient();
-    const { data: exps } = await supabase
-      .from("expenses")
-      .select("id, expense_date, vendor_name, vendor_id, amount, gst_paid, tds_section, tds_amount")
-      .gte("expense_date", range.from).lte("expense_date", range.to)
-      .gt("tds_amount", 0);
-    if (!exps || exps.length === 0) {
+    /* R-1586: every TDS expense of the range and its vendors, paged past the gateway's
+       1000-row cap (./tds-26q.ts). */
+    let read: Awaited<ReturnType<typeof read26Q>>;
+    try { read = await read26Q(supabase, range); }
+    catch (e) { toast.error(`26Q data load nahi hua: ${errorMessage(e)}`); return; }
+    const { exps, vends } = read;
+    if (exps.length === 0) {
       toast.error("Is range me koi TDS-deducted expense nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
       return;
     }
-    const vids = Array.from(new Set(exps.map((e) => e.vendor_id).filter(Boolean))) as string[];
     /* PAN: the vendor's own (migration 20260927130000), else lifted from a well-formed GSTIN. */
     const panByVid = new Map<string, string>();
-    if (vids.length) {
-      const { data: vends } = await supabase.from("vendors").select("id, gstin, pan").in("id", vids);
-      for (const v of vends ?? []) panByVid.set(v.id, v.pan ?? panFromGstin(v.gstin) ?? "");
-    }
+    for (const v of vends) panByVid.set(v.id, v.pan ?? panFromGstin(v.gstin) ?? "");
     const panFrom = (vid: string | null | undefined) => (vid ? panByVid.get(vid) ?? "" : "");
     const rows = exps.slice()
       .sort((a, b) => (a.vendor_name ?? "").localeCompare(b.vendor_name ?? "") || a.expense_date.localeCompare(b.expense_date))

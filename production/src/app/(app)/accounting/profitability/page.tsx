@@ -27,6 +27,7 @@ import { LoadError } from "@/components/shared/load-error";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { readPoSummaries, readRevenueQuotes } from "./read";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import { utcDateISO } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -128,13 +129,8 @@ function useProfitability(range: DateRange) {
       // Pull quotes that have actually generated revenue (paid or invoiced).
       // line_items has `cost` per line (vendor wholesale) and `rate` (customer price);
       // multiplying by `qty` gives the true gross profit picture per quote.
-      const { data: quotes, error: qErr } = await supabase
-        .from("quotes")
-        .select("id, customer_id, customer_name, amount, tax_rate, line_items, seats, created_date, payment_status")
-        .gte("created_date", range.from)
-        .lte("created_date", range.to)
-        .in("payment_status", ["received", "partial", "invoiced"]);
-      if (qErr) throw qErr;
+      // R-1586: every quote in the range, paged past the gateway's 1000-row cap.
+      const quotes = await readRevenueQuotes(supabase, range);
 
       // Pull contact info for the customers we touched.
       const ids = Array.from(
@@ -198,12 +194,9 @@ function useProfitability(range: DateRange) {
       // wherever the operator has matched bills. This makes the report reflect
       // actual vendor invoices instead of the 83% heuristic stored at quote time.
       if (ids.length > 0) {
-        const { data: poSummaries } = await supabase
-          .from("purchase_order_summary" as never)
-          .select("customer_id, allocated_total, allocation_count")
-          .in("customer_id", ids);
+        const poSummaries = await readPoSummaries(supabase, ids);
         const actualByCustomer = new Map<string, number>();
-        for (const s of (poSummaries ?? []) as Array<{ customer_id: string | null; allocated_total: number; allocation_count: number }>) {
+        for (const s of poSummaries) {
           if (!s.customer_id || s.allocation_count === 0) continue;
           actualByCustomer.set(
             s.customer_id,

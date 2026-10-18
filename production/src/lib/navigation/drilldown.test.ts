@@ -284,7 +284,8 @@ describe("aging, expenses and the prepaid form", () => {
     const page = read("app/(app)/accounting/aging/page.tsx");
     expect(page).toMatch(/const owed = invoiceBalance\(/);
     expect(page).not.toMatch(/const owed = inv\.net_payable \?\? inv\.amount/);
-    expect(page).toMatch(/paid_amount, status, invoice_date/);
+    // R-1586: the paged read lives next to the page (aging/read.ts).
+    expect(read("app/(app)/accounting/aging/read.ts")).toMatch(/paid_amount, status, invoice_date/);
     expect(page).toMatch(/rows   = bucket \? allRows\.filter\(\(r\) => r\.buckets\[bucket\] > 0\) : allRows/);
   });
   it("expenses Top category opens that category; prepaid form points staff advances away", () => {

@@ -39,6 +39,26 @@ const OVER_CAP_NOT_MONEY: Record<string, string> = {
   "src/lib/queries/gbp.ts": "gbp_metrics_daily .limit(20000) — Google Business Profile metrics",
 };
 
+/**
+ * R-1586: the accounting reports and their exports — GST (GSTR-1 / 3B), Customer Aging,
+ * Profitability, Profit by product, 24Q / 26Q. Each report's reads sit in a small sibling
+ * file (a Next page may not export a loader), and the page itself is scanned too so a read
+ * cannot creep back into it.
+ */
+const REPORT_FILES = [
+  "src/app/(app)/accounting/gst/report.ts",
+  "src/app/(app)/accounting/aging/read.ts",
+  "src/app/(app)/accounting/aging/page.tsx",
+  "src/app/(app)/accounting/profitability/read.ts",
+  "src/app/(app)/accounting/profitability/page.tsx",
+  "src/app/(app)/reports/profit/read.ts",
+  "src/app/(app)/reports/profit/page.tsx",
+  "src/app/(app)/accounting/salary-register/tds-24q.ts",
+  "src/app/(app)/accounting/salary-register/page.tsx",
+  "src/app/(app)/accounting/expenses/tds-26q.ts",
+  "src/app/(app)/accounting/expenses/page.tsx",
+];
+
 /** The money files whose every list read must page (R-1509 bank.ts has its own scan). */
 const MONEY_FILES = [
   "src/lib/queries/payments-made.ts",
@@ -49,7 +69,31 @@ const MONEY_FILES = [
   "src/lib/queries/loans-given.ts",
   "src/lib/queries/credit-notes.ts",
   ...GOOGLE_BILL_CHECK,
+  // R-1582: the rest of the money lists — outstanding on loans / EMIs is a sum of these rows.
+  "src/lib/queries/bill-payments.ts",
+  "src/lib/queries/employee-loans.ts",
+  "src/lib/queries/emi.ts",
+  "src/lib/queries/business-loans.ts",
+  "src/lib/queries/reimbursements.ts",
+  "src/lib/queries/prepaid-advances.ts",
+  "src/lib/queries/referral-commissions.ts",
+  "src/lib/queries/expense-claims.ts",
+  "src/lib/queries/vendors.ts",
+  "src/lib/queries/compliance.ts",
+  ...REPORT_FILES,
 ];
+
+/**
+ * R-1586: no `.limit()` past the cap anywhere under the accounting, compliance and reports
+ * screens (no exceptions: there were none when the scan was added).
+ */
+const REPORT_DIRS = ["src/app/(app)/accounting", "src/app/(app)/compliance", "src/app/(app)/reports"];
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const p = path.posix.join(dir, d.name);
+    if (d.isDirectory()) return walk(p);
+    return /\.tsx?$/.test(d.name) && !d.name.includes(".test.") ? [p] : [];
+  });
 
 /**
  * Unpaged selects that are bounded by what they ask for. `match` is a substring of the
@@ -114,6 +158,13 @@ describe("no money read asks for more than the gateway's 1000 rows (R-1519)", ()
     }
   });
 
+  it.each(REPORT_DIRS.flatMap(walk))("%s: no .limit() above 1000 (R-1586)", (file) => {
+    for (const m of strip(file).matchAll(/\.limit\((\d[\d_]*)\)/g)) {
+      const n = Number(m[1].replace(/_/g, ""));
+      expect(n, `${file}: .limit(${m[1]}) — the gateway returns 1000 and says nothing; page with fetchAllRows`).toBeLessThanOrEqual(GATEWAY_MAX_ROWS);
+    }
+  });
+
   it("the not-money exceptions still exist (remove an entry once its read is paged)", () => {
     for (const file of Object.keys(OVER_CAP_NOT_MONEY)) {
       const over = [...strip(file).matchAll(/\.limit\((\d[\d_]*)\)/g)].some((m) => Number(m[1].replace(/_/g, "")) > GATEWAY_MAX_ROWS);
@@ -132,7 +183,8 @@ describe("every money list read pages with .range() (R-1519)", () => {
       expect(isPaged(src, at, text), `${file} (stripped) line ${line}: list read with no .range() — page it with fetchAllRows:\n${text.slice(0, 160)}`).toBe(true);
       // Offset pages over an order with ties can repeat or skip a row: end on a unique column.
       const region = src.slice(at, at + 900);
-      expect(/\.order\("(id|doc_id)"/.test(region), `${file} line ${line}: paged read needs a unique tie-break (.order("id"))`).toBe(true);
+      // purchase_order_summary is a view with no `id` — purchase_order_id is its unique key.
+      expect(/\.order\("(id|doc_id|purchase_order_id)"/.test(region), `${file} line ${line}: paged read needs a unique tie-break (.order("id"))`).toBe(true);
     }
   });
 

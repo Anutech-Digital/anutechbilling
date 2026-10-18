@@ -11,31 +11,35 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { ReferralCommissionRow } from "@/lib/supabase/database.types";
 
 /** A commission row joined with its partner name (for list display). */
 export type CommissionWithPartner = ReferralCommissionRow & { partner_name: string | null };
 
+/** Every commission, newest first. R-1582: paged past the gateway's 1000-row cap. */
+export async function fetchReferralCommissions(supabase: ReturnType<typeof createClient>): Promise<CommissionWithPartner[]> {
+  const data = await fetchAllRows((from, to) => supabase
+    .from("referral_commissions")
+    .select("*, referral_partners(name)")
+    .order("earned_date", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to));
+  return data.map((r) => {
+    const rec = r as unknown as ReferralCommissionRow & {
+      referral_partners?: { name: string | null } | null;
+    };
+    return {
+      ...(rec as ReferralCommissionRow),
+      partner_name: rec.referral_partners?.name ?? null,
+    };
+  });
+}
+
 export function useReferralCommissions() {
   return useQuery({
     queryKey: ["referral-commissions"],
-    queryFn: async (): Promise<CommissionWithPartner[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("referral_commissions")
-        .select("*, referral_partners(name)")
-        .order("earned_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []).map((r) => {
-        const rec = r as unknown as ReferralCommissionRow & {
-          referral_partners?: { name: string | null } | null;
-        };
-        return {
-          ...(rec as ReferralCommissionRow),
-          partner_name: rec.referral_partners?.name ?? null,
-        };
-      });
-    },
+    queryFn: (): Promise<CommissionWithPartner[]> => fetchReferralCommissions(createClient()),
   });
 }
 

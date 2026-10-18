@@ -16,6 +16,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { errorMessage } from "@/lib/ops/fetch-all";
+import { read24Q } from "./tds-24q";
 
 import { HrPageShell } from "../payroll/screens";
 import { Card } from "@/components/ui/card";
@@ -182,20 +184,16 @@ function MonthRegister() {
   const export24Q = async () => {
     const { periods, label } = quarterOf(period);
     const supabase = createClient();
-    const { data: pays } = await supabase
-      .from("salary_payments")
-      .select("employee_id, period, pay_date, gross, lop_amount, incentive, tds")
-      .in("period", periods);
-    if (!pays || pays.length === 0) { toast.error(`No salary runs in ${label}.`); return; }
-    const empIds = Array.from(new Set(pays.map((p) => p.employee_id)));
-    const { data: emps } = await supabase.from("employees").select("id, name, pan").in("id", empIds);
-    const emap = new Map((emps ?? []).map((e) => [e.id, e]));
-    /* Challan per month — the TDS (or mixed) statutory payment booked for that period
-       (migration 20260927130000). 24Q Annexure I wants the challan the deduction went in. */
-    const { data: challans } = await supabase.from("statutory_dues_payments")
-      .select("period, kind, challan_no, paid_on").in("period", periods).in("kind", ["tds", "mixed"]);
+    /* R-1586: every row of the quarter, paged past the gateway's 1000-row cap (./tds-24q.ts).
+       24Q Annexure I wants the challan the deduction went in. */
+    let read: Awaited<ReturnType<typeof read24Q>>;
+    try { read = await read24Q(supabase, periods); }
+    catch (e) { toast.error(`24Q data load nahi hua: ${errorMessage(e)}`); return; }
+    const { pays, emps, challans } = read;
+    if (pays.length === 0) { toast.error(`No salary runs in ${label}.`); return; }
+    const emap = new Map(emps.map((e) => [e.id, e]));
     const challanOf = new Map<string, { no: string | null; on: string }>();
-    for (const c of challans ?? []) if (c.period && !challanOf.has(c.period)) challanOf.set(c.period, { no: c.challan_no ?? null, on: c.paid_on });
+    for (const c of challans) if (c.period && !challanOf.has(c.period)) challanOf.set(c.period, { no: c.challan_no ?? null, on: c.paid_on });
     let missingPan = 0;
     const outRows = pays
       .slice()

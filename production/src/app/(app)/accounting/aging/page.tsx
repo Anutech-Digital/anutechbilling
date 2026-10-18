@@ -30,6 +30,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
+import { readOpenInvoices } from "./read";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { MsmePayablesCard } from "@/components/features/accounting/msme-payables-card";
 import { OverduePauseCard } from "@/components/features/collections/overdue-pause-card";
@@ -76,11 +77,8 @@ function useAging() {
       // We use `net_payable` when present (= amount − adjusted advances)
       // otherwise fall back to `amount`. Invoices already 'paid' or 'void'
       // are excluded.
-      const { data: invoices, error: invErr } = await supabase
-        .from("invoices")
-        .select("id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date")
-        .in("status", ["pending", "overdue"]);
-      if (invErr) throw invErr;
+      // R-1586: every open invoice, paged past the gateway's 1000-row cap.
+      const invoices = await readOpenInvoices(supabase);
 
       // Pull customer contact info so the row can offer WhatsApp / email.
       const customerIds = Array.from(
