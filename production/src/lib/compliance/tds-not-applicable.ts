@@ -1,7 +1,7 @@
 /**
  * R-181 — a month with no TDS deducted has nothing to deposit.
  *
- * "Deposit TDS deducted" is due by the 7th for the TDS deducted LAST month. If the
+ * "Deposit TDS deducted" is due by the 7th (March: 30 April — R-1583, tds-due.ts) for the TDS deducted LAST month. If the
  * books show no TDS at all for that month (no salary TDS, no vendor TDS), there is
  * no challan to pay, so the period is not applicable — showing it red and
  * "overdue" only frightens the operator. Month-end Close already says the same
