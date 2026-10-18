@@ -48,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import {
   bulkReminderTargets,
   bulkReminderConfirm,
+  isTerminalRenewal,
   sendNowStep,
   sendNowConfirm,
   sentToastText,
@@ -288,7 +289,7 @@ function RenewalBucket({
                       size="sm"
                       className="flex-1"
                       loading={generating === sub.id}
-                      disabled={sub.renewal_state === "suspended" || sub.renewal_state === "renewed"}
+                      disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                       onClick={() => handleGenerateQuote(sub)}
                     >
                       <Icon name="plus" size={12} />
@@ -300,7 +301,7 @@ function RenewalBucket({
                     size="sm"
                     className="flex-1"
                     loading={sending === sub.id}
-                    disabled={sub.renewal_state === "suspended" || sub.renewal_state === "renewed"}
+                    disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                     onClick={() => handleSendNow(sub)}
                   >
                     <Icon name="mail" size={12} />
@@ -496,10 +497,7 @@ function RenewalBucket({
                                   variant={kind === "rose" ? "primary" : "default"}
                                   size="sm"
                                   loading={generating === sub.id}
-                                  disabled={
-                                    sub.renewal_state === "suspended" ||
-                                    sub.renewal_state === "renewed"
-                                  }
+                                  disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                   onClick={() => handleGenerateQuote(sub)}
                                   title="Create the renewal quote now (early, e.g. customer asked 60 days ahead) — same logic as the T-15 cron auto-create"
                                 >
@@ -511,10 +509,7 @@ function RenewalBucket({
                                 variant="ghost"
                                 size="sm"
                                 loading={sending === sub.id}
-                                disabled={
-                                  sub.renewal_state === "suspended" ||
-                                  sub.renewal_state === "renewed"
-                                }
+                                disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                 onClick={() => handleSendNow(sub)}
                                 title="Send the appropriate renewal email immediately (overrides daily cron)"
                               >

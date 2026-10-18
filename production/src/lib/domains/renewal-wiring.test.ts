@@ -73,6 +73,9 @@ describe("the renewals cron", () => {
     expect(c).toMatch(/:\s*await createOrGetRenewalQuote\(/);
   });
   it("holds a domain's reminder when the live price is unavailable, rather than emailing no price", () => {
-    expect(code("app/api/cron/renewals/route.ts")).toMatch(/if \(sub\.vendor === "domain" && !quoteResult\)/);
+    /* R-1571 widened the hold from domains to every vendor; the domain still gets its own reason. */
+    const cron = code("app/api/cron/renewals/route.ts");
+    expect(cron).toMatch(/if \(!quoteResult\) \{/);
+    expect(cron).toContain("the live renewal price could not be read");
   });
 });

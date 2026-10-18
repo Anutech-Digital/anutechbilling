@@ -29,6 +29,7 @@ import { withRoute } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
+import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -71,9 +72,12 @@ export const POST = withRoute({
       { status: 400 }
     );
   }
-  if (sub.renewal_state === "renewed") {
+  /* R-1562: 'renewed' blocks only while the NEW term's first reminder is still ahead — a
+     quote right after the payment is almost always a mistake. The bare-state check blocked
+     the renewal quote of every term after the first paid one, for good. */
+  if (renewalIsSettled(sub.renewal_state, sub.renewal_date, sub.term_months)) {
     return NextResponse.json(
-      { error: "this subscription has already been renewed" },
+      { error: `Already renewed — the next term's renewal quote opens ${firstReminderDaysOut(sub.term_months)} days before ${sub.renewal_date}.` },
       { status: 400 }
     );
   }
