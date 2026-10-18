@@ -28,12 +28,12 @@ insert into public.customers (id, tenant_id, name, country, state_code, state) v
 insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
   ('5e450000-0000-4000-8000-0000000000b1', '5e450000-0000-4000-8000-000000000001', 'S45 HDFC', 'HDFC', 0, '2026-04-01');
 
--- 10 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
+-- 12 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate,
                            line_items, status, payment_status, payment_terms_days)
 select 'S45Q-' || n, '5e450000-0000-4000-8000-000000000001', '5e450000-0000-4000-8000-0000000000c1',
        'S45 Cust', 11800, 10000, 18, '[]'::jsonb, 'sent', 'awaiting', 30
-  from generate_series(1, 10) n;
+  from generate_series(1, 12) n;
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '5e450000-0000-4000-8000-0000000000a1', 'role', 'authenticated')::text, true);
@@ -133,6 +133,19 @@ begin
   g := pg_temp.step('6e full credit note on paid invoice', g);
   perform public.refund_payment(v_pay, 'S45 refund against the credit note');
   g := pg_temp.step('6f refund against the credit note', g);
+
+  -- R-1614: an overpayment credit used only IN PART (redeem_customer_credits splits it: the
+  -- open row keeps the rest, a 'redeemed_split' row holds the used part).
+  -- 6g. Quote 11 invoiced, then paid ₹14,800 → ₹3,000 overpayment credit.
+  perform public.generate_invoice('S45Q-11');
+  g := pg_temp.step('6g invoice issued', g);
+  perform public.record_payment('S45Q-11', 14800, 'upi', 'S45-UTR-11', null);
+  g := pg_temp.step('6h overpayment on invoice', g);
+  -- 6i. Quote 12 paid ₹10,800 cash + ₹1,000 credit: the ₹680 left of case 6's credit-note
+  --     credit (older, used whole) and ₹320 of the ₹3,000 overpayment credit (split).
+  perform public.record_desk_payment('S45Q-12', 10800, 'upi', 'S45-UTR-12', null,
+    '5e450000-0000-4000-8000-0000000000c1', 1000, null, null);
+  g := pg_temp.step('6i overpayment credit part used on another quote', g);
 
   -- 7. Credit note ₹1,180 on a PENDING invoice.
   perform public.generate_invoice('S45Q-4');

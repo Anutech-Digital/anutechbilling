@@ -18,6 +18,13 @@
 --   INST      Split-billed quote S (no invoice of its own): ₹2,360 paid on its raised instalment
 --             invoice INV-S1 (paid_amount 2,360) → not an advance (was ₹2,360); ₹640 extra waits
 --             for the next instalment → ₹640 advance.
+--   SPLIT     R-1614: Quote F ₹6,000 invoiced, ₹10,000 received → ₹4,000 overpayment credit, only
+--             ₹1,500 of it USED on quote G (₹6,000 = ₹4,500 cash + ₹1,500 credit): the open row
+--             keeps ₹2,500, a 'redeemed_split' row (source payment F) holds the ₹1,500. Liability
+--             = G ₹6,000 + open ₹2,500 = ₹8,500 (was ₹10,000 — the used ₹1,500 counted again on F).
+--   SPLIT1    R-1614, not invoiced: Quote H ₹1,000 (no invoice), ₹3,000 received → ₹2,000 credit, ₹800
+--             used on quote J (₹1,000 = ₹200 cash + ₹800): open ₹1,200 + split ₹800. Liability = H
+--             ₹1,000 advance + open ₹1,200 + J ₹1,000 = ₹3,200 (was ₹4,000).
 --   RECEIV    receivables unchanged (0 — everything paid).
 --   OTHER     another company's rows are in none of these.
 
@@ -38,13 +45,17 @@ insert into public.customers (id, tenant_id, name, state_code, country) values
 insert into public.invoices (id, tenant_id, customer_name, customer_id, amount, net_payable, paid_amount, taxable_value, tax_amount, tax_rate, invoice_date, status, quote_id) values
   ('R1612-INV-A',  'e1612000-0000-0000-0000-0000000000a0', 'R1612 Cust', 'e1612000-0000-4000-8000-0000000000c1', 6000, 6000, 6000, 5085, 915, 18, '2026-09-05', 'paid', null),
   ('R1612-INV-D',  'e1612000-0000-0000-0000-0000000000a0', 'R1612 Cust', 'e1612000-0000-4000-8000-0000000000c1', 1000, 1000, 1000, 847, 153, 18, '2026-09-06', 'paid', null),
-  ('R1612-INV-S1', 'e1612000-0000-0000-0000-0000000000a0', 'R1612 Cust', 'e1612000-0000-4000-8000-0000000000c1', 2360, 2360, 2360, 2000, 360, 18, '2026-10-01', 'paid', null);
+  ('R1612-INV-S1', 'e1612000-0000-0000-0000-0000000000a0', 'R1612 Cust', 'e1612000-0000-4000-8000-0000000000c1', 2360, 2360, 2360, 2000, 360, 18, '2026-10-01', 'paid', null),
+  ('R1612-INV-F',  'e1612000-0000-0000-0000-0000000000a0', 'R1612 Cust', 'e1612000-0000-4000-8000-0000000000c1', 6000, 6000, 6000, 5085, 915, 18, '2026-09-07', 'paid', null);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items, invoice_id)
 select 'Q-R1612-' || k, 'e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 'R1612 Cust',
        amt, round(amt / 1.18), 18, 'accepted', 'none', '[]'::jsonb, inv
-  from (values ('A', 6000, 'R1612-INV-A'), ('B', 6000, null), ('D', 1000, 'R1612-INV-D'), ('E', 1000, null), ('S', 9440, null)) v(k, amt, inv);
+  from (values ('A', 6000, 'R1612-INV-A'), ('B', 6000, null), ('D', 1000, 'R1612-INV-D'), ('E', 1000, null), ('S', 9440, null),
+               ('F', 6000, 'R1612-INV-F'), ('G', 6000, null),
+               ('H', 1000, null), ('J', 1000, null)) v(k, amt, inv);
 update public.invoices set quote_id = 'Q-R1612-A' where id = 'R1612-INV-A';
 update public.invoices set quote_id = 'Q-R1612-D' where id = 'R1612-INV-D';
+update public.invoices set quote_id = 'Q-R1612-F' where id = 'R1612-INV-F';
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items, invoice_id) values
   ('Q-R1612-X', 'e1612000-0000-0000-0000-0000000000b0', 'e1612000-0000-4000-8000-0000000000c2', 'R1612 Other', 5000, 4237, 18, 'accepted', 'none', '[]'::jsonb, null);
 
@@ -60,6 +71,10 @@ insert into public.payments (id, tenant_id, quote_id, customer_id, amount, credi
   ('e1612000-0000-4000-8000-0000000000d1', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-D', 'e1612000-0000-4000-8000-0000000000c1', 1500,  0,    'upi', 'R1612-D', 'received', '2026-09-06'),
   ('e1612000-0000-4000-8000-0000000000e9', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-E', 'e1612000-0000-4000-8000-0000000000c1', 1300,  0,    'upi', 'R1612-E', 'received', '2026-10-06'),
   ('e1612000-0000-4000-8000-0000000000f1', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-S', 'e1612000-0000-4000-8000-0000000000c1', 3000,  0,    'upi', 'R1612-S', 'received', '2026-10-02'),
+  ('e1612000-0000-4000-8000-0000000000fa', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-F', 'e1612000-0000-4000-8000-0000000000c1', 10000, 0,    'upi', 'R1612-F', 'received', '2026-09-07'),
+  ('e1612000-0000-4000-8000-0000000000fb', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-G', 'e1612000-0000-4000-8000-0000000000c1', 6000,  1500, 'upi', 'R1612-G', 'received', '2026-10-07'),
+  ('e1612000-0000-4000-8000-0000000000fc', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-H', 'e1612000-0000-4000-8000-0000000000c1', 3000,  0,    'upi', 'R1612-H', 'received', '2026-09-08'),
+  ('e1612000-0000-4000-8000-0000000000fd', 'e1612000-0000-0000-0000-0000000000a0', 'Q-R1612-J', 'e1612000-0000-4000-8000-0000000000c1', 1000,  800,  'upi', 'R1612-J', 'received', '2026-10-08'),
   ('e1612000-0000-4000-8000-0000000000f9', 'e1612000-0000-0000-0000-0000000000b0', 'Q-R1612-X', 'e1612000-0000-4000-8000-0000000000c2', 5000,  0,    'upi', 'R1612-X', 'received', '2026-10-02');
 
 insert into public.customer_credits (tenant_id, customer_id, amount, source, source_payment_id, source_quote_id, status) values
@@ -67,7 +82,13 @@ insert into public.customer_credits (tenant_id, customer_id, amount, source, sou
   ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 4000, 'overpayment', 'e1612000-0000-4000-8000-0000000000a1', 'Q-R1612-A', 'used'),
   ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 500,  'overpayment', 'e1612000-0000-4000-8000-0000000000d1', 'Q-R1612-D', 'open'),
   ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 300,  'overpayment', 'e1612000-0000-4000-8000-0000000000e9', 'Q-R1612-E', 'open'),
-  ('e1612000-0000-0000-0000-0000000000b0', 'e1612000-0000-4000-8000-0000000000c2', 999,  'overpayment', null, 'Q-R1612-X', 'open');
+  ('e1612000-0000-0000-0000-0000000000b0', 'e1612000-0000-4000-8000-0000000000c2', 999,  'overpayment', null, 'Q-R1612-X', 'open'),
+  -- R-1614: F's ₹4,000 overpayment, ₹1,500 of it used on G (redeem_customer_credits split).
+  ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 2500, 'overpayment',    'e1612000-0000-4000-8000-0000000000fa', 'Q-R1612-F', 'open'),
+  ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 1500, 'redeemed_split', 'e1612000-0000-4000-8000-0000000000fa', 'Q-R1612-F', 'used'),
+  -- R-1614: H's ₹2,000 overpayment (H not invoiced), ₹800 of it used on J.
+  ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 1200, 'overpayment',    'e1612000-0000-4000-8000-0000000000fc', 'Q-R1612-H', 'open'),
+  ('e1612000-0000-0000-0000-0000000000a0', 'e1612000-0000-4000-8000-0000000000c1', 800,  'redeemed_split', 'e1612000-0000-4000-8000-0000000000fc', 'Q-R1612-H', 'used');
 
 create temp table r1612_fail (msg text) on commit drop;
 grant all on r1612_fail to authenticated;
@@ -80,13 +101,16 @@ declare b record;
 begin
   select * into b from public.report_balance_sheet('2026-10-31');
   -- cash in hand: 10,000 + 2,000 (B's cash) + 1,500 + 1,300 + 3,000 = 17,800 (was 21,800)
-  if b.undeposited_funds <> 17800 then
-    insert into r1612_fail values (format('USED cash: undeposited_funds %s (want 17800 — B''s ₹4,000 credit is not money in)', b.undeposited_funds));
+  --   R-1614 SPLIT: + F 10,000 + G's cash 4,500; SPLIT1: + H 3,000 + J's cash 200 = 35,500
+  if b.undeposited_funds <> 35500 then
+    insert into r1612_fail values (format('USED cash: undeposited_funds %s (want 35500 — B''s ₹4,000 credit is not money in)', b.undeposited_funds));
   end if;
   -- liability: B 6,000 + D open 500 + E (1,000 advance + 300 credit) + S 640 = 8,440
   --   (was 6,000 + 4,000 used + 500 + 1,300 + 3,000 = 14,800)
-  if b.advances_from_customers <> 8440 then
-    insert into r1612_fail values (format('USED/OPEN/UNINV/INST liability: advances_from_customers %s (want 8440)', b.advances_from_customers));
+  --   R-1614 SPLIT: + G 6,000 + F's open 2,500 (was + 1,500 more — F's used part again);
+  --   SPLIT1: + H 1,000 + open 1,200 + J 1,000 (was + 800 more) = 20,140
+  if b.advances_from_customers <> 20140 then
+    insert into r1612_fail values (format('USED/OPEN/UNINV/INST/SPLIT liability: advances_from_customers %s (want 20140)', b.advances_from_customers));
   end if;
   if b.receivables <> 0 then
     insert into r1612_fail values (format('RECEIV: receivables %s (want 0)', b.receivables));
