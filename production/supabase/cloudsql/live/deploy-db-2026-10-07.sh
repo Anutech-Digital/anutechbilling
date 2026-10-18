@@ -146,6 +146,7 @@ MIGS=(
   "r1556backupmfa|20261018173040_r1556_backup_mfa_tenant.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.get_tenant_backup(uuid)') and prosrc like '%R-1557%')"
   "r1578capitalised|20261018180232_r1578_capitalised_expense_pnl.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and prosrc like '%R-1578%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_monthly(date,date)') and prosrc like '%R-1578%')"
   "r1577delexpense|20261018180436_r1577_delete_expense_bill_links.sql|resellersos_migration|to_regprocedure('public.delete_expense(text)') is not null and to_regprocedure('public.delete_vendor_bill(text)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_expense_no_orphan_bank_match')"
+  "r1563bscncredit|20261018181719_r1563_bs_credit_note_credit.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1563%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.redeem_customer_credits(uuid,integer,text)') and prosrc like '%R-1563%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
