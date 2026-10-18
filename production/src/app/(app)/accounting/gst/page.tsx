@@ -720,7 +720,7 @@ function GstReportInner() {
       {data && data.blockedItc.blocked > 0 && (
         <Card className="p-4 mb-4 border-amber/40 bg-amber-soft/20">
           <p className="text-sm font-semibold text-ink">GST jo credit nahi bana — {rupee(data.blockedItc.blocked)}</p>
-          <p className="text-xs text-ink-2 mt-0.5 mb-2">Ye kharche mein hi gina hai, ITC mein nahi. Wajah theek ho (GST bill lo, vendor ka GSTIN bharo) to agli baar credit milega.</p>
+          <p className="text-xs text-ink-2 mt-0.5 mb-2">Ye kharche / bill ki cost mein hi gina hai, ITC mein nahi (kharche aur vendor bills dono). Wajah theek ho (vendor se tax invoice lo, vendor ka GSTIN bharo) to agli baar credit milega.</p>
           <ul className="text-xs text-ink-2 space-y-0.5">
             {data.blockedItc.blockedByReason.map((r) => (
               <li key={r.reason} className="flex justify-between gap-3"><span>{r.reason} · {r.count}</span><span className="font-mono tabular-nums">{rupee(r.amount)}</span></li>

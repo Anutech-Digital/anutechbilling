@@ -436,7 +436,7 @@ export default function PnLPage() {
               </div>
               {data.itcBlocked > 0 && (
                 <div className="flex justify-between items-baseline text-xs">
-                  <span className="text-ink-3">GST with no credit (no proper bill, no GSTIN, or s.17(5)), counted as expense</span>
+                  <span className="text-ink-3">GST with no credit (no tax invoice, proforma, no GSTIN, wrong head, or s.17(5)), counted as expense / cost of goods</span>
                   <span className="font-mono text-ink-3">{rupee(data.itcBlocked)}</span>
                 </div>
               )}

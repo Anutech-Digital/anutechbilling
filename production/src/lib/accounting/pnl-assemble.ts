@@ -14,6 +14,7 @@
 import { buildPnl, type PnlPeriod, type VendorInput } from "@/lib/accounting/pnl";
 import { buildExpenseReport, type ExpenseReport } from "@/lib/accounting/expense-report";
 import { splitItc } from "@/lib/gst/itc";
+import { splitBillGroups, type BillItcGroup } from "@/lib/gst/bill-itc";
 import {
   projectCostForPeriod, type ProjectCostResult, type LabourAllocation, type ProjectInfo, type CostExpense,
 } from "@/lib/accounting/project-cost";
@@ -35,8 +36,8 @@ export interface PnLNumbers {
 
   // GST snapshot
   outputGST: number;        // 18% of invoice subtotal proxy (using net_payable for simplicity)
-  inputGST:  number;        // CGST + SGST + IGST on bills + CLAIMABLE gst_paid on expenses (lib/gst/itc.ts)
-  /** Expense GST that is not credit (kaccha bill, no vendor GSTIN, s.17(5)) — it stays inside `expenses` as cost. */
+  inputGST:  number;        // CLAIMABLE GST on bills (lib/gst/bill-itc.ts) + CLAIMABLE gst_paid on expenses (lib/gst/itc.ts)
+  /** GST that is not credit — expenses (kaccha bill, no vendor GSTIN, s.17(5)) stay inside `expenses`; COGS bills (R-1576: proforma, no GSTIN, wrong head, s.17(5)) inside `cogs`. */
   itcBlocked: number;
   netGST:    number;
 
@@ -74,6 +75,8 @@ export interface PnlRpcRow {
   bills_gst: number;
   expense_groups: { category: string | null; vendor_name: string | null; month: string; amount: number; n: number }[];
   itc_groups: { bill_type: string | null; category: string | null; vendorGstin: string | null; gst_paid: number; n: number }[];
+  /** R-1576: the COGS bills grouped for the ITC rule (lib/gst/bill-itc.ts). Absent before that migration. */
+  bill_itc_groups?: BillItcGroup[] | null;
   unassigned_by_category: { category: string | null; amount: number }[];
   project_expenses: {
     project_id: string; amount: number; category: string | null; expense_date: string | null;
@@ -97,9 +100,14 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
   const revenueCount = r.revenue_count;
   const outputGST    = r.inv_tax - r.cn_tax + r.dn_tax;
 
-  const cogs      = r.cogs;
+  /* R-1576: only a bill's CREDITABLE GST is input GST; the rest (proforma, no vendor GSTIN,
+     wrong head, s.17(5)) is part of what the goods cost. Before the migration (no groups):
+     the old figures — never a silent 0 credit. */
+  const billItc   = Array.isArray(r.bill_itc_groups) ? splitBillGroups(r.bill_itc_groups) : null;
+  const billsGst  = billItc ? billItc.eligible : r.bills_gst;
+  const billsGstBlocked = billItc ? billItc.blocked : 0;
+  const cogs      = r.cogs + billsGstBlocked;
   const cogsCount = r.cogs_count;
-  const billsGst  = r.bills_gst;
 
   /* Mahina "YYYY-MM" aata hai; report sirf slice(0, 7) padhta hai, isliye pehli tareekh. */
   const expenseRows = r.expense_groups.map((g) => ({
@@ -170,7 +178,7 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     expenses: expensesTotal, expensesCount, expensesByCategory, expenseReport,
     commissions, commissionsCount,
     netProfit,
-    outputGST, inputGST, netGST, itcBlocked: itc.blocked,
+    outputGST, inputGST, netGST, itcBlocked: itc.blocked + billsGstBlocked,
     marginPct, profitPct,
     model,
     projectCost,

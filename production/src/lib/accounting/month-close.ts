@@ -44,6 +44,8 @@ export interface MonthCloseFacts {
   gstPaid: boolean;               // tax_payments kind=gst period=month exists
   draftInvoices: number;          // still draft, dated on/before month end
   blockedItcCount: number;        // expenses this month whose GST is not credit
+  /** R-1576: vendor bills this month whose GST is not credit (proforma, no GSTIN, wrong head, s.17(5)). */
+  blockedBillItcCount?: number;
   booksLockedUntil: string | null;
   manual: Record<string, { done_at: string; done_by: string | null; via?: "calendar" } | undefined>;
 }
@@ -148,13 +150,18 @@ export function evaluateMonthClose(f: MonthCloseFacts): MonthClose {
     href: "/invoices",
   });
 
-  // 6. ITC hygiene (info)
+  // 6. ITC hygiene (info) — expenses and (R-1576) vendor bills
+  const bills = f.blockedBillItcCount ?? 0;
   steps.push({
-    key: "itc", kind: "auto", title: "ITC on expenses is clean",
-    status: f.blockedItcCount === 0 ? "done" : "warn",
-    detail: f.blockedItcCount === 0 ? "Every expense with GST has a bill and a vendor GSTIN."
-      : `${f.blockedItcCount} expense(s) give no GST credit (no proper bill, no vendor GSTIN, or s.17(5)). Fix them now if you can; otherwise the GST stays a cost.`,
-    href: "/accounting/expenses",
+    key: "itc", kind: "auto", title: "ITC on expenses and bills is clean",
+    status: f.blockedItcCount === 0 && bills === 0 ? "done" : "warn",
+    detail: f.blockedItcCount === 0 && bills === 0 ? "Every expense and vendor bill with GST has a tax invoice and a vendor GSTIN."
+      : [
+          f.blockedItcCount > 0 ? `${f.blockedItcCount} expense(s) give no GST credit (no proper bill, no vendor GSTIN, or s.17(5)).` : "",
+          bills > 0 ? `${bills} vendor bill(s) give no GST credit (proforma / not a tax invoice, no vendor GSTIN, wrong GST head, or s.17(5)).` : "",
+          "Fix them now if you can (ask the vendor for a tax invoice); otherwise the GST stays a cost.",
+        ].filter(Boolean).join(" "),
+    href: f.blockedItcCount === 0 && bills > 0 ? "/accounting/bills" : "/accounting/expenses",
   });
 
   // 7–9. Manual portal steps

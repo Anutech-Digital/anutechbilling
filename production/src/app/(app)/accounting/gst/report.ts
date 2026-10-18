@@ -9,6 +9,7 @@ import { expenseGstHeads } from "@/lib/accounting/gst-heads";
 import { gstPaidForPeriods } from "@/lib/accounting/tax-payments";
 import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { splitItc, itcEligibility } from "@/lib/gst/itc";
+import { billItcEligibility, splitBillItc, mergeItcSplits } from "@/lib/gst/bill-itc";
 import { docGstRate, docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
 import { paymentAdvances, snapshotAdvanceGross } from "@/lib/gst/advance-cash";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
@@ -243,12 +244,22 @@ export function useGstReport(range: DateRange) {
       // ── Input: vendor bills + GST-paying expenses ─────────────────
       const { data: bills } = await supabase
         .from("vendor_bills")
-        .select("id, bill_date, vendor_name, vendor_gstin, subtotal, cgst, sgst, igst, total, category, bill_no")
+        .select("id, bill_date, vendor_name, vendor_gstin, subtotal, cgst, sgst, igst, total, category, bill_no, document_type")
         .gte("bill_date", range.from)
         .lte("bill_date", range.to);
 
+      /* R-1576: bill ka GST bhi credit tabhi jab ho SAKTA hai — tax invoice, vendor GSTIN,
+         sahi head (rajya), 17(5) nahi (lib/gst/bill-itc.ts). Pehle har bill seedha Input me
+         jaata tha, proforma aur bina-GSTIN wala bhi. Jo credit nahi bana wo `blockedItc` me. */
+      const ownStateCode = sellerStateCode ?? stateCodeFromGstin(sellerGstin);
+      const billItcIn = (b: NonNullable<typeof bills>[number]) => ({ ...b, ownStateCode });
+      const billSplit = splitBillItc((bills ?? []).map(billItcIn));
+      const billBlocked17Heads: Heads[] = (bills ?? [])
+        .filter((b) => (billItcEligibility(billItcIn(b)).reason ?? "").includes("17(5)"))
+        .map((b) => ({ igst: b.igst ?? 0, cgst: b.cgst ?? 0, sgst: b.sgst ?? 0 }));
+
       /* Vendor bill me igst/cgst/sgst apne khaane me hote hain, isliye ye NAAPE hue hain. */
-      const inputRowsBills: InputRow[] = (bills ?? []).map((b) => ({
+      const inputRowsBills: InputRow[] = (bills ?? []).filter((b) => billItcEligibility(billItcIn(b)).eligible).map((b) => ({
         assumed: false,
         source:       "bill",
         id:           b.id,
@@ -286,11 +297,10 @@ export function useGstReport(range: DateRange) {
       const { data: vendorRows } = await supabase.from("vendors").select("id, gstin");
       const vendorGstinOf = new Map((vendorRows ?? []).map((v) => [v.id, v.gstin ?? null]));
       const withGstin = (expenses ?? []).map((e) => ({ ...e, vendorGstin: e.vendor_id ? vendorGstinOf.get(e.vendor_id) ?? null : null }));
-      const blockedItc = splitItc(withGstin);
+      const blockedItc = mergeItcSplits(splitItc(withGstin), billSplit);
       const claimable = withGstin.filter((e) => itcEligibility(e).eligible);
       /* R-258: a guessed split (no IGST/CGST on the bill) follows the vendor GSTIN's state —
          another state than ours means the vendor charged IGST, not CGST+SGST. */
-      const ownStateCode = sellerStateCode ?? stateCodeFromGstin(sellerGstin);
       const headsOf = (e: (typeof withGstin)[number]) => {
         const h = expenseGstHeads(e);
         const vendorState = stateCodeFromGstin(e.vendorGstin);
@@ -301,7 +311,8 @@ export function useGstReport(range: DateRange) {
       /* s.17(5) blocked rows keep their heads: 3B wants them in 4(A)(5) and again in 4(B)(1). */
       const blocked17Heads: Heads[] = withGstin
         .filter((e) => (itcEligibility(e).reason ?? "").includes("17(5)"))
-        .map((e) => { const h = headsOf(e); return { igst: h.igst, cgst: h.cgst, sgst: h.sgst }; });
+        .map((e) => { const h = headsOf(e); return { igst: h.igst, cgst: h.cgst, sgst: h.sgst }; })
+        .concat(billBlocked17Heads);
 
       /* ── Ab MAANA nahi jata jab NAAPA hua maujood ho (29 Aug 2026) ──────────
          Yahan pehle har kharche par ye chalta tha:

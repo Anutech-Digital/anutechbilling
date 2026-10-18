@@ -13317,6 +13317,7 @@ export type Database = {
           cgst: number
           created_at: string
           currency: string
+          document_type: string | null
           due_date: string | null
           fx_rate: number
           id: string
@@ -13343,6 +13344,7 @@ export type Database = {
           cgst?: number
           created_at?: string
           currency?: string
+          document_type?: string | null
           due_date?: string | null
           fx_rate?: number
           id: string
@@ -13369,6 +13371,7 @@ export type Database = {
           cgst?: number
           created_at?: string
           currency?: string
+          document_type?: string | null
           due_date?: string | null
           fx_rate?: number
           id?: string
@@ -15323,6 +15326,7 @@ export type Database = {
         Returns: {
           advances_from_customers: number
           as_of: string
+          bill_itc_groups: Json
           bills_gst: number
           business_loans_payable: number
           cash_and_bank: number
@@ -15367,6 +15371,7 @@ export type Database = {
       report_pnl: {
         Args: { p_from: string; p_to: string }
         Returns: {
+          bill_itc_groups: Json
           bills_gst: number
           cn_tax: number
           cn_taxable: number

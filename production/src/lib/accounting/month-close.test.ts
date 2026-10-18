@@ -54,6 +54,15 @@ describe("month-end close", () => {
     expect(c2.readyToLock).toBe(true);
   });
 
+  it("R-1576: a vendor bill with no GST credit (proforma / no GSTIN) is an ITC warning too, pointing at Bills", () => {
+    const c = evaluateMonthClose({ ...base, blockedBillItcCount: 2 });
+    const s = c.steps.find((x) => x.key === "itc")!;
+    expect(s.status).toBe("warn");
+    expect(s.detail).toMatch(/2 vendor bill\(s\) give no GST credit/);
+    expect(s.href).toBe("/accounting/bills");
+    expect(evaluateMonthClose(base).steps.find((x) => x.key === "itc")!.status).toBe("done");
+  });
+
   it("quarter end adds the TDS return step; an unticked manual step blocks", () => {
     const c = evaluateMonthClose({ ...base, period: "2026-09", monthEnd: "2026-09-30", today: "2026-10-05" });
     const s = c.steps.find((x) => x.key === "tds_return_filed")!;

@@ -7,6 +7,7 @@
  */
 import type { BalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { splitItc } from "@/lib/gst/itc";
+import { splitBillGroups, type BillItcGroup } from "@/lib/gst/bill-itc";
 import { statutoryDues } from "@/lib/accounting/tds-deductor";
 import { bookValueNow, type AssetLike } from "@/lib/accounting/depreciation";
 import { incomeTaxPaidForFy, type TaxPaymentLike } from "@/lib/accounting/tax-payments";
@@ -75,12 +76,23 @@ export interface BalanceSheetRpcRow {
   gst_output: number;
   bills_gst: number;
   itc_groups: { bill_type: string | null; category: string | null; vendorGstin: string | null; gst_paid: number; n: number }[];
+  /** R-1576: vendor bills grouped for the ITC rule (lib/gst/bill-itc.ts). Absent before that migration. */
+  bill_itc_groups?: BillItcGroup[] | null;
   fixed_assets: (AssetLike & { emi_purchase_id: string | null })[];
   tax_payments: TaxPaymentLike[];
   /** S45 slice 2 (migration 20261009170000). Migration lagne se pehle column hota hi nahi. */
   expenses_payable?: number | null;
   expenses_paid_unbanked?: number | null;
   salary_other_deductions?: number | null;
+}
+
+/**
+ * R-1576: the part of the bills' GST that is input credit (lib/gst/bill-itc.ts) — a proforma,
+ * a bill with no vendor GSTIN, a wrong-head or s.17(5) bill is cost, not credit. Before the
+ * migration the SQL sends no groups: then the old figure (all bill GST), never a silent 0.
+ */
+export function billItcEligible(billsGst: number, groups: BillItcGroup[] | null | undefined): number {
+  return Array.isArray(groups) ? splitBillGroups(groups).eligible : billsGst;
 }
 
 export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
@@ -97,7 +109,7 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
   const expGst = splitItc(r.itc_groups).eligible;
   const gstPaid = r.tax_payments.filter((p) => p.kind === "gst").reduce((s, p) => s + p.amount, 0);
   const advanceTaxPaid = incomeTaxPaidForFy(r.tax_payments, r.fy_start_year);
-  const gstPayable = r.gst_output - r.bills_gst - expGst - gstPaid;
+  const gstPayable = r.gst_output - billItcEligible(r.bills_gst, r.bill_itc_groups) - expGst - gstPaid;
 
   return {
     cashAndBank: r.cash_and_bank,
