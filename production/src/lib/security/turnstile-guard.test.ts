@@ -33,7 +33,9 @@ describe("R-020 — bot check on public forms", () => {
       "site/components/quote/QuoteBuilder.tsx", "site/components/trial/TrialForm.tsx"]) {
       expect(src(p), p).toMatch(/\.\.\.ts\.headers/);
     }
-    expect(src("app/api/enquiry/route.ts")).toMatch(/"x-turnstile-token": tsToken/);
+    /* R-1598: /api/enquiry hands the visitor's headers to the in-process handler — the token among them. */
+    expect(src("app/api/enquiry/route.ts")).toMatch(/deliverToApp\(/);
+    expect(src("site/lib/app-forward.ts")).toMatch(/"x-turnstile-token"/);
   });
 
   it("quote accept records the signer IP with the shared clientIp, not the spoofable first XFF entry", () => {

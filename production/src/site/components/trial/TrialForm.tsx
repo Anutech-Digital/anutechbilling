@@ -27,6 +27,7 @@ import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
+import { landingForForm } from "@/site/lib/ad-attribution";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const P = "var(--primary)";
@@ -207,7 +208,9 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
       const res = await fetch("/api/enquiry", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
-        body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true }),
+        body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true,
+          /* R-1598: landing page with gclid/utm + where the visitor came from. */
+          ...landingForForm() }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !json.ok) {

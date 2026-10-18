@@ -119,6 +119,19 @@ describe("quote form ka enquiry contract", () => {
     }
   });
 
+  it("R-1598: /api/enquiry aur /api/agent kisi doosri deployment (live) ko fetch nahi karte", () => {
+    /* Staging ke /quote, /trial aur AI chat ke leads LIVE me jaate the: dono routes
+       RESELLEROS_URL (default live domain) par fetch karte the. Ab handler isi process me. */
+    for (const p of [join(APP, "app", "api", "enquiry", "route.ts"), join(APP, "app", "api", "agent", "route.ts")]) {
+      const s = read(p);
+      expect(s.includes("RESELLEROS_URL"), `${p} RESELLEROS_URL use karta hai`).toBe(false);
+      expect(/\bfetch\(/.test(s), `${p} khud fetch karta hai`).toBe(false);
+      expect(s.includes("deliverToApp("), `${p} deliverToApp se nahi jaata`).toBe(true);
+    }
+    const fwd = read(join(SITE, "lib", "app-forward.ts"));
+    expect(/process\.env\.NEXT_PUBLIC/.test(fwd), "forward target NEXT_PUBLIC env se nahi aana chahiye (build me jam jaata hai)").toBe(false);
+  });
+
   it("QuoteBuilder seedha app ko nahi, /api/enquiry ko POST karta hai (CORS)", () => {
     const qb = read(join(SITE, "components", "quote", "QuoteBuilder.tsx"));
     expect(qb).toContain('fetch("/api/enquiry"');
