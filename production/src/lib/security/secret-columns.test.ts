@@ -104,6 +104,17 @@ describe("R-833 secret columns", () => {
     expect(list.sort()).toEqual([...SECRET_COLUMNS].sort());
   });
 
+  it("R-1557: the newest get_tenant_backup strips exactly SECRET_COLUMNS from the download", () => {
+    const defining = migrations().filter((f) =>
+      /create or replace function public\.get_tenant_backup\(/i.test(read(`${MIG_DIR}/${f}`)));
+    const newest = defining[defining.length - 1];
+    expect(newest, "no migration defines get_tenant_backup").toBeTruthy();
+    const m = /v_secret constant text\[\] := array\[([\s\S]*?)\];/.exec(read(`${MIG_DIR}/${newest}`));
+    expect(m, `${newest}: get_tenant_backup has no v_secret list — the download would carry secrets`).toBeTruthy();
+    const list = [...m![1].matchAll(/'([a-z_0-9]+\.[a-z_0-9]+)'/g)].map((x) => x[1]);
+    expect(list.sort()).toEqual([...SECRET_COLUMNS].sort());
+  });
+
   it("09 handles secret tables before (and instead of) its generic table-level grant", () => {
     const block = blockOf(read(NINE));
     const branch = block.indexOf("if rec.relname = any(secret_tables) then");
