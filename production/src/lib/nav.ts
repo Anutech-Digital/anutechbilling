@@ -287,11 +287,43 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
   accountant: ["/customers/new"],
 };
 
-/** The route guard: allowed by the nav (prefix) and not denied for this role. */
+/**
+ * R-1542 (18 Oct 2026): app pages that sit under NO menu row, and the roles that may open
+ * them by URL. Every other page is decided by its menu row (nav-route-guard.test.ts fails
+ * when an (app) page is under neither). Kept to what each page did before: the protected
+ * ones here bounced every role but owner + manager; /platform, /products, /vendor-portal
+ * and /aa were not in middleware's list at all, so nothing gated them.
+ */
+const OM_ONLY: UserRole[] = ["owner", "manager"];
+export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
+  "/mobile": OM_ONLY,
+  "/setup": OM_ONLY,
+  "/attendance/kiosk": OM_ONLY,         // the office tablet runs signed in as the owner
+  "/platform": OM_ONLY,                 // founder-only; the API refuses anyone else anyway
+  "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
+  "/vendor-portal": OM_ONLY,            // "not built yet" notice, was under Purchase Orders
+  /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
+  "/aa": ["owner", "manager", "billing", "accountant"],
+};
+
+/**
+ * The route guard — the SAME rule as the menu (R-1542, 18 Oct 2026). The most specific row
+ * whose href is `pathname` or a parent of it decides: the role may open the page only if
+ * that row is in its menu (filterNavForRole). Before, any row the role could see admitted
+ * every path under it, so the Companies row (billing/accountant) admitted Parent Accounts
+ * (an owner + manager child row), /reports admitted the Profit report, /settings admitted
+ * owner-only Backup. ROUTE_DENY still applies on top (sub-pages that are not menu rows).
+ */
 export function isRouteAllowed(role: UserRole, pathname: string, opts: NavFilterOpts = {}): boolean {
   const under = (a: string) => pathname === a || pathname.startsWith(a + "/");
   if ((ROUTE_DENY[role] ?? []).some(under)) return false;
-  return allowedRoutesForRole(role, opts).some(under);
+  const rows = flattenNav(APP_NAV).map((e) => e.item.href).filter(under);
+  const off = Object.keys(OFF_MENU_ROLES).filter(under);
+  const best = [...rows, ...off].sort((a, b) => b.length - a.length)[0];
+  if (!best) return false;
+  if (rows.includes(best)) return allowedRoutesForRole(role, opts).includes(best);
+  const visRole: UserRole = role === "sales_senior" ? "sales" : role;
+  return OFF_MENU_ROLES[best].includes(visRole);
 }
 
 /** Where each role lands by default (after login + on disallowed-route redirect). */

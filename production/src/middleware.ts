@@ -100,6 +100,12 @@ const PROTECTED_PREFIXES = [
   "/hosting-domains",
   "/my-expenses",
   "/collections",     // R-1516 Payment Follow-up
+  /* R-1542 (18 Oct 2026): (app) pages under no menu row that were never gated — nav.ts
+     OFF_MENU_ROLES says who opens them; nav-route-guard.test.ts checks every (app) page is here. */
+  "/platform",
+  "/products",
+  "/vendor-portal",
+  "/aa/",
   /* Onboarding fork for a signed-in person who has no workspace yet. It is
      PROTECTED (you must be authenticated to see it) but deliberately NOT in
      AUTH_PREFIXES below — those bounce a signed-in user to their role home,
@@ -392,10 +398,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Role-based route guard. Sales users only have /leads + /tasks in their
-  // nav; visiting any other protected route bounces them to their home.
-  // Owners + managers get the full app — no gate applied to them.
-  if (isAuthed && isProtected && role && role !== "owner" && role !== "manager") {
+  // Role-based route guard: a typed URL opens only what the role's menu has (nav.ts
+  // isRouteAllowed). R-1542 (18 Oct 2026): the manager is gated too — skipping it meant
+  // ROUTE_DENY.manager (Loans given) and the owner-only Backup row never ran. Only the owner
+  // skips it, and nav-route-guard.test.ts proves the owner may open every page anyway.
+  if (isAuthed && isProtected && role && role !== "owner") {
     const userRole = role as UserRole;
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {

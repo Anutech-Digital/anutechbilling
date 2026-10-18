@@ -46,11 +46,14 @@ export default function BackupPage() {
 
   // Auto restore point: once per app session, make a daily 'auto' snapshot if
   // the newest one is stale (>20h). Keeps ~15 points rolling with zero effort.
+  /* R-1542: Backup is an owner-only menu row; middleware bounces other roles, and the database
+     refuses them (R-1556). The page says so too instead of offering buttons that fail. */
+  const notOwner = me != null && me.role !== "owner";
   React.useEffect(() => {
-    if (autoRan.current) return;
+    if (autoRan.current || me?.role !== "owner") return;
     autoRan.current = true;
     autoBackupIfStale().then((created) => { if (created) qc.invalidateQueries({ queryKey: ["tenant_backups"] }); });
-  }, [qc]);
+  }, [qc, me?.role]);
 
   const rows = q.data ?? [];
   // R-823: a failed load must say so — never fall through to "No backups yet".
@@ -74,6 +77,19 @@ export default function BackupPage() {
     setDownloadingId(id);
     try { await downloadBackup(id, createdAt); }
     finally { setDownloadingId(null); }
+  }
+
+  if (notOwner) {
+    return (
+      <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
+        <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Settings</p>
+        <h1 className="font-serif text-3xl md:text-4xl tracking-tight mb-4">Backup &amp; Restore</h1>
+        <Card className="py-2">
+          <EmptyState icon="lock" title="Only the workspace owner can see backups"
+            body="A backup holds every table in the workspace, including salaries and connected-account tokens. Ask an owner to open this page." />
+        </Card>
+      </div>
+    );
   }
 
   return (
