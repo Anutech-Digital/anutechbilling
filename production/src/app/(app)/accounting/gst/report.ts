@@ -16,6 +16,7 @@ import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { isCreditNoteLate } from "@/lib/gst/credit-note-deadline";
 import { istRangeUtc, type GstPeriod } from "@/lib/gst/periods";
 import { toIstDate } from "@/lib/dates/ist";
+import { isTaxInvoiceRow } from "@/lib/invoices/document-kind";
 import { createClient } from "@/lib/supabase/client";
 import { gstCashHeadline, gstr3bFromReport, type GstReport, type InputRow, type OutputRow } from "./cash-to-pay";
 
@@ -28,13 +29,16 @@ export function useGstReport(range: DateRange) {
       const supabase = createClient();
 
       // ── Output: invoices issued in the period ─────────────────────
-      const { data: invoices, error: invErr } = await supabase
+      const { data: issued, error: invErr } = await supabase
         .from("invoices")
-        .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code")
+        .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, document_kind")
         .gte("invoice_date", range.from)
         .lte("invoice_date", range.to)
         .in("status", ["pending", "paid", "overdue"]);
       if (invErr) throw invErr;
+      /* R-1529: a Bill of Supply (unregistered / composition supplier) is in no GST return —
+         not in GSTR-1, not in GST payable, not as an 11B advance adjustment. Tax Invoices only. */
+      const invoices = (issued ?? []).filter(isTaxInvoiceRow);
 
       // Credit / debit notes issued in the period — they NET the output tax (a
       // credit note reduces it, a debit note increases it), so GSTR-1/3B is right.

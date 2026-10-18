@@ -35,6 +35,7 @@ import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN } from "@/lib/gst/hsn";
+import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
 
 /** Display-shape for advance rows in the dialog — works for both frozen + live data */
 interface DisplayAdvance {
@@ -133,6 +134,11 @@ export function TaxInvoiceDialog({
   const { data: me } = useCurrentUser();
   const router = useRouter();
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
+
+  /* R-1529: Tax Invoice or Bill of Supply — frozen on the invoice row at issue. */
+  const bos          = isBillOfSupply(invoice);
+  const docTitle     = documentTitle(invoice);
+  const declarations = billOfSupplyDeclarations(invoice);
 
   // ── Immutable GST figures (CGST Sec 31 — an issued invoice cannot change) ──
   // Prefer the values FROZEN on the invoice row at generation (migration 0116)
@@ -265,7 +271,7 @@ export function TaxInvoiceDialog({
     const amountLabel = advancesAdjusted > 0 ? "Net payable" : "Amount";
     const message =
       `Namaste ${invoice.customer_name},\n\n` +
-      `Aapka Tax Invoice ${invoice.id} taiyaar hai.\n` +
+      `Aapka ${docTitle} ${invoice.id} taiyaar hai.\n` +
       `${amountLabel}: ${money(netPayable)}${dueLine}\n\n` +
       `PDF attach kar raha hoon. Koi sawaal ho to bataiyega.\n\n` +
       `Dhanyavaad,\n${tenantName}`;
@@ -303,7 +309,7 @@ export function TaxInvoiceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0">
-        <DialogTitle className="sr-only">Tax Invoice · {invoice.id}</DialogTitle>
+        <DialogTitle className="sr-only">{docTitle} · {invoice.id}</DialogTitle>
 
         {/* Toolbar */}
         {/* R-187: on a phone the buttons used to sit on one line and push "Download PDF" off
@@ -313,7 +319,7 @@ export function TaxInvoiceDialog({
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <Icon name="receipt" size={16} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink whitespace-nowrap">
-              Tax Invoice<span className="hidden sm:inline"> · GST-compliant</span>
+              {docTitle}<span className="hidden sm:inline">{bos ? " · No GST" : " · GST-compliant"}</span>
             </span>
             {advancesAdjusted > 0 && (
               <span className="text-3xs uppercase tracking-wider bg-emerald-soft text-emerald-ink px-2 py-0.5 rounded-full font-semibold">
@@ -407,13 +413,16 @@ export function TaxInvoiceDialog({
           {/* Header */}
           <div className="text-center mb-4">
             <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold">
-              Original for recipient · GST-compliant
+              {bos ? "Original for recipient · No GST charged" : "Original for recipient · GST-compliant"}
             </p>
-            <h1 className="font-serif text-3xl mt-1">Tax Invoice</h1>
+            <h1 className="font-serif text-3xl mt-1">{docTitle}</h1>
             <p className="font-mono text-sm text-ink-2 mt-1">{invoice.id}</p>
             {invoice.gst_irn && (
               <p className="font-mono text-3xs text-ink-3 mt-0.5">IRN: {invoice.gst_irn}</p>
             )}
+            {declarations.map((line) => (
+              <p key={line} className="text-xs font-semibold text-ink-2 mt-1">{line}</p>
+            ))}
           </div>
 
           {/* Supplier + Recipient */}
@@ -461,7 +470,8 @@ export function TaxInvoiceDialog({
             </div>
             <div>
               <p className="text-3xs uppercase tracking-widest text-ink-3 font-semibold mb-0.5">Place of supply</p>
-              <p>{placeOfSupply}</p>
+              {/* R-1529: a Bill of Supply has no GST head to name — the state only. */}
+              <p>{bos && !isExport ? billOfSupplyPlace(invoice.pos_state_code, GST_STATE_BY_CODE, customerState) : placeOfSupply}</p>
             </div>
           </div>
 
@@ -534,10 +544,10 @@ export function TaxInvoiceDialog({
                   </tr>
                 )}
                 <tr className="border-t border-hairline">
-                  <td className="py-1 text-ink-3">Taxable value</td>
+                  <td className="py-1 text-ink-3">{bos ? "Value of supply" : "Taxable value"}</td>
                   <td className="py-1 text-right tabular-nums">{money(fTaxable)}</td>
                 </tr>
-                {isExport ? (
+                {bos ? null : isExport ? (
                   <tr>
                     <td className="py-1 text-ink-3">Export — zero-rated (LUT), no GST</td>
                     <td className="py-1 text-right tabular-nums">{money(0)}</td>
@@ -561,7 +571,7 @@ export function TaxInvoiceDialog({
                 )}
                 <tr className="border-t-2 border-ink">
                   <td className="py-2 font-semibold uppercase tracking-wider text-2xs">
-                    Invoice total
+                    {bos ? "Bill total" : "Invoice total"}
                   </td>
                   <td className="py-2 text-right">
                     <span className="font-serif text-xl tabular-nums">{money(fTotal)}</span>
@@ -648,7 +658,15 @@ export function TaxInvoiceDialog({
           <div className="rounded-md bg-amber-soft border border-amber/30 p-3 text-2xs text-amber-ink mb-6">
             <p className="font-semibold mb-1">📋 GST treatment</p>
             <p>
-              {isExport ? (
+              {bos ? (
+                <>
+                  This is a <b>Bill of Supply</b> (CGST Section 31(3)(c), Rule 49). The supplier
+                  is {invoice.supplier_gst_status === "composition"
+                    ? <>a <b>composition taxable person</b> and cannot collect tax on supplies</>
+                    : <>not registered under GST</>} — <b>no GST is charged</b> and no Input Tax
+                  Credit can be claimed on it.
+                </>
+              ) : isExport ? (
                 <>
                   <b>Export of service</b> to a recipient outside India ({customerCountry ?? "—"}) —
                   <b> zero-rated supply</b> made under a <b>Letter of Undertaking (LUT)</b> without

@@ -6302,6 +6302,7 @@ export type Database = {
           customer_gstin: string | null
           customer_id: string | null
           customer_name: string
+          document_kind: string
           due_date: string | null
           first_advance_at: string | null
           fx_date: string | null
@@ -6323,6 +6324,7 @@ export type Database = {
           seller_gstin: string | null
           seller_state_code: string | null
           status: Database["public"]["Enums"]["invoice_status"]
+          supplier_gst_status: string | null
           tax_amount: number | null
           tax_rate: number | null
           taxable_value: number | null
@@ -6339,6 +6341,7 @@ export type Database = {
           customer_gstin?: string | null
           customer_id?: string | null
           customer_name: string
+          document_kind?: string
           due_date?: string | null
           first_advance_at?: string | null
           fx_date?: string | null
@@ -6360,6 +6363,7 @@ export type Database = {
           seller_gstin?: string | null
           seller_state_code?: string | null
           status?: Database["public"]["Enums"]["invoice_status"]
+          supplier_gst_status?: string | null
           tax_amount?: number | null
           tax_rate?: number | null
           taxable_value?: number | null
@@ -6376,6 +6380,7 @@ export type Database = {
           customer_gstin?: string | null
           customer_id?: string | null
           customer_name?: string
+          document_kind?: string
           due_date?: string | null
           first_advance_at?: string | null
           fx_date?: string | null
@@ -6397,6 +6402,7 @@ export type Database = {
           seller_gstin?: string | null
           seller_state_code?: string | null
           status?: Database["public"]["Enums"]["invoice_status"]
+          supplier_gst_status?: string | null
           tax_amount?: number | null
           tax_rate?: number | null
           taxable_value?: number | null
@@ -12465,7 +12471,10 @@ export type Database = {
           followup_value_drop: string | null
           gmail_sender_user_id: string | null
           grace_period_days: number
+          gst_composition_rate: number
           gst_filing: string | null
+          gst_registered_from: string | null
+          gst_registration: string | null
           gstin: string | null
           gstin_verification: Json | null
           gstin_verified_at: string | null
@@ -12517,7 +12526,10 @@ export type Database = {
           followup_value_drop?: string | null
           gmail_sender_user_id?: string | null
           grace_period_days?: number
+          gst_composition_rate?: number
           gst_filing?: string | null
+          gst_registered_from?: string | null
+          gst_registration?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
@@ -12569,7 +12581,10 @@ export type Database = {
           followup_value_drop?: string | null
           gmail_sender_user_id?: string | null
           grace_period_days?: number
+          gst_composition_rate?: number
           gst_filing?: string | null
+          gst_registered_from?: string | null
+          gst_registration?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null

@@ -37,6 +37,7 @@ import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialo
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
+import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
@@ -101,7 +102,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      The rule now lives in lib/invoices/supplier-identity.ts with its own regression
      test: there is no safe default for "who is selling this", so an unknown identity
      is reported and the document is withheld. */
-  const identity = supplierIdentity(me);
+  /* R-1529: an unregistered supplier's Bill of Supply has no GSTIN — the invoice row says
+     which document this is, frozen at issue. */
+  const identity = supplierIdentity(me, invoice);
   const supplier = identity.ok ? identity.supplier : null;
 
   /* R-248: `?pdf=1` (from Record payment's "Generate invoice" / "View invoice" toast
@@ -233,8 +236,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 icon="file"
                 onClick={() => {
                   if (!supplier) {
-                    const msg = supplierIdentityMessage(identity)!;
-                    toast.error("Can't issue this Tax Invoice yet", {
+                    const msg = supplierIdentityMessage(identity, invoice)!;
+                    toast.error(`Can't issue this ${documentTitle(invoice)} yet`, {
                       description: msg,
                       action: identity.ok || !identity.hasSession ? undefined : {
                         label: "Open Settings",
