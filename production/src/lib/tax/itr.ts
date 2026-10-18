@@ -54,6 +54,8 @@
  * nahi; screen par yahi likha jata hai.
  */
 
+import { fyStartYear, fyLabelOfYear, fyCodeOfYear } from "@/lib/dates/ist";
+
 /* ─────────────────────────── Financial year ─────────────────────────── */
 
 export interface FinancialYear {
@@ -73,16 +75,14 @@ export interface FinancialYear {
   itrDue: string;
 }
 
-const two = (n: number): string => String(n % 100).padStart(2, "0");
-
 export function financialYear(startYear: number): FinancialYear {
   return {
     startYear,
-    label: `FY ${startYear}-${two(startYear + 1)}`,
-    assessmentYear: `AY ${startYear + 1}-${two(startYear + 2)}`,
+    label: `FY ${fyLabelOfYear(startYear)}`,
+    assessmentYear: `AY ${fyLabelOfYear(startYear + 1)}`,
     start: `${startYear}-04-01`,
     end: `${startYear + 1}-03-31`,
-    fiscalKey: `FY${two(startYear)}${two(startYear + 1)}`,
+    fiscalKey: fyCodeOfYear(startYear),
     itrDue: `${startYear + 1}-10-31`,
   };
 }
@@ -93,12 +93,7 @@ export function financialYear(startYear: number): FinancialYear {
  * UTC me tab 18:30 hi baje hote hain).
  */
 export function currentFinancialYear(now: Date): FinancialYear {
-  const ist = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now); // "2026-09-01"
-  const y = Number(ist.slice(0, 4));
-  const beforeApril = ist.slice(5, 7) < "04";
-  return financialYear(beforeApril ? y - 1 : y);
+  return financialYear(fyStartYear(now));   // fyStartYear reads a Date in IST
 }
 
 /* ─────────────────────────── Sources (input) ─────────────────────────── */

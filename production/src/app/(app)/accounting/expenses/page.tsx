@@ -40,7 +40,7 @@ import { build26QRows, read26Q } from "./tds-26q";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { istToday } from "@/lib/dates/ist";
+import { istToday, fyStartYear } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
 
@@ -77,8 +77,8 @@ const RANGE_PRESETS: { id: string; label: string; range: () => DateRange }[] = [
       if (m >= 10)          return { from: iso(y, 10, 1), to: iso(y + 1, 3, 31) };   // H2 (Oct–Dec side)
       return { from: iso(y - 1, 10, 1), to: iso(y, 3, 31) };                          // H2 (Jan–Mar side)
     } },
-  { id: "fy",       label: "This FY",      range: () => { const { y, m } = istNow(); const fs = m >= 4 ? y : y - 1; return { from: iso(fs, 4, 1), to: iso(fs + 1, 3, 31) }; } },
-  { id: "prevfy",   label: "Previous FY",  range: () => { const { y, m } = istNow(); const fs = m >= 4 ? y : y - 1; return { from: iso(fs - 1, 4, 1), to: iso(fs, 3, 31) }; } },
+  { id: "fy",       label: "This FY",      range: () => { const { y, m } = istNow(); const fs = fyStartYear(iso(y, m, 1)); return { from: iso(fs, 4, 1), to: iso(fs + 1, 3, 31) }; } },
+  { id: "prevfy",   label: "Previous FY",  range: () => { const { y, m } = istNow(); const fs = fyStartYear(iso(y, m, 1)); return { from: iso(fs - 1, 4, 1), to: iso(fs, 3, 31) }; } },
 ];
 
 export default function ExpensesPage() {

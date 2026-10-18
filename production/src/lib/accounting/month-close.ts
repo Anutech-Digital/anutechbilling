@@ -12,7 +12,7 @@
  * refuses to offer it while an earlier step is red.
  */
 
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear } from "@/lib/dates/ist";
 import { formatDate } from "@/lib/utils";
 import { tdsDepositDueDate } from "@/lib/compliance/tds-due";
 
@@ -63,8 +63,8 @@ export const MANUAL_STEPS: { key: string; title: string; detail: string; href?: 
  *  TDS return = "<fyStart>-q<n>" for the quarter the month closes. */
 export function compliancePeriodKey(stepKey: string, period: string): string {
   if (stepKey !== "tds_return_filed") return period;
-  const [y, m] = period.split("-").map(Number);
-  const fy = m >= 4 ? y : y - 1;
+  const m = Number(period.slice(5, 7));
+  const fy = fyStartYear(period);
   const q = m >= 4 && m <= 6 ? 1 : m >= 7 && m <= 9 ? 2 : m >= 10 ? 3 : 4;
   return `${fy}-q${q}`;
 }

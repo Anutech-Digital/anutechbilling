@@ -29,7 +29,7 @@ import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { readPoSummaries, readRevenueQuotes } from "./read";
 import { primaryContactsFor } from "@/lib/contacts/primary";
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute } from "@/lib/nav";
 import { tdsBase } from "@/lib/accounting/tds-receipt";
@@ -44,11 +44,9 @@ function istToday(): Date {
 function yyyymmdd(d: Date): string {
   return utcDateISO(d);
 }
+/** `d` is an IST-shifted Date (istToday), so its UTC calendar date is the IST date. */
 function fiscalYearStart(d: Date): Date {
-  const yr = d.getUTCFullYear();
-  const m  = d.getUTCMonth();
-  const fyYear = m < 3 ? yr - 1 : yr;
-  return new Date(Date.UTC(fyYear, 3, 1));
+  return new Date(Date.UTC(fyStartYear(utcDateISO(d)), 3, 1));
 }
 interface DateRange { from: string; to: string }
 

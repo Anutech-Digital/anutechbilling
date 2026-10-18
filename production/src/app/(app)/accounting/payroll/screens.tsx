@@ -69,7 +69,7 @@ import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-det
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
-import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel } from "@/lib/dates/ist";
+import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel, fyStartYear } from "@/lib/dates/ist";
 
 /** Previous month (YYYY-MM) — payroll is usually run for the month just ended. */
 function prevPeriod(): string {
@@ -1284,8 +1284,7 @@ function EmployeePayrollYearDialog({
   const { data: history, isLoading } = useEmployeeSalaryHistory(employee.id);
 
   // Indian FY containing the anchor month (Apr→Mar).
-  const [ay, am] = anchorPeriod.split("-").map(Number);
-  const fyStart = am >= 4 ? ay : ay - 1;
+  const fyStart = fyStartYear(anchorPeriod);
   const months = Array.from({ length: 12 }, (_, i) => {
     const abs = 4 + i;                                   // 4..15
     const year = abs <= 12 ? fyStart : fyStart + 1;
@@ -2015,9 +2014,8 @@ function LeaveDialog({ employees, onClose }: { employees: Employee[]; onClose: (
 
   // Paid-leave used in the leave-year (Indian FY, Apr–Mar) of the 'from' date.
   const fy = React.useMemo(() => {
-    const [y, m] = from.split("-").map(Number);
-    const sy = m >= 4 ? y : y - 1;
-    return { start: `${sy}-04-01`, end: `${sy + 1}-03-31` };
+    const { start, end } = fyBounds(from);
+    return { start, end };
   }, [from]);
   // Prorated for mid-year joiners, against the leave entry's own FY.
   const allowance = emp ? effectiveLeaveAllowance(emp, fy.start) : 0;

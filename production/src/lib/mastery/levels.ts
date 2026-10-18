@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Employee levels, tier multipliers, and the bonus-pool allocation that pays them.
  *

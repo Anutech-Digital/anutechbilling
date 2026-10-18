@@ -36,7 +36,7 @@ This file is read by Claude Code on every session. It contains all conventions, 
 2. **Money-correctness > feature count** — flag anything that risks wrong billing or trust.
 3. **Never assume — verify against real code; cite `file:line`.**
 4. **Risky / money / irreversible changes:** show a concrete plan → get Pardeep's approval → implement **with a test**. Never silently mutate money-code.
-5. **"Done" = its test is green** (not "code changed"). Keep `TASKS.md` updated; move finished items to Done.
+5. **"Done" = its test is green** (not "code changed"). Track work on the team board (root `CLAUDE.md`) — `TASKS.md` is retired (stale since 8 Sep 2026, R-1609).
 6. **Communicate in Hinglish, plain language** — Pardeep is the owner/seller, not a deep engineer.
 7. **Report launch-readiness honestly** — separate must-fix-to-launch from fast-follow; protect reputation (soft launch to a friendly cohort, never a buggy public launch).
 8. **Ask only when a decision is genuinely Pardeep's** (pricing, business, irreversible). Otherwise pick the sensible default and proceed.
@@ -47,7 +47,7 @@ This file is read by Claude Code on every session. It contains all conventions, 
 
 **The goal (compass):** make the money-spine **lead → quote → pay → subscription → invoice → renewal** provably correct (test-backed) → confident soft launch → first paying customer. *Correct first, beautiful second, big third.*
 
-**Map:** `docs/PROJECT-KNOWLEDGE.md` (whole system — ⚠️ audited only to migration `0050`, see its banner) · `docs/MONEY-FLOW-TEST-MATRIX.md` (**transaction**-level money bugs + launch line) · `docs/ACCOUNTING-AUDIT.md` (**statement**-level: P&L / Balance Sheet correctness) · `docs/UX-AUDIT.md` (interaction / behaviour — incl. §24 compliance measured at 1-of-278) · `TASKS.md` (live status — **the HANDOFF block at the top of `## Active` says what is half-done; read it before starting anything**).
+**Map:** `docs/PROJECT-KNOWLEDGE.md` (whole system — ⚠️ audited only to migration `0050`, see its banner) · `docs/MONEY-FLOW-TEST-MATRIX.md` (**transaction**-level money bugs + launch line) · `docs/ACCOUNTING-AUDIT.md` (**statement**-level: P&L / Balance Sheet correctness) · `docs/UX-AUDIT.md` (interaction / behaviour — incl. §24 compliance measured at 1-of-278) · **Live status = the team board** (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection `cards` — see root `CLAUDE.md`). `TASKS.md` is history only: last real edit 8 Sep 2026, stamped stale by R-1609.
 
 **Two operational docs added 18 Aug 2026, both written from measurement:**
 `docs/NEW-SESSION.md` — the 2-minute checklist Pardeep runs when opening a session, and the

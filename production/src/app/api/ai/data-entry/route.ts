@@ -21,7 +21,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { dataEntryPrompt, sanitizeEntries, sanitizeNotes, proposalKeys, MAX_INPUT_CHARS, type EntryProposal, type AiLawNote } from "@/lib/ai/data-entry";
 import { extractEntities } from "@/lib/inbound/extract";
 import { rateLimit } from "@/lib/security/rate-limit";
-import { istToday } from "@/lib/dates/ist";
+import { istToday, fyStartISO } from "@/lib/dates/ist";
 import { logAiDecision } from "@/lib/ai/audit";
 
 const READABLE = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const fyStart = (() => { const [y, m] = today.split("-").map(Number); return `${m >= 4 ? y : y - 1}-04-01`; })();
+  const fyStart = fyStartISO(today);
   const withMatches: ProposalWithMatches[] = await Promise.all(entries.map(async (p) => {
     const context: ProposalContext = {};
     if (p.kind === "expense" && p.fields.vendor_name) context.vendorYtd = await vendorYtd(supabase, p.fields.vendor_name, fyStart);

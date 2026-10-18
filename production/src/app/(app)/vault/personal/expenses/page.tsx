@@ -40,6 +40,7 @@ import {
 } from "@/lib/queries/personal-vault";
 import { summariseCashFlow, PERSONAL_EXPENSE_CATEGORIES } from "@/lib/vault/personal/net-worth";
 import { formatDate } from "@/lib/utils";
+import { fyStartISO } from "@/lib/dates/ist";
 
 type TxKind = PersonalTransaction["kind"];
 
@@ -99,11 +100,8 @@ export default function PersonalExpensesPage() {
     [accounts],
   );
 
-  const fyStart = React.useMemo(() => {
-    const d = new Date();
-    const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-    return `${y}-04-01`;
-  }, []);
+  // IST, not the browser's clock (R-1609).
+  const fyStart = React.useMemo(() => fyStartISO(new Date()), []);
 
   const flow = React.useMemo(
     () => summariseCashFlow(rows.filter((t) => t.occurred_on >= fyStart)),

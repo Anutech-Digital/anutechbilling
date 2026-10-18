@@ -17,6 +17,8 @@
  *    take an opening balance from without looking.
  */
 
+import { fyStartISO } from "@/lib/dates/ist";
+
 export type StatementLine = {
   txn_date:      string;        // ISO YYYY-MM-DD
   debit:         number;
@@ -87,6 +89,5 @@ export function openingBalanceFromStatement(
 
 /** 1 April of the Indian financial year an ISO date falls in. */
 export function fyStartFor(isoDate: string): string {
-  const [y, m] = isoDate.split("-").map(Number);
-  return `${m >= 4 ? y : y - 1}-04-01`;
+  return fyStartISO(isoDate);
 }

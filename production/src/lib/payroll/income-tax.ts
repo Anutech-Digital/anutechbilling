@@ -15,6 +15,8 @@
  * (80CCD(2)) would, and is not modelled — the working says "salary as paid".
  */
 
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+
 export interface Slab { upto: number | null; ratePct: number }
 export interface TaxYear { fyStart: number; slabs: Slab[]; standardDeduction: number; rebateLimit: number; cessPct: number }
 
@@ -32,11 +34,10 @@ export const TAX_YEARS: readonly TaxYear[] = [
 
 /** Indian FY start year for a YYYY-MM period. */
 export function fyStartOfPeriod(period: string): number {
-  const [y, m] = period.slice(0, 7).split("-").map(Number);
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(period.slice(0, 7));
 }
 export function fyLabelOf(fyStart: number): string {
-  return `${fyStart}-${String((fyStart + 1) % 100).padStart(2, "0")}`;
+  return fyLabelOfYear(fyStart);
 }
 export function fyPeriods(fyStart: number): string[] {
   return Array.from({ length: 12 }, (_, i) => {

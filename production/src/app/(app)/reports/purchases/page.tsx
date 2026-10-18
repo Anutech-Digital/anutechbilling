@@ -24,7 +24,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
-import { formatMonthLabel, utcDateISO } from "@/lib/dates/ist";
+import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
@@ -41,10 +41,9 @@ interface PurchaseLine {
 interface Agg { key: string; net: number; gst: number; gross: number; count: number }
 
 /** Indian fiscal year start (Apr 1) for the date containing `d`. */
+/** `d` is an IST-shifted Date (see rangeBounds), so its UTC calendar date is the IST date. */
 function fyStart(d: Date): Date {
-  const y = d.getUTCFullYear();
-  const fy = d.getUTCMonth() >= 3 ? y : y - 1;  // Jan-Mar belong to previous FY
-  return new Date(Date.UTC(fy, 3, 1));
+  return new Date(Date.UTC(fyStartYear(utcDateISO(d)), 3, 1));
 }
 
 function rangeBounds(key: RangeKey): { from: string | null; to: string | null; label: string } {

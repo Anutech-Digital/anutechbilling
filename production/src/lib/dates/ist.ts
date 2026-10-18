@@ -101,17 +101,40 @@ export function istDayStartUtc(iso: string): Date {
 
 // ── Indian financial year (April → March) ─────────────────────────────
 
-/** FY ka start saal: 2026-03-31 → 2025, 2026-04-01 → 2026. Date do to IST me padhte hain. */
+/*
+ * R-1609 (19 Oct 2026): this is the ONE place the April-FY rule is written. ~20 files used to
+ * hand-roll `m >= 4 ? y : y - 1`; they now call these. A string is read as a calendar date
+ * ("YYYY-MM-DD", or a "YYYY-MM" period) with no timezone shift; a Date is read in IST.
+ */
+
+/** FY ka start saal: 2026-03-31 → 2025, 2026-04-01 → 2026. "YYYY-MM" bhi chalta hai. Date do to IST me padhte hain. */
 export function fyStartYear(at: string | Date = new Date()): number {
   const iso = typeof at === "string" ? at.slice(0, 10) : toIstDate(at);
   const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7));
   return m >= 4 ? y : y - 1;
 }
 
+/** 1 April of the FY a date falls in: "2026-02-10" → "2025-04-01". */
+export function fyStartISO(at: string | Date = new Date()): string {
+  return `${fyStartYear(at)}-04-01`;
+}
+
+/**
+ * The one FY label format: "2026-27" for start year 2026 — what GST / ITR / TDS forms, the
+ * depreciation schedule and the Form 16 CSV print. Screens that want "FY 2026-27" prefix it.
+ */
+export function fyLabelOfYear(startYear: number): string {
+  return `${startYear}-${pad2((startYear + 1) % 100)}`;
+}
+
+/** "FY2627" for start year 2026 — the `tds_receivable.fiscal_year` column's stored code. */
+export function fyCodeOfYear(startYear: number): string {
+  return `FY${pad2(startYear % 100)}${pad2((startYear + 1) % 100)}`;
+}
+
 /** "2026-27" style label (GST / ITR / TDS forms isi tarah likhte hain). */
 export function fyLabel(at: string | Date = new Date()): string {
-  const y = fyStartYear(at);
-  return `${y}-${pad2((y + 1) % 100)}`;
+  return fyLabelOfYear(fyStartYear(at));
 }
 
 /** FY ki pehli aur aakhri tareekh: { start: "2026-04-01", end: "2027-03-31" }. */

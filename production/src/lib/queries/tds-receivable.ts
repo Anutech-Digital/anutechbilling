@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { fyStartYear, fyCodeOfYear } from "@/lib/dates/ist";
 
 type TdsInsert = Database["public"]["Tables"]["tds_receivable"]["Insert"];
 type TdsUpdate = Database["public"]["Tables"]["tds_receivable"]["Update"];
@@ -159,11 +160,7 @@ function newTdsId(): string {
 
 /** Compute Indian fiscal year label from a date (Apr 1 → Mar 31). */
 export function fiscalYearFromDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  const yr = d.getUTCFullYear();
-  const m  = d.getUTCMonth(); // 0=Jan
-  const fyStart = m < 3 ? yr - 1 : yr;
-  return `FY${String(fyStart % 100).padStart(2, "0")}${String((fyStart + 1) % 100).padStart(2, "0")}`;
+  return fyCodeOfYear(fyStartYear(dateStr));
 }
 
 export function useCreateTdsReceivable() {

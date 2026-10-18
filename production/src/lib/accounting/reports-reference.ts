@@ -23,7 +23,7 @@ import { buildPnl } from "@/lib/accounting/pnl";
 import { buildExpenseReport } from "@/lib/accounting/expense-report";
 import { projectCostForPeriod } from "@/lib/accounting/project-cost";
 import type { PnLNumbers, PnlMasters } from "@/lib/accounting/pnl-assemble";
-import { toIstDate } from "@/lib/dates/ist";
+import { toIstDate, fyStartYear as fyStartYearOf, fyLabelOfYear } from "@/lib/dates/ist";
 
 type N = number | null;
 
@@ -141,9 +141,8 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
 
   const reimbursementsPayable = r.reimb.reduce((s, x) => s + (x.amount ?? 0), 0);
 
-  const [y, m] = todayIso.split("-").map(Number);
-  const fyStartYear = m < 4 ? y - 1 : y;
-  const fyLabel = `FY ${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, "0")}`;
+  const fyStartYear = fyStartYearOf(todayIso);
+  const fyLabel = `FY ${fyLabelOfYear(fyStartYear)}`;
 
   const invGST = r.invoices.reduce(
     (s, i) => s + (i.tax_amount ?? Math.round((i.amount ?? 0) * (i.tax_rate ?? 18) / (100 + (i.tax_rate ?? 18)))), 0);

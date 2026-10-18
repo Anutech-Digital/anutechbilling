@@ -16,7 +16,7 @@
  * Sheet here is the owner's view and the ITR view, both of which use these.
  */
 
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
 
 export type AssetBlock ="computers" | "plant" | "furniture" | "vehicles" | "building" | "intangible";
 
@@ -40,10 +40,9 @@ export interface AssetLike {
 }
 
 export function fyStartOf(iso: string): number {
-  const [y, m] = iso.slice(0, 7).split("-").map(Number);
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(iso.slice(0, 7));
 }
-export const fyLabel = (fy: number) => `${fy}-${String((fy + 1) % 100).padStart(2, "0")}`;
+export const fyLabel = (fy: number) => fyLabelOfYear(fy);
 const fyEnd = (fy: number) => `${fy + 1}-03-31`;
 
 /** Days from put-to-use to the FY end, inclusive of both ends. */

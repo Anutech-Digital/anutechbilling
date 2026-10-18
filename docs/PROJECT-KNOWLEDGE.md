@@ -20,7 +20,7 @@
 >
 > **What to trust instead:**
 > - **Money-spine bug status** → `docs/MONEY-FLOW-TEST-MATRIX.md` §2.1 (revised 2026-06-01, verified against live DB).
-> - **Live status / current work** → `TASKS.md`.
+> - **Live status / current work** → the team board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n, collection `cards`) — see root `CLAUDE.md`. `TASKS.md` stopped being updated on 8 Sep 2026 and is stamped stale (R-1609).
 > - **Schema truth** → `production/supabase/migrations/` itself, and the live DB. Nothing else.
 >
 > Sections 1–3 (product vision, architecture pattern, the multi-tenancy model) and 11–13 (pricing models, design tokens, infra) have aged well and are still the best orientation in the repo. Sections 4–8 and 14–15 (data model, RPC inventory, module status, file index) are the stale ones.
@@ -54,7 +54,7 @@ Note: code-level `user_role` enum is `owner | sales | accountant | support` (mig
 
 **Owner / live tenants:** Owner is **Client A** (Pardeep, `Pardeep@example.test`), distributor tier, dogfooding. Second live tenant **Anutech Digital**, reseller tier (partner). `BUY_PAGE_TENANT_ID` defaults to `8ff50dbf-e17e-4210-a580-0df7b1a6f71b` (Client A) across all public APIs — the storefront is single-tenant for v1.
 
-**V3 vs V2:** V3 diverged substantially from the archived V2 plan (`docs/archive/LEADOS-RESELLER-CRM-V2-PRD.md`): renamed LeadOS V2 → ResellerOS; single-product → GW+M365+Zoho; single-agency → multi-tenant RLS; Firestore/Firebase → Supabase Postgres + Cloud Run; Algolia → Postgres queries; 6 modules → 17 shipped modules; added customer portal, public buy pages, partner channel, banking. Authoritative current-state docs: `RESELLEROS-PRD-V3.md` and `PROJECT_TRACKER.md` (both 2026-05-29).
+**V3 vs V2:** V3 diverged substantially from the archived V2 plan (`docs/archive/LEADOS-RESELLER-CRM-V2-PRD.md`): renamed LeadOS V2 → ResellerOS; single-product → GW+M365+Zoho; single-agency → multi-tenant RLS; Firestore/Firebase → Supabase Postgres + Cloud Run; Algolia → Postgres queries; 6 modules → 17 shipped modules; added customer portal, public buy pages, partner channel, banking. Current state: the code and the team board. `RESELLEROS-PRD-V3.md` and `PROJECT_TRACKER.md` (both 2026-05-29) are history only — stamped STALE on 19 Oct 2026 (R-1609).
 
 ---
 
@@ -438,7 +438,7 @@ Fonts: `--font-serif` **DM Serif Display** (headlines/KPI values/totals), `--fon
 Flex shell (bg `paper-2/50`): Desktop Sidebar (sticky 240px, role-filtered via `filterNavForRole`, badges via `useNavBadges`, Setup hidden once `tenantSetupCompletedAt`); MobileSidebar (Sheet `w-72`); TopBar (`h-14`, breadcrumb, ⌘K, theme toggle, sparkles QuickActions, bell badge via `useTaskCountDueOrOverdue`); CommandPalette (cmdk, ⌘K, real tenant-scoped customers/leads/contacts/quotes); MobileBottomNav (role-aware tabs). NotificationPanel still uses **sample data** (Realtime TODO).
 
 ### 12.4 Navigation (`lib/nav.ts`)
-Single source of truth. `UserRole = owner|manager|sales`. `APP_NAV` sections: Workspace, Revenue, Procurement, Accounting, Engage, System (most owner/mgr-only; sales sees Leads/Tasks + Deals if `can_view_deals`). `CUSTOMER_NAV` = chromeless public pages. Helpers: `filterNavForRole`, `allowedRoutesForRole` (for middleware), `ROLE_HOME` (owner/manager→`/dashboard`, sales→`/leads`), `getCrumb`.
+Single source of truth. `UserRole` = `USER_ROLES` in `lib/auth/roles.ts` (owner, manager, sales_senior, sales, billing, delivery, accountant, support, partner_agent — checked 19 Oct 2026; the line below describes the original three-role design). `APP_NAV` sections: Workspace, Revenue, Procurement, Accounting, Engage, System (most owner/mgr-only; sales sees Leads/Tasks + Deals if `can_view_deals`). `CUSTOMER_NAV` = chromeless public pages. Helpers: `filterNavForRole`, `allowedRoutesForRole` (for middleware), `ROLE_HOME` (owner/manager→`/dashboard`, sales→`/leads`), `getCrumb`.
 
 ---
 
@@ -453,7 +453,7 @@ Single source of truth. `UserRole = owner|manager|sales`. `APP_NAV` sections: Wo
 Supabase (`NEXT_PUBLIC_SUPABASE_URL/ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`), Razorpay (`NEXT_PUBLIC_RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`), GST IRP (`GST_IRP_*`), Google CSP (`GOOGLE_CSP_*`), WhatsApp/Gupshup (`GUPSHUP_*`), Email/Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`), AI (`GEMINI_API_KEY`, `GEMINI_MODEL`), monitoring (`NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `NEXT_PUBLIC_PLAUSIBLE_DOMAIN`), app (`NEXT_PUBLIC_APP_URL`, `NODE_ENV`). Used-but-not-in-example: `SENTRY_DSN`, `SENTRY_ORG`/`PROJECT`, `CRON_SECRET`, `NEXT_PUBLIC_DEMO_MODE`, `ALLOW_SENTRY_TEST`, `SETU_*`, `SANDBOX_*`.
 
 ### 13.3 Sentry
-The canonical `instrumentation.ts → sentry.{server,edge}.config.ts` flow **does not fire** on Next 14.2.15 + standalone + Cloud Run. **Workaround:** `src/lib/sentry.ts` is an idempotent side-effect module (`if (DSN && !getClient()) init(...)`), imported via **`import "@/lib/sentry"` at the top of `lib/supabase/server.ts`** — the chokepoint every authenticated server path crosses. New server-only code bypassing Supabase (standalone webhooks/cron) must add the import directly. Error boundaries `app/global-error.tsx` + `app/(app)/error.tsx`. Smoke test `GET /api/sentry-test` (prod-gated by `ALLOW_SENTRY_TEST=1`).
+The canonical `instrumentation.ts → sentry.{server,edge}.config.ts` flow **does not fire** on Next 14.2.15 + standalone + Cloud Run (measured then; the app is on Next 15.5.26 since — `production/package.json`, checked 19 Oct 2026 — and the workaround below is still in place). **Workaround:** `src/lib/sentry.ts` is an idempotent side-effect module (`if (DSN && !getClient()) init(...)`), imported via **`import "@/lib/sentry"` at the top of `lib/supabase/server.ts`** — the chokepoint every authenticated server path crosses. New server-only code bypassing Supabase (standalone webhooks/cron) must add the import directly. Error boundaries `app/global-error.tsx` + `app/(app)/error.tsx`. Smoke test `GET /api/sentry-test` (prod-gated by `ALLOW_SENTRY_TEST=1`).
 
 ### 13.4 Middleware (`src/middleware.ts` + `lib/supabase/middleware.ts`)
 1. `isSupabaseConfigured()` false → pass through. 2. `NEXT_PUBLIC_DEMO_MODE=true` + dev → bypass. 3. Else `updateSession()` refreshes cookies (modern `getAll/setAll`, chosen because the Cloud Run proxy can drop chunked tokens), validates via **`getUser()`** (JWT-validated, not spoofable `getSession()`), reads `users.role` + `can_view_deals`. 4. Gate against `PROTECTED_PREFIXES` (a **manual mirror of APP_NAV — drift risk, flagged in-file**): unauth+protected → `/login?next=`; auth on login/signup → `ROLE_HOME[role]`; auth + sales role → `allowedRoutesForRole` check, bounce to home if disallowed; owner/manager get full app.
@@ -537,4 +537,4 @@ Live Razorpay + paywall; e-Invoice IRP; audit logs; DPA template. Older P0s (mos
 `next.config.mjs`, `firebase.json`, `.firebaserc`, `.env.example`, `src/middleware.ts`, `src/lib/supabase/{client,server,middleware}.ts`, `src/lib/sentry.ts`, `instrumentation.ts`, `sentry.{client,server,edge}.config.ts`, `src/lib/nav.ts`, `src/app/globals.css`, `tailwind.config.ts`, `src/lib/{tenant,types}.ts`, `src/lib/aa/setu.ts`, `src/lib/whatsapp/client.ts`, `src/lib/email/send.ts`.
 
 ### Docs (`C:\dev\ResellerOSv3\`)
-`RESELLEROS-PRD-V3.md` + `PROJECT_TRACKER.md` (authoritative, 2026-05-29), `production/CLAUDE.md` (stale on host/RPC/cadence), `production/LAUNCH_READINESS.md` (2026-05-24, mid-pivot), `docs/{TEST-PLAN,WORLD_CLASS_GAP_ANALYSIS,WORKFLOW-DIAGRAM,MONITORING_SETUP,EMAIL_SETUP_RESEND,LANDING_PAGE_DESIGN_BRIEF}.md`, `UX-DESIGN-PRINCIPLES.md` (predates prod tokens), `WORKFLOWS-DETAILED.md`, `docs/archive/{LEADOS-RESELLER-CRM-V2-PRD,MODULES-BREAKDOWN,UNIFIED-PRD-V3}.md`.
+`RESELLEROS-PRD-V3.md` + `PROJECT_TRACKER.md` (2026-05-29 — STALE, history only; R-1609), `production/CLAUDE.md` (the project rulebook), `production/LAUNCH_READINESS.md` (2026-05-24, mid-pivot — STALE), `docs/{TEST-PLAN,WORLD_CLASS_GAP_ANALYSIS,WORKFLOW-DIAGRAM,MONITORING_SETUP,EMAIL_SETUP_RESEND,LANDING_PAGE_DESIGN_BRIEF}.md`, `UX-DESIGN-PRINCIPLES.md` (predates prod tokens), `WORKFLOWS-DETAILED.md`, `docs/archive/{LEADOS-RESELLER-CRM-V2-PRD,MODULES-BREAKDOWN,UNIFIED-PRD-V3}.md`.

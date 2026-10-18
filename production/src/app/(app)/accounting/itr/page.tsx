@@ -31,6 +31,7 @@ import { downloadCSV } from "@/lib/csv";
 import { useItrPack } from "@/lib/queries/itr";
 import { useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled } from "@/lib/queries/compliance";
 import { currentFinancialYear, type ItrPack } from "@/lib/tax/itr";
+import { fyLabelOfYear } from "@/lib/dates/ist";
 import { itrCsvRows, ITR_CSV_HEADERS } from "@/lib/tax/itr-export";
 
 const ITR_OBLIGATION_KEY = "it_itr6";
@@ -82,7 +83,7 @@ export default function ItrPage() {
                   : "rounded-full border border-hairline bg-paper px-3 py-1.5 text-xs text-ink-2 hover:border-hairline-strong"
               }
             >
-              FY {y}-{String((y + 1) % 100).padStart(2, "0")}
+              FY {fyLabelOfYear(y)}
               {y === nowFy.startYear ? " (chal raha)" : ""}
             </button>
           ))}

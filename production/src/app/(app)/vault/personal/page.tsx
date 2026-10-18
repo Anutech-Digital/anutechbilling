@@ -22,6 +22,7 @@ import { computeNetWorth, summariseCashFlow, STALE_AFTER_DAYS } from "@/lib/vaul
 import { VaultPinSettings } from "@/components/features/vault/vault-pin-settings";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
 import { rupee } from "@/lib/utils";
+import { fyStartISO } from "@/lib/dates/ist";
 
 export default function PersonalVaultOverview() {
   const accountsQ = usePersonalAccounts();
@@ -38,10 +39,9 @@ export default function PersonalVaultOverview() {
   );
 
   // This financial year so far — the window an Indian owner thinks in.
-  const fyStart = React.useMemo(() => {
-    const y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-    return `${y}-04-01`;
-  }, [now]);
+  // IST, not the browser's clock (R-1609): a laptop on another timezone near 31 Mar / 1 Apr
+  // used to pick the wrong FY.
+  const fyStart = React.useMemo(() => fyStartISO(now), [now]);
 
   const flow = React.useMemo(
     () => summariseCashFlow((txQ.data ?? []).filter((t) => t.occurred_on >= fyStart)),

@@ -1,5 +1,7 @@
 # Tasks
 
+> **STALE — 8 Sep 2026 tak ka (stamped 19 Oct 2026, R-1609). Asli: team board (https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n) + code.** Ye file sirf history hai — isse status, counts ya "kya bacha hai" mat padho.
+
 > Living task list — main ise update karta rahunga. Jaise-jaise kaam complete hoga, task `Done` mein strikethrough ho jayega. Tum bhi edit kar sakte ho. Visual board ke liye `dashboard.html` browser mein kholo.
 > Full detail: [docs/MONEY-FLOW-TEST-MATRIX.md](docs/MONEY-FLOW-TEST-MATRIX.md) (per-transaction) · [docs/ACCOUNTING-AUDIT.md](docs/ACCOUNTING-AUDIT.md) (P&L / Balance Sheet) · [docs/UX-AUDIT.md](docs/UX-AUDIT.md) (interaction / behaviour) · context: [docs/PROJECT-KNOWLEDGE.md](docs/PROJECT-KNOWLEDGE.md)
 

@@ -15,6 +15,7 @@
  */
 
 import { tdsDepositDueDate } from "./tds-due";
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
 
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
 export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual";
@@ -120,9 +121,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /** FY that a given date falls in → the starting calendar year (Apr–Mar). */
 function fyStart(d: Date): number {
-  return d.getMonth() + 1 >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+  // This module keeps dates as local-midnight Date objects (day0), so read the local calendar date.
+  return fyStartYear(iso(d.getFullYear(), d.getMonth() + 1, d.getDate()));
 }
-const fyLabel = (startYear: number) => `FY ${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+const fyLabel = (startYear: number) => `FY ${fyLabelOfYear(startYear)}`;
 
 /**
  * Pick the "actionable" instance: the earliest one still upcoming, OR — if the

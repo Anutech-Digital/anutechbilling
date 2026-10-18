@@ -27,7 +27,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
-import { formatMonthLabel } from "@/lib/dates/ist";
+import { formatMonthLabel, fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryPayment } from "@/lib/queries/payroll";
 import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
@@ -49,8 +49,7 @@ function quarterOf(period: string): { periods: string[]; label: string } {
   const startMonth = m >= 4 && m <= 6 ? 4 : m >= 7 && m <= 9 ? 7 : m >= 10 ? 10 : 1;
   const periods = [0, 1, 2].map((i) => `${y}-${String(startMonth + i).padStart(2, "0")}`);
   const qNum = startMonth === 4 ? 1 : startMonth === 7 ? 2 : startMonth === 10 ? 3 : 4;
-  const fy = m >= 4 ? y : y - 1;
-  return { periods, label: `Q${qNum} FY${fy}-${String((fy + 1) % 100).padStart(2, "0")}` };
+  return { periods, label: `Q${qNum} FY${fyLabelOfYear(fyStartYear(period))}` };
 }
 function statusBadge(s: SalaryPayment["paid_status"]) {
   return (
