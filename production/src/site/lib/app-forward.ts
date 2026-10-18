@@ -69,10 +69,12 @@ export function planForward(
   return { kind: "remote", base: target.origin };
 }
 
-/** Headers of the visitor's request that the lead handlers read: attribution, rate limits, bot check. */
+/** Headers of the visitor's request that the lead handlers read: attribution, rate limits, bot check.
+    No forwarded-host/proto: the handler's own request URL already carries this deployment's
+    origin, and a host header is read only through lib/app-url.ts (R-723 scan). */
 const PASS_HEADERS = [
   "referer", "user-agent", "accept-language",
-  "x-forwarded-for", "x-real-ip", "cf-connecting-ip", "x-forwarded-proto", "x-forwarded-host",
+  "x-forwarded-for", "x-real-ip", "cf-connecting-ip",
   "x-turnstile-token",
 ] as const;
 

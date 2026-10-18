@@ -43,6 +43,8 @@ describe("passThroughHeaders / pageField", () => {
     expect(h.get("x-forwarded-for")).toBe("1.2.3.4");
     expect(h.get("x-turnstile-token")).toBe("t");
     expect(h.get("cookie")).toBeNull();
+    /* R-723: a forwarded host is never copied (host is read only via lib/app-url.ts). */
+    expect(passThroughHeaders({ headers: new Headers({ "x-forwarded-host": "evil.example.invalid" }) }).has("x-forwarded-host")).toBe(false);
     expect(h.get("content-type")).toBe("application/json");
   });
 
