@@ -17,7 +17,9 @@ function toolbar(file: string): { row: string; title: string; actions: string } 
   const rowLineStart = src.lastIndexOf("<div", start);
   const row = src.slice(rowLineStart, src.indexOf(">", start) + 1);
   const rest = src.slice(start);
-  const titleMatch = rest.match(/<span className="([^"]*)">\s*(Tax Invoice|Receipt Voucher)/);
+  /* R-1529: the Tax Invoice dialog's title is `{docTitle}` — "Tax Invoice" or "Bill of Supply",
+     read off the invoice row — in the same no-wrap span. */
+  const titleMatch = rest.match(/<span className="([^"]*)">\s*(Tax Invoice|Receipt Voucher|\{docTitle\})/);
   expect(titleMatch, `${file}: toolbar title not found`).not.toBeNull();
   const actionsMatch = rest.match(/<div className="([^"]*)" data-toolbar-actions/);
   return { row, title: titleMatch?.[1] ?? "", actions: actionsMatch?.[1] ?? "" };
