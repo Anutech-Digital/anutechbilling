@@ -141,6 +141,7 @@ MIGS=(
   "r1574renewalquote|20261018162355_r1574_renewal_quote_once.sql|resellersos_migration|to_regprocedure('public.create_renewal_quote(uuid,uuid,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1574%')"
   "r1612bsadvances|20261018163944_r1612_balance_sheet_advances.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1612%')"
   "r1567refunddelete|20261018164416_r1567_refund_delete_payment_credit.sql|resellersos_migration|to_regclass('public.cancelled_vouchers') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1567%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_payment(uuid)') and prosrc like '%R-1568%')"
+  "r1575closedquote|20261018165435_r1575_closed_quote_guard.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_payment_closed_quote_guard') and exists(select 1 from pg_trigger where tgname = 'trg_invoice_closed_quote_guard')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
