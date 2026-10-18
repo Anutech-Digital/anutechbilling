@@ -24,7 +24,7 @@ import {
   type Employee, type EmployeeDocument,
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
-import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
+import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
@@ -107,7 +107,9 @@ export function EmployeeDetailDrawer({
 
             {/* CTC Breakdown Card */}
             {employee && (() => {
-              const ctc = calculateCtcBreakdown(employee.monthly_gross * 12);
+              /* R-1585: the employee's own structure (gross, Basic, DA, PF/ESI flags) — monthly
+                 gross × 12 is not the CTC. */
+              const ctc = ctcFromEmployee(employee);
               return (
                 <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-hairline">
@@ -123,11 +125,10 @@ export function EmployeeDetailDrawer({
                     <div className="bg-paper-2/50 p-2 rounded-lg border border-hairline/60">
                       <span className="font-bold text-ink block uppercase text-3xs tracking-wider mb-1">1. Earnings (Gross {rupee(ctc.grossMonthly)}/mo)</span>
                       <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-ink-2">
-                        <div>Basic (50%): <b className="font-mono">{rupee(ctc.basicMonthly)}</b></div>
-                        <div>HRA (40%): <b className="font-mono">{rupee(ctc.hraMonthly)}</b></div>
-                        {ctc.conveyanceMonthly > 0 && <div>Conveyance: <b className="font-mono">{rupee(ctc.conveyanceMonthly)}</b></div>}
-                        {ctc.medicalMonthly > 0 && <div>Medical: <b className="font-mono">{rupee(ctc.medicalMonthly)}</b></div>}
-                        <div className="col-span-2">Special Allowance: <b className="font-mono">{rupee(ctc.specialAllowanceMonthly)}</b></div>
+                        <div>Basic: <b className="font-mono">{rupee(ctc.basicMonthly)}</b></div>
+                        {ctc.daMonthly > 0 && <div>DA: <b className="font-mono">{rupee(ctc.daMonthly)}</b></div>}
+                        <div className="col-span-2">Other allowances: <b className="font-mono">{rupee(ctc.specialAllowanceMonthly)}</b></div>
+                        {ctc.basicAssumed && <div className="col-span-2 text-amber-ink">Basic set nahi — PF/gratuity poore gross par.</div>}
                       </div>
                     </div>
 
@@ -150,7 +151,7 @@ export function EmployeeDetailDrawer({
                         <span className="font-mono">{rupee(ctc.netTakeHomeMonthly)}</span>
                       </div>
                       <div className="text-xs text-emerald-700 mt-1">
-                        Deductions: Employee PF -{rupee(ctc.employeePfMonthly)} · PT -{rupee(ctc.professionalTaxMonthly)}
+                        Deductions: Employee PF -{rupee(ctc.employeePfMonthly)}{ctc.employeeEsiMonthly > 0 && <> · ESI -{rupee(ctc.employeeEsiMonthly)}</>} · PT -{rupee(ctc.professionalTaxMonthly)}
                       </div>
                     </div>
                   </div>

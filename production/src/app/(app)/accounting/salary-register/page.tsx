@@ -27,9 +27,10 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
-import { formatMonthLabel, fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryPayment } from "@/lib/queries/payroll";
-import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
+import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
 
 /** Previous month (YYYY-MM) — the register shows the month that was just paid. */
@@ -144,33 +145,59 @@ function MonthRegister() {
     );
   };
 
+  /* R-1585: the CTC register reads each employee's real structure (monthly gross, Basic, DA,
+     PF/ESI flags) through ctcFromEmployee — it used to pass monthly gross × 12 to the CTC
+     calculator as if it were the CTC. PF ceiling = this month's (pf.ts). The "actual" columns
+     are the current FY's payslips, summed (lib/payroll/ctc-register.ts). */
+  const ctcMonth = istToday().slice(0, 7);
+  const ctcFy = fyStartYear(ctcMonth);
+  const allPayQ = useSalaryPayments();
+  const ctcEmployees = empQ.data ?? [];
+  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth });
+  const fyActuals = fyPayslipActuals(allPayQ.data ?? [], ctcFy);
+  const ctcRowsData = ctcEmployees.map((e) => ({ e, ctc: ctcOf(e), actual: fyActuals.byEmployee.get(e.id) }));
+  const ctcTotals = ctcRowsData.reduce((t, r) => ({
+    annualCtc: t.annualCtc + r.ctc.annualCtc, monthlyCtc: t.monthlyCtc + r.ctc.monthlyCtc, gross: t.gross + r.ctc.grossMonthly,
+    employer: t.employer + r.ctc.totalEmployerContributionMonthly, net: t.net + r.ctc.netTakeHomeMonthly,
+  }), { annualCtc: 0, monthlyCtc: 0, gross: 0, employer: 0, net: 0 });
+
   const exportCtcRegisterCsv = () => {
-    const ctcRows = (empQ.data ?? []).map((e) => {
-      const ctc = calculateCtcBreakdown(e.monthly_gross * 12);
-      return [
-        toTitleCase(e.name),
-        e.designation ?? "",
-        ctc.annualCtc,
-        ctc.monthlyCtc,
-        ctc.grossMonthly,
-        ctc.basicMonthly,
-        ctc.hraMonthly,
-        ctc.specialAllowanceMonthly,
-        ctc.employerPfMonthly,
-        ctc.employerEsiMonthly,
-        ctc.gratuityMonthly,
-        ctc.employeePfMonthly,
-        ctc.professionalTaxMonthly,
-        ctc.netTakeHomeMonthly,
-      ];
-    });
+    const ctcRows = ctcRowsData.map(({ e, ctc, actual }) => [
+      toTitleCase(e.name),
+      e.designation ?? "",
+      ctc.annualCtc,
+      ctc.monthlyCtc,
+      ctc.grossMonthly,
+      ctc.basicMonthly,
+      ctc.daMonthly,
+      ctc.specialAllowanceMonthly,
+      ctc.employerPfMonthly,
+      ctc.employerEsiMonthly,
+      ctc.gratuityMonthly,
+      ctc.employeePfMonthly,
+      ctc.employeeEsiMonthly,
+      ctc.professionalTaxMonthly,
+      ctc.netTakeHomeMonthly,
+      actual?.months ?? 0,
+      actual?.earned ?? 0,
+      actual?.employerPf ?? 0,
+      actual?.employerEsi ?? 0,
+      actual?.cost ?? 0,
+    ]);
+    const t = fyActuals.totals;
+    ctcRows.push([
+      "Total", "", ctcTotals.annualCtc, ctcTotals.monthlyCtc, ctcTotals.gross, "", "", "", "", "", "", "", "", "", ctcTotals.net,
+      t.months, t.earned, t.employerPf, t.employerEsi, t.cost,
+    ]);
+    const fyTag = `FY ${fyLabelOfYear(ctcFy)}`;
 
     downloadCsv(
       `CTC-Master-Structure-Register.csv`,
       [
         "Employee", "Designation", "Annual CTC (₹)", "Monthly CTC (₹)", "Gross Salary (₹/mo)",
-        "Basic Salary (50%)", "HRA (40%)", "Special Allowance", "Employer PF (12%)", "Employer ESI",
-        "Gratuity Provision", "Employee PF", "Prof. Tax (PT)", "Net Take Home (₹/mo)"
+        "Basic", "DA", "Other allowances", "Employer PF", "Employer ESI",
+        "Gratuity Provision", "Employee PF", "Employee ESI", "Prof. Tax (PT)", "Net Take Home (₹/mo)",
+        `Months paid (${fyTag})`, `Salary earned (${fyTag})`, `Employer PF paid (${fyTag})`, `Employer ESI paid (${fyTag})`, `Actual cost (${fyTag})`,
       ],
       ctcRows
     );
@@ -248,55 +275,70 @@ function MonthRegister() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-serif font-bold text-ink">Cost to Company (CTC) Salary Matrix</h2>
-              <p className="text-xs text-ink-3">Comprehensive breakdown of Gross Salary, Employer Retirals (EPF/ESI/Gratuity), Deductions &amp; Net In-Hand Take Home.</p>
+              <p className="text-xs text-ink-3">Each employee&apos;s monthly gross from Payroll, plus the company&apos;s cost on top (employer PF, employer ESI, gratuity) = CTC. &quot;Actual FY {fyLabelOfYear(ctcFy)}&quot; = what this year&apos;s payslips really paid.</p>
             </div>
             <Button variant="outline" size="sm" icon="download" onClick={exportCtcRegisterCsv}>
               Export CTC Register CSV
             </Button>
           </div>
 
-          <Card flush>
+          <Card flush className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-paper-2/60 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
                   <th className="text-left px-3 py-3">Employee</th>
                   <th className="text-right px-3 py-3">Annual CTC</th>
                   <th className="text-right px-3 py-3">Monthly CTC</th>
-                  <th className="text-right px-3 py-3">Gross Base</th>
-                  <th className="text-right px-3 py-3">Basic (50%)</th>
-                  <th className="text-right px-3 py-3">HRA (40%)</th>
-                  <th className="text-right px-3 py-3">Conveyance</th>
-                  <th className="text-right px-3 py-3">Medical</th>
-                  <th className="text-right px-3 py-3">Special Allow.</th>
-                  <th className="text-right px-3 py-3">Employer Retirals</th>
+                  <th className="text-right px-3 py-3">Gross</th>
+                  <th className="text-right px-3 py-3">Basic + DA</th>
+                  <th className="text-right px-3 py-3">Other allow.</th>
+                  <th className="text-right px-3 py-3">Employer PF</th>
+                  <th className="text-right px-3 py-3">Employer ESI</th>
+                  <th className="text-right px-3 py-3">Gratuity</th>
                   <th className="text-right px-3 py-3 font-bold text-emerald-700">Net Take Home</th>
+                  <th className="text-right px-3 py-3 whitespace-nowrap">Actual FY {fyLabelOfYear(ctcFy)}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {(empQ.data ?? []).map((e) => {
-                  const ctc = calculateCtcBreakdown(e.monthly_gross * 12);
-                  return (
-                    <tr key={e.id} className="hover:bg-paper-2/40 transition-colors">
-                      <td className="px-3 py-2.5">
-                        <div className="font-bold text-ink">{toTitleCase(e.name)}</div>
-                        <div className="text-xs text-ink-3">{e.designation || "Staff"}</div>
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono font-bold text-ink">{rupee(ctc.annualCtc)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-2">{rupee(ctc.monthlyCtc)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink">{rupee(ctc.grossMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.basicMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.hraMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.conveyanceMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.medicalMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.specialAllowanceMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-amber-700 font-semibold">{rupee(ctc.totalEmployerContributionMonthly)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700 text-sm">{rupee(ctc.netTakeHomeMonthly)}</td>
-                    </tr>
-                  );
-                })}
+                {ctcRowsData.map(({ e, ctc, actual }) => (
+                  <tr key={e.id} className="hover:bg-paper-2/40 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <div className="font-bold text-ink">{toTitleCase(e.name)}</div>
+                      <div className="text-xs text-ink-3">{e.designation || "Staff"}</div>
+                      {ctc.basicAssumed && <div className="text-xs text-amber-ink">Basic set nahi — PF/gratuity poore gross par</div>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-ink">{rupee(ctc.annualCtc)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink-2">{rupee(ctc.monthlyCtc)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-semibold text-ink">{rupee(ctc.grossMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.basicMonthly + ctc.daMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-ink-3">{rupee(ctc.specialAllowanceMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.employerPfMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.employerEsiMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.gratuityMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700 text-sm">{rupee(ctc.netTakeHomeMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-ink-2">
+                      {actual ? <>{rupee(actual.cost)}<div className="text-3xs text-ink-3">{actual.months} mo · salary {rupee(actual.earned)}</div></> : <span className="text-ink-3">—</span>}
+                    </td>
+                  </tr>
+                ))}
+                {ctcRowsData.length > 0 && (
+                  <tr className="border-t-2 border-hairline-strong bg-paper-2/40 font-semibold">
+                    <td className="px-3 py-2.5 text-ink">{ctcRowsData.length} employee{ctcRowsData.length > 1 ? "s" : ""}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{rupee(ctcTotals.annualCtc)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{rupee(ctcTotals.monthlyCtc)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">{rupee(ctcTotals.gross)}</td>
+                    <td className="px-3 py-2.5" colSpan={2} />
+                    <td className="px-3 py-2.5 text-right font-mono text-amber-700" colSpan={3}>{rupee(ctcTotals.employer)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-emerald-700">{rupee(ctcTotals.net)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono">
+                      {rupee(fyActuals.totals.cost)}<div className="text-3xs text-ink-3 font-normal">{fyActuals.totals.months} payslips · salary {rupee(fyActuals.totals.earned)}</div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </Card>
+          <p className="text-xs text-ink-3">PF on Basic + DA at this month&apos;s ceiling, ESI only when the employee is ESI-covered and gross ≤ ₹21,000, PT from the app&apos;s PT slab. Actual = salary earned (gross − LOP + bonus) + employer PF + employer ESI on this FY&apos;s payslips.</p>
         </div>
       ) : (
         <>
