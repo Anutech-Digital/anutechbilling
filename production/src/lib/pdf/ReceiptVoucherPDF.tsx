@@ -453,7 +453,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           {creditPart > 0 ? (
             <View style={s.tableRow}>
               <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
-                {pdfSafeMoney(`Also settled from advance credit received earlier: ₹${creditPart.toLocaleString("en-IN")}`)}
+                Also settled from advance credit received earlier: {pdfRupee(creditPart)}
               </Text>
             </View>
           ) : null}
