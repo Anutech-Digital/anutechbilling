@@ -142,6 +142,7 @@ MIGS=(
   "r1612bsadvances|20261018163944_r1612_balance_sheet_advances.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1612%')"
   "r1567refunddelete|20261018164416_r1567_refund_delete_payment_credit.sql|resellersos_migration|to_regclass('public.cancelled_vouchers') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1567%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_payment(uuid)') and prosrc like '%R-1568%')"
   "r1575closedquote|20261018165435_r1575_closed_quote_guard.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_payment_closed_quote_guard') and exists(select 1 from pg_trigger where tgname = 'trg_invoice_closed_quote_guard')"
+  "r1563cnrefund|20261018171947_r1563_credit_note_refund.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1563%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.issue_credit_note_core(text,integer,text,text,text,boolean)') and prosrc like '%R-1566%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1566%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
