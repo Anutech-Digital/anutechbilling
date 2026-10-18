@@ -57,6 +57,7 @@ import { trialsConfigured, TRIALS_PAUSED_MESSAGE } from "@/lib/dms-engine/trials
 import { hostingLimitProblem } from "./hosting-limit";
 import { hostingDomain, planDomains, BUY_A_DOMAIN_HREF } from "./hosting-domain";
 import { hostingRate } from "./hosting-prices";
+import { bundleAllowance } from "./hosting-bundle";
 import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, simulatedPaymentAllowed } from "./live-guards";
 import { issueInvoiceForOnlinePayment } from "./online-invoice.server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
@@ -177,7 +178,7 @@ const newId = () => globalThis.crypto?.randomUUID() ?? Math.random().toString(36
  *                      applied after the whole cart is priced, and ONLY when a
  *                      yearly hosting line is present. A client that sends ₹0 for
  *                      a bare domain still gets charged the real reg price.
- *   mailbox:anutech  → MAILBOX_YR. Same bundle rule as the domain.
+ *   mailbox:anutech  → MAILBOX_YR. One unit free per yearly plan (R-1595, hosting-bundle.ts).
  */
 function repriceLine(sku: string | undefined, cycle: string | undefined, qty: number): Repriced | null {
   if (!sku) return null;
@@ -437,22 +438,20 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const items: QuoteLine[] = [];
     const unpriced: string[] = [];
     let hasHosting = false;
-    let hasYearlyHosting = false;
     let hostingTier: string | null = null;
-    const bundleEligible: QuoteLine[] = []; // domain + mailbox lines that go ₹0 with a yearly plan
+    const mailboxLines: QuoteLine[] = []; // R-1595: one unit free per yearly plan, the rest charged
     const firstYearOf = new Map<QuoteLine, number>(); // domain line → its 1-year price (R-156)
     const domainPricing = await priceDomainLines(lines);
     const domainNames: string[] = [];
     const domainLineSet: QuoteLine[] = []; // every domain:* line, priced by priceDomainLines
     /* Each hosting line with what was typed for it, in cart order (one domain per plan). */
-    const hostingItems: { line: QuoteLine; typed: string | undefined }[] = [];
+    const hostingItems: { line: QuoteLine; typed: string | undefined; yearly: boolean }[] = [];
     for (const [idx, l] of lines.entries()) {
       const dp = domainPricing.get(idx);
       if (dp) {
         if (!dp.ok) { unpriced.push(dp.reason); continue; }
         items.push(dp.line);
         domainLineSet.push(dp.line); // R-225: a coupon never discounts it
-        bundleEligible.push(dp.line);
         firstYearOf.set(dp.line, dp.firstYear);
         if (dp.line.domain) domainNames.push(dp.line.domain);
         continue;
@@ -461,20 +460,10 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       if (!r) { unpriced.push(l.label || l.sku || "an item"); continue; }
       items.push(r.line);
       if (r.kind === "hosting") {
-        hasHosting = true; if (r.yearly) hasYearlyHosting = true; hostingTier = hostingTier ?? r.tier ?? null;
-        hostingItems.push({ line: r.line, typed: l.hostingDomain ?? (hostingItems.length === 0 ? domain : undefined) });
+        hasHosting = true; hostingTier = hostingTier ?? r.tier ?? null;
+        hostingItems.push({ line: r.line, typed: l.hostingDomain ?? (hostingItems.length === 0 ? domain : undefined), yearly: r.yearly });
       }
-      if (r.kind === "domain" || r.kind === "mailbox") bundleEligible.push(r.line);
-    }
-    // THE bundle rule, enforced server-side: the domain (and its mailbox) are ₹0
-    // only when a YEARLY hosting line rides along. Otherwise they pay full reg —
-    // the client's ₹0 is never trusted. A bare domain, or a monthly plan, is charged.
-    if (hasYearlyHosting) {
-      for (const line of bundleEligible) {
-        const firstYear = firstYearOf.get(line);
-        // A domain: its first year is free, any further years are paid (R-156). A mailbox: ₹0.
-        line.rate = firstYear === undefined ? 0 : bundledDomainRate(line.rate, firstYear);
-      }
+      if (r.kind === "mailbox") mailboxLines.push(r.line);
     }
     if (unpriced.length) {
       return NextResponse.json(
@@ -555,6 +544,40 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       // The quote's own domain stays the first plan's, so everything that reads it is unchanged.
       cleanDomain = resolved.domains[0];
     }
+
+    /* THE bundle rule, enforced server-side (R-1595, lib/checkout/hosting-bundle.ts): each
+       YEARLY hosting line brings ONE domain's first year free — the one it is set up on when
+       that is in the cart, else the first one not yet free — and ONE mailbox free. Everything
+       else is charged in full; the client's ₹0 is never trusted. Until R-1595 every domain and
+       every mailbox went ₹0 once any yearly plan was in the cart. */
+    const bundle = bundleAllowance(
+      hostingItems.map((h) => ({ yearly: h.yearly, domain: h.line.hostingDomain ?? null })),
+      domainLineSet.map((l) => l.domain ?? ""),
+      mailboxLines.reduce((n, l) => n + l.qty, 0),
+    );
+    const freeDomainNames: string[] = [];
+    domainLineSet.forEach((line, i) => {
+      const firstYear = firstYearOf.get(line);
+      if (!bundle.freeDomains.has(i) || firstYear === undefined) return;
+      // Its first year is free, any further years are paid (R-156).
+      line.rate = bundledDomainRate(line.rate, firstYear);
+      if (line.domain) freeDomainNames.push(line.domain);
+    });
+    let freeBoxesLeft = bundle.freeMailboxes;
+    for (const line of mailboxLines) {
+      if (freeBoxesLeft <= 0) break;
+      const free = Math.min(freeBoxesLeft, line.qty);
+      freeBoxesLeft -= free;
+      if (free === line.qty) { line.rate = 0; continue; }
+      // Part of the line is free: split it, so the bill shows the free one and the paid ones.
+      line.qty -= free;
+      items.splice(items.indexOf(line), 0, { ...line, id: newId(), name: `${line.name} (free with yearly hosting)`, qty: free, rate: 0 });
+    }
+    const bundleParts = [
+      freeDomainNames.length ? `${freeDomainNames.join(", ")} free` : null,
+      bundle.freeMailboxes ? `${bundle.freeMailboxes} mailbox${bundle.freeMailboxes === 1 ? "" : "es"} free` : null,
+    ].filter(Boolean);
+    const bundleNote = bundleParts.length ? `Bundle (yearly hosting): ${bundleParts.join("; ")}` : null;
 
     /* Coupon, exactly as the cart page shows it (cartTotals in site/lib/money):
        percent off the gross, before GST. Until 24 Sep 2026 the cart page applied
@@ -644,6 +667,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
           : `Hosting domain: ${cleanDomain}`
         : null,
       domainNames.length ? `Domains to register: ${domainNames.join(", ")}` : null,
+      bundleNote,
       gstin ? `GSTIN: ${gstin}` : null,
       ...items.map((i) => `  • ${i.name} × ${i.qty} @ ₹${i.rate}`),
     ].filter(Boolean).join("\n");
