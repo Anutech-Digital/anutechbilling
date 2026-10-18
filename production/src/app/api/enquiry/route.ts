@@ -43,6 +43,8 @@ import { gwTierFor } from "@/site/lib/quote-mapping";
 import { deliverToApp, pageField } from "@/site/lib/app-forward";
 import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route";
 import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/route";
+import { siteVisitorLimit, waitPhrase } from "@/lib/security/rate-limit";
+import { redactContacts } from "@/lib/security/redact-contact";
 
 /** The app's two public enquiry endpoints — handled by this deployment (R-1598). */
 const ENQUIRY_API = "/api/public/enquiry/general";
@@ -69,6 +71,19 @@ interface EnquiryBody {
 
 const PRODUCTS = new Set(["google-workspace", "microsoft-365", "zoho", "other"]);
 
+/** R-1549 / §24: the bot check refused it — say nothing was saved, and how to get past it. */
+function botCheckFailed() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error:
+        "We could not confirm this request came from a person, so nothing was saved. " +
+        "Reload the page and press the button again — if it keeps happening, message us on WhatsApp.",
+    },
+    { status: 403 },
+  );
+}
+
 /** An id the app returned, trimmed; null when it sent none. */
 function idOrNull(v: unknown): string | null {
   return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
@@ -91,6 +106,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { ok: false, error: "Name, company, a valid email and a 10-digit phone are required." },
       { status: 400 },
+    );
+  }
+
+  /* R-1549: this visitor's own count — per IP, and per email — never one bucket for everyone.
+     The middleware does not count this path, and the handler below runs in-process. */
+  const limit = await siteVisitorLimit("enquiry", req.headers, email);
+  if (!limit.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          `Too many requests were sent from your connection or email in a short time, so this one was not sent — nothing was saved. ` +
+          `Please wait ${waitPhrase(limit.retryAfterSec)} and press the button again, or message us on WhatsApp.`,
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } },
     );
   }
 
@@ -139,9 +169,9 @@ export async function POST(req: NextRequest) {
         message,
         ...(trial ? { trial: true } : {}),
       });
-      if (res.status === 403) return NextResponse.json({ ok: false, error: "We could not verify this request. Please try again." }, { status: 403 });
+      if (res.status === 403) return botCheckFailed();
       if (!res.ok) {
-        console.error("[enquiry] workspace handler refused:", res.status, await res.text().catch(() => ""));
+        console.error("[enquiry] workspace handler refused:", res.status, redactContacts(await res.text().catch(() => "")));
         return fail();
       }
       const data = (await res.json()) as { success?: boolean; leadId?: string | null; draftQuoteId?: string | null; autoSent?: boolean; ackSent?: boolean };
@@ -159,9 +189,9 @@ export async function POST(req: NextRequest) {
     if (trial) payload.trial = true;
 
     const res = await post(ENQUIRY_API, generalEnquiry, payload);
-    if (res.status === 403) return NextResponse.json({ ok: false, error: "We could not verify this request. Please try again." }, { status: 403 });
+    if (res.status === 403) return botCheckFailed();
     if (!res.ok) {
-      console.error("[enquiry] general handler refused:", res.status, await res.text().catch(() => ""));
+      console.error("[enquiry] general handler refused:", res.status, redactContacts(await res.text().catch(() => "")));
       return fail();
     }
     const general = (await res.json().catch(() => ({}))) as { leadId?: string | null; ackSent?: boolean };

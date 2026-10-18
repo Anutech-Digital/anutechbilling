@@ -149,6 +149,14 @@ export function AgentChat() {
           leadAlreadyCaptured: leadCaptured,
         }),
       });
+      /* R-1549: too many messages from this visitor — the server says how long to wait; show that,
+         not the generic "couldn't answer". */
+      if (res.status === 429) {
+        const limited = (await res.json().catch(() => ({}))) as { reply?: string };
+        setFailed(true);
+        setMsgs((cur) => [...cur, { role: "assistant", text: limited.reply || "You have sent too many messages in a short time. Please wait a few minutes and send it again — or use the Get a quote page." }]);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = (await res.json()) as { reply?: string; suggestQuote?: Msg["suggestQuote"]; leadCreated?: { quoteId: string | null } | null };
       if (!data.reply) throw new Error("empty");

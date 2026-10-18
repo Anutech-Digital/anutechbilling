@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { turnstileRefusal } from "./turnstile-guard";
+import { turnstileRefusal, turnstileRefusalFor, markTrustedInternalCall, isTrustedInternalCall } from "./turnstile-guard";
 
 const ENV = process.env.TURNSTILE_SECRET_KEY;
 afterEach(() => { if (ENV === undefined) delete process.env.TURNSTILE_SECRET_KEY; else process.env.TURNSTILE_SECRET_KEY = ENV; });
@@ -23,9 +23,23 @@ describe("R-020 — bot check on public forms", () => {
   it("enquiry (general + workspace) and signup call the guard before reading the form", () => {
     for (const p of ["app/api/public/enquiry/general/route.ts", "app/api/public/enquiry/workspace/route.ts", "app/api/auth/signup/route.ts"]) {
       const s = src(p);
-      expect(s, p).toMatch(/turnstileRefusal\(request\.headers, body\)/);
-      expect(s.indexOf("turnstileRefusal(request"), p).toBeLessThan(s.indexOf(p.includes("signup") ? "const { password" : "enquirySchema.safeParse(body)"));
+      /* R-1549: the enquiry handlers use turnstileRefusalFor(request, body) — same check, plus the
+         chat's own in-process lead call (marked by the server, never from the network). */
+      expect(s, p).toMatch(/turnstileRefusal(?:For\(request, body\)|\(request\.headers, body\))/);
+      expect(s.indexOf("turnstileRefusal"), p).toBeGreaterThan(-1);
+      expect(s.search(/turnstileRefusal(For)?\(request/), p).toBeLessThan(s.indexOf(p.includes("signup") ? "const { password" : "enquirySchema.safeParse(body)"));
     }
+  });
+
+  it("R-1549: only a request object the server marked is let past — a forged header is not", async () => {
+    process.env.TURNSTILE_SECRET_KEY = "0x_aitest_secret";
+    const forged = new Request("https://x.example.invalid/api/public/enquiry/general", {
+      method: "POST", headers: { "x-internal-call": "1", "x-trusted": "true" },
+    });
+    expect((await turnstileRefusalFor(forged, {}))?.status).toBe(403);
+    const ours = markTrustedInternalCall(new Request("https://x.example.invalid/api/public/enquiry/general", { method: "POST" }));
+    expect(isTrustedInternalCall(ours)).toBe(true);
+    expect(await turnstileRefusalFor(ours, {})).toBeNull();
   });
 
   it("every form that posts to them sends the widget token", () => {

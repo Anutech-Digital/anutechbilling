@@ -44,6 +44,7 @@ import { recordEmail } from "./log";
 import { isUndeliverableAddress } from "./reserved-address";
 import { resolveAutonomy, type AiAction } from "@/lib/ai/autonomy";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 export interface EmailMessage {
   /** Single recipient for now. Cc / Bcc come when needed. */
@@ -349,7 +350,7 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
       replyTo: msg.replyTo,
       attachments: msg.attachments,
     }, smtp);
-    console.info(`[email/send] smtp ${r.ok ? "sent" : "FAILED"} to ${msg.to} in ${Date.now() - t0} ms (${msg.kind ?? "no kind"})`);
+    console.info(`[email/send] smtp ${r.ok ? "sent" : "FAILED"} to ${maskContactValue(msg.to)} in ${Date.now() - t0} ms (${msg.kind ?? "no kind"})`);
     return r.ok
       ? { status: "sent", providerId: r.messageId, errorMessage: null, provider: "smtp" }
       : { status: "failed", providerId: null, errorMessage: `SMTP: ${r.detail}`, provider: "smtp" };
@@ -365,7 +366,7 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
       // eslint-disable-next-line no-console
       console.warn(
         `[email/send] STUB MODE — RESEND_API_KEY not set. Would have sent:\n` +
-        `  to:      ${msg.to}\n` +
+        `  to:      ${maskContactValue(msg.to)}\n` +
         `  subject: ${msg.subject}\n` +
         `  attachments: ${msg.attachments?.map((a) => a.filename).join(", ") ?? "(none)"}`
       );

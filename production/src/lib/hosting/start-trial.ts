@@ -24,6 +24,7 @@ import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { makeTrialToken } from "@/lib/hosting/trial-token";
 import { TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { checkTrialHistory, recordTrialInDms } from "@/lib/dms-engine/trials";
+import { maskContactValue, redactContacts } from "@/lib/security/redact-contact";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const BUY_PAGE_TENANT_ID =
@@ -362,7 +363,7 @@ ${signOff}`;
   }).catch((e: unknown) => ({ status: "failed" as const, errorMessage: (e as Error).message }));
   const confirmationSent = confirmation.status === "sent";
   if (!confirmationSent) {
-    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${email}: ${confirmation.errorMessage ?? confirmation.status}`);
+    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${maskContactValue(email)}: ${redactContacts(confirmation.errorMessage ?? confirmation.status)}`);
   }
 
   /* No owner email for a trial (owner, 30 Sep 2026: "remove this feature completely — that

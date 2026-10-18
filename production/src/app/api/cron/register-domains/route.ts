@@ -52,6 +52,7 @@ import {
   registrantFor,
   registrationCommandId,
 } from "@/lib/provisioning/domain-registration";
+import { maskContactValue, redactContacts } from "@/lib/security/redact-contact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -111,7 +112,7 @@ async function tellCustomer(tenantId: string, to: string, firstName: string, dom
     automated: { tenantId, action: "domain.registered.send" },
   }).catch((e: unknown) => ({ status: "failed" as const, errorMessage: e instanceof Error ? e.message : String(e) }));
   if (res && (res as { status?: string }).status === "failed") {
-    console.error(`[register-domains] ${domain} registered, but the customer email to ${to} failed: ${(res as { errorMessage?: string }).errorMessage ?? "unknown error"}`);
+    console.error(`[register-domains] ${domain} registered, but the customer email to ${maskContactValue(to)} failed: ${redactContacts((res as { errorMessage?: string }).errorMessage ?? "unknown error")}`);
   }
 }
 

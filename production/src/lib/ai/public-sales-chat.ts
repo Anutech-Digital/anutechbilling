@@ -300,6 +300,25 @@ export function honestNoDeliveryReply(visitorText = ""): string {
   );
 }
 
+/**
+ * R-1549 (19 Oct 2026): the visitor gave their details but the lead could NOT be saved (the
+ * enquiry handler refused it, it timed out, or this email sent too many in a short time). The
+ * model's reply ("our team will contact you") would be a lie, so it is replaced with what
+ * happened and what to do — in the visitor's language, like honestNoDeliveryReply.
+ */
+export function leadNotSavedReply(visitorText = ""): string {
+  if (prefersHinglish(visitorText)) {
+    return (
+      "Maaf kijiye — main abhi aapki details save nahi kar paaya, isliye hamari team ko ye abhi nahi mili hain. " +
+      "Kuch minute baad dobara likhiye, ya Get a quote page se bhejiye, ya WhatsApp par message kariye."
+    );
+  }
+  return (
+    "Sorry — I could not save your details just now, so our team has not received them yet. " +
+    "Please try again in a few minutes, use the Get a quote page, or message us on WhatsApp."
+  );
+}
+
 export function guardReply(raw: unknown, allowedFigures: readonly number[]): PublicChatReply {
   if (!raw || typeof raw !== "object") return fallbackReply();
   const reply = (raw as Record<string, unknown>).reply;

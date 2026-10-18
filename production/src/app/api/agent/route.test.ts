@@ -10,6 +10,7 @@ const chat = vi.fn();
 vi.mock("@/app/api/public/agent/chat/route", () => ({ POST: (r: NextRequest) => chat(r) }));
 
 import { POST } from "./route";
+import { resetRateLimiter } from "@/lib/security/rate-limit";
 
 const fetchMock = vi.fn();
 beforeEach(() => {
@@ -57,5 +58,19 @@ describe("/api/agent — R-1598: the chat stays on this deployment", () => {
   it("a malformed body is 400", async () => {
     const bad = new NextRequest(`${STAGING}/api/agent`, { method: "POST", body: "{" });
     expect((await POST(bad)).status).toBe(400);
+  });
+});
+
+describe("/api/agent — R-1549: the chat limit is per visitor, never one shared bucket", () => {
+  beforeEach(() => resetRateLimiter());
+
+  it("one IP sending too fast gets a stated reply — another IP still chats", async () => {
+    chat.mockImplementation(async () => ok({ reply: "Hello" }));
+    for (let i = 0; i < 30; i++) expect((await POST(req(convo, STAGING, { "x-forwarded-for": "203.0.113.7" }))).status).toBe(200);
+    const blocked = await POST(req(convo, STAGING, { "x-forwarded-for": "203.0.113.7" }));
+    expect(blocked.status).toBe(429);
+    expect((await blocked.json()).reply).toMatch(/too many messages.*wait about \d+ minute/i);
+    expect((await POST(req(convo, STAGING, { "x-forwarded-for": "198.51.100.4" }))).status).toBe(200);
+    expect(chat).toHaveBeenCalledTimes(31);
   });
 });

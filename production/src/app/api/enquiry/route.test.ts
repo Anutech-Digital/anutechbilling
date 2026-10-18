@@ -16,9 +16,11 @@ vi.mock("@/app/api/public/enquiry/general/route", () => ({ POST: (r: NextRequest
 vi.mock("@/app/api/public/enquiry/workspace/route", () => ({ POST: (r: NextRequest) => workspace(r) }));
 
 import { POST } from "./route";
+import { resetRateLimiter } from "@/lib/security/rate-limit";
 
 const fetchMock = vi.fn();
 beforeEach(() => {
+  resetRateLimiter();
   general.mockReset(); workspace.mockReset(); fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("RESELLEROS_FORWARD_URL", "");
@@ -175,5 +177,40 @@ describe("/api/enquiry — R-1598: stays on this deployment, keeps the ad source
     expect(general).not.toHaveBeenCalled();
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://app.other.example.invalid/api/public/enquiry/general");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ pageUrl: "https://x.example.invalid/quote?gclid=z" });
+  });
+});
+
+describe("/api/enquiry — R-1549: every visitor has their own limit, never one shared bucket", () => {
+  const from = (ip: string, b: Record<string, unknown> = body) =>
+    req(b, "https://site.example.invalid", { "x-forwarded-for": ip });
+  const asOther = (i: number) => ({ ...body, email: `visitor${i}@example.invalid` });
+
+  it("one IP sending too many is stopped with a message that says what to do — another IP is not", async () => {
+    answer(200, { success: true, leadId: "L-1", ackSent: true });
+    for (let i = 0; i < 10; i++) expect((await POST(from("203.0.113.7", asOther(i)))).status).toBe(200);
+    const blocked = await POST(from("203.0.113.7", asOther(99)));
+    expect(blocked.status).toBe(429);
+    const json = await blocked.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toMatch(/nothing was saved/i);
+    expect(json.error).toMatch(/wait about \d+ minute/i);
+    expect(blocked.headers.get("retry-after")).toMatch(/^\d+$/);
+    // A different visitor is untouched by the first one's count.
+    expect((await POST(from("198.51.100.4", asOther(100)))).status).toBe(200);
+    expect(general).toHaveBeenCalledTimes(11);
+  });
+
+  it("the same email from many IPs is limited per email too", async () => {
+    answer(200, { success: true, leadId: "L-1", ackSent: true });
+    for (let i = 0; i < 5; i++) expect((await POST(from(`192.0.2.${i + 1}`))).status).toBe(200);
+    expect((await POST(from("192.0.2.50"))).status).toBe(429);
+    expect((await POST(from("192.0.2.51", { ...body, email: "someone-else@example.invalid" }))).status).toBe(200);
+  });
+
+  it("a failed bot check says nothing was saved and how to retry", async () => {
+    answer(403, { error: "We could not verify this request." });
+    const res = await POST(from("203.0.113.9"));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/nothing was saved.*reload the page/i);
   });
 });

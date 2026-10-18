@@ -15,6 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { deliverToApp } from "@/site/lib/app-forward";
 import { POST as publicAgentChat } from "@/app/api/public/agent/chat/route";
+import { siteVisitorLimit, waitPhrase } from "@/lib/security/rate-limit";
 
 const AGENT_API = "/api/public/agent/chat";
 
@@ -24,6 +25,24 @@ export async function POST(req: NextRequest) {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "malformed" }, { status: 400 });
+  }
+
+  /* R-1549: this visitor's own count (per IP) — the middleware does not count /api/agent and the
+     handler below runs in-process, so without this there was no limit, and before R-1598 every
+     visitor shared the server's one bucket. Every message here is a paid model call. */
+  const limit = await siteVisitorLimit("agent", req.headers);
+  if (!limit.ok) {
+    const wait = waitPhrase(limit.retryAfterSec);
+    return NextResponse.json(
+      {
+        error: "rate_limited",
+        retryAfterSec: limit.retryAfterSec,
+        reply:
+          `You have sent too many messages in a short time, so I could not answer this one. ` +
+          `Please wait ${wait} and send it again — or use the Get a quote page, or message us on WhatsApp.`,
+      },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfterSec) } },
+    );
   }
 
   try {

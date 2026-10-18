@@ -18,7 +18,7 @@
  *   surface. (Same model as the workspace enquiry route.)
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { turnstileRefusal } from "@/lib/security/turnstile-guard";
+import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
@@ -62,8 +62,9 @@ const enquirySchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set. */
-    const botRefusal = await turnstileRefusal(request.headers, body);
+    /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set.
+       R-1549: the website chat's own lead call (marked in-process, never from the network) passes. */
+    const botRefusal = await turnstileRefusalFor(request, body);
     if (botRefusal) return botRefusal;
     const parsed = enquirySchema.safeParse(body);
 
