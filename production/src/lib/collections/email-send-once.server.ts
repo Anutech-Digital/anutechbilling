@@ -19,6 +19,11 @@ import { RouteError } from "@/lib/api/with-route";
 
 type Db = ReturnType<typeof createClient>;
 
+/** customer_email_sends.status values (an email-delivery status, not a quote's). */
+const SENDING = "sending";
+const SENT = "sent";
+const FAILED = "failed";
+
 export type CustomerEmailKind = "payment_reminder" | "pending_dues_statement";
 
 export type EmailSendClaim =
@@ -47,7 +52,7 @@ export async function claimEmailSend(
 ): Promise<EmailSendClaim> {
   const { data, error } = await supabase
     .from("customer_email_sends")
-    .insert({ tenant_id: opts.tenantId, request_id: opts.requestId, customer_id: opts.customerId, kind: opts.kind, status: "sending" })
+    .insert({ tenant_id: opts.tenantId, request_id: opts.requestId, customer_id: opts.customerId, kind: opts.kind, status: SENDING })
     .select("id")
     .single();
   if (!error && data) return { go: true, claimId: (data as { id: string }).id };
@@ -65,32 +70,36 @@ export async function claimEmailSend(
   if (row.customer_id !== opts.customerId || row.kind !== opts.kind) {
     throw new RouteError(409, "This Send was already used for another email — close the dialog, open it again and send.");
   }
-  if (row.status === "sent") return { go: false, sentTo: row.sent_to, followupId: row.followup_id };
-  if (row.status === "failed") {
+  if (row.status === SENT) return { go: false, sentTo: row.sent_to, followupId: row.followup_id };
+  if (row.status === FAILED) {
     const { data: reclaimed, error: upErr } = await supabase
       .from("customer_email_sends")
-      .update({ status: "sending", updated_at: new Date().toISOString() })
+      .update({ status: SENDING, updated_at: new Date().toISOString() })
       .eq("id", row.id)
-      .eq("status", "failed")
+      .eq("status", FAILED)
       .select("id");
     if (!upErr && Array.isArray(reclaimed) && reclaimed.length === 1) return { go: true, claimId: row.id };
   }
   throw new RouteError(409, STILL_SENDING);
 }
 
-/** Record what happened. Never throws: a lost write leaves 'sending', which is never re-sent. */
+/**
+ * Record what happened ("delivered" → status sent, with where it went and the follow-up id;
+ * "failed" → may be sent again). Never throws: a lost write leaves 'sending', never re-sent.
+ */
 export async function settleEmailSend(
   supabase: Db,
   claimId: string,
-  outcome: { status: "sent"; sentTo: string; followupId?: string | null } | { status: "failed" },
+  outcome: { delivered: true; sentTo: string; followupId: string | null } | { delivered: false },
 ): Promise<void> {
-  const patch = outcome.status === "sent"
-    ? { status: "sent", sent_to: outcome.sentTo, followup_id: outcome.followupId ?? null, updated_at: new Date().toISOString() }
-    : { status: "failed", updated_at: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const patch = outcome.delivered
+    ? { status: SENT, sent_to: outcome.sentTo, followup_id: outcome.followupId, updated_at: now }
+    : { status: FAILED, updated_at: now };
   try {
     const { error } = await supabase.from("customer_email_sends").update(patch).eq("id", claimId);
-    if (error) console.error(`[email-send-once] could not record ${outcome.status} for ${claimId}:`, error.message);
+    if (error) console.error(`[email-send-once] could not record ${patch.status} for ${claimId}:`, error.message);
   } catch (e) {
-    console.error(`[email-send-once] could not record ${outcome.status} for ${claimId}:`, e);
+    console.error(`[email-send-once] could not record ${patch.status} for ${claimId}:`, e);
   }
 }

@@ -92,7 +92,7 @@ export const POST = withRoute(
       route: { tenantId },
       kind: "pending_dues_statement",
     });
-    if (sent.status !== "sent") await settleEmailSend(supabase, claim.claimId, { status: "failed" });
+    if (sent.status !== "sent") await settleEmailSend(supabase, claim.claimId, { delivered: false });
     if (sent.status === "failed") {
       throw new RouteError(502, `${sent.errorMessage ?? "The email could not be sent."} Nothing was sent and nothing was logged — fix that and press Send again, or use WhatsApp.`);
     }
@@ -102,10 +102,10 @@ export const POST = withRoute(
 
     try {
       const row = await logFollowup(supabase, { input: followup, userId: user.id, tenantId, role });
-      await settleEmailSend(supabase, claim.claimId, { status: "sent", sentTo: target.to, followupId: row.id });
+      await settleEmailSend(supabase, claim.claimId, { delivered: true, sentTo: target.to, followupId: row.id });
       return { sentTo: target.to, total: out.statement.total, followupId: row.id, logged: true };
     } catch (e) {
-      await settleEmailSend(supabase, claim.claimId, { status: "sent", sentTo: target.to, followupId: null });
+      await settleEmailSend(supabase, claim.claimId, { delivered: true, sentTo: target.to, followupId: null });
       if (!(e instanceof RouteError)) console.error("[api/customers/pending-dues/email] email sent, follow-up log failed:", e);
       const why = e instanceof RouteError ? e.publicMessage : "the follow-up could not be saved";
       return {
