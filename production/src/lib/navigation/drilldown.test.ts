@@ -115,6 +115,7 @@ describe("no dead drill-downs", () => {
       "app/(app)/dashboard/page.tsx",
       "components/features/deals/deals-strip.tsx",
       "components/features/dashboard/company-section.tsx",
+      "lib/hooks/nav-badge-views.ts",   // R-1541: the sidebar badges open these views
     ].map(read).join("\n");
     for (const name of Object.keys(DRILL) as DrillName[]) {
       expect(files, name).toContain(`drillHref("${name}")`);

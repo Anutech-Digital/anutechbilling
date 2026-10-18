@@ -34,7 +34,8 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
-import { rupee, formatDate, daysBetween } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
+import { daysUntilRenewal, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -620,19 +621,21 @@ export default function RenewalsPage() {
   }
 
   // Enrich with days-until-renewal (skip cancelled / no-date)
+  /* R-1541: the bucket rules live in lib/renewals/buckets.ts — the sidebar's Renewals badge
+     (nav_badges) counts the Urgent bucket with the same numbers and opens it. */
   const enriched = all
-    .filter((s) => s.renewal_date !== null && s.status !== "cancelled")
+    .filter(onRenewalsPage)
     .map((s) => ({
       sub: withRenewalQuote(s, openRenewalMap),
-      daysUntil: daysBetween(today, s.renewal_date!),
+      daysUntil: daysUntilRenewal(s.renewal_date!, today),
     }));
 
   // Urgency buckets. Urgent INCLUDES already-lapsed subs (daysUntil < 0, in grace
   // before auto-suspend) — otherwise the very rows about to suspend vanished from
   // every bucket. The row UI already renders the "Expired Nd ago" state.
-  const urgent   = enriched.filter((r) => r.daysUntil <= 7);
-  const upcoming = enriched.filter((r) => r.daysUntil > 7  && r.daysUntil <= 30);
-  const future   = enriched.filter((r) => r.daysUntil > 30 && r.daysUntil <= 90);
+  const urgent   = enriched.filter((r) => renewalBucket(r.daysUntil) === "urgent");
+  const upcoming = enriched.filter((r) => renewalBucket(r.daysUntil) === "upcoming");
+  const future   = enriched.filter((r) => renewalBucket(r.daysUntil) === "future");
 
   // KPI aggregates
   const urgentMrr   = urgent.reduce((s, r)   => s + r.sub.mrr, 0);

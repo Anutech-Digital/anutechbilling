@@ -54,6 +54,7 @@ import {
 } from "@/app/(app)/subscriptions/palette-links";
 import { paymentMethodLabel } from "@/app/(app)/payments/method-label";
 import { COPY } from "@/lib/copy";
+import { paletteGroupsFor, paletteMayOpen } from "./palette-access";
 
 // ============================================================
 // Hook to manage open state + register ⌘K shortcut
@@ -143,6 +144,9 @@ export function CommandPalette({
     /* flattenNav: accordion children and directory rows (S30) are pages too — P&L now
        lives in the Reports directory, and must still come up when you type "P&L". */
     return flattenNav(nav)
+      /* R-1543: and the URL rule itself (fails closed while the role loads) — a menu row the
+         guard would bounce is not offered. */
+      .filter(({ item }) => item.external || paletteMayOpen(me?.role, item.href))
       .filter(({ item }) => !seen.has(item.href) && seen.add(item.href))
       .map(({ item, section }) => ({ ...item, section: appLabelForHref(apps, item.href) ?? section.section }));
   }, [me?.role, me?.canViewDeals]);
@@ -192,20 +196,31 @@ export function CommandPalette({
   const pick = <T,>(rows: T[] | undefined | null, fields: (r: T) => (string | number | null | undefined)[]): T[] =>
     !rows ? [] : searching ? rows.filter((r) => matchesAllTerms(fields(r), query)) : rows.slice(0, PREVIEW_PER_GROUP);
 
-  const fCustomers = pick(customers, (c) => [c.name, c.id, ...customerKeywords(c)]);
-  const fLeads = pick(leads, (l) => [l.company, l.stage, ...leadKeywords({ ...l, email: l.contact_email, phone: l.contact_phone })]);
-  const fContacts = pick(contacts, (c) => [c.name, c.company, c.email, c.phone, ...contactKeywords(c)]);
-  const fQuotes = pick(quotes, (q) => [q.id, q.customer_name, q.status, ...quoteKeywords(q)]);
-  const fInvoices = pick(invoices, (inv) => [inv.id, inv.customer_name, inv.status, ...invoiceKeywords(inv)]);
-  const fSubs = pick(subscriptions, (s) => [s.customer_name, s.plan, s.status, ...subscriptionKeywords(s)]);
-  const fSeats = query.trim().length >= 2 ? activeSubs.filter((s) => matchesAllTerms([s.customer_name, s.plan], query)) : [];
-  const fPayments = pick(payments, (p) => [p.customer_id ? customerNameById.get(p.customer_id) : null, p.reference, p.method, p.amount]);
-  const fPages = searching ? pageItems.filter((i) => matchesAllTerms([i.label, i.section], query)) : pageItems;
-  const count = (shown: unknown[], all: unknown[] | undefined | null) => (searching ? shown.length : (all?.length ?? 0));
-
+  /* R-1543: a result is offered only when this role may open the page it leads to — the same
+     rule as the URL guard (palette-access.ts). Sales picking a company bounced to /leads;
+     billing picking a lead landed on /invoices. A group whose page is closed is not searched. */
+  const role = me?.role;
+  const allowed = paletteGroupsFor(role);
   /* A contact opens the record it came from, not the contacts list. */
   const contactHref = (c: { source: string; refId: string }) =>
     c.source === "lead" ? `/leads?lead=${c.refId}` : c.source === "customer" ? `/customers/${c.refId}` : "/contacts";
+  const openContacts = React.useMemo(
+    () => (contacts ?? []).filter((c) => paletteMayOpen(role, contactHref(c))),
+    // contactHref is a pure function of the row; role is the only other input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contacts, role],
+  );
+
+  const fCustomers = allowed.companies ? pick(customers, (c) => [c.name, c.id, ...customerKeywords(c)]) : [];
+  const fLeads = allowed.leads ? pick(leads, (l) => [l.company, l.stage, ...leadKeywords({ ...l, email: l.contact_email, phone: l.contact_phone })]) : [];
+  const fContacts = pick(openContacts, (c) => [c.name, c.company, c.email, c.phone, ...contactKeywords(c)]);
+  const fQuotes = allowed.quotes ? pick(quotes, (q) => [q.id, q.customer_name, q.status, ...quoteKeywords(q)]) : [];
+  const fInvoices = allowed.invoices ? pick(invoices, (inv) => [inv.id, inv.customer_name, inv.status, ...invoiceKeywords(inv)]) : [];
+  const fSubs = allowed.subscriptions ? pick(subscriptions, (s) => [s.customer_name, s.plan, s.status, ...subscriptionKeywords(s)]) : [];
+  const fSeats = allowed.seats && query.trim().length >= 2 ? activeSubs.filter((s) => matchesAllTerms([s.customer_name, s.plan], query)) : [];
+  const fPayments = allowed.payments ? pick(payments, (p) => [p.customer_id ? customerNameById.get(p.customer_id) : null, p.reference, p.method, p.amount]) : [];
+  const fPages = searching ? pageItems.filter((i) => matchesAllTerms([i.label, i.section], query)) : pageItems;
+  const count = (shown: unknown[], all: unknown[] | undefined | null) => (searching ? shown.length : (all?.length ?? 0));
 
   // Pages — role-filtered + href-deduped (see pageItems). Placed first while searching.
   const pagesGroup = fPages.length > 0 && (
@@ -233,7 +248,10 @@ export function CommandPalette({
     { icon: "send",    label: "Launch new campaign",    meta: "Email or WhatsApp blast",                     href: "/campaigns" },
     { icon: "mail",    label: "Send renewal reminders", meta: "Go to Renewals",                              href: "/renewals" },
   ];
-  const fActions = searching ? quickActions.filter((a) => matchesAllTerms([a.label, a.meta], query)) : quickActions;
+  /* R-1543: an action whose page this role cannot open is not offered (sales has no
+     /customers/new, billing no /quotes/new). */
+  const roleActions = quickActions.filter((a) => paletteMayOpen(role, a.href));
+  const fActions = searching ? roleActions.filter((a) => matchesAllTerms([a.label, a.meta], query)) : roleActions;
 
   // Which subscription the seats dialog is open for, if any.
   const [addSeatsSub, setAddSeatsSub] = React.useState<Subscription | null>(null);
@@ -340,7 +358,7 @@ export function CommandPalette({
 
               {/* Contacts — unified across leads/customers/imported */}
               {fContacts.length > 0 && (
-                <Command.Group heading={`Contacts · ${count(fContacts, contacts)}`}>
+                <Command.Group heading={`Contacts · ${count(fContacts, openContacts)}`}>
                   {fContacts.map((c) => (
                     <PaletteItem
                       key={c.id}

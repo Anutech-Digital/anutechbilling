@@ -26,7 +26,8 @@ export interface KpiInvoice extends OverdueInvoice {
 }
 
 /** Statuses that are a real, issued claim on the customer. Void and draft are not. */
-const OWED = new Set(["pending", "overdue"]);
+export const INVOICE_OWED_STATUSES = ["pending", "overdue"] as const;
+const OWED = new Set<string>(INVOICE_OWED_STATUSES);
 
 /** What the customer still owes on one invoice: net of advances adjusted at issue
  *  (`net_payable`) and of receipts against it since (`paid_amount`), never below 0. */

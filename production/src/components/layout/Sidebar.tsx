@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { usePathname } from "next/navigation";
 
 import { Icon } from "@/components/ui/icon";
@@ -28,6 +29,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { useNavBadges } from "@/lib/hooks/useNavBadges";
+import { shownBadge } from "@/lib/hooks/nav-badge-views";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
@@ -84,8 +86,12 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   // Reusable link (plain item + accordion children).
   const renderLink = (it: NavItem, child = false) => {
     const isActive = pathname === it.href;
-    const b = it.badge ?? navBadges[it.id as keyof typeof navBadges];
-    return (
+    /* R-1541: a live count is its own link — to the filtered view whose rows it counts
+       (lib/hooks/nav-badge-views.ts) — with what it means on hover. The row still opens the
+       page. A count whose view this role cannot open is not drawn. */
+    const live = it.badge ? null : shownBadge(it.id, navBadges[it.id as keyof typeof navBadges], role);
+    const b = it.badge ?? live?.text;
+    const row = (
       <Link
         key={it.id}
         href={it.href as any}
@@ -114,12 +120,34 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             the very surface the measurement stopped at. */}
         {b && (collapsed ? (
           <span className="absolute top-1 right-2 w-1.5 h-1.5 rounded-full bg-amber" />
+        ) : live ? (
+          /* Room for the badge link drawn over this row's right edge (below). */
+          <span aria-hidden className="flex-shrink-0 text-3xs px-1.5 py-0.5 tabular-nums invisible">{b}</span>
         ) : (
           <span className={cn("text-3xs px-1.5 py-0.5 rounded-full tabular-nums flex-shrink-0", isActive ? "bg-amber/15 text-amber-ink" : "bg-paper-2 text-ink-3")}>
             {b}
           </span>
         ))}
       </Link>
+    );
+    if (!live || collapsed) return row;
+    return (
+      <div key={it.id} className="relative">
+        {row}
+        <Link
+          href={live.href as Route}
+          onClick={onNavigate}
+          title={live.title}
+          aria-label={live.title}
+          className={cn(
+            "absolute right-3 top-1/2 -translate-y-1/2 text-3xs px-1.5 py-0.5 rounded-full tabular-nums",
+            "hover:ring-1 hover:ring-amber/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
+            isActive ? "bg-amber/15 text-amber-ink" : "bg-paper-2 text-ink-3",
+          )}
+        >
+          {live.text}
+        </Link>
+      </div>
     );
   };
 
