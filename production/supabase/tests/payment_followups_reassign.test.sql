@@ -103,9 +103,14 @@ begin
   -- ── 6a. owner hands it to sales #2 (insert) — allowed ────────────────────
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner, 'role', 'authenticated')::text, true);
   -- created_at one minute later, so this hand-over is the LATEST follow-up (now() is per
-  -- transaction, so every other row in this test shares one created_at).
-  insert into public.payment_followups (tenant_id, customer_id, kind, note, assigned_to, created_at)
-  values (v_a, v_cust, 'call', 'owner hands to sales 2', v_sales2, now() + interval '1 minute');
+  -- transaction, so every other row in this test shares one created_at). R-1559: a login can
+  -- no longer write created_at, so the test moves it as the fixture owner (postgres).
+  insert into public.payment_followups (tenant_id, customer_id, kind, note, assigned_to)
+  values (v_a, v_cust, 'call', 'owner hands to sales 2', v_sales2);
+  reset role;
+  update public.payment_followups set created_at = now() + interval '1 minute'
+   where tenant_id = v_a and note = 'owner hands to sales 2';
+  set local role authenticated;
   -- 6b. owner reassigns an existing row on update — allowed
   update public.payment_followups set assigned_to = v_manager where id = v_row;
   get diagnostics v_n = row_count;
