@@ -71,6 +71,8 @@ export const PUSH_GUARD_SUITES = [
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
+  // ── repo-wide file scans ──
+  "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
 ];
 
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. */

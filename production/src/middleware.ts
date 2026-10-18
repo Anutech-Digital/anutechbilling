@@ -104,7 +104,6 @@ const PROTECTED_PREFIXES = [
      OFF_MENU_ROLES says who opens them; nav-route-guard.test.ts checks every (app) page is here. */
   "/platform",
   "/products",
-  "/vendor-portal",
   "/aa/",
   /* Onboarding fork for a signed-in person who has no workspace yet. It is
      PROTECTED (you must be authenticated to see it) but deliberately NOT in

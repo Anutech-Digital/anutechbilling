@@ -105,6 +105,8 @@ email; `created_at` verbatim. DSP's `uq_rating(ref_type, ref_id)` maps 1:1 onto 
 1. **EXTRACT** — on the DSP VM, read-only, one command per table (Pardeep paste):
    `mysql -N -B dsp -e "select json_object(…) from tickets"` → 6 files of
    line-per-row JSON, plus a counts row per table. No dumps of tables that don't move.
+   (The ready script `scripts/dsp-migration/extract.sh` was removed with the parked work on
+   19 Oct 2026, R-1605 — restore it from git history if this migration is ever revived.)
 2. **TRANSFORM** — `scripts/dsp-migration/transform.mjs` (execution phase): reads the
    JSON, applies §2–§3, emits ONE `load.sql` — `begin; …inserts…; commit;` with the
    namespace guard at the top and per-table counts `select`ed at the bottom.

@@ -7,7 +7,7 @@ chala kar dekhna, jo toota ya ajeeb lage use board par likhna, aur fix ke baad d
 
 | jagah | URL | kab |
 |---|---|---|
-| **Online test environment** | https://reselleros-test-1027476185726.asia-south1.run.app | roz ka testing yahin. Iska data apna hai, asli customers ka nahi. |
+| **Staging (online test)** | https://resellersos-staging-njvk4nxhdq-as.a.run.app | roz ka testing yahin. Har shaam 5 baje naya kaam yahan aata hai. Iska data apna hai (saaf kiya hua clone), asli customers ka nahi. Purana `reselleros-test` app 19 Oct 2026 (R-1604) se band hai — `docs/qa/runs/2026-09-28*` me uska URL sirf itihaas hai. |
 | Local (apne laptop par) | `npm run dev:local` → http://localhost:3001 | sirf agar local Supabase set hai |
 | **Production** | — | **Kabhi nahi.** Asli customers, asli invoice, asli paise. Wahan kuch banaya/badla to wo asli ho jaata hai. |
 

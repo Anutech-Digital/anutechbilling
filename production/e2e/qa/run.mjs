@@ -2,7 +2,7 @@
 /**
  * QA run — one command for Hitesh (and his scheduled routine):
  *
- *   node e2e/qa/run.mjs                 # all QA checks against the online TEST environment
+ *   node e2e/qa/run.mjs                 # all QA checks against STAGING (resellersos-staging)
  *   node e2e/qa/run.mjs --grep buy      # only matching tests (retest one area)
  *   QA_BASE_URL=http://localhost:3001 node e2e/qa/run.mjs   # local instead
  *   node e2e/qa/run.mjs --report-only   # rebuild the report from the last run, no browser
@@ -13,7 +13,7 @@
  * Each card's owner is worked out from the failing URL via OWNERS.json, so a failure on
  * /buy/... goes to Pawan and one on /accounting/... to Pardeep without anyone deciding.
  *
- * Never points at production: a base URL without "test" or "localhost" is refused.
+ * Never points at production: only a resellersos-staging-… Cloud Run URL or localhost is accepted.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,9 +24,10 @@ import { ownerOf } from "../../scripts/areas.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const prod = join(here, "..", "..");
 const root = join(prod, "..");
-const BASE = process.env.QA_BASE_URL || "https://reselleros-test-1027476185726.asia-south1.run.app";
-if (!/test|localhost|127\.0\.0\.1/.test(BASE)) {
-  console.error(`Refusing to run QA against ${BASE}: only the test environment or localhost.`);
+/* R-1604 (19 Oct 2026): the old "reselleros-test" app is retired; daily testing is on staging. */
+const BASE = process.env.QA_BASE_URL || "https://resellersos-staging-njvk4nxhdq-as.a.run.app";
+if (!/^https:\/\/resellersos-staging-[a-z0-9-]+\.a\.run\.app\/?$|^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(BASE)) {
+  console.error(`Refusing to run QA against ${BASE}: only staging (resellersos-staging) or localhost.`);
   process.exit(2);
 }
 

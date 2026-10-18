@@ -291,8 +291,10 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
  * R-1542 (18 Oct 2026): app pages that sit under NO menu row, and the roles that may open
  * them by URL. Every other page is decided by its menu row (nav-route-guard.test.ts fails
  * when an (app) page is under neither). Kept to what each page did before: the protected
- * ones here bounced every role but owner + manager; /platform, /products, /vendor-portal
- * and /aa were not in middleware's list at all, so nothing gated them.
+ * ones here bounced every role but owner + manager; /platform, /products and /aa were not
+ * in middleware's list at all, so nothing gated them. /vendor-portal was here until R-1545
+ * (19 Oct 2026): its "not built yet" page is gone and next.config.mjs redirects the URL to
+ * /accounting/vendors.
  */
 const OM_ONLY: UserRole[] = ["owner", "manager"];
 export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
@@ -301,7 +303,6 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/attendance/kiosk": OM_ONLY,         // the office tablet runs signed in as the owner
   "/platform": OM_ONLY,                 // founder-only; the API refuses anyone else anyway
   "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
-  "/vendor-portal": OM_ONLY,            // "not built yet" notice, was under Purchase Orders
   /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
   "/aa": ["owner", "manager", "billing", "accountant"],
 };
@@ -437,7 +438,6 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
-  "/vendor-portal": "Not built yet — the page says so",
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",

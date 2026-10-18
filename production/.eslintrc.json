@@ -50,7 +50,6 @@
         "src/app/(app)/my-expenses/**",
         "src/app/(app)/purchases/**",
         "src/app/(app)/purchase-orders/**",
-        "src/app/(app)/vendor-portal/**",
         "src/app/(public)/unsubscribe/**",
         "src/app/(public)/expense-claim/**",
         "src/app/api/marketing/**",
