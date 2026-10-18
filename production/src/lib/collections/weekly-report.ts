@@ -20,6 +20,7 @@
  *   • Gone quiet: customers who owe now and have had no follow-up for 7+ days (or never).
  */
 import { addDaysISO, daysBetweenISO, toIstDate } from "@/lib/dates/ist";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 export const QUIET_DAYS = 7;
 
@@ -40,6 +41,8 @@ export interface ReportFollowup {
 export interface ReportPayment {
   customer_id: string | null;
   amount: number | null;
+  /** R-1565: advance credit applied — not money the customer paid this week. */
+  credit_applied?: number | null;
   received_at: string;
   status: string;
 }
@@ -108,7 +111,8 @@ export function buildWeeklyReport(input: WeeklyReportInput): WeeklyReport {
   const listed = new Set<string>([...input.owing.map((o) => o.customerId), ...input.followups.map((f) => f.customer_id)]);
   const received = input.payments
     .filter((p) => p.status === "received" && p.customer_id && listed.has(p.customer_id))
-    .map((p) => ({ customerId: p.customer_id as string, amount: rupees(p.amount), on: toIstDate(p.received_at) }));
+    .map((p) => ({ customerId: p.customer_id as string, amount: rupees(cashReceived({ amount: rupees(p.amount), credit_applied: p.credit_applied })), on: toIstDate(p.received_at) }))
+    .filter((p) => p.amount > 0);
 
   const thisWeek = received.filter((p) => inWeek(p.on));
 

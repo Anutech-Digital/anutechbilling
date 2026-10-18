@@ -10,6 +10,7 @@ import { gstPaidForPeriods } from "@/lib/accounting/tax-payments";
 import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { splitItc, itcEligibility } from "@/lib/gst/itc";
 import { docGstRate, docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
+import { paymentAdvances, snapshotAdvanceGross } from "@/lib/gst/advance-cash";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
 import { expenseHeadsByState, type Heads } from "@/lib/gst/gstr3b";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -56,7 +57,7 @@ export function useGstReport(range: DateRange) {
          invoice is issued. received_at is a timestamp, so the period is the IST day range. */
       const { data: pays } = await supabase
         .from("payments")
-        .select("id, receipt_voucher_no, amount, received_at, quote_id, customer_id")
+        .select("id, receipt_voucher_no, amount, credit_applied, received_at, quote_id, customer_id")
         .eq("status", "received")
         .gte("received_at", istRangeUtc(range.from, range.to).fromUtc)
         .lt("received_at", istRangeUtc(range.from, range.to).toUtcExclusive);
@@ -200,19 +201,29 @@ export function useGstReport(range: DateRange) {
       /* Advances for 11A (received this period, from payments) and 11B (received earlier,
          adjusted on an invoice dated this period, from the invoice's frozen
          adjusted_advances snapshot). buildAdvances decides which table each lands in. */
-      const advances: Advance[] = [];
-      for (const p of pays ?? []) {
+      /* R-1565: an advance is the CASH that came in (amount − credit_applied). Credit applied to
+         a payment was already an advance on the payment that created it — lib/gst/advance-cash.ts. */
+      const advances: Advance[] = paymentAdvances(pays ?? [], toIstDate, (p) => {
         const q = p.quote_id ? quoteById.get(p.quote_id) : undefined;
         const c = custOf(p.customer_id ?? q?.customerId);
-        advances.push({
-          paymentId: p.id, voucherNo: p.receipt_voucher_no ?? null,
-          receivedDate: toIstDate(p.received_at),
+        return {
           adjustedOn: q?.invoiceId ? invDateById.get(q.invoiceId) ?? null : null,
           /* R-1131: the quote's own rate; a quote with none is flagged, not taxed at 18%. */
-          gross: p.amount ?? 0, rate: q?.rate ?? 0, rateMissing: q?.rate == null,
+          rate: q?.rate ?? 0, rateMissing: q?.rate == null,
           interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin }),
           customerGstin: c?.gstin ?? null, customerStateCode: c?.stateCode ?? null, customerState: c?.state ?? null, customerCountry: c?.country ?? null,
-        });
+        };
+      });
+      /* 11B: the credit part of each adjusted advance (its payment's credit_applied). */
+      const snapPayIds = Array.from(new Set((invoices ?? []).flatMap((i) =>
+        (Array.isArray(i.adjusted_advances) ? i.adjusted_advances : [])
+          .map((a) => a?.payment_id).filter((x): x is string => !!x))));
+      const creditByPayment = new Map<string, number>();
+      if (snapPayIds.length) {
+        const { data: credited, error: credErr } = await supabase
+          .from("payments").select("id, credit_applied").in("id", snapPayIds).gt("credit_applied", 0);
+        if (credErr) throw credErr;
+        for (const p of credited ?? []) creditByPayment.set(p.id, p.credit_applied);
       }
       for (const i of invoices ?? []) {
         const c = partyOf(i, custOf(i.customer_id));
@@ -222,7 +233,7 @@ export function useGstReport(range: DateRange) {
           if (receivedDate >= range.from) continue;   // same-period advance: already neither 11A nor 11B
           advances.push({
             paymentId: a.payment_id, voucherNo: a.voucher_no ?? null, receivedDate, adjustedOn: i.invoice_date,
-            gross: a.amount ?? 0, rate: rateByInvoice.get(i.id)?.rate ?? 0, rateMissing: rateByInvoice.get(i.id)?.rateMissing ?? true,
+            gross: snapshotAdvanceGross(a, creditByPayment), rate: rateByInvoice.get(i.id)?.rate ?? 0, rateMissing: rateByInvoice.get(i.id)?.rateMissing ?? true,
             interState: i.inter_state ?? false,
             customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           });

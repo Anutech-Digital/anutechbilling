@@ -34,7 +34,7 @@ export async function loadOwnerDigestFacts(db: DigestDb, tenantId: string, now: 
 
   const [payments, projectPayments, invoices, held, subscriptions, quotes] = await Promise.all([
     fetchAllRows<DigestPayment>((a, b) => db.from<DigestPayment>("payments")
-      .select("status, amount, received_at")
+      .select("status, amount, credit_applied, received_at")
       .eq("tenant_id", tenantId).eq("status", "received")
       .gte("received_at", fromInstant).lt("received_at", toInstant)
       .order("id", { ascending: true }).range(a, b)),

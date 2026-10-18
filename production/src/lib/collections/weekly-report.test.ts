@@ -65,6 +65,17 @@ describe("weekly report", () => {
     expect(r.received).toEqual({ total: 10000 + 2000 + 7000 + 800, payments: 4, customers: 3 });
   });
 
+  it("R-1565: advance credit applied is not money the customer paid this week", () => {
+    const withCredit = buildWeeklyReport({
+      today: TODAY, owing, followups,
+      payments: [...payments,
+        { ...payments[0], amount: 6000, credit_applied: 4000 },   // ₹2,000 cash
+        { ...payments[0], amount: 3000, credit_applied: 3000 }],  // all credit — not a payment
+    });
+    expect(withCredit.received.total).toBe(r.received.total + 2000);
+    expect(withCredit.received.payments).toBe(r.received.payments + 1);
+  });
+
   it("promises made / kept / broken / due today", () => {
     expect(r.promises.made).toBe(3);             // B twice + C, logged this week
     expect(r.promises.madeAmount).toBe(10000);

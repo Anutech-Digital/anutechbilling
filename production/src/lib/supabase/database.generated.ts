@@ -8204,6 +8204,7 @@ export type Database = {
           amount: number
           bank_account_id: string | null
           created_at: string
+          credit_applied: number
           customer_id: string | null
           gateway_fee: number | null
           gateway_fee_gst: number | null
@@ -8227,6 +8228,7 @@ export type Database = {
           amount: number
           bank_account_id?: string | null
           created_at?: string
+          credit_applied?: number
           customer_id?: string | null
           gateway_fee?: number | null
           gateway_fee_gst?: number | null
@@ -8250,6 +8252,7 @@ export type Database = {
           amount?: number
           bank_account_id?: string | null
           created_at?: string
+          credit_applied?: number
           customer_id?: string | null
           gateway_fee?: number | null
           gateway_fee_gst?: number | null

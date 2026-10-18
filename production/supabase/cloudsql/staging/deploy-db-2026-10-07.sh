@@ -136,6 +136,7 @@ MIGS=(
   "r1561instdue|20261018030414_r1561_instalment_due_once.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1561%')"
   "r1546bucketmime|20261018031506_r1546_storage_mime_allowlists.sql|postgres|exists(select 1 from storage.buckets where id = 'employee-docs' and allowed_mime_types is not null)"
   "r1564instalmentpay|20261018033137_r1564_instalment_payment.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_instalment_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text)') and prosrc like '%R-1564%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1564%')"
+  "r1565creditnotcash|20261018044814_r1565_credit_applied_not_cash.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'credit_applied') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_desk_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text,text)') and prosrc like '%R-1565%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

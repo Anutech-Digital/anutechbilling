@@ -29,6 +29,7 @@ import type { Payment } from "@/lib/supabase/database.types";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -321,9 +322,13 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     splitLine,
   } = props;
 
+  /* R-1565: the money received on THIS voucher. Advance credit applied to the payment was
+     received (and receipted, with its GST) on an earlier voucher — not counted again. */
+  const received = cashReceived(payment);
+  const creditPart = payment.amount - received;
   // GST reverse-out from gross amount (Indian standard)
-  const taxable  = Math.round((payment.amount * 100) / (100 + gstRate));
-  const totalTax = payment.amount - taxable;
+  const taxable  = Math.round((received * 100) / (100 + gstRate));
+  const totalTax = received - taxable;
   /* R-046: the same shared split the invoice and GSTR-1 use. A receipt voucher is a GST
      document too (CGST 31(3)(d)), so its heads must be derived the same way. */
   const { cgst, sgst } = splitIntraStateTax(totalTax);
@@ -443,8 +448,15 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
 
           <View style={s.totalRow}>
             <Text style={[s.tdDesc, s.totalLabel]}>Total amount received</Text>
-            <Text style={[s.tdAmt, s.totalAmount]}>{pdfRupee(payment.amount)}</Text>
+            <Text style={[s.tdAmt, s.totalAmount]}>{pdfRupee(received)}</Text>
           </View>
+          {creditPart > 0 ? (
+            <View style={s.tableRow}>
+              <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
+                {pdfSafeMoney(`Also settled from advance credit received earlier: ₹${creditPart.toLocaleString("en-IN")}`)}
+              </Text>
+            </View>
+          ) : null}
           {splitLine ? (
             <View style={s.tableRow}>
               <Text style={[s.tdDesc, s.taxLine, { fontFamily: PDF_FONT }]}>
@@ -457,7 +469,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
         {/* ── Amount in words ─────────────────────────────────────── */}
         <Text style={s.inWords}>
           <Text style={s.inWordsLabel}>Amount received (in words): </Text>
-          {amountInWords(payment.amount)} only.
+          {amountInWords(received)} only.
         </Text>
 
         {/* ── GST treatment notice ────────────────────────────────── */}

@@ -25,6 +25,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { useTdsForPayment } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
+import { cashReceived } from "@/lib/payments/cash-received";
 import type { Payment } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -80,8 +81,12 @@ export function ReceiptVoucherDialog({
 
   // GST calculation — reverse-out from gross amount (Indian standard)
   // amount received = taxable + GST → taxable = amount × 100 / (100 + rate)
-  const taxable = Math.round((payment.amount * 100) / (100 + gstRate));
-  const totalTax = payment.amount - taxable;
+  /* R-1565: the money received on THIS voucher. Advance credit applied to the payment was
+     received (and receipted, with its GST) on an earlier voucher — not counted again. */
+  const received = cashReceived(payment);
+  const creditPart = payment.amount - received;
+  const taxable = Math.round((received * 100) / (100 + gstRate));
+  const totalTax = received - taxable;
   const cgst = Math.round(totalTax / 2);
   const sgst = totalTax - cgst;
   const igst = totalTax;
@@ -106,7 +111,7 @@ export function ReceiptVoucherDialog({
               variant="primary"
               icon="whatsapp"
               onClick={() => {
-                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (${splitLine ?? `₹${payment.amount.toLocaleString("en-IN")}`}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
+                const q = encodeURIComponent(`Namaste ${customerName},\n\nAapka Advance Receipt Voucher ${payment.receipt_voucher_no || ""} (${splitLine ?? `₹${received.toLocaleString("en-IN")}`}) received ho gaya hai.\n\nDhanyavaad,\n${tenantName}`);
                 window.open(`https://web.whatsapp.com/send?text=${q}`, "_blank");
               }}
             >
@@ -265,9 +270,16 @@ export function ReceiptVoucherDialog({
                     Total amount received
                   </td>
                   <td className="p-3 text-right">
-                    <span className="font-serif text-2xl tabular-nums">{rupee(payment.amount)}</span>
+                    <span className="font-serif text-2xl tabular-nums">{rupee(received)}</span>
                   </td>
                 </tr>
+                {creditPart > 0 && (
+                  <tr data-testid="receipt-credit-applied">
+                    <td colSpan={2} className="px-3 pb-3 text-right text-xs text-ink-2 tabular-nums">
+                      Also settled from advance credit received earlier: {rupee(creditPart)}
+                    </td>
+                  </tr>
+                )}
                 {splitLine && (
                   <tr data-testid="receipt-tds-split">
                     <td colSpan={2} className="px-3 pb-3 text-right text-xs text-ink-2 tabular-nums">
@@ -281,7 +293,7 @@ export function ReceiptVoucherDialog({
 
           {/* Amount in words */}
           <p className="text-xs text-ink-3 mb-6">
-            <b>Amount received (in words):</b> {amountInWords(payment.amount)} only.
+            <b>Amount received (in words):</b> {amountInWords(received)} only.
           </p>
 
           {/* GST compliance notice */}
