@@ -19,12 +19,22 @@
 --   4. Deleting that payment demotes the quote back to 'sent'.         <- symmetric
 --   5. A FULL payment still lands 'accepted' + 'received'.             <- no regression
 --   6. A 'rejected' quote is NOT promoted by a payment.                <- forward only
+--      (since R-1575 the payment itself is refused -- see below)
+--   7. A 'viewed' quote is promoted by its first payment too.          <- guard lets it through
 --
 -- ON CASE 6: the promotion has always been written as `status in ('draft','sent','viewed')`
 --   and this change did not touch that list. It is asserted anyway, because the whole
 --   point of removing a condition from a CASE arm is that it is easy to remove one too
 --   many, and "rejected quote silently becomes accepted when money arrives" is the kind of
 --   bug that would be found by an accountant, not by us.
+--
+-- R-1616 (19 Oct 2026): case 6 used to RECORD a payment on the rejected quote and check
+--   only that the label stayed 'rejected'. R-1575 (20261018165435_r1575_closed_quote_guard.sql,
+--   trg_payment_closed_quote_guard) now refuses any 'received' payment on a rejected or
+--   replaced quote, so that setup raised before the assertion. The guard is right and the
+--   scenario was outdated: case 6 now expects the refusal (check_violation), no payment
+--   row, and the quote still 'rejected' -- stronger than before. Case 7 proves the guard
+--   does not block a legitimate first payment on a 'viewed' quote.
 --
 -- SAFETY: synthetic tenant, synthetic quote, one transaction, ends in ROLLBACK. No real
 -- row is read into an assertion or written. The receipt-voucher number that record_payment
@@ -45,7 +55,8 @@ insert into public.quotes (id, tenant_id, customer_name, amount, subtotal, statu
 values
   ('ZZ-RPC-PARTIAL', '0a17e511-0000-4000-8000-000000000001', 'ZZ Test Buyer', 50027, 42396, 'sent',     'none', 0, '[]'::jsonb),
   ('ZZ-RPC-FULL',    '0a17e511-0000-4000-8000-000000000001', 'ZZ Test Buyer', 10000, 10000, 'sent',     'none', 0, '[]'::jsonb),
-  ('ZZ-RPC-REJECTED','0a17e511-0000-4000-8000-000000000001', 'ZZ Test Buyer', 10000, 10000, 'rejected', 'none', 0, '[]'::jsonb);
+  ('ZZ-RPC-REJECTED','0a17e511-0000-4000-8000-000000000001', 'ZZ Test Buyer', 10000, 10000, 'rejected', 'none', 0, '[]'::jsonb),
+  ('ZZ-RPC-VIEWED',  '0a17e511-0000-4000-8000-000000000001', 'ZZ Test Buyer', 10000, 10000, 'viewed',   'none', 0, '[]'::jsonb);
 
 do $$
 declare
@@ -54,6 +65,8 @@ declare
   v_customers   integer;
   v_payment_id  uuid;
   v_result      jsonb;
+  v_refused     boolean := false;
+  v_pay_count   integer;
 begin
   -- ── 1 + 2 + 3: a PARTIAL payment ────────────────────────────────────────────
   v_result := public.record_payment(
@@ -113,18 +126,41 @@ begin
   end if;
 
   -- ── 6: forward only -- a rejected quote is left alone ───────────────────────
-  v_result := public.record_payment(
-    p_quote_id => 'ZZ-RPC-REJECTED',
-    p_amount   => 10000,
-    p_method   => 'cash',
-    p_reference=> 'ZZ-TEST-REJECTED-1'
-  );
+  -- Since R-1575 the late payment is refused outright (the owner must press Reopen
+  -- first), so nothing can promote or reopen the rejected quote.
+  begin
+    v_result := public.record_payment(
+      p_quote_id => 'ZZ-RPC-REJECTED',
+      p_amount   => 10000,
+      p_method   => 'cash',
+      p_reference=> 'ZZ-TEST-REJECTED-1'
+    );
+  exception when check_violation then
+    v_refused := true;
+  end;
+  if not v_refused then
+    raise exception 'CASE 6 FAIL: a payment on a rejected quote went through -- the R-1575 guard did not fire';
+  end if;
+  select count(*) into v_pay_count from public.payments where quote_id = 'ZZ-RPC-REJECTED';
   select status::text into v_status from public.quotes where id = 'ZZ-RPC-REJECTED';
-  if v_status <> 'rejected' then
-    raise exception 'CASE 6 FAIL: a rejected quote became "%" when money arrived', v_status;
+  if v_pay_count <> 0 or v_status <> 'rejected' then
+    raise exception 'CASE 6 FAIL: rejected quote now has % payment(s) and status "%"', v_pay_count, v_status;
   end if;
 
-  raise notice 'ALL 6 CASES PASS';
+  -- ── 7: a 'viewed' quote's first payment accepts it (guard not in the way) ───
+  v_result := public.record_payment(
+    p_quote_id => 'ZZ-RPC-VIEWED',
+    p_amount   => 4000,
+    p_method   => 'upi',
+    p_reference=> 'ZZ-TEST-VIEWED-1'
+  );
+  select status::text, payment_status::text into v_status, v_pay_status
+    from public.quotes where id = 'ZZ-RPC-VIEWED';
+  if v_status <> 'accepted' or v_pay_status <> 'partial' then
+    raise exception 'CASE 7 FAIL: first payment on a viewed quote gave status="%" payment_status="%"', v_status, v_pay_status;
+  end if;
+
+  raise notice 'ALL 7 CASES PASS';
 end $$;
 
 -- One row, and it is the proof: any failure above raises and aborts the transaction, so

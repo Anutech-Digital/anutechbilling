@@ -8,7 +8,10 @@
 -- message with the expected values beside them, for a human to compare. And it had stopped
 -- running: customer 53db44e6… was deleted. See AGENTS.md L11.
 --
--- The dates are asserted relative to current_date, never as literals, so this cannot rot.
+-- The dates are asserted relative to public.ist_today(), never as literals, so this cannot rot.
+-- R-1616 (19 Oct 2026): it compared against current_date, which is the UTC day in the DB.
+-- generate_invoice stamps dates from public.ist_today() (an invoice day is the IST day,
+-- R-1581), so between 00:00 and 05:30 IST the test expected yesterday and failed.
 
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -36,8 +39,8 @@ begin
   if v_due is null then
     raise exception 'FAIL net15: no due_date stamped at all';
   end if;
-  if v_due <> current_date + 15 then
-    raise exception 'FAIL net15: due_date % , expected % (today + 15)', v_due, current_date + 15;
+  if v_due <> public.ist_today() + 15 then
+    raise exception 'FAIL net15: due_date % , expected % (today + 15)', v_due, public.ist_today() + 15;
   end if;
 
   -- ── NULL term: falls back to net-30, and the fallback is the whole point ──
@@ -52,8 +55,8 @@ begin
        quietly instead of being followed up. */
     raise exception 'FAIL null-term: no due_date stamped — the net-30 fallback did not fire';
   end if;
-  if v_due <> current_date + 30 then
-    raise exception 'FAIL null-term: due_date %, expected % (today + 30 fallback)', v_due, current_date + 30;
+  if v_due <> public.ist_today() + 30 then
+    raise exception 'FAIL null-term: due_date %, expected % (today + 30 fallback)', v_due, public.ist_today() + 30;
   end if;
 
   raise notice 'PASS: Net 15 honoured, null term falls back to net-30';
