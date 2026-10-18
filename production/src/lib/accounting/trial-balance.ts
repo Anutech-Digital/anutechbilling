@@ -93,7 +93,15 @@ export function buildTrialBalance(args: {
   put("Assets", "Loans & advances to employees", bs.employeeLoans, "debit", "Employee loans − repayments");
   put("Assets", "Loans given (outside parties)", bs.loansGiven ?? 0, "debit", "Loans given − principal repaid");
   put("Assets", "Prepaid / vendor advances", bs.prepaidAdvances, "debit", "Advances paid − consumed");
-  put("Assets", "Fixed assets (WDV)", bs.fixedAssets, "debit", "Asset register at written-down value");
+  /* R-1578: cost Dr + accumulated depreciation Cr (the depreciation the P&L has charged), so the
+     year's Depreciation expense below has its other side. Older callers (no split) → one net line. */
+  if (bs.fixedAssetsCost != null && bs.accumulatedDepreciation != null) {
+    put("Assets", "Fixed assets (at cost)", bs.fixedAssetsCost, "debit", "Asset register at cost + EMI purchases not yet registered");
+    put("Assets", "Less: accumulated depreciation", -bs.accumulatedDepreciation, "debit",
+      "Depreciation charged on the assets still held, up to today (Income-tax WDV rates)");
+  } else {
+    put("Assets", "Fixed assets (WDV)", bs.fixedAssets, "debit", "Asset register at written-down value");
+  }
   put("Assets", `Advance income tax (${bs.fyLabel})`, bs.advanceTaxPaid, "debit", "Advance + self-assessment tax paid");
   for (const it of items.filter((i) => i.section === "asset")) put("Assets", it.label, it.amount, "debit", "Balance sheet — manual line");
 
@@ -131,6 +139,8 @@ export function buildTrialBalance(args: {
   put("Expenses", "Less: ITC inside the expenses above", -(grossExpenses - pnl.expenses), "debit",
     "Claimable GST on expenses — already reduces GST payable");
   put("Expenses", "Referral / partner commissions", pnl.commissions, "debit", "Gross commission earned by partners");
+  put("Expenses", "Depreciation", pnl.depreciation ?? 0, "debit",
+    `Asset register, ${bs.fyLabel} to date (Income-tax WDV rates; an expense turned into an asset is here, not above)`);
 
   const dr = rows.reduce((s, r) => s + r.debit, 0);
   const cr = rows.reduce((s, r) => s + r.credit, 0);

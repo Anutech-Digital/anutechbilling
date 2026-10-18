@@ -9,7 +9,7 @@ import type { BalanceSheetAuto } from "@/lib/queries/balance-sheet";
 import { splitItc } from "@/lib/gst/itc";
 import { splitBillGroups, type BillItcGroup } from "@/lib/gst/bill-itc";
 import { statutoryDues } from "@/lib/accounting/tds-deductor";
-import { bookValueNow, type AssetLike } from "@/lib/accounting/depreciation";
+import { netBlockAt, type AssetLike } from "@/lib/accounting/depreciation";
 import { incomeTaxPaidForFy, type TaxPaymentLike } from "@/lib/accounting/tax-payments";
 
 /**
@@ -96,8 +96,10 @@ export function billItcEligible(billsGst: number, groups: BillItcGroup[] | null 
 }
 
 export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
-  /* WDV har register asset ka (as_of par); EMI jo register me nahi wo cost par (SQL ne joda). */
-  const fixedAssets = r.fixed_assets.reduce((s, a) => s + bookValueNow(a, r.as_of), 0) + r.emi_unregistered_cost;
+  /* R-1578: net block = cost − depreciation charged up to as_of (wahi jo P&L me laga —
+     lib/accounting/depreciation.ts); EMI jo register me nahi wo cost par (SQL ne joda). */
+  const block = netBlockAt(r.fixed_assets, r.as_of);
+  const fixedAssets = block.net + r.emi_unregistered_cost;
 
   /* statutoryDues rows par sum karta hai; SQL ne hisse pehle hi jod diye, isliye ek row. */
   const salaryDuesPayable = statutoryDues({
@@ -123,6 +125,8 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
     employeeLoans: r.employee_loans,
     prepaidAdvances: r.prepaid_advances,
     fixedAssets,
+    fixedAssetsCost: block.cost + r.emi_unregistered_cost,
+    accumulatedDepreciation: block.accumulated,
     payables: r.payables,
     salaryPayable: r.salary_payable,
     salaryDuesPayable,

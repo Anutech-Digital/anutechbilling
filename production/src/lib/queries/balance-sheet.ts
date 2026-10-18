@@ -44,7 +44,12 @@ export interface BalanceSheetAuto {
    *  fixtures stay valid; absent = 0. */
   loansGiven?:     number;
   prepaidAdvances: number;   // vendor advances paid but not yet consumed (a current asset)
-  fixedAssets:     number;   // registered assets at WDV (lib/accounting/depreciation.ts) + EMI purchases not yet registered, at cost
+  fixedAssets:     number;   // NET BLOCK: registered assets at cost − accumulated depreciation to as_of (lib/accounting/depreciation.ts, R-1578) + EMI purchases not yet registered, at cost
+  /** R-1578: the two halves of `fixedAssets` — cost (incl. unregistered EMI purchases) and the
+   *  depreciation charged on them so far (P&L). Optional so fixtures stay valid; absent = the
+   *  Trial Balance shows one net line as before. */
+  fixedAssetsCost?: number;
+  accumulatedDepreciation?: number;
   payables:        number;   // unpaid vendor bills (total − paid)
   salaryPayable:   number;   // net salary accrued (payroll run) but not yet paid out — a liability
   salaryDuesPayable: number; // statutory dues: salary TDS/PF/ESI (both shares) + vendor TDS, less challans

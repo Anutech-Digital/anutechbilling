@@ -21,6 +21,7 @@ import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
 import { assemblePnl, type PnLNumbers, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import type { AssetBlock } from "@/lib/accounting/depreciation";
 
 export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
@@ -40,7 +41,7 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
       /* R-265: the master-data reads page with fetchAllRows on `id` — a bare select stops
          at PostgREST's 1000-row cap and the subscription cost / project cost would silently
          cover only the first 1000 rows. fetchAllRows throws a page's error itself. */
-      const [rpc, subs, labourRows, emps, projects] = await Promise.all([
+      const [rpc, subs, labourRows, emps, projects, assets] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         /* ── THE SUBSCRIPTION BOOK — where the licence cost actually lives ──────
            `vendor_bills` is EMPTY on this tenant, so billed COGS is ₹0 and the report used
@@ -59,6 +60,12 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
           .order("id").range(a, b)),
         fetchAllRows((a, b) => supabase.from("employees").select("id, name, monthly_gross").order("id").range(a, b)),
         fetchAllRows((a, b) => supabase.from("project_sales").select("id, title, customer_name, start_date").order("id").range(a, b)),
+        /* ── R-1578: THE FIXED-ASSET REGISTER — its depreciation is a P&L expense ──
+           report_pnl leaves out an expense that became an asset (capitalised); the cost
+           reaches the P&L only as depreciation (lib/accounting/depreciation.ts). */
+        fetchAllRows((a, b) => supabase.from("fixed_assets")
+          .select("id, name, block, cost, put_to_use, disposed_on, disposal_value")
+          .order("id").range(a, b)),
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
 
@@ -85,6 +92,7 @@ export function usePnL(range: { from: string; to: string }, enabled = true) {
         monthlyGross: new Map(emps.map((e) => [e.id, e.monthly_gross ?? 0])),
         projects,
         employeeNames: new Map(emps.map((e) => [e.id, e.name])),
+        assets: assets.map((x) => ({ ...x, block: x.block as AssetBlock })),
       });
     },
   });

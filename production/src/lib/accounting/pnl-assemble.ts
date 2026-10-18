@@ -18,6 +18,7 @@ import { splitBillGroups, type BillItcGroup } from "@/lib/gst/bill-itc";
 import {
   projectCostForPeriod, type ProjectCostResult, type LabourAllocation, type ProjectInfo, type CostExpense,
 } from "@/lib/accounting/project-cost";
+import { registerDepreciationForRange, type AssetLike } from "@/lib/accounting/depreciation";
 
 export interface PnLNumbers {
   revenue:        number;   // Invoices ≥ status='pending' within period
@@ -32,6 +33,10 @@ export interface PnLNumbers {
   expenseReport: ExpenseReport;
   commissions:      number;   // referral / channel-partner commissions (gross)
   commissionsCount: number;
+  /** R-1578: the fixed-asset register's depreciation that falls in the period (IT Act WDV,
+   *  lib/accounting/depreciation.ts). An expense turned into an asset is not in `expenses`
+   *  (report_pnl leaves it out) — this line is how its cost reaches the P&L. */
+  depreciation:   number;
   netProfit:      number;
 
   // GST snapshot
@@ -93,6 +98,8 @@ export interface PnlMasters {
   monthlyGross: ReadonlyMap<string, number>;
   projects: ProjectInfo[];
   employeeNames: Map<string, string>;
+  /** R-1578: the fixed-asset register. Absent = no depreciation line (₹0). */
+  assets?: readonly AssetLike[];
 }
 
 export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m: PnlMasters): PnLNumbers {
@@ -155,9 +162,13 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     revenueByProject,
   });
 
+  /* R-1578: depreciation is an operating expense of the period — the register's yearly charge,
+     the part that falls inside the range (lib/accounting/depreciation.ts). */
+  const depreciation = registerDepreciationForRange(m.assets ?? [], range.from, range.to);
+
   const model = buildPnl({
     revenue,
-    expenses: expensesTotal + commissions,
+    expenses: expensesTotal + commissions + depreciation,
     billedCogs: cogs > 0 ? cogs : null,
     vendors: m.vendors,
     projectCost: projectCost.total,
@@ -165,7 +176,7 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
   });
 
   const grossMargin = revenue - cogs;
-  const netProfit   = grossMargin - expensesTotal - commissions;
+  const netProfit   = grossMargin - expensesTotal - commissions - depreciation;
   const inputGST    = billsGst + expensesGst;
   const netGST      = outputGST - inputGST;
   const marginPct = revenue > 0 ? (grossMargin / revenue) * 100 : 0;
@@ -177,6 +188,7 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     grossMargin,
     expenses: expensesTotal, expensesCount, expensesByCategory, expenseReport,
     commissions, commissionsCount,
+    depreciation,
     netProfit,
     outputGST, inputGST, netGST, itcBlocked: itc.blocked + billsGstBlocked,
     marginPct, profitPct,

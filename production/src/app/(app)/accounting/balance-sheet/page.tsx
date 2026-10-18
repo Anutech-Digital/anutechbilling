@@ -290,7 +290,9 @@ export default function BalanceSheetPage() {
                   <BSLine label="Prepaid / vendor advances" hint="paid, not yet consumed" amount={auto?.prepaidAdvances ?? 0} kind="auto" source="Prepaid" href="/accounting/prepaid" />
                 )}
                 {(auto?.fixedAssets ?? 0) > 0 && (
-                  <BSLine label="Fixed assets" hint="register at WDV (Income-tax rates) + EMI purchases not yet registered, at cost" amount={auto?.fixedAssets ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
+                  <BSLine label="Fixed assets" hint={auto?.fixedAssetsCost != null && auto.accumulatedDepreciation != null
+                    ? `net block: cost ${rupee(auto.fixedAssetsCost)} − depreciation ${rupee(auto.accumulatedDepreciation)} charged in the P&L (Income-tax WDV rates)`
+                    : "register at WDV (Income-tax rates) + EMI purchases not yet registered, at cost"} amount={auto?.fixedAssets ?? 0} kind="auto" source="Assets & EMIs" href="/accounting/assets" />
                 )}
                 {gstCredit > 0 && <BSLine label="GST input credit (ITC)" amount={gstCredit} kind="auto" source="GST Reports" href="/accounting/gst" />}
                 {(auto?.advanceTaxPaid ?? 0) > 0 && (

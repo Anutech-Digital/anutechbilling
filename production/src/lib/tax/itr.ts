@@ -125,6 +125,14 @@ export interface ItrSources {
   tdsCount: number;
   /** Ab tak bhara advance tax, agar kahin darj ho. Na ho to 0 + gap. */
   advanceTaxPaid: number;
+  /**
+   * R-1578: is FY ka depreciation — asset register (lib/accounting/depreciation.ts), IT Act
+   * WDV (s.32, Rule 5; 180 din se kam to aadhi dar). Jo expense asset bana wo `expenses` me
+   * nahi aata (capitalised) — uska kharcha sirf isi line se. Optional: purane callers = 0.
+   */
+  depreciation?: number;
+  /** Register me kitne asset is FY me rakhe the — 0 = register khaali (gap). */
+  assetCount?: number;
 }
 
 /* ─────────────────────────── Output shapes ─────────────────────────── */
@@ -247,6 +255,14 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
         source: "expenses (GST input-credit ghata kar)",
         count: c.count,
       })),
+    ...((s.depreciation ?? 0) > 0
+      ? [{
+          label: "Depreciation (IT Act WDV, asset register)",
+          amount: s.depreciation ?? 0, kind: "expense",
+          source: "fixed_assets — block ki dar par WDV (s.32)",
+          count: s.assetCount ?? 0,
+        } satisfies PnlLine]
+      : []),
   ];
 
   const totalIncome = pnl.filter((l) => l.kind === "income").reduce((a, l) => a + l.amount, 0);
@@ -296,9 +312,11 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
     );
   if (s.expenses.every((c) => c.count === 0))
     gaps.push("Kharcho ki koi entry nahi — kiraya, bijli, software, sab chhoota hua hai.");
-  gaps.push(
-    "Depreciation app me track nahi hota — computer/furniture jaise assets ka ghisav CA jodega (books me bhi, IT Act ki dar par bhi).",
-  );
+  /* R-1578: depreciation ab asset register se aata hai (upar ki line). Register khaali ho tabhi gap. */
+  if (!s.assetCount)
+    gaps.push(
+      "Asset register me koi asset nahi — computer/furniture/gaadi kharidi ho to Accounting → Assets me jodiye; tab unka depreciation (IT Act WDV) yahan apne aap ghatega.",
+    );
   gaps.push(
     "Bank ka byaaj, FD, ya koi aur aamdani app me nahi aati — CA bank statement se jodega.",
   );

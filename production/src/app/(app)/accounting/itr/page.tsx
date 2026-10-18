@@ -64,8 +64,8 @@ export default function ItrPage() {
         <div>
           <h1 className="font-serif text-2xl text-ink">Income Tax (ITR) — taiyari</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-3">
-            Ye computation ANDAZA hai, assessment nahi — depreciation, disallowance aur audit
-            CA jodega. Return khud incometax.gov.in par, DSC se, file hota hai; ye pack us
+            Ye computation ANDAZA hai, assessment nahi — depreciation asset register se (IT Act
+            WDV) aata hai; disallowance aur audit CA jodega. Return khud incometax.gov.in par, DSC se, file hota hai; ye pack us
             kaam ko ghanton se minto me laata hai.
           </p>
         </div>

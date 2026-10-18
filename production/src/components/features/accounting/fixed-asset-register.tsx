@@ -19,7 +19,7 @@ import { downloadCSV } from "@/lib/csv";
 import { useFixedAssets, useCreateFixedAsset, useDisposeFixedAsset, useDeleteFixedAsset, useCapitalisableExpenses, type FixedAsset } from "@/lib/queries/fixed-assets";
 import { useEmiPurchases } from "@/lib/queries/emi";
 import { useEmployeeAssets } from "@/lib/queries/employee-assets";
-import { BLOCKS, depreciationSchedule, depreciationInFy, bookValueNow, registerSummary, fyStartOf, fyLabel, type AssetBlock } from "@/lib/accounting/depreciation";
+import { BLOCKS, depreciationSchedule, depreciationInFy, bookValueAt, registerSummary, fyStartOf, fyLabel, type AssetBlock } from "@/lib/accounting/depreciation";
 import { istToday } from "@/lib/dates/ist";
 
 function todayIso(): string { return istToday(); }
@@ -101,7 +101,7 @@ export function FixedAssetRegister() {
                         <td className="px-3 py-2 text-right font-mono">{rupee(a.cost)}</td>
                         <td className="px-3 py-2 text-ink-2 text-xs">{formatDate(a.put_to_use)}{fyStartOf(a.put_to_use) === fy && depreciationSchedule(a, fy)[0]?.halfRate ? <span className="ml-1 text-amber-ink">(½ rate — &lt;180 din)</span> : null}</td>
                         <td className="px-3 py-2 text-right font-mono text-amber-ink">{rupee(depreciationInFy(a, fy))}</td>
-                        <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{rupee(bookValueNow(a, today))}</td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{rupee(bookValueAt(a, today))}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           {!sold && <Button variant="ghost" size="sm" onClick={() => setDisposeFor(a)}>Sold / scrap</Button>}
                           <button type="button" aria-label="Delete asset" className="rounded p-1.5 text-ink-3 hover:bg-paper-2 hover:text-rose"

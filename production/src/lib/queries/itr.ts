@@ -28,6 +28,7 @@ import {
   type ExpenseCategoryLine, type ItrPack, type ItrSources,
 } from "@/lib/tax/itr";
 import { incomeTaxPaidForFy } from "@/lib/accounting/tax-payments";
+import { depreciationInFy, type AssetBlock } from "@/lib/accounting/depreciation";
 
 /** pnl/page.tsx ka pinned fallback — purani rows jinke breakdown persist nahi hue. */
 function invTaxable(i: { amount: number | null; taxable_value: number | null; tax_rate: number | null }): number {
@@ -41,7 +42,7 @@ export function useItrPack(fyStartYear: number) {
       const fy = financialYear(fyStartYear);
       const supabase = createClient();
 
-      const [inv, cn, dn, po, exp, tds, taxPay] = await Promise.all([
+      const [inv, cn, dn, po, exp, tds, taxPay, fa] = await Promise.all([
         supabase
           .from("invoices")
           .select("amount, taxable_value, tax_rate, status, invoice_date")
@@ -67,7 +68,7 @@ export function useItrPack(fyStartYear: number) {
           .in("status", ["placed", "provisioned", "closed"]),
         supabase
           .from("expenses")
-          .select("category, amount, gst_paid, expense_date")
+          .select("id, category, amount, gst_paid, expense_date")
           .gte("expense_date", fy.start)
           .lte("expense_date", fy.end),
         supabase
@@ -82,9 +83,13 @@ export function useItrPack(fyStartYear: number) {
           .from("tax_payments")
           .select("kind, amount, period, fy")
           .in("kind", ["advance_tax", "self_assessment_tax"]),
+        // R-1578: asset register — FY ka depreciation, aur jo expense asset bana (capitalised).
+        supabase
+          .from("fixed_assets")
+          .select("id, name, block, cost, put_to_use, disposed_on, disposal_value, expense_id"),
       ]);
 
-      for (const r of [inv, cn, dn, po, exp, tds, taxPay]) {
+      for (const r of [inv, cn, dn, po, exp, tds, taxPay, fa]) {
         if (r.error) throw r.error;
       }
 
@@ -99,8 +104,11 @@ export function useItrPack(fyStartYear: number) {
       const poRows = po.data ?? [];
       const purchaseCost = poRows.reduce((s, p) => s + (p.total_cost ?? 0), 0);
 
+      /* R-1578: asset bana expense kharcha nahi — uski keemat depreciation se aati hai. */
+      const assets = (fa.data ?? []).map((a) => ({ ...a, block: a.block as AssetBlock }));
+      const capitalised = new Set(assets.map((a) => a.expense_id).filter((id): id is string => !!id));
       const byCategory = new Map<string, ExpenseCategoryLine>();
-      for (const e of exp.data ?? []) {
+      for (const e of (exp.data ?? []).filter((x) => !capitalised.has(x.id))) {
         const key = e.category || "Other";
         const line = byCategory.get(key) ?? { category: key, amount: 0, gst: 0, count: 0 };
         line.amount += e.amount ?? 0;
@@ -124,6 +132,8 @@ export function useItrPack(fyStartYear: number) {
         // Banking me bank line ko "Income tax" payment book karne se aata hai. Kuch book
         // nahi hua to 0 — aur pack ka gap wahi kehta rahega.
         advanceTaxPaid: incomeTaxPaidForFy(taxPay.data ?? [], fyStartYear),
+        depreciation: assets.reduce((sum, a) => sum + depreciationInFy(a, fyStartYear), 0),
+        assetCount: assets.filter((a) => a.put_to_use <= fy.end && !(a.disposed_on && a.disposed_on < fy.start)).length,
       };
 
       return computeItrPack(fy, sources);

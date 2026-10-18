@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { depreciationSchedule, wdvAtFyEnd, bookValueNow, registerSummary, fyStartOf, type AssetLike } from "./depreciation";
+import {
+  depreciationSchedule, wdvAtFyEnd, bookValueNow, registerSummary, fyStartOf, type AssetLike,
+  accumulatedDepreciation, depreciationForRange, bookValueAt, netBlockAt, registerDepreciationForRange,
+} from "./depreciation";
 
 const laptop: AssetLike = { id: "a", name: "MacBook", block: "computers", cost: 120_000, put_to_use: "2024-06-10" };
 
@@ -51,6 +54,30 @@ describe("Income-tax WDV depreciation", () => {
     expect(r.depreciation).toBe(20_880);
     expect(r.closingWdv).toBe(58_320);
     expect(r.cost).toBe(160_000);
+  });
+
+  it("R-1578: accumulated depreciation runs day by day inside a year and lands on the register's figure", () => {
+    // laptop 10 Jun 2024: FY 24-25 ₹48,000 over 295 days (10 Jun → 31 Mar), FY 25-26 ₹28,800 over 365 days
+    expect(accumulatedDepreciation(laptop, "2024-06-09")).toBe(0);
+    expect(accumulatedDepreciation(laptop, "2024-06-10")).toBe(Math.round(48_000 / 295));
+    expect(accumulatedDepreciation(laptop, "2025-03-31")).toBe(48_000);
+    expect(accumulatedDepreciation(laptop, "2025-04-30")).toBe(48_000 + Math.round((28_800 * 30) / 365));
+    expect(accumulatedDepreciation(laptop, "2026-03-31")).toBe(76_800);
+    expect(depreciationForRange(laptop, "2025-04-01", "2026-03-31")).toBe(28_800);
+    expect(depreciationForRange(laptop, "2026-04-01", "2026-03-31")).toBe(0);
+  });
+
+  it("R-1578: book value on a date = cost − accumulated; 0 before use and once sold; sold asset stops depreciating", () => {
+    expect(bookValueAt(laptop, "2026-03-31")).toBe(43_200);
+    expect(bookValueAt(laptop, "2024-01-01")).toBe(0);
+    const sold: AssetLike = { ...laptop, disposed_on: "2026-07-01", disposal_value: 30_000 };
+    expect(bookValueAt(sold, "2026-07-01")).toBe(0);
+    expect(depreciationForRange(sold, "2026-04-01", "2026-06-30")).toBe(0);   // nothing in the year of disposal
+    const chair: AssetLike = { id: "b", name: "Chairs", block: "furniture", cost: 40_000, put_to_use: "2025-04-01" };
+    const nb = netBlockAt([laptop, sold, chair], "2026-03-31");
+    expect(nb).toEqual({ cost: 280_000, accumulated: 76_800 * 2 + 4_000, net: 280_000 - 157_600 });
+    expect(netBlockAt([sold], "2026-07-02")).toEqual({ cost: 0, accumulated: 0, net: 0 });
+    expect(registerDepreciationForRange([laptop, chair], "2026-04-01", "2027-03-31")).toBe(17_280 + 3_600);
   });
 
   it("fyStartOf", () => {

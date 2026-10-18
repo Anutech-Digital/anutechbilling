@@ -202,14 +202,27 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
     expect(withSalary.gaps.some((g) => g.includes("Salary ka koi kharcha"))).toBe(false);
   });
 
-  it("depreciation aur bank-byaaj ke gap HAMESHA rehte hain — app unhe track hi nahi karti", () => {
+  it("bank-byaaj ka gap HAMESHA; asset register khaali ho to uska gap", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
       revenueExGst: 1_000_000, invoiceCount: 5,
       expenses: [{ category: "Salaries", amount: 100_000, gst: 0, count: 1 }],
     });
-    expect(pack.gaps.some((g) => g.includes("Depreciation"))).toBe(true);
+    expect(pack.gaps.some((g) => g.includes("Asset register me koi asset nahi"))).toBe(true);
     expect(pack.gaps.some((g) => g.includes("Bank ka byaaj"))).toBe(true);
+    expect(pack.pnl.some((l) => l.label.startsWith("Depreciation"))).toBe(false);
+  });
+
+  it("R-1578: register ka depreciation ek expense line hai aur book profit ghatata hai; gap nahi", () => {
+    const pack = computeItrPack(fy, {
+      ...EMPTY,
+      revenueExGst: 1_000_000, invoiceCount: 5,
+      expenses: [{ category: "Salaries", amount: 100_000, gst: 0, count: 1 }],
+      depreciation: 24_000, assetCount: 1,
+    });
+    expect(pack.pnl.find((l) => l.label.startsWith("Depreciation"))).toMatchObject({ amount: 24_000, kind: "expense", count: 1 });
+    expect(pack.bookProfit).toBe(1_000_000 - 100_000 - 24_000);
+    expect(pack.gaps.some((g) => g.includes("Asset register") || g.includes("Depreciation app me"))).toBe(false);
   });
 
   it("advance tax bharna banta ho aur darj na ho to gap", () => {

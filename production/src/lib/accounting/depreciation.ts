@@ -16,7 +16,9 @@
  * Sheet here is the owner's view and the ITR view, both of which use these.
  */
 
-export type AssetBlock = "computers" | "plant" | "furniture" | "vehicles" | "building" | "intangible";
+import { utcDateISO } from "@/lib/dates/ist";
+
+export type AssetBlock ="computers" | "plant" | "furniture" | "vehicles" | "building" | "intangible";
 
 export const BLOCKS: Record<AssetBlock, { label: string; ratePct: number; examples: string }> = {
   computers:  { label: "Computers & software", ratePct: 40, examples: "laptop, desktop, printer, server, software licence" },
@@ -97,6 +99,67 @@ export function bookValueNow(a: AssetLike, today: string): number {
   if (a.disposed_on && a.disposed_on <= today) return 0;
   if (fyStartOf(a.put_to_use) >= fy) return Math.round(a.cost);
   return wdvAtFyEnd(a, fy - 1);
+}
+
+/* ─── R-1578: depreciation for a DATE RANGE, so the P&L, Balance Sheet and Trial Balance use it ───
+ * The register above is per financial year (IT Act WDV, half rate under 180 days). A P&L for
+ * Oct 2026 or "FY start → today" needs the part of that year's charge that falls inside the
+ * range. Same method, no new one: the FY's charge is spread evenly over the days the asset is
+ * in use that year (put-to-use → 31 Mar in the first year; the whole FY after that). A range is
+ * the difference of one running total — accumulatedDepreciation(to) − accumulatedDepreciation(day
+ * before from) — so Apr + May + … + Mar adds up to exactly depreciationInFy in whole rupees, and
+ * the Balance Sheet's net block (cost − accumulated) moves by exactly what the P&L charged.
+ * bookValueNow (opening WDV, no charge for the running year) stays for callers that want the
+ * IT-Act opening figure; the Balance Sheet uses bookValueAt now that the P&L charges the year. */
+
+const DAY_MS = 86_400_000;
+const dayNum = (iso: string) => Math.floor(new Date(iso.slice(0, 10) + "T00:00:00Z").getTime() / DAY_MS);
+const isoOfDay = (n: number) => utcDateISO(new Date(n * DAY_MS));
+
+/** First day the asset counts in `fy` (1 Apr, or put-to-use in the year it was bought). */
+const firstDayInFy = (a: AssetLike, fy: number) => Math.max(dayNum(`${fy}-04-01`), dayNum(a.put_to_use));
+
+/** Depreciation charged from put-to-use up to and including `date` (whole rupees). Stops
+ *  growing in the year of disposal (the register charges nothing that year). */
+export function accumulatedDepreciation(a: AssetLike, date: string): number {
+  const d = date.slice(0, 10);
+  if (d < a.put_to_use) return 0;
+  const fy = fyStartOf(d);
+  const rows = depreciationSchedule(a, fy);
+  const before = rows.filter((r) => r.fy < fy).reduce((s, r) => s + r.depreciation, 0);
+  const thisYear = rows.find((r) => r.fy === fy)?.depreciation ?? 0;
+  if (!thisYear) return before;
+  const used = dayNum(fyEnd(fy)) - firstDayInFy(a, fy) + 1;
+  const upTo = dayNum(d) - firstDayInFy(a, fy) + 1;
+  return before + Math.round((thisYear * Math.min(upTo, used)) / used);
+}
+
+/** Depreciation that falls inside [from, to] — the P&L line for that range. */
+export function depreciationForRange(a: AssetLike, from: string, to: string): number {
+  if (to < from) return 0;
+  return accumulatedDepreciation(a, to) - accumulatedDepreciation(a, isoOfDay(dayNum(from) - 1));
+}
+
+/** Book value on `date` = cost − accumulated depreciation; 0 before use and once sold. */
+export function bookValueAt(a: AssetLike, date: string): number {
+  const d = date.slice(0, 10);
+  if (a.put_to_use > d) return 0;
+  if (a.disposed_on && a.disposed_on <= d) return 0;
+  return Math.round(a.cost) - accumulatedDepreciation(a, d);
+}
+
+/** The assets still held on `date`: cost, accumulated depreciation, net block (cost − accumulated). */
+export function netBlockAt(assets: readonly AssetLike[], date: string): { cost: number; accumulated: number; net: number } {
+  const d = date.slice(0, 10);
+  const held = assets.filter((a) => a.put_to_use <= d && !(a.disposed_on && a.disposed_on <= d));
+  const cost = held.reduce((s, a) => s + Math.round(a.cost), 0);
+  const accumulated = held.reduce((s, a) => s + accumulatedDepreciation(a, d), 0);
+  return { cost, accumulated, net: cost - accumulated };
+}
+
+/** Depreciation for [from, to] across the register — the P&L and ITR line. */
+export function registerDepreciationForRange(assets: readonly AssetLike[], from: string, to: string): number {
+  return assets.reduce((s, a) => s + depreciationForRange(a, from, to), 0);
 }
 
 export interface RegisterSummary {
