@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { cn, formatDate } from "@/lib/utils";
 import {
   useWhatsAppConversations,
@@ -59,7 +60,7 @@ const STATUS_GLYPH: Record<WhatsAppMessageStatus, string> = {
 function ConversationList({
   selected, onSelect,
 }: { selected: string | null; onSelect: (phone: string) => void }) {
-  const { data: convos, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useWhatsAppConversations();
+  const { data: convos, isLoading, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useWhatsAppConversations();
 
   if (isLoading) return (
     <div className="p-2 space-y-1">
@@ -68,7 +69,8 @@ function ConversationList({
       <Skeleton className="h-14 w-full" />
     </div>
   );
-  if (error) return <p className="p-4 text-xs text-rose">Couldn&apos;t load: {(error as Error).message}</p>;
+  /* R-1534: plain words + Try again — the raw text goes to the console, not the rail. */
+  if (error) return <LoadErrorInline what="Conversations" error={error} onRetry={() => void refetch()} />;
   if (!convos || convos.length === 0) return (
     <div className="p-6 text-center">
       <p className="text-sm text-ink-2 font-medium">No conversations yet</p>
@@ -165,7 +167,9 @@ function MessageBubble({ m }: { m: WhatsAppMessageRow }) {
 }
 
 function ThreadPane({ contactPhone }: { contactPhone: string | null }) {
-  const { data: messages, isLoading } = useWhatsAppThread(contactPhone);
+  /* R-1534: a failed load is NOT an empty chat. It used to fall through to "No messages
+     yet — say hi", and the rep sent the customer a second "hi". */
+  const { data: messages, isLoading, isError, error, refetch } = useWhatsAppThread(contactPhone);
   const sendMutation = useSendWhatsApp();
   const [draft, setDraft] = React.useState("");
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -217,7 +221,7 @@ function ThreadPane({ contactPhone }: { contactPhone: string | null }) {
         <div>
           <p className="font-mono text-sm text-ink">{contactPhone}</p>
           <p className="text-3xs text-ink-3">
-            {messages?.length ?? 0} messages
+            {messages ? `${messages.length} messages` : "—"}
             {lastInbound && ` · last reply ${relativeTime(lastInbound.created_at)}`}
           </p>
         </div>
@@ -230,12 +234,16 @@ function ThreadPane({ contactPhone }: { contactPhone: string | null }) {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 bg-paper-2/30">
-        {isLoading ? (
+        {/* A failed 10-second poll keeps the messages already on screen; only a chat that
+            never loaded shows the error. */}
+        {isError && !messages ? (
+          <LoadErrorInline what="This chat" error={error} onRetry={() => void refetch()} />
+        ) : isLoading || !messages ? (
           <div className="space-y-2">
             <Skeleton className="h-12 w-2/3" />
             <Skeleton className="h-12 w-1/2 ml-auto" />
           </div>
-        ) : !messages || messages.length === 0 ? (
+        ) : messages.length === 0 ? (
           <p className="text-center text-xs text-ink-3 mt-6">No messages yet — say hi.</p>
         ) : (
           messages.map((m) => <MessageBubble key={m.id} m={m} />)
@@ -244,7 +252,11 @@ function ThreadPane({ contactPhone }: { contactPhone: string | null }) {
 
       {/* Composer */}
       <div className="border-t border-hairline bg-paper p-3">
-        {within24h ? (
+        {!messages ? (
+          /* Until the chat has loaded nobody can tell whether you already wrote to them, or
+             whether the 24-hour window is open — so no reply box yet. */
+          <p className="text-xs text-ink-3">{isError ? "Load the chat first, then reply." : "Loading the chat…"}</p>
+        ) : within24h ? (
           <div className="flex gap-2">
             <Input
               aria-label="Message"

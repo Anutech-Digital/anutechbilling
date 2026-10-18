@@ -19,6 +19,7 @@ import CampaignComposerDialog from "@/components/features/campaigns/campaign-com
 import { FAB } from "@/components/ui/fab";
 import { useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -326,15 +327,8 @@ export default function ContactsPage() {
         </>
       )}
 
-      {/* Error */}
-      {error && (
-        <EmptyState
-          icon="alert"
-          title="Could not load contacts"
-          body={error.message}
-          action={<Button icon="refresh" onClick={() => refetch()}>Try again</Button>}
-        />
-      )}
+      {/* Error — R-1535: plain words + Try again; the raw database text goes to the console. */}
+      {error && <LoadError what="Contacts" error={error} onRetry={() => void refetch()} />}
 
       {/* Loading */}
       {isLoading && (

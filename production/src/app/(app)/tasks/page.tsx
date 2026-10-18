@@ -64,8 +64,27 @@ export default function TasksPage() {
     if (!taskParam || openedFor.current === taskParam || !linkedTask.isSuccess) return;
     openedFor.current = taskParam;
     if (linkedTask.data) setEditingTask(linkedTask.data);
-    else { toast.error("That task no longer exists."); setTaskParam(""); }
+    else {
+      toast.error("That task no longer exists.", {
+        description: "It was deleted, or it isn't shared with you. Showing all tasks.",
+      });
+      setTaskParam("");
+    }
   }, [taskParam, linkedTask.isSuccess, linkedTask.data, setTaskParam]);
+  /* R-1535: a FAILED read is not "no longer exists" — keep ?task= and offer Try again. */
+  const taskErrorShown = React.useRef<number | null>(null);
+  const { isError: linkedTaskFailed, error: linkedTaskError, errorUpdatedAt: linkedTaskErrorAt, refetch: refetchLinkedTask } = linkedTask;
+  React.useEffect(() => {
+    if (!taskParam || !linkedTaskFailed || taskErrorShown.current === linkedTaskErrorAt) return;
+    taskErrorShown.current = linkedTaskErrorAt;
+    // A failed READ: fixed words on screen, the raw text in the console (§11).
+    console.error("[tasks] ?task= read failed", linkedTaskError);
+    toast.error("This task couldn't be opened.", {
+      description: "The task was not removed — it just couldn't be loaded. Try again in a moment.",
+      action: { label: "Try again", onClick: () => void refetchLinkedTask() },
+      duration: 10_000,
+    });
+  }, [taskParam, linkedTaskFailed, linkedTaskError, linkedTaskErrorAt, refetchLinkedTask]);
   const closeEditing = React.useCallback(() => {
     setEditingTask(null);
     if (taskParam) setTaskParam("");

@@ -63,7 +63,7 @@ import {
 import { LeadsKpiDrawer } from "@/components/features/leads/leads-kpi-drawer";
 import { LeadsHotCard } from "@/components/features/leads/leads-hot-card";
 import { LeadsKanbanBoard } from "@/components/features/leads/leads-kanban-board";
-import { LeadsNoResults, LeadsStatusStates, hasActiveLeadFilters } from "@/components/features/leads/leads-empty-states";
+import { LeadsNoResults, LeadsStatusStates, deepLinkOutcome, hasActiveLeadFilters } from "@/components/features/leads/leads-empty-states";
 import { LeadsHeaderBar } from "@/components/features/leads/leads-header-bar";
 import { LeadsPageDialogs } from "@/components/features/leads/leads-page-dialogs";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
@@ -267,6 +267,9 @@ function LeadsPageInner() {
      R-208: a SECOND deep link in the same visit (the next lead saved from Add lead / Quick
      add) is a different id, so it is handled; closing re-arms it for the same id. */
   const deepLinkHandledRef = React.useRef<string | null>(null);
+  /** R-1535: which failed read was already toasted (its errorUpdatedAt), so one failure is
+   *  one toast and a failed retry is another. */
+  const deepLinkErrorShownRef = React.useRef<number | null>(null);
   React.useEffect(() => {
     if (!focusLeadId) deepLinkHandledRef.current = null;
   }, [focusLeadId]);
@@ -274,6 +277,10 @@ function LeadsPageInner() {
      /deals?lead=<id> link — the /today rows use it — goes there instead of the drawer. */
   const deepLinkToPage = isDealsPage && !!focusLeadId;
   const deepLink = useLead(deepLinkToPage ? undefined : (focusLeadId ?? undefined));
+  const {
+    isFetched: deepLinkFetched, isError: deepLinkIsError, data: deepLinkData,
+    error: deepLinkError, errorUpdatedAt: deepLinkErrorAt, refetch: deepLinkRefetch,
+  } = deepLink;
   React.useEffect(() => {
     /* No "handled" ref here: under dev StrictMode the first run's navigation can be dropped
        by the remount, and replacing to the same URL twice is harmless. */
@@ -283,12 +290,30 @@ function LeadsPageInner() {
   React.useEffect(() => {
     if (deepLinkToPage) return;
     if (!focusLeadId || deepLinkHandledRef.current === focusLeadId) return;
-    if (!deepLink.isFetched) return;
 
-    const match = deepLink.data ?? null;
+    const outcome = deepLinkOutcome({ isFetched: deepLinkFetched, isError: deepLinkIsError, data: deepLinkData });
+    if (outcome === "wait") return;
+    if (outcome === "error") {
+      /* R-1535: the read FAILED — the lead may well exist. Keep ?lead= (so Try again and a
+         refresh still work) and do not mark it handled: a successful retry opens it. */
+      if (deepLinkErrorShownRef.current === deepLinkErrorAt) return;
+      deepLinkErrorShownRef.current = deepLinkErrorAt;
+      // A failed READ: fixed words on screen, the raw text in the console (§11).
+      console.error("[leads] ?lead= read failed", deepLinkError);
+      toast.error("This lead couldn't be opened.", {
+        description: "The lead was not removed — it just couldn't be loaded. Try again in a moment.",
+        action: { label: "Try again", onClick: () => void deepLinkRefetch() },
+        duration: 10_000,
+      });
+      return;
+    }
+
+    const match = deepLinkData ?? null;
     deepLinkHandledRef.current = focusLeadId;
     if (!match) {
-      toast.error(`Lead ${focusLeadId} not found`);
+      toast.error("This lead was not found.", {
+        description: "It was deleted, merged into another lead, or you don't have access to it. Showing all leads.",
+      });
       setLeadInUrl("");
       return;
     }
@@ -306,7 +331,7 @@ function LeadsPageInner() {
 
     /* ?lead= is NOT stripped any more (R-342): it is what makes Back and refresh reopen
        this drawer. Closing the drawer clears it (closeLead). */
-  }, [deepLinkToPage, focusLeadId, deepLink.isFetched, deepLink.data, setLeadInUrl]);
+  }, [deepLinkToPage, focusLeadId, deepLinkFetched, deepLinkIsError, deepLinkData, deepLinkError, deepLinkErrorAt, deepLinkRefetch, setLeadInUrl]);
 
   /* Opening a row / card / queue item: /leads keeps its quick drawer; /deals opens the
      deal's own page, where its whole history lives (30 Sep 2026). */
