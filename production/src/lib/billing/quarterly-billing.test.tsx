@@ -35,6 +35,7 @@ import { previewCharge } from "@/lib/subscriptions/seat-request";
 import { nextUninvoiced, nextTermShowsNext } from "@/components/features/subscriptions/schedule-invoices";
 import { subscriptionSchedule, nextTermSchedule } from "./subscription-schedule";
 import { acceptedPayNow } from "@/app/(public)/quote/[id]/accept/accepted-pay";
+import { quoteDueNow } from "@/lib/payments/quote-due-now";
 import { QuotePDF } from "@/lib/pdf/QuotePDF";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { rupee } from "@/lib/utils";
@@ -74,8 +75,8 @@ describe("one plan, four quarters", () => {
     expect(s.firstGross).toBe(plan.lines[0].gross);
     expect(s.instalmentsGross).toBe(plan.instalmentsGross);
     const pay = acceptedPayNow({
-      quote: { ...Q, currency: "INR", payment_status: "none", invoice_id: null },
-      firstCommitment: "annual_yearly", payOnline: true, hasUpi: false,
+      due: quoteDueNow({ ...Q, currency: "INR", payment_status: "none", invoice_id: null }, 0),
+      payOnline: true, hasUpi: false,
     });
     expect(pay?.amount).toBe(7646);
   });

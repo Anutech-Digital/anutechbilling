@@ -1,18 +1,21 @@
 /**
- * R-234 — the UPI QR on the public accept page must ask for the SAME money as the
- * Pay button. On a split-billed quote the button charges instalment 1
- * (quoteInstalments().firstGross); the QR used to carry the whole term.
+ * R-234 / R-1613 — the UPI QR on the public accept page must ask for the SAME money as the
+ * Pay button and the Razorpay order. All three read quoteDueNow (lib/payments/quote-due-now):
+ * instalment 1 on a split quote, total − money received otherwise.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { quoteInstalments } from "@/lib/billing/instalments";
+import { quoteDueNow, type QuoteDueNowFields } from "@/lib/payments/quote-due-now";
 import { quoteUpiAmount } from "./upi-amount";
 
-const base = {
+const base: QuoteDueNowFields = {
   subtotal: 24000, discount_pct: 0, tax_rate: 18, amount: 28320,
-  currency: "INR", payment_status: "none", payment_amount: null,
+  currency: "INR", payment_status: "none",
 };
+const qr = (q: QuoteDueNowFields, firstCommitment: string | null, received = 0) =>
+  quoteUpiAmount(quoteDueNow({ ...q, line_items: [{ qty: 10, rate: 2400, commitment: firstCommitment }] }, received));
 
 describe("quoteUpiAmount", () => {
   it("quarterly quote: QR amount = Pay button amount (first instalment), not the term", () => {
@@ -21,7 +24,7 @@ describe("quoteUpiAmount", () => {
       cycle: "quarterly", termTaxable: 24000, termGross: 28320, taxRate: 18, lineCommitment: "annual",
     });
     expect(button).not.toBeNull();
-    const amt = quoteUpiAmount(q, "annual");
+    const amt = qr(q, "annual");
     expect(amt).toBe(button!.firstGross);
     expect(amt).toBe(7080);
     expect(amt).not.toBe(28320);
@@ -30,30 +33,34 @@ describe("quoteUpiAmount", () => {
   it("monthly cycle with a remainder still matches the engine's first period", () => {
     const q = { ...base, subtotal: 10001, amount: 11801, billing_cycle: "monthly" as const };
     const button = quoteInstalments({ cycle: "monthly", termTaxable: 10001, termGross: 11801, taxRate: 18, lineCommitment: null });
-    expect(quoteUpiAmount(q, null)).toBe(button!.firstGross);
+    expect(qr(q, null)).toBe(button!.firstGross);
   });
 
   it("legacy quote without billing_cycle falls back to the line commitment like the view", () => {
-    const q = { ...base, billing_cycle: null };
     // no split for a yearly / legacy-annual quote → whole amount
-    expect(quoteUpiAmount(q, "annual")).toBe(28320);
+    expect(qr({ ...base, billing_cycle: null }, "annual")).toBe(28320);
   });
 
   it("yearly quote keeps the whole amount due", () => {
-    expect(quoteUpiAmount({ ...base, billing_cycle: "yearly" as const }, "annual")).toBe(28320);
+    expect(qr({ ...base, billing_cycle: "yearly" as const }, "annual")).toBe(28320);
   });
 
   it("flex (commitment monthly) asks for the stored per-month amount", () => {
-    expect(quoteUpiAmount({ ...base, billing_cycle: "monthly" as const }, "monthly")).toBe(28320);
+    expect(qr({ ...base, billing_cycle: "monthly" as const }, "monthly")).toBe(28320);
+  });
+
+  it("R-1613: part-paid yearly quote → only the remainder (₹28,320 − ₹8,320 = ₹20,000)", () => {
+    expect(qr({ ...base, billing_cycle: "yearly" as const, payment_status: "partial" }, "annual", 8320)).toBe(20000);
   });
 
   it("split quote whose first instalment is already paid gets no QR (pay route refuses too)", () => {
-    expect(quoteUpiAmount({ ...base, billing_cycle: "quarterly" as const, payment_status: "partial", payment_amount: 7080 }, "annual")).toBe(0);
+    expect(qr({ ...base, billing_cycle: "quarterly" as const, payment_status: "partial" }, "annual", 7080)).toBe(0);
   });
 
-  it("foreign or invoiced quote still gets no QR", () => {
-    expect(quoteUpiAmount({ ...base, billing_cycle: "quarterly" as const, currency: "USD" }, "annual")).toBe(0);
-    expect(quoteUpiAmount({ ...base, billing_cycle: "quarterly" as const, payment_status: "invoiced" }, "annual")).toBe(0);
+  it("foreign, invoiced or fully paid quote gets no QR", () => {
+    expect(qr({ ...base, billing_cycle: "quarterly" as const, currency: "USD" }, "annual")).toBe(0);
+    expect(qr({ ...base, billing_cycle: "quarterly" as const, payment_status: "invoiced" }, "annual")).toBe(0);
+    expect(qr({ ...base, billing_cycle: "yearly" as const, payment_status: "partial" }, "annual", 28320)).toBe(0);
   });
 });
 

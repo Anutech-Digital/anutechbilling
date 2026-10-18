@@ -11,7 +11,8 @@ import { verifyPdfToken } from "@/lib/pdf/pdf-token";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuotePdfProps, type TenantPdfInfo } from "@/lib/pdf/build-props";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/pdf/quote-template";
@@ -70,15 +71,16 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     },
   });
 
-  // Scan-to-pay. quoteAmountDue() decides whether this quote can be collected at
-  // all — it refuses a non-INR quote (UPI settles only in rupees) and refuses one
-  // already invoiced (the invoice owns that ask, at its own balance).
+  // Scan-to-pay. R-1613: the QR asks for exactly what the online Pay button charges —
+  // readQuoteDueNow (total − money received, instalment 1 on a split quote). No QR on a
+  // non-INR quote (UPI settles only in rupees), a paid one, or one already invoiced (the
+  // invoice owns that ask, at its own balance).
   const t = tenant as { name?: string; upi_vpa?: string | null; upi_payee_name?: string | null } | null;
   const upi = await buildQuoteUpiQr({
     vpa:       t?.upi_vpa,
     payeeName: t?.upi_payee_name ?? t?.name,
     quoteId:   q.id,
-    amountDue: quoteAmountDue(q),
+    amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(admin, q)),
   });
 
   /* R-1523: ?template=proforma → the same quote as a "Proforma Invoice" (quote number, no GST

@@ -27,7 +27,8 @@ import { classifySendFailure } from "@/lib/whatsapp/send-failure";
 import { renderQuotePDF } from "@/lib/pdf";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
@@ -87,7 +88,8 @@ export const POST = withRoute({
         .select(`
           id, tenant_id, customer_id, customer_name, line_items, subtotal,
           discount_pct, tax_rate, amount, notes, expires_date, is_renewal, is_add_seats, is_one_off,
-          is_extension, extension_months
+          is_extension, extension_months, billing_cycle, currency, exchange_rate,
+          payment_status, invoice_id
         `)
         .eq("id", attach_quote_id)
         .single();
@@ -122,14 +124,15 @@ export const POST = withRoute({
 
       // Scan-to-pay on the PDF the customer receives over WhatsApp. This is the
       // shortest path there is from "quote arrives" to "money sent": the QR and
-      // the UPI app are on the same phone. quoteAmountDue() gates it — non-INR
-      // and already-invoiced quotes get no QR.
+      // the UPI app are on the same phone. R-1613: readQuoteDueNow gives the figure the
+      // online Pay button charges; non-INR, paid and already-invoiced quotes get no QR
+      // (currency / payment_status were not even selected here before — a USD quote got a ₹ QR).
       const tUpi = tenant as { upi_vpa?: string | null; upi_payee_name?: string | null } | null;
       const upi = await buildQuoteUpiQr({
         vpa:       tUpi?.upi_vpa,
         payeeName: tUpi?.upi_payee_name ?? tenant?.name,
         quoteId:   quote.id,
-        amountDue: quoteAmountDue(quote),
+        amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(admin, quote)),
       });
 
       const blob = await renderQuotePDF({
