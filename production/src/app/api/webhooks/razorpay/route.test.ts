@@ -492,3 +492,159 @@ describe("R-045 — refund.processed leaves an instruction, once, and books noth
     expect((await POST(signed(refundEvt(), { secret: "whsec_wrong" }))).status).toBe(401);
   });
 });
+
+/* R-1569 (audit 18 Oct): route.ts:360 answered `alreadyProcessed` for ANY event on a quote
+   already marked received — even a NEW Razorpay payment id. The customer had the pay page
+   open, the desk recorded the bank transfer, the customer paid online too: the money sat in
+   Razorpay and nothing in the app said so. R-1575: an old checkout paid after the quote was
+   combined/revised settled the REPLACED quote (provisioning it) while the new one still
+   asked for the money. Now: never dropped, never on a closed quote, owner told — once. */
+describe("R-1569 — a payment that arrives after the quote is settled or replaced is never lost", () => {
+  const DESK = { tenant_id: TENANT, quote_id: QUOTE, reference: "NEFT-DESK-1", status: "received", amount: 1180 };
+  const ALERT: Record<string, RegExp> = { "payment.duplicate": /dobara|Zyada paisa/i, "payment.replaced_quote": /^Purane quote/, "payment.unapplied": /record nahi hua/ };
+  const alerts = (type: string) => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0])
+    .filter((n) => n.kind === "payment.received" && n.entityId === "pay_AITEST1" && ALERT[type].test(n.title));
+  beforeEach(() => {
+    vi.mocked(notifyTenantOwners).mockClear();
+    vi.mocked(notifyTenantOwners).mockImplementation(async (n) => {
+      (db.tables.notifications ??= []).push({ tenant_id: n.tenantId, kind: n.kind, entity_id: n.entityId ?? null });
+    });
+  });
+  afterEach(() => { vi.mocked(notifyTenantOwners).mockImplementation(async () => undefined); });
+
+  it("desk already marked it paid → the online payment is recorded (excess → credit) and the owner is told", async () => {
+    db.tables.quotes[0].payment_status = "received";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.alreadyProcessed).toBeUndefined();
+    expect(body.latePayment).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]); // no second invoice
+    expect(db.rpcCalls[0].args).toMatchObject({ p_quote_id: QUOTE, p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(db.tables.payments).toHaveLength(2);
+    const a = alerts("payment.duplicate");
+    expect(a).toHaveLength(1);
+    expect(a[0].title).toMatch(/dobara/i);
+    expect(`${a[0].title} ${a[0].body}`).toMatch(/refund|credit/i);
+    expect(queueProvisioning).not.toHaveBeenCalled(); // already provisioned off the first payment
+    const customerMails = sendEmail.mock.calls.filter((c) => (c[0] as { kind: string }).kind === "razorpay_payment_customer");
+    expect(customerMails).toHaveLength(0);
+  });
+
+  it("the same late payment delivered again (and as order.paid) records nothing more and alerts once", async () => {
+    db.tables.quotes[0].payment_status = "received";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    await POST(signed(captured()));
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    const orderPaid = await POST(signed(captured("order.paid")));
+    expect((await orderPaid.json()).alreadyProcessed).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(db.tables.payments).toHaveLength(2);
+    expect(alerts("payment.duplicate")).toHaveLength(1);
+  });
+
+  it("an invoiced quote paid again online is recorded too, not dropped", async () => {
+    db.tables.quotes[0].payment_status = "invoiced";
+    db.tables.quotes[0].invoice_id = "INV-EXISTING";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    const res = await POST(signed(captured()));
+    expect((await res.json()).latePayment).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(alerts("payment.duplicate")).toHaveLength(1);
+  });
+
+  it("R-1575: an old checkout paid after a COMBINE is recorded on the replacing quote, never on the closed one", async () => {
+    db.tables.quotes[0].status = "expired";
+    db.tables.quotes[0].superseded_by = "Q-AITEST-0002";
+    db.tables.quotes.push({
+      id: "Q-AITEST-0002", tenant_id: TENANT, customer_name: "AITEST Buyer Co", amount: 2360, payment_status: "awaiting",
+      status: "accepted", superseded_by: null, lead_id: LEAD, line_items: [], invoice_id: null,
+    });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.appliedTo).toBe("Q-AITEST-0002");
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(db.rpcCalls[0].args).toMatchObject({ p_quote_id: "Q-AITEST-0002", p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(String(db.rpcCalls[0].args.p_notes)).toContain(QUOTE);
+    expect(db.tables.quotes[0].payment_status).toBe("awaiting"); // the replaced quote is untouched
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    const a = alerts("payment.replaced_quote");
+    expect(a).toHaveLength(1);
+    expect(`${a[0].title} ${a[0].body}`).toContain("Q-AITEST-0002");
+
+    // Replay: found by the payment id wherever it was recorded — nothing more.
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+  });
+
+  /* R-1574 made record_payment refuse the first payment on a renewal quote whose term was
+     already renewed. Through the webhook that refusal was a 500 — Razorpay retries, nothing
+     is ever booked. */
+  const staleRenewal = () => {
+    db.tables.quotes[0].renewal_subscription_id = "sub-1";
+    const base = db.rpcImpl!;
+    db.rpcImpl = (name, args) =>
+      name === "record_payment" && args.p_quote_id === QUOTE
+        ? { data: null, error: { code: "P0001", message: `Renewal quote ${QUOTE} was made for the term of subscription "Starter" due on 2026-10-01, but that subscription now renews on 2027-10-01 — that term was already renewed (or its date was changed), so this payment would renew nothing.` } }
+        : base(name, args);
+  };
+
+  it("R-1574 refusal: an old-term renewal quote paid online → recorded on the CURRENT renewal quote (credit if paid), owner told, replay-safe", async () => {
+    staleRenewal();
+    db.tables.subscriptions.push({ id: "sub-1", tenant_id: TENANT, renewal_quote_id: "Q-AITEST-0003" });
+    db.tables.quotes.push({
+      id: "Q-AITEST-0003", tenant_id: TENANT, customer_name: "AITEST Buyer Co", amount: 1180, payment_status: "received",
+      status: "accepted", superseded_by: null, lead_id: LEAD, line_items: [], invoice_id: null,
+    });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).appliedTo).toBe("Q-AITEST-0003");
+    const rec = db.rpcCalls.filter((c) => c.name === "record_payment");
+    expect(rec.map((c) => c.args.p_quote_id)).toEqual([QUOTE, "Q-AITEST-0003"]);
+    expect(rec[1].args).toMatchObject({ p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(String(rec[1].args.p_notes)).toContain(QUOTE);
+    expect(rpcNames()).not.toContain("generate_invoice");
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(db.tables.payments.filter((p) => p.reference === "pay_AITEST1")).toHaveLength(1);
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+  });
+
+  it("R-1574 refusal with no current renewal quote → not a 500 loop: owner told once to refund or book it", async () => {
+    staleRenewal();
+    db.tables.subscriptions.push({ id: "sub-1", tenant_id: TENANT, renewal_quote_id: null });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).unapplied).toBe(true);
+    const a = alerts("payment.unapplied");
+    expect(a).toHaveLength(1);
+    expect(String(a[0].body)).toMatch(/refund/i);
+    expect(String(a[0].body)).toContain("pay_AITEST1");
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(alerts("payment.unapplied")).toHaveLength(1);
+  });
+
+  it("R-1575: a REJECTED quote with no replacement records nothing, and the owner is told once (refund or new quote)", async () => {
+    db.tables.quotes[0].status = "rejected";
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).unapplied).toBe(true);
+    expect(rpcNames()).toEqual([]);
+    const a = alerts("payment.unapplied");
+    expect(a).toHaveLength(1);
+    expect(a[0].entityId).toBe("pay_AITEST1");
+    expect(`${a[0].title} ${a[0].body}`).toMatch(/refund/i);
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(alerts("payment.unapplied")).toHaveLength(1);
+  });
+});

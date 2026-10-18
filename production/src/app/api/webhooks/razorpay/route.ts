@@ -56,6 +56,9 @@ import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment, parseRefund, refundAdvice } from "@/lib/razorpay/gateway-money";
 import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
+import {
+  receivedOnQuote, settleLatePayment, settleOnReplacedQuote, settleStaleRenewal, STALE_RENEWAL_RE, type LateArgs,
+} from "./late-payment.server";
 
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
@@ -339,7 +342,7 @@ export async function POST(request: NextRequest) {
   // ── Look up the quote we created at checkout time ─────────────────────
   const { data: quote, error: qErr } = await admin
     .from("quotes")
-    .select("id, tenant_id, customer_name, amount, payment_status, lead_id, seats, plan, line_items, is_renewal")
+    .select("id, tenant_id, customer_name, amount, payment_status, lead_id, seats, plan, line_items, is_renewal, status, superseded_by")
     .eq("id", receipt)
     .single();
 
@@ -356,32 +359,54 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Tenant mismatch" }, { status: 403 });
   }
 
-  // Idempotency — Razorpay can deliver the same event twice.
-  if (quote.payment_status === "received") {
-    console.log("[webhooks/razorpay] quote already marked paid:", receipt);
-    return NextResponse.json({ received: true, alreadyProcessed: true });
-  }
-  /* R-079: once the invoice is issued the quote moves on to 'invoiced', so the status check
-     above no longer sees a repeat delivery. The payment row is the durable fact: THIS
-     payment id already recorded against THIS quote means the event was handled — no second
-     provisioning row, no second email, and no second invoice. */
+  /* Idempotency — Razorpay delivers the same payment more than once (payment.captured AND
+     order.paid, plus retries). R-079: the payment row is the durable fact. R-1569: it is the
+     ONLY test now. Until 18 Oct a quote already marked 'received' answered alreadyProcessed
+     for ANY event — a NEW payment id included — so a customer who paid online after the desk
+     had recorded their bank transfer paid real money the app never recorded. The lookup is
+     tenant-wide (not this quote only) because R-1575 records a payment on a replaced quote
+     against the quote that replaced it. The order id is matched too: an order.paid that
+     carried no payment entity was recorded under it. */
   {
-    const ref = payment?.id ?? orderId;
+    const refs = payment?.id ? [payment.id, orderId] : [orderId];
     const { data: seen } = await admin
       .from("payments")
-      .select("id")
+      .select("id, quote_id")
       .eq("tenant_id", quote.tenant_id)
-      .eq("quote_id", quote.id)
-      .eq("reference", ref)
+      .in("reference", refs)
       .eq("status", "received")
       .limit(1);
     if (seen && seen.length) {
-      console.log("[webhooks/razorpay] payment already recorded:", ref, "on", receipt);
+      const seenQuote = (seen[0] as { quote_id?: string | null }).quote_id ?? quote.id;
+      console.log("[webhooks/razorpay] payment already recorded:", refs[0], "on", seenQuote);
       /* An order.paid that landed first may have carried no fee; the payment.captured that
          follows does. Writing the same numbers twice is harmless. */
-      if (payment?.id) await recordGatewayFee(admin, quote.tenant_id, quote.id, payment.id, payment);
+      if (payment?.id) await recordGatewayFee(admin, quote.tenant_id, seenQuote, payment.id, payment);
       return NextResponse.json({ received: true, alreadyProcessed: true });
     }
+  }
+
+  /* R-1569 / R-1575: a quote that is replaced, rejected, or already paid in full takes no
+     NORMAL settlement (no invoice, no activation, no "thank you" mail) — but the money is
+     real and is always recorded or reported to the owner. */
+  const lateArgs = (p: RazorpayPayment): LateArgs => ({
+    quote, payment: p, event, orderId,
+    recordFee: (a, t, q, ref) => recordGatewayFee(a, t, q, ref, p),
+  });
+  const closedQuote = Boolean(quote.superseded_by) || quote.status === "rejected";
+  const priorReceived = await receivedOnQuote(admin, quote.tenant_id, quote.id);
+  const alreadySettled =
+    quote.payment_status === "received" || (priorReceived > 0 && priorReceived >= (quote.amount ?? 0));
+  if (closedQuote || alreadySettled) {
+    if (!payment?.id) {
+      /* An order-only event names no payment: there is nothing to tell a new payment from a
+         repeat by. The payment.captured for the same money carries the id and lands below. */
+      console.log("[webhooks/razorpay] order-only event on a settled/closed quote:", receipt);
+      return NextResponse.json({ received: true, alreadyProcessed: true });
+    }
+    return closedQuote
+      ? settleOnReplacedQuote(admin, lateArgs(payment))
+      : settleLatePayment(admin, lateArgs(payment));
   }
 
   // ── Call record_payment RPC — atomically:
@@ -430,6 +455,13 @@ export async function POST(request: NextRequest) {
        42703/23505 there names our tables and constraints. The server log keeps the
        whole thing; the response keeps our own guard wording and nothing else. */
     logDbError("webhooks/razorpay:record_payment", rpcErr);
+    /* R-1569 × R-1574: record_payment refuses the first payment on a renewal quote whose
+       term was already renewed (P0001, "…that term was already renewed…"). A 500 here would
+       have Razorpay retry for a day and the money would never be booked. The money goes to
+       the subscription's CURRENT renewal quote, or — if there is none — the owner is told. */
+    if (payment?.id && STALE_RENEWAL_RE.test(rpcErr.message ?? "")) {
+      return settleStaleRenewal(admin, lateArgs(payment));
+    }
     return NextResponse.json(
       { error: safeDbMessage(rpcErr, "Payment processing failed") },
       { status: 500 },
@@ -470,6 +502,19 @@ export async function POST(request: NextRequest) {
     href: `/quotes/${quote.id}`,
     entityId: quote.id,
   });
+  /* R-1569: a part-paid quote paid through an order made before the desk's part-payment
+     (that order still asks for the whole amount) — the excess is credit; say so. */
+  const overpaidCredit = Number((recorded as { overpaid_credit?: number } | null)?.overpaid_credit) || 0;
+  if (overpaidCredit > 0) {
+    await notifyTenantOwners({
+      tenantId: quote.tenant_id,
+      kind: "payment.received", // R-1569 alert — entityId is the Razorpay payment id
+      title: `Zyada paisa aaya — ${rupee(overpaidCredit)} credit on ${quote.id}`,
+      body: `${quote.customer_name ?? "Customer"} ne Razorpay se ${rupee(paymentAmount)} pay kiya (${paymentRef}); quote par pehle se paisa tha, ${rupee(overpaidCredit)} customer credit bana. Refund karo ya agle bill me lagao.`,
+      href: `/quotes/${quote.id}`,
+      entityId: paymentRef,
+    });
+  }
 
   /* ── QUEUE THE ACTIVATION ────────────────────────────────────────────────
      Placed after `record_payment` has committed, on purpose: the money being recorded is the

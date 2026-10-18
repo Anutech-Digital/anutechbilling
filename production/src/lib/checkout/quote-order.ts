@@ -24,7 +24,7 @@ const ENV_RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
 
 /** The quote columns this needs — the pay route's select. */
 export const QUOTE_ORDER_COLUMNS =
-  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items";
+  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items, superseded_by";
 
 export interface QuoteForOrder {
   id: string;
@@ -41,6 +41,30 @@ export interface QuoteForOrder {
   discount_pct: number | null;
   tax_rate: number | null;
   line_items: unknown;
+  /** R-1569/R-1575: set when the quote was revised or combined into another. */
+  superseded_by?: string | null;
+}
+
+/**
+ * R-1569: rupees already received on the quote — the payments ledger, not the quote's
+ * `payment_status` label. A TDS settlement is recorded as one payment whose amount includes
+ * the TDS (record_payment_with_tds), so it counts here too. Refunded / deleted rows are
+ * not money in hand and are left out.
+ */
+export async function quoteAmountReceived(
+  admin: ReturnType<typeof createAdminClient>,
+  quote: { id: string; tenant_id: string },
+): Promise<number> {
+  const { data, error } = await admin
+    .from("payments")
+    .select("amount, status")
+    .eq("tenant_id", quote.tenant_id)
+    .eq("quote_id", quote.id)
+    .eq("status", "received");
+  if (error) throw new Error(`payments read failed: ${error.message}`);
+  return ((data ?? []) as { amount: number | null; status: string | null }[])
+    .filter((p) => p.status === "received")
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 }
 
 export interface QuoteOrderOptions {
@@ -68,6 +92,17 @@ export async function startQuotePayment(
   }
   if (quote.status === "rejected") {
     return { status: 400, body: { error: "This quote was rejected — please contact the reseller." } };
+  }
+  /* R-1575: a quote revised or combined into another takes no money — the replacing quote
+     does. Named, so the customer knows which one to ask for. */
+  if (quote.superseded_by) {
+    return {
+      status: 400,
+      body: {
+        error: `This quote was replaced by ${quote.superseded_by} — it can't be paid any more.`,
+        nextStep: `Please pay quote ${quote.superseded_by} instead; ask the reseller to send you its link if you don't have it.`,
+      },
+    };
   }
   /* R-448: 'expired' is also a replaced quote (superseded_by) — never take money on it. */
   if (quote.status === "expired") {
@@ -140,7 +175,29 @@ export async function startQuotePayment(
     };
   }
 
-  const amountInr = instalments ? instalments.firstGross : (quote.amount ?? 0);
+  /* R-1569: charge what is still DUE, never the whole quote again. A ₹50,000 quote with
+     ₹20,000 recorded by the desk used to send a ₹50,000 order; the extra ₹20,000 landed as
+     customer credit — money taken that was never owed. A split-billed quote reaches here
+     only before its first payment (refused above once part-paid), so its first instalment
+     stands. */
+  const quoteTotal = quote.amount ?? 0;
+  let alreadyPaid = 0;
+  try {
+    alreadyPaid = await quoteAmountReceived(admin, quote);
+  } catch (err) {
+    console.error(`${opts.logTag} ${(err as Error).message}`);
+    return { status: 500, body: { error: "Could not start payment. Please retry." } };
+  }
+  if (!instalments && alreadyPaid > 0 && alreadyPaid >= quoteTotal) {
+    return {
+      status: 409,
+      body: {
+        error: "This quote is already paid in full.",
+        nextStep: "Nothing more is due on it. If you need a receipt or think this is wrong, please contact the reseller.",
+      },
+    };
+  }
+  const amountInr = instalments ? instalments.firstGross : quoteTotal - alreadyPaid;
   if (amountInr <= 0) {
     return { status: 400, body: { error: "Nothing to pay on this quote." } };
   }
@@ -232,6 +289,8 @@ export async function startQuotePayment(
         /* So a ₹2,360 capture against a ₹28,320 quote is self-explaining in the
            gateway dashboard rather than looking like an underpayment. */
         ...(instalments ? { instalment: `1 of ${instalments.count}`, cycle: instalments.cycle } : {}),
+        /* R-1569: a part-paid quote's order is the remainder — say so in the gateway too. */
+        ...(alreadyPaid > 0 ? { quoteTotal: String(quoteTotal), alreadyPaid: String(alreadyPaid) } : {}),
       },
     });
     return {
@@ -240,6 +299,9 @@ export async function startQuotePayment(
         success: true,
         orderId: order.id,
         amount: amountInr * 100,
+        amountRupees: amountInr,
+        quoteTotal,
+        alreadyPaid,
         currency: "INR",
         razorpayKeyId: rzKeyId,
         razorpayMode: rzMode,
