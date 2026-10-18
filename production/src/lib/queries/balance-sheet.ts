@@ -64,6 +64,9 @@ export interface BalanceSheetAuto {
   expensesPayable: number;   // unpaid expenses (amount − TDS), no bank line matched — a liability
   expensesPaidUnbanked: number; // "paid" expenses (cash / UPI) not matched to any bank line — money already gone; reduces cash-like assets
   salaryOtherDeductions: number; // "other" deductions withheld from salary — held by the company, owed onward / back (a liability)
+  /** R-1580: partner commission earned but not yet paid (net of its 194H TDS, which sits in
+   *  salaryDuesPayable) — a liability. Optional so fixtures stay valid; absent = 0. */
+  commissionsPayable?: number;
   fyLabel:         string;   // e.g. "FY 2026-27" for the GST caveat
 }
 

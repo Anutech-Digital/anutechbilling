@@ -84,6 +84,8 @@ export interface BalanceSheetRpcRow {
   expenses_payable?: number | null;
   expenses_paid_unbanked?: number | null;
   salary_other_deductions?: number | null;
+  /** R-1580: partner commission earned, not yet paid (net). Absent before that migration. */
+  commissions_payable?: number | null;
 }
 
 /**
@@ -141,6 +143,8 @@ export function balanceSheetFromRpc(r: BalanceSheetRpcRow): BalanceSheetAuto {
     expensesPayable: r.expenses_payable ?? 0,
     expensesPaidUnbanked: r.expenses_paid_unbanked ?? 0,
     salaryOtherDeductions: r.salary_other_deductions ?? 0,
+    /* R-1580: migration se pehle 0 — aaj tak wala number, koi naya galat number nahi. */
+    commissionsPayable: r.commissions_payable ?? 0,
     fyLabel: r.fy_label,
   };
 }

@@ -147,6 +147,7 @@ export default function BalanceSheetPage() {
         ["Reimbursements payable", auto.reimbursementsPayable ?? 0],
         ["Expenses payable", auto.expensesPayable ?? 0],
         ["Salary deductions held (other)", auto.salaryOtherDeductions ?? 0],
+        ["Commission payable (partners)", auto.commissionsPayable ?? 0],
         ["Credit card payable", auto.creditCardPayable ?? 0],
         ["EMI loans payable", auto.emiLoansPayable ?? 0],
         ["Business loans payable", auto.businessLoansPayable ?? 0],
@@ -319,7 +320,7 @@ export default function BalanceSheetPage() {
                   <BSLine label="Salary payable" hint="payroll run, not yet paid out" amount={auto?.salaryPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
                 )}
                 {(auto?.salaryDuesPayable ?? 0) > 0 && (
-                  <BSLine label="Statutory dues payable" hint="TDS (salary + vendor), PF, ESI — not yet remitted" amount={auto?.salaryDuesPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
+                  <BSLine label="Statutory dues payable" hint="TDS (salary + vendor + partner commission), PF, ESI — not yet remitted" amount={auto?.salaryDuesPayable ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
                 )}
                 {(auto?.reimbursementsPayable ?? 0) > 0 && (
                   <BSLine label="Reimbursements payable" hint="expenses paid from someone's own card, not yet repaid" amount={auto?.reimbursementsPayable ?? 0} kind="auto" source="Reimbursements" href="/accounting/reimbursements" />
@@ -329,6 +330,9 @@ export default function BalanceSheetPage() {
                 )}
                 {(auto?.salaryOtherDeductions ?? 0) > 0 && (
                   <BSLine label="Salary deductions held" hint={'"other" deductions withheld from salary, owed onward or back'} amount={auto?.salaryOtherDeductions ?? 0} kind="auto" source="Payroll" href="/accounting/payroll" />
+                )}
+                {(auto?.commissionsPayable ?? 0) > 0 && (
+                  <BSLine label="Commission payable (partners)" hint="partner commission earned, not yet paid (after TDS)" amount={auto?.commissionsPayable ?? 0} kind="auto" source="Referrals" />
                 )}
                 {(auto?.creditCardPayable ?? 0) > 0 && (
                   <BSLine label="Credit card payable" hint="company credit cards ka owe / udhari" amount={auto?.creditCardPayable ?? 0} kind="auto" source="Banking" href="/accounting/banking" />

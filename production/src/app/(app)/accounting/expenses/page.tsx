@@ -36,11 +36,10 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
 import { errorMessage } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
-import { read26Q } from "./tds-26q";
+import { build26QRows, read26Q } from "./tds-26q";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { panFromGstin } from "@/lib/accounting/tds-deductor";
 import { istToday } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
@@ -282,7 +281,7 @@ export default function ExpensesPage() {
 
   // 26Q working — non-salary TDS you DEDUCTED (rent/professional/contractor…),
   // deductee-wise, for the current date range. For the CA / TDS software (RPU →
-  // FVU); the app can't produce the FVU itself. PAN derived from vendor GSTIN.
+  // FVU); the app can't produce the FVU itself. R-1580: + partner commissions (194H).
   async function export26Q() {
     const supabase = createClient();
     /* R-1586: every TDS expense of the range and its vendors, paged past the gateway's
@@ -290,36 +289,21 @@ export default function ExpensesPage() {
     let read: Awaited<ReturnType<typeof read26Q>>;
     try { read = await read26Q(supabase, range); }
     catch (e) { toast.error(`26Q data load nahi hua: ${errorMessage(e)}`); return; }
-    const { exps, vends } = read;
-    if (exps.length === 0) {
-      toast.error("Is range me koi TDS-deducted expense nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
+    /* R-1580: expenses + partner commissions (194H); PAN = deductee's own, else from GSTIN. */
+    const { rows, totalTds, missingPan } = build26QRows(read);
+    if (rows.length === 0) {
+      toast.error("Is range me koi TDS-deducted expense ya partner commission nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
       return;
     }
-    /* PAN: the vendor's own (migration 20260927130000), else lifted from a well-formed GSTIN. */
-    const panByVid = new Map<string, string>();
-    for (const v of vends) panByVid.set(v.id, v.pan ?? panFromGstin(v.gstin) ?? "");
-    const panFrom = (vid: string | null | undefined) => (vid ? panByVid.get(vid) ?? "" : "");
-    const rows = exps.slice()
-      .sort((a, b) => (a.vendor_name ?? "").localeCompare(b.vendor_name ?? "") || a.expense_date.localeCompare(b.expense_date))
-      .map((e) => [
-        e.vendor_name ?? "—",
-        panFrom(e.vendor_id),
-        e.tds_section ?? "",
-        e.expense_date,
-        (e.amount ?? 0) - (e.gst_paid ?? 0),   // amount on which TDS applies (ex-GST base)
-        e.tds_amount ?? 0,
-      ]);
     const esc = (v: string | number) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const csv = [["Deductee (vendor)", "PAN", "Section", "Date", "Amount paid (ex-GST)", "TDS deducted"], ...rows]
+    const csv = [["Deductee (vendor / partner)", "PAN", "Section", "Date", "Amount paid / credited (ex-GST)", "TDS deducted"], ...rows]
       .map((r) => r.map(esc).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url; a.download = `26Q-working-${range.from}-to-${range.to}.csv`; a.click();
     URL.revokeObjectURL(url);
-    const totalTds = exps.reduce((s, e) => s + (e.tds_amount ?? 0), 0);
-    const missingPan = rows.filter((r) => !r[1]).length;
     let msg = `26Q working — ${rows.length} rows, TDS ${rupee(totalTds)}. Import into your TDS software / RPU (app can't make the FVU).`;
-    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors page (bina PAN ke 20% u/s 206AA).`;
+    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors / Referral partners page (bina PAN ke 20% u/s 206AA).`;
     toast.success(msg);
   }
 

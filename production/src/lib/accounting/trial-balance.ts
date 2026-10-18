@@ -114,6 +114,9 @@ export function buildTrialBalance(args: {
   put("Liabilities", "Reimbursements payable", bs.reimbursementsPayable, "credit", "Paid from someone's own pocket, not yet repaid");
   put("Liabilities", "Expenses payable", bs.expensesPayable, "credit", "Expenses marked unpaid (amount − TDS), no bank line matched");
   put("Liabilities", "Salary deductions held (other)", bs.salaryOtherDeductions, "credit", "\"Other\" deductions withheld from salary");
+  /* R-1580: commission P&L me gross; Cr = abhi na diya net (yahan) + 194H TDS (statutory dues). */
+  put("Liabilities", "Commission payable (partners)", bs.commissionsPayable ?? 0, "credit",
+    "Partner commission earned, not yet paid (net of TDS — the TDS is in statutory dues)");
   put("Liabilities", "Credit card payable", bs.creditCardPayable, "credit", "Company cards: amount owed");
   put("Liabilities", "EMI / asset loans", bs.emiLoansPayable, "credit", "Financed − principal repaid");
   put("Liabilities", "Business loans", bs.businessLoansPayable, "credit", "Borrowed − principal repaid");
