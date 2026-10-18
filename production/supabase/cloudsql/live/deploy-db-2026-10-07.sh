@@ -133,6 +133,7 @@ MIGS=(
   "r1528reassign|20261017153945_r1528_followup_reassign_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_payment_followups_reassign_guard()') and prosrc like '%R-1528%') and exists(select 1 from pg_trigger where tgname = 'trg_payment_followups_reassign_guard' and tgrelid = to_regclass('public.payment_followups'))"
   "r1527combinequotes|20261017161500_r1527_combine_quotes.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.combine_quotes(text[])') and prosrc like '%R-1527%')"
   "r1529billofsupply|20261018022629_r1529_bill_of_supply.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_invoice_document_kind') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_document_number(text,uuid,date)') and prosrc like '%R-1529%')"
+  "r1561instdue|20261018030414_r1561_instalment_due_once.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1561%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
