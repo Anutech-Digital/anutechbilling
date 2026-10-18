@@ -4,7 +4,11 @@
  * The mock rows and KPI figures below are ILLUSTRATIVE screenshots-in-text from the handoff,
  * not live data. The page's live links are the real integration: signup and demo go to the
  * actual app (see lib/config.ts, where the handoff's alias URL was corrected).
+ *
+ * R-1600 / R-1602 (19 Oct 2026): region from DATA_LOCATION, partner line from PARTNER_BADGE;
+ * "DPDP Act 2023 ready" dropped — no compliance claim without a CA / lawyer's yes.
  */
+import { DATA_LOCATION, PARTNER_BADGE } from "../config";
 
 export const OS_KPIS: readonly { label: string; value: string; note: string; accent?: boolean }[] = [
   { label: "MRR", value: "₹69.4K", note: "4 active subs" },
@@ -21,11 +25,10 @@ export const OS_QUOTES = [
 ] as const;
 
 export const OS_FACTS = [
-  "GOOGLE PREMIER PARTNER SINCE 2014",
+  `${PARTNER_BADGE} since 2014`.toUpperCase(),
   "17 MODULES, ONE DATABASE",
   "GST + HSN 998313",
-  "DPDP ACT 2023 READY",
-  "GOOGLE CLOUD MUMBAI",
+  `${DATA_LOCATION.provider} ${DATA_LOCATION.city}`.toUpperCase(),
   "RAZORPAY PAYOUTS",
 ] as const;
 
@@ -132,8 +135,8 @@ export const OS_ONBOARDING = [
 ] as const;
 
 export const OS_SECURITY = [
-  { title: "Hosted on Google Cloud Mumbai", body: "Data stays in India. Region is asia-south1, with managed Postgres and daily encrypted snapshots." },
-  { title: "DPDP Act 2023 ready", body: "Consent records, purpose limitation and data-principal deletion requests built into the schema." },
+  { title: `Hosted on ${DATA_LOCATION.provider} ${DATA_LOCATION.city}`, body: `Region is ${DATA_LOCATION.region}, with managed Postgres (${DATA_LOCATION.database}) and daily encrypted backups.` },
+  { title: "Privacy policy you can read", body: "Where your data is stored, who processes it, how long we keep it and how to ask for deletion — written down, with a grievance officer named." },
   { title: "Tenant isolation", body: "Every reseller is a separate tenant. Row-level scoping on every query, verified in tests, not by convention." },
   { title: "Role-based access", body: "Owner, operator and accountant roles with an append-only audit log on quotes, invoices and payments." },
   { title: "GST correctness", body: "HSN 998313, CGST §31 numbering, intra and inter-state split, advance receipts — schema-level, not a plugin." },

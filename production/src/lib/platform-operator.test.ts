@@ -118,19 +118,19 @@ describe("public pages par purani entity ka naam nahi", () => {
   });
 });
 
-describe("do alag Mumbai — ek galat, ek sahi", () => {
+describe("company ka sheher aur server ka region — do alag baatein", () => {
   it("company ka sheher Delhi hai", () => {
     expect(PLATFORM_OPERATOR.city).toMatch(/Delhi/);
     expect(PLATFORM_OPERATOR.address).toMatch(/Delhi/);
   });
 
-  it("server ka region Mumbai RAHNA chahiye — wo sach hai", () => {
-    /* Ye test ulti disha me hai, aur jaan-boojhkar. Agar koi "Mumbai" ka blanket
-       find-replace chalaye — jo is badlav me sabse aasan galti thi — to `ap-south-1` ka
-       sach bhi mit jata aur ye test use pakad lega. */
+  it("server ka region ek constant se aata hai (DATA_LOCATION), sheher se nahi", () => {
+    /* Pehle yahan "Mumbai RAHNA chahiye" tha — par 5-6 Sep 2026 se production Singapore
+       (asia-southeast1) me hai, to wo test ek purana sach pakde baitha tha (R-1600, 19 Oct).
+       Ab region site/lib/config.ts DATA_LOCATION se aata hai; ye pages use hi padhein. */
     expect(codeOf(["src", "app", "(public)", "_components", "landing-sections.tsx"]))
-      .toMatch(/Google Cloud Mumbai/);
+      .toMatch(/DATA_LOCATION/);
     expect(codeOf(["src", "app", "(public)", "about", "page.tsx"]))
-      .toMatch(/Google Cloud, Mumbai/);
+      .toMatch(/DATA_LOCATION\.label/);
   });
 });

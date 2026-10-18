@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
 import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
+import { DATA_LOCATION, PARTNER_LINE } from "@/site/lib/config";
 import React from "react";
 
 /* ───────────────────────────────────────────────────────────────
@@ -114,21 +115,20 @@ export function TrustRibbon() {
   return (
     <section className="border-y border-hairline bg-paper-2/60 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-7 gap-y-2 px-6 py-5 font-mono text-2xs uppercase tracking-wider text-ink-3">
-        <span className="text-amber-ink font-semibold">★ Google Premier Partner · since 2014</span>
+        {/* R-1602: partner line from the one flag (site/lib/config.ts) — "Premier Partner"
+            only once the certificate is on file. */}
+        <span className="text-amber-ink font-semibold">★ {PARTNER_LINE}</span>
         <Dot />
         <span className="text-emerald font-semibold">⚡ 1-Click Excel & Tally Migration</span>
         <Dot />
         {/* Company Delhi ki hai (ANUTECH DIGITAL PVT LTD, Rohini — lib/platform.ts).
-            Neeche "Google Cloud Mumbai" JAAN-BOOJHKAR waisa hi hai: wo server ka region
-            hai (`ap-south-1`) aur wo sach hai. Do alag Mumbai — "Mumbai" ka blanket
-            replace ek sahi baat tod deta. */}
+            Server ka region alag baat hai — R-1600: wo DATA_LOCATION se aata hai
+            (Singapore, asia-southeast1). "DPDP ready" ka daava hataya (CA ki haan ke bina nahi). */}
         <span>🇮🇳 Built in Delhi</span>
         <Dot />
         <span>GST + HSN 998313</span>
         <Dot />
-        <span>DPDP Act 2023 ready</span>
-        <Dot />
-        <span>Hosted on Google Cloud Mumbai</span>
+        <span>Hosted on {DATA_LOCATION.provider} {DATA_LOCATION.city}</span>
         <Dot />
         <span>Razorpay payouts</span>
       </div>

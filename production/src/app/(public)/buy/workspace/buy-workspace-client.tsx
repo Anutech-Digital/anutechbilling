@@ -37,7 +37,10 @@ import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import {
+  COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay,
+  SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT,
+} from "@/site/lib/config";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -638,6 +641,8 @@ function GoogleGMark({ size = 32 }: { size?: number }) {
 
 /** Google Cloud "Sell · Premier Partner · Google Workspace" circular badge. */
 function PremierPartnerBadge({ size = 140 }: { size?: number }) {
+  // R-1602: shown only once the partner certificate is on file (site/lib/config.ts flag).
+  if (!SHOW_PREMIER_PARTNER) return null;
   return (
     <div
       style={{
@@ -722,8 +727,8 @@ function PremierBadgeShowcase() {
 function FounderHero({ waMessage }: { waMessage: string }) {
   return (
     <div className="relative w-full max-w-[440px]">
-      {/* Premier Partner badge — small corner accent, top-left */}
-      <div className="absolute -top-5 -left-5 z-20">
+      {/* Premier Partner badge — small corner accent, top-left (R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute -top-5 -left-5 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -736,7 +741,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <PremierPartnerBadge size={84} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Main card — white surface, generous padding, subtle border */}
       <div
@@ -756,7 +761,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <div className="font-serif text-xl text-ink leading-tight">Pardeep Sharma</div>
             <div className="text-sm text-ink-3 mt-0.5">Founder, ANUTECH DIGITAL PVT LTD</div>
             <div className="text-2xs text-amber-ink mt-1 font-medium">
-              Google Premier Partner · since 2014
+              {PARTNER_LINE}
             </div>
           </div>
         </div>
@@ -996,8 +1001,8 @@ function HeroVisual() {
         </div>
       </div>
 
-      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out) */}
-      <div className="absolute top-0 left-0 z-20">
+      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out; R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute top-0 left-0 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -1010,7 +1015,7 @@ function HeroVisual() {
             <PremierPartnerBadge size={96} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* TOP-RIGHT — Custom email card (Workspace's #1 value prop, made
           prominent: bigger pad, larger email font, all-mono so it reads as
@@ -1348,7 +1353,7 @@ export function BuyWorkspaceClient({
               color: "#FCD34D",
             }}
           >
-            <span style={{ fontSize: 11 }}>★</span> Google Premier Partner
+            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
           </div>
           <Button asChild variant="primary" size="sm">
             <a href="#enquiry">Get started</a>
@@ -1411,7 +1416,7 @@ export function BuyWorkspaceClient({
 
             <p className="text-base text-ink-3 leading-relaxed mb-7 max-w-xl">
               <b className="text-ink">Indian SMEs</b> trust us with their email.
-              Google Premier Partner since 2014. GST invoice, Hindi support,
+              {PARTNER_LINE}. GST invoice, Hindi support,
               <b className="text-ink"> one person who picks up the phone.</b>
             </p>
 
@@ -1700,7 +1705,7 @@ export function BuyWorkspaceClient({
                   <CompareBullet positive>Razorpay · UPI · NEFT · card · net-banking</CompareBullet>
                   <CompareBullet positive>Domain verification + DNS setup done by us</CompareBullet>
                   <CompareBullet positive>Annual upfront with single invoice</CompareBullet>
-                  <CompareBullet positive>Direct Google escalation via Premier Partner status</CompareBullet>
+                  {SHOW_PREMIER_PARTNER && <CompareBullet positive>Direct Google escalation via {PARTNER_SHORT} status</CompareBullet>}
                 </ul>
               </div>
 
@@ -1977,7 +1982,7 @@ export function BuyWorkspaceClient({
             <div className="font-serif text-sm">ANUTECH DIGITAL PVT LTD</div>
           </div>
           <div className="text-xs text-ink-3 font-mono">
-            Made in India · GSTIN registered · Google Premier Partner
+            Made in India · GSTIN registered · {PARTNER_BADGE}
           </div>
         </div>
       </footer>

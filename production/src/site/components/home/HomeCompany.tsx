@@ -23,7 +23,7 @@ import {
 import Link from "@/site/components/ui/SiteLink";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { reportLeadConversion } from "@/site/lib/google-ads";
-import { WHATSAPP_URL, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
+import { WHATSAPP_URL, WHATSAPP_READY, COMPANY, PARTNER_BADGE, PARTNER_SHORT, SHOW_PREMIER_PARTNER } from "@/site/lib/config";
 import { C, MONO, CATALOGUE_V2, CatScene } from "@/site/components/home/HomeV2";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { teaserCardPrice, type DomainTeaser } from "@/site/lib/data/domain-teaser";
@@ -54,7 +54,7 @@ const STEPS: readonly { n: string; icon: LucideIcon; title: string; body: string
 
 /** "IT for your office" — the licence/hosting catalogue, email first. */
 const IT_CARDS = [
-  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: ["GOOGLE PREMIER PARTNER", "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/googleworkspace-inbox.png" },
+  { name: "Business email", href: "/email", from: "₹79", unit: "from · /mailbox/mo", gst: "+ GST 18%", body: "Google Workspace, Microsoft 365, Zoho or Anutech Mail — priced side by side, migrated free.", tags: [PARTNER_BADGE.toUpperCase(), "FREE MIGRATION"], cta: "See email plans", icon: "mail" as const, img: "/googleworkspace-inbox.png" },
   ...CATALOGUE_V2.filter((c) => c.name !== "Reseller program"),
 ];
 
@@ -187,7 +187,8 @@ export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; d
         <div className="hc-wrap hc-facts">
           {([
             [CalendarCheck, "Since 2014", "In business"],
-            [Award, "Premier Partner", "Google"],
+            // R-1602: "Premier Partner" only behind the flag in site/lib/config.ts.
+            [Award, PARTNER_SHORT, SHOW_PREMIER_PARTNER ? "Google" : "Google Workspace"],
             [MessageCircle, "A person", "Answers on WhatsApp"],
             [FileText, COMPANY.gstin, "GSTIN · " + COMPANY.city],
           ] as const).map(([Icon, v, l]) => (

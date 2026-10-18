@@ -26,7 +26,7 @@ export function UtilityBar() {
              thesis, so the utility bar states it first (offer text in warm accent). */
           <span><span style={{ color: "#FFC9A8" }}>Free {FREE_DOMAIN_TLDS_LABEL} domain for the first year with yearly hosting</span> · GST invoice on every order</span>
         ) : onHome ? (
-          <span>Custom software &amp; office automation · Google Premier Partner since 2014</span>
+          <span>Custom software &amp; office automation · {COMPANY.partnerLine}</span>
         ) : (
           <span>Free migration on every plan · GST invoice on every order</span>
         )}
@@ -137,7 +137,7 @@ export function Footer() {
               <Image src="/lp/anutech-logo.png" alt="ANUTECH Digital Pvt Ltd" width={108} height={36} style={{ objectFit: "contain", height: 36, width: "auto" }} />
             </div>
             <p style={{ fontSize: 14, lineHeight: 1.55, color: "var(--text-secondary)", maxWidth: 260, margin: "0 0 14px" }}>
-              Anutech Digital Pvt Ltd, Rohini, Delhi. Google Premier Partner since 2014. Maker of ResellerOS.
+              Anutech Digital Pvt Ltd, Rohini, Delhi. {COMPANY.partnerLine}. Maker of ResellerOS.
             </p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {["GST INVOICE", "UPI", "NETBANKING", "VISA / MASTERCARD"].map((b) => (

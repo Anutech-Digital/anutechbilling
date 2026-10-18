@@ -6,7 +6,7 @@
  * ⚠️ Client names, case-study figures and review quotes are PLACEHOLDERS to be replaced
  * with real ones before launch — the handoff marks them so.
  */
-import { SLA } from "../config";
+import { SLA, PARTNER_LINE } from "../config";
 import { DOMAIN_TEASER_NO_PRICE } from "./domain-teaser";
 import { HOSTING_DESCRIPTION } from "./hosting-copy";
 
@@ -57,7 +57,8 @@ export const COMPARE_ROWS = [
   { label: "Migration", us: "Free, done by us", them: "A documentation article" },
   { label: "Support", us: "WhatsApp, answered by a person", them: "Ticket queue, chatbot first" },
   { label: "Who answers", us: "Someone who can change your account", them: "Tier-one, then escalation" },
-  { label: "Datacentre", us: "Mumbai and Bengaluru", them: "Usually US, India optional" },
+  // R-1600: "Mumbai and Bengaluru" was never verified; hosting is Google Cloud (R-1459).
+  { label: "Datacentre", us: "Google Cloud", them: "Usually US, India optional" },
   { label: "Contract", us: "Monthly or yearly, cancel any time", them: "Tenure-locked promo pricing" },
 ] as const;
 
@@ -104,7 +105,7 @@ export const COMPANY_FACTS = [
   { label: "GSTIN", value: "07ABDCA0298H1ZP" },
   { label: "HSN CODE", value: "998313" },
   { label: "REGISTERED OFFICE", value: "Rohini, Delhi" },
-  { label: "PARTNER STATUS", value: "Google Premier Partner, since 2014" },
+  { label: "PARTNER STATUS", value: PARTNER_LINE }, // R-1602: one flag in config.ts
   { label: "SUPPORT HOURS", value: "Mon–Sat, 10:00–19:00 IST" },
   { label: "PRODUCT", value: "ResellerOS · resellersos.in" },
 ] as const;

@@ -13,7 +13,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay, PARTNER_BADGE } from "@/site/lib/config";
 
 export interface ThanksOrder {
   quoteId:        string;
@@ -155,7 +155,7 @@ export function ThanksClient({
               color:      "#FCD34D",
             }}
           >
-            <span style={{ fontSize: 11 }}>★</span> Google Premier Partner
+            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
           </div>
         </div>
       </header>

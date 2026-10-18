@@ -29,13 +29,14 @@ import { BuyWorkspaceClient, type CatalogItem } from "./buy-workspace-client";
 import { parseBuyParams } from "@/lib/checkout/buy-link";
 import { isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
 import { simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { PARTNER_LINE } from "@/site/lib/config";
 
 const BUY_PAGE_TENANT_ID =
   process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 export const metadata: Metadata = {
   title: { absolute: "Buy Google Workspace · Anutech Digital" },
-  description: "Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. Premier Partner since 2014.",
+  description: `Google Workspace pricing for India. Annual GST invoice, hand-held migration, Hindi + English support. ${PARTNER_LINE}.`,
 };
 
 // Don't cache for the SSR — Pardeep needs price/enablement edits in the
