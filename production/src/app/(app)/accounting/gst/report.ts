@@ -11,7 +11,8 @@ import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { splitItc, itcEligibility } from "@/lib/gst/itc";
 import { billItcEligibility, splitBillItc, mergeItcSplits } from "@/lib/gst/bill-itc";
 import { docGstRate, docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
-import { paymentAdvances, snapshotAdvanceGross } from "@/lib/gst/advance-cash";
+import { snapshotAdvanceGross, type AdvancePayment } from "@/lib/gst/advance-cash";
+import { allocateInstalmentPayments, splitPaymentAdvances, type AdvancePortion, type InstalmentInvoice } from "@/lib/gst/instalment-advances";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
 import { expenseHeadsByState, type Heads } from "@/lib/gst/gstr3b";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -23,6 +24,98 @@ import { createClient } from "@/lib/supabase/client";
 import { gstCashHeadline, gstr3bFromReport, type GstReport, type InputRow, type OutputRow } from "./cash-to-pay";
 
 type DateRange = GstPeriod;
+
+type InstPayment = AdvancePayment & { quote_id: string | null };
+
+/**
+ * R-1611: the instalment invoices of the split-billed quotes this report touches — the quotes
+ * of this period's payments (no invoice of their own) and the quotes behind this period's
+ * instalment invoices — and their received payments matched to them oldest-first.
+ * `portions`: payment id → its parts (11A side). `adjustedBy`: invoice id → the payment parts
+ * it took (11B side). A quote with no raised instalment adds nothing (all advance, as before).
+ */
+async function loadInstalmentPortions(
+  supabase: ReturnType<typeof createClient>,
+  args: { payQuoteIds: string[]; periodInvoiceIds: string[]; quoteById: ReadonlyMap<string, { invoiceId: string | null }> },
+): Promise<{ portions: Map<string, AdvancePortion[]>; adjustedBy: Map<string, { payment: InstPayment; gross: number }[]> }> {
+  const portions = new Map<string, AdvancePortion[]>();
+  const adjustedBy = new Map<string, { payment: InstPayment; gross: number }[]>();
+
+  // Subscriptions behind those quotes and behind this period's instalment invoices.
+  const subIds = new Set<string>();
+  if (args.periodInvoiceIds.length) {
+    const { data, error } = await supabase.from("subscription_billings")
+      .select("subscription_id").in("invoice_id", args.periodInvoiceIds);
+    if (error) throw error;
+    for (const b of data ?? []) subIds.add(b.subscription_id);
+  }
+  const subs: { id: string; quote_id: string | null }[] = [];
+  if (args.payQuoteIds.length) {
+    const { data, error } = await supabase.from("subscriptions").select("id, quote_id").in("quote_id", args.payQuoteIds);
+    if (error) throw error;
+    subs.push(...(data ?? []));
+  }
+  const missing = [...subIds].filter((id) => !subs.some((s) => s.id === id));
+  if (missing.length) {
+    const { data, error } = await supabase.from("subscriptions").select("id, quote_id").in("id", missing);
+    if (error) throw error;
+    subs.push(...(data ?? []));
+  }
+  // Only a quote with no invoice of its own is split-billed (record_instalment_payment refuses the rest).
+  const quoteIds = Array.from(new Set(subs.map((s) => s.quote_id).filter((x): x is string => !!x)));
+  const unknownQuotes = quoteIds.filter((id) => !args.quoteById.has(id));
+  const ownInvoice = new Set(quoteIds.filter((id) => args.quoteById.get(id)?.invoiceId));
+  if (unknownQuotes.length) {
+    const { data, error } = await supabase.from("quotes").select("id, invoice_id").in("id", unknownQuotes);
+    if (error) throw error;
+    for (const q of data ?? []) if (q.invoice_id) ownInvoice.add(q.id);
+  }
+  const splitSubs = subs.filter((s) => s.quote_id && !ownInvoice.has(s.quote_id));
+  if (!splitSubs.length) return { portions, adjustedBy };
+  const quoteOfSub = new Map(splitSubs.map((s) => [s.id, s.quote_id as string]));
+
+  const { data: bills, error: billErr } = await supabase.from("subscription_billings")
+    .select("subscription_id, invoice_id, term_start, period_index")
+    .in("subscription_id", [...quoteOfSub.keys()]).not("invoice_id", "is", null);
+  if (billErr) throw billErr;
+  const invIds = Array.from(new Set((bills ?? []).map((b) => b.invoice_id).filter((x): x is string => !!x)));
+  const invById = new Map<string, { invoice_date: string; paid_amount: number | null; status: string }>();
+  if (invIds.length) {
+    const { data, error } = await supabase.from("invoices").select("id, invoice_date, paid_amount, status").in("id", invIds);
+    if (error) throw error;
+    for (const iv of data ?? []) invById.set(iv.id, iv);
+  }
+  const instByQuote = new Map<string, InstalmentInvoice[]>();
+  const orderedBills = [...(bills ?? [])].sort((a, b) =>
+    a.term_start.localeCompare(b.term_start) || a.period_index - b.period_index || (a.invoice_id ?? "").localeCompare(b.invoice_id ?? ""));
+  for (const b of orderedBills) {
+    const iv = b.invoice_id ? invById.get(b.invoice_id) : undefined;
+    const quoteId = quoteOfSub.get(b.subscription_id);
+    if (!iv || !quoteId || !["pending", "paid", "overdue"].includes(iv.status)) continue;
+    const list = instByQuote.get(quoteId) ?? [];
+    list.push({ id: b.invoice_id as string, invoiceDate: iv.invoice_date, applied: iv.paid_amount ?? 0 });
+    instByQuote.set(quoteId, list);
+  }
+  if (!instByQuote.size) return { portions, adjustedBy };
+
+  const { data: qPays, error: payErr } = await supabase.from("payments")
+    .select("id, receipt_voucher_no, amount, credit_applied, received_at, quote_id")
+    .eq("status", "received").in("quote_id", [...instByQuote.keys()]);
+  if (payErr) throw payErr;
+  for (const [quoteId, inst] of instByQuote) {
+    const quotePays = (qPays ?? []).filter((p) => p.quote_id === quoteId);
+    const byId = new Map(quotePays.map((p) => [p.id, p]));
+    for (const [payId, parts] of allocateInstalmentPayments(quotePays, inst)) {
+      portions.set(payId, parts);
+      const payment = byId.get(payId);
+      for (const x of parts) {
+        if (!x.invoiceId || !payment) continue;
+        adjustedBy.set(x.invoiceId, [...(adjustedBy.get(x.invoiceId) ?? []), { payment, gross: x.gross }]);
+      }
+    }
+  }
+  return { portions, adjustedBy };
+}
 
 export function useGstReport(range: DateRange) {
   return useQuery({
@@ -74,6 +167,16 @@ export function useGstReport(range: DateRange) {
           for (const iv of qInv ?? []) invDateById.set(iv.id, iv.invoice_date);
         }
       }
+
+      /* R-1611: a split-billed (instalment) subscription's quote has no invoice of its own — its
+         instalment invoices link through subscription_billings.invoice_id (quote_id NULL). The
+         money it received is matched to those invoices oldest-first (lib/gst/instalment-advances.ts):
+         the part an instalment took is adjusted on that invoice's date, the rest stays an advance. */
+      const inst = await loadInstalmentPortions(supabase, {
+        payQuoteIds: payQuoteIds.filter((id) => !quoteById.get(id)?.invoiceId),
+        periodInvoiceIds: invoices.map((i) => i.id),
+        quoteById,
+      });
 
       // Pull GSTIN / state / country from customers table (invoices + notes + advances)
       const customerIds = Array.from(new Set([
@@ -204,7 +307,7 @@ export function useGstReport(range: DateRange) {
          adjusted_advances snapshot). buildAdvances decides which table each lands in. */
       /* R-1565: an advance is the CASH that came in (amount − credit_applied). Credit applied to
          a payment was already an advance on the payment that created it — lib/gst/advance-cash.ts. */
-      const advances: Advance[] = paymentAdvances(pays ?? [], toIstDate, (p) => {
+      const advances: Advance[] = splitPaymentAdvances(pays ?? [], toIstDate, (p) => {
         const q = p.quote_id ? quoteById.get(p.quote_id) : undefined;
         const c = custOf(p.customer_id ?? q?.customerId);
         return {
@@ -214,7 +317,7 @@ export function useGstReport(range: DateRange) {
           interState: isInterStateSupply(c?.stateCode ?? null, sellerStateCode, { customerGstin: c?.gstin ?? null, sellerGstin }),
           customerGstin: c?.gstin ?? null, customerStateCode: c?.stateCode ?? null, customerState: c?.state ?? null, customerCountry: c?.country ?? null,
         };
-      });
+      }, (p) => inst.portions.get(p.id));
       /* 11B: the credit part of each adjusted advance (its payment's credit_applied). */
       const snapPayIds = Array.from(new Set((invoices ?? []).flatMap((i) =>
         (Array.isArray(i.adjusted_advances) ? i.adjusted_advances : [])
@@ -235,6 +338,19 @@ export function useGstReport(range: DateRange) {
           advances.push({
             paymentId: a.payment_id, voucherNo: a.voucher_no ?? null, receivedDate, adjustedOn: i.invoice_date,
             gross: snapshotAdvanceGross(a, creditByPayment), rate: rateByInvoice.get(i.id)?.rate ?? 0, rateMissing: rateByInvoice.get(i.id)?.rateMissing ?? true,
+            interState: i.inter_state ?? false,
+            customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
+          });
+        }
+        /* R-1611 11B: money received before this period that this period's instalment invoice
+           took (oldest-first match) — unless the invoice's own snapshot already lists it. */
+        const snapIds = new Set((Array.isArray(i.adjusted_advances) ? i.adjusted_advances : []).map((a) => a?.payment_id));
+        for (const x of inst.adjustedBy.get(i.id) ?? []) {
+          const receivedDate = toIstDate(x.payment.received_at);
+          if (receivedDate >= range.from || snapIds.has(x.payment.id)) continue;
+          advances.push({
+            paymentId: x.payment.id, voucherNo: x.payment.receipt_voucher_no ?? null, receivedDate, adjustedOn: i.invoice_date,
+            gross: x.gross, rate: rateByInvoice.get(i.id)?.rate ?? 0, rateMissing: rateByInvoice.get(i.id)?.rateMissing ?? true,
             interState: i.inter_state ?? false,
             customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
           });
