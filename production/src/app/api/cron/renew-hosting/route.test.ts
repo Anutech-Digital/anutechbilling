@@ -173,3 +173,63 @@ describe("each engine answer lands in the right queue state", () => {
     expect(engine.sendEngineCommand).toHaveBeenCalledTimes(1);
   });
 });
+
+/* R-1552 / R-1587 (18 Oct 2026) */
+const hb = vi.hoisted(() => ({ pingHeartbeat: vi.fn() }));
+vi.mock("@/lib/ops/heartbeat", () => hb);
+
+describe("R-1552: only the cron secret runs it (the route's own check, behind the gate)", () => {
+  it("no bearer → 401, nothing listed", async () => {
+    const res = await GET(new Request("https://example.invalid/api/cron/renew-hosting"));
+    expect(res.status).toBe(401);
+    expect(prov.listReadyHostingRenewals).not.toHaveBeenCalled();
+  });
+  it("CRON_SECRET unset → 503, nothing listed", async () => {
+    delete process.env.CRON_SECRET;
+    expect((await GET(req())).status).toBe(503);
+    expect(prov.listReadyHostingRenewals).not.toHaveBeenCalled();
+  });
+});
+
+describe("R-1587: a DMS outage is heard", () => {
+  it("DMS down for every row → 503, a [cron/renew-hosting] stderr line, heartbeat fail", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    client.getEngineServices.mockResolvedValue({ ok: false, reason: "unreachable" });
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toMatchObject({ dmsUnreachable: true, failed: 0 });
+    expect(body.errors).toEqual([expect.stringMatching(/acme\.in: could not read DMS services \(unreachable\)/)]);
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/renew-hosting] errors=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("renew-hosting", false);
+    err.mockRestore();
+  });
+  it("a refusal is reported as failed, still 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "refused", reason: "quota" });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ failed: 1, refused: 1 });
+    expect(err.mock.calls.some((c) => String(c[0]).startsWith("[cron/renew-hosting] failed=1"))).toBe(true);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("renew-hosting", false);
+    err.mockRestore();
+  });
+  it("a clean run pings the heartbeat ok", async () => {
+    hb.pingHeartbeat.mockReset();
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { expiryAfter: "2028-09-25" }, replayed: false });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("renew-hosting", true);
+  });
+  it("the queue read throws → reported 5xx, not a silent 200", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hb.pingHeartbeat.mockReset();
+    prov.listReadyHostingRenewals.mockRejectedValue(new TypeError("fetch failed"));
+    const res = await GET(req());
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(hb.pingHeartbeat).toHaveBeenCalledWith("renew-hosting", false);
+    err.mockRestore();
+  });
+});
