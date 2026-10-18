@@ -149,6 +149,7 @@ MIGS=(
   "r1563bscncredit|20261018181719_r1563_bs_credit_note_credit.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1563%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.redeem_customer_credits(uuid,integer,text)') and prosrc like '%R-1563%')"
   "r1614bssplit|20261018183131_r1614_bs_split_overpayment_credit.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1614%')"
   "r1580commissiontds|20261018184158_r1580_commission_tds.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1580%')"
+  "r1558creditcustomer|20261018185647_r1558_credit_customer_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_desk_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text,text)') and prosrc like '%R-1558%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
