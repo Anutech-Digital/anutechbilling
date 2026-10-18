@@ -6,6 +6,7 @@
  *
  *   email + password  → Credentials provider → ./accounts.checkPassword (bcrypt, GoTrue hashes)
  *                       unconfirmed email is refused (R-048 part 1)
+ *                       R-1548: 10 tries / 15 min per email, 30 per IP → "too_many_attempts"
  *   Google            → Google provider → linked to the EXISTING account (R-529: Google identity,
  *                       then the public.users profile for the verified email, then auth.users
  *                       by email) — created only when the address is new. Unverified → refused.
@@ -19,7 +20,8 @@ import "server-only";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { checkPassword, ensureOAuthUser, recordSignIn } from "./accounts";
+import { checkPassword, ensureOAuthUser, lastSignInAt, recordSignIn } from "./accounts";
+import { loginAttemptAllowed } from "./login-limit";
 import { hasVerifiedFactor, verifyCode } from "./mfa";
 import { publicSession } from "./session-public";
 
@@ -62,10 +64,16 @@ export const authConfig: NextAuthConfig = {
     Credentials({
       id: "credentials",
       credentials: { email: {}, password: {} },
-      async authorize(raw) {
+      async authorize(raw, request) {
         const email = typeof raw?.email === "string" ? raw.email : "";
         const password = typeof raw?.password === "string" ? raw.password : "";
         if (!email || !password) throw new LoginError("invalid_credentials");
+        // R-1548: count the try per IP and per email BEFORE bcrypt — over the limit, the
+        // password is never checked (./login-limit). A sign-in moves lastSignInAt → fresh count.
+        const epoch = await lastSignInAt(email);
+        if (!(await loginAttemptAllowed({ email, headers: request?.headers, epoch }))) {
+          throw new LoginError("too_many_attempts");
+        }
         const r = await checkPassword(email, password);
         if (!r.ok) throw new LoginError(r.reason);
         await recordSignIn(r.user.id);
