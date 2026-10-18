@@ -20,7 +20,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
-import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
+import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
+import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -63,6 +64,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
 
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
   const { data: payments } = usePaymentsByQuote(quote?.id);
+  /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
+     its subscription's quote (record_instalment_payment), so the button shows for it too. */
+  const { data: instalment } = useInstalmentLink(invoice.quote_id ? null : invoice.id);
+  const canPay = !!quote?.id || !!instalment?.quoteId;
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
@@ -194,7 +199,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               </p>
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
-              {quote?.id && moneyDue && (
+              {canPay && moneyDue && (
                 /* R-237: record the payment HERE. Billing's only way used to be the quote
                    page, which middleware does not let billing open. */
                 <Button size="sm" variant="primary" icon="rupee" onClick={openPayment}>
@@ -379,7 +384,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <InvoicePaymentsAccordion
                     inv={invoice}
                     /* R-238: no receipt yet → the next step is right here. */
-                    onRecordPayment={quote?.id && moneyDue ? openPayment : undefined}
+                    onRecordPayment={canPay && moneyDue ? openPayment : undefined}
                   />
                 </div>
               )}
@@ -432,6 +437,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
       )}
       {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
           (record_payment flips this invoice to paid once the balance is covered). */}
+      {payOpen && !quote && instalment?.quoteId && (
+        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
+      )}
       {payOpen && quote && (
         <RecordPaymentDialog
           open={payOpen}

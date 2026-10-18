@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
+import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
 
 // ============================================================
 // Read — all payments for a tenant (used by /payments dashboard)
@@ -51,6 +52,39 @@ export function usePaymentsByQuote(quoteId: string | null | undefined) {
         .order("received_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as Payment[];
+    },
+  });
+}
+
+// ============================================================
+// R-1564 — an instalment invoice's subscription + the quote it was sold on
+// ============================================================
+/**
+ * raise_subscription_billing leaves invoices.quote_id NULL on an instalment (the PDF would
+ * print the year's quote total); the link is subscription_billings.invoice_id. null = this
+ * invoice is not an instalment. quoteId null = the subscription was not sold on a quote.
+ */
+export function useInstalmentLink(invoiceId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["invoices", "instalment-link", invoiceId],
+    enabled: !!invoiceId,
+    queryFn: async (): Promise<{ subscriptionId: string; quoteId: string | null } | null> => {
+      const supabase = createClient();
+      const { data: b, error } = await supabase
+        .from("subscription_billings")
+        .select("subscription_id")
+        .eq("invoice_id", invoiceId!)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (!b) return null;
+      const { data: s, error: sErr } = await supabase
+        .from("subscriptions")
+        .select("quote_id")
+        .eq("id", b.subscription_id)
+        .maybeSingle();
+      if (sErr) throw sErr;
+      return { subscriptionId: b.subscription_id, quoteId: s?.quote_id ?? null };
     },
   });
 }
@@ -395,11 +429,14 @@ export interface MultiPayInvoiceRow {
   status: string;
   tax_rate: number | null;
   quote_id: string | null;
+  /** R-1564: a subscription instalment (no quote of its own) — record_instalment_payment. */
+  instalment?: boolean;
 }
 
 /**
- * The customer's invoices that still owe money AND are the invoice their own quote points
- * at (quotes.invoice_id = invoices.id) — the only ones record_multi_invoice_payment accepts.
+ * The customer's invoices that still owe money AND are either the invoice their own quote
+ * points at (quotes.invoice_id = invoices.id) or, R-1564, a subscription instalment
+ * (subscription_billings.invoice_id) — the ones record_multi_invoice_payment accepts.
  * Paged (R-264): no silent 1000-row stop.
  */
 export function useCustomerOpenInvoices(customerId: string | null | undefined) {
@@ -414,7 +451,6 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
           .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id")
           .eq("customer_id", customerId!)
           .not("status", "in", "(paid,void)")
-          .not("quote_id", "is", null)
           .order("invoice_date", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to));
@@ -428,7 +464,25 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
         if (error) throw error;
         for (const q of data ?? []) if (q.invoice_id) own.add(`${q.id}|${q.invoice_id}`);
       }
-      return invoices.filter((i) => i.quote_id && own.has(`${i.quote_id}|${i.id}`));
+      /* R-1564: quote-less invoices that are subscription instalments — the OLDEST open one
+         of each subscription only. Two instalments of one subscription share its quote, and
+         quote + reference is the replay key, so the server takes one per receipt; anything
+         over that instalment's due is recorded from the invoice page, where it goes to the
+         next instalment by itself. */
+      const quoteless = invoices.filter((i) => !i.quote_id).map((i) => i.id);
+      const billing: Array<{ invoice_id: string | null; subscription_id: string; term_start: string; period_index: number }> = [];
+      for (let i = 0; i < quoteless.length; i += 200) {
+        const { data, error } = await supabase
+          .from("subscription_billings")
+          .select("invoice_id, subscription_id, term_start, period_index")
+          .in("invoice_id", quoteless.slice(i, i + 200));
+        if (error) throw error;
+        billing.push(...(data ?? []));
+      }
+      const instalments = new Set(oldestInstalmentPerSubscription(billing));
+      return invoices
+        .filter((i) => (i.quote_id ? own.has(`${i.quote_id}|${i.id}`) : instalments.has(i.id)))
+        .map((i) => (instalments.has(i.id) ? { ...i, instalment: true } : i));
     },
   });
 }

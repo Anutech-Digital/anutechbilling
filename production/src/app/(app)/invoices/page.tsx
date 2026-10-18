@@ -17,9 +17,7 @@ import { INVOICE_TABS } from "@/lib/navigation/drilldown";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useInvoices, useQuotesAwaitingInvoice, useGenerateInvoice, useDeleteProjectInvoice, useDeleteSubscriptionInvoice, useDocumentSeries } from "@/lib/queries/invoices";
-import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
-import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
-import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
+import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoice } from "@/lib/queries/projects";
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -1257,48 +1255,6 @@ function InvoiceRow({
       </tr>
     )}
     </>
-  );
-}
-
-/**
- * RecordSubscriptionPaymentContainer — lazily loads the invoice's parent quote +
- * its payments, then opens the SAME quote-keyed RecordPaymentDialog used on the
- * quote detail page. Subscription invoices have no invoice-keyed payment RPC —
- * record_payment runs on the parent quote and flips the invoice to paid when the
- * balance is covered. This is a shortcut surface, not a new money path.
- */
-function RecordSubscriptionPaymentContainer({
-  invoice,
-  open,
-  onOpenChange,
-}: {
-  invoice: Invoice;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { data: quote, isLoading } = useQuoteByInvoiceId(invoice.id);
-  const { data: payments } = usePaymentsByQuote(quote?.id);
-
-  // Quote is the money source of truth. Until it loads we can't open the dialog
-  // safely (no expected amount / already-received), so hold with a tiny hint.
-  if (isLoading || !quote) {
-    return <div className="text-3xs text-ink-3 mt-1 italic">Loading payment…</div>;
-  }
-
-  return (
-    <RecordPaymentDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      quoteId={quote.id}
-      customerName={invoice.customer_name ?? quote.customer_name}
-      expectedAmount={quote.amount ?? invoice.amount}
-      alreadyReceived={totalReceived(payments ?? [])}
-      isProspect={!!quote.lead_id && !quote.customer_id}
-      invoiceId={invoice.id}
-      customerId={invoice.customer_id ?? quote.customer_id}
-      askDomain={!quote.is_one_off}
-      defaultDomain={quote.domain ?? undefined}
-    />
   );
 }
 

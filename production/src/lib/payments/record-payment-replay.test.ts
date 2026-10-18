@@ -105,7 +105,11 @@ describe("record-payment-dialog replay wiring (R-374)", () => {
 
   /* R-895 / R-1118: credit, payment, date + bank tag and paid_date are ONE database call. */
   it("records through record_desk_payment with the credit, date and bank account in the same call", () => {
-    const call = src.slice(src.indexOf('supabase.rpc("record_desk_payment", {'), replayAt);
+    /* R-1564: the arguments are built once (deskArgs) and sent to record_desk_payment, or to
+       record_instalment_payment for an instalment invoice — both carry all of them. */
+    const call = src.slice(src.indexOf("const deskArgs = {"), replayAt);
+    expect(call).toMatch(/supabase\.rpc\("record_desk_payment", \{\s*\.\.\.deskArgs/);
+    expect(call).toMatch(/supabase\.rpc\("record_instalment_payment", \{ \.\.\.deskArgs/);
     expect(call).toMatch(/p_credit_customer_id:/);
     expect(call).toMatch(/p_credit_amount:/);
     expect(call).toMatch(/p_received_on:\s+tagArgs\.p_received_on/);

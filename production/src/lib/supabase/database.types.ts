@@ -1217,6 +1217,7 @@ type ArgNullable = {
   record_desk_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_invoice_id" | "p_fiscal_year";
   record_account_transfer: "p_note";
   record_multi_invoice_payment: "p_bank_account_id" | "p_notes";
+  record_instalment_payment: "p_notes" | "p_credit_customer_id" | "p_received_on" | "p_bank_account_id" | "p_tds_section" | "p_tds_rate_pct" | "p_customer_tan" | "p_fiscal_year";
   create_project_sale: "p_customer_id" | "p_description";
   record_project_payment: "p_method" | "p_reference" | "p_bank_txn_id";
   create_project_quote: "p_customer_id" | "p_description";
@@ -1424,6 +1425,40 @@ type FunctionReturnPatches = {
             overpaid_credit?:        number;
             credit_applied:          number;
             tagged:                  boolean;
+          };
+  /** R-1564: a payment on a subscription instalment invoice — record_desk_payment on the
+   *  subscription's quote, applied to THIS invoice (then other open instalments, oldest first;
+   *  the rest waits for the next instalment) in one transaction. */
+  record_instalment_payment: {
+            payment_id:           string;
+            receipt_voucher_no:   string | null;
+            customer_id:          string | null;
+            total_received:       number;
+            expected:             number;
+            outstanding:          number;
+            is_first_payment:     boolean;
+            is_fully_paid:        boolean;
+            converted_now:        boolean;
+            subscription_created: boolean;
+            has_existing_invoice: boolean;
+            is_renewal_quote:        boolean;
+            renewal_rolled_forward:  boolean;
+            idempotent_replay?:      boolean;
+            already_recorded?:       boolean;
+            tds_saved?:              boolean;
+            overpaid_credit?:        number;
+            credit_applied:          number;
+            tagged:                  boolean;
+            instalment:              true;
+            invoice_id:              string;
+            quote_id:                string;
+            applied:                 number;
+            /** THIS instalment invoice is now paid in full. */
+            invoice_paid:            boolean;
+            invoice_due_after?:      number;
+            also_applied:            Array<{ invoice_id: string; applied: number; invoice_paid: boolean }>;
+            /** Received but not applied — the next instalment raised takes it as credit. */
+            advance_left:            number;
           };
   /** R-1525: one receipt over several invoices of one customer (record_desk_payment per line). */
   record_multi_invoice_payment: {
