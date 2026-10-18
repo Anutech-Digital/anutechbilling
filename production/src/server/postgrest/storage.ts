@@ -23,6 +23,7 @@ import { asPgrstError } from "./handler";
 import { signJwt, verifyJwt } from "./identity";
 import { BodyTooLargeError } from "./body-limit";
 import { readUploadCapped, uploadLimit, uploadTooLargeMessage, type UploadBody } from "./upload-limit";
+import { baseType, safeServeHeaders, uploadProblem } from "./storage-safety";
 
 interface Bucket {
   id: string;
@@ -52,21 +53,21 @@ async function bucketInfo(id: string): Promise<Bucket | null> {
 
 const ownerOf = (id: Identity) => (id.mode === "user" ? id.userId : null);
 
-function mimeAllowed(b: Bucket, type: string): boolean {
+function mimeAllowed(b: Bucket, contentType: string): boolean {
   if (!b.allowed_mime_types?.length) return true;
-  return b.allowed_mime_types.some((m) => m === type || (m.endsWith("/*") && type.startsWith(m.slice(0, -1))));
+  const type = baseType(contentType);
+  return b.allowed_mime_types.some((raw) => {
+    const m = raw.toLowerCase();
+    return m === type || (m.endsWith("/*") && type.startsWith(m.slice(0, -1)));
+  });
 }
 
 function serve(obj: { body: Buffer; contentType: string }, opts: { download?: string | null; publicCache?: boolean }): Response {
-  const headers = new Headers({
-    "Content-Type": obj.contentType,
-    "Content-Length": String(obj.body.length),
-    "Cache-Control": opts.publicCache ? "public, max-age=3600" : "private, no-store",
-    "X-Content-Type-Options": "nosniff",
-  });
-  if (opts.download !== undefined && opts.download !== null) {
-    headers.set("Content-Disposition", `attachment${opts.download ? `; filename="${opts.download.replace(/["\\\r\n]/g, "")}"` : ""}`);
-  }
+  /* R-1546: files are served from the app's own origin — sandboxed, nosniff, and inline only
+     for a raster image whose bytes really are one (storage-safety.ts). */
+  const headers = safeServeHeaders(obj.contentType, obj.body, opts.download);
+  headers.set("Content-Length", String(obj.body.length));
+  headers.set("Cache-Control", opts.publicCache ? "public, max-age=3600" : "private, no-store");
   return new Response(new Uint8Array(obj.body), { status: 200, headers });
 }
 
@@ -150,7 +151,8 @@ export async function handleStorage(req: Request, path: string, identity: Identi
       if (!ok.has(target.name)) return fail(404, "not_found", "Object not found");
       const obj = await objectBackend().get(`${target.bucket}/${target.name}`);
       if (!obj) return fail(404, "not_found", "Object not found");
-      return method === "HEAD" ? new Response(null, { status: 200, headers: { "Content-Type": obj.contentType } }) : serve(obj, { download: url.searchParams.get("download") });
+      if (method === "HEAD") return new Response(null, { status: 200, headers: safeServeHeaders(obj.contentType, obj.body, url.searchParams.get("download")) });
+      return serve(obj, { download: url.searchParams.get("download") });
     }
 
     // ── upload / update ──────────────────────────────────────────────────────
@@ -167,6 +169,9 @@ export async function handleStorage(req: Request, path: string, identity: Identi
         throw e;
       }
       if (!mimeAllowed(b, file.contentType)) return fail(415, "invalid_mime_type", `mime type ${file.contentType} is not supported`);
+      // R-1546: no markup in any bucket, and the bytes must be what the claimed type says.
+      const problem = uploadProblem(file.contentType, file.body);
+      if (problem) return fail(415, "invalid_mime_type", problem);
       const upsert = method === "POST" && req.headers.get("x-upsert") === "true";
       const meta = JSON.stringify({ size: file.body.length, mimetype: file.contentType, cacheControl: file.cacheControl ?? "max-age=3600", eTag: `"${randomUUID()}"` });
       const key = `${target.bucket}/${target.name}`;

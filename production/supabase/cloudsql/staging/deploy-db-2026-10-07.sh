@@ -134,6 +134,7 @@ MIGS=(
   "r1527combinequotes|20261017161500_r1527_combine_quotes.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.combine_quotes(text[])') and prosrc like '%R-1527%')"
   "r1529billofsupply|20261018022629_r1529_bill_of_supply.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_invoice_document_kind') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_document_number(text,uuid,date)') and prosrc like '%R-1529%')"
   "r1561instdue|20261018030414_r1561_instalment_due_once.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1561%')"
+  "r1546bucketmime|20261018031506_r1546_storage_mime_allowlists.sql|postgres|exists(select 1 from storage.buckets where id = 'employee-docs' and allowed_mime_types is not null)"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

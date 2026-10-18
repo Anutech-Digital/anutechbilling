@@ -1078,7 +1078,7 @@ function BrandingTab() {
     <Card className="p-5 md:p-6 max-w-2xl">
       <h2 className="font-serif text-xl text-ink">Company logo</h2>
       <p className="text-sm text-ink-3 mt-1 mb-5">
-        Shown in the sidebar and on customer-facing pages (enquiry form, quotations). PNG / JPG / WEBP / SVG, up to 5 MB. A square or wide logo on a transparent background works best.
+        Shown in the sidebar and on customer-facing pages (enquiry form, quotations). PNG / JPG / WEBP, up to 5 MB. A square or wide logo on a transparent background works best.
       </p>
 
       <div className="flex items-center gap-5 flex-wrap">
@@ -1094,7 +1094,7 @@ function BrandingTab() {
 
         <div className="flex flex-col gap-2">
           <input
-            ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp"
             className="hidden" onChange={(e) => onPick(e.target.files?.[0] ?? null)}
           />
           <div className="flex gap-2 flex-wrap">
