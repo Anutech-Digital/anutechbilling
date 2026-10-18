@@ -18,16 +18,28 @@
  * ─── `buildPnl` KYUN NAHI ───────────────────────────────────────────────────
  * lib/accounting/pnl.ts ka COGS zaroorat padne par subscription-book se
  * ANDAZA lagata hai (ratio) — management report ke liye bilkul sahi faisla.
- * Tax ke kagaz par andaza nahi chal sakta: yahan sirf DARJ rows ginte hain
- * (invoices, credit/debit notes, purchase orders, expenses), aur jo darj
- * nahi hai wo gap ban kar bolta hai.
+ * Tax ke kagaz par andaza nahi chal sakta: yahan sirf DARJ rows ginte hain,
+ * aur jo darj nahi hai wo gap ban kar bolta hai.
+ *
+ * ─── R-1579: P&L ke SAATH, alag nahi ───────────────────────────────────────
+ * Pehle queries/itr.ts apna hisaab khud jodta tha — COGS purchase_orders se,
+ * kharchon se SAARA gst_paid ghata kar, commission aur settlement ke bank
+ * charges ke bina, aur bina paging. Ek hi FY par ITR ₹4,59,000 aur P&L
+ * ₹5,13,064 (itr-from-pnl.test.ts). Ab "profit as per books" wahi aankde hain
+ * jo /accounting/pnl ke — `report_pnl` + `assemblePnl` (lib/tax/itr-from-pnl.ts):
+ * revenue, COGS = vendor bills 'COGS-*' (blocked GST samet), kharche jinse sirf
+ * CLAIMABLE ITC ghata (blocked GST kharcha hai), commissions, bank charges
+ * (settlement shortfall), depreciation (R-1578). Farq sirf itna: P&L page bina
+ * bill ke COGS ka ANDAZA (subscription book) dikhata hai — ITR nahi; isliye
+ * ITR flat `netProfit` (darj bills) leta hai aur bill na ho to gap bolta hai.
+ * Purchase orders ab sirf NOTE hain (order hua, bill nahi aaya).
  *
  * ─── DOUBLE COUNTING SE BACHAV ──────────────────────────────────────────────
  * Salary, loan-ki-kisht aur inbound purchases sab `expenses` me bhi book hote
  * hain (`salary_payments.expense_id` waghaira). Isliye kharcha SIRF `expenses`
  * se aata hai, category-wise — salary_payments ko alag se jodna wahi rakam do
- * baar ginna hota. `purchase_orders` akela alag hai (uska expense_id hai hi
- * nahi — wo vendor se licence ki khareed hai, COGS).
+ * baar ginna hota. Licence ki khareed vendor bills (COGS-*) se aati hai —
+ * P&L jaisi (R-1579).
  *
  * ─── PAISE KI IKAI ──────────────────────────────────────────────────────────
  * Sab kuch POORE RUPAYE me (integers) — is app ka storage yahi hai (§13).
@@ -91,13 +103,17 @@ export function currentFinancialYear(now: Date): FinancialYear {
 
 /* ─────────────────────────── Sources (input) ─────────────────────────── */
 
-/** Ek category ka jod — `expenses` se, jaisa darj hai. */
+/** Ek category ka jod — `expenses` se (report_pnl ke groups), jaisa darj hai. */
 export interface ExpenseCategoryLine {
   category: string;
   /** `expenses.amount` ka jod — GST-SAMET kul (dialog ka "of which GST"). */
   amount: number;
-  /** `expenses.gst_paid` ka jod — input credit, kharcha nahi. */
-  gst: number;
+  /**
+   * Sirf CLAIMABLE input credit (lib/gst/itc.ts) — wahi jo P&L ghatata hai. Blocked GST
+   * (kaccha bill, vendor ka GSTIN nahi, s.17(5)) kharcha hai aur `amount` me hi rehta hai.
+   * R-1579: pehle yahan saara gst_paid ghatta tha.
+   */
+  itc: number;
   count: number;
 }
 
@@ -115,11 +131,25 @@ export interface ItrSources {
   invoiceCount: number;
   creditNoteCount: number;
   debitNoteCount: number;
-  /** `purchase_orders.total_cost` — vendor se licence ki khareed (COGS). */
-  purchaseCost: number;
-  purchaseCount: number;
-  /** `expenses` category-wise — salary/loan/sab isi ke andar (upar dekho). */
+  /**
+   * R-1579: COGS — vendor bills 'COGS-*' ka subtotal + unka BLOCKED GST (R-1576), wahi jo
+   * P&L ka `cogs` hai. Purchase order nahi: order bill nahi hai.
+   */
+  cogs: number;
+  cogsCount: number;
+  /** Placed/provisioned/closed purchase orders is FY ke — sirf NOTE (bill aaya ya nahi). */
+  placedPoCost: number;
+  placedPoCount: number;
+  /** `expenses` category-wise — salary/loan/bank charges sab isi ke andar (upar dekho). */
   expenses: ExpenseCategoryLine[];
+  /** Referral / channel-partner commissions (gross) — P&L ki wahi line. */
+  commissions: number;
+  commissionsCount: number;
+  /**
+   * P&L (assemblePnl) ka net profit isi FY ka. Diya ho aur book profit se na mile to gap
+   * bolta hai — do "profit" CA ke saamne kabhi chup-chaap nahi.
+   */
+  pnlNetProfit?: number;
   /** `tds_receivable.tds_amount` (is FY ka) — tax me se KATEGA. */
   tdsCredit: number;
   tdsCount: number;
@@ -239,22 +269,30 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
       count: s.invoiceCount,
     },
     {
-      label: "Licence ki khareed (vendor cost)",
-      amount: s.purchaseCost, kind: "expense",
-      source: "purchase_orders.total_cost",
-      count: s.purchaseCount,
+      label: "Licence ki khareed (vendor bills, COGS)",
+      amount: s.cogs, kind: "expense",
+      source: "vendor_bills COGS-* (blocked GST samet) — P&L jaisa",
+      count: s.cogsCount,
     },
-    /* Har category apni line — GST ghata kar, kyunki wo input credit hai,
-       kharcha nahi. Khaali categories nahi chhapti; unki jagah gaps bolte hain. */
+    /* Har category apni line — sirf CLAIMABLE GST ghata kar (wo input credit hai); blocked
+       GST kharcha hai. Khaali categories nahi chhapti; unki jagah gaps bolte hain. */
     ...s.expenses
-      .filter((c) => c.count > 0)
-      .sort((a, b) => (b.amount - b.gst) - (a.amount - a.gst))
+      .filter((c) => c.count > 0 || c.itc !== 0)
+      .sort((a, b) => (b.amount - b.itc) - (a.amount - a.itc) || (a.category < b.category ? -1 : a.category > b.category ? 1 : 0))
       .map((c): PnlLine => ({
         label: c.category,
-        amount: c.amount - c.gst, kind: "expense",
-        source: "expenses (GST input-credit ghata kar)",
+        amount: c.amount - c.itc, kind: "expense",
+        source: "expenses (sirf claimable ITC ghata kar)",
         count: c.count,
       })),
+    ...(s.commissions !== 0
+      ? [{
+          label: "Referral / partner commissions",
+          amount: s.commissions, kind: "expense",
+          source: "referral_commissions (gross) — P&L jaisa",
+          count: s.commissionsCount,
+        } satisfies PnlLine]
+      : []),
     ...((s.depreciation ?? 0) > 0
       ? [{
           label: "Depreciation (IT Act WDV, asset register)",
@@ -301,9 +339,13 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
     gaps.push(
       `TDS ki ${s.tdsCount} entry darj hain (customers ne ₹${s.tdsCredit.toLocaleString("en-IN")} tax kata) par unki invoices nahi — matlab bikri kahin aur ho rahi hai. Bina aamdani dikhaye TDS claim nahi hota.`,
     );
-  if (s.purchaseCount === 0)
+  if (s.cogsCount === 0 && s.placedPoCount > 0)
     gaps.push(
-      "Licence ki khareed ₹0 hai kyunki koi PLACED purchase order nahi mila — draft PO ginti me nahi aate (order asli me hua hi nahi hota). Live tenant par 1 Sep 2026 ko saare 32 PO draft the: agar vendor se sach me kharida hai to unhe Purchases me 'placed' kariye.",
+      `Is saal ${s.placedPoCount} placed purchase order (₹${s.placedPoCost.toLocaleString("en-IN")}) hain par koi COGS vendor bill nahi — licence ki khareed ₹0 gini gayi. Kharcha bill se banta hai, order se nahi: vendor ka bill Purchases → Bills me 'COGS' category se daaliye.`,
+    );
+  else if (s.cogsCount === 0)
+    gaps.push(
+      "Licence ki khareed ₹0 hai kyunki is saal koi COGS vendor bill darj nahi. P&L page aise me subscription book se ANDAZA dikhata hai — tax ke kagaz par andaza nahi chalta: vendor ke bill Purchases → Bills me daaliye.",
     );
   const salaryBooked = s.expenses.some((c) => c.category === SALARY_CATEGORY && c.count > 0);
   if (!salaryBooked)
@@ -320,6 +362,10 @@ export function computeItrPack(fy: FinancialYear, s: ItrSources): ItrPack {
   gaps.push(
     "Bank ka byaaj, FD, ya koi aur aamdani app me nahi aati — CA bank statement se jodega.",
   );
+  if (s.pnlNetProfit !== undefined && s.pnlNetProfit !== bookProfit)
+    gaps.push(
+      `Ye book profit (₹${bookProfit.toLocaleString("en-IN")}) P&L ke net profit (₹${s.pnlNetProfit.toLocaleString("en-IN")}) se alag hai — CA ko dene se pehle support ko batayein.`,
+    );
   if (s.advanceTaxPaid === 0 && advanceTaxRequired)
     gaps.push(
       "Advance tax ka koi bhugtan darj nahi — agar bhara hai to Banking me us challan ki bank line ko Reconcile → Statutory → Income tax book kijiye (aur challan CA ko dijiye); nahi bhara to schedule upar hai, aur der par Section 234B/C ka byaaj lagta hai.",

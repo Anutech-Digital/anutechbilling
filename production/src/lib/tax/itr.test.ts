@@ -13,7 +13,8 @@ import {
 
 const EMPTY: ItrSources = {
   revenueExGst: 0, invoiceCount: 0, creditNoteCount: 0, debitNoteCount: 0,
-  purchaseCost: 0, purchaseCount: 0,
+  cogs: 0, cogsCount: 0, placedPoCost: 0, placedPoCount: 0,
+  commissions: 0, commissionsCount: 0,
   expenses: [],
   tdsCredit: 0, tdsCount: 0,
   advanceTaxPaid: 0,
@@ -66,7 +67,7 @@ describe("computeItrPack — tax ke aankde, haath se gine hue", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
       revenueExGst: 1_500_000, invoiceCount: 10,
-      purchaseCost: 500_000, purchaseCount: 5,
+      cogs: 500_000, cogsCount: 5,
     });
     expect(pack.bookProfit).toBe(1_000_000);
     expect(pack.taxableIncome).toBe(1_000_000);
@@ -104,7 +105,7 @@ describe("computeItrPack — tax ke aankde, haath se gine hue", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
       revenueExGst: 100_000, invoiceCount: 1,
-      purchaseCost: 300_000, purchaseCount: 3,
+      cogs: 300_000, cogsCount: 3,
     });
     expect(pack.bookProfit).toBe(-200_000);
     expect(pack.taxableIncome).toBe(0);
@@ -152,8 +153,8 @@ describe("computeItrPack — expenses category-wise, GST ghata kar", () => {
       ...EMPTY,
       revenueExGst: 500_000, invoiceCount: 2,
       expenses: [
-        { category: "Hosting", amount: 118_000, gst: 18_000, count: 3 },
-        { category: "Salaries", amount: 200_000, gst: 0, count: 2 },
+        { category: "Hosting", amount: 118_000, itc: 18_000, count: 3 },
+        { category: "Salaries", amount: 200_000, itc: 0, count: 2 },
       ],
     });
     const hosting = pack.pnl.find((l) => l.label === "Hosting")!;
@@ -165,7 +166,7 @@ describe("computeItrPack — expenses category-wise, GST ghata kar", () => {
   it("khaali category chhapti nahi", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
-      expenses: [{ category: "Travel", amount: 0, gst: 0, count: 0 }],
+      expenses: [{ category: "Travel", amount: 0, itc: 0, count: 0 }],
     });
     expect(pack.pnl.find((l) => l.label === "Travel")).toBeUndefined();
   });
@@ -183,12 +184,16 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
     expect(pack.gaps.some((g) => g.includes("TDS ki 32 entry"))).toBe(true);
   });
 
-  it("placed PO na ho to khareed ka gap; ho to nahi", () => {
+  it("R-1579: COGS bill na ho to khareed ka gap (PO ho to uska note); bill ho to nahi", () => {
     const without = computeItrPack(fy, EMPTY);
-    expect(without.gaps.some((g) => g.includes("PLACED purchase order"))).toBe(true);
+    expect(without.gaps.some((g) => g.includes("koi COGS vendor bill darj nahi"))).toBe(true);
 
-    const withPo = computeItrPack(fy, { ...EMPTY, purchaseCost: 100_000, purchaseCount: 2 });
-    expect(withPo.gaps.some((g) => g.includes("PLACED purchase order"))).toBe(false);
+    const poOnly = computeItrPack(fy, { ...EMPTY, placedPoCost: 100_000, placedPoCount: 2 });
+    expect(poOnly.gaps.some((g) => g.includes("2 placed purchase order"))).toBe(true);
+    expect(poOnly.pnl.find((l) => l.label.startsWith("Licence ki khareed"))!.amount).toBe(0);
+
+    const withBill = computeItrPack(fy, { ...EMPTY, cogs: 100_000, cogsCount: 2, placedPoCost: 100_000, placedPoCount: 2 });
+    expect(withBill.gaps.some((g) => g.includes("COGS vendor bill"))).toBe(false);
   });
 
   it("salary book na ho to gap; book ho to nahi", () => {
@@ -197,7 +202,7 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
 
     const withSalary = computeItrPack(fy, {
       ...EMPTY,
-      expenses: [{ category: "Salaries", amount: 50_000, gst: 0, count: 1 }],
+      expenses: [{ category: "Salaries", amount: 50_000, itc: 0, count: 1 }],
     });
     expect(withSalary.gaps.some((g) => g.includes("Salary ka koi kharcha"))).toBe(false);
   });
@@ -206,7 +211,7 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
       revenueExGst: 1_000_000, invoiceCount: 5,
-      expenses: [{ category: "Salaries", amount: 100_000, gst: 0, count: 1 }],
+      expenses: [{ category: "Salaries", amount: 100_000, itc: 0, count: 1 }],
     });
     expect(pack.gaps.some((g) => g.includes("Asset register me koi asset nahi"))).toBe(true);
     expect(pack.gaps.some((g) => g.includes("Bank ka byaaj"))).toBe(true);
@@ -217,7 +222,7 @@ describe("computeItrPack — gaps (jo nahi hai wo bolna)", () => {
     const pack = computeItrPack(fy, {
       ...EMPTY,
       revenueExGst: 1_000_000, invoiceCount: 5,
-      expenses: [{ category: "Salaries", amount: 100_000, gst: 0, count: 1 }],
+      expenses: [{ category: "Salaries", amount: 100_000, itc: 0, count: 1 }],
       depreciation: 24_000, assetCount: 1,
     });
     expect(pack.pnl.find((l) => l.label.startsWith("Depreciation"))).toMatchObject({ amount: 24_000, kind: "expense", count: 1 });
