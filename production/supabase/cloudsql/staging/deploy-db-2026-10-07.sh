@@ -156,6 +156,7 @@ MIGS=(
   "r1541navbadges|20261018211844_r1541_nav_badges_attention.sql|resellersos_migration|position('R-1541' in coalesce(obj_description(to_regprocedure('public.nav_badges(text[])'), 'pg_proc'), '')) > 0"
   "r1559grants|20261018220847_r1559_definer_grants.sql|resellersos_migration|case when to_regclass('public.payment_followups') is null then false else not has_column_privilege('authenticated', 'public.payment_followups', 'created_by', 'UPDATE') end"
   "r1573dnpaid|20261018224237_r1573_debit_note_paid_invoice.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.issue_debit_note(text,integer,text,text,text)') and prosrc like '%R-1573%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1573%')"
+  "r1615definer|20261018225100_r1615_definer_tenant_gate.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.consume_prepaid_advance(uuid,integer,date,text,integer,text)') and prosrc like '%R-1615%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.undo_my_last_punch()') and prosrc like '%R-1615%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

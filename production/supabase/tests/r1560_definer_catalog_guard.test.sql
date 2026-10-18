@@ -93,25 +93,10 @@ declare
     'payment_run_role()',              -- returns the caller's role only
     'automation_jobs_stamp()'          -- trigger: stamps changed_by only when the user is in NEW.tenant_id
   ];
-  -- Rule (b) — KNOWN GAPS (R-1560, 19 Oct 2026): tenant comes from users by auth.uid(), so
-  -- R-731 MFA and (mostly) is_active are skipped. Listed on card R-1560 for a follow-up;
-  -- remove a name here when its function moves to current_tenant_id(). Do NOT add new ones.
-  v_known_b text[] := array[
-    'consume_prepaid_advance(uuid,integer,date,text,integer,text)',
-    'log_activity(text,text,text,text)',
-    'list_stranded_auth_users()',
-    'merge_stranded_user_into_tenant(text,uuid,user_role)',
-    'get_my_tenant_with_parent()',
-    'get_partner_catalog()',
-    'get_partner_metrics()',
-    'sync_partner_item(text,integer)',
-    'sync_partner_item(text,integer,text)',
-    'my_attendance_history(integer)',
-    'my_attendance_today()',
-    'record_attendance_consent()',
-    'set_my_employee(uuid)',
-    'undo_my_last_punch()'
-  ];
+  -- Rule (b) — KNOWN GAPS: tenant comes from users by auth.uid(), so R-731 MFA and is_active
+  -- are skipped. R-1560 listed 14; R-1615 (migration 20261018225100) moved all 14 to
+  -- current_tenant_id(), so this list is EMPTY. Do NOT add names — fix the function instead.
+  v_known_b text[] := '{}'::text[];
   v_bad   text;
   v_stale text;
 begin
