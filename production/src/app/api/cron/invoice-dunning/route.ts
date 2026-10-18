@@ -25,12 +25,13 @@
  */
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { decideDunning, dunningMessage, dunningRank, type DunningStep } from "@/lib/invoices/dunning";
+import { DUNNING_STEPS, decideDunning, dunningMessage, dunningRank, type DunningStep } from "@/lib/invoices/dunning";
 import { upiPayLink } from "@/lib/invoices/pay-link";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { isEmailConfigured } from "@/lib/email/send";
-import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
-import { dunningLogStatus, reachedNobody } from "@/lib/invoices/dunning-log-status";
+import { sendInternalEmail } from "@/lib/messaging";
+import { MAX_STEP_ATTEMPTS, stepHistory, stepSettled, type DunningOutcome, type StepHistory } from "@/lib/invoices/dunning-log-status";
+import { sendDunningEmail } from "@/lib/invoices/dunning-send.server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { rupee, formatDate } from "@/lib/utils";
@@ -65,6 +66,44 @@ function subscriptionIdByQuote(subs: readonly { id: string; quote_id: string | n
   return out;
 }
 
+const LADDER_LABEL: Record<string, string> = {
+  reminder: "Day 1 reminder", retry: "Day 3 reminder", grace_warning: "Day 7 warning", final: "Day 14 final notice",
+};
+
+/**
+ * R-1539 — what the owner's escalation says about the reminders, from the log, not from
+ * hope. It used to say "The customer has had the full reminder sequence" unconditionally.
+ */
+function reminderSummary(
+  history: ReadonlyMap<string, StepHistory> | undefined,
+  currentStep: string,
+  current: DunningOutcome,
+): string {
+  const lines: string[] = [];
+  let reached = 0;
+  for (const { step } of DUNNING_STEPS) {
+    const label = `${LADDER_LABEL[step] ?? step} (${step})`;
+    if (step === currentStep) {
+      if (current.status === "sent") { reached++; lines.push(`  ✓ ${label}: sent today`); }
+      else lines.push(`  ✗ ${label}: NOT delivered — ${current.reason ?? current.status}. Tried again on the next runs (up to ${MAX_STEP_ATTEMPTS} tries).`);
+      continue;
+    }
+    const h = history?.get(step);
+    if (h?.delivered) { reached++; lines.push(`  ✓ ${label}: sent`); }
+    else if (h?.inFlight) lines.push(`  ? ${label}: send started but its result was never recorded — check the email log`);
+    else if (h) lines.push(`  ✗ ${label}: NOT delivered — ${h.lastReason ?? "not sent"}`);
+    else lines.push(`  ✗ ${label}: never sent (the invoice reached this point before that day's run)`);
+  }
+  const total = DUNNING_STEPS.length;
+  const head = reached === total
+    ? `All ${reached} of ${total} reminders reached the customer — the customer has had the full reminder sequence.`
+    : `${reached} of ${total} reminders reached the customer:`;
+  const tail = reached === total
+    ? "Nothing further will be sent automatically. Decide whether to call them, agree a plan, or pause the service."
+    : "Fix the reason above (an email address on the customer's contact, or Customer messages in Automation) — or call them. Decide whether to agree a plan or pause the service.";
+  return `${head}\n${lines.join("\n")}\n\n${tail}`;
+}
+
 interface DunningResult {
   ran_at: string;
   dry_run: boolean;
@@ -82,6 +121,10 @@ interface DunningResult {
    * the cron reports as done.
    */
   no_recipient: number;
+  /** R-1539: customer emails the provider or the "Customer messages" switch refused, or that failed. */
+  emails_failed: number;
+  /** R-1539: every step that did not reach the customer this run, with why. Retried next run (bounded). */
+  not_delivered: { invoice_id: string; step: DunningStep; status: string; reason: string; attempt: number }[];
   escalations: number;
   suspends: number;
   skipped: number;
@@ -119,8 +162,8 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     ran_at: asOf.toISOString(),
     dry_run: dryRun,
     email_mode: isEmailConfigured() ? "real" : "stub",
-    considered: 0, emails_sent: 0, no_recipient: 0, escalations: 0, suspends: 0, skipped: 0,
-    details: [], errors: [],
+    considered: 0, emails_sent: 0, no_recipient: 0, emails_failed: 0, not_delivered: [],
+    escalations: 0, suspends: 0, skipped: 0, details: [], errors: [],
   };
 
   /* Only invoices that could possibly be chased. 'paid'/'void'/'draft' and
@@ -135,7 +178,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
   type InvoiceRow = Pick<Invoice, "id" | "tenant_id" | "customer_id" | "customer_name" | "amount" | "net_payable" | "paid_amount" | "status" | "due_date" | "quote_id">;
   let invoices: InvoiceRow[];
   let tenants: Pick<Tenant, "id" | "name" | "email" | "auto_suspend_on_overdue" | "upi_vpa" | "upi_payee_name">[];
-  let logs: { invoice_id: string | null; dunning_step: string }[];
+  let logs: { invoice_id: string | null; dunning_step: string; status: string; error_message: string | null; sent_at: string | null }[];
   let subs: { id: string; quote_id: string | null }[];
   try {
     invoices = await fetchAllRows<InvoiceRow>((from, to) => supabase
@@ -158,7 +201,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
         .in("id", ids).order("id", { ascending: true }).range(from, to)),
       fetchAllRowsIn(invoices.map((i) => i.id), (ids, from, to) => supabase
         .from("invoice_dunning_log")
-        .select("invoice_id, dunning_step")
+        .select("invoice_id, dunning_step, status, error_message, sent_at")
         .in("invoice_id", ids).order("id", { ascending: true }).range(from, to)),
       /* Was one `maybeSingle()` per invoice inside the loop below (the N+1). */
       fetchAllRowsIn(invoices.map((i) => i.quote_id), (ids, from, to) => supabase
@@ -192,7 +235,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
      an unknown key returns undefined, `undefined > 0` is false, so a nudge already in
      the log looks unsent and goes out again every morning until the invoice falls due.
      One definition, in the module that owns the ladder. */
-  const lastStepByInvoice = new Map<string, DunningStep>();
+  const rowsByInvoice = new Map<string, typeof logs>();
   for (const l of logs) {
     /* `invoice_id` became nullable on 10 Sep 2026 (migration 20260910070000) so the
        same log can record a POSTPAID SUBSCRIPTION chase, which has no invoice. Those
@@ -201,10 +244,22 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
        purpose of this map is not re-sending a step that already went out. This loop
        still reads only invoice rows; the subscription source is a separate pass. */
     if (!l.invoice_id) continue;
-    const prev = lastStepByInvoice.get(l.invoice_id) ?? "none";
-    if (dunningRank(l.dunning_step) > dunningRank(prev)) {
-      lastStepByInvoice.set(l.invoice_id, l.dunning_step as DunningStep);
+    rowsByInvoice.set(l.invoice_id, [...(rowsByInvoice.get(l.invoice_id) ?? []), l]);
+  }
+  /* R-1539 / R-1572: a step counts as done only when it is SETTLED — delivered ('sent'),
+     maybe-delivered ('sending': claimed, result never recorded — never re-sent), or tried
+     MAX_STEP_ATTEMPTS times. Before, every row moved the ladder on, whatever its status, so a
+     refused or failed reminder was never retried. */
+  const historyByInvoice = new Map<string, Map<string, StepHistory>>();
+  const lastStepByInvoice = new Map<string, DunningStep>();
+  for (const [invoiceId, rows] of rowsByInvoice) {
+    const h = stepHistory(rows);
+    historyByInvoice.set(invoiceId, h);
+    let last: string = "none";
+    for (const [step, sh] of h) {
+      if (stepSettled(sh) && dunningRank(step) > dunningRank(last)) last = step;
     }
+    if (last !== "none") lastStepByInvoice.set(invoiceId, last as DunningStep);
   }
 
   /* R-530: the late fee + interest building up on each invoice, for one line in the reminder.
@@ -240,6 +295,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
        INV-9B8C-2026-27-0003 for ₹11,800 when ₹10,620 was owed. Every message below (email,
        escalation, WhatsApp, UPI link) reads this one number. */
     const amountDue = invoiceAmountDue(inv);
+    const history = historyByInvoice.get(inv.id);
     const decision = decideDunning({
       dueDate: inv.due_date,
       status: inv.status,
@@ -316,28 +372,34 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
         lateCharges: lateLine.get(inv.id) ?? null,
       });
 
-      if (to && msg) {
-        /* `automated` subjects this to the workspace's kill switch and dial (23 Aug 2026).
-           Until then there was no way to stop this cron chasing customers except disabling
-           a Cloud Scheduler job in a Google console.
+      /* R-1539 / R-1572: lib/invoices/dunning-send.server.ts — row claimed as 'sending' BEFORE
+         the send, then set to what really happened. Before, the row was written AFTER the send
+         (error never checked → the same email again next morning) and its status came from
+         dunningLogStatus(recipient, isEmailConfigured()) — a refusal by the "Customer messages"
+         switch, or a provider error, was logged "sent" and the ladder moved on.
 
-           `emails_sent` is incremented only on a real send now — a refusal returns status
-           "failed" with the reason, and counting it as sent would make the switch look
-           broken in the very summary somebody checks after flipping it.
-
-           The ESCALATION mail below is deliberately NOT gated: it goes to the reseller, not
-           to a customer, and a switch that silenced the app's own alarms would turn one bad
-           afternoon into a missed suspension. */
-        const r = await sendCustomerEmail({
-          /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
-                me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
-          route: { tenantId: inv.tenant_id },
-          to, subject: msg.subject, text: msg.text,
-          kind: "invoice_dunning",
-          automated: { tenantId: inv.tenant_id, action: "dunning.send" },
+         `automated` subjects this to the workspace's kill switch and dial (23 Aug 2026). */
+      const sent = await sendDunningEmail(supabase, {
+        tenantId: inv.tenant_id, invoiceId: inv.id, step: decision.step,
+        daysOverdue: decision.daysOverdue, actionTaken: decision.action,
+        to, message: msg ? { subject: msg.subject, text: msg.text } : null,
+        automated: { tenantId: inv.tenant_id, action: "dunning.send" },
+      });
+      const outcome = sent.outcome;
+      if (outcome.status === "sent") result.emails_sent++;
+      else {
+        if (outcome.status === "no_recipient") result.no_recipient++;
+        else result.emails_failed++;
+        /* Surfaced in the cron failure report (top-level `errors`) — the owner can only fix
+           what the run says out loud. Retried next run, up to MAX_STEP_ATTEMPTS. */
+        const attempt = (history?.get(decision.step)?.undelivered ?? 0) + 1;
+        result.not_delivered.push({ invoice_id: inv.id, step: decision.step, status: outcome.status, reason: outcome.reason ?? "", attempt });
+        result.errors.push({
+          invoice_id: inv.id,
+          message: `${decision.step} not delivered (${outcome.status}): ${outcome.reason ?? ""} — attempt ${attempt} of ${MAX_STEP_ATTEMPTS}`,
         });
-        if (r.status !== "failed") result.emails_sent++;
       }
+      if (sent.logError) result.errors.push({ invoice_id: inv.id, message: `dunning log: ${sent.logError}` });
 
       // ── Reseller-side action ─────────────────────────────────────────────
       if (decision.action === "suspend" && subscriptionId) {
@@ -347,10 +409,20 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
           .eq("id", subscriptionId);
         if (suspErr) throw suspErr;
         result.suspends++;
-      } else if (decision.action === "escalate") {
+      } else if (decision.action === "escalate" && !history?.has(decision.step)) {
         /* The reseller decides. The email carries everything needed to decide
            without opening anything — §24: a notification that only says
-           "something needs attention" costs a login to find out what. */
+           "something needs attention" costs a login to find out what.
+
+           ONCE per invoice: only on the first attempt of this step — while the customer's
+           final notice is retried the owner is not emailed again.
+
+           R-1539: it states what REALLY reached the customer. It used to say "The customer
+           has had the full reminder sequence" even when none of it went out.
+
+           Deliberately NOT gated: it goes to the reseller, not to a customer, and a switch
+           that silenced the app's own alarms would turn one bad afternoon into a missed
+           suspension. */
         if (tenant?.email) {
           await sendInternalEmail({
             /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
@@ -367,42 +439,22 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
 
 ${decision.reason}
 
-The customer has had the full reminder sequence. Nothing further will be sent
-automatically. Decide whether to call them, agree a plan, or pause the service.`,
+${reminderSummary(history, decision.step, outcome)}`,
           });
         }
         result.escalations++;
       }
-
-      const logStatus = dunningLogStatus({
-        recipient: to, hasMessage: Boolean(msg), emailConfigured: isEmailConfigured(),
-      });
-      if (reachedNobody(logStatus)) result.no_recipient++;
-
-      await supabase.from("invoice_dunning_log").insert({
-        tenant_id: inv.tenant_id,
-        invoice_id: inv.id,
-        dunning_step: decision.step,
-        days_overdue: decision.daysOverdue,
-        action_taken: decision.action,
-        recipient_email: to,
-        subject: msg?.subject ?? null,
-        /* Truthful, not optimistic. See lib/invoices/dunning-log-status.ts: this used to be
-           isEmailConfigured(), which answers whether Resend is set up rather than whether
-           THIS message reached anybody — so a step with no customer address was logged as
-           "sent". */
-        status: logStatus,
-      });
     } catch (e) {
+      /* Only failures BEFORE the send land here (contact lookup, message) — sendDunningEmail
+         never throws. Logged as failed so the next run RETRIES this step (bounded). */
       const message = e instanceof Error ? e.message : String(e);
       result.errors.push({ invoice_id: inv.id, message });
-      /* Logged as failed so the next run RETRIES this step rather than treating it as
-         delivered. A failure recorded as a success is a customer who is never chased. */
-      await supabase.from("invoice_dunning_log").insert({
+      const { error: failErr } = await supabase.from("invoice_dunning_log").insert({
         tenant_id: inv.tenant_id, invoice_id: inv.id, dunning_step: decision.step,
         days_overdue: decision.daysOverdue, action_taken: decision.action,
         status: "failed", error_message: message.slice(0, 500),
       });
+      if (failErr) result.errors.push({ invoice_id: inv.id, message: `dunning log: ${errorMessage(failErr)}` });
     }
 
     /* ── S28: WhatsApp copy, try/catch ke BAHAR ───────────────────────────────
@@ -435,7 +487,14 @@ automatically. Decide whether to call them, agree a plan, or pause the service.`
   /* R-116 — after the reminders, so today's ladder email and the pause notice are logged in
      that order. Its own try: a failure here must not hide the reminder results above. */
   try {
-    result.overdue_pause = await runOverdueSuspension(supabase, { asOf, dryRun, creditQuoteIds });
+    const pause = await runOverdueSuspension(supabase, { asOf, dryRun, creditQuoteIds });
+    result.overdue_pause = pause;
+    /* R-1538: a pause held back because the final notice never reached the customer is the
+       owner's to act on — said out loud in the cron failure report, every run until fixed. */
+    for (const b of pause.blocked) {
+      result.errors.push({ invoice_id: b.invoice_id, message: `can't pause subscription ${b.subscription_id} — ${b.reason}` });
+    }
+    for (const e of pause.errors) result.errors.push({ invoice_id: "-", message: `overdue pause ${e.subscription_id}: ${e.message}` });
   } catch (e) {
     result.overdue_pause = { error: errorMessage(e) };
     result.errors.push({ invoice_id: "-", message: `overdue pause: ${errorMessage(e)}` });
