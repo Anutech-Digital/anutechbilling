@@ -1,5 +1,6 @@
-#!/usr/bin/env node
 /**
+ * No `#!` line on purpose (18 Oct): on a core.autocrlf checkout the CRLF shebang made vitest
+ * fail to load this file ("Invalid or unexpected token"). Run it as `node scripts/ops/...`.
  * R-1462 — live/staging Cloud Run env + secret wiring, PRINT ONLY (R-909 blocker 9, cutover 18 Oct).
  *
  * Reads NOTHING from Google Cloud. From the checked-in map scripts/ops/live-env-map.json

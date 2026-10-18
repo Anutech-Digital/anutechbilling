@@ -29,9 +29,21 @@ on:
   push:
     branches: [main, deploy, 'session/**', manager-pardeep, billing-abhishek, website-pawan, accounts-hitesh, pardeep-sir, abhishek-pre-merge, pawan-api-system, hitesh-qa]
   pull_request:
+# ─── R-1593 (18 Oct 2026): STOP PAYING FOR RUNS NOBODY WILL READ ─────────────
+# ~90 workers push manager-pardeep back to back; every push ran the full gate (~17-20 min) and
+# every OLDER run on the same branch kept running too. R-1424: Actions hit the spending limit.
+# One group per workflow + ref (a PR's ref is refs/pull/N/merge, so per PR): a newer push
+# cancels the older run. main/deploy are NOT cancelled — each commit there keeps its own result.
+# Which checks run is unchanged; tests/ops/ci-workflow.test.ts pins all of this.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' }}
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A normal run takes 17-20 min (gh run list, 18 Oct). A hung build/test stops here instead
+    # of burning GitHub's 6-hour default.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: production
@@ -88,6 +100,18 @@ jobs:
       - run: npm run lint
       - run: npm run lint:ratchet
 
+      # R-1593: Next's own build cache (webpack/SWC output). Keyed on the lockfile + every
+      # source/config file, so an unchanged tree is an exact hit; on any change the restore-key
+      # brings back the newest cache for the same lockfile and Next rebuilds only what changed.
+      # npm's download cache is the `cache: npm` on setup-node above.
+      - name: Restore Next build cache
+        uses: actions/cache@v4
+        with:
+          path: production/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-${{ hashFiles('production/src/**', 'production/public/**', 'production/next.config.mjs', 'production/tsconfig.json', 'production/tailwind.config.ts', 'production/postcss.config.mjs') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-
+
       # ── The build, and why the other three do not cover it ──────────────────
       # CLAUDE.md §25.2, written after a deploy attempt found the build broken while
       # typecheck, test and lint were all green: `next.config` sets
@@ -143,6 +167,8 @@ jobs:
   e2e-smoke:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # R-1593: install + chromium + three no-auth specs; a hung browser stops here.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: production
