@@ -59,7 +59,7 @@ describe("domainHelpLinks — one place builds the way on (R-1494)", () => {
 describe("/domains page — a failed check still offers a next step (R-1494)", () => {
   it("502 → message + Ask us + WhatsApp", async () => {
     stub502();
-    render(<DomainLanding />);
+    render(<DomainLanding tlds={[]} />);
     fireEvent.change(screen.getByLabelText("Domain name to search"), { target: { value: "anutechtest123" } });
     fireEvent.submit(screen.getByLabelText("Domain name to search").closest("form")!);
     expect(await screen.findByText(UNREACHABLE)).toBeTruthy();
@@ -67,7 +67,7 @@ describe("/domains page — a failed check still offers a next step (R-1494)", (
   });
 
   it("empty name → only 'Type a name', no help links", () => {
-    render(<DomainLanding />);
+    render(<DomainLanding tlds={[]} />);
     fireEvent.submit(screen.getByLabelText("Domain name to search").closest("form")!);
     expect(screen.getByText("Type a name to check.")).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Ask us about/ })).toBeNull();

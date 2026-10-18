@@ -14,11 +14,11 @@
 import Image from "next/image";
 import Link from "@/site/components/ui/SiteLink";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { CLIENT_AREA_URL, SLA } from "@/site/lib/config";
 import { LICENCE_EDITIONS } from "@/site/lib/data/catalog";
-import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
+import { DOMAIN_TEASER_NO_PRICE, teaserTag, type DomainTeaser } from "@/site/lib/data/domain-teaser";
 import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
 import { emailFromRate } from "@/site/lib/live-catalog";
 
@@ -34,6 +34,10 @@ interface Menu {
    figure the home page shows — emailFromRate over the live editions, which the marketing
    layout reads from the catalogue and passes in. This marker is swapped at render. */
 const EMAIL_FROM_NOTE = "@email-from";
+/* R-1599: the domain teaser is the live .in price the layout reads (getSiteTldPrices) —
+   swapped in at render like the email one; with no live price it carries no number. */
+const DOMAIN_NOTE = "@domain-teaser";
+const domainPromo = (t: DomainTeaser): Menu["promo"] => ({ tag: teaserTag(t), title: "Your name, in rupees", body: `${t.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" });
 
 const MENUS: readonly Menu[] = [
   {
@@ -65,7 +69,7 @@ const MENUS: readonly Menu[] = [
         { label: "Included free", note: "WHOIS privacy, DNS, theft lock", href: "/domains#included" },
       ],
     ],
-    promo: { tag: `${DOMAIN_TEASER.tld} FROM ${DOMAIN_TEASER.from}/YR`.toUpperCase(), title: "Your name, in rupees", body: `${DOMAIN_TEASER.line}. 500+ extensions, each with its renewal price printed beside it.`, cta: "Search a domain", href: "/domains" },
+    promo: domainPromo(DOMAIN_TEASER_NO_PRICE),
   },
   {
     label: "Hosting", href: "/hosting",
@@ -134,7 +138,7 @@ const MENUS: readonly Menu[] = [
 const MOBILE_PAGES = [
   { label: "Home", note: "Everything Anutech does", href: "/" },
   { label: "Custom software", note: "Office automation, built for you", href: "/#software" },
-  { label: "Domains", note: DOMAIN_TEASER.line, href: "/domains" },
+  { label: "Domains", note: DOMAIN_NOTE, href: "/domains" },
   { label: "Hosting", note: "cPanel on NVMe, from ₹50/mo", href: "/hosting" },
   { label: "Business email", note: EMAIL_FROM_NOTE, href: "/email" },
   { label: "Compare editions", note: "GW, M365 and Zoho side by side", href: "/email/compare-editions" },
@@ -151,11 +155,18 @@ const MOBILE_PAGES = [
 /**
  * @param emailFrom ₹/mo for the "Mailboxes from" teaser — live (layout reads the catalogue);
  *   without it, the typed fallback editions decide, never a figure written here.
+ * @param domainTeaser the live .in teaser (layout: getSiteTldPrices); without it, no number.
  */
-export function Header({ emailFrom }: { emailFrom?: number } = {}) {
+export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { emailFrom?: number; domainTeaser?: DomainTeaser } = {}) {
   const fromRs = emailFrom ?? emailFromRate(LICENCE_EDITIONS);
   const noteOf = (note: string) =>
-    note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo` : note;
+    note === EMAIL_FROM_NOTE ? `Mailboxes from ₹${Math.round(fromRs).toLocaleString("en-IN")}/mo`
+    : note === DOMAIN_NOTE ? domainTeaser.line
+    : note;
+  const menus = useMemo(
+    () => MENUS.map((m) => (m.label === "Domains" ? { ...m, promo: domainPromo(domainTeaser) } : m)),
+    [domainTeaser],
+  );
   const [open, setOpen] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const pathname = usePathname();
@@ -168,7 +179,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
     setMobile(false);
   }, [pathname]);
 
-  const active = MENUS.find((m) => m.label === open) ?? null;
+  const active = menus.find((m) => m.label === open) ?? null;
 
   /* /domains and /hosting are the "orange" editorial sections. On them the chrome
      picks up the brand accent (ink + amber) instead of the services blue, so the
@@ -192,7 +203,7 @@ export function Header({ emailFrom }: { emailFrom?: number } = {}) {
         </Link>
 
         <nav className="hide-mobile" style={{ display: "flex", gap: 4, flex: 1 }} aria-label="Main">
-          {MENUS.map((m) => {
+          {menus.map((m) => {
             /* Exact segment match, not startsWith: "/reselleros".startsWith("/reseller") is
                true, and the first render of the ResellerOS page lit up Wholesale too. */
             const isActive = pathname === m.href || pathname.startsWith(m.href + "/");

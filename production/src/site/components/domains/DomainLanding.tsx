@@ -20,7 +20,9 @@
  * REAL DATA, REAL CART (Pardeep's standing rule):
  *   · Availability + price is the live registry lookup (searchDomains → the same
  *     answer the logged-in app shows). No faked "taken" hashing.
- *   · TLD rate-card prices come from TLDS (catalog.ts).
+ *   · TLD rate-card prices are the LIVE registry prices the checkout charges, read on the
+ *     server (getSiteTldPrices, R-1599) and passed in as `tlds`. A TLD with no live price
+ *     shows "Price at search" — the placeholder figures in catalog.ts TLDS are never printed.
  *   · Hosting prices come from HOSTING_TIERS — the SAME source the cart's
  *     server-side checkout re-prices against (sku `hosting:<tier>`), so the ₹0
  *     the page shows is the ₹0 the server charges. The domain line carries
@@ -37,7 +39,8 @@ import { useEffect, useMemo, useState } from "react";
 import { domainSans as manrope, domainSerif as serif, domainMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { searchDomains, normaliseName, domainHelpLinks, type DomainResult } from "@/site/lib/domain-search";
-import { TLDS, type Tld } from "@/site/lib/data/catalog";
+import type { SiteTld } from "@/site/lib/live-tld-pricing";
+import { PRICE_AT_SEARCH, tldCell } from "@/site/lib/rate-card";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
 import { freeDomainEligible, FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
@@ -66,18 +69,23 @@ const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 type Term = "yearly" | "monthly";
 type Tab = "register" | "transfer" | "bulk";
 
-/** The TLD table indexed for O(1) reg/renew lookups + fallback pricing. */
-const TLD_BY_EXT: Record<string, Tld> = Object.fromEntries(TLDS.map((t) => [t.tld, t]));
-const anchorTld = TLD_BY_EXT[ANCHOR_TLD] ?? TLDS[0];
-
-const RATE_FILTERS: { key: string; label: string; groups: Tld["group"][] }[] = [
+const RATE_FILTERS: { key: string; label: string; groups: SiteTld["group"][] }[] = [
   { key: "popular", label: "Popular", groups: ["Popular"] },
   { key: "business", label: "Business", groups: ["Business"] },
   { key: "tech", label: "Tech & startup", groups: ["Tech"] },
-  { key: "all", label: `All ${TLDS.length}`, groups: ["Popular", "Business", "Tech"] },
+  { key: "all", label: "All", groups: ["Popular", "Business", "Tech"] },
 ];
 
-export function DomainLanding() {
+/**
+ * @param tlds the live rate card (server: getSiteTldPrices) — the only domain prices this
+ *   page prints besides the search result's own live price.
+ */
+export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
+  /* The rows indexed by extension for the result card's renewal + the hero arithmetic. */
+  const tldByExt = useMemo(() => new Map(tlds.map((t) => [t.tld, t])), [tlds]);
+  const anchorTld = tldByExt.get(ANCHOR_TLD) ?? null;
+  const anchorReg = anchorTld?.reg ?? null;
+  const anchorRenew = anchorTld?.renew ?? null;
   // ── search ──────────────────────────────────────────────────────────────
   const [tab, setTab] = useState<Tab>("register");
   const [q, setQ] = useState("");
@@ -126,7 +134,7 @@ export function DomainLanding() {
     if (!out.domains.some((d) => d.domain.endsWith(tld))) {
       const firstAvail = out.domains.find((d) => d.available) ?? out.domains[0];
       if (firstAvail) {
-        const ext = TLDS.find((t) => firstAvail.domain.endsWith(t.tld))?.tld;
+        const ext = tlds.find((t) => firstAvail.domain.endsWith(t.tld))?.tld;
         if (ext) setTld(ext);
       }
     }
@@ -144,10 +152,10 @@ export function DomainLanding() {
 
   const tier = HOSTING_TIERS.find((t) => t.name === planName) ?? HOSTING_TIERS[0];
   const anchorTier = HOSTING_TIERS.find((t) => t.name === ANCHOR_TIER) ?? HOSTING_TIERS[0];
-  const tldRow = TLD_BY_EXT[tld] ?? anchorTld;
-  // Real domain price: the live registry price when known, else the rate-card reg.
-  const domainReg = primary?.priceKnown ? primary.price : tldRow.reg;
-  const domainRenew = tldRow.renew;
+  /* R-1599: the result's own live price (what the checkout charges, whole rupees) — never a
+     rate-card fallback; unknown stays null and the card says so. Renewal: the live rate card. */
+  const domainReg = primary?.priceKnown && primary.price > 0 ? Math.round(primary.price) : null;
+  const domainRenew = tldByExt.get(tld)?.renew ?? null;
 
   // ── single source of truth for every displayed number ─────────────────────
   const yearly = term === "yearly";
@@ -158,22 +166,22 @@ export function DomainLanding() {
   // Whole rupees, as the checkout API charges it (Math.round of the same tier figure).
   const hostingCost = hostingOn ? Math.round(yearly ? tier.yearlyTotal : tier.monthly) : 0;
   const mailboxCost = mailOn ? (planFree ? 0 : MAILBOX_YR) : 0;
-  const subtotal = domainCost + hostingCost + mailboxCost;
-  const total = Math.round(subtotal * 1.18);
-  const saved = (bundleFree ? domainReg : 0) + (planFree && mailOn ? MAILBOX_YR : 0);
+  const subtotal = domainCost == null ? null : domainCost + hostingCost + mailboxCost;
+  const total = subtotal == null ? null : Math.round(subtotal * 1.18);
+  const saved = (bundleFree ? domainReg ?? 0 : 0) + (planFree && mailOn ? MAILBOX_YR : 0);
   const available = primary?.available ?? false;
 
   function addToCart() {
     /* Only a name that is available at a live, known price can be paid for: the
        checkout re-checks both and refuses otherwise, so adding it would only fail later. */
-    if (!primary || !primary.available || !primary.priceKnown) return;
+    if (!primary || !primary.available || !primary.priceKnown || domainReg == null) return;
     const planId = tier.name.toLowerCase();
     /* Domain line — sku lets the server re-price + apply the bundle rule. At its FULL price
        (R-1601): the cart works out on every render whether yearly hosting makes it free, so
        removing the plan later puts the price back instead of leaving a stale ₹0. */
     cart.add({
       label: primary.domain,
-      detail: `Registration, 1 year · renews ${inr(domainRenew)}`,
+      detail: domainRenew != null ? `Registration, 1 year · renews ${inr(domainRenew)}` : "Registration, 1 year",
       unitPrice: domainReg,
       unit: "year",
       cycle: "yearly",
@@ -209,13 +217,13 @@ export function DomainLanding() {
   /* Rate-card row: pick the extension and search for it. It used to add a
      placeholder "yourname.<tld>" to the cart — a name nobody asked for, at a fixed
      price, which the checkout could neither price live nor register. */
-  function addRateRow(t: Tld) {
+  function addRateRow(t: SiteTld) {
     setTld(t.tld);
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (normaliseName(q)) void runSearch();
   }
 
-  const shownTlds = TLDS.filter((t) => (RATE_FILTERS.find((f) => f.key === filter)?.groups ?? []).includes(t.group));
+  const shownTlds = tlds.filter((t) => (RATE_FILTERS.find((f) => f.key === filter)?.groups ?? []).includes(t.group));
 
   // ── shared style atoms ────────────────────────────────────────────────────
   const wrap = (extra?: React.CSSProperties): React.CSSProperties => ({ maxWidth: 1160, margin: "0 auto", padding: mob ? "0 20px" : "0 28px", ...extra });
@@ -256,7 +264,7 @@ export function DomainLanding() {
                     style={{ flex: 1, border: "none", outline: "none", boxShadow: "none", background: "transparent", padding: "16px 0", fontSize: 19, letterSpacing: "-0.01em", fontFamily: "inherit", color: C.ink, minWidth: 0 }} />
                   <select value={tld} onChange={(e) => setTld(e.target.value)} onFocus={() => setFieldFocus(true)} onBlur={() => setFieldFocus(false)} aria-label="Extension"
                     style={{ border: "none", outline: "none", boxShadow: "none", background: "transparent", fontFamily: MONO, fontSize: 17, color: C.accent, padding: "14px 8px", cursor: "pointer" }}>
-                    {TLDS.map((t) => <option key={t.tld} value={t.tld}>{t.tld}</option>)}
+                    {tlds.map((t) => <option key={t.tld} value={t.tld}>{t.tld}</option>)}
                   </select>
                 </div>
                 <button type="submit" style={{ appearance: "none", cursor: "pointer", background: C.accent, color: "#fff", border: "none", borderRadius: 10, padding: "0 32px", fontSize: 16, fontWeight: 600, fontFamily: "inherit" }}>
@@ -300,7 +308,7 @@ export function DomainLanding() {
                   tier={tier} domainCost={domainCost} mailboxCost={mailboxCost}
                   bundleFree={bundleFree} planFree={planFree} total={total} saved={saved}
                   onAdd={addToCart}
-                  alternates={alternates} onAddAlt={(d) => { const ext = TLDS.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
+                  alternates={alternates} onAddAlt={(d) => { const ext = tlds.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
                 />
               )}
             </div>
@@ -371,9 +379,17 @@ export function DomainLanding() {
             <span style={{ fontStyle: "italic", color: C.accent }}>Point it at something.</span>
           </h1>
           <p style={{ fontSize: mob ? 16.5 : 18, lineHeight: 1.6, color: C.ink2, maxWidth: "52ch", margin: "18px 0 0" }}>
-            A {ANCHOR_TLD} on its own is {inr(anchorTld.reg)}. {ANCHOR_TIER} hosting is {inr(anchorTier.yearlyTotal)}.
-            Together it&apos;s {inr(anchorTier.yearlyTotal)} — so hosting adds {inr(anchorTier.yearlyTotal - anchorTld.reg)}, not {inr(anchorTier.yearlyTotal)},
-            and the domain line reads ₹0. That is for a {FREE_DOMAIN_TLDS_LABEL} domain, first year, one per yearly plan. Register just the name if that&apos;s all you need — it stays available and unpunished.
+            {anchorReg != null ? (
+              <>
+                A {ANCHOR_TLD} on its own is {inr(anchorReg)}. {ANCHOR_TIER} hosting is {inr(anchorTier.yearlyTotal)}.
+                Together it&apos;s {inr(anchorTier.yearlyTotal)} — so hosting adds {inr(anchorTier.yearlyTotal - anchorReg)}, not {inr(anchorTier.yearlyTotal)},
+                and the domain line reads ₹0.
+              </>
+            ) : (
+              <>
+                {ANCHOR_TIER} hosting is {inr(anchorTier.yearlyTotal)} a year. With it, the domain line reads ₹0 — search a name for its live price.
+              </>
+            )} That is for a {FREE_DOMAIN_TLDS_LABEL} domain, first year, one per yearly plan. Register just the name if that&apos;s all you need — it stays available and unpunished.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 22 }}>
             {["The renewal price is shown up front — no year-two surprise", `${15}-day hosting trial, no card asked for`, "We wire the DNS and migrate the site for you"].map((t) => (
@@ -389,9 +405,9 @@ export function DomainLanding() {
           <div style={{ ...eyebrow, color: C.muted, fontSize: 11 }}>The arithmetic, before you start</div>
           <div style={{ marginTop: 12 }}>
             {[
-              { l: `${ANCHOR_TLD} domain, on its own`, v: inr(anchorTld.reg), strike: false, bold: false },
+              { l: `${ANCHOR_TLD} domain, on its own`, v: anchorReg != null ? inr(anchorReg) : PRICE_AT_SEARCH, strike: false, bold: false },
               { l: `${ANCHOR_TIER} hosting, 1 year`, v: inr(anchorTier.yearlyTotal), strike: false, bold: false },
-              { l: "Bought separately", v: inr(anchorTld.reg + anchorTier.yearlyTotal), strike: true, bold: false },
+              ...(anchorReg != null ? [{ l: "Bought separately", v: inr(anchorReg + anchorTier.yearlyTotal), strike: true, bold: false }] : []),
             ].map((r) => (
               <div key={r.l} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "11px 0", borderBottom: `1px dashed ${C.line}` }}>
                 <span style={{ fontSize: 14.5, color: r.strike ? C.faint : C.ink2 }}>{r.l}</span>
@@ -404,8 +420,10 @@ export function DomainLanding() {
             </div>
           </div>
           <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.5, margin: "8px 0 0" }}>
-            Hosting costs {inr(anchorTier.yearlyTotal - anchorTld.reg)} more, not {inr(anchorTier.yearlyTotal)} — so the domain line reads ₹0.
-            The renewal, {inr(anchorTld.renew)} + {inr(anchorTier.yearlyTotal)}, is printed on the invoice.
+            {anchorReg != null && <>Hosting costs {inr(anchorTier.yearlyTotal - anchorReg)} more, not {inr(anchorTier.yearlyTotal)} — so the domain line reads ₹0. </>}
+            {anchorRenew != null
+              ? <>The renewal, {inr(anchorRenew)} + {inr(anchorTier.yearlyTotal)}, is printed on the invoice.</>
+              : <>The renewal price is shown at search and printed on the invoice.</>}
           </p>
         </div>
       </section>
@@ -463,7 +481,7 @@ export function DomainLanding() {
             return (
               <button key={f.key} aria-pressed={on} onClick={() => setFilter(f.key)}
                 style={{ appearance: "none", cursor: "pointer", background: on ? C.ink : C.card, color: on ? "#fff" : C.ink2, border: `1px solid ${on ? C.ink : C.line}`, borderRadius: 20, padding: "7px 15px", fontSize: 13.5, fontWeight: 500, fontFamily: "inherit" }}>
-                {f.label}
+                {f.key === "all" ? `${f.label} ${tlds.length}` : f.label}
               </button>
             );
           })}
@@ -482,9 +500,10 @@ export function DomainLanding() {
                 {shownTlds.map((t) => (
                   <tr key={t.tld} style={{ borderBottom: `1px solid ${C.lineSoft}` }}>
                     <td style={{ padding: "13px 16px" }}><span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 500, color: C.ink }}>{t.tld}</span><div style={{ fontSize: 12, color: C.muted }}>{t.use}</div></td>
-                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.ink })}>{inr(t.reg)}</td>
-                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{inr(t.renew)}</td>
-                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{inr(t.transfer)}</td>
+                    {/* R-1599: live prices only — no live register price says so, never a placeholder. */}
+                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: t.reg == null ? 12.5 : 14.5, color: t.reg == null ? C.muted : C.ink, whiteSpace: "nowrap" })}>{t.reg == null ? PRICE_AT_SEARCH : inr(t.reg)}</td>
+                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{tldCell(t.renew)}</td>
+                    <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{tldCell(t.transfer)}</td>
                     <td style={{ textAlign: "right", padding: "13px 16px" }}>
                       {freeDomainEligible(t.tld) ? (
                         <>
@@ -493,7 +512,7 @@ export function DomainLanding() {
                         </>
                       ) : (
                         <>
-                          <span style={priceMono({ fontSize: 14.5, color: C.ink })}>{inr(t.reg)}</span>
+                          <span style={priceMono({ fontSize: 14.5, color: C.ink })}>{tldCell(t.reg)}</span>
                           <div style={{ fontSize: 12, color: C.muted }}>not in the free list</div>
                         </>
                       )}
@@ -506,7 +525,7 @@ export function DomainLanding() {
               </tbody>
             </table>
           </div>
-          <div style={{ background: C.tint, padding: "12px 16px", fontSize: 13, color: C.muted }}>Showing {shownTlds.length} of {TLDS.length} extensions — the ones people actually ask for. GST at 18% is stated separately on every invoice.</div>
+          <div style={{ background: C.tint, padding: "12px 16px", fontSize: 13, color: C.muted }}>Showing {shownTlds.length} of {tlds.length} extensions — the ones people actually ask for. GST at 18% is stated separately on every invoice.</div>
         </div>
       </section>
 
@@ -569,12 +588,12 @@ export function DomainLanding() {
 /* ── The availability result: options, plan chooser, alternates ──────────── */
 function ResultBlock(p: {
   C: typeof C_TYPE; MONO: string; SERIF: string; mob: boolean; priceMono: (e?: React.CSSProperties) => React.CSSProperties;
-  primary: DomainResult; available: boolean; tld: string; domainReg: number; domainRenew: number;
+  primary: DomainResult; available: boolean; tld: string; domainReg: number | null; domainRenew: number | null;
   hostingOn: boolean; setHostingOn: (v: boolean) => void;
   planName: string; setPlanName: (v: string) => void;
   term: Term; setTerm: (v: Term) => void; mailOn: boolean; setMailOn: (v: boolean) => void;
-  tier: (typeof HOSTING_TIERS)[number]; domainCost: number; mailboxCost: number;
-  bundleFree: boolean; planFree: boolean; total: number; saved: number; onAdd: () => void;
+  tier: (typeof HOSTING_TIERS)[number]; domainCost: number | null; mailboxCost: number;
+  bundleFree: boolean; planFree: boolean; total: number | null; saved: number; onAdd: () => void;
   alternates: DomainResult[]; onAddAlt: (d: DomainResult) => void;
 }) {
   const { C, MONO, SERIF, mob, priceMono, primary, available, domainReg, domainRenew,
@@ -596,6 +615,9 @@ function ResultBlock(p: {
   }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+  /* R-1599: the live price this exact name is sold at; unknown → no number (the checkout
+     would refuse it too). */
+  const regText = domainReg != null ? inr(domainReg) : "Price unavailable";
 
   return (
     <div style={{ marginTop: 24, border: `1.5px solid ${C.successBorder}`, borderRadius: 14, overflow: "hidden" }}>
@@ -603,7 +625,7 @@ function ResultBlock(p: {
       <div style={{ background: C.successSurf, padding: "16px 22px", borderBottom: `1px solid ${C.successBorder}`, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", color: C.success, fontWeight: 600 }}>Available</span>
         <span style={{ fontFamily: SERIF, fontSize: 23, letterSpacing: "-0.02em", color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary.domain}>{primary.domain}</span>
-        <span style={priceMono({ fontSize: 13, color: C.success })}>renews {inr(domainRenew)}/yr</span>
+        <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"}</span>
       </div>
       <p style={{ padding: "16px 22px 6px", fontSize: 13.5, color: C.muted, margin: 0 }}>Pick one — you can change it any time before you pay.</p>
 
@@ -618,8 +640,8 @@ function ResultBlock(p: {
             <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, textTransform: "uppercase", color: hostingOn ? "#fff" : C.accent, background: hostingOn ? C.accent : C.accSurf, borderRadius: 4, padding: "3px 7px" }}>Recommended</span>
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 12 }}>
-            <span style={priceMono({ fontSize: 29, fontWeight: 700, color: C.accent })}>{bundleFree ? "₹0" : inr(domainReg)}</span>
-            {bundleFree && <span style={priceMono({ fontSize: 17, color: C.faint, textDecoration: "line-through" })}>{inr(domainReg)}</span>}
+            <span style={priceMono({ fontSize: 29, fontWeight: 700, color: C.accent })}>{bundleFree ? "₹0" : regText}</span>
+            {bundleFree && domainReg != null && <span style={priceMono({ fontSize: 17, color: C.faint, textDecoration: "line-through" })}>{inr(domainReg)}</span>}
             <span style={{ fontSize: 13, color: C.accentDark }}>for the name</span>
           </div>
           <p style={{ fontSize: 13, color: C.accentDark, margin: "8px 0 0", lineHeight: 1.5 }}>
@@ -637,10 +659,10 @@ function ResultBlock(p: {
             <span style={{ fontFamily: MONO, fontSize: 11, textTransform: "uppercase", color: C.faint, fontWeight: 600 }}>Domain only</span>
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 12 }}>
-            <span style={priceMono({ fontSize: 29, fontWeight: 500, color: C.ink })}>{inr(domainReg)}</span>
+            <span style={priceMono({ fontSize: 29, fontWeight: 500, color: C.ink })}>{regText}</span>
             <span style={{ fontSize: 13, color: C.muted }}>first year + GST</span>
           </div>
-          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>renews {inr(domainRenew)}/yr · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"} · nothing else added. You get the name and DNS control — nothing will load at it until you point it at a host.</p>
         </button>
       </div>
 
@@ -697,7 +719,7 @@ function ResultBlock(p: {
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ textAlign: "right" }}>
-            <div style={priceMono({ fontSize: 20, fontWeight: 700, color: C.ink })}>{inr(total)}</div>
+            <div style={priceMono({ fontSize: 20, fontWeight: 700, color: C.ink })}>{total != null ? inr(total) : "—"}</div>
             <div style={{ fontSize: 11.5, color: C.faint }}>total incl. 18% GST</div>
           </div>
           <button onClick={onAdd} style={{ appearance: "none", cursor: "pointer", background: C.ink, color: "#fff", border: "none", borderRadius: 10, padding: "14px 26px", fontSize: 15.5, fontWeight: 600, fontFamily: "inherit" }}>

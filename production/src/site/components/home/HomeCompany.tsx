@@ -26,6 +26,7 @@ import { reportLeadConversion } from "@/site/lib/google-ads";
 import { WHATSAPP_URL, WHATSAPP_READY, COMPANY } from "@/site/lib/config";
 import { C, MONO, CATALOGUE_V2, CatScene } from "@/site/components/home/HomeV2";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
+import { teaserCardPrice, type DomainTeaser } from "@/site/lib/data/domain-teaser";
 import { ProductPeek } from "@/site/components/home/ProductPeek";
 
 const WA = (text: string) => `${WHATSAPP_URL}?text=${encodeURIComponent(text)}`;
@@ -57,9 +58,13 @@ const IT_CARDS = [
   ...CATALOGUE_V2.filter((c) => c.name !== "Reseller program"),
 ];
 
-export function HomeCompany({ emailFrom }: { emailFrom?: number }) {
+export function HomeCompany({ emailFrom, domainTeaser }: { emailFrom?: number; domainTeaser?: DomainTeaser }) {
   const [openFaq, setOpenFaq] = useState(0);
-  const cards = IT_CARDS.map((c) => (c.name === "Business email" && emailFrom ? { ...c, from: inr(emailFrom) } : c));
+  /* R-1599: the Domains card carries the live .in price the checkout charges (server-read). */
+  const cards = IT_CARDS.map((c) =>
+    c.name === "Business email" && emailFrom ? { ...c, from: inr(emailFrom) }
+    : c.name === "Domains" && domainTeaser ? { ...c, ...teaserCardPrice(domainTeaser) }
+    : c);
   const rootRef = useRef<HTMLDivElement>(null);
   useScrollReveal(rootRef);
 

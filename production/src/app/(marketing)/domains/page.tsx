@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { DomainLanding } from "@/site/components/domains/DomainLanding";
-import { TLDS } from "@/site/lib/data/catalog";
-import { DOMAIN_FAQS } from "@/site/lib/data/domains-landing";
+import { DOMAIN_FAQS, domainOfferCatalog } from "@/site/lib/data/domains-landing";
+import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 import { SITE_URL } from "@/site/lib/config";
 import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 
@@ -14,8 +14,8 @@ import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
  *
  * SEO + AI-answerability (Pardeep's standing ask — the site should be legible to
  * Google/Gemini so it can rank and be quoted): rich <metadata> plus JSON-LD for
- * the organisation, the domain-registration offer catalogue (real ₹ prices from
- * TLDS), and the FAQ (the same six Q&A the page renders). All figures come from
+ * the organisation, the domain-registration offer catalogue (live ₹ prices — the ones
+ * the checkout charges, R-1599), and the FAQ (the same six Q&A the page renders). All figures come from
  * the app's own data, never invented. Canonical origin is anutech.in (SITE_URL).
  */
 
@@ -33,11 +33,16 @@ export const metadata: Metadata = {
   },
 };
 
-/* Static-ish; the live availability check runs client-side, prices refresh on deploy. */
+/* ISR: the rate table, result card and JSON-LD read the live registry prices (10-min cache,
+   last good kept on a failed read — site/lib/live-tld-pricing.ts); availability runs client-side. */
 export const revalidate = 600;
 
-export default function DomainsPage() {
-  const cheapest = Math.min(...TLDS.map((t) => t.reg));
+export default async function DomainsPage() {
+  /* R-1599: every domain price on this page — table, result card, JSON-LD — is the live
+     price the checkout charges. Never TLDS' placeholders. */
+  const tlds = await getSiteTldPrices();
+  const offers = domainOfferCatalog(tlds);
+  const cheapest = offers ? (offers.lowPrice as number) : null;
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -55,21 +60,7 @@ export default function DomainsPage() {
         description:
           `Register or transfer a domain in rupees. A ${FREE_DOMAIN_TLDS_LABEL} domain is ₹0 for the first year when bundled with a yearly Anutech hosting plan. Renewal price shown up front; GST invoice on every order.`,
         brand: { "@type": "Brand", name: "Anutech Digital" },
-        offers: {
-          "@type": "AggregateOffer",
-          priceCurrency: "INR",
-          lowPrice: 0,
-          highPrice: Math.max(...TLDS.map((t) => t.reg)),
-          offerCount: TLDS.length,
-          offers: TLDS.map((t) => ({
-            "@type": "Offer",
-            name: `${t.tld} domain — first year`,
-            priceCurrency: "INR",
-            price: t.reg,
-            description: `${t.tld} for ${t.use}. Renews ₹${t.renew}/yr. ₹0 with a yearly hosting plan.`,
-            url: `${SITE_URL}/domains#rates`,
-          })),
-        },
+        ...(offers ? { offers } : {}),
       },
       {
         "@type": "FAQPage",
@@ -89,8 +80,8 @@ export default function DomainsPage() {
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <DomainLanding />
-      <span hidden>{`Domains from ₹${cheapest}; a ${FREE_DOMAIN_TLDS_LABEL} is ₹0 for the first year with yearly hosting.`}</span>
+      <DomainLanding tlds={tlds} />
+      <span hidden>{`${cheapest != null ? `Domains from ₹${cheapest} + GST; a` : "A"} ${FREE_DOMAIN_TLDS_LABEL} is ₹0 for the first year with yearly hosting.`}</span>
     </>
   );
 }
