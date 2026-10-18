@@ -31,13 +31,10 @@ const GOOGLE_BILL_CHECK = [
 /**
  * `.limit(n)` above the cap outside the money files — not money screens, outside R-1519's
  * files. Listed so the scan covers every NEW file in src/lib/queries; each needs its own
- * card to page. Do not add to this list: page the read instead.
+ * card to page. Do not add to this list: page the read instead. Empty since R-1588 paged
+ * ads.ts / feedback.ts / gbp.ts (limit-over-cap-scan.test.ts now covers all of src/).
  */
-const OVER_CAP_NOT_MONEY: Record<string, string> = {
-  "src/lib/queries/ads.ts": "ad_spend_daily .limit(50000) — marketing dashboard, not the books",
-  "src/lib/queries/feedback.ts": "feedback .limit(5000) — support inbox",
-  "src/lib/queries/gbp.ts": "gbp_metrics_daily .limit(20000) — Google Business Profile metrics",
-};
+const OVER_CAP_NOT_MONEY: Record<string, string> = {};
 
 /**
  * R-1586: the accounting reports and their exports — GST (GSTR-1 / 3B), Customer Aging,

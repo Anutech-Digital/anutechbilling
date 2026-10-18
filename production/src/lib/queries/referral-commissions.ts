@@ -8,6 +8,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -65,8 +66,9 @@ export function usePayCommission() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["referral-commissions"] });
-      qc.invalidateQueries({ queryKey: ["banking"] });
-      qc.invalidateQueries({ queryKey: ["pnl"] });
+      qc.invalidateQueries({ queryKey: queryKeys.bankAccounts() });
+      qc.invalidateQueries({ queryKey: queryKeys.bankTransactions() });
+      qc.invalidateQueries({ queryKey: queryKeys.pnl() });
       toast.success("Commission paid");
     },
     onError: (e) => toastError(e),
@@ -88,7 +90,7 @@ export function useCancelCommission() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["referral-commissions"] });
-      qc.invalidateQueries({ queryKey: ["pnl"] });
+      qc.invalidateQueries({ queryKey: queryKeys.pnl() });
       toast.success("Commission cancelled");
     },
     onError: (e) => toastError(e),

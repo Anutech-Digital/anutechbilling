@@ -79,7 +79,7 @@ export function useUnreconcileBankTxn() {
       return data as { invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null };
     },
     onSuccess: (res) => {
-      for (const k of ["bank_transactions", "bank_accounts", "invoices", "quotes", "payments", "customers", "aging",
+      for (const k of ["bank_transactions", "bank_accounts", "invoices", "quotes", "payments", "customers",
                        "salary-payments", "expenses", "balance-sheet", "tax-payments", "project_sales", "accounting", "itr-pack"]) {
         qc.invalidateQueries({ queryKey: [k] });
       }

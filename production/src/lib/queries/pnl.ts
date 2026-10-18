@@ -16,6 +16,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { vendorsFromSubscriptions } from "@/lib/accounting/pnl";
 import { assemblePnl, type PnLNumbers, type PnlRpcRow } from "@/lib/accounting/pnl-assemble";
@@ -30,7 +31,7 @@ export const BOOKS_START = "2000-04-01";
 
 export function usePnL(range: { from: string; to: string }, enabled = true) {
   return useQuery({
-    queryKey: ["accounting", "pnl", range.from, range.to],
+    queryKey: [...queryKeys.pnl(), range.from, range.to],
     /* The comparison period is fetched only once the owner asks for it. A second full
        aggregation on every page load, for a number nobody is reading, is a cost with no
        reader. */

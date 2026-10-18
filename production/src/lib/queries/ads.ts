@@ -6,7 +6,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toastError } from "@/lib/errors/toast-error";
 import { isMarketingCategory } from "@/lib/marketing/ad-channels";
 import type { AdPlatform, AdSpendRow } from "@/lib/marketing/ad-platforms";
@@ -34,20 +37,30 @@ export function useAdsStatus() {
 export function useAdSpend(fromDay: string) {
   return useQuery({
     queryKey: [...ADS_KEY, "spend", fromDay],
-    queryFn: async (): Promise<AdSpendRow[]> => {
-      const supabase = createClient();
-      const [{ data: accounts }, { data, error }] = await Promise.all([
-        supabase.from("ad_accounts").select("id, platform"),
-        supabase.from("ad_spend_daily").select("ad_account_id, day, campaign_id, campaign_name, spend, impressions, clicks, conversions, conversion_value").gte("day", fromDay).order("day").limit(50000),
-      ]);
-      if (error) throw error;
-      const platform = new Map((accounts ?? []).map((a) => [a.id, a.platform as AdPlatform]));
-      return (data ?? []).flatMap((r) => {
-        const p = platform.get(r.ad_account_id); if (!p) return [];
-        return [{ platform: p, account_id: r.ad_account_id, day: r.day, campaign_id: r.campaign_id, campaign_name: r.campaign_name, spend: Number(r.spend), impressions: r.impressions, clicks: r.clicks, conversions: Number(r.conversions), conversion_value: Number(r.conversion_value) }];
-      });
-    },
+    queryFn: () => fetchAdSpend(createClient(), fromDay),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * R-1588: every spend row from `fromDay`. The old `.limit(50000)` came back as 1000 rows
+ * (the gateway caps every answer), and 90 days x 12 campaigns is already 1,080 — spend and
+ * ROAS were short. Paged; the primary key (ad_account_id, day, campaign_id) after `day`
+ * makes the order total.
+ */
+export async function fetchAdSpend(supabase: SupabaseClient<Database>, fromDay: string): Promise<AdSpendRow[]> {
+  const [{ data: accounts }, data] = await Promise.all([
+    supabase.from("ad_accounts").select("id, platform"),
+    fetchAllRows((from, to) => supabase.from("ad_spend_daily")
+      .select("ad_account_id, day, campaign_id, campaign_name, spend, impressions, clicks, conversions, conversion_value")
+      .gte("day", fromDay)
+      .order("day", { ascending: true }).order("ad_account_id", { ascending: true }).order("campaign_id", { ascending: true })
+      .range(from, to)),
+  ]);
+  const platform = new Map((accounts ?? []).map((a) => [a.id, a.platform as AdPlatform]));
+  return data.flatMap((r) => {
+    const p = platform.get(r.ad_account_id); if (!p) return [];
+    return [{ platform: p, account_id: r.ad_account_id, day: r.day, campaign_id: r.campaign_id, campaign_name: r.campaign_name, spend: Number(r.spend), impressions: r.impressions, clicks: r.clicks, conversions: Number(r.conversions), conversion_value: Number(r.conversion_value) }];
   });
 }
 
@@ -56,10 +69,13 @@ export function useBookedAdSpendByMonth(fromDay: string) {
   return useQuery({
     queryKey: [...ADS_KEY, "booked", fromDay],
     queryFn: async (): Promise<Record<string, Map<string, number>>> => {
-      const { data, error } = await createClient().from("expenses").select("channel, amount, expense_date, category").gte("expense_date", fromDay).not("channel", "is", null);
-      if (error) throw error;
+      const supabase = createClient();
+      /* R-1588: paged — more than 1000 tagged expenses were cut silently. */
+      const data = await fetchAllRows((from, to) => supabase.from("expenses").select("channel, amount, expense_date, category")
+        .gte("expense_date", fromDay).not("channel", "is", null)
+        .order("id", { ascending: true }).range(from, to));
       const out: Record<string, Map<string, number>> = {};
-      for (const r of data ?? []) {
+      for (const r of data) {
         if (!r.channel || !isMarketingCategory(r.category)) continue;
         const m = (out[r.channel] ??= new Map());
         const month = r.expense_date.slice(0, 7);
@@ -75,10 +91,13 @@ export function useLeadsByCampaign(fromDay: string) {
   return useQuery({
     queryKey: [...ADS_KEY, "leads-by-campaign", fromDay],
     queryFn: async (): Promise<Map<string, number>> => {
-      const { data, error } = await createClient().from("leads").select("utm_campaign").gte("created_at", fromDay).not("utm_campaign", "is", null);
-      if (error) throw error;
+      const supabase = createClient();
+      /* R-1588: paged — a count of the first 1000 leads is not a count. */
+      const data = await fetchAllRows((from, to) => supabase.from("leads").select("utm_campaign")
+        .gte("created_at", fromDay).not("utm_campaign", "is", null)
+        .order("id", { ascending: true }).range(from, to));
       const m = new Map<string, number>();
-      for (const r of (data ?? []) as { utm_campaign: string | null }[]) if (r.utm_campaign) m.set(r.utm_campaign, (m.get(r.utm_campaign) ?? 0) + 1);
+      for (const r of data as { utm_campaign: string | null }[]) if (r.utm_campaign) m.set(r.utm_campaign, (m.get(r.utm_campaign) ?? 0) + 1);
       return m;
     },
   });

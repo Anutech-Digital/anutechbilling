@@ -24,6 +24,7 @@ function builder(table: string) {
     select: () => b,
     order: () => b,
     limit: () => b,
+    range: () => b,
     eq: (col: string, v: unknown) => { filters.push((r) => r[col] === v); return b; },
     in: (col: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[col])); return b; },
     then: (ok: (v: { data: unknown[]; error: null }) => unknown) =>

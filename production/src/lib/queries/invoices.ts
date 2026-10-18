@@ -4,6 +4,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import type { SeriesState } from "@/lib/actions/consequence";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -300,7 +301,7 @@ export function useCreateDirectInvoice() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: ["aging"] });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success(
         `Invoice ${res.invoice_id} raised · ₹${res.net_payable.toLocaleString("en-IN")} due${res.tax_rate === 0 ? " · export (zero-rated)" : ""}`,

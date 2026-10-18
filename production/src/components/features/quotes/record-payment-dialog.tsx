@@ -11,6 +11,7 @@ import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import { useBankAccounts } from "@/lib/queries/bank";
@@ -819,7 +820,9 @@ export function RecordPaymentDialog({
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
-      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      // R-1589: Aging showed the old balance after a payment until a reload.
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
 
       /* R-374: the reference was already recorded — nothing new was saved. Say so, and keep
          the sheet open so the operator can enter the new payment's own reference. */

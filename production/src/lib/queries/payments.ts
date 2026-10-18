@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { queryKeys } from "@/lib/queries/keys";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
@@ -187,7 +188,8 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       // R-1567: the refund gives back credit this payment used and reverses its TDS receivable.
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
@@ -229,10 +231,11 @@ export function useDeletePayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["purchase-orders"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       // R-1568: delete removes its open credit, gives back credit it used, reverses its TDS.
-      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Payment deleted & reversed");
     },
@@ -545,9 +548,13 @@ export function useRecordMultiInvoicePayment() {
       return data;
     },
     onSuccess: () => {
-      for (const key of ["payments", "invoices", "quotes", "customers", "customer-credits", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
+      for (const key of ["payments", "invoices", "quotes", "customers", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }
+      /* R-1589: was "customer-credits" — no query reads that key, so the excess-to-credit
+         balance stayed old. Aging was not refreshed at all. */
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
     },
   });
 }

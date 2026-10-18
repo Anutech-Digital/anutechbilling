@@ -17,7 +17,7 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "U1", email: "u1@example.invalid" } } }) },
     from: (table: string) => {
       const q: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "gt", "order", "limit", "in"]) q[m] = () => q;
+      for (const m of ["select", "eq", "gt", "order", "limit", "range", "in"]) q[m] = () => q;
       q.maybeSingle = async () => ({ data: table === "users" ? { tenant_id: "T1", role: state.role } : null, error: null });
       q.then = (ok: (v: unknown) => unknown) =>
         Promise.resolve({

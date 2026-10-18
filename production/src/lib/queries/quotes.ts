@@ -156,7 +156,6 @@ export function useCreateQuote() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
-      qc.invalidateQueries({ queryKey: ["quote"] });
       toast.success("Quote saved");
     },
     onError: (err) => toastError(err),

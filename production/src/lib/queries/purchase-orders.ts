@@ -9,6 +9,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -50,7 +51,7 @@ export interface PurchaseOrderSummary {
 
 export function usePurchaseOrders() {
   return useQuery({
-    queryKey: ["purchase_orders"],
+    queryKey: queryKeys.purchaseOrders(),
     queryFn: async (): Promise<PurchaseOrderRow[]> => {
       const supabase = createClient();
       /* R-264: paged past the silent 1000-row cap; id last makes the order total. */
@@ -68,7 +69,7 @@ export function usePurchaseOrders() {
 /** Filter POs for a specific subscription */
 export function useSubscriptionPurchaseOrders(subscriptionId: string | undefined) {
   return useQuery({
-    queryKey: ["purchase_orders", "subscription", subscriptionId],
+    queryKey: [...queryKeys.purchaseOrders(), "subscription", subscriptionId],
     enabled:  !!subscriptionId,
     queryFn: async (): Promise<PurchaseOrderRow[]> => {
       const supabase = createClient();
@@ -127,7 +128,7 @@ export function useUpdatePurchaseOrder() {
       return data as PurchaseOrderRow;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Purchase order updated");
     },
     onError: (e) => toastError(e, { fallback: "Purchase order update nahi hua" }),
@@ -144,7 +145,7 @@ export function useUpdatePurchaseOrder() {
  */
 export function usePurchaseOrderSummaries() {
   return useQuery({
-    queryKey: ["purchase_orders", "summary"],
+    queryKey: [...queryKeys.purchaseOrders(), "summary"],
     queryFn: async (): Promise<PurchaseOrderSummary[]> => {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -254,8 +255,8 @@ export function useAllocateBillToPO() {
     },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["po_allocations", vars.purchase_order_id] });
-      qc.invalidateQueries({ queryKey: ["purchase_orders", "summary"] });
-      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: [...queryKeys.purchaseOrders(), "summary"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Bill allocated to PO");
     },
     onError: (e) => toastError(e, { fallback: "Bill allocate nahi hua" }),
@@ -275,8 +276,8 @@ export function useDeallocate() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["po_allocations"] });
-      qc.invalidateQueries({ queryKey: ["purchase_orders", "summary"] });
-      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: [...queryKeys.purchaseOrders(), "summary"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("Bill unlinked from PO");
     },
     onError: (e) => toastError(e, { fallback: "Unlink nahi hua" }),
@@ -301,7 +302,7 @@ export function useUpdatePurchaseOrderCost() {
       return data as PurchaseOrderRow;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       toast.success("PO cost updated");
     },
     onError: (e) => toastError(e, { fallback: "Cost update nahi hua" }),

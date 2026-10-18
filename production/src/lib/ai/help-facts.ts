@@ -14,6 +14,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { missingInvoiceState, stateCodeFromGstin } from "@/lib/gst/gstin-state";
 
@@ -48,11 +49,14 @@ export async function helpFacts(client: SupabaseClient<Database>, tenantId: stri
     );
   }
 
-  const { data: custs } = await client
+  /* R-1588: paged up to the old cap of 2000 — `.limit(2000)` came back as 1000 rows (the
+     gateway caps every answer), so customer no. 1001+ was never checked for a GST state. */
+  const custs = await fetchAllRows((from, to) => client
     .from("customers")
     .select("id, name, state_code, country")
     .order("name", { ascending: true })
-    .limit(2000);
+    .order("id", { ascending: true })
+    .range(from, to), { maxRows: 2000 }).catch(() => null);
   const missing = (custs ?? []).filter((c) => missingInvoiceState(c));
   lines.push(
     `Customers: ${(custs ?? []).length}${(custs ?? []).length === 2000 ? "+" : ""}; missing a GST state (invoice cannot be made for them): ${missing.length}` +

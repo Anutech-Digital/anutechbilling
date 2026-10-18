@@ -78,7 +78,7 @@ export function useCombineQuotes() {
       return data;
     },
     onSuccess: () => {
-      for (const key of ["quotes", "quote", "customers", "nav-badges"]) qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ["quotes", "customers", "nav-badges"]) qc.invalidateQueries({ queryKey: [key] });
     },
   });
 }

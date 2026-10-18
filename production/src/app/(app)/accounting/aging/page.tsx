@@ -20,6 +20,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { AGING_BUCKETS } from "@/lib/navigation/drilldown";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -69,7 +70,7 @@ function daysBetween(from: string, to: Date): number {
 
 function useAging() {
   return useQuery({
-    queryKey: ["accounting", "aging"],
+    queryKey: queryKeys.aging(),
     queryFn: async (): Promise<{ rows: CustomerAgingRow[]; totals: AgingTotals }> => {
       const supabase = createClient();
 
