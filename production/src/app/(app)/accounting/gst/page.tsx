@@ -39,6 +39,8 @@ import { useGstReport, useGstPaidInRange } from "./report";
 import { gstCashHeadline, gstr3bFromReport, outputTaxBridge, toGstr1Doc } from "./cash-to-pay";
 import { OutputTaxBridgeCard } from "./output-tax-bridge-card";
 import { GstWarnings } from "./gst-warnings";
+import { CompositionReturnCard } from "./composition-card";
+import { downloadCSV } from "./download-csv";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
 
 // ────────────────────────────────────────────────────────────────
@@ -57,31 +59,7 @@ const thisQuarter = () => gstThisQuarter();
 
 // GSTR-3B worksheet — lib/gst/gstr3b.ts (RCM, s.17(5) reversal, cash per head).
 
-// ────────────────────────────────────────────────────────────────
-// CSV export helpers
-// ────────────────────────────────────────────────────────────────
-
-function csvEscape(s: unknown): string {
-  const v = String(s ?? "");
-  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
-
-function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
-  const lines = [
-    headers.map(csvEscape).join(","),
-    ...rows.map((r) => r.map(csvEscape).join(",")),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+// CSV export helper: ./download-csv.ts (R-1530 — shared with the composition card).
 
 // ────────────────────────────────────────────────────────────────
 // Page
@@ -345,6 +323,8 @@ function GstReportInner() {
           </div>
         </div>
       </Card>
+      {/* R-1530: composition business — CMP-08 per quarter + GSTR-4 for the year (own FY picker). */}
+      <CompositionReturnCard />
       {/* R-1581: a report read failed — say so instead of printing ₹0 / "no invoices" (CLAUDE.md §17c). */}
       {reportFailed ? <LoadError what="GST report" onRetry={() => { void refetchReport(); void refetchPaid(); }} /> : (<>
 
