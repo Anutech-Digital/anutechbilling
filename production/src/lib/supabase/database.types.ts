@@ -1357,6 +1357,18 @@ type FunctionReturnPatches = {
             credits_closed:     number;
             gateway_refunded:   boolean;
           };
+  /** R-1574: the renewal quote made AND linked in one transaction — or the one the subscription
+   *  already has (created false; relinked true when its lost link was written back). */
+  create_renewal_quote: {
+            quote_id:     string;
+            created:      boolean;
+            relinked:     boolean;
+            amount:       number;
+            subtotal:     number;
+            discount_pct: number;
+            tax_rate:     number;
+            line_items:   QuoteLineItem[];
+          };
   record_payment: {
             payment_id:           string;
             receipt_voucher_no:   string | null;
@@ -1374,6 +1386,8 @@ type FunctionReturnPatches = {
             is_renewal_quote:        boolean;
             /** Added in migration 0010. True when this payment fully covered a renewal quote and the linked subscription was advanced 1 year. */
             renewal_rolled_forward:  boolean;
+            /** R-1574: renewed through quotes.renewal_subscription_id because the subscription no longer pointed at this quote. Absent on replay. */
+            renewal_link_lost?:      boolean;
             /** True when the same (quote, reference) was already recorded — idempotent replay; no new row inserted. */
             idempotent_replay?:      boolean;
             already_recorded?:       boolean;

@@ -9719,6 +9719,8 @@ export type Database = {
           public_token: string
           rejected_note: string | null
           rejected_reason: string | null
+          renewal_subscription_id: string | null
+          renewal_term_date: string | null
           revision_no: number
           revision_of: string | null
           seats: number | null
@@ -9790,6 +9792,8 @@ export type Database = {
           public_token?: string
           rejected_note?: string | null
           rejected_reason?: string | null
+          renewal_subscription_id?: string | null
+          renewal_term_date?: string | null
           revision_no?: number
           revision_of?: string | null
           seats?: number | null
@@ -9861,6 +9865,8 @@ export type Database = {
           public_token?: string
           rejected_note?: string | null
           rejected_reason?: string | null
+          renewal_subscription_id?: string | null
+          renewal_term_date?: string | null
           revision_no?: number
           revision_of?: string | null
           seats?: number | null
@@ -14318,6 +14324,10 @@ export type Database = {
           p_title: string
         }
         Returns: string
+      }
+      create_renewal_quote: {
+        Args: { p_quote: Json; p_subscription_id: string; p_tenant_id: string }
+        Returns: Json
       }
       create_site_promo: {
         Args: {
