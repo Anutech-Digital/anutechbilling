@@ -10,7 +10,7 @@
  * the empty fake data — that is past the gate). Denied role → 403, no write, no rpc, no AI, no
  * message, no outbound fetch, and no table read except `users` (plus `readsBeforeGate`).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -123,6 +123,9 @@ const CASES: Case[] = [
   { route: "voice/whatsapp-note", load: () => import("./voice/whatsapp-note/route"), body: { customerId: ID }, allow: ["sales", "billing", "support"], deny: ["partner_agent", null] },
 ];
 
+/** Route modules imported once in beforeAll (R-1591). */
+const loaded = new Map<Case, Mod>();
+
 const fetchMock = vi.fn(async () => { throw new Error("no network in tests"); });
 
 beforeEach(() => {
@@ -143,7 +146,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function call(c: Case, role: string | null): Promise<{ status: number; error: string | null }> {
   state.role = role;
   state.rows = { ...(c.rows ?? {}) };
-  const mod = await c.load();
+  const mod = loaded.get(c) ?? (await c.load());
   const method = c.method ?? "POST";
   const handler = mod[method] as Handler;
   const req = new NextRequest(`https://app.example.test/api/${c.route}`, {
@@ -166,6 +169,14 @@ const isGateRefusal = (r: { status: number; error: string | null }) =>
   r.status === 403 && !!r.error && (/role ko allowed nahi/.test(r.error) || /^Only .+ can /.test(r.error));
 
 describe("R-1470: mutating routes refuse roles that do not do that job", () => {
+  /* R-1591 (18 Oct 2026): the 26 route modules (AI / messaging / Prisma graphs) used to be imported
+     inside each case's FIRST test, under the 5 s default — a cold import in a parallel full run went
+     past it (inbound-emails/[id]/reply: 5014 ms even alone). Import them once here with a hook-only
+     timeout; the tests themselves only run the handler, still under the 5 s default. */
+  beforeAll(async () => {
+    for (const c of CASES) loaded.set(c, await c.load());
+  }, 120_000);
+
   for (const c of CASES) {
     for (const role of c.allow) {
       it(`${c.route}: ${role ?? "no role"} passes the gate`, async () => {

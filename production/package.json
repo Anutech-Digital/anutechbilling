@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "lint:ratchet": "node scripts/lint-ratchet.mjs",
-    "typecheck": "prisma generate && tsc --noEmit",
+    "typecheck": "prisma generate && next typegen && tsc --noEmit",
     "backup:code": "node scripts/backup-code.mjs",
     "backup:db": "node scripts/backup-db.mjs ../../resellersos-backups",
     "backup:prune": "node scripts/prune-backups.mjs ../../resellersos-backups",

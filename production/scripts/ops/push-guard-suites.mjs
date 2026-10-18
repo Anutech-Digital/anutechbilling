@@ -43,6 +43,12 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/ai/autonomy-chokepoint.test.ts",
   "src/lib/ai/gemini.test.ts",
   "src/lib/app-url-fallback.test.ts",
+  // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
+  // past the push gate and CI stayed red ~2 h.
+  "src/lib/app-url.test.ts",
+  "src/lib/nav-route-guard.test.ts",
+  "src/lib/queries/__tests__/money-read-scan.test.ts",
+  "tests/secret-scan.test.ts",
   "src/lib/auth/no-passwords-in-source.test.ts",
   "src/lib/email/no-hardcoded-recipient.test.ts",
   "src/lib/feedback/internal-links.test.ts",

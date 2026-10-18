@@ -176,10 +176,24 @@ async function withTurn(name, card, doing, fn) {
  * One type-check at a time (6 Oct night): each tsc of this repo takes ~2.6 GB; two or three at
  * once starved the local app on a 24 GB machine. Capping tsc's heap would just crash it.
  */
+/**
+ * R-1592 (18 Oct 2026): `next typegen` first — it writes .next/types (typedRoutes: the Route union
+ * that <Link href>/router.push are checked against; tsconfig includes .next/types/**). Without it a
+ * fresh worktree has no route types, so tsc passed a wrong href and only `next build` / the Cloud
+ * Build gate (`npx next typegen && npx tsc --noEmit`) went red. Same steps as `npm run typecheck`.
+ * typegen is light (~5 s warm, no build); it runs inside the heavy turn so tsc never sees half-written types.
+ */
+export const TSC_STEPS = ["npx next typegen", "npx tsc --noEmit -p ."];
+
 function tscWithTurn(card) {
   return withTurn("heavy", card, "type-check kar raha hai", async () => {
-    try { sh("npx tsc --noEmit -p ."); return true; }
-    catch (e) { console.error("✗ tsc fail:\n" + String(e.stdout ?? "").slice(0, 2000)); return false; }
+    for (const step of TSC_STEPS) {
+      const t0 = Date.now();
+      try { sh(step); }
+      catch (e) { console.error(`✗ ${step} fail:\n` + String(e.stdout ?? "").slice(0, 2000) + String(e.stderr ?? "").slice(-800)); return false; }
+      console.log(`  ${step}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    }
+    return true;
   });
 }
 
