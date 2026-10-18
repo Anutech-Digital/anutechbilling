@@ -65,6 +65,7 @@ import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
 import type { PaymentMandateInsertT as PaymentMandateInsert } from "@/lib/supabase/database.types";
 import { safeDbMessage, logDbError } from "@/lib/errors/db-error";
+import { maskContactValue } from "@/lib/security/redact-contact";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
 import { loadLeadOwner } from "@/lib/email/lead-owner.server";
 
@@ -851,7 +852,7 @@ async function handlePaymentFailed(
     emailOutcome = `No retry email (Razorpay sent no email address). Retry link: ${retryUrl}`;
   } else if (!live) {
     console.info(
-      `[webhooks/razorpay] payment.failed ${payment.id}: retry email NOT sent (not production). Would send to ${to}: ${retryUrl}`,
+      `[webhooks/razorpay] payment.failed ${payment.id}: retry email NOT sent (not production). Would send to ${maskContactValue(to)}: ${retryUrl}`,
     );
     emailOutcome = `Retry link logged, not emailed (not production): ${retryUrl}`;
   } else {

@@ -33,6 +33,7 @@ import { downloadWhatsAppMedia } from "@/lib/whatsapp/media";
 import { transcribeVoiceNote } from "@/lib/voice/stt";
 import { decideVoiceNote, isTranscribable, voiceContextNote } from "@/lib/voice/voice-note";
 import { isStopMessage } from "@/lib/marketing/whatsapp-broadcast";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 /* Envelope sender + trading name for anything the AI sales agent sends off the back of a
    WhatsApp message. Mirrors the inbound-email webhook so one reseller cannot end up sending
@@ -349,7 +350,7 @@ async function handleVoiceNote(
   }
 
   if (outcome.kind === "file_only") {
-    console.warn(`[/api/webhooks/whatsapp] voice note from ${phone}: ${outcome.note}`);
+    console.warn(`[/api/webhooks/whatsapp] voice note from ${maskContactValue(phone)}: ${outcome.note}`);
     return;
   }
 

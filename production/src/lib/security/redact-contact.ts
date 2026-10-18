@@ -4,11 +4,11 @@
  * Logs go to Cloud Logging, kept for months and readable by anyone with a GCP viewer role, so a
  * full address there is customer data leaked to a place nobody reviews (DPDP). A log line still
  * has to be useful when something fails, so the mask keeps enough to tell two customers apart
- * and to match the record in the app (first letter + domain; country code, first two and the
- * line's tail) — never the whole value.
+ * and to match the record in the app (first letter + domain; country code and the last 3
+ * digits) — never the whole value.
  *
  *   maskEmail("pardeep@anutech.in")   → "p***@anutech.in"
- *   maskPhone("+91 98765 43210")      → "+91 98***43210"
+ *   maskPhone("+91 98765 43210")      → "+91 *******210"
  *   maskContactValue(x)               → either of the above, by shape; arrays joined
  *   redactContacts(text)              → every email/phone INSIDE a free-text string masked
  *                                       (SMTP/provider error messages quote the recipient)
@@ -38,8 +38,8 @@ export function maskPhone(value: string | null | undefined): string {
   /* National part = the last 10 digits; anything before it is the country code. */
   const national = digits.length > 10 ? digits.slice(-10) : digits;
   const cc = digits.length > 10 ? `+${digits.slice(0, -10)} ` : v.startsWith("+") ? "+" : "";
-  const tail = Math.min(5, national.length - 4);
-  return `${cc}${national.slice(0, 2)}***${national.slice(-tail)}`;
+  /* Only the last 3 digits of the national number stay (R-1610 follow-up, 19 Oct). */
+  return `${cc}${"*".repeat(national.length - 3)}${national.slice(-3)}`;
 }
 
 /** An email or a phone, by its shape; a list (to: string[]) masked item by item. */

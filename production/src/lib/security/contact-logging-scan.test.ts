@@ -16,17 +16,14 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const ROOT = process.cwd();
+/* src/app/api covers src/app/api/webhooks (whatsapp, razorpay) too — asserted below. */
 const SCAN_DIRS = ["src/lib/email", "src/lib/messaging", "src/lib/hosting", "src/app/api"];
 
 /**
- * Known lines in folders other sessions own (R-1610 follow-up). Each entry is
- * "<file>|<variable>" — shrink this list, never grow it.
+ * Known unmasked lines, as "<file>|<variable>". Empty since the R-1610 follow-up masked the two
+ * api/webhooks lines (whatsapp phone, razorpay retry-mail `to`) — keep it empty.
  */
-const KNOWN: readonly string[] = [
-  /* api/webhooks belongs to the webhooks worker this week; the masked line is a one-word change there. */
-  "src/app/api/webhooks/whatsapp/route.ts|phone",
-  "src/app/api/webhooks/razorpay/webhook.server.ts|to",
-];
+const KNOWN: readonly string[] = [];
 
 /** The last identifier of an expression names contact data. */
 const CONTACT_NAME = /^(?:.*[._])?(e-?mail|emails|email_?address|customerEmail|toEmail|ownerEmail|phone|phones|mobile|msisdn|wa_?id|whatsapp(?:Number)?|recipient|recipients|to)$/i;
@@ -118,6 +115,9 @@ describe("R-1610 — no unmasked customer email/phone in server logs", () => {
   const files = SCAN_DIRS.flatMap((d) => walk(join(ROOT, d)));
   it("scans real files", () => {
     expect(files.length).toBeGreaterThan(100);
+    const rels = files.map((f) => relative(ROOT, f).split(sep).join("/"));
+    expect(rels).toContain("src/app/api/webhooks/whatsapp/route.ts");
+    expect(rels).toContain("src/app/api/webhooks/razorpay/webhook.server.ts");
   });
   it("every console line that prints an email/phone/recipient masks it", () => {
     const offenders: string[] = [];
