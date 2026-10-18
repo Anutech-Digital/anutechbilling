@@ -17,6 +17,8 @@ import { rupee, cycleLabel } from "@/site/lib/money";
 import { missingCheckoutDetails, missingDetailsMessage, gstinProblem, normalizeGstinInput } from "@/site/lib/checkout-details";
 import { stateCodeFromGstin, gstinContradictsState } from "@/lib/gst/gstin-state";
 import { BUY_A_DOMAIN_HREF } from "@/lib/checkout/hosting-domain";
+import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
+import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
@@ -78,7 +80,6 @@ function loadRazorpay(): Promise<RzpCtor> {
 export default function CheckoutPage() {
   const cart = useCart();
   const router = useRouter();
-  const t = cart.totals;
 
   const [step, setStep] = useState<"details" | "payment">("details");
   const [name, setName] = useState("");
@@ -125,6 +126,9 @@ export default function CheckoutPage() {
   /* Paid hosting plans in cart order. Each is its own account on its own domain. */
   const hostingLines = cart.lines.filter((l) => (l.sku || "").startsWith("hosting:"));
   const typedFor = (key: string, i: number) => (i === 0 ? domain : planDomain[key] ?? "");
+  /* R-1601: priced with the domain typed for each plan, as the server will price it — which
+     domain is free with yearly hosting depends on the domain the plan is set up on. */
+  const t = cart.totalsFor(hostingLines.map((l, i) => typedFor(l.key, i)));
   /* Two of the same plan (two websites on Starter) read "Starter hosting · 1" and "· 2", so
      each domain box and each message says which one it means (R-032). */
   const planName = (i: number) => {
@@ -490,7 +494,7 @@ export default function CheckoutPage() {
                       </a>
                       {hasTrial
                         ? " — then come back and start your free trial."
-                        : " — the domain is free with yearly hosting."}
+                        : ` — a ${FREE_DOMAIN_TLDS_LABEL} domain is free for the first year with yearly hosting.`}
                     </p>
                   )}
                 </>
@@ -635,8 +639,12 @@ export default function CheckoutPage() {
 
               {priceCheck && (
                 <div role="alert" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "11px 14px", fontSize: 14, marginBottom: 12 }}>
-                  The total has changed from {rupee(priceCheck.shown)} to <strong>{rupee(priceCheck.server)}</strong> — usually because a
-                  domain&apos;s registry price moved since you added it. Nothing has been charged.
+                  {/* R-1601: not "the registry price moved" — the cart now prices the yearly-hosting
+                      bundle as the server does, so what is left is any re-check: a domain's live
+                      price, or which domain the hosting is set up on (only that one is free). */}
+                  The total has changed from {rupee(priceCheck.shown)} to <strong>{rupee(priceCheck.server)}</strong> after
+                  our server re-checked every price — a domain&apos;s live registry price, or which domain is free
+                  with yearly hosting (only the one your hosting is set up on). Nothing has been charged.
                   <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => void openPayment(priceCheck.order)}>
                       Pay {rupee(priceCheck.server)}
@@ -690,13 +698,14 @@ export default function CheckoutPage() {
 
         {/* Sticky — payment method chunte waqt total nazron me rahe. */}
         <aside className="card" style={{ position: "sticky", top: 84 }}>
-          {cart.lines.map((l) => (
-            <div key={l.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
+          {t.priced.map((p) => (
+            <div key={p.line.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{l.label} × {l.qty}</div>
-                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(l.cycle)}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{p.line.label} × {p.line.qty}</div>
+                <div className="meta" style={{ fontSize: 12 }}>{cycleLabel(p.line.cycle)}</div>
+                <BundleNote p={p} />
               </div>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>{rupee(l.unitPrice * l.qty)}</span>
+              <LinePrice p={p} size={14} />
             </div>
           ))}
           <div style={{ paddingTop: 10 }}>

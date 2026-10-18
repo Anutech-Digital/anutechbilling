@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { useCart } from "./CartProvider";
 import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
+import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
 export function CartDrawer() {
@@ -60,14 +61,15 @@ export function CartDrawer() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "14px 22px" }}>
-          {cart.lines.map((l) => (
+          {t.priced.map((p) => { const l = p.line; return (
             <div key={l.key} style={{ padding: "14px 0", borderBottom: "1px solid var(--border-hairline)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{l.label}</div>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{rupee(l.unitPrice * l.qty)}</div>
+                <LinePrice p={p} />
               </div>
               <div className="meta" style={{ margin: "3px 0 8px" }}>{l.detail}</div>
-              <DomainYears line={l} compact />
+              <BundleNote p={p} />
+              <DomainYears line={l} compact firstYearFree={p.freeNote !== null} />
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 13, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
                   {isTrialLine(l) ? "Free for 15 days" : (l.years ?? 1) > 1 ? `Renews after ${l.years} years` : cycleLabel(l.cycle)}
@@ -95,7 +97,7 @@ export function CartDrawer() {
                 </button>
               </div>
             </div>
-          ))}
+          ); })}
           <p className="meta" style={{ marginTop: 14 }}>
             Migration from your current provider is free on every plan — we do it, outside your business hours.
           </p>

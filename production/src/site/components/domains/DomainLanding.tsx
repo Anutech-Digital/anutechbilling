@@ -168,20 +168,19 @@ export function DomainLanding() {
        checkout re-checks both and refuses otherwise, so adding it would only fail later. */
     if (!primary || !primary.available || !primary.priceKnown) return;
     const planId = tier.name.toLowerCase();
-    // Domain line — sku lets the server re-price + apply the ₹0 bundle rule.
+    /* Domain line — sku lets the server re-price + apply the bundle rule. At its FULL price
+       (R-1601): the cart works out on every render whether yearly hosting makes it free, so
+       removing the plan later puts the price back instead of leaving a stale ₹0. */
     cart.add({
       label: primary.domain,
-      detail: bundleFree
-        ? `Registration, 1 year · free with yearly hosting · renews ${inr(domainRenew)}`
-        : `Registration, 1 year · renews ${inr(domainRenew)}`,
-      unitPrice: domainCost,
+      detail: `Registration, 1 year · renews ${inr(domainRenew)}`,
+      unitPrice: domainReg,
       unit: "year",
       cycle: "yearly",
       sku: `domain:${tld.replace(/^\./, "")}`,
       domain: primary.domain,
       years: 1,
       yearPrices: primary.prices, // R-156: 2/3/5-year terms, when the registry prices them
-      bundleFree,
     });
     if (hostingOn) {
       cart.add({
@@ -197,8 +196,8 @@ export function DomainLanding() {
       if (mailOn) {
         cart.add({
           label: `Mailbox on ${primary.domain}`,
-          detail: planFree ? "Free with the yearly plan" : "Anutech Mail · billed yearly",
-          unitPrice: mailboxCost,
+          detail: "Anutech Mail · billed yearly",
+          unitPrice: MAILBOX_YR, // full price; the cart frees one per yearly plan (R-1601)
           unit: "year",
           cycle: "yearly",
           sku: `mailbox:anutech`,
