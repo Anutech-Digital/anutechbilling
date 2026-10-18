@@ -20,6 +20,12 @@ type TdsUpdate = Database["public"]["Tables"]["tds_receivable"]["Update"];
 export type TdsReceivable = TdsReceivableRow;
 export type { TdsStatus };
 
+/** R-1567 / R-1568: refund_payment / delete_payment set the TDS of a refunded or deleted
+ *  payment to this status — it is not receivable any more (trial balance and balance sheet
+ *  already count only pending_cert / cert_received / verified_26as). The list, KPI strip,
+ *  year-end, 26AS matching and ITR leave these rows out. */
+export const TDS_REVERSED_STATUS = "reversed";
+
 /** Lifecycle stages — order shown in the list / tabs. */
 export const TDS_STATUSES: TdsStatus[] = [
   "pending_cert",
@@ -83,6 +89,7 @@ export function useTdsReceivables(opts?: {
         let q = supabase
           .from("tds_receivable")
           .select("*")
+          .filter("status", "neq", TDS_REVERSED_STATUS)
           .order("payment_received_date", { ascending: false })
           .order("id", { ascending: true });
         if (status === "claimable") q = q.in("status", ["cert_received", "verified_26as"]);
@@ -105,7 +112,8 @@ export function useTdsSummary(fiscalYear?: string) {
       const data = await fetchAllRows<{ status: string | null; tds_amount: number | null; fiscal_year: string | null }>((from, to) => {
         let q = supabase
           .from("tds_receivable")
-          .select("status, tds_amount, fiscal_year");
+          .select("status, tds_amount, fiscal_year")
+          .filter("status", "neq", TDS_REVERSED_STATUS);
         if (fiscalYear) q = q.eq("fiscal_year", fiscalYear);
         return q.order("id", { ascending: true }).range(from, to);
       });

@@ -170,8 +170,10 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["customer-credits"] });
+      qc.invalidateQueries({ queryKey: ["customer_credits"] });
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      // R-1567: the refund gives back credit this payment used and reverses its TDS receivable.
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
         description: "Kitab me darj hua. Asli paisa Razorpay/bank se aapko khud bhejna hai.",
       });
@@ -210,6 +212,9 @@ export function useDeletePayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       qc.invalidateQueries({ queryKey: ["purchase-orders"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      // R-1568: delete removes its open credit, gives back credit it used, reverses its TDS.
+      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Payment deleted & reversed");
     },
     // When the caller wants to surface blockers in a dialog (dependency-aware

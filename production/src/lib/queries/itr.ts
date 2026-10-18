@@ -73,7 +73,10 @@ export function useItrPack(fyStartYear: number) {
         supabase
           .from("tds_receivable")
           .select("tds_amount, fiscal_year")
-          .eq("fiscal_year", fy.fiscalKey),
+          .eq("fiscal_year", fy.fiscalKey)
+          // R-1567: a refunded / deleted payment's TDS is 'reversed' — not a credit to claim
+          // (filter(): the generated TdsStatus type does not list it).
+          .filter("status", "neq", "reversed"),
         // Advance + self-assessment tax jo bank line se "tax payment" book hua (tax_payments).
         supabase
           .from("tax_payments")

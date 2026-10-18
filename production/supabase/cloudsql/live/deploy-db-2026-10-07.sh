@@ -140,6 +140,7 @@ MIGS=(
   "r1576billitc|20261018045438_r1576_bill_itc.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'vendor_bills' and column_name = 'document_type') and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and 'bill_itc_groups' = any(proargnames)) and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and 'bill_itc_groups' = any(proargnames))"
   "r1574renewalquote|20261018162355_r1574_renewal_quote_once.sql|resellersos_migration|to_regprocedure('public.create_renewal_quote(uuid,uuid,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1574%')"
   "r1612bsadvances|20261018163944_r1612_balance_sheet_advances.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-1612%')"
+  "r1567refunddelete|20261018164416_r1567_refund_delete_payment_credit.sql|resellersos_migration|to_regclass('public.cancelled_vouchers') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1567%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.delete_payment(uuid)') and prosrc like '%R-1568%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
