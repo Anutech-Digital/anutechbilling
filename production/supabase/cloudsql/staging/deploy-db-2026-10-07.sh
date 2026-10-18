@@ -152,6 +152,7 @@ MIGS=(
   "r1558creditcustomer|20261018185647_r1558_credit_customer_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_desk_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text,text)') and prosrc like '%R-1558%')"
   "r1583tds194h|20261018191711_r1583_194h_tds_default.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.fn_accrue_referral_commission()') and prosrc like '%tds_194h_default_rate%')"
   "r1544emailsends|20261018193347_r1544_customer_email_sends.sql|resellersos_migration|to_regclass('public.customer_email_sends') is not null and exists(select 1 from pg_policy where polname = 'zzz_service_role_all' and polrelid = to_regclass('public.customer_email_sends'))"
+  "r1584lock|20261018195438_r1584_books_lock_more_tables.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_books_lock' and tgrelid = to_regclass('public.fixed_assets'))"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

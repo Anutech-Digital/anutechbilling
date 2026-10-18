@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
@@ -106,8 +107,9 @@ function GstReportInner() {
   /* R-257: ?from=&to= opens the page on the range a link names (the Overview tile);
      otherwise last month on the 1st–20th (the return being filed), this month after. */
   const [range, setRange] = React.useState<DateRange>(() => gstRangeFromParams(search.get("from"), search.get("to")));
-  const { data, isLoading } = useGstReport(range);
-  const { paid: gstPaidInRange } = useGstPaidInRange(range);
+  const { data, isLoading, isError: reportError, refetch: refetchReport } = useGstReport(range);
+  const { paid: gstPaidInRange, isError: paidError, refetch: refetchPaid } = useGstPaidInRange(range);
+  const reportFailed = reportError || paidError; // R-1581: GST paid feeds cash-to-pay — failed read = failed page
 
   /* ── GSTR-2B milaan (27 Sep 2026) ────────────────────────────────────────
      The portal's JSON is read in the browser and matched against this period's ITC rows;
@@ -343,6 +345,8 @@ function GstReportInner() {
           </div>
         </div>
       </Card>
+      {/* R-1581: a report read failed — say so instead of printing ₹0 / "no invoices" (CLAUDE.md §17c). */}
+      {reportFailed ? <LoadError what="GST report" onRetry={() => { void refetchReport(); void refetchPaid(); }} /> : (<>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6">
@@ -841,6 +845,7 @@ function GstReportInner() {
           </div>
         </Card>
       )}
+      </>)}
     </div>
   );
 }

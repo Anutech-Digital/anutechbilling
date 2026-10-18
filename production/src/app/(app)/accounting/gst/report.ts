@@ -214,8 +214,11 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     frozenParty(invoiceId ? snapByInvoice.get(invoiceId) : null, live);
 
   // Seller's own state (place of supply for intra-state B2C). RLS scopes to own tenant.
-  const { data: tenantRow } = await supabase
+  /* R-1581: a failed read must fail the report — a missing state code silently turns every
+     intra-state sale into IGST (wrong CGST/SGST split on GSTR-1 / 3B). */
+  const { data: tenantRow, error: tenantErr } = await supabase
     .from("tenants").select("state_code, state, gstin").limit(1).maybeSingle();
+  if (tenantErr) throw tenantErr;
   const sellerStateCode = tenantRow?.state_code ?? null;
   const sellerState = tenantRow?.state ?? null;
   const sellerGstin = tenantRow?.gstin?.trim() || null;

@@ -54,6 +54,7 @@ const R270_PAGES = [
   "pnl/page.tsx",
   "profitability/page.tsx",
   "tds-receivable/page.tsx",
+  "gst/page.tsx", // R-1581
 ];
 
 /** Not fixed yet — separate cards. Only ever remove from this list. */
@@ -64,7 +65,6 @@ const KNOWN_GAPS = [
   "cash-flow/page.tsx",
   "day-book/page.tsx",
   "esi-register/page.tsx",
-  "gst/page.tsx",
   "loans/page.tsx",
   "prepaid/page.tsx",
   "reimbursements/page.tsx",
