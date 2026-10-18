@@ -45,6 +45,7 @@ import { normaliseSupportEmail } from "@/lib/inbound/support-inbound";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
 import { localPart } from "@/lib/inbound/routing";
 import { runSupportAgentForMessage } from "@/lib/ai/run-support-agent";
+import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -63,10 +64,7 @@ const FROM_EMAIL =
    support@anutech.in would have that reseller's customers replying to somebody else's desk. */
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL?.trim() || "support@anutech.in";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
-const INBOUND_TENANT_ID =
-  process.env.INBOUND_EMAIL_TENANT_ID?.trim() || BUY_PAGE_TENANT_ID;
+/* R-1555: the tenant comes from lib/inbound/tenant.ts per request — no hard-coded fallback on a deployment. */
 
 /**
  * Senders whose mail must never open a ticket.
@@ -98,6 +96,13 @@ export async function POST(request: NextRequest) {
   }
   if (secret.fromQuery) console.warn(querySecretWarning("v1/integrations/support-email-inbound"));
 
+  /* R-1555: no company configured → 503, never a silent fallback to the Anutech tenant. */
+  const tenantId = inboundTenantId();
+  if (!tenantId) {
+    console.error(inboundTenantMissingMessage("v1/integrations/support-email-inbound"));
+    return NextResponse.json({ error: "not configured" }, { status: 503 });
+  }
+
   // ── 2. Normalise the payload ───────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
@@ -116,7 +121,6 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  const tenantId = INBOUND_TENANT_ID;
 
   // ── 3. Idempotency claim — the UNIQUE on message_id blocks replays ─────
   const { error: claimErr } = await admin.from("inbound_emails").insert({

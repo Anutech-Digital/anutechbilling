@@ -45,6 +45,7 @@ import { planCorrections, correctionDetail } from "@/lib/leads/apply-correction"
 import { extractAttachments, pickBillAttachment } from "@/lib/inbound/attachments";
 import { readBillWithGemini } from "@/lib/ai/read-bill";
 import { sanitizeExtractedBill } from "@/app/api/ai/extract-bill/sanitize";
+import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /* The trading name the AI sales agent signs as. Env-overridable because this route already
@@ -58,14 +59,12 @@ const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <o
    support@anutech.in would have that reseller's customers replying to somebody else's desk. */
 const SUPPORT_EMAIL  = process.env.SUPPORT_EMAIL?.trim() || "support@anutech.in";
 const APP_URL        = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
 // Which tenant inbound enquiry-emails belong to. Defaults to the buy-page
 // tenant, but set INBOUND_EMAIL_TENANT_ID to route a specific reseller's
 // forwarded Gmail enquiries to their own tenant (e.g. Anutech) without
 // disturbing the public buy-page routing.
-const INBOUND_TENANT_ID =
-  process.env.INBOUND_EMAIL_TENANT_ID?.trim() || BUY_PAGE_TENANT_ID;
+/* R-1555: resolved per call by inboundTenantId() (lib/inbound/tenant.ts) — on a deployment with
+   neither env var set the mail is refused with 503 instead of landing in the Anutech tenant. */
 
 interface ExtractedLead {
   isEnquiry: boolean;
@@ -153,6 +152,13 @@ async function extractWithGemini(apiKey: string, model: string, subject: string,
  * still the only thing exposed to the internet, and it is unchanged.
  */
 export async function ingestInboundEmail(body: Record<string, unknown>): Promise<NextResponse> {
+  /* R-1555: no company configured → 503, never a silent fallback to the Anutech tenant. */
+  const tenantId = inboundTenantId();
+  if (!tenantId) {
+    console.error(inboundTenantMissingMessage("inbound-email"));
+    return NextResponse.json({ error: "not configured" }, { status: 503 });
+  }
+
   // ── 2. Normalise payload across common inbound-parse providers ─────────
   const str = (...keys: string[]): string => {
     for (const k of keys) {
@@ -270,7 +276,6 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
   }
 
   const admin    = createAdminClient();
-  const tenantId = INBOUND_TENANT_ID;
 
   // ── 2b. Route on WHO IT WAS SENT TO, before anything is created ─────────
   // The address the sender chose is a fact and it is their own statement of

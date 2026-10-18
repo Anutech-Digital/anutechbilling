@@ -14,15 +14,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { acceptedSecrets, secretMatches, readInboundSecret, querySecretAllowed, querySecretWarning } from "@/lib/inbound/verify-secret";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
+import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const INBOUND_SECRET = process.env.INBOUND_EMAIL_SECRET?.trim() || "";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
-const INBOUND_TENANT_ID =
-  process.env.INBOUND_EMAIL_TENANT_ID?.trim() || BUY_PAGE_TENANT_ID;
+/* R-1555: no hard-coded Anutech fallback on a deployment — lib/inbound/tenant.ts, per request. */
 
 interface ExtractedPurchase {
   isPurchase: boolean;
@@ -87,6 +85,13 @@ export async function POST(request: NextRequest) {
   }
   if (secret.fromQuery) console.warn(querySecretWarning("webhooks/inbound-purchase"));
 
+  /* R-1555: no company configured → 503, never a silent fallback to the Anutech tenant. */
+  const tenantId = inboundTenantId();
+  if (!tenantId) {
+    console.error(inboundTenantMissingMessage("webhooks/inbound-purchase"));
+    return NextResponse.json({ error: "not configured" }, { status: 503 });
+  }
+
   // 2. Normalise payload
   let body: Record<string, unknown>;
   try { body = (await request.json()) as Record<string, unknown>; }
@@ -103,7 +108,6 @@ export async function POST(request: NextRequest) {
     || `noid-${fromEmail}-${subject}`.slice(0, 200);
 
   const admin    = createAdminClient();
-  const tenantId = INBOUND_TENANT_ID;
 
   // 3. Extract (Gemini or minimal stub — never drop; owner reviews raw)
   const gemini = await resolveGeminiConfig(admin, tenantId);

@@ -85,6 +85,10 @@ export function secretMatches(provided: string | null | undefined, accepted: rea
  *
  * Jab log me chetavni aana band ho jaye, `INBOUND_REQUIRE_HEADER=1` set kar dena — us din
  * se query wala raasta 401 dega, bina naye deploy ke.
+ *
+ * R-1554 (19 Oct 2026): ye kram ab ulta — query DEFAULT BAND, aur sirf
+ * `INBOUND_ALLOW_QUERY_SECRET=1` se (purane forwarder ke liye, chetavni ke saath) khulta hai.
+ * Neeche `querySecretAllowed` dekho.
  */
 export interface ProvidedSecret {
   /** Jo mila (ho sakta hai khaali). */
@@ -110,9 +114,22 @@ export function readInboundSecret(request: { url: string; headers: Headers }): P
   return { value: query, fromQuery: query.length > 0 };
 }
 
-/** `INBOUND_REQUIRE_HEADER=1` ke baad query wala raasta band. Default: khula. */
-export function querySecretAllowed(raw: string | null | undefined = process.env.INBOUND_REQUIRE_HEADER): boolean {
-  return (raw ?? "").trim() !== "1";
+/**
+ * R-1554 (19 Oct 2026): ab DEFAULT BAND hai — `?key=` sirf tab maana jaata hai jab
+ * `INBOUND_ALLOW_QUERY_SECRET=1` jaan-boojhkar set ho (koi purana forwarder jo abhi header nahi
+ * bhej sakta). Pehle default khula tha aur sirf `INBOUND_REQUIRE_HEADER=1` band karta tha — yaani
+ * jis deploy par wo env bhool gaya, wahan secret URL me chalta aur Cloud Run log me cleartext
+ * baithta. `INBOUND_REQUIRE_HEADER=1` ab bhi maana jaata hai (live par 28 Aug se laga hai) aur
+ * legacy flag ko bhi hara deta hai.
+ *
+ * Jab legacy flag se query maani jaati hai, route `querySecretWarning` log karta hai — wahi
+ * chetavni batati hai ki forwarder abhi migrate nahi hua.
+ */
+export function querySecretAllowed(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if ((env.INBOUND_REQUIRE_HEADER ?? "").trim() === "1") return false;
+  return (env.INBOUND_ALLOW_QUERY_SECRET ?? "").trim() === "1";
 }
 
 /**
@@ -122,6 +139,8 @@ export function querySecretAllowed(raw: string | null | undefined = process.env.
  * doosre darwaze se karna hoga.
  */
 export function querySecretWarning(label: string): string {
-  return `[${label}] shared secret URL me aaya, isliye wo is request ke log me cleartext hai. ` +
-    `Bhejne wale ko \`x-inbound-secret\` header par le jaao, phir INBOUND_REQUIRE_HEADER=1 set karo.`;
+  /* "INBOUND_REQUIRE_HEADER" shabd rehna chahiye — lib/ops/health-digest.ts aur
+     scripts/health-prod.mjs isi se is chetavni ko log me dhoondhte hain. */
+  return `[${label}] shared secret URL me aaya (INBOUND_ALLOW_QUERY_SECRET=1 ki wajah se maana), isliye wo is request ke log me cleartext hai. ` +
+    `Bhejne wale ko \`x-inbound-secret\` header par le jaao, phir INBOUND_ALLOW_QUERY_SECRET hatao (default = INBOUND_REQUIRE_HEADER jaisa, sirf header).`;
 }

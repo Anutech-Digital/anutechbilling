@@ -29,7 +29,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { answerHandshake } from "@/lib/whatsapp/handshake";
 import { verifyMetaSignature, signatureRefusalReason } from "@/lib/crypto/webhook-signature";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { runSupportAgentForMessage } from "@/lib/ai/run-support-agent";
@@ -66,37 +66,14 @@ type MetaChangeValue = {
 };
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenant");
-  const mode = url.searchParams.get("hub.mode");
-  const token = url.searchParams.get("hub.verify_token");
-  const challenge = url.searchParams.get("hub.challenge");
-
-  if (!tenantId) return NextResponse.json({ error: "missing tenant" }, { status: 400 });
-  if (mode !== "subscribe" || !token || !challenge) {
-    return NextResponse.json({ error: "invalid handshake" }, { status: 400 });
-  }
-
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from("tenant_secrets")
-    .select("whatsapp_verify_token")
-    .eq("tenant_id", tenantId)
-    .maybeSingle();
-
-  if (!data?.whatsapp_verify_token) {
-    return NextResponse.json({ error: "no verify token configured" }, { status: 403 });
-  }
-  /* Constant-time — wahi niyam jo 17 cron aur HMAC-signature par hai (audit C8).
-     Handshake ka token bhi ek secret hai; !== uska ek-ek akshar timing se batata hai. */
-  if (!timingSafeEqualStr(token, data.whatsapp_verify_token)) {
-    return NextResponse.json({ error: "verify_token mismatch" }, { status: 403 });
-  }
-
-  // Echo the challenge back as plain text — Meta needs this exact body.
-  return new NextResponse(challenge, {
-    status: 200,
-    headers: { "content-type": "text/plain" },
+  /* R-1550: sealed token decrypt hota hai, aur har refusal ka ek hi 403 — lib/whatsapp/handshake.ts. */
+  return answerHandshake(new URL(req.url), async (tenantId) => {
+    const { data } = await createAdminClient()
+      .from("tenant_secrets")
+      .select("whatsapp_verify_token")
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    return data;
   });
 }
 
