@@ -154,6 +154,23 @@ export function useUpdatePayment() {
 // double-guard, invoice-guard). GST-invoice/bank-reconciled wale case RPC
 // khud §24-shaili me refuse karta hai — message me agla kadam hota hai.
 // Gateway par paisa YE NAHI bhejta — wo operator Razorpay/bank se karta hai.
+/**
+ * R-1563: the open credit that can pay a refund on an invoiced quote — credit made by credit
+ * notes on that invoice (R-1566) and the payment's own open overpayment credit. Read just
+ * before the refund dialog; refund_payment checks the same thing again on the click.
+ */
+export async function fetchRefundCredit(paymentId: string, invoiceId: string): Promise<{ ownOpenCredit: number; creditNoteCredit: number }> {
+  const supabase = createClient();
+  const [own, cn] = await Promise.all([
+    supabase.from("customer_credits").select("amount").eq("source_payment_id", paymentId).eq("status", "open"),
+    supabase.from("customer_credits").select("amount").eq("source_invoice_id", invoiceId).eq("source", "credit_note").eq("status", "open"),
+  ]);
+  if (own.error) throw new Error(own.error.message);
+  if (cn.error) throw new Error(cn.error.message);
+  const sum = (rows: { amount: number }[] | null) => (rows ?? []).reduce((s, r) => s + (r.amount ?? 0), 0);
+  return { ownOpenCredit: sum(own.data), creditNoteCredit: sum(cn.data) };
+}
+
 export function useRefundPayment(opts?: { onBlocked?: (message: string) => void }) {
   const qc = useQueryClient();
   return useMutation({
@@ -174,6 +191,8 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       // R-1567: the refund gives back credit this payment used and reverses its TDS receivable.
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
+      // R-1563: a refund on an invoiced quote pays out credit-note credit and moves the invoice.
+      qc.invalidateQueries({ queryKey: ["invoices"] });
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
         description: "Kitab me darj hua. Asli paisa Razorpay/bank se aapko khud bhejna hai.",
       });

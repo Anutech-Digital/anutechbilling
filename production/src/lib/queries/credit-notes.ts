@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { rupee } from "@/lib/utils";
 import type { CreditNoteRow, CreditNoteReasonCode } from "@/lib/supabase/database.types";
 
 export function useCreditNotesByInvoice(invoiceId: string | null | undefined) {
@@ -49,14 +50,20 @@ export function useIssueCreditNote() {
         p_notes:        input.notes ?? null,
       });
       if (error) throw error;
-      return data as { credit_note_id: string; new_net_payable: number };
+      return data as { credit_note_id: string; new_net_payable: number; customer_credit?: number; invoice_paid?: boolean };
     },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["aging"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
-      toast.success(`Credit note ${res.credit_note_id} issued`);
+      /* R-1566: on an invoice already paid, the note's excess is now the customer's credit. */
+      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      const credit = res.customer_credit ?? 0;
+      toast.success(`Credit note ${res.credit_note_id} issued`, credit > 0 ? {
+        description: `${rupee(credit)} was already paid on this invoice — it is now the customer's credit: use it on their next quote, or refund it from Payments (Refund on that payment).`,
+      } : undefined);
     },
     onError: (e) => toastError(e),
   });

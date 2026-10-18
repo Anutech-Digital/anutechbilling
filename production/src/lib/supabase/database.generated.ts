@@ -3544,6 +3544,8 @@ export type Database = {
           id: string
           note: string | null
           source: string
+          source_credit_note_id: string | null
+          source_invoice_id: string | null
           source_payment_id: string | null
           source_quote_id: string | null
           status: string
@@ -3556,6 +3558,8 @@ export type Database = {
           id?: string
           note?: string | null
           source?: string
+          source_credit_note_id?: string | null
+          source_invoice_id?: string | null
           source_payment_id?: string | null
           source_quote_id?: string | null
           status?: string
@@ -3568,6 +3572,8 @@ export type Database = {
           id?: string
           note?: string | null
           source?: string
+          source_credit_note_id?: string | null
+          source_invoice_id?: string | null
           source_payment_id?: string | null
           source_quote_id?: string | null
           status?: string

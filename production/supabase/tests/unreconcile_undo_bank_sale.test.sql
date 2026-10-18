@@ -93,6 +93,11 @@ do $$ declare inv text := (select v from s where k = 'inv:aaaaaaaa-0000-0000-000
     raise exception 'FAIL: receipt not removed'; end if;
   if (select payment_status::text from public.quotes where id = (select v from s where k = 'q:aaaaaaaa-0000-0000-0000-0000000b7001')) <> 'none' then
     raise exception 'FAIL: quote not reset'; end if;
+  /* R-1566: the reversal note takes the sale's money back — it must not also leave that
+     money with the customer as credit (issue_credit_note_core p_settle = false). */
+  if exists (select 1 from public.customer_credits
+              where tenant_id = 'aaaaaaaa-0000-0000-0000-0000000000a4' and status = 'open') then
+    raise exception 'FAIL: undo-sale left open customer credit for money that was taken back'; end if;
 end $$;
 
 -- 2. plain un-reconcile keeps the sale
