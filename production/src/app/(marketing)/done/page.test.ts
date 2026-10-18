@@ -28,3 +28,27 @@ describe("/done tells the customer only what is true", () => {
     expect(code).toMatch(/the email did not go out/);
   });
 });
+
+describe("R-1596 — /done shows the payment's true state, confirmed by our server", () => {
+  const checkout = readFileSync("src/app/(marketing)/checkout/page.tsx", "utf8");
+  it("the checkout confirms the payment on our server before opening /done", () => {
+    const handler = checkout.slice(checkout.indexOf("handler: async"), checkout.indexOf("modal: { ondismiss"));
+    expect(handler).toMatch(/fromRazorpayHandler\(resp\)/);
+    expect(handler).toMatch(/await confirmPayment\(returned\)/);
+    expect(handler.indexOf("confirmPayment(")).toBeLessThan(handler.indexOf('router.push("/done"'));
+    expect(checkout).toMatch(/<BusyPanel\s+active=\{confirmingPayment\}/);
+  });
+  it("/done asks the server again unless it already said paid, and says 'Payment received' only then", () => {
+    expect(code).toMatch(/const p = readPayment\(\)/);
+    expect(code).toMatch(/await confirmPayment\(payment\)/);
+    expect(code).toMatch(/if \(payment && verdict\?\.state !== "paid"\)/);
+    expect(code.indexOf('if (payment && verdict?.state !== "paid")')).toBeLessThan(code.indexOf('badge="Payment received · order placed"'));
+  });
+  it("still confirming shows progress and a way to ask again; a failure never says nothing was charged", () => {
+    const branch = code.slice(code.indexOf('if (payment && verdict?.state !== "paid")'), code.indexOf('badge="Payment received · order placed"'));
+    expect(branch).toMatch(/<BusyPanel active=\{checking\}/);
+    expect(branch).toMatch(/Check again/);
+    expect(branch).not.toMatch(/nothing was charged/i);
+    expect(branch).toMatch(/don't pay again/i);
+  });
+});

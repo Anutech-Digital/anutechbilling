@@ -45,7 +45,7 @@ import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
-import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { loadCheckoutRazorpayKeys } from "./razorpay-keys.server";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { lookupDomains, splitDomain } from "@/lib/domains/live-lookup";
 import { MAILBOX_YR } from "@/site/lib/data/domains-landing";
@@ -68,8 +68,6 @@ import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
    value at module load; it is "" in production when unset, so their lookups fail closed.
    runCartCheckout resolves the tenant per request and refuses with a clear error instead. */
 export const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
-const ENV_RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID?.trim() || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim() || "";
-const ENV_RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
 
 const lineSchema = z.object({
   sku: z.string().min(1).max(60).optional(),
@@ -593,24 +591,12 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     if (amount <= 0) return NextResponse.json({ error: "Nothing to pay for." }, { status: 400 });
 
     // ── Razorpay credentials (tenant_secrets → env) ────────────────────────
-    let rzKeyId = "", rzKeySecret = "", rzMode: "test" | "live" = "test";
+    // R-1596: one resolver, shared with checkout/verify, so a payment is verified with the key that made its order.
     const admin = createAdminClient();
-    {
-      const { data: rawSecrets } = await admin
-        .from("tenant_secrets")
-        .select("razorpay_key_id, razorpay_key_secret, razorpay_mode")
-        .eq("tenant_id", BUY_PAGE_TENANT_ID)
-        .maybeSingle();
-      // Sealed at rest (rosv1:…) — decrypt or Razorpay rejects the ciphertext.
-      const secrets = decryptTenantSecrets(rawSecrets);
-      if (secrets?.razorpay_key_id && secrets.razorpay_key_secret) {
-        rzKeyId = secrets.razorpay_key_id; rzKeySecret = secrets.razorpay_key_secret;
-        rzMode = secrets.razorpay_mode === "live" ? "live" : "test";
-      } else if (ENV_RAZORPAY_KEY_ID && ENV_RAZORPAY_KEY_SECRET) {
-        rzKeyId = ENV_RAZORPAY_KEY_ID; rzKeySecret = ENV_RAZORPAY_KEY_SECRET;
-        rzMode = ENV_RAZORPAY_KEY_ID.startsWith("rzp_live_") ? "live" : "test";
-      }
-    }
+    const rzKeys = await loadCheckoutRazorpayKeys(admin, BUY_PAGE_TENANT_ID);
+    const rzKeyId = rzKeys?.keyId ?? "";
+    const rzKeySecret = rzKeys?.keySecret ?? "";
+    const rzMode: "test" | "live" = rzKeys?.mode ?? "test";
     const razorpayConfigured = Boolean(rzKeyId) && Boolean(rzKeySecret);
     const isSimulation = simulate === true;
     /* R-079: never on a production deployment or with a live key — ALLOW_SIMULATED_CHECKOUT

@@ -59,7 +59,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "app/api/public/quote/[id]/accept/route.ts": "quote-accepted alert to the company",
   "app/api/public/quote/[id]/upi-notify/route.ts": "UPI-paid alert to the company",
   "app/api/team/invite/route.ts": "invite to a new team member",
-  "app/api/webhooks/razorpay/route.ts": "payment alerts to owner / lead owner (customer mail gated)",
+  "app/api/webhooks/razorpay/webhook.server.ts": "payment alerts to owner / lead owner (customer mail gated)",
   "lib/ai/actions/support-dispatcher.ts": "escalation alert to the company (customer reply gated)",
   "lib/auth/email-verification.ts": "sign-up email verification",
   "lib/auth/tenant-match.ts": "join request to the company owner (email + WhatsApp)",

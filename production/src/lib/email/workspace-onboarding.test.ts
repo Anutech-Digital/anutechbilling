@@ -41,7 +41,7 @@ describe("lead owner next steps", () => {
 
 describe("wiring", () => {
   it("webhook mails the lead owner and the customer the setup steps; no dead app host", () => {
-    const w = read("app/api/webhooks/razorpay/route.ts");
+    const w = read("app/api/webhooks/razorpay/webhook.server.ts");
     expect(w).toMatch(/const leadOwner = await loadLeadOwner\(admin, quote\.tenant_id, quote\.lead_id\)/);
     expect(w).toMatch(/kind:\s+"razorpay_payment_lead_owner"/);
     expect(w).toMatch(/customerSetupSteps\(/);

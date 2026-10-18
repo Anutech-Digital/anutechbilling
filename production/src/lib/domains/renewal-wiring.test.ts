@@ -12,7 +12,7 @@ const src = (p: string) => readFileSync(join(__dirname, "..", "..", p), "utf8");
 const code = (p: string) => src(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the payment webhook", () => {
-  const w = code("app/api/webhooks/razorpay/route.ts");
+  const w = code("app/api/webhooks/razorpay/webhook.server.ts");
 
   it("finds the domain subscription being renewed BEFORE record_payment rolls it forward", () => {
     const lookup = w.indexOf('.eq("renewal_quote_id", quote.id)');

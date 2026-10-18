@@ -6,7 +6,8 @@
  *
  * Real payment (2 Sep 2026): "Pay" now calls /api/public/checkout/cart — which re-prices
  * every line SERVER-SIDE from its SKU (the client price is never trusted), creates a draft
- * quote, and returns a Razorpay order. The Razorpay widget opens; on success the webhook
+ * quote, and returns a Razorpay order. The Razorpay widget opens; on success our server confirms
+ * the payment (R-1596: /api/public/checkout/verify — or the webhook, whichever is first) and
  * flips the quote to paid, creates the customer/subscription/invoice and queues provisioning.
  * A line with no server-priceable SKU is refused with a clear message (request a quote).
  */
@@ -29,6 +30,7 @@ const STATE_OPTIONS = Object.entries(GST_STATE_BY_CODE)
   .sort((a, b) => a[1].localeCompare(b[1]));
 import { razorpayContact } from "@/lib/checkout/razorpay-contact";
 import { BusyPanel } from "@/components/ui/busy-panel";
+import { confirmPayment, fromRazorpayHandler, savePayment } from "@/lib/checkout/confirm-payment";
 import { CheckoutNotice } from "@/site/components/cart/CheckoutNotice";
 import { settlePageScroll } from "@/lib/ui/scroll-lock";
 import { checkoutProblem, actionLabel, type ProblemAction, type ProblemFlags } from "@/site/lib/checkout-problem";
@@ -104,6 +106,8 @@ export default function CheckoutPage() {
   /* True while the server prepares a PAID order, until Razorpay's own window opens — the
      progress panel must not keep counting behind Razorpay (30 Sep 2026). */
   const [preparingPayment, setPreparingPayment] = useState(false);
+  /* R-1596: true while our server confirms a payment Razorpay just took, before /done. */
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
   /* What stopped the order or the trial, shown as a pop-up with the ways to fix it
      (1 Oct 2026, Pawan: a red line above the button "looks flimsy" for this). */
   const [problem, setProblem] = useState<{ during: "trial" | "order" | "payment"; message: string; flags: ProblemFlags } | null>(null);
@@ -308,6 +312,7 @@ export default function CheckoutPage() {
 
       if (json.simulated) {
         try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", json.quoteId || ""); } catch { /* default shown */ }
+        savePayment(null); // a simulated order was recorded by the server already
         cart.clear();
         router.push("/done" as never);
         return;
@@ -364,10 +369,20 @@ export default function CheckoutPage() {
         /* The storefront blue (site.css --primary), so the payment window matches the shop
            around it (3 Oct 2026). It was the staff app's orange. */
         theme: { color: "#1668E3" },
-        handler: () => {
+        /* R-1596: the payment is confirmed on OUR server before /done, not left to the webhook
+           alone. /done shows the answer (and asks again while it is still confirming). */
+        handler: async (resp: unknown) => {
           try { window.sessionStorage.removeItem("anutech.trial"); window.sessionStorage.setItem("anutech.order", order.quoteId || ""); } catch { /* default */ }
-          cart.clear();
           afterRazorpay();
+          const returned = fromRazorpayHandler(resp);
+          if (returned) {
+            setConfirmingPayment(true);
+            const answer = await confirmPayment(returned);
+            savePayment({ ...returned, state: answer.state });
+          } else {
+            savePayment(null);
+          }
+          cart.clear();
           router.push("/done" as never);
         },
         modal: { ondismiss: () => { setPaying(false); afterRazorpay(); }, escape: true },
@@ -671,6 +686,12 @@ export default function CheckoutPage() {
                   "Creating your order",
                   "Opening the Razorpay payment window",
                 ]}
+              />
+              <BusyPanel
+                active={confirmingPayment}
+                variant="modal"
+                title="Confirming your payment"
+                steps={["Checking the payment with Razorpay", "Recording your order", "Issuing your GST invoice"]}
               />
               {/* Not disabled until the box is ticked: a press says why (29 Sep 2026). */}
               <button
