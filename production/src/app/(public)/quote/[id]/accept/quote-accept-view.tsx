@@ -244,7 +244,11 @@ export function QuoteAcceptView({
      taxable, GST and total from the same plan (lib/billing/instalments.ts), and the year as
      the sum of instalments. The tax rows were the year's GST ÷ 4. Only when nothing was
      changed on the page (a changed basket is the server's figure, not a plan yet). */
-  const inst = dueToday && !liveConfig && !isFlex ? dueToday : null;
+  /* R-1570: never on a foreign quote. `dueToday` is built from quote.subtotal — RUPEES — so on
+     a USD quote billed quarterly/monthly it printed a ₹ instalment with a "$" in front. The PDF
+     (lib/quotes/per-period-figures) gives a foreign quote no ₹ plan either; it divides the
+     display-currency figures, which is what fmtInv below does. */
+  const inst = dueToday && !liveConfig && !isFlex && !isForeign ? dueToday : null;
   const fmtInst = (n: number) => `${fmtC(n)}${billingUnit}`;
 
   const [notifying, setNotifying] = React.useState(false);
@@ -888,7 +892,7 @@ export function QuoteAcceptView({
                     {isFlex
                       ? `${fmtC(payableTotal)}/month`
                       : perInvoice
-                      ? `${fmtC(dueToday ? dueToday.firstGross : dRound(payableTotal / billingN))}${billingUnit}`
+                      ? `${fmtC(dueToday && !isForeign ? dueToday.firstGross : dRound(payableTotal / billingN))}${billingUnit}`
                       : fmtC(payableTotal)}
                   </span>
                 </div>
