@@ -14398,6 +14398,7 @@ export type Database = {
         Returns: Json
       }
       delete_employee_loan: { Args: { p_loan_id: string }; Returns: undefined }
+      delete_expense: { Args: { p_id: string }; Returns: undefined }
       delete_expense_claim: { Args: { p_claim_id: string }; Returns: undefined }
       delete_payment: { Args: { p_payment_id: string }; Returns: Json }
       delete_project_invoice: {
@@ -14422,6 +14423,7 @@ export type Database = {
         Returns: undefined
       }
       delete_tenant_backup: { Args: { p_id: string }; Returns: undefined }
+      delete_vendor_bill: { Args: { p_id: string }; Returns: undefined }
       demo_data_add_invoices: { Args: { p_rows: Json }; Returns: number }
       demo_data_clear_invoices: { Args: never; Returns: number }
       demo_pre_request: { Args: never; Returns: undefined }

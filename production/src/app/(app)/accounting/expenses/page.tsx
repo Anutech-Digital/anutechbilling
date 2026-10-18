@@ -48,6 +48,14 @@ import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
 
+/** R-1577: what a delete changes — and that a linked expense is refused with where to undo it. */
+const DELETE_EXPENSE_CONFIRM = {
+  title: "Delete this expense?",
+  body: "Ye kharcha P&L aur GST se hat jaayega. Agar ye kisi salary, EMI, loan, tax challan, asset, payment run ya bank line se juda hai to delete nahi hoga — app batayega kahan se hatana hai.",
+  danger: true,
+  confirmLabel: "Delete",
+} as const;
+
 const iso = (y: number, m: number, d: number) =>
   `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate(); // m = 1..12
@@ -377,7 +385,7 @@ export default function ExpensesPage() {
                 )}
                 <IconButton icon="edit" size="sm" variant="ghost" aria-label="Edit expense" onClick={() => setEditing(e)} />
                 <IconButton icon="trash" size="sm" variant="ghost" aria-label="Delete expense"
-                  onClick={async () => { if (await confirm({ title: `Delete this expense?`, danger: true, confirmLabel: "Delete" })) del.mutate(e.id); }} />
+                  onClick={async () => { if (await confirm(DELETE_EXPENSE_CONFIRM)) del.mutate(e.id); }} />
               </div>
             </td>
           </tr>
@@ -437,7 +445,7 @@ export default function ExpensesPage() {
                 aria-label="Delete expense"
                 onClick={async (ev) => {
                   ev.stopPropagation();
-                  if (await confirm({ title: `Delete this expense?`, danger: true, confirmLabel: "Delete" })) del.mutate(e.id);
+                  if (await confirm(DELETE_EXPENSE_CONFIRM)) del.mutate(e.id);
                 }}
               />
             </div>

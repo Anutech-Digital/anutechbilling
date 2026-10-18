@@ -145,6 +145,7 @@ MIGS=(
   "r1563cnrefund|20261018171947_r1563_credit_note_refund.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1563%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.issue_credit_note_core(text,integer,text,text,text,boolean)') and prosrc like '%R-1566%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.unreconcile_bank_receipt(uuid,boolean)') and prosrc like '%R-1566%')"
   "r1556backupmfa|20261018173040_r1556_backup_mfa_tenant.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.get_tenant_backup(uuid)') and prosrc like '%R-1557%')"
   "r1578capitalised|20261018180232_r1578_capitalised_expense_pnl.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and prosrc like '%R-1578%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_monthly(date,date)') and prosrc like '%R-1578%')"
+  "r1577delexpense|20261018180436_r1577_delete_expense_bill_links.sql|resellersos_migration|to_regprocedure('public.delete_expense(text)') is not null and to_regprocedure('public.delete_vendor_bill(text)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_expense_no_orphan_bank_match')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

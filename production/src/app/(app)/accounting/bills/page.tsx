@@ -111,7 +111,13 @@ export default function VendorBillsPage() {
     [range, statusFilter, search],
   );
   const deleteBill = React.useCallback(async (b: VendorBill) => {
-    if (await confirm({ title: `Delete bill ${b.bill_no || b.id}?`, danger: true, confirmLabel: "Delete" })) del.mutate(b.id);
+    if (await confirm({
+      title: `Delete bill ${b.bill_no || b.id}?`,
+      /* R-1577: say what changes; a paid / bank-matched bill or one in a payment run is refused with the next step. */
+      body: "Ye bill aur uska payable books se hat jaayega. Agar iski payment kisi bank line se match hai ya ye kisi payment run me hai to delete nahi hoga — app batayega pehle kya karna hai.",
+      danger: true,
+      confirmLabel: "Delete",
+    })) del.mutate(b.id);
   }, [confirm, del]);
 
   const columns = React.useMemo<DataTableColumn<VendorBill>[]>(() => [

@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { toastDeleteBlocked } from "@/lib/queries/expenses";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
@@ -240,9 +241,12 @@ export async function getBillAttachmentUrl(path: string): Promise<string | null>
 export function useDeleteVendorBill() {
   const qc = useQueryClient();
   return useMutation({
+    /* R-1577: one transaction in the database (delete_vendor_bill). A bill whose payment is
+       still matched to a bank line, or that sits in an open payment run, is refused with the
+       page to fix it — un-reconcile in Banking first, the delete_payment rule. */
     mutationFn: async (id: string) => {
       const supabase = createClient();
-      const { error } = await supabase.from("vendor_bills").delete().eq("id", id);
+      const { error } = await supabase.rpc("delete_vendor_bill", { p_id: id });
       if (error) throw error;
       return id;
     },
@@ -250,6 +254,6 @@ export function useDeleteVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill deleted");
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastDeleteBlocked(err, "Ye bill yahan se nahi hata — neeche ke button se us page par jao jahan ise theek kiya jaata hai."),
   });
 }
