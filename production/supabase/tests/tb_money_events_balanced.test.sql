@@ -28,12 +28,12 @@ insert into public.customers (id, tenant_id, name, country, state_code, state) v
 insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
   ('5e450000-0000-4000-8000-0000000000b1', '5e450000-0000-4000-8000-000000000001', 'S45 HDFC', 'HDFC', 0, '2026-04-01');
 
--- 12 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
+-- 13 quotes, ₹11,800 each (₹10,000 + 18% GST), all intra-state.
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate,
                            line_items, status, payment_status, payment_terms_days)
 select 'S45Q-' || n, '5e450000-0000-4000-8000-000000000001', '5e450000-0000-4000-8000-0000000000c1',
        'S45 Cust', 11800, 10000, 18, '[]'::jsonb, 'sent', 'awaiting', 30
-  from generate_series(1, 12) n;
+  from generate_series(1, 13) n;
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '5e450000-0000-4000-8000-0000000000a1', 'role', 'authenticated')::text, true);
@@ -146,6 +146,17 @@ begin
   perform public.record_desk_payment('S45Q-12', 10800, 'upi', 'S45-UTR-12', null,
     '5e450000-0000-4000-8000-0000000000c1', 1000, null, null);
   g := pg_temp.step('6i overpayment credit part used on another quote', g);
+
+  -- R-1573: a debit note (late interest) on a PAID invoice is owed again (receivable), and the
+  -- money paid for it settles it — not an advance / customer credit.
+  perform public.generate_invoice('S45Q-13');
+  perform public.record_payment('S45Q-13', 11800, 'upi', 'S45-UTR-13', null);
+  g := pg_temp.step('6j invoice issued + paid', g);
+  select id into v_inv from public.invoices where quote_id = 'S45Q-13';
+  perform public.issue_debit_note(v_inv, 1180, 'additional_charge', 'S45 late payment interest', null);
+  g := pg_temp.step('6k debit note on paid invoice', g);
+  perform public.record_payment('S45Q-13', 1180, 'upi', 'S45-UTR-13b', null);
+  g := pg_temp.step('6l payment of the debit note', g);
 
   -- 7. Credit note ₹1,180 on a PENDING invoice.
   perform public.generate_invoice('S45Q-4');
