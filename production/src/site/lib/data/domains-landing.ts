@@ -6,6 +6,9 @@
  *
  *   > The domain is ₹0 when it points at our hosting (yearly plan).
  *
+ * R-1595 (Pardeep, 18 Oct 2026): only a .com / .in / .net / .org / .co.in, only the one the
+ * yearly plan is set up on, first year only (FREE_DOMAIN_TLDS, lib/checkout/hosting-bundle.ts).
+ *
  * Everything here exists to make that arithmetic obvious and HONEST. Two rules
  * from the handoff's copy guide are load-bearing and must not be "optimised" away:
  *
@@ -27,6 +30,8 @@
  * component derives them from TLDS + HOSTING_TIERS so the card can never drift
  * from what the cart charges.
  */
+
+import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 
 /** Anutech Mail — ₹79/mo (MAIL_RATES, catalog.ts). One mailbox, billed yearly. */
 export const MAILBOX_MO = 79;
@@ -84,15 +89,15 @@ export const DOMAIN_FAQS: readonly { q: string; a: string }[] = [
   {
     q: "My website is still months away.",
     // DON'T-BUY answer — keep.
-    a: "Buy just the name and stop there. A domain sitting unused for a few months costs you only the registration; there's no reason to pay for hosting a site that doesn't exist yet. Come back and add hosting the day you're ready — the same ₹0-domain maths still applies at renewal.",
+    a: "Buy just the name and stop there. A domain sitting unused for a few months costs you only the registration; there's no reason to pay for hosting a site that doesn't exist yet. Come back and add hosting the day you're ready — we set it up on the name you already own.",
   },
   {
     q: "My developer will choose the host.",
-    a: "Register the name now so nobody else takes it, and let them decide the rest. If they pick us, the domain's already here and free with the plan; if they pick elsewhere, we point it there for you at no charge. Either way you haven't lost the name while deciding.",
+    a: "Register the name now so nobody else takes it, and let them decide the rest. If they pick us, the domain's already here and we set the hosting up on it; if they pick elsewhere, we point it there for you at no charge. Either way you haven't lost the name while deciding.",
   },
   {
     q: "Is the free domain a first-year trick?",
-    a: "No — and the proof is on the page: the renewal price is printed next to every first-year price. A .in is free with a yearly plan this year and renews at ₹799, shown before you pay and printed on the invoice. There is no year-two rate jump hiding under the ₹0.",
+    a: `No — and the proof is on the page: the renewal price is printed next to every first-year price. The free domain is a ${FREE_DOMAIN_TLDS_LABEL}, bought with the yearly plan that is set up on it. A .in is free with a yearly plan this year and renews at ₹799, shown before you pay and printed on the invoice. There is no year-two rate jump hiding under the ₹0.`,
   },
   {
     q: "What if your hosting turns out to be slow?",

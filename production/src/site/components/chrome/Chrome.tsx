@@ -6,6 +6,7 @@
  * README describes as one system ("Global Chrome (every route)").
  */
 import Image from "next/image";
+import { FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import Link from "@/site/components/ui/SiteLink";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -23,7 +24,7 @@ export function UtilityBar() {
         {onDomains ? (
           /* The domains page leads with the offer — the ₹0 lever is the whole page's
              thesis, so the utility bar states it first (offer text in warm accent). */
-          <span><span style={{ color: "#FFC9A8" }}>Domain ₹0 with any 1-year hosting plan</span> · GST invoice on every order</span>
+          <span><span style={{ color: "#FFC9A8" }}>Free {FREE_DOMAIN_TLDS_LABEL} domain for the first year with yearly hosting</span> · GST invoice on every order</span>
         ) : onHome ? (
           <span>Custom software &amp; office automation · Google Premier Partner since 2014</span>
         ) : (

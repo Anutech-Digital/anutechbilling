@@ -6,6 +6,10 @@
  *
  *   > The domain is ₹0 when it points at our hosting (yearly plan).
  *
+ * R-1595 (Pardeep, 18 Oct 2026): only a FREE_DOMAIN_TLDS domain (.com / .in / .net / .org /
+ * .co.in — lib/checkout/hosting-bundle.ts), only the one the plan is set up on, first year
+ * only; one mailbox free per yearly plan. Every figure below follows that one list.
+ *
  * It is the commercial sibling of HostingLanding — same editorial language
  * (Instrument Serif display, JetBrains Mono for every number/eyebrow, the amber
  * accent), same self-contained inline styling, and it renders under (marketing)
@@ -21,7 +25,7 @@
  *     server-side checkout re-prices against (sku `hosting:<tier>`), so the ₹0
  *     the page shows is the ₹0 the server charges. The domain line carries
  *     sku `domain:<tld>`; the server zeroes it only when a yearly hosting line
- *     is in the same order — the bundle rule is enforced there, never trusted
+ *     is set up on it and its TLD is in FREE_DOMAIN_TLDS — the bundle rule is enforced there, never trusted
  *     from the client.
  *
  * Two honesty rules from the handoff are kept deliberately: the renewal price is
@@ -36,6 +40,7 @@ import { searchDomains, normaliseName, domainHelpLinks, type DomainResult } from
 import { TLDS, type Tld } from "@/site/lib/data/catalog";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { SLA } from "@/site/lib/config";
+import { freeDomainEligible, FREE_DOMAIN_TLDS_LABEL } from "@/lib/checkout/hosting-bundle";
 import {
   MAILBOX_YR,
   ANCHOR_TIER,
@@ -146,14 +151,16 @@ export function DomainLanding() {
 
   // ── single source of truth for every displayed number ─────────────────────
   const yearly = term === "yearly";
-  const bundleFree = hostingOn && yearly; // the only state where the domain is ₹0
+  const planFree = hostingOn && yearly; // a yearly plan: one mailbox free
+  const tldFree = freeDomainEligible(tld); // R-1595: only .com / .in / .net / .org / .co.in
+  const bundleFree = planFree && tldFree; // the only state where the domain is ₹0
   const domainCost = bundleFree ? 0 : domainReg;
   // Whole rupees, as the checkout API charges it (Math.round of the same tier figure).
   const hostingCost = hostingOn ? Math.round(yearly ? tier.yearlyTotal : tier.monthly) : 0;
-  const mailboxCost = mailOn ? (bundleFree ? 0 : MAILBOX_YR) : 0;
+  const mailboxCost = mailOn ? (planFree ? 0 : MAILBOX_YR) : 0;
   const subtotal = domainCost + hostingCost + mailboxCost;
   const total = Math.round(subtotal * 1.18);
-  const saved = (bundleFree ? domainReg : 0) + (bundleFree && mailOn ? MAILBOX_YR : 0);
+  const saved = (bundleFree ? domainReg : 0) + (planFree && mailOn ? MAILBOX_YR : 0);
   const available = primary?.available ?? false;
 
   function addToCart() {
@@ -190,7 +197,7 @@ export function DomainLanding() {
       if (mailOn) {
         cart.add({
           label: `Mailbox on ${primary.domain}`,
-          detail: bundleFree ? "Free with the yearly plan" : "Anutech Mail · billed yearly",
+          detail: planFree ? "Free with the yearly plan" : "Anutech Mail · billed yearly",
           unitPrice: mailboxCost,
           unit: "year",
           cycle: "yearly",
@@ -292,7 +299,7 @@ export function DomainLanding() {
                   planName={planName} setPlanName={setPlanName}
                   term={term} setTerm={setTerm} mailOn={mailOn} setMailOn={setMailOn}
                   tier={tier} domainCost={domainCost} mailboxCost={mailboxCost}
-                  bundleFree={bundleFree} total={total} saved={saved}
+                  bundleFree={bundleFree} planFree={planFree} total={total} saved={saved}
                   onAdd={addToCart}
                   alternates={alternates} onAddAlt={(d) => { const ext = TLDS.find((t) => d.domain.endsWith(t.tld))?.tld; if (ext) setTld(ext); }}
                 />
@@ -343,7 +350,7 @@ export function DomainLanding() {
                 {[
                   { t: "Bulk availability sweep", b: "Paste hundreds of names; get a live available/taken map back in one pass.", hot: false },
                   { t: "Wholesale slabs", b: "Reseller pricing that steps down with volume — shown before you commit.", hot: false },
-                  { t: "Host the book too", b: "Point the whole portfolio at our hosting and every domain line becomes ₹0.", hot: true },
+                  { t: "Host the book too", b: `Host the portfolio with us too — each yearly plan makes the ${FREE_DOMAIN_TLDS_LABEL} domain it is set up on ₹0 for the first year.`, hot: true },
                 ].map((t) => (
                   <div key={t.t} style={{ background: t.hot ? C.accSurf2 : C.tint, border: `1px solid ${t.hot ? C.accBorder : C.line}`, borderRadius: 11, padding: 17 }}>
                     <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hot ? C.accent : C.ink }}>{t.t}</div>
@@ -367,7 +374,7 @@ export function DomainLanding() {
           <p style={{ fontSize: mob ? 16.5 : 18, lineHeight: 1.6, color: C.ink2, maxWidth: "52ch", margin: "18px 0 0" }}>
             A {ANCHOR_TLD} on its own is {inr(anchorTld.reg)}. {ANCHOR_TIER} hosting is {inr(anchorTier.yearlyTotal)}.
             Together it&apos;s {inr(anchorTier.yearlyTotal)} — so hosting adds {inr(anchorTier.yearlyTotal - anchorTld.reg)}, not {inr(anchorTier.yearlyTotal)},
-            and the domain line reads ₹0. Register just the name if that&apos;s all you need — it stays available and unpunished.
+            and the domain line reads ₹0. That is for a {FREE_DOMAIN_TLDS_LABEL} domain, first year, one per yearly plan. Register just the name if that&apos;s all you need — it stays available and unpunished.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 22 }}>
             {["The renewal price is shown up front — no year-two surprise", `${15}-day hosting trial, no card asked for`, "We wire the DNS and migrate the site for you"].map((t) => (
@@ -449,7 +456,7 @@ export function DomainLanding() {
             <div style={eyebrow}>Rate card</div>
             <h2 style={h2}>The rate card, in the open.</h2>
           </div>
-          <p style={{ fontSize: 14.5, color: C.muted, maxWidth: "38ch", margin: 0 }}>Register, renew and transfer on one row — and the price with a yearly hosting plan, which is always ₹0.</p>
+          <p style={{ fontSize: 14.5, color: C.muted, maxWidth: "38ch", margin: 0 }}>Register, renew and transfer on one row — and the price with a yearly hosting plan: ₹0 for the first year of a {FREE_DOMAIN_TLDS_LABEL} domain.</p>
         </div>
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "18px 0 14px" }}>
           {RATE_FILTERS.map((f) => {
@@ -480,8 +487,17 @@ export function DomainLanding() {
                     <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{inr(t.renew)}</td>
                     <td style={priceMono({ textAlign: "right", padding: "13px 16px", fontSize: 14.5, color: C.muted })}>{inr(t.transfer)}</td>
                     <td style={{ textAlign: "right", padding: "13px 16px" }}>
-                      <span style={priceMono({ fontSize: 14.5, fontWeight: 700, color: C.accent })}>₹0</span>
-                      <div style={{ fontSize: 12, color: C.muted }}>first year · yearly plan</div>
+                      {freeDomainEligible(t.tld) ? (
+                        <>
+                          <span style={priceMono({ fontSize: 14.5, fontWeight: 700, color: C.accent })}>₹0</span>
+                          <div style={{ fontSize: 12, color: C.muted }}>first year · yearly plan</div>
+                        </>
+                      ) : (
+                        <>
+                          <span style={priceMono({ fontSize: 14.5, color: C.ink })}>{inr(t.reg)}</span>
+                          <div style={{ fontSize: 12, color: C.muted }}>not in the free list</div>
+                        </>
+                      )}
                     </td>
                     <td style={{ textAlign: "left", padding: "13px 16px" }}>
                       <button onClick={() => addRateRow(t)} style={{ appearance: "none", cursor: "pointer", background: C.accSurf, color: C.accent, border: `1px solid ${C.accBorder}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>Search</button>
@@ -559,12 +575,12 @@ function ResultBlock(p: {
   planName: string; setPlanName: (v: string) => void;
   term: Term; setTerm: (v: Term) => void; mailOn: boolean; setMailOn: (v: boolean) => void;
   tier: (typeof HOSTING_TIERS)[number]; domainCost: number; mailboxCost: number;
-  bundleFree: boolean; total: number; saved: number; onAdd: () => void;
+  bundleFree: boolean; planFree: boolean; total: number; saved: number; onAdd: () => void;
   alternates: DomainResult[]; onAddAlt: (d: DomainResult) => void;
 }) {
   const { C, MONO, SERIF, mob, priceMono, primary, available, domainReg, domainRenew,
     hostingOn, setHostingOn, planName, setPlanName, term, setTerm, mailOn, setMailOn,
-    tier, bundleFree, total, saved, onAdd, alternates, onAddAlt } = p;
+    tier, bundleFree, planFree, total, saved, onAdd, alternates, onAddAlt } = p;
   const yearly = term === "yearly";
 
   if (!available) {
@@ -608,9 +624,10 @@ function ResultBlock(p: {
             <span style={{ fontSize: 13, color: C.accentDark }}>for the name</span>
           </div>
           <p style={{ fontSize: 13, color: C.accentDark, margin: "8px 0 0", lineHeight: 1.5 }}>
-            + {tier.name} hosting at {inr(yearly ? tier.yearlyMo : tier.monthly)}/mo · {bundleFree ? "mailbox included free, DNS wired for you" : "renews at the same price"}
+            + {tier.name} hosting at {inr(yearly ? tier.yearlyMo : tier.monthly)}/mo · {planFree ? "mailbox included free, DNS wired for you" : "renews at the same price"}
           </p>
-          {!bundleFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>You&apos;re on monthly billing — the free domain and free mailbox need a yearly plan.</p>}
+          {!planFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>You&apos;re on monthly billing — the free domain and free mailbox need a yearly plan.</p>}
+          {planFree && !bundleFree && <p style={{ fontSize: 12.5, fontWeight: 600, color: C.accent, margin: "8px 0 0" }}>The free domain is a {FREE_DOMAIN_TLDS_LABEL} — this extension is charged in full.</p>}
         </button>
 
         {/* solo */}
@@ -639,7 +656,7 @@ function ResultBlock(p: {
                 return (
                   <button key={t} onClick={() => setTerm(t)} aria-pressed={on}
                     style={{ appearance: "none", cursor: "pointer", background: on ? C.card : "transparent", boxShadow: on ? "0 1px 2px rgba(26,22,20,0.12)" : "none", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 13, fontWeight: on ? 600 : 500, color: on ? C.ink : C.muted, fontFamily: "inherit" }}>
-                    {t === "yearly" ? "Yearly · domain free" : "Monthly"}
+                    {t === "yearly" ? (freeDomainEligible(p.tld) ? "Yearly · domain free" : "Yearly · mailbox free") : "Monthly"}
                   </button>
                 );
               })}
@@ -666,7 +683,7 @@ function ResultBlock(p: {
           <div style={{ display: "flex", alignItems: "center", gap: 13, background: C.paper, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 14px", marginTop: 12 }}>
             <Switch on={mailOn} onToggle={() => setMailOn(!mailOn)} color={C.accent} off={C.line} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {bundleFree ? "free with the plan" : `${inr(MAILBOX_YR_CONST)}/yr`}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>Add one mailbox on {primary.domain} — {planFree ? "free with the plan" : `${inr(MAILBOX_YR_CONST)}/yr`}</div>
               <div style={{ fontSize: 13, color: C.muted }}>you@{primary.domain}, Anutech Mail. Follows the plan — drops if you switch to domain-only.</div>
             </div>
           </div>
@@ -707,7 +724,7 @@ function Alternates(p: { C: typeof C_TYPE; MONO: string; priceMono: (e?: React.C
           <div key={d.domain} style={{ display: "flex", alignItems: "center", gap: 10, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: "13px 15px" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.ink }} title={d.domain}>{d.domain}</div>
-              <div style={priceMono({ fontSize: 12, color: C.muted })}>{d.available ? (d.priceKnown ? `${inr(d.price)} · ₹0 with hosting` : "price on request") : "taken · WHOIS"}</div>
+              <div style={priceMono({ fontSize: 12, color: C.muted })}>{d.available ? (d.priceKnown ? (freeDomainEligible(d.domain) ? `${inr(d.price)} · ₹0 with yearly hosting` : inr(d.price)) : "price on request") : "taken · WHOIS"}</div>
             </div>
             {d.available ? (
               <button onClick={() => onAddAlt(d)} style={{ appearance: "none", cursor: "pointer", background: C.accSurf, color: C.accent, border: `1px solid ${C.accBorder}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>Pick</button>

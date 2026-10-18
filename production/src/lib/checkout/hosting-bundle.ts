@@ -1,19 +1,30 @@
 /**
- * What a yearly hosting plan brings free (R-1595, 18 Oct 2026).
+ * What a yearly hosting plan brings free (R-1595, 18 Oct 2026 — decided by Pardeep).
  *
- * The site's promise, and nothing more:
- *   /domains   — "The domain is ₹0 when it points at our hosting (yearly plan)."
- *   /domains   — "Add one mailbox on <domain> — free with the plan."
- * So each YEARLY hosting line brings:
- *   · ONE domain's first year free — the domain that plan is set up on when it is in the cart,
- *     otherwise the first domain in the cart not already given free (card R-1595);
+ * Each YEARLY hosting line brings:
+ *   · the FIRST YEAR of ONE domain free — only the domain that plan is set up on, only when that
+ *     domain is being registered in the same cart, and only for a common TLD in FREE_DOMAIN_TLDS.
+ *     A plan set up on a domain the buyer already owns frees no other domain. A costly TLD
+ *     (.ai, .io, .co …) is charged in full;
  *   · ONE mailbox (one unit, one year) free.
  * Monthly plans bring nothing. Every other domain and mailbox is charged in full. Until R-1595
  * the checkout made EVERY domain and EVERY mailbox ₹0 once any yearly plan was in the cart.
  *
- * Pure, so the server (cart-checkout.ts — the site cart and the DMS panel order) and the cart
- * page (R-1601) can share one rule. The server is the one that charges.
+ * Pure, so the server (cart-checkout.ts — the site cart and the DMS panel order) and the site
+ * (domains page copy and calculator; the cart page, R-1601) share one rule. The server charges.
  */
+
+/** The TLDs whose first year is free with a yearly hosting plan. Change the offer here only. */
+export const FREE_DOMAIN_TLDS = ["com", "in", "net", "org", "co.in"] as const;
+
+/** ".com / .in / .net / .org / .co.in" — for copy that names the offer. */
+export const FREE_DOMAIN_TLDS_LABEL = FREE_DOMAIN_TLDS.map((t) => `.${t}`).join(" / ");
+
+/** Whether a domain (or a bare TLD like ".in" / "co.in") can be the free one. */
+export function freeDomainEligible(domainOrTld: string): boolean {
+  const d = domainOrTld.trim().toLowerCase().replace(/^\./, "");
+  return FREE_DOMAIN_TLDS.some((t) => d === t || d.endsWith(`.${t}`));
+}
 
 export interface BundlePlan {
   yearly: boolean;
@@ -36,18 +47,10 @@ export interface BundleAllowance {
 export function bundleAllowance(plans: BundlePlan[], domains: string[], mailboxUnits: number): BundleAllowance {
   const yearly = plans.filter((p) => p.yearly);
   const freeDomains = new Set<number>();
-  let unserved = 0;
-  // First pass: a plan's own domain, when it is being bought in this cart.
   for (const p of yearly) {
-    const i = p.domain ? domains.findIndex((d, idx) => d === p.domain && !freeDomains.has(idx)) : -1;
+    if (!p.domain || !freeDomainEligible(p.domain)) continue;
+    const i = domains.findIndex((d, idx) => d === p.domain && !freeDomains.has(idx));
     if (i >= 0) freeDomains.add(i);
-    else unserved += 1;
-  }
-  // Second pass: a plan whose domain is not in the cart frees the first domain not yet free.
-  for (; unserved > 0; unserved -= 1) {
-    const i = domains.findIndex((_d, idx) => !freeDomains.has(idx));
-    if (i < 0) break;
-    freeDomains.add(i);
   }
   return { freeDomains, freeMailboxes: Math.max(0, Math.min(Math.floor(mailboxUnits), yearly.length)) };
 }

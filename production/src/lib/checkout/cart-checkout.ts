@@ -57,7 +57,7 @@ import { trialsConfigured, TRIALS_PAUSED_MESSAGE } from "@/lib/dms-engine/trials
 import { hostingLimitProblem } from "./hosting-limit";
 import { hostingDomain, planDomains, BUY_A_DOMAIN_HREF } from "./hosting-domain";
 import { hostingRate } from "./hosting-prices";
-import { bundleAllowance } from "./hosting-bundle";
+import { bundleAllowance, FREE_DOMAIN_TLDS_LABEL } from "./hosting-bundle";
 import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, simulatedPaymentAllowed } from "./live-guards";
 import { issueInvoiceForOnlinePayment } from "./online-invoice.server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
@@ -527,7 +527,7 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
           {
             error:
               `Please add ${resolved.problems.join("; ")}. Nothing was charged. ` +
-              "Don't have a domain yet? Add one to this order — it is free with yearly hosting.",
+              `Don't have a domain yet? Add one to this order — a ${FREE_DOMAIN_TLDS_LABEL} domain is free for the first year with yearly hosting.`,
             next: BUY_A_DOMAIN_HREF,
             needDomain: true,
           },
@@ -546,8 +546,9 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     }
 
     /* THE bundle rule, enforced server-side (R-1595, lib/checkout/hosting-bundle.ts): each
-       YEARLY hosting line brings ONE domain's first year free — the one it is set up on when
-       that is in the cart, else the first one not yet free — and ONE mailbox free. Everything
+       YEARLY hosting line brings ONE domain's first year free — only the one it is set up on,
+       only when that is in the cart and its TLD is in FREE_DOMAIN_TLDS (Pardeep, 18 Oct) —
+       and ONE mailbox free. Everything
        else is charged in full; the client's ₹0 is never trusted. Until R-1595 every domain and
        every mailbox went ₹0 once any yearly plan was in the cart. */
     const bundle = bundleAllowance(

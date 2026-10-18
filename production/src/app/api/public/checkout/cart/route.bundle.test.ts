@@ -6,6 +6,8 @@
  *   "Add one mailbox on <domain> — free with the plan" (/domains bundle card).
  * Until R-1595 the server made EVERY domain line and EVERY mailbox ₹0 once any yearly plan
  * was in the cart — Starter ₹600 + 3 × .ai + 50 mailboxes was charged ₹708.
+ * Pardeep, 18 Oct: the free domain is only the one the hosting is set up on, and only a
+ * .com / .in / .net / .org / .co.in (FREE_DOMAIN_TLDS in lib/checkout/hosting-bundle.ts).
  *
  * Same mocks as route.test.ts, through the simulation path (no Razorpay keys, NODE_ENV=test).
  */
@@ -86,12 +88,13 @@ describe("R-1595: one domain and one mailbox free per yearly hosting plan", () =
   it("the audit's cart: Starter yearly + 3 × .ai + 50 mailboxes is NOT ₹600 + GST", async () => {
     const res = await POST(req({ domain: "alpha.ai", lines: [starter("yearly"), dom("alpha.ai"), dom("beta.ai"), dom("gamma.ai"), box(50)] }));
     expect(res.status).toBe(200);
-    expect(domainRate("alpha.ai")).toBe(0); // the one the hosting points at
+    // .ai is not a free TLD (Pardeep, 18 Oct) — even the one the hosting points at is charged.
+    expect(domainRate("alpha.ai")).toBe(6999);
     expect(domainRate("beta.ai")).toBe(6999);
     expect(domainRate("gamma.ai")).toBe(6999);
     expect(mailboxQty()).toBe(50);
     expect(mailboxPaid()).toBe(49 * MAILBOX_YR);
-    const subtotal = 600 + 2 * 6999 + 49 * MAILBOX_YR;
+    const subtotal = 600 + 3 * 6999 + 49 * MAILBOX_YR;
     expect(quote()!.subtotal).toBe(subtotal);
     expect(quote()!.amount).toBe(Math.round(subtotal * 1.18));
     expect(quote()!.amount).not.toBe(708);
@@ -127,11 +130,29 @@ describe("R-1595: one domain and one mailbox free per yearly hosting plan", () =
     expect(domainRate("other.com")).toBe(0);
   });
 
-  it("hosting on a domain the buyer already owns: still only ONE cart domain free (the first)", async () => {
-    const res = await POST(req({ domain: "mine.co.in", lines: [starter("yearly"), dom("acme.in"), dom("other.com")] }));
+  it("hosting on a domain the buyer already owns: no cart domain is free (Pardeep, 18 Oct)", async () => {
+    const res = await POST(req({ domain: "mine.co.in", lines: [starter("yearly"), dom("acme.in"), dom("other.com"), box(1)] }));
     expect(res.status).toBe(200);
-    expect(domainRate("acme.in")).toBe(0);
+    expect(domainRate("acme.in")).toBe(749);
     expect(domainRate("other.com")).toBe(999);
+    expect(mailboxPaid()).toBe(0); // the mailbox still comes with the yearly plan
+  });
+
+  it("a costly TLD with yearly hosting is charged in full, even as the hosting's own domain", async () => {
+    const res = await POST(req({ lines: [starter("yearly"), dom("acme.ai")] }));
+    expect(res.status).toBe(200);
+    expect(domainRate("acme.ai")).toBe(6999);
+    expect(quote()!.amount).toBe(Math.round((600 + 6999) * 1.18));
+  });
+
+  it("each free TLD qualifies: .com / .in / .net / .org / .co.in", async () => {
+    PRICE.net = 1099; PRICE.org = 999; PRICE["co.in"] = 599;
+    for (const d of ["acme.com", "acme.in", "acme.net", "acme.org", "acme.co.in"]) {
+      inserts.rows = [];
+      const res = await POST(req({ lines: [starter("yearly"), { sku: `domain:${d.slice(5)}`, domain: d, qty: 1 }] }));
+      expect(res.status, d).toBe(200);
+      expect(domainRate(d), d).toBe(0);
+    }
   });
 
   it("mailbox quantity 10: one free, nine charged", async () => {
