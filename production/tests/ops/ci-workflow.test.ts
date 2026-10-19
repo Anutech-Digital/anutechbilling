@@ -38,7 +38,10 @@ describe("ci.yml — R-1593 cost controls", () => {
     expect(cacheAt).toBeGreaterThan(-1);
     expect(cacheAt).toBeLessThan(buildAt);
     const w = steps[cacheAt].with ?? {};
-    expect(w.path).toBe("production/.next/cache");
+    // R-1619: a stale .tsbuildinfo restored from an older commit ran next build's type check
+    // out of heap. The cache keeps webpack/SWC output but never that file.
+    const paths = String(w.path).split("\n").map((p) => p.trim()).filter(Boolean);
+    expect(paths).toEqual(["production/.next/cache", "!production/.next/cache/.tsbuildinfo"]);
     expect(w.key).toContain("hashFiles('production/package-lock.json')");
     expect(w.key).toContain("production/src/**");
     expect(w["restore-keys"]).toContain("hashFiles('production/package-lock.json')");
