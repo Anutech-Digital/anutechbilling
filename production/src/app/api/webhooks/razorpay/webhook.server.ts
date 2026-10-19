@@ -60,6 +60,8 @@ import {
   receivedOnQuote, settleLatePayment, settleOnReplacedQuote, settleStaleRenewal, STALE_RENEWAL_RE, type LateArgs,
 } from "./late-payment.server";
 import { domainItemIdsForQuote, vendorForQuote } from "./quote-vendor.server";
+import { captureMismatch, flagPaymentForReview, flagUnderpaid } from "./review.server";
+import { quoteDueNow } from "@/lib/payments/quote-due-now";
 
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import { applyGatewayEvent, type MandateStatus } from "@/lib/payments/mandate";
@@ -251,6 +253,10 @@ export async function POST(request: NextRequest) {
     order: body.payload.order?.entity,
     keyIdForMode,
     mayActOn,
+    /* R-747: Razorpay's own id for this delivery — the same on every retry of it. Kept on the
+       payment row's notes; the payment id is the key that refuses a second payment. */
+    eventId: request.headers.get("x-razorpay-event-id")?.trim() || null,
+    reviewTenant: verifiedWithOwnSecret ? tenantParam : null,
   });
 }
 
@@ -266,6 +272,10 @@ export interface CaptureInput {
   keyIdForMode: string | null;
   /** May this verified caller act on a record of that tenant? */
   mayActOn: (tenantId: string) => Promise<boolean>;
+  /** R-747: Razorpay's x-razorpay-event-id, when the caller is the webhook. */
+  eventId?: string | null;
+  /** R-747: the tenant whose OWN secret verified the event — told when its order cannot be found. */
+  reviewTenant?: string | null;
 }
 
 /**
@@ -281,16 +291,29 @@ export interface CaptureInput {
  */
 export async function settleCapturedPayment(
   admin: ReturnType<typeof createAdminClient>,
-  { request, event, payment, order, keyIdForMode, mayActOn }: CaptureInput,
+  { request, event, payment, order, keyIdForMode, mayActOn, eventId, reviewTenant }: CaptureInput,
 ): Promise<NextResponse> {
   if (!payment && !order) {
     console.error("[webhooks/razorpay] no payment or order in payload");
     return NextResponse.json({ error: "No payment or order in payload" }, { status: 400 });
   }
 
-  const orderId = payment?.order_id ?? order?.id;
-  const receipt = order?.receipt ?? payment?.notes?.quoteId;
-  const notes   = payment?.notes ?? order?.notes ?? {};
+  /* R-747: an event with no payment in it names no amount that was actually captured. Until
+     19 Oct it was recorded at the QUOTE's total (`quote.amount` fallback), so an order.paid
+     without its payment entity on a part-paid quote booked money nobody paid. Razorpay's
+     payment.captured for the same money carries the payment and settles it; this is
+     acknowledged so Razorpay does not retry it. */
+  if (!payment) {
+    console.warn(`[webhooks/razorpay] ${event} for order ${order?.id ?? "(none)"} carries no payment — not settled; the payment.captured settles it`);
+    return NextResponse.json({ received: true, ignored: `${event} (no payment in the event)` });
+  }
+
+  const orderId = payment.order_id ?? order?.id;
+  const receipt = order?.receipt ?? payment.notes?.quoteId;
+  const notes   = payment.notes ?? order?.notes ?? {};
+  const reviewPayment = {
+    id: payment.id, amount: payment.amount, currency: payment.currency, email: payment.email ?? notes.email, contact: payment.contact,
+  };
 
   if (!orderId || !receipt) {
     console.error("[webhooks/razorpay] missing orderId or receipt", { orderId, receipt });
@@ -300,12 +323,26 @@ export async function settleCapturedPayment(
   // ── Look up the quote we created at checkout time ─────────────────────
   const { data: quote, error: qErr } = await admin
     .from("quotes")
-    .select("id, tenant_id, customer_name, amount, payment_status, lead_id, seats, plan, line_items, is_renewal, status, superseded_by")
+    .select("id, tenant_id, customer_name, amount, payment_status, lead_id, seats, plan, line_items, is_renewal, status, superseded_by, invoice_id, subtotal, discount_pct, tax_rate, billing_cycle, currency, exchange_rate")
     .eq("id", receipt)
     .single();
 
   if (qErr || !quote) {
-    console.error("[webhooks/razorpay] quote not found:", receipt, qErr);
+    /* R-747: money with no order of ours to land on. A 404 had Razorpay retry it for a day
+       and nobody was told. The tenant whose own secret verified it (or, under the global
+       secret, the tenant the checkout named — only if that secret may act on it) is told
+       once; nothing is recorded. */
+    const hint = reviewTenant ?? notes.tenantId ?? null;
+    if (payment.id && hint && (await mayActOn(hint))) {
+      return flagPaymentForReview(admin, {
+        tenantId: hint, quoteId: null, leadId: null, payment: reviewPayment, orderId, event,
+        why: `iska quote/order "${receipt}" app me nahi mila`,
+        nextStep: `Razorpay dashboard me payment ${payment.id} kholo: sahi quote mile to us par Record payment karo (reference ${payment.id}), warna customer ko refund karo.`,
+      });
+    }
+    console.error("[webhooks/razorpay] quote not found — nothing recorded:", receipt, {
+      payment: payment.id, order: orderId, email: maskContactValue(reviewPayment.email), db: qErr?.message ?? null,
+    });
     return NextResponse.json({ error: "Quote not found" }, { status: 404 });
   }
 
@@ -344,6 +381,19 @@ export async function settleCapturedPayment(
     }
   }
 
+  /* R-747: Razorpay settles rupees and every order we create is INR. A payment in another
+     currency — or a ₹ payment on a foreign-currency quote — was recorded as if its minor
+     units were paise of rupees (USD 11.80 → ₹12). Refused here, before ANY path records it
+     (the late-payment paths below included), and put in front of the owner once. */
+  const mismatch = captureMismatch(payment, quote);
+  if (mismatch) {
+    return flagPaymentForReview(admin, {
+      tenantId: quote.tenant_id, quoteId: quote.id, leadId: quote.lead_id, payment: reviewPayment, orderId, event,
+      why: mismatch,
+      nextStep: `Razorpay dashboard me payment ${payment.id} dekho; sahi ho to quote ${quote.id} par Record payment me rupee raqam haath se daalo (reference ${payment.id}), warna refund karo.`,
+    });
+  }
+
   /* R-1569 / R-1575: a quote that is replaced, rejected, or already paid in full takes no
      NORMAL settlement (no invoice, no activation, no "thank you" mail) — but the money is
      real and is always recorded or reported to the owner. */
@@ -372,9 +422,15 @@ export async function settleCapturedPayment(
   //   • flip lead stage to 'won'
   //   • upsert customer + subscription
   //   • roll forward renewal_date
-  const paymentAmount = payment?.amount
-    ? Math.round(payment.amount / 100)
-    : (quote.amount ?? 0);
+  /* R-747: what Razorpay CAPTURED, never the quote's total standing in for it. */
+  const paymentAmount = Math.round((Number(payment.amount) || 0) / 100);
+  /* R-747: what was due on this quote right now — the same answer the Razorpay order was
+     created from (quote-due-now: the remainder, or instalment 1 of a split quote). Unknown
+     (invoiced / instalments already running) → no comparison; record_payment's own ledger
+     arithmetic still decides partial vs paid. Compared in paise, so ₹1,179.50 is short. */
+  const due = quoteDueNow(quote, priorReceived);
+  const expectedNow = due.state === "due" && due.inr ? due.amount : null;
+  const underpaid = expectedNow !== null && Number(payment.amount) < expectedNow * 100;
   // Razorpay's `method` values (card/upi/netbanking/wallet/emi) don't map 1:1
   // to our enum (upi/razorpay/bank_transfer/cheque/cash/other). UPI passes
   // through, everything else collapses to 'razorpay' so the RPC accepts it.
@@ -404,7 +460,7 @@ export async function settleCapturedPayment(
     p_amount:    paymentAmount,
     p_method:    paymentMethod,
     p_reference: paymentRef,
-    p_notes:     `Razorpay ${event} · order ${orderId}`,
+    p_notes:     `Razorpay ${event} · order ${orderId}${eventId ? ` · event ${eventId}` : ""}`,
   });
 
   if (rpcErr) {
@@ -439,6 +495,17 @@ export async function settleCapturedPayment(
 
   /* R-045: what Razorpay kept. Best-effort — the payment is committed either way. */
   if (payment?.id) await recordGatewayFee(admin, quote.tenant_id, quote.id, paymentRef, payment);
+
+  /* R-747: LESS than was due. The money is real and is recorded above at what was actually
+     captured — record_payment marks the quote 'partial', never 'received', so no invoice can
+     be issued off it. Nothing else of a completed sale runs: no activation, no domain
+     subscriptions, no "order confirmed" mail to the buyer and no "provision it" mail to the
+     desk. The owner is told what came, what was due and what to do. */
+  if (underpaid && expectedNow !== null) {
+    return flagUnderpaid(admin, {
+      tenantId: quote.tenant_id, quoteId: quote.id, leadId: quote.lead_id, payment: reviewPayment, orderId, event,
+    }, expectedNow);
+  }
 
   /* ── THE GST TAX INVOICE (R-079) ─────────────────────────────────────────
      Through generate_invoice — the desk's own issuing path — right after the payment is
