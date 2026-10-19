@@ -104,10 +104,19 @@ jobs:
       # source/config file, so an unchanged tree is an exact hit; on any change the restore-key
       # brings back the newest cache for the same lockfile and Next rebuilds only what changed.
       # npm's download cache is the `cache: npm` on setup-node above.
+      # R-1619: NOT .tsbuildinfo. tsconfig has `incremental`, so next build's type check writes
+      # .next/cache/.tsbuildinfo and, when one is there, rebuilds from it. A STALE one (restored
+      # by restore-key from an older commit) made that check run out of the 4 GB heap: every run
+      # that restored this cache died in "Checking validity of types"; the one cache miss was
+      # green. A red run saves no cache, so the same stale file came back on every push. The
+      # `!` line keeps the webpack/SWC cache and drops only that file (and, as it changes the
+      # path list, the cache version — the old entries holding it are not restored again).
       - name: Restore Next build cache
         uses: actions/cache@v4
         with:
-          path: production/.next/cache
+          path: |
+            production/.next/cache
+            !production/.next/cache/.tsbuildinfo
           key: nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-${{ hashFiles('production/src/**', 'production/public/**', 'production/next.config.mjs', 'production/tsconfig.json', 'production/tailwind.config.ts', 'production/postcss.config.mjs') }}
           restore-keys: |
             nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-
