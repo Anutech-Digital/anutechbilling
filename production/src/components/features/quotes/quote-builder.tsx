@@ -605,7 +605,7 @@ function QuoteBuilderBody() {
 
     const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
 
-    // 1. Find the matching catalog item — exact / substring / tier-keyword (lib/quotes/lead-plan-match.ts).
+    // 1. Find the matching catalog item — exact / substring / family-then-tier (lib/quotes/lead-plan-match.ts).
     const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
 
     let rate = 0;
@@ -626,18 +626,14 @@ function QuoteBuilderBody() {
       }
     }
 
-    // 2. Fallback to the hardcoded plan map — tries exact then substring match too.
+    // 2. Fallback to the hardcoded plan map — the SAME family-then-tier matcher (R-1667),
+    //    so a bare tier word never borrows another product's price here either.
     if (!rate && leadPlan) {
-      const lpLower = leadPlan.toLowerCase();
-      let monthlyPPS = PLAN_PRICE_PER_SEAT_PM[leadPlan];
-      if (!monthlyPPS) {
-        // Try substring match against known plan names
-        const key = Object.keys(PLAN_PRICE_PER_SEAT_PM).find((k) => {
-          const kl = k.toLowerCase();
-          return kl.includes(lpLower) || lpLower.includes(kl);
-        });
-        if (key) monthlyPPS = PLAN_PRICE_PER_SEAT_PM[key];
-      }
+      const key = matchCatalogItemForPlan(
+        Object.keys(PLAN_PRICE_PER_SEAT_PM).map((k) => ({ name: k })),
+        leadPlan,
+      )?.name;
+      const monthlyPPS = key ? PLAN_PRICE_PER_SEAT_PM[key] : undefined;
       if (monthlyPPS) {
         rate = monthlyPPS * 12;
         /* Cost stays 0 — DELIBERATELY, and this is the important line in the block.
@@ -688,6 +684,13 @@ function QuoteBuilderBody() {
           duration: 10_000,
         });
       }
+    } else if (leadPlan && seatsNum > 0) {
+      /* R-1667: the plan did not match ONE catalogue item. The line stays empty on purpose —
+         a guessed item is a wrong price on a customer's quote. */
+      toast.warning(`"${leadPlan}" did not match one catalogue item — line left empty`, {
+        description: `Pick the right item for ${seatsNum} seat${seatsNum === 1 ? "" : "s"} yourself. Nothing was guessed.`,
+        duration: 10_000,
+      });
     } else {
       toast.info(`Add line items for ${leadCompany}'s quote`);
     }
