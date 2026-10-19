@@ -155,6 +155,11 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
    a data-less skeleton anyway (every query is pending on the server), so nothing useful is
    lost. suppressHydrationWarning would only hide the warning on one element and leave the
    tree regenerated — not used. */
+/** R-1675: one key for "what the catalogue lines are priced in" — currency, rate, USD basis. */
+function pricingBasisKey(currency: string | null | undefined, fx: number, basis: string): string {
+  return `${(currency ?? "INR").toUpperCase()}|${fx}|${basis}`;
+}
+
 const noopSubscribe = () => () => {};
 function useHydrated(): boolean {
   return React.useSyncExternalStore(noopSubscribe, () => true, () => false);
@@ -509,6 +514,13 @@ function QuoteBuilderBody() {
   // Round off the final foreign payable total (default on). Display-only — books stay ₹.
   const [roundTotal, setRoundTotal] = React.useState(true);
 
+  /* R-1675: the pricing basis (currency | rate | USD basis) the lines of an in-place EDIT were
+     saved at. While the builder still sits on that basis, the lines are the saved quote — a
+     catalogue (re)load must not re-derive them. Staging Q-5F40-27-0091: a ₹10,627 rate (18%
+     under list) opened as the ₹12,960 catalogue price, because the catalogue answered after
+     the quote and this effect read the saved rate as the list price. Cleared the moment the
+     operator changes the basis, so a real currency / rate switch still re-prices. */
+  const savedBasisRef = React.useRef<string | null>(null);
   // Re-price catalog-linked lines when the billing currency / exchange rate changes,
   // so switching to USD uses each item's REAL USD price (books stay ₹ = USD × rate),
   // and switching back to INR restores the ₹ catalog price. Custom lines (no item_id)
@@ -517,6 +529,10 @@ function QuoteBuilderBody() {
     if (!catalog || catalog.length === 0) return;
     const usdMode = (currency ?? "INR").toUpperCase() === "USD";
     const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
+    if (savedBasisRef.current !== null) {
+      if (savedBasisRef.current === pricingBasisKey(currency, fx, usdPricingBasis)) return;
+      savedBasisRef.current = null;
+    }
     setLineItems((prev) => prev.map((l) => {
       if (!l.item_id || l.bulk) return l;
       const it = catalog.find((c) => c.id === l.item_id);
@@ -761,6 +777,14 @@ function QuoteBuilderBody() {
        CGST+SGST on the tax invoice.
        Copying them is right for a duplicate too: a copy of a USD quote should be USD. */
     if (sourceQuote.currency)             setCurrency(sourceQuote.currency);
+    /* R-1675: an in-place Edit opens on the quote's own numbers — see savedBasisRef. */
+    if (editOf) {
+      savedBasisRef.current = pricingBasisKey(
+        sourceQuote.currency ?? "INR",
+        sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0 ? sourceQuote.exchange_rate : 1,
+        "international",
+      );
+    }
     if (sourceQuote.exchange_rate != null && sourceQuote.exchange_rate > 0) {
       setExchangeRate(sourceQuote.exchange_rate);
       /* R-045: keep where that rate came from — an untouched Save must not relabel it. */
