@@ -20,7 +20,7 @@ insert into public.tenants (id, name, email, state_code, doc_code)
 insert into public.customers (id, tenant_id, name, state_code)
   values ('cccccccc-0000-0000-0000-0000000000a1','eeeeeeee-0000-0000-0000-0000000000a1','Cust GI Full','07');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('eeeeeeee-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000),
+  values ('eeeeeeee-0000-0000-0000-0000000000a1','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000),
          ('eeeeeeee-0000-0000-0000-0000000000a1','invoice',        public.indian_fiscal_year(current_date), 'INV', 0);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-GI-FULL','eeeeeeee-0000-0000-0000-0000000000a1','cccccccc-0000-0000-0000-0000000000a1','Cust GI Full',122342,103680,18,'sent','awaiting',
@@ -68,7 +68,7 @@ insert into public.tenants (id, name, email, state_code, doc_code)
 insert into public.customers (id, tenant_id, name, state_code)
   values ('cccccccc-0000-0000-0000-0000000000a2','eeeeeeee-0000-0000-0000-0000000000a2','Cust GI Part','07');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('eeeeeeee-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000),
+  values ('eeeeeeee-0000-0000-0000-0000000000a2','purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000),
          ('eeeeeeee-0000-0000-0000-0000000000a2','invoice',        public.indian_fiscal_year(current_date), 'INV', 0);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
   values ('Q-GI-PART','eeeeeeee-0000-0000-0000-0000000000a2','cccccccc-0000-0000-0000-0000000000a2','Cust GI Part',122342,103680,18,'sent','awaiting',

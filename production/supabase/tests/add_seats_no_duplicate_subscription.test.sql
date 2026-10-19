@@ -49,7 +49,7 @@ insert into public.tenants (id, name, email, state_code)
 insert into public.customers (id, tenant_id, name)
   values ('cccccccc-0000-0000-0000-0000000000c2', 'dddddddd-0000-0000-0000-0000000000d2', 'Cust NewSale');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dddddddd-0000-0000-0000-0000000000d2', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('dddddddd-0000-0000-0000-0000000000d2', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items)
   values ('Q-NEWSALE-T2', 'dddddddd-0000-0000-0000-0000000000d2', 'cccccccc-0000-0000-0000-0000000000c2',
           'Cust NewSale', 12000, 'sent', 'awaiting',
