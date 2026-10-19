@@ -1,6 +1,6 @@
 /**
  * R-1529 — read/save the tenant's GST registration (tenants.gst_registration,
- * gst_composition_rate, gst_registered_from).
+ * gst_composition_rate, gst_registered_from; R-1531: gst_rc_date).
  *
  * Same shape as turnover.ts: an untyped read so a database without the migration answers
  * "not chosen" (the card says it needs a database update) instead of breaking Settings.
@@ -13,9 +13,10 @@ import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { istToday } from "@/lib/dates/ist";
 import {
   gstRegistrationFromRow, gstRegistrationPatch, gstRegistrationProblem, isMissingGstRegistrationColumn,
-  type GstRegistrationInput, type GstRegistrationState,
+  isMissingRcDateColumn, type GstRegistrationInput, type GstRegistrationState,
 } from "./gst-registration";
 
 const untyped = () => createClient() as unknown as SupabaseClient;
@@ -28,12 +29,19 @@ export function useGstRegistration() {
     enabled: Boolean(tenantId),
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<GstRegistrationState> => {
-      const { data, error } = await untyped()
+      const read = (cols: string) => untyped()
         .from("tenants")
-        .select("gst_registration, gst_composition_rate, gst_registered_from")
+        .select(cols)
         .eq("id", tenantId as string)
         .maybeSingle();
-      return gstRegistrationFromRow(data as Record<string, unknown> | null, error);
+      /* R-1531: gst_rc_date comes in its own migration. A database that has R-1529's columns
+         but not that one yet still reads the rest — the certificate date field just waits. */
+      const first = await read("gst_registration, gst_composition_rate, gst_registered_from, gst_rc_date");
+      if (isMissingRcDateColumn(first.error)) {
+        const { data, error } = await read("gst_registration, gst_composition_rate, gst_registered_from");
+        return gstRegistrationFromRow(data as Record<string, unknown> | null, error, { rcDateColumn: false });
+      }
+      return gstRegistrationFromRow(first.data as Record<string, unknown> | null, first.error);
     },
   });
 }
@@ -43,13 +51,13 @@ export function useSaveGstRegistration() {
   const me = useCurrentUser();
   const tenantId = me.data?.tenantId ?? null;
   return useMutation({
-    mutationFn: async (input: GstRegistrationInput) => {
+    mutationFn: async ({ rcDateColumn, ...input }: GstRegistrationInput & { rcDateColumn: boolean }) => {
       if (!tenantId) throw new Error("Not signed in to a workspace");
-      const problem = gstRegistrationProblem(input);
+      const problem = gstRegistrationProblem({ ...input, today: istToday() });
       if (problem) throw new Error(problem);
       const { data, error } = await untyped()
         .from("tenants")
-        .update(gstRegistrationPatch(input))
+        .update(gstRegistrationPatch(input, { rcDateColumn }))
         .eq("id", tenantId)
         .select("id");
       if (isMissingGstRegistrationColumn(error)) {
@@ -64,6 +72,7 @@ export function useSaveGstRegistration() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenant_gst_registration"] });
+      qc.invalidateQueries({ queryKey: ["revised_invoice_bills"] });
       toast.success("GST registration saved", {
         description: "New invoices follow it from now on. Invoices already issued stay exactly as they are.",
       });

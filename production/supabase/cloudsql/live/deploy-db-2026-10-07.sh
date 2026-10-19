@@ -159,6 +159,7 @@ MIGS=(
   "r1615definer|20261018225100_r1615_definer_tenant_gate.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.consume_prepaid_advance(uuid,integer,date,text,integer,text)') and prosrc like '%R-1615%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.undo_my_last_punch()') and prosrc like '%R-1615%')"
   "r1617nocut|20261019001426_r1617_document_number_no_truncate.sql|resellersos_migration|exists(select 1 from pg_proc where proname = 'format_document_number' and prosrc like '%R-1617%')"
   "r1004ambackfill|20261019002055_r1004_account_manager_backfill.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.r1004_backfill_account_managers()') and prosrc like '%R-1004 backfill%')"
+  "r1531gstrcdate|20261019002811_r1531_gst_rc_date.sql|resellersos_migration|exists(select 1 from pg_attribute where attrelid = to_regclass('public.tenants') and attname = 'gst_rc_date' and not attisdropped) and exists(select 1 from pg_constraint where conname = 'tenants_gst_rc_date_check')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

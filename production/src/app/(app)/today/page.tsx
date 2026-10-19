@@ -31,6 +31,8 @@ import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useTodayDealItems } from "@/lib/queries/deals";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canSeeDeals } from "@/lib/deals/access";
+import { revisedInvoiceTodayItem } from "@/lib/compliance/revised-invoice";
+import { useRevisedInvoiceReminder } from "@/lib/compliance/revised-invoice-query";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -128,9 +130,12 @@ export default function TodayPage() {
       : []),
     [compliance.data, tdsMonths.data, tdsToday, profile.data],
   );
+  /* R-1531: Bills of Supply after the GST effective date → revised tax invoices (31(3)(a)). */
+  const revised = useRevisedInvoiceReminder();
+  const revisedItem = React.useMemo(() => revisedInvoiceTodayItem(revised.reminder), [revised.reminder]);
   const all = React.useMemo(
-    () => rankTodayItems([...(inbox.data ?? []), ...complianceItems, ...deals.items]),
-    [inbox.data, complianceItems, deals.items],
+    () => rankTodayItems([...(inbox.data ?? []), ...complianceItems, ...(revisedItem ? [revisedItem] : []), ...deals.items]),
+    [inbox.data, complianceItems, revisedItem, deals.items],
   );
   const counts = React.useMemo(() => {
     const m = new Map<string, number>();
@@ -141,7 +146,7 @@ export default function TodayPage() {
   const shown = kindFilter ? all.filter((i) => i.kind === kindFilter) : all;
   const first = shown.filter((i) => i.priority >= URGENT_PRIORITY);
   const rest = shown.filter((i) => i.priority < URGENT_PRIORITY);
-  const loading = inbox.isLoading || compliance.isLoading || deals.isLoading;
+  const loading = inbox.isLoading || compliance.isLoading || deals.isLoading || revised.isLoading;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto">
@@ -155,7 +160,7 @@ export default function TodayPage() {
             Every queue's work in one list, most urgent first. Click a row to open that screen.
           </p>
         </div>
-        <Button icon="refresh" variant="ghost" onClick={() => { inbox.refetch(); compliance.refetch(); deals.refetch(); }}>
+        <Button icon="refresh" variant="ghost" onClick={() => { inbox.refetch(); compliance.refetch(); deals.refetch(); revised.refetch(); }}>
           Refresh
         </Button>
       </div>
@@ -182,6 +187,17 @@ export default function TodayPage() {
         </Card>
       )}
 
+      {revised.error && (
+        <Card className="p-4 mb-4 border-amber-soft">
+          <p className="text-sm text-amber-ink font-medium">Bills of Supply after your GST registration could not be checked.</p>
+          <p className="text-xs text-ink-3 mt-1">
+            {loadErrorBody(revised.error)} A revised-invoice reminder may be missing below.{" "}
+            <Link href={"/compliance" as Route} className="underline">Open the Compliance Calendar</Link>.
+          </p>
+          <Button className="mt-2" size="sm" icon="refresh" onClick={() => revised.refetch()}>Try again</Button>
+        </Card>
+      )}
+
       {deals.error && (
         <Card className="p-4 mb-4 border-amber-soft">
           <p className="text-sm text-amber-ink font-medium">Deals could not be loaded.</p>
@@ -198,7 +214,7 @@ export default function TodayPage() {
       )}
 
       {/* "All clear" is a fact only when every source loaded. */}
-      {!loading && !inbox.error && !compliance.error && !deals.error && all.length === 0 && (
+      {!loading && !inbox.error && !compliance.error && !deals.error && !revised.error && all.length === 0 && (
         <EmptyState
           icon="check_circle"
           title="All clear for today"

@@ -41,6 +41,10 @@ export interface GstRegistrationState {
   compositionRate: number;
   /** Registration effective date (YYYY-MM-DD) or null. */
   registeredFrom: string | null;
+  /** R-1531: date the registration certificate (REG-06) was issued, or null. */
+  rcDate: string | null;
+  /** R-1531: tenants.gst_rc_date exists in this database (its migration may lag R-1529's). */
+  rcDateColumn: boolean;
   /** The columns are not in this database yet — the card shows "coming soon". */
   columnMissing: boolean;
 }
@@ -71,6 +75,10 @@ export interface GstRegistrationInput {
   gstin: string | null | undefined;
   compositionRate: number | string | null | undefined;
   registeredFrom: string | null | undefined;
+  /** R-1531: certificate issue date — only for Registered (Section 31(3)(a) reminder). */
+  rcDate?: string | null | undefined;
+  /** Today in IST (YYYY-MM-DD) — the certificate date cannot be after it. */
+  today?: string;
 }
 
 /**
@@ -95,24 +103,46 @@ export function gstRegistrationProblem(i: GstRegistrationInput): string | null {
   if (i.registeredFrom && !/^\d{4}-\d{2}-\d{2}$/.test(i.registeredFrom)) {
     return "Registration date must be a date (DD/MM/YYYY).";
   }
+  if (i.status === "registered" && i.rcDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(i.rcDate)) return "Certificate date must be a date (DD/MM/YYYY).";
+    if (i.registeredFrom && i.rcDate < i.registeredFrom) {
+      return "The certificate date cannot be before the registration effective date. Check both dates on your GST registration certificate.";
+    }
+    if (i.today && i.rcDate > i.today) {
+      return "The certificate date cannot be after today. Enter the date printed on your GST registration certificate.";
+    }
+  }
   return null;
 }
 
-/** The tenants patch for a valid input. */
-export function gstRegistrationPatch(i: GstRegistrationInput): {
+/**
+ * The tenants patch for a valid input. R-1531: gst_rc_date is written only when the column
+ * exists (`rcDateColumn`, default true) and kept only for Registered.
+ */
+export function gstRegistrationPatch(i: GstRegistrationInput, opts: { rcDateColumn?: boolean } = {}): {
   gst_registration: GstRegistration;
   gst_composition_rate?: number;
   gst_registered_from: string | null;
+  gst_rc_date?: string | null;
 } {
   const rate = typeof i.compositionRate === "string" ? Number(i.compositionRate) : i.compositionRate;
   return {
     gst_registration: i.status,
     ...(i.status === "composition" && rate != null ? { gst_composition_rate: Math.round(rate * 100) / 100 } : {}),
     gst_registered_from: i.status === "unregistered" ? null : (i.registeredFrom || null),
+    ...(opts.rcDateColumn === false ? {} : { gst_rc_date: i.status === "registered" ? (i.rcDate || null) : null }),
   };
 }
 
 interface PgErrorLike { code?: string | null; message?: string | null }
+
+/** R-1531: only tenants.gst_rc_date is missing (R-1529's columns are there) — read without it. */
+export function isMissingRcDateColumn(err: PgErrorLike | null | undefined): boolean {
+  if (!err) return false;
+  const m = err.message ?? "";
+  return /gst_rc_date/.test(m)
+    && (err.code === "42703" || err.code === "PGRST204" || /(does not exist|could not find)/i.test(m));
+}
 
 /** "column does not exist" before the migration is applied — read as not-chosen, not as a failure. */
 export function isMissingGstRegistrationColumn(err: PgErrorLike | null | undefined): boolean {
@@ -123,11 +153,15 @@ export function isMissingGstRegistrationColumn(err: PgErrorLike | null | undefin
 }
 
 export function gstRegistrationFromRow(
-  row: { gst_registration?: unknown; gst_composition_rate?: unknown; gst_registered_from?: unknown } | null,
+  row: { gst_registration?: unknown; gst_composition_rate?: unknown; gst_registered_from?: unknown; gst_rc_date?: unknown } | null,
   err: PgErrorLike | null,
+  opts: { rcDateColumn?: boolean } = {},
 ): GstRegistrationState {
   if (isMissingGstRegistrationColumn(err)) {
-    return { saved: null, compositionRate: DEFAULT_COMPOSITION_RATE, registeredFrom: null, columnMissing: true };
+    return {
+      saved: null, compositionRate: DEFAULT_COMPOSITION_RATE, registeredFrom: null,
+      rcDate: null, rcDateColumn: false, columnMissing: true,
+    };
   }
   if (err) throw Object.assign(new Error(err.message ?? "Could not read the GST registration"), { code: err.code });
   const rate = Number(row?.gst_composition_rate);
@@ -135,6 +169,8 @@ export function gstRegistrationFromRow(
     saved: toGstRegistration(row?.gst_registration),
     compositionRate: Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_COMPOSITION_RATE,
     registeredFrom: typeof row?.gst_registered_from === "string" ? row.gst_registered_from : null,
+    rcDate: typeof row?.gst_rc_date === "string" ? row.gst_rc_date : null,
+    rcDateColumn: opts.rcDateColumn !== false,
     columnMissing: false,
   };
 }

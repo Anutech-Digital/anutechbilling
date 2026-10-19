@@ -4,7 +4,8 @@
  * Registered (Tax Invoice + GST) / Not registered (Bill of Supply, no GST) / Composition
  * scheme (Bill of Supply + "composition taxable person" line; the business pays the
  * composition rate on its turnover itself). Plus the registration effective date (q4: Tax
- * Invoices from that date).
+ * Invoices from that date). R-1531: for Registered, the certificate issue date — the Section
+ * 31(3)(a) revised-invoice reminder on /compliance and /today counts one month from it.
  *
  * Its own Save, like TurnoverCard, because the columns arrive in their own migration: until
  * that is applied the card says so and stays read-only. Rules live in
@@ -23,6 +24,7 @@ import {
   effectiveGstRegistration, gstRegistrationProblem, type GstRegistration,
 } from "@/lib/compliance/gst-registration";
 import { useGstRegistration, useSaveGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { istToday } from "@/lib/dates/ist";
 
 export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gstin: string | null | undefined }) {
   const { data: saved, isLoading, isError } = useGstRegistration();
@@ -32,6 +34,8 @@ export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gsti
   const [choice, setChoice] = React.useState<GstRegistration | null>(null);
   const [rate, setRate] = React.useState<string>(String(DEFAULT_COMPOSITION_RATE));
   const [from, setFrom] = React.useState<string>("");
+  const [rcDate, setRcDate] = React.useState<string>("");
+  const today = istToday();
 
   const loaded = React.useRef(false);
   React.useEffect(() => {
@@ -40,19 +44,23 @@ export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gsti
     setChoice(effectiveGstRegistration(saved.saved, gstin));
     setRate(String(saved.compositionRate));
     setFrom(saved.registeredFrom ?? "");
+    setRcDate(saved.rcDate ?? "");
   }, [saved, gstin]);
 
   const missing = Boolean(saved?.columnMissing);
+  const rcDateColumn = saved?.rcDateColumn ?? false;
   const dirty = !!saved && (
     choice !== savedChoice
     || (choice === "composition" && Number(rate) !== saved.compositionRate)
     || (from || null) !== saved.registeredFrom
+    || (choice === "registered" && rcDateColumn && (rcDate || null) !== saved.rcDate)
     /* Never chosen but defaulted from the GSTIN: saving makes the default explicit. */
     || (saved.saved === null && choice !== null)
   );
-  const problem = choice
-    ? gstRegistrationProblem({ status: choice, gstin, compositionRate: rate, registeredFrom: from || null })
+  const input = choice
+    ? { status: choice, gstin, compositionRate: rate, registeredFrom: from || null, rcDate: rcDateColumn ? (rcDate || null) : null }
     : null;
+  const problem = input ? gstRegistrationProblem({ ...input, today }) : null;
   const disabled = !isOwner || missing || save.isPending || isLoading;
   const canSave = isOwner && !missing && dirty && !!choice && !problem && !save.isPending;
 
@@ -60,6 +68,7 @@ export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gsti
     setChoice(savedChoice);
     setRate(String(saved?.compositionRate ?? DEFAULT_COMPOSITION_RATE));
     setFrom(saved?.registeredFrom ?? "");
+    setRcDate(saved?.rcDate ?? "");
   };
 
   return (
@@ -144,6 +153,26 @@ export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gsti
                   The date on your GST registration certificate. Bills dated before it are issued as Bills of Supply.
                 </p>
               </div>
+              {choice === "registered" && rcDateColumn && (
+                <div>
+                  <label htmlFor="settings-gst-rc-date" className="block text-xs font-medium text-ink-2 mb-1">
+                    Certificate issue date (optional)
+                  </label>
+                  <Input
+                    id="settings-gst-rc-date"
+                    type="date"
+                    value={rcDate}
+                    min={from || undefined}
+                    max={today}
+                    disabled={disabled}
+                    onChange={(e) => setRcDate(e.target.value)}
+                  />
+                  <p className="mt-1 text-3xs text-ink-3">
+                    The day the certificate was issued. Bills of Supply from the effective date up to this day
+                    need a revised tax invoice within one month of it — the Compliance page reminds you.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -155,7 +184,7 @@ export function GstRegistrationCard({ isOwner, gstin }: { isOwner: boolean; gsti
             <div className="flex items-center gap-2">
               <Button type="button" size="sm" variant="primary" icon="check"
                 loading={save.isPending} disabled={!canSave}
-                onClick={() => choice && save.mutate({ status: choice, gstin, compositionRate: rate, registeredFrom: from || null })}>
+                onClick={() => input && save.mutate({ ...input, rcDateColumn })}>
                 Save GST registration
               </Button>
               {dirty && (

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_COMPOSITION_RATE, effectiveGstRegistration, gstRegistrationFromRow, gstRegistrationPatch,
-  gstRegistrationProblem, issuesBillOfSupply,
+  gstRegistrationProblem, issuesBillOfSupply, isMissingRcDateColumn,
 } from "./gst-registration";
 
 const GSTIN = "07ABDCA0298H1ZP";
@@ -56,24 +56,36 @@ describe("gstRegistrationProblem — same rules as the database", () => {
 describe("gstRegistrationPatch", () => {
   it("composition writes its rate (rounded to 2 places)", () => {
     expect(gstRegistrationPatch({ status: "composition", gstin: GSTIN, compositionRate: "6.257", registeredFrom: "2026-04-01" }))
-      .toEqual({ gst_registration: "composition", gst_composition_rate: 6.26, gst_registered_from: "2026-04-01" });
+      .toEqual({ gst_registration: "composition", gst_composition_rate: 6.26, gst_registered_from: "2026-04-01", gst_rc_date: null });
   });
   it("not registered clears the effective date and leaves the rate alone", () => {
     expect(gstRegistrationPatch({ status: "unregistered", gstin: null, compositionRate: 3, registeredFrom: "2026-04-01" }))
-      .toEqual({ gst_registration: "unregistered", gst_registered_from: null });
+      .toEqual({ gst_registration: "unregistered", gst_registered_from: null, gst_rc_date: null });
   });
 });
 
 describe("gstRegistrationFromRow", () => {
   it("before the migration: not chosen, columnMissing", () => {
     const s = gstRegistrationFromRow(null, { code: "42703", message: 'column tenants.gst_registration does not exist' });
-    expect(s).toEqual({ saved: null, compositionRate: DEFAULT_COMPOSITION_RATE, registeredFrom: null, columnMissing: true });
+    expect(s).toEqual({
+      saved: null, compositionRate: DEFAULT_COMPOSITION_RATE, registeredFrom: null,
+      rcDate: null, rcDateColumn: false, columnMissing: true,
+    });
   });
   it("any other error throws (never read as 'registered')", () => {
     expect(() => gstRegistrationFromRow(null, { code: "500", message: "boom" })).toThrow(/boom/);
   });
   it("reads the row", () => {
     expect(gstRegistrationFromRow({ gst_registration: "composition", gst_composition_rate: "5.00", gst_registered_from: "2026-04-01" }, null))
-      .toEqual({ saved: "composition", compositionRate: 5, registeredFrom: "2026-04-01", columnMissing: false });
+      .toEqual({ saved: "composition", compositionRate: 5, registeredFrom: "2026-04-01", rcDate: null, rcDateColumn: true, columnMissing: false });
+  });
+  it("R-1531: a database without gst_rc_date yet reads the rest, with rcDateColumn false", () => {
+    expect(gstRegistrationFromRow({ gst_registration: "registered", gst_registered_from: "2026-04-01" }, null, { rcDateColumn: false }))
+      .toMatchObject({ saved: "registered", registeredFrom: "2026-04-01", rcDate: null, rcDateColumn: false, columnMissing: false });
+  });
+  it("R-1531: the gst_rc_date-only missing column is told apart from R-1529's", () => {
+    expect(isMissingRcDateColumn({ code: "42703", message: "column tenants.gst_rc_date does not exist" })).toBe(true);
+    expect(isMissingRcDateColumn({ code: "42703", message: "column tenants.gst_registration does not exist" })).toBe(false);
+    expect(isMissingRcDateColumn(null)).toBe(false);
   });
 });

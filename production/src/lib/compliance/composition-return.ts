@@ -103,9 +103,14 @@ export function gstr4DueDate(startYear: number): string {
   return startYear >= 2024 ? `${startYear + 1}-06-30` : `${startYear + 1}-04-30`;
 }
 
+/** Issued = pending / paid / overdue — not a draft, not void. Shared with R-1531's reminder. */
+export function isIssuedStatus(status: string | null | undefined): boolean {
+  return ISSUED.has(status ?? "");
+}
+
 /** An issued Bill of Supply made while the business was under composition. */
 export function isCompositionBill(d: CompositionDoc): boolean {
-  return isBillOfSupply(d) && supplierGstStatusOf(d) === "composition" && ISSUED.has(d.status ?? "");
+  return isBillOfSupply(d) && supplierGstStatusOf(d) === "composition" && isIssuedStatus(d.status);
 }
 
 export function billOfSupplyValue(d: Pick<CompositionDoc, "amount" | "taxable_value">): number {
