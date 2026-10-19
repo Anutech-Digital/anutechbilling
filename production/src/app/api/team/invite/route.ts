@@ -29,6 +29,7 @@ import { TEMP_PASSWORD_RATE, checkTypedTempPassword } from "@/lib/auth/temp-pass
 import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
 import { isActiveOwner } from "@/lib/auth/deactivated";
+import { inviteExpiresAt, isInviteExpired } from "@/lib/auth/invite-accept";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 
@@ -137,7 +138,7 @@ export async function POST(request: NextRequest) {
        the caller's own tenant, so the update below cannot touch anyone else's row. */
     const { data: existing } = await supabase
       .from("team_invites")
-      .select("role, tenant_id, token")
+      .select("role, tenant_id, token, expires_at")
       .eq("email", email)
       .maybeSingle();
 
@@ -151,27 +152,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /* R-733: invites expire after 7 days. Re-inviting an EXPIRED one is how the owner sends a
+       fresh link — new token (the old link stays dead) and a new expiry — so it is never
+       refused as "nothing to change". */
+    const expired = isInviteExpired(existing.expires_at);
+
     /* Same role and no password to add → nothing to do. With a temporary password the
        re-invite is how an owner says "create their login now", so it goes on. */
-    if (existing.role === role && tempPassword === null) {
+    if (existing.role === role && tempPassword === null && !expired) {
       return NextResponse.json(
         { error: `${email} is already invited as ${role}. Nothing to change — they just need to sign in with Google using that address.` },
         { status: 409 },
       );
     }
 
-    if (existing.role !== role) {
+    if (existing.role !== role || expired) {
+      const freshToken = expired ? crypto.randomUUID() : null;
+      const renew = freshToken ? { token: freshToken, expires_at: inviteExpiresAt() } : {};
       const { error: updErr } = await supabase
         .from("team_invites")
-        .update({ role, invited_by: authData.user.id })
+        .update({ role, invited_by: authData.user.id, ...renew })
         .eq("email", email)
         .eq("tenant_id", me.tenant_id);
       if (updErr) {
         return NextResponse.json({ error: updErr.message }, { status: 500 });
       }
-      roleChangedFrom = existing.role;
+      if (existing.role !== role) roleChangedFrom = existing.role;
+      inviteToken = freshToken ?? existing.token;
+    } else {
+      inviteToken = existing.token;
     }
-    inviteToken = existing.token;
   }
 
   // ── R-534: create the login now, with the temporary password ─────────

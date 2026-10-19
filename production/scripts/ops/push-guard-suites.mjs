@@ -50,6 +50,7 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/queries/__tests__/money-read-scan.test.ts",
   "tests/secret-scan.test.ts",
   "src/lib/auth/no-passwords-in-source.test.ts",
+  "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
   "src/lib/feedback/internal-links.test.ts",
   "src/lib/feedback/route-map.test.ts",

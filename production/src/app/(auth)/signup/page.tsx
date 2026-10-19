@@ -14,6 +14,7 @@ import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { isValidGstin } from "@/lib/utils";
+import { checkNewPassword } from "@/lib/auth/password-rules";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { GoogleAuthButton } from "@/components/features/auth/google-button";
 import { ResendVerification } from "@/components/features/auth/resend-verification";
@@ -27,7 +28,11 @@ const schema = z.object({
   ),
   fullName: z.string().min(2, "Your name is required"),
   email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "At least 8 characters"),
+  /* R-736: the same rules the server now applies (lib/auth/password-rules.ts), shown here first. */
+  password: z.string().superRefine((v, ctx) => {
+    const problem = checkNewPassword(v);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem.message });
+  }),
 });
 type FormData = z.infer<typeof schema>;
 

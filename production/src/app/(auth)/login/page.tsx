@@ -24,7 +24,9 @@ import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
 import { TOO_MANY_ATTEMPTS_CODE, TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/auth/browser-auth";
 import {
   EMAIL_UNVERIFIED_ERROR, EMAIL_UNVERIFIED_MESSAGE, LINK_CONFLICT_ERROR, LINK_CONFLICT_MESSAGE,
+  INVITE_EXPIRED_ERROR, INVITE_USED_ERROR,
 } from "../callback/link-guard";
+import { INVITE_EXPIRED_MESSAGE, INVITE_USED_MESSAGE } from "@/lib/auth/invite-accept";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -227,6 +229,13 @@ function LoginPageInner() {
       {(searchParams.get("error") === LINK_CONFLICT_ERROR || searchParams.get("error") === EMAIL_UNVERIFIED_ERROR) && (
         <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
           {searchParams.get("error") === LINK_CONFLICT_ERROR ? LINK_CONFLICT_MESSAGE : EMAIL_UNVERIFIED_MESSAGE}
+        </div>
+      )}
+
+      {/* R-733: the Google callback found this address's team invite expired / already used. */}
+      {(searchParams.get("error") === INVITE_EXPIRED_ERROR || searchParams.get("error") === INVITE_USED_ERROR) && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          {searchParams.get("error") === INVITE_EXPIRED_ERROR ? INVITE_EXPIRED_MESSAGE : INVITE_USED_MESSAGE}
         </div>
       )}
 

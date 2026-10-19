@@ -12361,6 +12361,7 @@ export type Database = {
           accepted_at: string | null
           created_at: string
           email: string
+          expires_at: string
           id: string
           invited_by: string | null
           role: Database["public"]["Enums"]["user_role"]
@@ -12371,6 +12372,7 @@ export type Database = {
           accepted_at?: string | null
           created_at?: string
           email: string
+          expires_at?: string
           id?: string
           invited_by?: string | null
           role?: Database["public"]["Enums"]["user_role"]
@@ -12381,6 +12383,7 @@ export type Database = {
           accepted_at?: string | null
           created_at?: string
           email?: string
+          expires_at?: string
           id?: string
           invited_by?: string | null
           role?: Database["public"]["Enums"]["user_role"]
@@ -14109,6 +14112,19 @@ export type Database = {
     }
     Functions: {
       _demo_data_tenant: { Args: never; Returns: string }
+      accept_team_invite: {
+        Args: {
+          p_email: string
+          p_full_name: string
+          p_initials: string
+          p_token?: string
+          p_user_id: string
+        }
+        Returns: {
+          role: Database["public"]["Enums"]["user_role"]
+          tenant_id: string
+        }[]
+      }
       _employee_advance_cash_leg: {
         Args: {
           p_account: string
