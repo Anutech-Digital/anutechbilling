@@ -12,7 +12,8 @@
  *
  *   1. SECRET_COLUMNS here == `secret_cols` in 09.
  *   2. 09's secret-table branch runs before its generic table-level grant and skips it.
- *   3. supabase/tests/secret_columns_hidden.test.sql carries a byte-identical copy of 09's block
+ *   3. supabase/tests/secret_columns_hidden.test.sql (and the r840 / r1559 SQL tests) carry a
+ *      byte-identical copy of 09's block
  *      (CI never applies cloudsql/ files, so the SQL test runs the copy).
  *   4. Replaying baseline + every migration in file order, no secret table ends with a
  *      table-level SELECT for authenticated/anon, and no column grant names a secret column.
@@ -29,6 +30,7 @@ import { readdirSync, readFileSync } from "node:fs";
 const NINE = "supabase/cloudsql/09-grant-what-policies-allow.sql";
 const SQL_TEST = "supabase/tests/secret_columns_hidden.test.sql";
 const SQL_TEST_R840 = "supabase/tests/r840_vault_ciphertext_hidden.test.sql";
+const SQL_TEST_R1559 = "supabase/tests/r1559_followup_columns_login_grants.test.sql";
 const MIG_DIR = "supabase/migrations";
 const BASELINE = "supabase/baseline.sql";
 
@@ -133,6 +135,14 @@ describe("R-833 secret columns", () => {
   it("the SQL test runs a byte-identical copy of 09's block", () => {
     expect(blockOf(read(SQL_TEST))).toBe(blockOf(read(NINE)));
     expect(blockOf(read(SQL_TEST_R840))).toBe(blockOf(read(NINE)));
+    expect(blockOf(read(SQL_TEST_R1559))).toBe(blockOf(read(NINE)));
+  });
+
+  it("R-1622: 09 keeps payment_followups INSERT/UPDATE as column grants (R-1559)", () => {
+    const m = /colgrant_tables text\[\] := array\[([\s\S]*?)\];/.exec(read(NINE));
+    expect(m, "09 has no colgrant_tables array").toBeTruthy();
+    const list = [...m![1].matchAll(/'([a-z_0-9]+)'/g)].map((x) => x[1]);
+    expect(list).toContain("payment_followups");
   });
 
   it("after baseline + every migration, no browser role has table-level SELECT on a secret table", () => {

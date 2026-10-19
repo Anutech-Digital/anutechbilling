@@ -45,7 +45,15 @@
 --   Safe to re-run: GRANT/REVOKE are idempotent. Prints every grant it makes (NOTICE).
 --   Run as the table owner (resellersos_migration):
 --     gcloud sql import sql <instance> gs://…/09-grant-what-policies-allow.sql --database=resellersos --user=resellersos_migration
---   Test: supabase/tests/secret_columns_hidden.test.sql runs this same block (kept identical
+--
+-- COLUMN-GRANTED TABLES (R-1622, 19 Oct 2026)
+--   A table in `colgrant_tables` (payment_followups, R-1559) has no secret column but its
+--   INSERT/UPDATE are column lists on purpose. It gets table-level SELECT/DELETE as usual, never
+--   INSERT/UPDATE; a table-level INSERT/UPDATE/REFERENCES already held on top of its column
+--   grants (what every run before R-1622 left on staging) is revoked and the columns put back.
+--
+--   Test: supabase/tests/secret_columns_hidden.test.sql, r840_vault_ciphertext_hidden.test.sql
+--   and r1559_followup_columns_login_grants.test.sql run this same block (kept identical
 --   by src/lib/security/secret-columns.test.ts).
 -- ============================================================================
 -- BEGIN 09 GRANT BLOCK
@@ -68,6 +76,12 @@ declare
     'vault_passwords.username_ciphertext',
     'vault_passwords.password_ciphertext',
     'vault_passwords.notes_ciphertext'
+  ];
+  -- R-1622: tables whose INSERT/UPDATE are COLUMN grants by design (no secret column — SELECT
+  -- and DELETE stay table-level). A table-level INSERT/UPDATE here would undo the column list.
+  -- payment_followups: R-1559 (created_by / created_at / tenant_id / customer_id not writable).
+  colgrant_tables text[] := array[
+    'payment_followups'
   ];
   secret_tables text[];
   sel_needed text[] := '{}';   -- "table|role" pairs whose policies cover SELECT
@@ -113,6 +127,25 @@ begin
       end if;
       if rec.polcmd in ('a', 'w', '*') then
         raise notice 'secret columns: no table-level % on % for % (its migrations grant columns)', priv, rec.relname, rec.rolname;
+      end if;
+      continue;
+    end if;
+
+    -- R-1622: column-granted tables — table-level SELECT/DELETE as usual, never INSERT/UPDATE.
+    if rec.relname = any(colgrant_tables) then
+      foreach wpriv in array array['SELECT', 'DELETE'] loop
+        continue when not (rec.polcmd = '*' or (rec.polcmd = 'r' and wpriv = 'SELECT') or (rec.polcmd = 'd' and wpriv = 'DELETE'));
+        continue when has_table_privilege(rec.rolname, rec.oid, wpriv);
+        begin
+          execute format('grant %s on public.%I to %I', lower(wpriv), rec.relname, rec.rolname);
+          raise notice 'granted % on % to %', lower(wpriv), rec.relname, rec.rolname;
+          n := n + 1;
+        exception when insufficient_privilege then
+          raise notice 'SKIPPED % on % (not owner — run this file again as postgres for it)', lower(wpriv), rec.relname;
+        end;
+      end loop;
+      if rec.polcmd in ('a', 'w', '*') then
+        raise notice 'column grants: no table-level % on % for % (its migrations grant columns)', priv, rec.relname, rec.rolname;
       end if;
       continue;
     end if;
@@ -198,6 +231,38 @@ begin
       end loop;
     exception when insufficient_privilege then
       raise notice 'SKIPPED secret-column check on % (not owner — run this file again as postgres for it)', t;
+    end;
+  end loop;
+
+  -- R-1622: column-granted tables — a table-level INSERT/UPDATE/REFERENCES on top of the
+  -- column grants (what this file did on every run before R-1622) is revoked, columns kept.
+  foreach t in array colgrant_tables loop
+    select c.oid into v_oid
+      from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+     where ns.nspname = 'public' and c.relname = t and c.relkind = 'r';
+    continue when v_oid is null;
+    begin
+      foreach v_role in array array['authenticated', 'anon'] loop
+        foreach wpriv in array array['INSERT', 'UPDATE', 'REFERENCES'] loop
+          continue when not has_table_privilege(v_role, v_oid, wpriv);
+          select string_agg(quote_ident(a.attname), ', ' order by a.attnum) into v_cols
+            from pg_attribute a cross join lateral aclexplode(a.attacl) x
+           where a.attrelid = v_oid and a.attnum > 0 and not a.attisdropped
+             and x.grantee = (select oid from pg_roles where rolname = v_role)
+             and x.privilege_type = wpriv;
+          if v_cols is null then
+            -- No column grants (its migration has not run here) — revoking would block every write.
+            raise notice 'NOTE table-level % on % for % kept (no column grants — run its migration first)', lower(wpriv), t, v_role;
+            continue;
+          end if;
+          execute format('revoke %s on table public.%I from %I', wpriv, t, v_role);  -- also drops its column grants
+          execute format('grant %s (%s) on public.%I to %I', wpriv, v_cols, t, v_role);
+          raise notice 'revoked table-level % on % from % (kept its column grants)', lower(wpriv), t, v_role;
+          n := n + 1;
+        end loop;
+      end loop;
+    exception when insufficient_privilege then
+      raise notice 'SKIPPED column-grant check on % (not owner — run this file again as postgres for it)', t;
     end;
   end loop;
 
