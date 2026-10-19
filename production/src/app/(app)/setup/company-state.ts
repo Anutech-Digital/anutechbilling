@@ -49,3 +49,6 @@ export function resolveCompanyState(
   const code = normalizeStateCode(chosenCode) ?? stateCodeFromGstin(gstin);
   return code ? { code, name: GST_STATE_BY_CODE[code] } : null;
 }
+
+/* R-1128: lives in lib/gst so the tenant save hook and server routes share it. */
+export { companyGstinStateConflict } from "@/lib/gst/gstin-state";

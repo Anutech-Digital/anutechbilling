@@ -17,7 +17,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode } from "../setup/company-state";
+import { GST_STATE_OPTIONS, companyGstinStateConflict, initialStateCode, normalizeStateCode } from "../setup/company-state";
 import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode } from "../setup/invoice-code-field";
 import { invoiceCodeProblem, normalizeInvoiceCode } from "../setup/invoice-code";
 import { useForm } from "react-hook-form";
@@ -144,6 +144,10 @@ const companySchema = z.object({
     .int("Whole days only")
     .min(0, "Cannot be negative")
     .max(30, "Max 30 days"),
+}).superRefine((v, ctx) => {
+  /* R-1128: the state must be the one the GSTIN was issued in — it decides CGST/SGST vs IGST. */
+  const conflict = companyGstinStateConflict(v.state_code, v.gstin);
+  if (conflict) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state_code"], message: conflict.message });
 });
 type CompanyForm = z.infer<typeof companySchema>;
 
@@ -197,6 +201,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
   // First 2 digits of a GSTIN encode the state per GSTN master list.
   // Mark fields dirty so the form's "Save changes" button activates.
   const watchedGstin = watch("gstin");
+  /* R-1128: shown live under the state select, with a one-press fix. */
+  const stateConflict = companyGstinStateConflict(watch("state_code"), watchedGstin);
   React.useEffect(() => {
     const { code, name } = gstStateFromGstin(watchedGstin ?? "");
     if (code && name) setValue("state_code", code, { shouldDirty: true, shouldValidate: true });
@@ -319,8 +325,8 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                 <Field htmlFor="settings-registered-state" label="Registered state">
                   <select id="settings-registered-state"
                     className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber"
-                    aria-invalid={!!errors.state_code}
-                    aria-describedby={errors.state_code ? "settings-registered-state-error" : undefined}
+                    aria-invalid={!!errors.state_code || !!stateConflict}
+                    aria-describedby={errors.state_code || stateConflict ? "settings-registered-state-error" : undefined}
                     {...register("state_code")}
                   >
                     <option value="" disabled>Choose your state</option>
@@ -330,10 +336,16 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                       </option>
                     ))}
                   </select>
-                  {errors.state_code?.message && (
+                  {(stateConflict?.message ?? errors.state_code?.message) && (
                     <p id="settings-registered-state-error" className="mt-1 text-3xs text-rose">
-                      {errors.state_code.message}
+                      {stateConflict?.message ?? errors.state_code?.message}
                     </p>
+                  )}
+                  {stateConflict && (
+                    <Button type="button" variant="default" size="sm" className="mt-1"
+                      onClick={() => setValue("state_code", stateConflict.gstinCode, { shouldDirty: true, shouldValidate: true })}>
+                      Set state from GSTIN ({stateConflict.gstinState})
+                    </Button>
                   )}
                 </Field>
                 <Field htmlFor="settings-pin-code" label="PIN code">

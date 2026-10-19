@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform";
 import type { TablesUpdate } from "@/lib/supabase/database.types";
+import { companyGstinStateConflict, stateCodeFromName } from "@/lib/gst/gstin-state";
 
 /**
  * R-881: tables whose rows mean "this workspace has real business data". A workspace with any of
@@ -152,7 +153,26 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   if (name !== undefined) updates.name = name.trim();
   if (tier !== undefined) updates.tier = tier;
   if (gstin !== undefined) updates.gstin = gstin ? gstin.trim().toUpperCase() : null;
-  if (state !== undefined) updates.state = state ? state.trim() : null;
+  if (state !== undefined) {
+    updates.state = state ? state.trim() : null;
+    /* R-1128: keep state_code with the name (R-250 rule) — the invoice reads only the code. */
+    const code = stateCodeFromName(updates.state);
+    if (code) updates.state_code = code;
+  }
+
+  /* R-1128: the state must be the one the GSTIN was issued in (first 2 digits) — fail closed:
+     if the current row cannot be read to check, nothing is saved. */
+  if (gstin !== undefined || state !== undefined) {
+    const { data: current, error: readErr } = await admin
+      .from("tenants").select("gstin, state, state_code").eq("id", tenantId).maybeSingle();
+    if (readErr || !current) {
+      return NextResponse.json({ error: "Could not read this workspace to check its GSTIN and state, so nothing was saved. Refresh the page and try again." }, { status: 500 });
+    }
+    const finalGstin = updates.gstin !== undefined ? updates.gstin : current.gstin;
+    const finalState = updates.state_code ?? (updates.state !== undefined ? updates.state : current.state_code ?? current.state);
+    const conflict = companyGstinStateConflict(finalState, finalGstin);
+    if (conflict) return NextResponse.json({ error: conflict.message }, { status: 400 });
+  }
   if (phone !== undefined) updates.phone = phone ? phone.trim() : null;
   if (activated !== undefined) {
     updates.setup_completed_at = activated ? new Date().toISOString() : null;
