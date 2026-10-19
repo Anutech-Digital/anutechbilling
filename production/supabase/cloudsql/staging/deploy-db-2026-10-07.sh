@@ -181,14 +181,16 @@ done
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 {
   echo 'DO $$ DECLARE r text; BEGIN'
-  echo '  SELECT concat_ws('"' '"
+  # R-1622: concat_ws() takes at most 100 arguments; at 134 migrations the PEEK failed and the
+  # script stopped silently at step 2. array_to_string(ARRAY[...]) has no such limit.
+  echo "  SELECT array_to_string(ARRAY[''::text"
   sep=","
   for m in "${MIGS[@]}"; do
     printf "   %s'%s=' || (%s)::text\n" "$sep" "$(field "$m" 1)" "$(field "$m" 4)"
   done
   # apply() rewrites auth.uid() to these helpers — they must exist first (R-161).
   echo "   ,'cuid=' || (exists(select 1 from pg_proc where proname='current_user_id' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='current_request_role' and pronamespace='public'::regnamespace))::text"
-  echo '  ) INTO r;'
+  echo "  ]::text[], ' ') INTO r;"
   echo "  RAISE EXCEPTION 'PEEK %', r; END \$\$;"
 } > "$TMP/peek-staging.sql"
 printf "notify pgrst, 'reload schema';\n" > "$TMP/reload.sql"
