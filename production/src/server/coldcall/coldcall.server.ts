@@ -140,9 +140,9 @@ export interface ContactRow {
   leadId: string | null;
 }
 
-export async function listContacts(run: Run, campaignId: string, status: string | null): Promise<ContactRow[]> {
+export async function listContacts(run: Run, campaignId: string, status: string[] | null): Promise<ContactRow[]> {
   const rows = await run((tx) => tx.cold_call_contacts.findMany({
-    where: { campaign_id: campaignId, ...(status ? { status } : {}) },
+    where: { campaign_id: campaignId, ...(status ? { status: { in: status } } : {}) },
     orderBy: [{ updated_at: "desc" }],
     take: 500,
   }));

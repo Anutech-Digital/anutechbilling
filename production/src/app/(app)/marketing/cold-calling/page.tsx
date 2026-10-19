@@ -5,6 +5,9 @@
  * call came to lands on its row; a person moves the interested ones into Sales & Pipeline with a
  * button — nothing enters the pipeline on its own (Abhishek, 19 Oct 2026). DND numbers are kept
  * on the list, marked, and never called.
+ *
+ * Laid out as three numbered steps (add numbers → start → move the interested ones) so a
+ * salesperson who has never seen it knows what to press next (Abhishek, 19 Oct: "more easy").
  */
 "use client";
 
@@ -16,8 +19,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import {
@@ -28,27 +31,56 @@ import {
 type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline";
 
 const STATUS: Record<string, { label: string; kind: BadgeKind }> = {
-  pending:        { label: "Waiting",         kind: "muted" },
-  calling:        { label: "Calling…",        kind: "info" },
-  interested:     { label: "Interested",      kind: "success" },
-  callback:       { label: "Call back",       kind: "warning" },
-  answered:       { label: "Answered",        kind: "outline" },
-  not_interested: { label: "Not interested",  kind: "muted" },
-  no_answer:      { label: "No answer",       kind: "muted" },
-  failed:         { label: "Failed",          kind: "danger" },
+  pending:        { label: "Waiting",          kind: "muted" },
+  calling:        { label: "Calling now",      kind: "info" },
+  interested:     { label: "Interested",       kind: "success" },
+  callback:       { label: "Call back",        kind: "warning" },
+  answered:       { label: "Talked",           kind: "outline" },
+  not_interested: { label: "Not interested",   kind: "muted" },
+  no_answer:      { label: "No answer",        kind: "muted" },
+  failed:         { label: "Call failed",      kind: "danger" },
   skipped_dnd:    { label: "DND — not called", kind: "muted" },
-  moved:          { label: "In pipeline",     kind: "success" },
+  moved:          { label: "In pipeline",      kind: "success" },
 };
 
 const CAMPAIGN_STATUS: Record<ColdCampaign["status"], { label: string; kind: BadgeKind }> = {
   draft:   { label: "Not started", kind: "muted" },
-  running: { label: "Running",     kind: "success" },
+  running: { label: "Calling",     kind: "success" },
   paused:  { label: "Paused",      kind: "warning" },
   done:    { label: "Finished",    kind: "outline" },
 };
 
+/** The filter boxes. A box may cover a few statuses ("Waiting" = not yet rung + ringing now). */
+const FILTERS = [
+  { id: "all",            label: "All numbers",    statuses: [] as string[],                  tone: "ink" },
+  { id: "interested",     label: "Interested",     statuses: ["interested"],                  tone: "emerald" },
+  { id: "callback",       label: "Call back",      statuses: ["callback"],                    tone: "amber" },
+  { id: "answered",       label: "Talked",         statuses: ["answered"],                    tone: "ink" },
+  { id: "waiting",        label: "Waiting",        statuses: ["pending", "calling"],          tone: "ink" },
+  { id: "not_reached",    label: "Not reached",    statuses: ["no_answer", "failed"],         tone: "ink" },
+  { id: "not_interested", label: "Not interested", statuses: ["not_interested"],              tone: "ink" },
+  { id: "skipped_dnd",    label: "DND",            statuses: ["skipped_dnd"],                 tone: "ink" },
+  { id: "moved",          label: "In pipeline",    statuses: ["moved"],                       tone: "emerald" },
+] as const;
+type FilterId = (typeof FILTERS)[number]["id"];
+
 /** Statuses a person may move into the pipeline — anyone who actually spoke to the agent. */
 const MOVABLE = new Set(["interested", "callback", "answered"]);
+
+const SAMPLE_CSV =
+  "Phone,Name,Company,City,DND\n" +
+  "9876543210,Rahul Sharma,Sharma Traders,Delhi,\n" +
+  "+91 98111 22334,Neha Gupta,Gupta & Co CA,Noida,\n" +
+  "9988776655,Amit Verma,Verma Logistics,Gurugram,Yes\n";
+
+function downloadSample() {
+  const url = URL.createObjectURL(new Blob([SAMPLE_CSV], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "cold-calling-sample.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function failToast(err: unknown, fallback: string) {
   if (err instanceof ColdCallError) {
@@ -56,6 +88,14 @@ function failToast(err: unknown, fallback: string) {
   } else {
     toast.error(fallback, { description: "Check your internet connection and try again." });
   }
+}
+
+function total(c: ColdCampaign): number {
+  return Object.values(c.counts).reduce((a, b) => a + b, 0);
+}
+
+function countOf(c: ColdCampaign, statuses: readonly string[]): number {
+  return statuses.length === 0 ? total(c) : statuses.reduce((n, s) => n + (c.counts[s] ?? 0), 0);
 }
 
 export default function ColdCallingPage() {
@@ -69,18 +109,18 @@ export default function ColdCallingPage() {
   const notConnected = agents.error instanceof ColdCallError && agents.error.status === 409 ? agents.error : null;
 
   return (
-    <div className="mx-auto max-w-[1400px] p-4 md:p-6 lg:p-8 space-y-5">
-      <header className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
+    <div className="mx-auto max-w-[1240px] p-4 md:p-6 lg:p-8 space-y-6">
+      <header className="flex items-end justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing Hub</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Cold Calling</h1>
-          <p className="text-sm text-ink-3 mt-1 max-w-3xl">
-            Import a list of numbers, pick an AI agent and start — the agent calls Monday to Friday within the hours below
-            and the daily limit. Interested people stay here until you press <strong>Move to Sales &amp; Pipeline</strong>.
-            Numbers marked DND in your file are never called.
+          <p className="text-sm text-ink-3 mt-1 max-w-2xl">
+            Your AI agent calls a list of numbers for you. You pick the interested ones and send them to Sales &amp; Pipeline.
           </p>
         </div>
-        {!notConnected && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New campaign</Button>}
+        {!notConnected && !creating && (
+          <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New campaign</Button>
+        )}
       </header>
 
       {notConnected && (
@@ -99,51 +139,47 @@ export default function ColdCallingPage() {
       )}
 
       {campaigns.isLoading ? (
-        <Skeleton className="h-24 rounded-lg" />
-      ) : list.length === 0 && !creating && !notConnected ? (
-        <Card className="p-6">
-          <EmptyState
-            icon="phone"
-            title="No calling campaigns yet"
-            body="Start one, import your Excel list (saved as CSV) and the AI agent calls it for you."
-            action={<Button variant="primary" onClick={() => setCreating(true)}>New campaign</Button>}
-          />
-        </Card>
+        <Skeleton className="h-48 rounded-lg" />
+      ) : list.length === 0 ? (
+        !creating && !notConnected && (
+          <Card className="p-6">
+            <EmptyState
+              icon="phone"
+              title="No calling campaigns yet"
+              body="A campaign is one list of numbers and one AI agent. Create one, add your numbers, and press Start."
+              action={<Button variant="primary" icon="plus" onClick={() => setCreating(true)}>Create your first campaign</Button>}
+            />
+          </Card>
+        )
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-          <ul className="space-y-2" aria-label="Campaigns">
-            {list.map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(c.id)}
-                  aria-pressed={selected?.id === c.id}
-                  className={cn(
-                    "w-full text-left rounded-lg border p-3 transition-colors focus:outline-none focus:ring-2 focus:ring-amber/40",
-                    selected?.id === c.id ? "border-amber bg-amber-soft/40" : "border-hairline bg-paper hover:bg-paper-2",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-ink truncate">{c.name}</span>
-                    <Badge kind={CAMPAIGN_STATUS[c.status].kind} size="sm">{CAMPAIGN_STATUS[c.status].label}</Badge>
-                  </div>
-                  <p className="text-xs text-ink-3 mt-1 truncate">Agent: {c.agentName ?? c.agentId}</p>
-                  <p className="text-xs text-ink-3 mt-0.5">
-                    {total(c)} numbers · <span className="text-emerald">{c.counts.interested ?? 0} interested</span> · today {c.calledToday}/{c.dailyLimit}
-                  </p>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {selected && <CampaignPanel campaign={selected} />}
-        </div>
+        <>
+          {list.length > 1 && (
+            <nav aria-label="Campaigns" className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+              {list.map((c) => {
+                const on = selected?.id === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSelectedId(c.id)}
+                    aria-pressed={on}
+                    className={cn(
+                      "shrink-0 rounded-full border px-4 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-amber/40",
+                      on ? "border-amber bg-amber-soft/50 text-ink font-medium" : "border-hairline bg-paper text-ink-2 hover:bg-paper-2",
+                    )}
+                  >
+                    {c.name}
+                    <span className="ml-2 text-xs text-ink-3">{CAMPAIGN_STATUS[c.status].label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
+          {selected && <CampaignPanel key={selected.id} campaign={selected} />}
+        </>
       )}
     </div>
   );
-}
-
-function total(c: ColdCampaign): number {
-  return Object.values(c.counts).reduce((a, b) => a + b, 0);
 }
 
 function NewCampaignForm(props: {
@@ -169,11 +205,11 @@ function NewCampaignForm(props: {
     if (!name.trim()) { toast.error("Give the campaign a name.", { description: "For example: Delhi CA firms — October." }); return; }
     if (!agentId) { toast.error("Pick an agent.", { description: "Agents come from your Bolna account." }); return; }
     if (!Number.isInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > 1000) {
-      toast.error("Daily limit must be 1 to 1,000.", { description: "50 a day is a good start." }); return;
+      toast.error("Calls per day must be 1 to 1,000.", { description: "50 a day is a good start." }); return;
     }
     try {
       const r = await create.mutateAsync({ name: name.trim(), agentId, dailyLimit });
-      toast.success("Campaign created", { description: "Now import your list of numbers." });
+      toast.success("Campaign created", { description: "Next: add your list of numbers." });
       props.onDone(r.id);
     } catch (err) {
       failToast(err, "Could not create the campaign.");
@@ -181,55 +217,93 @@ function NewCampaignForm(props: {
   };
 
   return (
-    <Card className="p-5">
-      <form onSubmit={submit} className="grid gap-4 md:grid-cols-[1fr_1fr_160px_auto] md:items-end">
+    <Card className="p-5 md:p-6">
+      <h2 className="font-serif text-xl">New campaign</h2>
+      <p className="text-sm text-ink-3 mt-0.5">Three details — you can add numbers right after.</p>
+      <form onSubmit={submit} className="mt-4 grid gap-4 md:grid-cols-3">
         <div>
-          <label htmlFor="cc-name" className="block text-xs font-medium text-ink-3 mb-1.5">Campaign name</label>
-          <Input id="cc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Delhi CA firms — October" maxLength={120} />
+          <label htmlFor="cc-name" className="block text-sm font-medium text-ink mb-1.5">Campaign name</label>
+          <Input id="cc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Delhi CA firms — October" maxLength={120} autoFocus />
+          <p className="text-xs text-ink-3 mt-1">Only for you — the customer never hears it.</p>
         </div>
         <div>
-          <label htmlFor="cc-agent" className="block text-xs font-medium text-ink-3 mb-1.5">AI agent</label>
+          <label htmlFor="cc-agent" className="block text-sm font-medium text-ink mb-1.5">Which AI agent calls</label>
           <select
             id="cc-agent"
             value={agentId}
             onChange={(e) => setAgentId(e.target.value)}
             disabled={props.loadingAgents}
-            className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+            className="w-full h-9 rounded-md border border-hairline bg-paper px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
           >
             {props.loadingAgents && <option value="">Loading agents…</option>}
             {props.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
+          <p className="text-xs text-ink-3 mt-1">Agents come from your Bolna account.</p>
         </div>
         <div>
-          <label htmlFor="cc-limit" className="block text-xs font-medium text-ink-3 mb-1.5">Calls per day</label>
+          <label htmlFor="cc-limit" className="block text-sm font-medium text-ink mb-1.5">Calls per day</label>
           <Input id="cc-limit" type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(e.target.value)} />
+          <p className="text-xs text-ink-3 mt-1">The agent stops for the day at this number.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="md:col-span-3 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => props.onDone(null)}>Cancel</Button>
-          <Button type="submit" variant="primary" loading={create.isPending}>Create</Button>
+          <Button type="submit" variant="primary" loading={create.isPending}>Create campaign</Button>
         </div>
       </form>
     </Card>
   );
 }
 
-const TABS = ["all", "interested", "callback", "answered", "pending", "calling", "no_answer", "not_interested", "skipped_dnd", "moved", "failed"] as const;
+/** One numbered step: a circle that turns into a tick when done. */
+function Step(props: { n: number; done: boolean; active: boolean; title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-4 flex flex-col gap-3 min-w-0",
+        props.active ? "border-amber bg-amber-soft/30" : "border-hairline bg-paper",
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className={cn(
+            "grid place-items-center h-7 w-7 rounded-full text-sm font-semibold shrink-0",
+            props.done ? "bg-emerald text-white" : props.active ? "bg-amber text-white" : "bg-paper-2 text-ink-3",
+          )}
+        >
+          {props.done ? <Icon name="check" size={14} /> : props.n}
+        </span>
+        <h3 className="font-medium text-ink">
+          <span className="sr-only">Step {props.n}{props.done ? " (done)" : ""}: </span>{props.title}
+        </h3>
+      </div>
+      {props.children}
+    </div>
+  );
+}
 
 function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
-  const [tab, setTab] = React.useState<(typeof TABS)[number]>("all");
-  const contacts = useColdContacts(campaign.id, tab === "all" ? null : tab);
+  const [filter, setFilter] = React.useState<FilterId>("all");
+  const active = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
+  const contacts = useColdContacts(campaign.id, active.statuses.length ? active.statuses.join(",") : null);
   const update = useUpdateCampaign();
   const importList = useImportList();
   const tick = useTick();
   const fileRef = React.useRef<HTMLInputElement>(null);
 
+  const numbers = total(campaign);
+  const reached = countOf(campaign, ["interested", "callback", "answered", "not_interested", "moved"]);
+  const toMove = countOf(campaign, ["interested", "callback"]);
+  const running = campaign.status === "running";
+  const started = campaign.status !== "draft";
+
   const setStatus = async (status: "running" | "paused" | "done") => {
     try {
       await update.mutateAsync({ id: campaign.id, status });
-      toast.success(status === "running" ? "Campaign started" : status === "paused" ? "Campaign paused" : "Campaign finished", {
+      toast.success(status === "running" ? "Calling started" : status === "paused" ? "Calling paused" : "Campaign finished", {
         description: status === "running"
-          ? `Calls go out Mon–Fri ${campaign.windowStart}:00–${campaign.windowEnd}:00, up to ${campaign.dailyLimit} a day.`
-          : "No new calls will be placed.",
+          ? `The agent calls Mon–Fri ${campaign.windowStart}:00–${campaign.windowEnd}:00, up to ${campaign.dailyLimit} a day. Results show up below.`
+          : "No new calls will be placed. Press Start again any time.",
       });
     } catch (err) { failToast(err, "Could not change the campaign."); }
   };
@@ -247,7 +321,7 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
         r.invalidCount ? `${r.invalidCount} unreadable (lines ${r.invalidLines.slice(0, 5).join(", ")}${r.invalidCount > 5 ? "…" : ""})` : null,
         r.duplicatesInFile ? `${r.duplicatesInFile} repeated in the file` : null,
       ].filter(Boolean);
-      toast.success(`${r.added} numbers added`, { description: parts.join(" · ") || "Start the campaign when you are ready." });
+      toast.success(`${r.added} numbers added`, { description: parts.join(" · ") || "Next: press Start calling." });
     } catch (err) { failToast(err, "Could not import the file."); }
   };
 
@@ -258,59 +332,141 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
     } catch (err) { failToast(err, "Could not check the calls."); }
   };
 
-  const count = (s: string) => campaign.counts[s] ?? 0;
-
   return (
-    <Card className="p-4 md:p-5 space-y-4 min-w-0">
+    <Card className="p-4 md:p-6 space-y-6 min-w-0">
+      {/* Title + what this campaign is set to */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
-          <h2 className="font-serif text-2xl leading-tight truncate">{campaign.name}</h2>
-          <p className="text-xs text-ink-3 mt-1">
-            Agent <strong className="text-ink">{campaign.agentName ?? campaign.agentId}</strong> · Mon–Fri {campaign.windowStart}:00–{campaign.windowEnd}:00 IST ·
-            {" "}{campaign.calledToday} of {campaign.dailyLimit} calls today
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="font-serif text-2xl leading-tight truncate">{campaign.name}</h2>
+            <Badge kind={CAMPAIGN_STATUS[campaign.status].kind} dot={running}>{CAMPAIGN_STATUS[campaign.status].label}</Badge>
+          </div>
+          <p className="text-sm text-ink-3 mt-1">
+            Agent <strong className="text-ink font-medium">{campaign.agentName ?? campaign.agentId}</strong>
+            <span aria-hidden> · </span>Mon–Fri {campaign.windowStart}:00–{campaign.windowEnd}:00 IST
+            <span aria-hidden> · </span>{campaign.calledToday} of {campaign.dailyLimit} calls today
           </p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" />
-          <Button icon="upload" onClick={() => fileRef.current?.click()} loading={importList.isPending}>Import CSV</Button>
-          <Button icon="refresh" onClick={runNow} loading={tick.isPending} title="Read finished calls from the agent and place the next calls now">Check &amp; call now</Button>
-          {campaign.status === "running"
-            ? <Button onClick={() => setStatus("paused")} loading={update.isPending}>Pause</Button>
-            : campaign.status !== "done"
-              ? <Button variant="primary" onClick={() => setStatus("running")} loading={update.isPending} disabled={total(campaign) === 0}
-                  title={total(campaign) === 0 ? "Import a list first" : undefined}>Start calling</Button>
-              : null}
-        </div>
+        {started && (
+          <Button size="sm" variant="ghost" icon="refresh" onClick={runNow} loading={tick.isPending}
+            title="Fetch finished calls from the agent now and place the next ones">
+            Refresh results
+          </Button>
+        )}
       </div>
-      <p className="text-xs text-ink-3">
-        CSV columns: <strong>Phone</strong> (required), Name, Company, City, DND (Yes = do not call). In Excel: File → Save As → CSV.
-      </p>
 
-      <TabBar
-        value={tab}
-        onChange={(v) => setTab(v as (typeof TABS)[number])}
-        items={TABS.map((t) => ({
-          id: t,
-          label: t === "all" ? "All" : STATUS[t].label,
-          count: t === "all" ? total(campaign) || undefined : count(t) || undefined,
-          dot: t === "interested" && count(t) ? "emerald" : undefined,
-        }))}
-      />
+      {/* The three steps */}
+      <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" tabIndex={-1} />
+      <div className="grid gap-3 md:grid-cols-3">
+        <Step n={1} title="Add numbers" done={numbers > 0} active={numbers === 0}>
+          <p className="text-sm text-ink-3">
+            {numbers > 0
+              ? <><strong className="text-ink">{numbers}</strong> numbers on the list. You can add more any time.</>
+              : <>Upload your Excel list saved as <strong>CSV</strong>. Only the <strong>Phone</strong> column is required.</>}
+          </p>
+          <div className="flex gap-2 flex-wrap mt-auto">
+            <Button size="sm" variant={numbers === 0 ? "primary" : "default"} icon="upload"
+              onClick={() => fileRef.current?.click()} loading={importList.isPending}>
+              {numbers === 0 ? "Upload list" : "Add more"}
+            </Button>
+            <Button size="sm" variant="ghost" icon="download" onClick={downloadSample}>Sample file</Button>
+          </div>
+        </Step>
 
-      {contacts.isLoading ? (
-        <Skeleton className="h-40 rounded-lg" />
-      ) : (contacts.data ?? []).length === 0 ? (
-        <EmptyState
-          icon="phone"
-          title={tab === "all" ? "No numbers on this list yet" : "Nobody here yet"}
-          body={tab === "all" ? "Import a CSV with a Phone column." : "Results appear here a minute or two after each call."}
-          action={tab === "all" ? <Button variant="primary" icon="upload" onClick={() => fileRef.current?.click()}>Import CSV</Button> : undefined}
-        />
-      ) : (
-        <ul className="divide-y divide-hairline rounded-lg border border-hairline" aria-label="Numbers on this list">
-          {(contacts.data ?? []).map((c) => <ContactItem key={c.id} contact={c} />)}
-        </ul>
-      )}
+        <Step n={2} title="Start calling" done={started && !running && campaign.status === "done"} active={numbers > 0 && !running && campaign.status !== "done"}>
+          <p className="text-sm text-ink-3">
+            {running
+              ? <>The agent is calling — <strong className="text-ink">{reached}</strong> people reached so far.</>
+              : campaign.status === "done"
+                ? <>Every number on the list has been called.</>
+                : campaign.status === "paused"
+                  ? <>Paused. No calls go out until you press Start.</>
+                  : <>The agent calls one by one, only Mon–Fri {campaign.windowStart}:00–{campaign.windowEnd}:00, up to {campaign.dailyLimit} a day.</>}
+          </p>
+          <div className="flex gap-2 flex-wrap mt-auto">
+            {running ? (
+              <Button size="sm" icon="square" onClick={() => setStatus("paused")} loading={update.isPending}>Pause</Button>
+            ) : campaign.status !== "done" ? (
+              numbers === 0 ? (
+                <p className="text-xs text-ink-3">Add numbers first (step 1).</p>
+              ) : (
+                <Button size="sm" variant="primary" icon="play" onClick={() => setStatus("running")} loading={update.isPending}>
+                  {campaign.status === "paused" ? "Start again" : "Start calling"}
+                </Button>
+              )
+            ) : null}
+          </div>
+        </Step>
+
+        <Step n={3} title="Send interested ones to Sales" done={started && countOf(campaign, ["moved"]) > 0 && toMove === 0} active={toMove > 0}>
+          <p className="text-sm text-ink-3">
+            {toMove > 0
+              ? <><strong className="text-emerald">{toMove}</strong> {toMove === 1 ? "person wants" : "people want"} to talk. Open them and press <strong>Move to Sales &amp; Pipeline</strong>.</>
+              : <>When someone is interested, they show up here. Nothing goes to the pipeline without your click.</>}
+          </p>
+          <div className="flex gap-2 flex-wrap mt-auto">
+            <Button size="sm" variant={toMove > 0 ? "primary" : "default"} icon="users"
+              onClick={() => setFilter("interested")} disabled={toMove === 0 && countOf(campaign, ["interested"]) === 0}
+              title={toMove === 0 ? "Nobody interested yet" : undefined}>
+              Show interested
+            </Button>
+          </div>
+        </Step>
+      </div>
+
+      {/* Results: each box is also a filter */}
+      <section aria-label="Results" className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-medium text-ink">Results</h3>
+          <span className="text-xs text-ink-3">Click a box to filter the list</span>
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-5 xl:grid-cols-9 gap-2">
+          {FILTERS.map((f) => {
+            const n = countOf(campaign, f.statuses);
+            const on = filter === f.id;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilter(f.id)}
+                aria-pressed={on}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-amber/40",
+                  on ? "border-amber bg-amber-soft/40" : "border-hairline bg-paper hover:bg-paper-2",
+                )}
+              >
+                <span className={cn("block font-serif text-xl leading-none",
+                  n > 0 && f.tone === "emerald" ? "text-emerald" : n > 0 && f.tone === "amber" ? "text-amber" : "text-ink")}>
+                  {n}
+                </span>
+                <span className="block text-xs text-ink-3 mt-1 truncate">{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {contacts.isLoading ? (
+          <Skeleton className="h-40 rounded-lg" />
+        ) : (contacts.data ?? []).length === 0 ? (
+          <EmptyState
+            icon="phone"
+            title={filter === "all" ? "No numbers on this list yet" : `Nobody in “${active.label}” yet`}
+            body={filter === "all" ? "Upload a CSV with a Phone column — use the sample file if unsure." : "Results appear a minute or two after each call."}
+            action={filter === "all"
+              ? <Button variant="primary" icon="upload" onClick={() => fileRef.current?.click()}>Upload list</Button>
+              : <Button onClick={() => setFilter("all")}>Show all numbers</Button>}
+          />
+        ) : (
+          <div className="rounded-lg border border-hairline overflow-hidden">
+            <div className="hidden md:grid grid-cols-[minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] gap-3 px-4 py-2 bg-paper-2 text-xs font-medium text-ink-3">
+              <span>Person</span><span>Result</span><span>Last call</span><span className="text-right">Next step</span>
+            </div>
+            <ul className="divide-y divide-hairline" aria-label="Numbers on this list">
+              {(contacts.data ?? []).map((c) => <ContactItem key={c.id} contact={c} />)}
+            </ul>
+          </div>
+        )}
+      </section>
     </Card>
   );
 }
@@ -320,53 +476,65 @@ function ContactItem({ contact: c }: { contact: ColdContact }) {
   const move = useMoveToPipeline();
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
+  const hasDetail = !!(c.summary || c.transcript || c.error || (c.nextAttemptAt && c.status === "pending"));
 
   const doMove = async () => {
     try {
       const r = await move.mutateAsync(c.id);
       toast.success("Moved to Sales & Pipeline", {
-        description: `${title} is now a lead (${r.leadId}) with the call's summary.`,
+        description: `${title} is now a lead with the call's summary.`,
         action: { label: "Open lead", onClick: () => { window.location.href = `/leads?lead=${encodeURIComponent(r.leadId)}`; } },
       });
     } catch (err) { failToast(err, "Could not move it to the pipeline."); }
   };
 
   return (
-    <li className="p-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className="flex-1 min-w-[200px] text-left focus:outline-none focus:ring-2 focus:ring-amber/40 rounded"
-        >
-          <span className="font-medium text-ink">{title}</span>
-          {c.company && c.name && <span className="text-ink-3"> · {c.company}</span>}
-          <span className="block text-xs text-ink-3 font-mono">{c.phone}{c.city ? ` · ${c.city}` : ""}</span>
-        </button>
-        <Badge kind={s.kind} size="sm">{s.label}</Badge>
-        {c.seatsHeard ? <Badge kind="info" size="sm">{c.seatsHeard} users</Badge> : null}
-        <span className="text-xs text-ink-3 w-28 text-right">
-          {c.lastCalledAt ? formatDate(c.lastCalledAt) : "Not called"}{c.attempts > 1 ? ` · ${c.attempts}×` : ""}
+    <li className="px-4 py-3">
+      <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] md:gap-3 md:items-center">
+        <div className="min-w-0">
+          <p className="text-ink truncate">
+            <span className="font-medium">{title}</span>
+            {c.company && c.name && <span className="text-ink-3"> · {c.company}</span>}
+          </p>
+          <p className="text-xs text-ink-3 font-mono truncate">{c.phone}{c.city ? ` · ${c.city}` : ""}</p>
+          {c.summary && !open && <p className="text-xs text-ink-2 mt-1 line-clamp-1">“{c.summary}”</p>}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge kind={s.kind} size="sm">{s.label}</Badge>
+          {c.seatsHeard ? <Badge kind="info" size="sm">{c.seatsHeard} users</Badge> : null}
+        </div>
+        <span className="text-xs text-ink-3">
+          {c.lastCalledAt ? formatDate(c.lastCalledAt) : "Not called yet"}{c.attempts > 1 ? ` · ${c.attempts} tries` : ""}
         </span>
-        {MOVABLE.has(c.status) && (
-          <Button size="sm" variant="primary" onClick={doMove} loading={move.isPending}>Move to Sales &amp; Pipeline</Button>
-        )}
-        {c.status === "moved" && c.leadId && (
-          <Link href={`/leads?lead=${encodeURIComponent(c.leadId)}` as Route} className="text-xs text-amber underline">Open lead</Link>
-        )}
+        <div className="flex items-center gap-2 md:justify-end flex-wrap">
+          {hasDetail && (
+            <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+              {open ? "Hide call" : "See call"}
+            </Button>
+          )}
+          {MOVABLE.has(c.status) && (
+            <Button size="sm" variant="primary" icon="send" onClick={doMove} loading={move.isPending}>Move to Sales</Button>
+          )}
+          {c.status === "moved" && c.leadId && (
+            <Link href={`/leads?lead=${encodeURIComponent(c.leadId)}` as Route}
+              className="inline-flex items-center gap-1 text-sm text-amber hover:underline">
+              Open lead <Icon name="external" size={12} />
+            </Link>
+          )}
+        </div>
       </div>
       {open && (
-        <div className="mt-3 space-y-2 text-sm">
-          {c.summary && <p><span className="text-ink-3">Summary:</span> {c.summary}</p>}
+        <div className="mt-3 space-y-2 text-sm rounded-md bg-paper-2 p-3">
+          {c.summary && <p><span className="text-ink-3">What they said:</span> {c.summary}</p>}
           {c.error && <p className="text-rose-ink">Call failed: {c.error}</p>}
           {c.nextAttemptAt && c.status === "pending" && (
-            <p className="text-ink-3">No answer last time — tries again after {formatDate(c.nextAttemptAt)}.</p>
+            <p className="text-ink-3">No answer last time — the agent tries again after {formatDate(c.nextAttemptAt)}.</p>
           )}
-          {c.transcript ? (
-            <pre className="whitespace-pre-wrap rounded-md bg-paper-2 p-3 text-xs text-ink max-h-72 overflow-auto">{c.transcript}</pre>
-          ) : (
-            !c.summary && !c.error && <p className="text-ink-3">No conversation yet.</p>
+          {c.transcript && (
+            <details>
+              <summary className="cursor-pointer text-xs text-ink-3">Full conversation</summary>
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-ink max-h-72 overflow-auto">{c.transcript}</pre>
+            </details>
           )}
         </div>
       )}
