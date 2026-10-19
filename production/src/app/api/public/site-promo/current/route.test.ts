@@ -21,6 +21,9 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { GET } from "./route";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 const go = (qs = "") => GET(new NextRequest(`https://reselleros.anutech.in/api/public/site-promo/current${qs}`));
 

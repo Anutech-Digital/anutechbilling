@@ -29,12 +29,13 @@ import { verifyTrialToken } from "@/lib/hosting/trial-token";
 import { isTrialPlan } from "@/lib/hosting/trial-plan";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
 import { normalisePhone, splitName } from "@/lib/provisioning/domain-registration";
+import { websiteTenantId, WEBSITE_TENANT_MISSING_MESSAGE } from "@/lib/website-tenant";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 const TRIAL_DAYS = 15;
 const PKG_NAME: Record<string, string> = { starter: "Starter", standard: "Standard", plus: "Plus" };
 
@@ -58,6 +59,11 @@ function done(req: NextRequest, status: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) {
+    console.error("[trial/hosting/confirm] " + WEBSITE_TENANT_MISSING_MESSAGE);
+    return done(req, "error");
+  }
   const token = req.nextUrl.searchParams.get("token") || "";
   const verdict = verifyTrialToken(token);
   if (!verdict.ok) return done(req, verdict.reason === "expired" ? "expired" : "invalid");

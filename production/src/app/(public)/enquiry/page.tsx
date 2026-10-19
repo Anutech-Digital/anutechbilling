@@ -22,9 +22,10 @@
 import { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/server";
 import { EnquiryClient } from "./enquiry-client";
+import { websiteTenantId } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
+   shows nothing (and logs why), never the live tenant's data. */
 
 export const metadata: Metadata = {
   title: "Get in touch · Send us your requirement",
@@ -41,6 +42,8 @@ let brandCache: { brand: Brand; at: number } | null = null;
 
 async function fetchBrand(): Promise<Brand> {
   if (brandCache && Date.now() - brandCache.at < BRAND_TTL_MS) return brandCache.brand;
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return FALLBACK;
   try {
     const admin = createAdminClient();
     const { data, error } = await admin

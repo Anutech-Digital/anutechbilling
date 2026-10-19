@@ -35,6 +35,9 @@ vi.mock("@/lib/supabase/bare", () => ({ createBareClient: () => emptyQuery() }))
 import { POST } from "./route";
 import { isTrustedInternalCall } from "@/lib/security/turnstile-guard";
 import { resetRateLimiter } from "@/lib/security/rate-limit";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 const fetchMock = vi.fn();
 const EMAIL = "asha.rao@example.invalid";

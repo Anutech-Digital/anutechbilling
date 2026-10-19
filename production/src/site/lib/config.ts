@@ -9,13 +9,41 @@
  * the alias's number, or the dead service's number. (The numbers are deliberately not
  * written in this comment: that same test reads every file, including this one.)
  */
-export const RESELLEROS_URL =
-  process.env.NEXT_PUBLIC_RESELLEROS_URL?.trim() ||
-  // Use the STABLE domain, not the Cloud Run URL — the run.app host changes when
-  // the service moves region (asia-south1 → asia-southeast1 on 5 Sep 2026), but
-  // the custom domain is bound to whichever service is live. So live-price + enquiry
-  // self-calls, signup and demo links follow the domain and never break on a move.
-  "https://reselleros.anutech.in";
+/** The live product domain — the production default for RESELLEROS_URL. */
+export const LIVE_RESELLEROS_URL = "https://reselleros.anutech.in";
+
+/**
+ * R-1499 (19 Oct 2026): a laptop never defaults to LIVE. Pawan's local /quote press posted to the
+ * live app because this used to fall back to the live domain whatever the build. Now:
+ *   NEXT_PUBLIC_RESELLEROS_URL set → that (any build);
+ *   production build               → the live domain (unchanged);
+ *   anything else (next dev, test) → NEXT_PUBLIC_APP_URL, i.e. this same app, else localhost:3001.
+ * Explicit arguments (not a `process.env` object) so the browser bundle still inlines each
+ * literal NEXT_PUBLIC_* / NODE_ENV read.
+ */
+export function resolveResellerosUrl(
+  explicit: string | undefined,
+  nodeEnv: string | undefined,
+  appUrl: string | undefined,
+): string {
+  const set = explicit?.trim();
+  if (set) return set;
+  if (nodeEnv === "production") {
+    // Use the STABLE domain, not the Cloud Run URL — the run.app host changes when
+    // the service moves region (asia-south1 → asia-southeast1 on 5 Sep 2026), but
+    // the custom domain is bound to whichever service is live. So live-price + enquiry
+    // self-calls, signup and demo links follow the domain and never break on a move.
+    return LIVE_RESELLEROS_URL;
+  }
+  const local = appUrl?.trim().replace(/\/+$/, "");
+  return local || "http://localhost:3001";
+}
+
+export const RESELLEROS_URL = resolveResellerosUrl(
+  process.env.NEXT_PUBLIC_RESELLEROS_URL,
+  process.env.NODE_ENV,
+  process.env.NEXT_PUBLIC_APP_URL,
+);
 
 /**
  * The COMPANY site's canonical origin — anutech.in (R-520, 9 Oct 2026: Pardeep split the

@@ -29,6 +29,9 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import { fetchOrder } from "./fetch-order";
 import { thanksUrl } from "./thanks-url";
+/* R-1499: outside production the website tenant is never implied any more — name it, as a
+   deployment does. (The fixture is the same id the routes used to fall back to.) */
+process.env.BUY_PAGE_TENANT_ID ||= "fbb976f1-9090-4f10-9726-0901bd144e42";
 
 const TOKEN = "3f2b6c1e-8d4a-4b7e-9a51-2c7d8e9f0a1b";
 const paidRow = () => ({

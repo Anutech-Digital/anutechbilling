@@ -26,14 +26,15 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { enquiryStateName } from "@/app/(public)/enquiry/enquiry-outcome";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const APP_URL    = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 
 // The tenant that owns the public capture form. Explicit env var (shared with
 // the buy page) so it can't drift when new tenants get seeded.
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 // Human labels for the product a lead is interested in. Kept in sync with the
 // <select> options on the /enquiry form.
@@ -60,6 +61,8 @@ const enquirySchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   try {
     const body = await request.json();
     /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set.

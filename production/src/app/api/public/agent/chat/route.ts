@@ -39,9 +39,10 @@ import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
 import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,8 @@ function bareLog(): SupabaseClient | null {
 }
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   let body: unknown;
   try {
     body = await request.json();
