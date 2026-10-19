@@ -44,6 +44,8 @@ export interface QuoteLine {
    * this warning before it ever catches a real one.
    */
   commitment?: string | null;
+  /** R-1688: the builder's explicit One-time marker — never a subscription, whatever else the line says. */
+  one_time?: boolean | null;
 }
 
 export interface OrphanInput {
@@ -101,6 +103,8 @@ export type LineExpectation =
 export function subscriptionExpectation(l: QuoteLine): LineExpectation {
   const billable = (l.qty ?? 0) > 0 && (l.rate ?? 0) > 0 && Boolean((l.name ?? "").trim());
   if (!billable) return "one-off";
+  /* R-1688: the explicit marker wins, as in quote_line_is_subscription (migration 20261019164713). */
+  if (l.one_time === true) return "one-off";
   const c = l.commitment?.trim().toLowerCase();
   /* R-1668: a One-time line (setup, migration) is a one-off charge — never a subscription.
      file_invoiced_quote_subscriptions (R-1686) skips it the same way. */

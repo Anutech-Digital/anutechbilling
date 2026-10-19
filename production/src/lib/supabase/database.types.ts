@@ -323,6 +323,11 @@ export type QuoteLineItem = {
   list_rate?: number;
   cost: number;          // ₹ per seat wholesale, same unit as `rate` (for margin calc)
   commitment?: LineCommitment;  // billing/commitment tier (default "annual_yearly")
+  /** R-1688: a One-time line (migration, setup) — charged once, NEVER a subscription. The builder
+   *  writes it on every line saved with no commitment (lib/quotes/line-commit-choice.ts
+   *  markOneTimeLines); the line still has no `commitment`, so pricing stays price × qty (R-1668).
+   *  The database's quote_line_is_subscription() reads it on every filing path. */
+  one_time?: boolean;
   /** Service start date (YYYY-MM-DD). Blank ⇒ subscription starts on payment date.
    *  When set, record_payment uses it as the subscription start (renewal = start + term). */
   start_date?: string;

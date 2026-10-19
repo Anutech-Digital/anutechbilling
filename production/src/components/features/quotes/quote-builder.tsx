@@ -95,7 +95,7 @@ import {
 import { slabPricing, nextSlabUpsell } from "@/lib/quotes/volume-tiers";
 import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
-import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice } from "@/lib/quotes/line-commit-choice";
+import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
 import { quoteSeatCount } from "@/lib/quotes/seat-lines";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
@@ -1439,7 +1439,9 @@ function QuoteBuilderBody() {
         // record_payment stamps this on the subscription it creates today; per-line
         // domains also live on each line_item for the coming multi-sub fan-out.
         domain:        (lineItems.find((l) => l.domain?.trim())?.domain ?? "").trim() || null,
-        line_items:    lineItems,
+        /* R-1688: One-time lines (no commitment) are saved with `one_time: true`, so no filing
+           path (Invoice now, pay later, paid first) ever makes them a subscription. */
+        line_items:    markOneTimeLines(lineItems),
         subtotal,
         total_cost:    totalCost,
         // Discount is baked into each line's rate (see totals) — nothing applied on top.
