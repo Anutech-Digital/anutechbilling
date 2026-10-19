@@ -267,6 +267,7 @@ for m in "${MIGS[@]}"; do
 done
 if [ -n "$AFTER" ] && [ -z "$missing" ]; then
   say "DB READY — tell Claude 'db ho gaya' and it will push the app."
+  echo "If the app was deployed BEFORE this DB step: no restart needed — the data gateway re-reads the schema by itself within 30 s (R-1671)."
 else
   echo "Still missing:${missing:- (could not read staging)} — send Claude this screen."; exit 1
 fi

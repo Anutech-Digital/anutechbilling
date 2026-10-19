@@ -1,6 +1,7 @@
 /**
  * What exists in the `public` schema — tables, columns, keys, foreign keys, functions — read
- * once per server instance from the database itself.
+ * from the database itself on first use, and re-read (rate-limited, R-1671) when a request names
+ * something not in it, so a DB step after the app started needs no restart.
  *
  * This is the gateway's injection barrier: every table, column, relation and function name in
  * a request is looked up here, and only names found here are ever written into SQL (quoted).
@@ -167,18 +168,67 @@ async function load(): Promise<Catalog> {
   });
 }
 
-const cache = globalThis as unknown as { __rosCatalog?: Promise<Catalog> };
+const cache = globalThis as unknown as {
+  __rosCatalog?: Promise<Catalog>;
+  /** When the current catalog's load started (ms) — the reload rate limit counts from here. */
+  __rosCatalogAt?: number;
+  /** R-1671: a reload in flight — concurrent misses wait for this one instead of starting more. */
+  __rosCatalogReload?: Promise<Catalog | null>;
+};
+
+/**
+ * R-1671: at most one catalog re-read per this many ms per server instance. A DB step (new
+ * column / table / function) is seen within this window without an app restart; a wrong name,
+ * or an attacker sending wrong names, cannot make every request re-read the catalog.
+ */
+export const CATALOG_RELOAD_MIN_MS = 30_000;
+
+/** Codes the request builder throws when a table, column, relation or function is not in the catalog. */
+const CATALOG_MISS_CODES = new Set(["42P01", "42703", "PGRST200", "PGRST202"]);
+
+export function isCatalogMiss(e: unknown): boolean {
+  return !!e && typeof e === "object" && "code" in e && CATALOG_MISS_CODES.has(String((e as { code: unknown }).code));
+}
 
 /** The catalog, loaded on first use. A failed load is not cached, so the next request retries. */
 export function getCatalog(): Promise<Catalog> {
-  cache.__rosCatalog ??= load().catch((e) => {
-    cache.__rosCatalog = undefined;
-    throw e;
-  });
+  if (!cache.__rosCatalog) {
+    cache.__rosCatalogAt = Date.now();
+    cache.__rosCatalog = load().catch((e) => {
+      cache.__rosCatalog = undefined;
+      throw e;
+    });
+  }
   return cache.__rosCatalog;
+}
+
+/**
+ * R-1671: re-read the catalog after a name was not found in it (a DB step may have added it
+ * since this instance read it). Returns the fresh catalog, or null when no reload is allowed yet
+ * (the current one is younger than CATALOG_RELOAD_MIN_MS) or the reload failed — the old catalog
+ * then stays in use. Concurrent callers share one reload. Names still come only from the
+ * catalog: this only re-reads it from the database.
+ */
+export function reloadCatalog(): Promise<Catalog | null> {
+  if (cache.__rosCatalogReload) return cache.__rosCatalogReload;
+  const now = Date.now();
+  if (cache.__rosCatalogAt !== undefined && now - cache.__rosCatalogAt < CATALOG_RELOAD_MIN_MS) return Promise.resolve(null);
+  cache.__rosCatalogAt = now;
+  const reload: Promise<Catalog | null> = load()
+    .then((fresh) => {
+      cache.__rosCatalog = Promise.resolve(fresh);
+      return fresh;
+    }, () => null)
+    .finally(() => {
+      if (cache.__rosCatalogReload === reload) cache.__rosCatalogReload = undefined;
+    });
+  cache.__rosCatalogReload = reload;
+  return reload;
 }
 
 /** For tests: forget the cached catalog (e.g. after a migration in the same process). */
 export function resetCatalog(): void {
   cache.__rosCatalog = undefined;
+  cache.__rosCatalogAt = undefined;
+  cache.__rosCatalogReload = undefined;
 }
