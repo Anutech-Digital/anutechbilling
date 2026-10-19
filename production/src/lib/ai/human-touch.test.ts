@@ -111,7 +111,11 @@ describe("the audit log records what the automation DID, not only what it refuse
     /* "did" on a failed send would be the worst possible row in this table: it would report a
        customer was emailed when the provider rejected it. */
     const after = SEND.slice(SEND.indexOf("await sendEmailInner(msg);"));
-    expect(after).toMatch(/outcome:\s*result\.status === "failed" \? "failed" : "did"/);
+    /* R-1403 put a staging-allowlist branch first: a mail the guard dropped is "skipped",
+       never "did" — then failed vs sent, as before. */
+    expect(after).toMatch(
+      /outcome:\s*(?:stagingBlocked \? "skipped" : )?result\.status === "failed" \? "failed" : "did"/,
+    );
   });
 
   it("a caller that writes its own row can skip the success row (refusals stay unconditional)", () => {
