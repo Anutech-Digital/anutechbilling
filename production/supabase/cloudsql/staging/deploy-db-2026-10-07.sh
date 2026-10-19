@@ -160,6 +160,7 @@ MIGS=(
   "r1617nocut|20261019001426_r1617_document_number_no_truncate.sql|resellersos_migration|exists(select 1 from pg_proc where proname = 'format_document_number' and prosrc like '%R-1617%')"
   "r1004ambackfill|20261019002055_r1004_account_manager_backfill.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.r1004_backfill_account_managers()') and prosrc like '%R-1004 backfill%')"
   "r1531gstrcdate|20261019002811_r1531_gst_rc_date.sql|resellersos_migration|exists(select 1 from pg_attribute where attrelid = to_regclass('public.tenants') and attname = 'gst_rc_date' and not attisdropped) and exists(select 1 from pg_constraint where conname = 'tenants_gst_rc_date_check')"
+  "r1618policy|20261019003408_r1618_policy_tenant_gate.sql|resellersos_migration|exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'prepaid_advances' and policyname = 'prepaid_advances_all' and qual like '%current_tenant_id()%') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'whatsapp_messages' and policyname = 'whatsapp_messages_tenant_write' and qual like '%current_tenant_id()%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
