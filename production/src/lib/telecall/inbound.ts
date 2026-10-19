@@ -109,7 +109,7 @@ function buildSignals(
       customerAskedForCallback: flag(a.customer_asked_for_callback),
       customerConfirmedRenewal: flag(a.customer_confirmed_renewal),
       customerNotInterested: flag(a.customer_not_interested),
-      seatsDiscussed: num(a.seats_discussed),
+      seatsDiscussed: seatsFrom(a.seats_discussed),
     },
   };
 }
@@ -211,9 +211,64 @@ function flattenExtraction(raw: Record<string, unknown> | null): Record<string, 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     const inner = obj(v);
-    if (inner) Object.assign(out, inner);
-    else out[k] = v;
+    if (inner && !isBolnaLeaf(inner)) {
+      for (const [ik, iv] of Object.entries(inner)) out[ik] = leafValue(iv);
+    } else {
+      out[k] = leafValue(v);
+    }
   }
+  return out;
+}
+
+/**
+ * Bolna's newer extraction wraps every answer: `{ objective: "yes", subjective: null,
+ * confidence: 0.95, reasoning_objective: "…" }` (seen on real calls, 19 Oct 2026). Read as an
+ * object, "customer asked for a quote" was never `yes`, so a customer who asked for a quote
+ * for 20 users was filed as merely "talked".
+ */
+function isBolnaLeaf(o: Record<string, unknown>): boolean {
+  return "objective" in o || "subjective" in o;
+}
+
+function leafValue(v: unknown): unknown {
+  const o = obj(v);
+  if (!o || !isBolnaLeaf(o)) return v;
+  return o.objective ?? o.subjective ?? null;
+}
+
+/** "Customer requested email accounts for 20 users." → 20. A plain number passes through. */
+function seatsFrom(v: unknown): number | null {
+  const n = num(v);
+  if (n !== null) return n > 0 ? Math.round(n) : null;
+  if (typeof v !== "string") return null;
+  const m = /\b(\d{1,5})\b/.exec(v);
+  const parsed = m ? Number(m[1]) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Why the agent thinks what it thinks — the model's own reasoning for every "yes", plus what it
+ * heard about seats — so a person can see at a glance why a number is worth a call.
+ */
+export function bolnaReasons(raw: unknown): string[] {
+  const top = obj(raw);
+  if (!top) return [];
+  const out: string[] = [];
+  const visit = (k: string, v: unknown) => {
+    const o = obj(v);
+    if (!o) return;
+    if (!isBolnaLeaf(o)) { for (const [ik, iv] of Object.entries(o)) visit(ik, iv); return; }
+    if (k === "seats_discussed") {
+      const s = str(o.subjective).trim();
+      if (s) out.push(s);
+      return;
+    }
+    if (str(o.objective).trim().toLowerCase() === "yes") {
+      const why = str(o.reasoning_objective).trim();
+      if (why) out.push(why);
+    }
+  };
+  for (const [k, v] of Object.entries(top)) visit(k, v);
   return out;
 }
 

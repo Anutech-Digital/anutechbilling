@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { listBolnaAgents } from "@/lib/telecall/provider";
-import { createCampaign, listCampaigns } from "@/server/coldcall/coldcall.server";
+import { createCampaign, listCampaigns, listProducts } from "@/server/coldcall/coldcall.server";
 import { bolnaOrError, coldCallContext } from "@/server/coldcall/route-context";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,8 @@ const body = z.object({
   name: z.string().trim().min(1).max(120),
   agentId: z.string().trim().min(1).max(100),
   dailyLimit: z.coerce.number().int().min(1).max(1000).default(50),
+  /* null / missing = "any product — let the customer say". */
+  productItemId: z.string().uuid().nullable().optional(),
 });
 
 export async function POST(req: Request) {
@@ -44,9 +46,21 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+  /* The product is looked up in this company's own catalogue (RLS), never trusted by id. */
+  let product: { id: string; name: string } | null = null;
+  if (parsed.data.productItemId) {
+    product = (await listProducts(ctx.run)).find((p) => p.id === parsed.data.productItemId) ?? null;
+    if (!product) {
+      return NextResponse.json(
+        { error: "That product is not in your catalogue.", detail: "Refresh the page and pick it again, or choose 'Any product'." },
+        { status: 400 },
+      );
+    }
+  }
   const id = await createCampaign(ctx.run, {
     tenantId: ctx.session.tenantId, userId: ctx.session.userId, name: parsed.data.name,
     agentId: agent.id, agentName: agent.name, dailyLimit: parsed.data.dailyLimit,
+    productItemId: product?.id ?? null, productName: product?.name ?? null,
   });
   return NextResponse.json({ id }, { status: 201 });
 }

@@ -12,6 +12,7 @@ export interface ColdCampaign {
   name: string;
   agentId: string;
   agentName: string | null;
+  productName: string | null;
   status: "draft" | "running" | "paused" | "done";
   dailyLimit: number;
   windowStart: number;
@@ -37,6 +38,7 @@ export interface ColdContact {
   seatsHeard: number | null;
   error: string | null;
   leadId: string | null;
+  reasons: string[];
 }
 
 /** An API refusal, carrying the route's own "what to do next" line. */
@@ -68,6 +70,14 @@ export function useBolnaAgents() {
   });
 }
 
+export function useColdProducts() {
+  return useQuery({
+    queryKey: [...KEY, "products"],
+    queryFn: async () => (await api<{ products: { id: string; name: string }[] }>("/api/cold-calling/products")).products,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useColdCampaigns() {
   return useQuery({
     queryKey: [...KEY, "campaigns"],
@@ -90,7 +100,7 @@ export function useColdContacts(campaignId: string | null, status: string | null
 export function useCreateCampaign() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; agentId: string; dailyLimit: number }) =>
+    mutationFn: (input: { name: string; agentId: string; dailyLimit: number; productItemId: string | null }) =>
       api<{ id: string }>("/api/cold-calling/campaigns", { method: "POST", body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });

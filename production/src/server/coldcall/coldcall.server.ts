@@ -14,7 +14,7 @@ import { catalogueFromRows, type CatalogRow } from "@/lib/ai/sales-agent.server"
 import { buildTelecallPrompt } from "@/lib/ai/telecaller-prompt";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
-import { normalisePostCall } from "@/lib/telecall/inbound";
+import { bolnaReasons, normalisePostCall } from "@/lib/telecall/inbound";
 import { fetchBolnaExecution, placeCall, type TelecallProviderConfig } from "@/lib/telecall/provider";
 import type { ItemPrices } from "@/lib/supabase/database.types";
 import {
@@ -65,6 +65,7 @@ export async function listCampaigns(run: Run, now: Date): Promise<CampaignSummar
       for (const g of grouped) if (g.campaign_id === c.id) counts[g.status] = g._count._all;
       return {
         id: c.id, name: c.name, agentId: c.agent_id, agentName: c.agent_name, status: c.status,
+        productName: c.product_name,
         dailyLimit: c.daily_limit, windowStart: c.window_start, windowEnd: c.window_end,
         createdAt: c.created_at.toISOString(), counts,
         calledToday: today.find((t) => t.campaign_id === c.id)?._count._all ?? 0,
@@ -75,16 +76,27 @@ export async function listCampaigns(run: Run, now: Date): Promise<CampaignSummar
 
 export async function createCampaign(
   run: Run,
-  input: { tenantId: string; userId: string; name: string; agentId: string; agentName: string | null; dailyLimit: number },
+  input: {
+    tenantId: string; userId: string; name: string; agentId: string; agentName: string | null; dailyLimit: number;
+    productItemId: string | null; productName: string | null;
+  },
 ): Promise<string> {
   const row = await run((tx) => tx.cold_call_campaigns.create({
     data: {
       tenant_id: input.tenantId, created_by: input.userId, name: input.name.trim().slice(0, 120),
       agent_id: input.agentId, agent_name: input.agentName, daily_limit: input.dailyLimit,
+      product_item_id: input.productItemId, product_name: input.productName?.slice(0, 200) ?? null,
     },
     select: { id: true },
   }));
   return row.id;
+}
+
+/** What a campaign can be for: the active main catalogue items. */
+export async function listProducts(run: Run): Promise<{ id: string; name: string }[]> {
+  return run((tx) => tx.items.findMany({
+    where: { kind: "main", is_active: true }, select: { id: true, name: true }, orderBy: { name: "asc" }, take: 200,
+  }));
 }
 
 export async function updateCampaign(
@@ -234,6 +246,8 @@ export interface ContactRow {
   seatsHeard: number | null;
   error: string | null;
   leadId: string | null;
+  /** Why the agent rated the call as it did, in its own words (quote asked, seats heard…). */
+  reasons: string[];
 }
 
 export async function listContacts(run: Run, campaignId: string, status: string[] | null): Promise<ContactRow[]> {
@@ -247,6 +261,7 @@ export async function listContacts(run: Run, campaignId: string, status: string[
     attempts: r.attempts, lastCalledAt: r.last_called_at?.toISOString() ?? null,
     nextAttemptAt: r.next_attempt_at?.toISOString() ?? null, durationSec: r.duration_sec,
     summary: r.summary, transcript: r.transcript, seatsHeard: r.seats_heard, error: r.error, leadId: r.lead_id,
+    reasons: bolnaReasons(r.extracted).slice(0, 4),
   }));
 }
 
@@ -271,9 +286,9 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
     const now = new Date();
     const who = c.name?.trim() || c.company?.trim() || c.phone;
     const followUp = nextWorkingDayAt(now, 11);
-    const campaign = await tx.cold_call_campaigns.findUnique({ where: { id: c.campaign_id }, select: { name: true } });
+    const campaign = await tx.cold_call_campaigns.findUnique({ where: { id: c.campaign_id }, select: { name: true, product_name: true } });
     const detail = [
-      `AI cold call — campaign “${campaign?.name ?? ""}”`,
+      `AI cold call — campaign “${campaign?.name ?? ""}”${campaign?.product_name ? ` · product: ${campaign.product_name}` : ""}`,
       c.summary ? `Summary: ${c.summary}` : null,
       c.seats_heard ? `AI ne suna: ${c.seats_heard} seats` : null,
       c.transcript ? `Transcript:\n${c.transcript.slice(0, 4000)}` : null,
@@ -295,7 +310,7 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
           id: leadId, tenant_id: tenantId, company, contact_name: c.name, contact_phone: c.phone,
           stage: "contact", source: "tele-calling", owner_id: userId, created_by: userId,
           seats: c.seats_heard ?? undefined, follow_up_date: followUp,
-          notes: `AI cold call (${campaign?.name ?? "Cold Calling"})${c.summary ? `: ${c.summary}` : ""}`.slice(0, 2000),
+          notes: `AI cold call (${campaign?.name ?? "Cold Calling"}${campaign?.product_name ? ` · ${campaign.product_name}` : ""})${c.summary ? `: ${c.summary}` : ""}`.slice(0, 2000),
         },
       });
     }
@@ -350,9 +365,16 @@ export interface TickReport {
   note: string | null;
 }
 
-async function loadCatalogue(tx: Tx): Promise<CatalogRow[]> {
+/** The campaign's product item, if it has one — the agent then quotes only that product. */
+async function campaignProduct(campaignId: string, tx: Tx): Promise<string | null> {
+  const c = await tx.cold_call_campaigns.findUnique({ where: { id: campaignId }, select: { product_item_id: true } });
+  return c?.product_item_id ?? null;
+}
+
+async function loadCatalogue(tx: Tx, onlyItem: Promise<string | null> = Promise.resolve(null)): Promise<CatalogRow[]> {
+  const itemId = await onlyItem;
   const items = await tx.items.findMany({
-    where: { kind: "main", is_active: true, msrp: { gt: 0 } },
+    where: { kind: "main", is_active: true, msrp: { gt: 0 }, ...(itemId ? { id: itemId } : {}) },
     select: { id: true, name: true, vendor: true, msrp: true, wholesale: true, prices: true },
     orderBy: { name: "asc" },
   });
@@ -437,7 +459,7 @@ export async function runCampaignTick(
     const tenant = await tx.tenants.findUnique({ where: { id: tenantId }, select: { name: true } });
     return {
       due: claimed.count === rows.length ? rows : [],
-      catalogue: catalogueFromRows(await loadCatalogue(tx)),
+      catalogue: catalogueFromRows(await loadCatalogue(tx, campaignProduct(campaignId, tx))),
       sellerName: tenant?.name?.trim() || "our team",
     };
   });
@@ -457,7 +479,7 @@ export async function runCampaignTick(
   for (const c of due) {
     const built = buildTelecallPrompt({
       callType: "lead_qualification", sellerName, customerName: c.name, currentPlan: null, seats: null,
-      renewalDate: null, pendingAmount: null, catalogue,
+      renewalDate: null, pendingAmount: null, catalogue, coldCall: { product: campaign.product_name },
     });
     const placed = await placeCall(agent, {
       toNumber: c.phone,

@@ -11,7 +11,7 @@ import {
   resolveTelecallProvider,
   type TelecallProviderConfig,
 } from "./provider";
-import { looksLikeBolnaExecution, normalisePostCall, sentimentOf } from "./inbound";
+import { bolnaReasons, looksLikeBolnaExecution, normalisePostCall, sentimentOf } from "./inbound";
 import { statusFromDisposition } from "@/lib/ai/telecall";
 
 const EXEC_ID = "123e4567-e89b-12d3-a456-426614174000";
@@ -175,5 +175,50 @@ describe("listBolnaAgents", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${BOLNA_API_BASE}/v2/agent/all`);
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer test-key");
+  });
+});
+
+/* The shape real calls returned on 19 Oct 2026: every answer wrapped in {objective, subjective,
+   reasoning…} and grouped under "Sales" / "General". Read as plain values it filed a customer
+   who asked for a quote for 20 users as merely "talked". */
+describe("Bolna grouped extraction (objective/subjective leaves)", () => {
+  const leaf = (objective: string | null, subjective: string | null, why = "") =>
+    ({ objective, subjective, confidence: 0.95, validation: null, confidence_label: "High", reasoning_objective: why, reasoning_subjective: why });
+  const exec = (sales: Record<string, unknown>) => ({
+    id: "3f6c2a10-1111-4222-8333-444455556666", agent_id: "agent-1", status: "completed",
+    conversation_duration: 61, transcript: "assistant: Namaste\nuser: bees", summary: "Wants 20 users.",
+    extracted_data: { Sales: sales, General: { "Call Summary": { subjective: "Wants 20 users." } } },
+  });
+
+  it("reads a quote request and seats said in words", () => {
+    const n = normalisePostCall(exec({
+      seats_discussed: leaf(null, "Customer requested email accounts for 20 users."),
+      customer_not_interested: leaf("no", null),
+      customer_asked_for_quote: leaf("yes", null, "Customer asked to send the quote by email."),
+      customer_asked_for_callback: leaf("no", null),
+      customer_confirmed_renewal: leaf("no", null),
+    }));
+    expect(n?.signals.customerAskedForQuote).toBe(true);
+    expect(n?.signals.customerNotInterested).toBe(false);
+    expect(n?.signals.seatsDiscussed).toBe(20);
+  });
+
+  it("reads 'wrong person' as not interested", () => {
+    const n = normalisePostCall(exec({
+      seats_discussed: leaf(null, ""),
+      customer_not_interested: leaf("yes", null, "Said it was the wrong person."),
+      customer_asked_for_quote: leaf("no", null),
+    }));
+    expect(n?.signals.customerNotInterested).toBe(true);
+    expect(n?.signals.seatsDiscussed).toBeNull();
+  });
+
+  it("gives the reasons behind every yes, and the seats heard", () => {
+    const r = bolnaReasons(exec({
+      seats_discussed: leaf(null, "Customer requested email accounts for 20 users."),
+      customer_asked_for_quote: leaf("yes", null, "Customer asked to send the quote by email."),
+      customer_not_interested: leaf("no", null, "Was cooperative."),
+    }).extracted_data);
+    expect(r).toEqual(["Customer requested email accounts for 20 users.", "Customer asked to send the quote by email."]);
   });
 });

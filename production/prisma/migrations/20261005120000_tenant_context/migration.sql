@@ -3,7 +3,7 @@
 -- 20261005100000). Review the helpers by hand; the rewrites below change ONLY the tokens
 -- auth.uid() → public.current_user_id() and auth.role() → public.current_request_role().
 --
--- Rewrites: 88 policies, 90 functions.
+-- Rewrites: 87 policies, 100 functions.
 --
 -- PREREQUISITE (once per database, as an admin — not part of this migration because it
 -- needs CREATEROLE and a password): db/ops/10-runtime-roles.sql creates app_runtime and
@@ -68,7 +68,7 @@ $$;
 grant execute on function public.current_user_id(), public.current_request_role(), public.current_tenant_id()
   to anon, authenticated, service_role;
 
--- ─── 2. Policies (88) ─────────────────────────────────────────────
+-- ─── 2. Policies (87) ─────────────────────────────────────────────
 alter policy "academy_apprentices_read" on "public"."academy_apprentices"
   using ((((tenant_id = current_tenant_id()) AND (academy_can_manage() OR (mentor_user_id = public.current_user_id()))) OR (user_id = public.current_user_id())));
 alter policy "ai_autonomy_write" on "public"."ai_autonomy"
@@ -367,11 +367,6 @@ alter policy "tenant_secrets_owner_write" on "public"."tenant_secrets"
   WHERE (users.id = ( SELECT public.current_user_id() AS uid)))) AND (( SELECT users.role
    FROM users
   WHERE (users.id = ( SELECT public.current_user_id() AS uid))) = 'owner'::user_role)));
-alter policy "tenants_select_own_customer" on "public"."tenants"
-  using ((id = ( SELECT customer_users.tenant_id
-   FROM customer_users
-  WHERE (customer_users.auth_user_id = ( SELECT public.current_user_id() AS uid))
- LIMIT 1)));
 alter policy "tenants_self_update" on "public"."tenants"
   using (((id = ( SELECT current_tenant_id() AS current_tenant_id)) AND (EXISTS ( SELECT 1
    FROM users
@@ -422,7 +417,7 @@ alter policy "owner manager update" on "public"."whatsapp_reminder_templates"
   WHERE ((u.id = public.current_user_id()) AND (u.tenant_id = whatsapp_reminder_templates.tenant_id) AND (u.role = ANY (ARRAY['owner'::user_role, 'manager'::user_role])))))))
   with check ((tenant_id = current_tenant_id()));
 
--- ─── 3. Functions (90) ──────────────────────────────────────────
+-- ─── 3. Functions (100) ──────────────────────────────────────────
 -- public._employee_advance_cash_leg
 CREATE OR REPLACE FUNCTION public._employee_advance_cash_leg(p_tenant uuid, p_account uuid, p_date date, p_debit integer, p_credit integer, p_text text, p_adv uuid)
  RETURNS uuid
@@ -508,6 +503,458 @@ AS $function$
   );
 $function$;
 
+-- public.activate_quote_on_credit
+CREATE OR REPLACE FUNCTION public.activate_quote_on_credit(p_quote_id text, p_credit_days integer, p_approve_over_limit boolean DEFAULT false, p_annual_override_reason text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_uid              uuid := public.current_user_id();
+  v_caller_tenant    uuid;
+  v_is_owner         boolean;
+  v_quote            record;
+  v_cust             record;
+  v_lead             record;
+  v_tenant_id        uuid;
+  v_customer_id      uuid;
+  v_received         integer;
+  v_limit            integer;
+  v_owed             integer;
+  v_this             integer;
+  v_exposure         integer;
+  v_over             boolean;
+  v_today            date := public.ist_today();
+  v_due              date;
+  v_invoice_id       text;
+  v_balance          integer;
+  v_owner            uuid;
+  v_who              text;
+  v_t1               timestamptz;
+  v_t2               timestamptz;
+  v_t3               timestamptz;
+  v_expected         integer;
+  v_domain           text;
+  v_subs_created     integer := 0;
+  v_pos              text[] := array[]::text[];
+  -- subscription loop (same names/rules as record_payment)
+  v_line_idx         integer;
+  v_first_line       jsonb;
+  v_commitment       text;
+  v_plan_name        text;
+  v_plan_lower       text;
+  v_is_annual        boolean;
+  v_is_monthly       boolean;
+  v_vendor           public.vendor;
+  v_start            date;
+  v_line_amount      integer;
+  v_renew_amount     integer;
+  v_bulk_total_seats integer;
+  v_bulk_pool        integer;
+  v_running_mrr      integer;
+  v_idx              integer;
+  v_n                integer;
+  v_d                jsonb;
+  v_dom              text;
+  v_dom_seats        integer;
+  v_dom_mrr          integer;
+  v_bulk_count       integer := 0;
+  v_seats            integer;
+  v_sub_domain       text;
+  v_used_domains     text[] := array[]::text[];
+  v_new_sub_id       uuid;
+  v_po_sub_id        uuid;
+  v_po_seats         integer;
+  v_po_plan          text;
+  v_po_vendor        public.vendor;
+  v_unit_wholesale_pm integer;
+  v_total_wholesale  integer;
+  v_po_id            text;
+  v_first_sub        boolean := true;
+  v_annual_reason    text := nullif(btrim(coalesce(p_annual_override_reason, '')), '');  -- R-368
+  v_has_annual       boolean;                                                              -- R-368
+  v_cost_pm          integer;                                                              -- R-378
+begin
+  if v_uid is null then
+    raise exception 'Sign in to activate a quote on credit.' using errcode = 'insufficient_privilege';
+  end if;
+  v_caller_tenant := public.current_tenant_id();
+  if v_caller_tenant is null then
+    raise exception 'No tenant context';
+  end if;
+  if not exists (select 1 from public.users u where u.id = v_uid and u.is_active) then
+    raise exception 'Your account is not active.' using errcode = 'insufficient_privilege';
+  end if;
+  v_is_owner := public.current_user_is_owner();
+
+  if p_credit_days is null or p_credit_days < 1 or p_credit_days > 180 then
+    raise exception 'Credit days must be 1 to 180.' using errcode = 'check_violation';
+  end if;
+
+  select q.id, q.tenant_id, q.customer_id, q.customer_name, q.lead_id, q.status, q.payment_status,
+         q.amount, q.line_items, q.invoice_id, q.domain, q.is_add_seats, q.is_one_off,
+         q.credit_activated_at, q.credit_due_date,
+         q.billing_cycle   -- R-370
+    into v_quote
+    from public.quotes q
+   where q.id = p_quote_id
+   for update;
+  if not found then
+    raise exception 'Quote % not found', p_quote_id using errcode = 'no_data_found';
+  end if;
+  if v_quote.tenant_id <> v_caller_tenant then
+    raise exception 'Quote % does not belong to your tenant', p_quote_id using errcode = 'insufficient_privilege';
+  end if;
+  v_tenant_id   := v_quote.tenant_id;
+  v_customer_id := v_quote.customer_id;
+  v_expected    := coalesce(v_quote.amount, 0);
+
+  -- Double click / second tab: report what is already there instead of a second invoice.
+  if v_quote.credit_activated_at is not null then
+    return jsonb_build_object(
+      'already_active', true,
+      'invoice_id', v_quote.invoice_id,
+      'due_date', v_quote.credit_due_date,
+      'subscriptions_created', 0,
+      'tasks_created', 0
+    );
+  end if;
+
+  if v_quote.status <> 'accepted' then
+    raise exception 'Only an accepted quote can be activated on credit. Mark % accepted first.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+  -- ── R-370: split billing is invoiced one period at a time by raise_subscription_billing.
+  -- A whole-term credit invoice here would be billed a second time by the instalments.
+  -- Same test as lib/payments/record-payment-invoice.ts isSplitBilled.
+  if v_quote.billing_cycle is not null and v_quote.billing_cycle::text <> 'yearly' then
+    raise exception 'This quote is billed in instalments (%) — record the first instalment instead, or switch billing to yearly.',
+      replace(v_quote.billing_cycle::text, '_', '-')
+      using errcode = 'check_violation';
+  end if;
+  if coalesce(v_quote.is_one_off, false) then
+    raise exception 'Quote % is a one-off sale: there is no subscription to activate. Issue the invoice instead.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+  if coalesce(v_quote.is_add_seats, false) then
+    raise exception 'Quote % adds seats to an existing subscription. Record the payment instead.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+  if exists (select 1 from public.subscriptions s where s.tenant_id = v_tenant_id and s.renewal_quote_id = p_quote_id) then
+    raise exception 'Quote % renews an existing subscription, which is already active. Record the payment instead.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+  if exists (select 1 from public.subscriptions s where s.tenant_id = v_tenant_id and s.quote_id = p_quote_id) then
+    raise exception 'Quote % already has subscriptions.', p_quote_id using errcode = 'check_violation';
+  end if;
+
+  select coalesce(sum(p.amount), 0) into v_received
+    from public.payments p where p.quote_id = p_quote_id and p.status = 'received';
+  if v_received > 0 or v_quote.payment_status in ('received', 'partial') then
+    raise exception 'Payment is already recorded on quote %, so it is not a credit sale.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+
+  if v_quote.lead_id is not null then
+    select l.trial_started_at, l.trial_converted_at into v_lead
+      from public.leads l where l.id = v_quote.lead_id and l.tenant_id = v_tenant_id;
+    if found and v_lead.trial_started_at is not null and v_lead.trial_converted_at is null then
+      raise exception 'Quote % is on a trial. Convert or stop the trial first.', p_quote_id
+        using errcode = 'check_violation';
+    end if;
+  end if;
+
+  if v_customer_id is null then
+    raise exception 'Quote % has no customer yet. Accept it from the quote page so the customer is created.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+  select c.id, c.name, c.domain, c.allow_pay_later, c.credit_limit into v_cust
+    from public.customers c where c.id = v_customer_id and c.tenant_id = v_tenant_id;
+  if not found then
+    raise exception 'Customer of quote % not found', p_quote_id using errcode = 'no_data_found';
+  end if;
+  if not v_cust.allow_pay_later then
+    raise exception 'Pay later is off for %. Turn it on in the customer''s Pay later settings, or record the payment first.', v_cust.name
+      using errcode = 'check_violation';
+  end if;
+
+  if not exists (
+    select 1 from jsonb_array_elements(case when jsonb_typeof(v_quote.line_items) = 'array' then v_quote.line_items else '[]'::jsonb end) li
+     where li->>'commitment' is not null
+  ) then
+    raise exception 'Quote % has no subscription line (monthly or annual), so there is nothing to activate.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+
+  -- ── Credit limit ──
+  v_limit := coalesce(v_cust.credit_limit, 50000);
+  select coalesce(sum(greatest(0, coalesce(i.net_payable, i.amount) - coalesce(i.paid_amount, 0))), 0)::int
+    into v_owed
+    from public.invoices i
+   where i.tenant_id = v_tenant_id and i.customer_id = v_customer_id
+     and i.status in ('pending', 'overdue');
+  -- An invoice already raised on this quote is inside v_owed; do not count it twice.
+  v_this     := case when v_quote.invoice_id is null then v_expected else 0 end;
+  v_exposure := v_owed + v_this;
+  v_over     := v_exposure > v_limit;
+  if v_over and not v_is_owner then
+    raise exception 'Over the credit limit: % already owes Rs %, this invoice is Rs %, total Rs % against a limit of Rs %. Only the owner can approve this.',
+      v_cust.name, v_owed, v_this, v_exposure, v_limit
+      using errcode = 'insufficient_privilege';
+  end if;
+  if v_over and not coalesce(p_approve_over_limit, false) then
+    raise exception 'Over the credit limit: total Rs % against a limit of Rs %. Tick "Approve over limit" to go ahead.',
+      v_exposure, v_limit
+      using errcode = 'check_violation';
+  end if;
+
+  -- ── R-368: annual plans need payment first; only the owner overrides, with a reason ──
+  -- After the credit-limit checks so their messages stay as they were. Same test as the app
+  -- (lib/credit/activate-on-credit.ts annualLineNames): a commitment that is not monthly and
+  -- not one_time.
+  select exists (
+    select 1 from jsonb_array_elements(case when jsonb_typeof(v_quote.line_items) = 'array' then v_quote.line_items else '[]'::jsonb end) li
+     where coalesce(li->>'commitment', '') not in ('', 'monthly', 'one_time')
+  ) into v_has_annual;
+  if v_has_annual and not v_is_owner then
+    raise exception 'Annual plans need payment first. Only the owner can activate an annual plan on credit (quote %).', p_quote_id
+      using errcode = 'insufficient_privilege';
+  end if;
+  if v_has_annual and (v_annual_reason is null or length(v_annual_reason) < 5) then
+    raise exception 'Annual plans need payment first. To activate quote % on credit anyway, write the reason for the override.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+
+  -- ── Invoice (tax maths untouched: generate_invoice) ──
+  -- An issued invoice is frozen (tg_invoices_freeze_issued: no due_date edits), so the due
+  -- date goes in through generate_invoice's own rule: due = today + quotes.payment_terms_days.
+  -- The credit days ARE the agreed terms of this sale, so the quote carries them.
+  if v_quote.invoice_id is null then
+    update public.quotes set payment_terms_days = p_credit_days
+     where id = p_quote_id and tenant_id = v_tenant_id;
+    select g.invoice_id into v_invoice_id from public.generate_invoice(p_quote_id) g;
+  else
+    -- Invoice raised before this: its due date stands (an issued invoice cannot be edited).
+    v_invoice_id := v_quote.invoice_id;
+    if exists (select 1 from public.invoices i where i.id = v_invoice_id and i.status in ('paid', 'void')) then
+      raise exception 'Invoice % on quote % is % — nothing to give credit on.', v_invoice_id, p_quote_id,
+        (select i.status from public.invoices i where i.id = v_invoice_id)
+        using errcode = 'check_violation';
+    end if;
+  end if;
+  select coalesce(i.due_date, v_today + p_credit_days) into v_due
+    from public.invoices i where i.id = v_invoice_id;
+  select greatest(0, coalesce(i.net_payable, i.amount) - coalesce(i.paid_amount, 0))::int into v_balance
+    from public.invoices i where i.id = v_invoice_id;
+
+  -- ── Subscriptions: record_payment's rules, line by line ──
+  v_domain := v_quote.domain;
+  for v_line_idx in 0 .. jsonb_array_length(v_quote.line_items) - 1 loop
+    v_first_line := v_quote.line_items -> v_line_idx;
+    v_commitment := v_first_line->>'commitment';
+    v_plan_name  := coalesce(v_first_line->>'name',
+                      case when v_commitment = 'monthly' then 'Monthly subscription'
+                           else 'Annual subscription' end);
+    v_is_annual  := v_commitment is distinct from 'monthly' and v_commitment is not null;
+    v_is_monthly := v_commitment = 'monthly';
+    v_po_sub_id  := null;
+    continue when not (v_is_annual or v_is_monthly);
+
+    v_vendor := null;
+    if v_first_line->>'item_id' is not null then
+      select i.vendor into v_vendor from public.items i
+       where i.id = v_first_line->>'item_id' and i.tenant_id = v_tenant_id;
+    end if;
+    if v_vendor is null then
+      v_plan_lower := lower(v_plan_name);
+      v_vendor := case
+        when v_plan_lower like '%google%'    then 'google'::public.vendor
+        when v_plan_lower like '%m365%'      then 'microsoft'::public.vendor
+        when v_plan_lower like '%microsoft%' then 'microsoft'::public.vendor
+        when v_plan_lower like '%365%'       then 'microsoft'::public.vendor
+        when v_plan_lower like '%zoho%'      then 'zoho'::public.vendor
+        else 'other'::public.vendor end;
+    end if;
+
+    v_start := coalesce(nullif(v_first_line->>'start_date', '')::date, current_date);
+    v_line_amount := round(
+      coalesce((v_first_line->>'qty')::numeric, 0) * coalesce((v_first_line->>'rate')::numeric, 0)
+        * (1 - coalesce((v_first_line->>'discount_pct')::numeric, 0) / 100)
+    )::int;
+    v_renew_amount := case
+      when nullif(v_first_line->>'renewal_rate', '') is not null
+        then round(coalesce((v_first_line->>'qty')::numeric, 0) * (v_first_line->>'renewal_rate')::numeric)::int
+      else v_line_amount end;
+
+    /* R-378: the line's cost per seat, as ₹/seat/MONTH (monthly line = as is, annual = /12). */
+    v_cost_pm := case
+      when jsonb_typeof(v_first_line->'cost') = 'number' and (v_first_line->>'cost')::numeric > 0
+        then round((v_first_line->>'cost')::numeric / case when v_is_monthly then 1.0 else 12.0 end)::int
+      else null end;
+
+    if coalesce((v_first_line->>'bulk')::boolean, false)
+       and jsonb_typeof(v_first_line->'domains') = 'array'
+       and jsonb_array_length(v_first_line->'domains') > 0 then
+      select coalesce(sum((e->>'seats')::int), 0) into v_bulk_total_seats
+        from jsonb_array_elements(v_first_line->'domains') e;
+      if v_bulk_total_seats <= 0 then
+        raise exception 'bulk line has zero total seats (quote %)', p_quote_id;
+      end if;
+      v_bulk_pool := greatest(0, round(
+                       coalesce(v_renew_amount, v_expected) / case when v_is_monthly then 1.0 else 12.0 end
+                     ))::int;
+      v_running_mrr := 0;
+      v_idx := 0;
+      v_n := jsonb_array_length(v_first_line->'domains');
+      for v_d in select e from jsonb_array_elements(v_first_line->'domains') e loop
+        v_idx := v_idx + 1;
+        v_dom := lower(trim(v_d->>'domain'));
+        v_dom_seats := coalesce((v_d->>'seats')::int, 0);
+        if v_dom = '' then continue; end if;
+        if v_idx < v_n then
+          v_dom_mrr := floor(v_bulk_pool::numeric * v_dom_seats / v_bulk_total_seats)::int;
+        else
+          v_dom_mrr := v_bulk_pool - v_running_mrr;
+        end if;
+        v_running_mrr := v_running_mrr + v_dom_mrr;
+
+        insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
+          start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months,
+          vendor_cost_per_seat_month)  -- R-378
+        values (v_tenant_id, v_customer_id, v_quote.customer_name, v_plan_name, v_vendor, v_dom_seats, v_dom_mrr,
+          v_start,
+          (v_start + case when v_is_monthly then interval '1 month' else interval '1 year' end)::date,
+          'active', 0, v_dom, p_quote_id,
+          case when v_is_monthly then 1 else 12 end,
+          v_cost_pm)  -- R-378
+        on conflict (tenant_id, quote_id, lower(domain)) where quote_id is not null and domain is not null
+          do nothing
+        returning id into v_new_sub_id;
+        if v_new_sub_id is not null then v_subs_created := v_subs_created + 1; end if;
+
+        insert into public.customer_domains (tenant_id, customer_id, domain)
+        values (v_tenant_id, v_customer_id, v_dom)
+        on conflict (tenant_id, lower(domain)) do nothing;
+
+        v_bulk_count := v_bulk_count + 1;
+        v_used_domains := array_append(v_used_domains, v_dom);
+      end loop;
+      v_po_seats := v_bulk_total_seats; v_po_plan := v_plan_name;
+      v_po_vendor := v_vendor; v_po_sub_id := v_new_sub_id;
+    else
+      v_seats := coalesce((v_first_line->>'qty')::int, 0);
+      v_sub_domain := nullif(lower(trim(v_first_line->>'domain')), '');
+      if v_sub_domain is null then
+        if v_domain is null then v_domain := v_cust.domain; end if;
+        v_sub_domain := v_domain;
+      end if;
+      if v_sub_domain is not null and lower(v_sub_domain) = any(v_used_domains) then
+        v_sub_domain := null;
+      end if;
+      insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
+        start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months,
+          vendor_cost_per_seat_month)  -- R-378
+      values (v_tenant_id, v_customer_id, v_quote.customer_name, v_plan_name, v_vendor, v_seats,
+        greatest(0, round(v_renew_amount / case when v_is_monthly then 1.0 else 12.0 end))::int, v_start,
+        (v_start + case when v_is_monthly then interval '1 month' else interval '1 year' end)::date, 'active',
+        -- Nothing is paid yet: the whole quote is outstanding, carried on the first subscription
+        -- exactly as record_payment does for a part payment.
+        case when v_first_sub then v_expected else 0 end,
+        v_sub_domain, p_quote_id,
+        case when v_is_monthly then 1 else 12 end,
+        v_cost_pm)  -- R-378
+      returning id into v_new_sub_id;
+      v_subs_created := v_subs_created + 1;
+      if v_sub_domain is not null then
+        v_used_domains := array_append(v_used_domains, lower(v_sub_domain));
+      end if;
+      v_po_seats := v_seats; v_po_plan := v_plan_name;
+      v_po_vendor := v_vendor; v_po_sub_id := v_new_sub_id;
+    end if;
+    v_first_sub := false;
+
+    -- Draft PO for the vendor seats, same as record_payment (the seats go live now).
+    if v_po_sub_id is not null then
+      select coalesce(nullif((prices->'annual'->>'wholesale')::int, 0), nullif(wholesale, 0))
+        into v_unit_wholesale_pm from public.items
+       where tenant_id = v_tenant_id and lower(name) = lower(v_po_plan) limit 1;
+      if v_unit_wholesale_pm is null or v_unit_wholesale_pm <= 0 then
+        v_unit_wholesale_pm := greatest(0, round(coalesce(v_line_amount, v_expected)::numeric * 0.83 / greatest(v_po_seats * 12, 1)))::int;
+      end if;
+      v_total_wholesale := v_unit_wholesale_pm * v_po_seats * 12;
+      v_po_id := public.next_document_number('purchase_order', v_tenant_id);
+      insert into public.purchase_orders (
+        id, tenant_id, subscription_id, customer_id, customer_name, domain,
+        vendor, plan, seats, term_months, unit_cost_pm, total_cost, status, notes, created_by
+      ) values (
+        v_po_id, v_tenant_id, v_po_sub_id, v_customer_id, v_quote.customer_name, v_domain,
+        v_po_vendor, v_po_plan, v_po_seats, 12, v_unit_wholesale_pm, v_total_wholesale, 'draft',
+        'Auto-created from quote ' || p_quote_id || ' (activated on credit)',
+        v_uid
+      );
+      v_pos := array_append(v_pos, v_po_id);
+    end if;
+  end loop;
+
+  if v_subs_created = 0 then
+    raise exception 'No subscription could be created from quote % — check its lines.', p_quote_id
+      using errcode = 'check_violation';
+  end if;
+
+  -- ── Tasks for the owner. Tasks only: nothing is sent, nothing is suspended. ──
+  select u.id into v_owner from public.users u
+   where u.tenant_id = v_tenant_id and u.role = 'owner' and u.is_active
+   order by u.created_at limit 1;
+  v_owner := coalesce(v_owner, v_uid);
+  v_who := coalesce(nullif(trim(v_quote.customer_name), ''), p_quote_id);
+
+  -- 10:00 IST on the day; never in the past.
+  v_t1 := greatest(now(), (v_today + time '10:00') at time zone 'Asia/Kolkata');
+  v_t2 := greatest(v_t1, ((v_due - 3) + time '10:00') at time zone 'Asia/Kolkata');
+  v_t3 := ((v_due + 15) + time '10:00') at time zone 'Asia/Kolkata';
+
+  insert into public.tasks (tenant_id, owner_id, title, notes, kind, due_at, quote_id) values
+    (v_tenant_id, v_owner,
+     'Set up seats (DNS, users) · ' || v_who,
+     'Quote ' || p_quote_id || ' is active on credit. Verify the domain (DNS) and create the users. Invoice '
+       || v_invoice_id || ', Rs ' || v_balance || ' due ' || to_char(v_due, 'DD Mon YYYY') || '.',
+     'custom', v_t1, p_quote_id),
+    (v_tenant_id, v_owner,
+     'Credit: send payment link · ' || v_who,
+     'Invoice ' || v_invoice_id || ' (Rs ' || v_balance || ') is due ' || to_char(v_due, 'DD Mon YYYY')
+       || '. Send the payment link. Reminder only — nothing is sent to the customer automatically.',
+     'followup', v_t2, p_quote_id),
+    (v_tenant_id, v_owner,
+     'Credit: payment not in — stop service? · ' || v_who,
+     'Invoice ' || v_invoice_id || ' was due ' || to_char(v_due, 'DD Mon YYYY')
+       || ' and is 15 days late. Decide: wait, chase or stop the service. Nothing is suspended automatically.',
+     'followup', v_t3, p_quote_id);
+
+  update public.quotes
+     set credit_activated_at = now(),
+         credit_activated_by = v_uid,
+         credit_due_date     = v_due,
+         credit_over_limit_approved_by = case when v_over then v_uid else null end,
+         credit_annual_override_reason = case when v_has_annual then v_annual_reason else null end,  -- R-368
+         credit_annual_override_by     = case when v_has_annual then v_uid else null end             -- R-368
+   where id = p_quote_id and tenant_id = v_tenant_id;
+
+  return jsonb_build_object(
+    'already_active', false,
+    'invoice_id', v_invoice_id,
+    'due_date', v_due,
+    'amount_due', v_balance,
+    'subscriptions_created', v_subs_created,
+    'purchase_orders', to_jsonb(v_pos),
+    'tasks_created', 3,
+    'over_limit', v_over,
+    'owed_before', v_owed,
+    'credit_limit', v_limit
+  );
+end;
+$function$;
+
 -- public.add_reimbursement
 CREATE OR REPLACE FUNCTION public.add_reimbursement(p_person text, p_purpose text, p_category text, p_amount integer, p_gst integer, p_incurred_on date, p_paid_via text, p_employee_id uuid DEFAULT NULL::uuid, p_receipt_path text DEFAULT NULL::text)
  RETURNS uuid
@@ -544,6 +991,82 @@ begin
   return v_id;
 end;
 $function$;
+
+-- public.approve_payment_run
+CREATE OR REPLACE FUNCTION public.approve_payment_run(p_run_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_role   text := public.payment_run_role();
+  r        public.payment_runs;
+  it       public.payment_run_items;
+  v_owed   integer;
+begin
+  if v_tenant is null then raise exception 'No tenant context' using errcode = 'insufficient_privilege'; end if;
+  select * into r from public.payment_runs where id = p_run_id and tenant_id = v_tenant for update;
+  if not found then raise exception 'Payment run not found'; end if;
+  if v_role is null or v_role not in ('owner','manager') then
+    raise exception 'Only the owner or a manager can approve a payment run' using errcode = 'insufficient_privilege';
+  end if;
+  if v_role = 'manager' and r.created_by = public.current_user_id() then
+    raise exception 'A manager cannot approve a run they created — ask the owner or another manager' using errcode = 'insufficient_privilege';
+  end if;
+  if r.status <> 'draft' then raise exception 'Only a draft run can be approved (this one is %)', r.status; end if;
+
+  -- Re-check: a bill may have been paid by hand since the draft was made.
+  for it in select * from public.payment_run_items where run_id = r.id loop
+    v_owed := public.payment_run_outstanding(v_tenant, it.source, it.doc_id);
+    if v_owed is null or v_owed < it.amount then
+      raise exception '% (%) is no longer owed in full — cancel this run and make a new one', coalesce(it.doc_ref, it.doc_id), it.vendor_name;
+    end if;
+  end loop;
+
+  update public.payment_runs set status = 'approved', approved_by = public.current_user_id(), approved_at = now(), updated_at = now() where id = r.id;
+end $function$;
+
+-- public.audit_service_actor
+CREATE OR REPLACE FUNCTION public.audit_service_actor()
+ RETURNS uuid
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+declare
+  /* nullif(…,''): set_config(…, null) leaves an EMPTY string, and ''::jsonb raises 22P02. */
+  v_claims text := nullif(current_setting('request.jwt.claims', true), '');
+  v_role   text;
+  v_raw    text;
+begin
+  if public.current_user_id() is not null then
+    return null;                       -- a real session: the trigger uses public.current_user_id() itself
+  end if;
+  begin
+    v_role := coalesce(v_claims::jsonb ->> 'role', '');
+  exception when others then
+    return null;
+  end;
+  if v_claims is not null and v_role <> 'service_role' then
+    return null;                       -- anon / authenticated / anything else: not trusted
+  end if;
+
+  v_raw := nullif(current_setting('app.actor_id', true), '');
+  if v_raw is null then
+    begin
+      v_raw := nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-actor-id';
+    exception when others then
+      v_raw := null;
+    end;
+  end if;
+  if v_raw is null
+     or v_raw !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return null;
+  end if;
+  return v_raw::uuid;
+end $function$;
 
 -- public.auto_backup_if_stale
 CREATE OR REPLACE FUNCTION public.auto_backup_if_stale()
@@ -1006,6 +1529,29 @@ CREATE OR REPLACE FUNCTION public.can_see_record(p_owner uuid)
  SET search_path TO 'public', 'pg_temp'
 AS $function$ select p_owner is null or public.current_customer_id() is not null or exists (select 1 from public.users u where u.id = public.current_user_id() and u.role not in ('sales','sales_senior','manager')) or p_owner in (select public.get_subordinate_user_ids(public.current_user_id())) $function$;
 
+-- public.cancel_payment_run
+CREATE OR REPLACE FUNCTION public.cancel_payment_run(p_run_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_role   text := public.payment_run_role();
+  r        public.payment_runs;
+begin
+  if v_tenant is null then raise exception 'No tenant context' using errcode = 'insufficient_privilege'; end if;
+  select * into r from public.payment_runs where id = p_run_id and tenant_id = v_tenant for update;
+  if not found then raise exception 'Payment run not found'; end if;
+  if r.status not in ('draft','approved') then raise exception 'A % run cannot be cancelled', r.status; end if;
+  -- An approved run is the owner's decision: only owner/manager undo it. A draft, its maker too.
+  if not (v_role in ('owner','manager') or (r.status = 'draft' and r.created_by = public.current_user_id() and v_role in ('billing','accountant'))) then
+    raise exception 'You cannot cancel this payment run' using errcode = 'insufficient_privilege';
+  end if;
+  update public.payment_runs set status = 'cancelled', cancelled_by = public.current_user_id(), cancelled_at = now(), updated_at = now() where id = r.id;
+end $function$;
+
 -- public.consume_prepaid_advance
 CREATE OR REPLACE FUNCTION public.consume_prepaid_advance(p_advance_id uuid, p_amount integer, p_date date DEFAULT CURRENT_DATE, p_note text DEFAULT NULL::text, p_gst integer DEFAULT 0, p_attachment text DEFAULT NULL::text)
  RETURNS integer
@@ -1104,6 +1650,80 @@ begin
 end;
 $function$;
 
+-- public.create_payment_run
+CREATE OR REPLACE FUNCTION public.create_payment_run(p_items jsonb, p_bank_account_id uuid, p_pay_on date DEFAULT NULL::date, p_note text DEFAULT NULL::text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_role   text := public.payment_run_role();
+  v_run    uuid;
+  v_no     text;
+  v_total  bigint := 0;
+  it       jsonb;
+  v_src    text; v_doc text; v_amt integer; v_owed integer;
+  v_vid uuid; v_vname text; v_ref text;
+begin
+  if v_tenant is null then raise exception 'No tenant context' using errcode = 'insufficient_privilege'; end if;
+  if v_role is null or v_role not in ('owner','manager','billing','accountant') then
+    raise exception 'Only owner, manager, billing or accountant can create a payment run' using errcode = 'insufficient_privilege';
+  end if;
+  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+    raise exception 'Pick at least one bill to pay';
+  end if;
+  if jsonb_array_length(p_items) > 200 then raise exception 'At most 200 bills in one run'; end if;
+  if not exists (select 1 from public.bank_accounts where id = p_bank_account_id and tenant_id = v_tenant) then
+    raise exception 'Pay-from bank account not found';
+  end if;
+
+  -- Run number: PR-YYYYMM-NNN, per tenant. The advisory lock makes two creates in the same
+  -- instant take turns instead of colliding on the unique (tenant_id, run_no).
+  perform pg_advisory_xact_lock(hashtext('payment_run_no:' || v_tenant::text));
+  select 'PR-' || to_char(coalesce(p_pay_on, current_date), 'YYYYMM') || '-' ||
+         lpad((count(*) + 1)::text, 3, '0')
+    into v_no
+    from public.payment_runs
+   where tenant_id = v_tenant and run_no like 'PR-' || to_char(coalesce(p_pay_on, current_date), 'YYYYMM') || '-%';
+
+  insert into public.payment_runs (tenant_id, run_no, bank_account_id, pay_on, note, created_by)
+  values (v_tenant, v_no, p_bank_account_id, coalesce(p_pay_on, current_date), nullif(trim(p_note), ''), public.current_user_id())
+  returning id into v_run;
+
+  for it in select * from jsonb_array_elements(p_items) loop
+    v_src := it->>'source';
+    v_doc := it->>'doc_id';
+    v_amt := (it->>'amount')::integer;
+    if v_src not in ('vendor_bill','expense') or v_doc is null then raise exception 'Bad item in the run'; end if;
+    if v_amt is null or v_amt <= 0 then raise exception 'Amount must be more than zero (%)', v_doc; end if;
+
+    v_owed := public.payment_run_outstanding(v_tenant, v_src, v_doc);
+    if v_owed is null or v_owed = 0 then raise exception '% is already paid or not found', v_doc; end if;
+    if v_amt > v_owed then raise exception '% — ₹% is more than the ₹% still owed', v_doc, v_amt, v_owed; end if;
+
+    if exists (select 1 from public.payment_run_items i join public.payment_runs r on r.id = i.run_id
+                where i.tenant_id = v_tenant and i.source = v_src and i.doc_id = v_doc
+                  and r.status in ('draft','approved') and r.id <> v_run) then
+      raise exception '% is already in another open payment run', v_doc;
+    end if;
+
+    if v_src = 'vendor_bill' then
+      select b.vendor_id, b.vendor_name, b.bill_no into v_vid, v_vname, v_ref from public.vendor_bills b where b.id = v_doc;
+    else
+      select e.vendor_id, coalesce(e.vendor_name, e.category), e.bill_no into v_vid, v_vname, v_ref from public.expenses e where e.id = v_doc;
+    end if;
+
+    insert into public.payment_run_items (run_id, tenant_id, source, doc_id, doc_ref, vendor_id, vendor_name, amount)
+    values (v_run, v_tenant, v_src, v_doc, v_ref, v_vid, coalesce(v_vname, 'Vendor'), v_amt);
+    v_total := v_total + v_amt;
+  end loop;
+
+  update public.payment_runs set total = v_total where id = v_run;
+  return v_run;
+end $function$;
+
 -- public.create_tenant_backup
 CREATE OR REPLACE FUNCTION public.create_tenant_backup(p_label text DEFAULT NULL::text)
  RETURNS jsonb
@@ -1126,10 +1746,30 @@ CREATE OR REPLACE FUNCTION public.current_customer_id()
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-  select customer_id
-  from public.customer_users
-  where auth_user_id = public.current_user_id()
-  limit 1
+  /* R-395: no `limit 1` guess. One link → it. Several → only the server-selected one. */
+  with links as (
+    select cu.customer_id
+      from public.customer_users cu
+     where cu.auth_user_id = public.current_user_id()
+  ),
+  claims as (
+    select nullif(current_setting('request.jwt.claims', true), '')::jsonb as c
+  ),
+  picked as (
+    select coalesce(
+             nullif(c #>> '{app_metadata,customer_id}', ''),
+             nullif(c ->> 'customer_id', '')
+           ) as v
+      from claims
+  )
+  select case
+           when (select count(*) from links) = 1 then (select customer_id from links)
+           else (select l.customer_id
+                   from links l, picked p
+                  where p.v is not null
+                    and l.customer_id::text = p.v
+                  limit 1)
+         end
 $function$;
 
 -- public.current_user_has_role
@@ -1160,6 +1800,42 @@ AS $function$
     select 1 from public.users u
     where u.id = public.current_user_id() and u.role = 'owner' and u.is_active
   );
+$function$;
+
+-- public.decide_invoice_write_off
+CREATE OR REPLACE FUNCTION public.decide_invoice_write_off(p_draft_id uuid, p_decision text)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_rows   integer;
+begin
+  if v_tenant is null then
+    raise exception 'You are not signed in to a company. Sign in again and retry.'
+      using errcode = '42501';
+  end if;
+  if not public.current_user_is_owner() then
+    raise exception 'Only the company owner can confirm or dismiss a write-off. Ask the owner to open Accounting > Aging.'
+      using errcode = '42501';
+  end if;
+  if p_decision not in ('confirmed', 'dismissed') then
+    raise exception 'Unknown decision "%". Use confirmed or dismissed.', p_decision
+      using errcode = '22023';
+  end if;
+
+  update public.invoice_write_off_drafts d
+     set status = p_decision, decided_by = public.current_user_id(), decided_at = now()
+   where d.id = p_draft_id and d.tenant_id = v_tenant and d.status = 'draft';
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    raise exception 'This write-off draft was not found or was already decided. Refresh the page.'
+      using errcode = 'P0002';
+  end if;
+  return p_decision;
+end;
 $function$;
 
 -- public.delete_customer
@@ -1774,6 +2450,33 @@ begin
 end;
 $function$;
 
+-- public.fn_customers_credit_owner_only
+CREATE OR REPLACE FUNCTION public.fn_customers_credit_owner_only()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if public.current_user_id() is null then
+    return new;
+  end if;
+  if tg_op = 'UPDATE'
+     and new.allow_pay_later is not distinct from old.allow_pay_later
+     and new.credit_limit   is not distinct from old.credit_limit then
+    return new;
+  end if;
+  if tg_op = 'INSERT' and new.allow_pay_later and new.credit_limit is null then
+    return new;
+  end if;
+  if public.current_user_is_owner() then
+    return new;
+  end if;
+  raise exception 'Only the owner can change Pay later or the credit limit for a customer.'
+    using errcode = 'insufficient_privilege';
+end;
+$function$;
+
 -- public.get_my_tenant_with_parent
 CREATE OR REPLACE FUNCTION public.get_my_tenant_with_parent()
  RETURNS TABLE(id uuid, name text, tier text, parent_tenant_id uuid, parent_name text, parent_tier text, parent_gstin text)
@@ -2217,13 +2920,14 @@ declare
   v_today     date    := (now() at time zone 'Asia/Kolkata')::date;
   v_month_end date;
   v_month_at  timestamptz;
-  v_pattern   text;
+  v_search    text;
   v_stages    text[];
   v_page_stages text[];
   v_prios     text[];
   v_owner_ids uuid[];
   v_owner_id  uuid    := nullif(v_f->>'owner_id', '')::uuid;
   v_owners    text[];
+  v_sources   text[];
   v_me        uuid    := public.current_user_id();
   v_out       jsonb;
 begin
@@ -2239,7 +2943,7 @@ begin
   v_month_at  := date_trunc('month', v_today)::timestamp at time zone 'Asia/Kolkata';
 
   if btrim(coalesce(v_f->>'search', '')) <> '' then
-    v_pattern := '%' || replace(replace(replace(lower(v_f->>'search'), '\', '\\'), '%', '\%'), '_', '\_') || '%';
+    v_search := v_f->>'search';
   end if;
   if jsonb_typeof(v_f->'stages') = 'array' and jsonb_array_length(v_f->'stages') > 0 then
     select array_agg(x) into v_stages from jsonb_array_elements_text(v_f->'stages') x;
@@ -2256,12 +2960,15 @@ begin
   if jsonb_typeof(v_f->'owners') = 'array' and jsonb_array_length(v_f->'owners') > 0 then
     select array_agg(x) into v_owners from jsonb_array_elements_text(v_f->'owners') x;
   end if;
+  if jsonb_typeof(v_f->'sources') = 'array' and jsonb_array_length(v_f->'sources') > 0 then
+    select array_agg(x) into v_sources from jsonb_array_elements_text(v_f->'sources') x;
+  end if;
 
   with pool as (
     select l.id, l.company, l.contact_name, l.contact_email, l.contact_phone, l.plan, l.value,
            l.stage::text as stage, l.priority, l.owner_id, l.is_junk, l.created_at,
            l.follow_up_date, l.expected_close_date, l.stage_changed_at, l.enquiry_type,
-           l.requires_human_attention
+           l.requires_human_attention, l.source
       from public.leads l
      where l.tenant_id = public.current_tenant_id()
   ), ws as (
@@ -2301,17 +3008,16 @@ begin
     select f.*
       from flagged f
      where (case when v_view = 'junk' then (f.is_junk or f.suspect) else not f.is_junk end)
-       and (v_pattern is null
-            or lower(f.company) like v_pattern escape '\'
-            or lower(f.contact_name) like v_pattern escape '\'
-            or lower(f.contact_email) like v_pattern escape '\'
-            or lower(f.contact_phone) like v_pattern escape '\'
-            or lower(f.plan) like v_pattern escape '\')
+       and (v_search is null
+            or public.lead_search_hit(v_search, f.company, f.contact_name, f.contact_email, f.contact_phone, f.plan,
+                                      f.source, (select u.full_name from public.users u where u.id = f.owner_id)))
        and (v_stages is null or f.stage = any (v_stages))
        and (v_prios is null or f.priority = any (v_prios))
        and (v_owners is null
             or (f.owner_id is null and '__unassigned' = any (v_owners))
             or f.owner_id::text = any (v_owners))
+       -- Source (R-392)
+       and (v_sources is null or public.lead_source_key(f.source) = any (v_sources))
        and (v_view in ('everything', 'all', 'junk')
             or (v_view = 'mine'     and f.owner_id = v_me)
             or (v_view = 'waiting'  and f.requires_human_attention and f.stage not in ('won', 'lost'))
@@ -2348,7 +3054,10 @@ begin
         'high_priority', count(*) filter (where p.priority = 'high'),
         'by_owner',      coalesce((select jsonb_object_agg(o.owner_id, o.n)
                                      from (select owner_id, count(*) as n from pool
-                                            where owner_id is not null group by owner_id) o), '{}'::jsonb))
+                                            where owner_id is not null group by owner_id) o), '{}'::jsonb),
+        'by_source',     coalesce((select jsonb_object_agg(o.k, o.n)
+                                     from (select public.lead_source_key(source) as k, count(*) as n from pool
+                                            where public.lead_source_key(source) <> '' group by 1) o), '{}'::jsonb))
         from pool p),
     'workspace', (
       select jsonb_build_object(
@@ -2439,15 +3148,17 @@ declare
   v_today     date    := (now() at time zone 'Asia/Kolkata')::date;
   v_c_at      timestamptz;
   v_c_key     numeric;
+  v_c_num     numeric;
+  v_c_txt     text;
   v_c_id      text;
   v_search    text;
-  v_pattern   text;
   v_stages    text[];
   v_prios     text[];
   v_junk      text    := coalesce(nullif(v_f->>'junk', ''), 'exclude');
   v_owner_ids uuid[];
   v_owner_id  uuid    := nullif(v_f->>'owner_id', '')::uuid;
   v_owners    text[];
+  v_sources   text[];
   v_open_only boolean := coalesce((v_f->>'open_only')::boolean, false);
   v_dup_of    text    := nullif(v_f->>'dup_of', '');
   v_like      jsonb   := case when jsonb_typeof(v_f->'dup_like') = 'object' then v_f->'dup_like' end;
@@ -2459,8 +3170,8 @@ declare
   v_count     integer;
   v_last      integer;
 begin
-  if v_sort not in ('created', 'wait') then
-    raise exception 'list_leads: sort must be created or wait (got %)', v_sort using errcode = '22023';
+  if v_sort not in ('created', 'wait', 'oldest', 'value', 'followup', 'name', 'stage') then
+    raise exception 'list_leads: sort must be created, wait, oldest, value, followup, name or stage (got %)', v_sort using errcode = '22023';
   end if;
   if v_view is not null and v_view not in ('everything', 'all', 'mine', 'waiting', 'today', 'overdue', 'hot', 'new',
                                           'won-mtd', 'closing', 'stalled', 'duplicates', 'junk') then
@@ -2476,6 +3187,13 @@ begin
       v_c_key := nullif(p_cursor->>'wait_key', '')::numeric;
       if v_c_key is null or v_c_id is null then
         raise exception 'list_leads: the cursor needs both wait_key and id — pass back next_cursor exactly as it was returned, or null for the first page'
+          using errcode = '22023';
+      end if;
+    elsif v_sort <> 'created' then
+      v_c_num := nullif(p_cursor->>'sort_num', '')::numeric;
+      v_c_txt := coalesce(p_cursor->>'sort_txt', '');
+      if v_c_num is null or v_c_id is null then
+        raise exception 'list_leads: the cursor needs both sort_num and id — pass back next_cursor exactly as it was returned, or null for the first page'
           using errcode = '22023';
       end if;
     else
@@ -2496,8 +3214,7 @@ begin
   end if;
 
   if btrim(coalesce(v_f->>'search', '')) <> '' then
-    v_search  := lower(v_f->>'search');
-    v_pattern := '%' || replace(replace(replace(v_search, '\', '\\'), '%', '\%'), '_', '\_') || '%';
+    v_search  := v_f->>'search';
   end if;
 
   if jsonb_typeof(v_f->'stages') = 'array' and jsonb_array_length(v_f->'stages') > 0 then
@@ -2511,6 +3228,9 @@ begin
   end if;
   if jsonb_typeof(v_f->'owners') = 'array' and jsonb_array_length(v_f->'owners') > 0 then
     select array_agg(x) into v_owners from jsonb_array_elements_text(v_f->'owners') x;
+  end if;
+  if jsonb_typeof(v_f->'sources') = 'array' and jsonb_array_length(v_f->'sources') > 0 then
+    select array_agg(x) into v_sources from jsonb_array_elements_text(v_f->'sources') x;
   end if;
 
   /* dup_of — the other leads that make THIS one a duplicate (the page's matchesOf), for the
@@ -2598,7 +3318,21 @@ begin
                   then 1000000000000::numeric - extract(epoch from l.created_at)
                   else greatest(0::numeric, extract(epoch from fr.at) - extract(epoch from l.created_at))
              end
-           end as wait_key
+           end as wait_key,
+           /* R-420: every other order is ONE ascending key — (sort_num, sort_txt, id) — so one
+              keyset rule pages them all. Twin: lib/leads/lead-sort.ts#leadSortKey.
+              Newer-first inside a tie is folded into sort_num (minus the arrival epoch). */
+           case v_sort
+             when 'oldest'   then extract(epoch from l.created_at)
+             when 'value'    then -coalesce(l.value, 0)::numeric * 10000000000 - extract(epoch from l.created_at)
+             when 'followup' then coalesce(extract(epoch from l.follow_up_date::timestamp), 100000000000) * 10000000000
+                                  - extract(epoch from l.created_at)
+             when 'name'     then case when lower(coalesce(nullif(btrim(l.contact_name), ''), nullif(btrim(l.company), ''), nullif(btrim(l.contact_email), ''), nullif(btrim(l.contact_phone), ''), '')) = '' then 1 else 0 end
+             when 'stage'    then (case l.stage::text when 'new' then 1 when 'contact' then 2 when 'quote' then 3
+                                   when 'demo' then 4 when 'trial' then 5 when 'won' then 6 when 'lost' then 7 else 8 end)
+                                  * 10000000000 - extract(epoch from l.created_at)
+           end as sort_num,
+           case when v_sort = 'name' then lower(coalesce(nullif(btrim(l.contact_name), ''), nullif(btrim(l.company), ''), nullif(btrim(l.contact_email), ''), nullif(btrim(l.contact_phone), ''), '')) else '' end as sort_txt
       from public.leads l
       /* lib/queries/lead-first-reply.ts: the first OUTBOUND touch (waiting.ts#OUTBOUND_KINDS),
          per lead through lead_activities_lead_idx. A grouped CTE joined back was planned as
@@ -2617,12 +3351,9 @@ begin
        and (v_junk in ('any', 'view') or (v_junk = 'only') = l.is_junk)
        and (v_junk <> 'view' or l.is_junk
             or public.lead_looks_like_junk(l.company, l.contact_name, l.contact_email, l.contact_phone))
-       and (v_pattern is null
-            or lower(l.company) like v_pattern escape '\'
-            or lower(l.contact_name) like v_pattern escape '\'
-            or lower(l.contact_email) like v_pattern escape '\'
-            or lower(l.contact_phone) like v_pattern escape '\'
-            or lower(l.plan) like v_pattern escape '\')
+       and (v_search is null
+            or public.lead_search_hit(v_search, l.company, l.contact_name, l.contact_email, l.contact_phone, l.plan,
+                                      l.source, (select u.full_name from public.users u where u.id = l.owner_id)))
        and (v_stages is null or l.stage::text = any (v_stages))
        and (v_prios is null or l.priority = any (v_prios))
        and (v_owner_ids is null or l.owner_id is null or l.owner_id = any (v_owner_ids))
@@ -2632,6 +3363,8 @@ begin
        and (v_owners is null
             or (l.owner_id is null and '__unassigned' = any (v_owners))
             or l.owner_id::text = any (v_owners))
+       -- Source (R-392)
+       and (v_sources is null or public.lead_source_key(l.source) = any (v_sources))
        -- smart view (searchLeads 4)
        and (v_view is null or v_view in ('everything', 'all', 'junk')
             or (v_view = 'mine'     and l.owner_id = public.current_user_id())
@@ -2668,9 +3401,12 @@ begin
      where v_c_id is null
         or (v_sort = 'wait'    and (c.wait_key, c.id) < (v_c_key, v_c_id))
         or (v_sort = 'created' and (c.created_at, c.id) < (v_c_at, v_c_id))
+        or (v_sort not in ('wait', 'created') and (c.sort_num, c.sort_txt, c.id) > (v_c_num, v_c_txt, v_c_id))
      order by case when v_sort = 'wait' then c.wait_key end desc,
               case when v_sort = 'created' then c.created_at end desc,
-              c.id desc
+              c.sort_num, c.sort_txt,
+              case when v_sort in ('wait', 'created') then c.id end desc,
+              c.id
      limit v_limit + 1
   ), numbered as (
     select p.*,
@@ -2679,11 +3415,14 @@ begin
            row_number() over (
              order by case when v_sort = 'wait' then p.wait_key end desc,
                       case when v_sort = 'created' then p.created_at end desc,
-                      p.id desc) as rn
+                      p.sort_num, p.sort_txt,
+                      case when v_sort in ('wait', 'created') then p.id end desc,
+                      p.id) as rn
       from page p
   )
-  select coalesce(jsonb_agg(to_jsonb(n) - 'rn' - 'wait_key' order by n.rn) filter (where n.rn <= v_limit), '[]'::jsonb),
-         coalesce(jsonb_agg(jsonb_build_object('wait_key', n.wait_key::text, 'id', n.id, 'created_at', n.created_at)
+  select coalesce(jsonb_agg(to_jsonb(n) - 'rn' - 'wait_key' - 'sort_num' - 'sort_txt' order by n.rn) filter (where n.rn <= v_limit), '[]'::jsonb),
+         coalesce(jsonb_agg(jsonb_build_object('wait_key', n.wait_key::text, 'id', n.id, 'created_at', n.created_at,
+                                               'sort_num', n.sort_num::text, 'sort_txt', n.sort_txt)
                             order by n.rn) filter (where n.rn <= v_limit), '[]'::jsonb),
          count(*)::integer
     into v_rows, v_keys, v_count
@@ -2695,7 +3434,10 @@ begin
       'rows', v_rows,
       'next_cursor', case when v_sort = 'wait'
                           then jsonb_build_object('wait_key', v_keys->v_last->'wait_key', 'id', v_keys->v_last->'id')
-                          else jsonb_build_object('created_at', v_rows->v_last->'created_at', 'id', v_rows->v_last->'id')
+                          when v_sort = 'created'
+                          then jsonb_build_object('created_at', v_rows->v_last->'created_at', 'id', v_rows->v_last->'id')
+                          else jsonb_build_object('sort_num', v_keys->v_last->'sort_num', 'sort_txt', v_keys->v_last->'sort_txt',
+                                                  'id', v_keys->v_last->'id')
                      end);
   end if;
   return jsonb_build_object('rows', v_rows, 'next_cursor', null);
@@ -2795,10 +3537,14 @@ declare
   v_changes jsonb;
   v_key     text;
   v_uid     uuid := public.current_user_id();
+  v_as      uuid;
   v_user    uuid;
   v_actor   text;
 begin
-  if v_uid is null then return null; end if;
+  if v_uid is null then
+    v_as := public.audit_service_actor();     -- R-051: admin-client write for a signed-in user
+    if v_as is null then return null; end if; -- cron / webhook / system: not logged (as before)
+  end if;
   if tg_op = 'DELETE' then v_json := to_jsonb(old); else v_json := to_jsonb(new); end if;
   v_tenant := nullif(v_json->>'tenant_id', '')::uuid;
   if v_tenant is null then return null; end if;
@@ -2823,19 +3569,85 @@ begin
     v_changes := jsonb_build_object('old', v_json);
   end if;
 
-  -- Who is acting: a staff user, or a portal customer (not in public.users).
-  select u.id into v_user from public.users u where u.id = v_uid;
-  if v_user is null then
-    select 'Customer ' || c.name into v_actor
-      from public.customer_users cu
-      join public.customers c on c.id = cu.customer_id
-     where cu.auth_user_id = v_uid
-     limit 1;
+  if v_uid is not null then
+    -- Who is acting: a staff user, or a portal customer (not in public.users).
+    select u.id into v_user from public.users u where u.id = v_uid;
+    if v_user is null then
+      select 'Customer ' || c.name into v_actor
+        from public.customer_users cu
+        join public.customers c on c.id = cu.customer_id
+       where cu.auth_user_id = v_uid
+       limit 1;
+    end if;
+  else
+    -- R-051: the service role vouched for v_as. Name them only inside their own tenant.
+    select u.id into v_user from public.users u where u.id = v_as and u.tenant_id = v_tenant;
+    if v_user is null and exists (select 1 from public.users u where u.id = v_as) then
+      v_actor := 'Platform support';
+    end if;
   end if;
 
   insert into public.activity_log (tenant_id, user_id, actor_label, action, entity, entity_id, label, changes)
   values (v_tenant, v_user, left(v_actor, 120), lower(tg_op), tg_table_name, v_id, left(v_label, 120), v_changes);
   return null;
+end $function$;
+
+-- public.mark_payment_run_paid
+CREATE OR REPLACE FUNCTION public.mark_payment_run_paid(p_run_id uuid, p_paid_on date DEFAULT NULL::date)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_role   text := public.payment_run_role();
+  r        public.payment_runs;
+  it       public.payment_run_items;
+  v_owed   integer;
+  v_on     date := coalesce(p_paid_on, current_date);
+  v_txn    uuid;
+  v_bill   public.vendor_bills;
+begin
+  if v_tenant is null then raise exception 'No tenant context' using errcode = 'insufficient_privilege'; end if;
+  if v_role is null or v_role not in ('owner','manager','billing','accountant') then
+    raise exception 'Only owner, manager, billing or accountant can mark a run paid' using errcode = 'insufficient_privilege';
+  end if;
+  select * into r from public.payment_runs where id = p_run_id and tenant_id = v_tenant for update;
+  if not found then raise exception 'Payment run not found'; end if;
+  if r.status <> 'approved' then raise exception 'Only an approved run can be marked paid (this one is %)', r.status; end if;
+
+  for it in select * from public.payment_run_items where run_id = r.id order by vendor_name loop
+    v_owed := public.payment_run_outstanding(v_tenant, it.source, it.doc_id);
+    if v_owed is null or v_owed < it.amount then
+      raise exception '% (%) was paid elsewhere after approval — nothing was marked; check it and try again', coalesce(it.doc_ref, it.doc_id), it.vendor_name;
+    end if;
+
+    if it.source = 'vendor_bill' then
+      select * into v_bill from public.vendor_bills where id = it.doc_id and tenant_id = v_tenant for update;
+      update public.vendor_bills
+         set paid_amount = coalesce(paid_amount,0) + it.amount,
+             status = case when coalesce(paid_amount,0) + it.amount >= total then 'paid' else 'partial' end,
+             updated_at = now()
+       where id = it.doc_id and tenant_id = v_tenant;
+      insert into public.bank_transactions (tenant_id, bank_account_id, txn_date, description, debit, credit, source,
+                                            matched_to_type, matched_to_id, match_confidence, reference)
+      values (v_tenant, r.bank_account_id, v_on, 'Bill payment: ' || it.vendor_name || ' · ' || r.run_no, it.amount, 0, 'manual',
+              'vendor_bill', it.doc_id, 'manual', r.run_no);
+    else
+      insert into public.bank_transactions (tenant_id, bank_account_id, txn_date, description, debit, credit, source,
+                                            matched_to_type, matched_to_id, match_confidence, reference)
+      values (v_tenant, r.bank_account_id, v_on, 'Expense payment: ' || it.vendor_name || ' · ' || r.run_no, it.amount, 0, 'manual',
+              'expense', it.doc_id, 'manual', r.run_no)
+      returning id into v_txn;
+      update public.expenses
+         set paid = true, paid_date = v_on, payment_method = 'bank_transfer',
+             bank_account_id = r.bank_account_id, reconciled_txn_id = v_txn
+       where id = it.doc_id and tenant_id = v_tenant;
+    end if;
+  end loop;
+
+  update public.payment_runs set status = 'paid', paid_by = public.current_user_id(), paid_at = now(), paid_on = v_on, updated_at = now() where id = r.id;
 end $function$;
 
 -- public.mark_self_attendance
@@ -3125,6 +3937,16 @@ begin
 end;
 $function$;
 
+-- public.payment_run_role
+CREATE OR REPLACE FUNCTION public.payment_run_role()
+ RETURNS text
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  select role::text from public.users where id = public.current_user_id();
+$function$;
+
 -- public.portal_ensure_customer_link
 CREATE OR REPLACE FUNCTION public.portal_ensure_customer_link()
  RETURNS text
@@ -3170,33 +3992,6 @@ begin
 end;
 $function$;
 
--- public.portal_list_products
-CREATE OR REPLACE FUNCTION public.portal_list_products()
- RETURNS TABLE(id text, name text, vendor text, price_per_seat_month integer, hsn text)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-  select
-    i.id,
-    i.name,
-    i.vendor::text,
-    coalesce(
-      nullif((i.prices->'annual'->>'msrp'), '')::int,
-      i.msrp
-    ) as price_per_seat_month,
-    i.hsn
-  from public.items i
-  where i.is_active = true
-    and i.kind = 'main'
-    and i.tenant_id = (
-      select cu.tenant_id from public.customer_users cu
-      where cu.auth_user_id = public.current_user_id()
-      limit 1
-    )
-  order by coalesce(nullif((i.prices->'annual'->>'msrp'),'')::int, i.msrp) asc, i.name asc;
-$function$;
-
 -- public.portal_request_quote
 CREATE OR REPLACE FUNCTION public.portal_request_quote(p_item_id text, p_seats integer, p_note text DEFAULT NULL::text)
  RETURNS text
@@ -3217,13 +4012,13 @@ begin
     raise exception 'not authenticated' using errcode = 'insufficient_privilege';
   end if;
 
+  /* R-395: the customer comes from current_customer_id() (ambiguous link → null → refused),
+     not from a `limit 1` guess over customer_users. */
   select c.id as customer_id, c.tenant_id, c.name, c.contact_email,
          c.contact_phone, c.gstin, c.state, c.state_code
     into v_customer
-  from public.customer_users cu
-  join public.customers c on c.id = cu.customer_id
-  where cu.auth_user_id = v_uid
-  limit 1;
+  from public.customers c
+  where c.id = public.current_customer_id();
 
   if v_customer.customer_id is null then
     raise exception 'no customer account' using errcode = 'no_data_found';
@@ -3289,6 +4084,29 @@ begin
   update public.customer_users
      set last_login_at = now()
    where auth_user_id = public.current_user_id();
+end;
+$function$;
+
+-- public.quotes_refuse_mixed_billing_term
+CREATE OR REPLACE FUNCTION public.quotes_refuse_mixed_billing_term()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+begin
+  if coalesce(public.current_request_role(), '') not in ('anon', 'authenticated') then
+    return new;
+  end if;
+  if not public.quote_line_terms_mixed(new.line_items) then
+    return new;
+  end if;
+  -- An old mixed row stays editable: only a change that CREATES the mix is refused.
+  if tg_op = 'UPDATE' and public.quote_line_terms_mixed(old.line_items) then
+    return new;
+  end if;
+  raise exception 'One quote = one billing term. Put monthly items on a separate quote.'
+    using errcode = 'check_violation',
+          hint = 'R-381: a monthly flex line is priced per month, annual lines per year.';
 end;
 $function$;
 
@@ -3745,6 +4563,9 @@ declare
   v_changes jsonb := '{}'::jsonb;
   v_kinds   text[] := '{}';
   v_uid     uuid   := public.current_user_id();
+  v_user    uuid;
+  v_actor   text;
+  v_as      uuid;
 begin
   /* Only COMMERCIAL terms. A domain correction or a reminder timestamp is not an
      amendment, and recording every column change would bury the seat history that
@@ -3783,9 +4604,27 @@ begin
     return new;   -- nothing commercial moved
   end if;
 
+  -- R-096: who is acting — a staff user, or a portal customer (not in public.users).
+  if v_uid is not null then
+    select u.id into v_user from public.users u where u.id = v_uid;
+    if v_user is null then
+      select 'Customer ' || c.name into v_actor
+        from public.customer_users cu
+        join public.customers c on c.id = cu.customer_id
+       where cu.auth_user_id = v_uid
+       limit 1;
+    end if;
+  else
+    -- R-051: an admin-client write made for a signed-in staff user of this tenant.
+    v_as := public.audit_service_actor();
+    if v_as is not null then
+      select u.id into v_user from public.users u where u.id = v_as and u.tenant_id = new.tenant_id;
+    end if;
+  end if;
+
   insert into public.contract_amendments (
     tenant_id, subscription_id, customer_name, kind, changes,
-    seats_from, seats_to, mrr_from, mrr_to, changed_by, source
+    seats_from, seats_to, mrr_from, mrr_to, changed_by, actor_label, source
   ) values (
     new.tenant_id, new.id, new.customer_name,
     array_to_string(v_kinds, '+'),
@@ -3794,8 +4633,9 @@ begin
     case when new.seats is distinct from old.seats then new.seats end,
     case when new.mrr   is distinct from old.mrr   then old.mrr   end,
     case when new.mrr   is distinct from old.mrr   then new.mrr   end,
-    v_uid,
-    case when v_uid is null then 'system' else 'user' end
+    v_user,
+    left(v_actor, 120),
+    case when v_uid is null and v_user is null then 'system' else 'user' end
   );
 
   return new;
@@ -3921,6 +4761,8 @@ declare
   -- 0172: multi-line-item support
   v_line_idx              integer;
   v_line_amount           integer;
+  -- R-329: what the line's subscription renews at (qty x renewal_rate), else v_line_amount.
+  v_renew_amount          integer;
   v_first_sub_in_quote    boolean := true;
   -- Only domain/Workspace-type products are meaningfully tied to a single
   -- domain; a quote mixing e.g. a support plan + a hosting plan has no
@@ -3931,6 +4773,10 @@ declare
   -- repeat instead of erroring or silently dropping the subscription.
   v_used_domains          text[] := array[]::text[];
   v_sub_domain            text;
+  -- R-346: the quote already has its subscriptions (activated on credit, or recreated).
+  v_quote_subs_exist      boolean := false;
+  -- R-378: the line's cost as ₹/seat/month → subscriptions.vendor_cost_per_seat_month.
+  v_cost_pm               integer;
 begin
   v_is_service_role := public.current_request_role() = 'service_role';
   if not v_is_service_role then
@@ -4077,6 +4923,26 @@ begin
          invoice and the subscription below hang off a different row than the payment. */
       update public.quotes set customer_id = v_customer_id
        where id = p_quote_id and tenant_id = v_tenant_id;
+
+      /* R-373 (7 Oct 2026): the reused customer may have no state (149/160 locally),
+         and generate_invoice refuses an invoice without one. The lead in hand carries
+         the state the buyer gave (or a GSTIN whose first two digits are the code), so
+         fill a BLANK customer state from it — never overwrite one already set. Same
+         rule as fillBlankCustomerState on the online path. */
+      update public.customers c
+         set state_code = case
+                            when btrim(coalesce(v_lead.state_code, '')) ~ '^[0-9]{2}$' then btrim(v_lead.state_code)
+                            else substring(btrim(v_lead.gstin) from 1 for 2)
+                          end,
+             state      = case
+                            when nullif(btrim(coalesce(c.state, '')), '') is null then v_lead.state
+                            else c.state
+                          end
+       where c.id = v_customer_id
+         and c.tenant_id = v_tenant_id
+         and nullif(btrim(coalesce(c.state_code, '')), '') is null
+         and (btrim(coalesce(v_lead.state_code, '')) ~ '^[0-9]{2}$'
+              or btrim(coalesce(v_lead.gstin, '')) ~ '^[0-9]{2}');
     end if;
 
     update public.leads
@@ -4147,8 +5013,18 @@ begin
      is a single sale; the guard's absence gave it a recurring subscription, which the
      renewal cron then bills again on its next cycle. The customer is invoiced for a
      subscription nobody sold them. */
+  /* R-346: a quote activated on credit already has its subscriptions (and draft POs). The
+     first payment used to file them all AGAIN — two active subscriptions per line, both
+     renewing. Existing rows for this quote_id mean "already filed": the payment goes down the
+     elsif below, which only brings the outstanding down. */
+  v_quote_subs_exist := exists (
+    select 1 from public.subscriptions s
+     where s.tenant_id = v_tenant_id and s.quote_id = p_quote_id
+  );
+
   if v_is_first_payment and not v_is_renewal_quote and not v_is_add_seats
-     and not coalesce(v_quote.is_one_off, false) then
+     and not coalesce(v_quote.is_one_off, false)
+     and not v_quote_subs_exist then  -- R-346
     if jsonb_typeof(v_quote.line_items) = 'array' and jsonb_array_length(v_quote.line_items) > 0 then
       for v_line_idx in 0 .. jsonb_array_length(v_quote.line_items) - 1 loop
         v_first_line := v_quote.line_items -> v_line_idx;
@@ -4184,6 +5060,18 @@ begin
             coalesce((v_first_line->>'qty')::numeric, 0) * coalesce((v_first_line->>'rate')::numeric, 0)
               * (1 - coalesce((v_first_line->>'discount_pct')::numeric, 0) / 100)
           )::int;
+          /* R-329: a cart coupon discounts the first payment only. The line then says what it
+             renews at; the subscription's mrr (and so every renewal) is filed from that. */
+          v_renew_amount := case
+            when nullif(v_first_line->>'renewal_rate', '') is not null
+              then round(coalesce((v_first_line->>'qty')::numeric, 0) * (v_first_line->>'renewal_rate')::numeric)::int
+            else v_line_amount end;
+
+          /* R-378: the line's cost per seat, as ₹/seat/MONTH (monthly line = as is, annual = /12). */
+          v_cost_pm := case
+            when jsonb_typeof(v_first_line->'cost') = 'number' and (v_first_line->>'cost')::numeric > 0
+              then round((v_first_line->>'cost')::numeric / case when v_is_monthly then 1.0 else 12.0 end)::int
+            else null end;
 
           if coalesce((v_first_line->>'bulk')::boolean, false)
              and jsonb_typeof(v_first_line->'domains') = 'array'
@@ -4194,7 +5082,7 @@ begin
               raise exception 'bulk line has zero total seats (quote %)', p_quote_id;
             end if;
             v_bulk_pool := greatest(0, round(
-                             coalesce(v_line_amount, v_expected) / case when v_is_monthly then 1.0 else 12.0 end
+                             coalesce(v_renew_amount, v_expected) / case when v_is_monthly then 1.0 else 12.0 end  -- R-329
                            ))::int;
             v_running_mrr := 0;
             v_idx := 0;
@@ -4213,12 +5101,13 @@ begin
 
               insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
                 start_date, renewal_date, status, outstanding_amount, domain, quote_id,
-                term_months)
+                term_months, vendor_cost_per_seat_month)  -- R-378
               values (v_tenant_id, v_customer_id, v_quote.customer_name, v_plan_name, v_vendor, v_dom_seats, v_dom_mrr,
                 v_start,
                 (v_start + case when v_is_monthly then interval '1 month' else interval '1 year' end)::date,
                 'active', 0, v_dom, p_quote_id,
-                case when v_is_monthly then 1 else 12 end)
+                case when v_is_monthly then 1 else 12 end,
+                v_cost_pm)  -- R-378
               on conflict (tenant_id, quote_id, lower(domain)) where quote_id is not null and domain is not null
                 do nothing
               returning id into v_new_sub_id;
@@ -4252,13 +5141,14 @@ begin
             end if;
             insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
               start_date, renewal_date, status, outstanding_amount, domain, quote_id,
-              term_months)
+              term_months, vendor_cost_per_seat_month)  -- R-378
             values (v_tenant_id, v_customer_id, v_quote.customer_name, v_plan_name, v_vendor, v_seats,
-              greatest(0, round(v_line_amount / case when v_is_monthly then 1.0 else 12.0 end))::int, v_start,
+              greatest(0, round(v_renew_amount / case when v_is_monthly then 1.0 else 12.0 end))::int, v_start,  -- R-329
               (v_start + case when v_is_monthly then interval '1 month' else interval '1 year' end)::date, 'active',
               case when v_first_sub_in_quote then v_outstanding else 0 end,
               v_sub_domain, p_quote_id,
-              case when v_is_monthly then 1 else 12 end)
+              case when v_is_monthly then 1 else 12 end,
+              v_cost_pm)  -- R-378
             returning id into v_new_sub_id;
             if v_sub_domain is not null then
               v_used_domains := array_append(v_used_domains, lower(v_sub_domain));
@@ -4405,6 +5295,17 @@ begin
        where id = v_quote.invoice_id and tenant_id = v_tenant_id;
       v_invoice_paid := v_post_invoice_received >= v_net_due;
     end if;
+  end if;
+
+  /* R-346: paid in full → the credit reminders ("Credit: send payment link", "Credit: payment
+     not in — stop service?") have nothing left to chase. Only those two; the set-up task stays. */
+  if v_invoice_paid then
+    update public.tasks
+       set status = 'cancelled'
+     where tenant_id = v_tenant_id
+       and quote_id  = p_quote_id
+       and status in ('pending', 'snoozed')
+       and title like 'Credit:%';
   end if;
 
   /* ─── Overpayment → customer credit, ISI transaction me (audit A5, 1 Sep 2026) ───
@@ -4827,6 +5728,68 @@ begin
      set status = 'settled', settled_on = coalesce(p_settled_on, current_date),
          settled_notes = nullif(trim(coalesce(p_notes, '')), '')
    where id = p_id;
+end;
+$function$;
+
+-- public.suggest_invoice_write_off
+CREATE OR REPLACE FUNCTION public.suggest_invoice_write_off(p_invoice_id text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_inv    record;
+  v_due    integer;
+  v_days   integer;
+  v_id     uuid;
+begin
+  if v_tenant is null then
+    raise exception 'You are not signed in to a company. Sign in again and retry.'
+      using errcode = '42501';
+  end if;
+
+  select i.id, i.status::text as status, i.amount, i.net_payable, i.paid_amount, i.due_date
+    into v_inv
+    from public.invoices i
+   where i.id = p_invoice_id and i.tenant_id = v_tenant;
+  if not found then
+    raise exception 'Invoice % was not found in your company. Refresh the page and pick it again.', p_invoice_id
+      using errcode = 'P0002';
+  end if;
+  if v_inv.status not in ('pending', 'overdue') then
+    raise exception 'Invoice % is %, so there is nothing to write off.', p_invoice_id, v_inv.status
+      using errcode = '22023';
+  end if;
+
+  v_due := greatest(0, coalesce(v_inv.net_payable, v_inv.amount, 0) - coalesce(v_inv.paid_amount, 0));
+  if v_due <= 0 then
+    raise exception 'Invoice % has nothing left to pay, so there is nothing to write off.', p_invoice_id
+      using errcode = '22023';
+  end if;
+  if v_inv.due_date is null then
+    raise exception 'Invoice % has no due date. Set one on the invoice first.', p_invoice_id
+      using errcode = '22023';
+  end if;
+  v_days := (now() at time zone 'Asia/Kolkata')::date - v_inv.due_date;
+  if v_days <= 180 then
+    raise exception 'Invoice % is % days overdue. Write-off is suggested only after 180 days.', p_invoice_id, v_days
+      using errcode = '22023';
+  end if;
+
+  select d.id into v_id
+    from public.invoice_write_off_drafts d
+   where d.tenant_id = v_tenant and d.invoice_id = p_invoice_id and d.status = 'draft';
+  if v_id is not null then
+    return v_id;
+  end if;
+
+  insert into public.invoice_write_off_drafts (tenant_id, invoice_id, amount, days_overdue, reason, created_by)
+  values (v_tenant, p_invoice_id, v_due, v_days,
+          format('%s days overdue with %s still unpaid.', v_days, v_due), public.current_user_id())
+  returning id into v_id;
+  return v_id;
 end;
 $function$;
 

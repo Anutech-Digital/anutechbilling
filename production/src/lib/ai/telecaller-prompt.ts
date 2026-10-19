@@ -107,6 +107,11 @@ export interface BuildTelecallPromptArgs {
   pendingAmount: number | null;
   /** Read from `items` at call time. See the header for why it is not in this file. */
   catalogue: readonly SalesCatalogEntry[];
+  /**
+   * R-1663: a cold call — the person never enquired. `product` is what the campaign is for
+   * (null = let them say what they need).
+   */
+  coldCall?: { product: string | null } | null;
 }
 
 export interface BuiltTelecallPrompt {
@@ -262,13 +267,34 @@ function boundaryBlock(): string {
  * say. One function so the three cannot drift apart — the authorised list is derived from the
  * same catalogue array that produced the price lines in the prompt.
  */
+/** R-1663: the person did NOT enquire — say who we are and why, once, then qualify or leave. */
+function coldCallBlock(product: string | null): string {
+  const what = product?.trim() || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
+  return [
+    "WHY YOU ARE CALLING",
+    "This is a COLD CALL. {{customer_name}} has NOT enquired with us — never say they did.",
+    `In one sentence, say who you are and that you are calling about ${what} for their business.`,
+    "Then ask whether it is a good moment and whether they handle this for their company.",
+    "If they say it is the wrong person, ask once who handles it; if they do not want to say,",
+    "thank them and end the call.",
+    "",
+    "IF THEY ARE OPEN TO IT, COME AWAY WITH, in this order:",
+    "1. HOW MANY people would need an account.",
+    "2. What they use today, if anything.",
+    "3. Their city or state.",
+    "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
+    "",
+    "If they are not interested, do not push: thank them and end the call.",
+  ].join("\n");
+}
+
 export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecallPrompt {
   const { callType, sellerName, catalogue } = args;
 
   const systemPrompt = [
     personaBlock(sellerName),
     "",
-    objectiveBlock(callType),
+    args.coldCall ? coldCallBlock(args.coldCall.product) : objectiveBlock(callType),
     "",
     moneyRules(catalogue),
     "",

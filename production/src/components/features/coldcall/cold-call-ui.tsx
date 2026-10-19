@@ -28,7 +28,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
-  ColdCallError, useColdContacts, useCreateCampaign, useImportList,
+  ColdCallError, useColdContacts, useColdProducts, useCreateCampaign, useImportList,
   useDeleteContact, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
 } from "@/lib/queries/cold-calling";
 
@@ -37,9 +37,9 @@ type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline"
 export const STATUS: Record<string, { label: string; kind: BadgeKind }> = {
   pending:        { label: "Waiting",          kind: "muted" },
   calling:        { label: "Calling now",      kind: "info" },
-  interested:     { label: "Interested",       kind: "success" },
-  callback:       { label: "Call back",        kind: "warning" },
-  answered:       { label: "Talked",           kind: "outline" },
+  interested:     { label: "Hot — interested", kind: "success" },
+  callback:       { label: "Warm — call back", kind: "warning" },
+  answered:       { label: "Talked — unclear", kind: "outline" },
   not_interested: { label: "Not interested",   kind: "muted" },
   no_answer:      { label: "No answer",        kind: "muted" },
   failed:         { label: "Call failed",      kind: "danger" },
@@ -117,7 +117,7 @@ export function CampaignCard({ campaign: c }: { campaign: ColdCampaign }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-ink truncate group-hover:text-amber">{c.name}</p>
-          <p className="text-xs text-ink-3 truncate mt-0.5">Agent: {c.agentName ?? c.agentId}</p>
+          <p className="text-xs text-ink-3 truncate mt-0.5">{c.productName ?? "Any product"} · {c.agentName ?? c.agentId}</p>
         </div>
         <Badge kind={CAMPAIGN_STATUS[c.status].kind} dot={c.status === "running"} size="sm">{CAMPAIGN_STATUS[c.status].label}</Badge>
       </div>
@@ -150,6 +150,8 @@ export function NewCampaignForm(props: {
   const [name, setName] = React.useState("");
   const [agentId, setAgentId] = React.useState("");
   const [limit, setLimit] = React.useState("50");
+  const products = useColdProducts();
+  const [productId, setProductId] = React.useState("");
 
   React.useEffect(() => {
     if (!agentId && props.agents.length) {
@@ -166,7 +168,7 @@ export function NewCampaignForm(props: {
       toast.error("Calls per day must be 1 to 1,000.", { description: "50 a day is a good start." }); return;
     }
     try {
-      const r = await create.mutateAsync({ name: name.trim(), agentId, dailyLimit });
+      const r = await create.mutateAsync({ name: name.trim(), agentId, dailyLimit, productItemId: productId || null });
       toast.success("Campaign created", { description: "Next: add your list of numbers." });
       props.onDone(r.id);
     } catch (err) {
@@ -177,8 +179,8 @@ export function NewCampaignForm(props: {
   return (
     <Card className="p-5 md:p-6">
       <h2 className="font-serif text-xl">New campaign</h2>
-      <p className="text-sm text-ink-3 mt-0.5">Three details — you can add numbers right after.</p>
-      <form onSubmit={submit} className="mt-4 grid gap-4 md:grid-cols-3">
+      <p className="text-sm text-ink-3 mt-0.5">Four details — you can add numbers right after.</p>
+      <form onSubmit={submit} className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
           <label htmlFor="cc-name" className="block text-sm font-medium text-ink mb-1.5">Campaign name</label>
           <Input id="cc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Delhi CA firms — October" maxLength={120} autoFocus />
@@ -199,11 +201,25 @@ export function NewCampaignForm(props: {
           <p className="text-xs text-ink-3 mt-1">Agents come from your Bolna account.</p>
         </div>
         <div>
+          <label htmlFor="cc-product" className="block text-sm font-medium text-ink mb-1.5">Calling about which product</label>
+          <select
+            id="cc-product"
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+            disabled={products.isLoading}
+            className="w-full h-9 rounded-md border border-hairline bg-paper px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+          >
+            <option value="">Any product — let the customer say what they need</option>
+            {(products.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <p className="text-xs text-ink-3 mt-1">The agent talks about this product and quotes only its price.</p>
+        </div>
+        <div>
           <label htmlFor="cc-limit" className="block text-sm font-medium text-ink mb-1.5">Calls per day</label>
           <Input id="cc-limit" type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(e.target.value)} />
           <p className="text-xs text-ink-3 mt-1">The agent stops for the day at this number.</p>
         </div>
-        <div className="md:col-span-3 flex justify-end gap-2">
+        <div className="md:col-span-2 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => props.onDone(null)}>Cancel</Button>
           <Button type="submit" variant="primary" loading={create.isPending}>Create campaign</Button>
         </div>
@@ -321,7 +337,8 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
             <Badge kind={CAMPAIGN_STATUS[campaign.status].kind} dot={running}>{CAMPAIGN_STATUS[campaign.status].label}</Badge>
           </div>
           <p className="text-sm text-ink-3 mt-1">
-            Agent <strong className="text-ink font-medium">{campaign.agentName ?? campaign.agentId}</strong>
+            Product <strong className="text-ink font-medium">{campaign.productName ?? "Any"}</strong>
+            <span aria-hidden> · </span>Agent <strong className="text-ink font-medium">{campaign.agentName ?? campaign.agentId}</strong>
             <span aria-hidden> · </span>Mon–Fri {campaign.windowStart}:00–{campaign.windowEnd}:00 IST
             <span aria-hidden> · </span>{campaign.calledToday} of {campaign.dailyLimit} calls today
           </p>
@@ -580,7 +597,9 @@ export function LiveStatus({ campaign, lastCheck }: {
   let tone: "live" | "wait" | "stop" = "wait";
   let headline: string;
   let detail: string | null = null;
-  if (campaign.status === "paused") {
+  if (calling > 0 && campaign.status !== "running") {
+    tone = "live"; headline = `Reading ${calling} call ${calling === 1 ? "result" : "results"}…`; detail = "Press Refresh results if it does not update in a minute.";
+  } else if (campaign.status === "paused") {
     tone = "stop"; headline = "Paused — no calls are going out."; detail = "Press Start again to continue.";
   } else if (campaign.status === "done" || (pending === 0 && calling === 0)) {
     tone = "stop"; headline = "Finished — every number has been called."; detail = "Add more numbers to call again.";
@@ -778,7 +797,9 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
             {c.company && c.name && <span className="text-ink-3"> · {c.company}</span>}
           </p>
           <p className="text-xs text-ink-3 font-mono truncate">{c.phone}{c.city ? ` · ${c.city}` : ""}</p>
-          {c.summary && !open && <p className="text-xs text-ink-2 mt-1 line-clamp-1">“{c.summary}”</p>}
+          {!open && (c.reasons[0]
+            ? <p className="text-xs text-ink-2 mt-1 line-clamp-1"><span className="text-ink-3">Why: </span>{c.reasons[0]}</p>
+            : c.summary && <p className="text-xs text-ink-2 mt-1 line-clamp-1">“{c.summary}”</p>)}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <Badge kind={s.kind} size="sm">{s.label}</Badge>
@@ -815,7 +836,15 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
       </div>
       {open && (
         <div className="mt-3 space-y-2 text-sm rounded-md bg-paper-2 p-3">
-          {c.summary && <p><span className="text-ink-3">What they said:</span> {c.summary}</p>}
+          {c.reasons.length > 0 && (
+            <div>
+              <p className="text-ink-3">Why the agent rated it this way:</p>
+              <ul className="list-disc pl-5 mt-1 space-y-0.5">
+                {c.reasons.map((r) => <li key={r}>{r}</li>)}
+              </ul>
+            </div>
+          )}
+          {c.summary && <p><span className="text-ink-3">Call summary:</span> {c.summary}</p>}
           {c.error && <p className="text-rose-ink">Call failed: {c.error}</p>}
           {c.nextAttemptAt && c.status === "pending" && (
             <p className="text-ink-3">No answer last time — the agent tries again after {formatDate(c.nextAttemptAt)}.</p>

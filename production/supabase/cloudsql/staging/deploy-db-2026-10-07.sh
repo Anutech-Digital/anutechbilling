@@ -122,6 +122,7 @@ MIGS=(
   "r1400quotes|20261012032851_r1400_quotes_reads.sql|resellersos_migration|exists(select 1 from pg_policy where polname = 'quotes_r1400_select' and polrelid = to_regclass('public.quotes') and not polpermissive and pg_get_expr(polqual, polrelid) like '%my_customer_ids%') and exists(select 1 from pg_trigger where tgname = 'trg_r1400_quote_owner' and tgrelid = to_regclass('public.quotes')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.r1400_quote_owner()') and prosrc like '%R-1400%')"
   "r1437bolna|20261014110000_r1437_telecall_provider_bolna.sql|resellersos_migration|exists(select 1 from pg_constraint where conname = 'ai_telecall_logs_provider_check' and conrelid = to_regclass('public.ai_telecall_logs') and pg_get_constraintdef(oid) like '%bolna%')"
   "r1661coldcall|20261019070000_r1661_cold_calling.sql|resellersos_migration|(to_regclass('public.cold_call_campaigns') is not null and to_regclass('public.cold_call_contacts') is not null)"
+  "r1663coldproduct|20261019110000_r1663_cold_call_product.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'cold_call_campaigns' and column_name = 'product_name')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

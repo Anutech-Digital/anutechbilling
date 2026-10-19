@@ -5010,6 +5010,8 @@ model cold_call_campaigns {
   name         String
   agent_id     String
   agent_name   String?
+  product_item_id String? @db.Uuid
+  product_name String?
   status       String   @default("draft")
   daily_limit  Int      @default(50)
   window_start Int      @default(10) @db.SmallInt
