@@ -21,6 +21,11 @@ import type { Subscription } from "@/lib/supabase/database.types";
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+/* R-1681: the dialog pauses through suspend_subscription; not exercised by date edits. */
+vi.mock("./suspend-subscription-dialog", () => ({
+  MIN_SUSPEND_REASON: 3,
+  useSuspendSubscription: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 
 afterEach(cleanup);
 

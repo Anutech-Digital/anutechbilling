@@ -15,12 +15,15 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormField } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useUpdateSubscription } from "@/lib/queries/subscriptions";
+import { MIN_SUSPEND_REASON, useSuspendSubscription } from "./suspend-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { checkNceLock, lockWarning } from "@/lib/subscriptions/nce-lock";
 import { Icon } from "@/components/ui/icon";
@@ -44,6 +47,7 @@ export function EditSubscriptionDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const update = useUpdateSubscription();
+  const suspend = useSuspendSubscription();
 
   const [plan, setPlan]       = React.useState(sub.plan);
   const [vendor, setVendor]   = React.useState<Subscription["vendor"]>(sub.vendor);
@@ -57,13 +61,20 @@ export function EditSubscriptionDialog({
    *  screen that can give those rows a date. */
   const [paymentDue, setPaymentDue] = React.useState(sub.payment_due_date ?? "");
   const [status, setStatus]   = React.useState<Subscription["status"]>(sub.status);
+  /* R-1681: pausing here asks why (and whether it is for an unpaid invoice), like Payments. */
+  const [pauseReason, setPauseReason] = React.useState("");
+  const [pauseForUnpaid, setPauseForUnpaid] = React.useState((sub.outstanding_amount ?? 0) > 0);
 
   // Re-seed when a different subscription is opened.
   React.useEffect(() => {
     setPlan(sub.plan); setVendor(sub.vendor); setSeats(String(sub.seats));
     setMrr(String(sub.mrr)); setStart(sub.start_date ?? ""); setRenewal(sub.renewal_date ?? "");
     setStatus(sub.status); setPaymentDue(sub.payment_due_date ?? "");
+    setPauseReason(""); setPauseForUnpaid((sub.outstanding_amount ?? 0) > 0);
   }, [sub]);
+
+  const pausing = status === "paused" && sub.status !== "paused";
+  const pauseReasonOk = pauseReason.trim().length >= MIN_SUSPEND_REASON;
 
   /**
    * How long THIS subscription's term is, in months — read off the record itself.
@@ -141,6 +152,10 @@ export function EditSubscriptionDialog({
       toast.error("Microsoft NCE lock", { description: nceCheck.reason });
       return;
     }
+    if (pausing && !pauseReasonOk) {
+      toast.error("Write why it is being paused", { description: "The reason is kept in the activity log. Fill it in under Status, then save." });
+      return;
+    }
     try {
       await update.mutateAsync({
         id: sub.id,
@@ -157,9 +172,13 @@ export function EditSubscriptionDialog({
              and an operator who empties the field means "there is no agreed date" —
              inventing one would put a countdown against terms nobody set. */
           payment_due_date: paymentDue || null,
-          status,
+          /* A pause goes through suspend_subscription below (reason + unpaid invoice). */
+          status: pausing ? sub.status : status,
         },
       });
+      if (pausing) {
+        await suspend.mutateAsync({ id: sub.id, reason: pauseReason, forUnpaid: pauseForUnpaid });
+      }
       onOpenChange(false);
     } catch { /* hook toasts */ }
   };
@@ -198,6 +217,22 @@ export function EditSubscriptionDialog({
               </Select>
             </FormField>
           </div>
+
+          {pausing && (
+            <div className="space-y-2 rounded-md border border-amber/50 bg-amber-soft/30 p-3">
+              <FormField label="Why is it being paused?" htmlFor="sub_pause_reason" required>
+                <Textarea id="sub_pause_reason" rows={2} value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} placeholder="Invoice unpaid for 30+ days" />
+              </FormField>
+              {!pauseReasonOk && <p className="text-2xs text-ink-3">Needed to save — the reason is kept in the activity log.</p>}
+              <label className="flex items-start gap-2 text-sm text-ink-2">
+                <Checkbox id="sub_pause_for_unpaid" checked={pauseForUnpaid} onCheckedChange={(v) => setPauseForUnpaid(v === true)} className="mt-0.5" />
+                <span>
+                  Paused because an invoice is unpaid
+                  <span className="block text-2xs text-ink-3">When that invoice is paid it turns back on by itself.</span>
+                </span>
+              </label>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Seats" htmlFor="sub_seats">
@@ -267,7 +302,7 @@ export function EditSubscriptionDialog({
         <DialogFooter>
           <Button type="button" variant="default" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
-            type="button" variant="primary" loading={update.isPending}
+            type="button" variant="primary" loading={update.isPending || suspend.isPending}
             disabled={nceCheck.locked}
             onClick={save}
           >

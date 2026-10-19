@@ -33,7 +33,6 @@ import {
   fetchRefundCredit,
   useOutstandingReceivables,
   useMarkReminderSent,
-  useSuspendSubscription,
   useResumeSubscription,
   useWriteOffSubscription,
   type Payment,
@@ -88,6 +87,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { cashReceived } from "@/lib/payments/cash-received";
 import { refundCover } from "@/lib/payments/refund-cover";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
+import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 
 const STATUS_TABS: TabBarItem[] = [
@@ -161,7 +161,6 @@ function PaymentsPageInner() {
   /* R-1525: one payment across several invoices of a customer. */
   const [multiPayOpen, setMultiPayOpen] = React.useState(false);
   const [kpiOpen, setKpiOpen] = React.useState(true);
-  const confirm = useConfirm();
 
   // Lookup: bankAccountId → short label (for the "received in" hint on a row)
   const bankNameById = React.useMemo(() => {
@@ -170,7 +169,8 @@ function PaymentsPageInner() {
     return m;
   }, [bankAccounts]);
   const markReminderSent  = useMarkReminderSent();
-  const suspendSub        = useSuspendSubscription();
+  /* R-1681: the row being paused — the dialog asks why and links the unpaid invoice. */
+  const [suspendRow, setSuspendRow] = React.useState<{ id: string; customer_name: string; plan: string; outstanding_amount: number } | null>(null);
   const resumeSub         = useResumeSubscription();
   const writeOffSub       = useWriteOffSubscription();
 
@@ -550,11 +550,7 @@ function PaymentsPageInner() {
                           `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
                         window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                       }}
-                      onSuspend={async () => {
-                        if (await confirm({ title: `Pause subscription for ${o.customer_name}?`, body: "This pauses your service tracking. You'll need to suspend the actual licenses via Google CSP / M365 admin separately.", confirmLabel: "Pause" })) {
-                          suspendSub.mutate(o.subscription_id);
-                        }
-                      }}
+                      onSuspend={() => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount })}
                       onResume={() => resumeSub.mutate(o.subscription_id)}
                       onWriteOff={async () => {
                         const reason = await askText({
@@ -888,6 +884,13 @@ function PaymentsPageInner() {
 
       {/* Edit payment details (safe fields only — amount stays locked) */}
       <MultiInvoicePaymentDialog open={multiPayOpen && canRecordMoney(me?.role)} onOpenChange={setMultiPayOpen} />
+      {suspendRow && (
+        <SuspendSubscriptionDialog
+          sub={suspendRow}
+          open={!!suspendRow}
+          onOpenChange={(v) => { if (!v) setSuspendRow(null); }}
+        />
+      )}
       <RecordQuotePaymentDialog
         quoteId={payQuoteId}
         open={!!payQuoteId}
