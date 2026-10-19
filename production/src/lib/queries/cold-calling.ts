@@ -105,8 +105,12 @@ export function useUpdateCampaign() {
   });
 }
 
+export interface SkippedNumber { phone: string; name: string | null; reason: string; leadId?: string | null }
+
 export interface ImportResult {
   added: number; alreadyOnList: number; dnd: number; invalidLines: number[]; invalidCount: number; duplicatesInFile: number;
+  alreadyCalled: SkippedNumber[]; alreadyCalledCount: number;
+  alreadyInSales: SkippedNumber[]; alreadyInSalesCount: number;
 }
 
 export function useImportList() {
@@ -132,10 +136,11 @@ export function useMoveToPipeline() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (contactId: string) =>
-      api<{ leadId: string }>(`/api/cold-calling/contacts/${contactId}/move`, { method: "POST" }),
+      api<{ leadId: string; joined: boolean; followUpAt: string }>(`/api/cold-calling/contacts/${contactId}/move`, { method: "POST" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });
       qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 }

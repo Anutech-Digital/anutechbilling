@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PostCallSignals } from "@/lib/ai/telecall";
-import { canCallNow, istDayStart, MAX_ATTEMPTS, outcomeFromCall, parseCallingList } from "./coldcall";
+import { canCallNow, istDayStart, MAX_ATTEMPTS, nextWorkingDayAt, outcomeFromCall, parseCallingList } from "./coldcall";
 
 describe("parseCallingList", () => {
   it("reads phone, name, company, city and DND; normalises numbers to +91", () => {
@@ -71,5 +71,23 @@ describe("calling window (IST, Mon–Fri)", () => {
   it("the day starts at midnight IST", () => {
     expect(istDayStart(new Date("2026-10-19T06:00:00Z")).toISOString()).toBe("2026-10-18T18:30:00.000Z");
     expect(istDayStart(new Date("2026-10-18T19:00:00Z")).toISOString()).toBe("2026-10-18T18:30:00.000Z");
+  });
+});
+
+describe("nextWorkingDayAt", () => {
+  it("Tuesday → Wednesday 11:00 IST", () => {
+    // Tue 20 Oct 2026 15:00 IST
+    const d = nextWorkingDayAt(new Date("2026-10-20T09:30:00Z"), 11);
+    expect(d.toISOString()).toBe("2026-10-21T05:30:00.000Z");
+  });
+  it("Friday → Monday", () => {
+    // Fri 23 Oct 2026 17:00 IST
+    const d = nextWorkingDayAt(new Date("2026-10-23T11:30:00Z"), 11);
+    expect(d.toISOString()).toBe("2026-10-26T05:30:00.000Z");
+  });
+  it("late Saturday night UTC that is already Sunday IST → Monday", () => {
+    // Sat 24 Oct 2026 20:00 UTC = Sun 01:30 IST
+    const d = nextWorkingDayAt(new Date("2026-10-24T20:00:00Z"), 11);
+    expect(d.toISOString()).toBe("2026-10-26T05:30:00.000Z");
   });
 });

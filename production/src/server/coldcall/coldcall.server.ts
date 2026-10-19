@@ -18,8 +18,10 @@ import { normalisePostCall } from "@/lib/telecall/inbound";
 import { fetchBolnaExecution, placeCall, type TelecallProviderConfig } from "@/lib/telecall/provider";
 import type { ItemPrices } from "@/lib/supabase/database.types";
 import {
-  canCallNow, istDayStart, outcomeFromCall, type CallingListRow, type ColdCallStatus,
+  canCallNow, istDayStart, nextWorkingDayAt, outcomeFromCall,
+  type CallingListRow, type ColdCallStatus, type SkippedNumber,
 } from "@/lib/coldcall/coldcall";
+import { normaliseIndianPhone } from "@/lib/ai/telecall";
 
 export type Run = <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>;
 
@@ -105,20 +107,109 @@ export async function updateCampaign(
 /* ── The list ────────────────────────────────────────────────────────────── */
 
 /** Adds numbers to a campaign; a number already on it is skipped (unique campaign_id+phone). */
+const STATUS_WORDS: Record<string, string> = {
+  pending: "waiting to be called", calling: "being called", answered: "talked", interested: "interested",
+  callback: "asked for a call back", not_interested: "not interested", no_answer: "did not answer",
+  failed: "call failed", skipped_dnd: "DND", moved: "moved to Sales",
+};
+
+function shortDate(d: Date): string {
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+}
+
+/**
+ * Numbers the business already has in Sales: leads (any stage) and customers, keyed by the
+ * normalised +91 number so "98111 22334" and "+919811122334" are one person. Read through RLS —
+ * it covers what this user can see.
+ */
+async function salesPhoneBook(tx: Tx): Promise<Map<string, { leadId: string | null; label: string }>> {
+  const book = new Map<string, { leadId: string | null; label: string }>();
+  const leads = await tx.leads.findMany({
+    where: { contact_phone: { not: null } },
+    select: { id: true, company: true, contact_phone: true, stage: true },
+  });
+  for (const l of leads) {
+    const p = normaliseIndianPhone(l.contact_phone);
+    if (p && !book.has(p)) book.set(p, { leadId: l.id, label: `lead ${l.company} (${String(l.stage)})` });
+  }
+  const customers = await tx.customers.findMany({
+    where: { OR: [{ contact_phone: { not: null } }, { contact_mobile: { not: null } }] },
+    select: { name: true, contact_phone: true, contact_mobile: true },
+  });
+  for (const c of customers) {
+    for (const raw of [c.contact_phone, c.contact_mobile]) {
+      const p = normaliseIndianPhone(raw);
+      if (p && !book.has(p)) book.set(p, { leadId: null, label: `customer ${c.name}` });
+    }
+  }
+  return book;
+}
+
+export interface ImportReport {
+  added: number;
+  dnd: number;
+  alreadyOnThisList: number;
+  /** Rung (or queued) in another campaign — never called twice. */
+  alreadyCalled: SkippedNumber[];
+  /** Already a lead or customer — Sales owns them, the agent does not cold-call them. */
+  alreadyInSales: SkippedNumber[];
+}
+
+/**
+ * Add a file's numbers to a campaign. A number is left out when this campaign already has it,
+ * when any other campaign already has it (called, queued, DND or said no — one person is
+ * cold-called once), or when it is already a lead or customer.
+ */
 export async function importContacts(
   run: Run, tenantId: string, campaignId: string, rows: readonly CallingListRow[],
-): Promise<{ added: number; dnd: number } | null> {
+): Promise<ImportReport | null> {
   return run(async (tx) => {
     const c = await tx.cold_call_campaigns.findUnique({ where: { id: campaignId }, select: { id: true } });
     if (!c) return null;
-    const r = await tx.cold_call_contacts.createMany({
-      data: rows.map((x) => ({
+
+    const phones = rows.map((r) => r.phone);
+    const known = await tx.cold_call_contacts.findMany({
+      where: { phone: { in: phones } },
+      select: { phone: true, status: true, campaign_id: true, last_called_at: true },
+    });
+    const names = new Map((await tx.cold_call_campaigns.findMany({
+      where: { id: { in: [...new Set(known.map((k) => k.campaign_id))] } }, select: { id: true, name: true },
+    })).map((x) => [x.id, x.name]));
+    const onThisList = new Set(known.filter((k) => k.campaign_id === campaignId).map((k) => k.phone));
+    const elsewhere = new Map(known.filter((k) => k.campaign_id !== campaignId).map((k) => [k.phone, k]));
+    const sales = await salesPhoneBook(tx);
+
+    const report: ImportReport = { added: 0, dnd: 0, alreadyOnThisList: 0, alreadyCalled: [], alreadyInSales: [] };
+    const fresh: CallingListRow[] = [];
+    for (const r of rows) {
+      if (onThisList.has(r.phone)) { report.alreadyOnThisList++; continue; }
+      const other = elsewhere.get(r.phone);
+      if (other) {
+        report.alreadyCalled.push({
+          phone: r.phone, name: r.name,
+          reason: `On “${names.get(other.campaign_id) ?? "another campaign"}” · ${STATUS_WORDS[other.status] ?? other.status}` +
+            (other.last_called_at ? ` · ${shortDate(other.last_called_at)}` : ""),
+        });
+        continue;
+      }
+      const inSales = sales.get(r.phone);
+      if (inSales) {
+        report.alreadyInSales.push({ phone: r.phone, name: r.name, reason: `Already a ${inSales.label}`, leadId: inSales.leadId });
+        continue;
+      }
+      fresh.push(r);
+    }
+
+    const created = await tx.cold_call_contacts.createMany({
+      data: fresh.map((x) => ({
         tenant_id: tenantId, campaign_id: campaignId, phone: x.phone, name: x.name, company: x.company,
         city: x.city, dnd: x.dnd, status: x.dnd ? "skipped_dnd" : "pending",
       })),
       skipDuplicates: true,
     });
-    return { added: r.count, dnd: rows.filter((x) => x.dnd).length };
+    report.added = created.count;
+    report.dnd = fresh.filter((x) => x.dnd).length;
+    return report;
   });
 }
 
@@ -157,7 +248,7 @@ export async function listContacts(run: Run, campaignId: string, status: string[
 /* ── Into the pipeline (a person pressed the button) ─────────────────────── */
 
 export type MoveResult =
-  | { ok: true; leadId: string }
+  | { ok: true; leadId: string; joined: boolean; followUpAt: string }
   | { ok: false; status: number; error: string; leadId?: string };
 
 /** Base-36 lead id in the app's existing L-XXXXXXXX shape, plus randomness against same-ms clicks. */
@@ -172,28 +263,51 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
     if (!c) return { ok: false, status: 404, error: "That number is not on your list any more — refresh the page." };
     if (c.lead_id) return { ok: false, status: 409, error: "Already in Sales & Pipeline.", leadId: c.lead_id };
 
-    const leadId = newLeadId();
-    const company = c.company?.trim() || c.name?.trim() || c.phone;
-    await tx.leads.create({
-      data: {
-        id: leadId, tenant_id: tenantId, company, contact_name: c.name, contact_phone: c.phone,
-        stage: "contact", source: "tele-calling", owner_id: userId, created_by: userId,
-        seats: c.seats_heard ?? undefined,
-        notes: c.summary ? `AI cold call: ${c.summary}`.slice(0, 2000) : null,
-      },
-    });
+    const now = new Date();
+    const who = c.name?.trim() || c.company?.trim() || c.phone;
+    const followUp = nextWorkingDayAt(now, 11);
+    const campaign = await tx.cold_call_campaigns.findUnique({ where: { id: c.campaign_id }, select: { name: true } });
     const detail = [
-      "AI cold call (Cold Calling)",
+      `AI cold call — campaign “${campaign?.name ?? ""}”`,
       c.summary ? `Summary: ${c.summary}` : null,
       c.seats_heard ? `AI ne suna: ${c.seats_heard} seats` : null,
       c.transcript ? `Transcript:\n${c.transcript.slice(0, 4000)}` : null,
     ].filter(Boolean).join("\n");
+
+    /* The same person already a lead (e.g. came in from the website meanwhile)? Add the call to
+       that lead instead of making a second one. */
+    const existing = (await salesPhoneBook(tx)).get(c.phone);
+    let leadId: string;
+    let joined = false;
+    if (existing?.leadId) {
+      leadId = existing.leadId;
+      joined = true;
+    } else {
+      leadId = newLeadId();
+      const company = c.company?.trim() || c.name?.trim() || c.phone;
+      await tx.leads.create({
+        data: {
+          id: leadId, tenant_id: tenantId, company, contact_name: c.name, contact_phone: c.phone,
+          stage: "contact", source: "tele-calling", owner_id: userId, created_by: userId,
+          seats: c.seats_heard ?? undefined, follow_up_date: followUp,
+          notes: `AI cold call (${campaign?.name ?? "Cold Calling"})${c.summary ? `: ${c.summary}` : ""}`.slice(0, 2000),
+        },
+      });
+    }
     await tx.lead_activities.create({ data: { tenant_id: tenantId, lead_id: leadId, kind: "note", detail } });
+    /* The salesperson's next step, on their Tasks list: a real call the next working morning. */
+    await tx.tasks.create({
+      data: {
+        tenant_id: tenantId, owner_id: userId, lead_id: leadId, kind: "call", due_at: followUp,
+        title: `Call ${who} — interested on AI cold call`,
+        notes: c.summary ? `AI ne suna: ${c.summary}`.slice(0, 1000) : null,
+      },
+    });
     await tx.cold_call_contacts.update({
       where: { id: contactId },
-      data: { status: "moved", lead_id: leadId, moved_at: new Date(), moved_by: userId, updated_at: new Date() },
+      data: { status: "moved", lead_id: leadId, moved_at: now, moved_by: userId, updated_at: now },
     });
-    return { ok: true, leadId };
+    return { ok: true, leadId, joined, followUpAt: followUp.toISOString() };
   });
 }
 

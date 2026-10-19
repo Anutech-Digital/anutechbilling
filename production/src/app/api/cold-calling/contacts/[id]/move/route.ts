@@ -13,5 +13,5 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "No such number on your list." }, { status: 404 });
   const r = await moveToPipeline(ctx.run, ctx.session.tenantId, ctx.session.userId, id);
   if (!r.ok) return NextResponse.json({ error: r.error, leadId: r.leadId ?? null }, { status: r.status });
-  return NextResponse.json({ leadId: r.leadId });
+  return NextResponse.json({ leadId: r.leadId, joined: r.joined, followUpAt: r.followUpAt });
 }

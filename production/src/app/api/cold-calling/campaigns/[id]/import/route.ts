@@ -32,8 +32,12 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
   return NextResponse.json({
     added: r.added,
-    alreadyOnList: list.rows.length - r.added,
+    alreadyOnList: r.alreadyOnThisList,
     dnd: r.dnd,
+    alreadyCalled: r.alreadyCalled.slice(0, 200),
+    alreadyCalledCount: r.alreadyCalled.length,
+    alreadyInSales: r.alreadyInSales.slice(0, 200),
+    alreadyInSalesCount: r.alreadyInSales.length,
     invalidLines: list.invalidLines.slice(0, 50),
     invalidCount: list.invalidLines.length,
     duplicatesInFile: list.duplicates,

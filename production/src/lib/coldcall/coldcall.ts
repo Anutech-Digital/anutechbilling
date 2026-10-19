@@ -176,3 +176,25 @@ export function istDayStart(at: Date): Date {
   ist.setUTCHours(0, 0, 0, 0);
   return new Date(ist.getTime() - IST_OFFSET_MS);
 }
+
+/**
+ * The next working day (Mon–Fri, IST) at `hour`:00 IST — when the salesperson's follow-up call is
+ * due after a cold-call contact is moved into the pipeline. Friday/Saturday/Sunday land on Monday.
+ */
+export function nextWorkingDayAt(now: Date, hour: number): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  do {
+    ist.setUTCDate(ist.getUTCDate() + 1);
+  } while (ist.getUTCDay() === 0 || ist.getUTCDay() === 6);
+  ist.setUTCHours(hour, 0, 0, 0);
+  return new Date(ist.getTime() - IST_OFFSET_MS);
+}
+
+/** Why a number from a new file is not added: it was already rung, or the business already has it. */
+export interface SkippedNumber {
+  phone: string;
+  name: string | null;
+  /** Plain words, e.g. "On “Delhi CA — Oct” · Not interested · 12 Oct". */
+  reason: string;
+  leadId?: string | null;
+}

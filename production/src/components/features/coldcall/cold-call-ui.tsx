@@ -21,12 +21,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
 import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
   ColdCallError, useColdContacts, useCreateCampaign, useImportList,
-  useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact,
+  useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
 } from "@/lib/queries/cold-calling";
 
 type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline";
@@ -246,6 +249,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const importList = useImportList();
   const tick = useTick();
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const [report, setReport] = React.useState<ImportResult | null>(null);
 
   /* While the page is open and the campaign runs, check every minute: results come in and the
      next calls go out. On the live server the cron does this too; on localhost this is the only
@@ -290,13 +294,12 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
     if (file.size > 2_000_000) { toast.error("File is larger than 2 MB.", { description: "Split the list into smaller files." }); return; }
     try {
       const r = await importList.mutateAsync({ id: campaign.id, csv: await file.text() });
-      const parts = [
-        r.alreadyOnList ? `${r.alreadyOnList} already on the list` : null,
-        r.dnd ? `${r.dnd} DND (will not be called)` : null,
-        r.invalidCount ? `${r.invalidCount} unreadable (lines ${r.invalidLines.slice(0, 5).join(", ")}${r.invalidCount > 5 ? "…" : ""})` : null,
-        r.duplicatesInFile ? `${r.duplicatesInFile} repeated in the file` : null,
-      ].filter(Boolean);
-      toast.success(`${r.added} numbers added`, { description: parts.join(" · ") || "Next: press Start calling." });
+      const skipped = r.alreadyOnList + r.alreadyCalledCount + r.alreadyInSalesCount + r.invalidCount + r.duplicatesInFile;
+      if (skipped === 0) {
+        toast.success(`${r.added} numbers added`, { description: r.dnd ? `${r.dnd} marked DND will not be called.` : "Next: press Start calling." });
+      } else {
+        setReport(r);
+      }
     } catch (err) { failToast(err, "Could not import the file."); }
   };
 
@@ -335,6 +338,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
 
       {/* The three steps */}
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" tabIndex={-1} />
+      <ImportReportDialog report={report} onClose={() => setReport(null)} />
       <div className="grid gap-3 md:grid-cols-3">
         <Step n={1} title="Add numbers" done={numbers > 0} active={numbers === 0}>
           <p className="text-sm text-ink-3">
@@ -647,6 +651,57 @@ export function LiveStatus({ campaign, lastCheck }: {
   );
 }
 
+/** After an import: what was added and, number by number, what was left out and why. */
+function ImportReportDialog({ report: r, onClose }: { report: ImportResult | null; onClose: () => void }) {
+  const groups: { title: string; hint: string; rows: SkippedNumber[]; total: number }[] = r ? [
+    { title: "Already called in another campaign", hint: "One person is cold-called only once.", rows: r.alreadyCalled, total: r.alreadyCalledCount },
+    { title: "Already in Sales (lead or customer)", hint: "Your team already has them — no cold call.", rows: r.alreadyInSales, total: r.alreadyInSalesCount },
+  ] : [];
+  return (
+    <Dialog open={!!r} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{r?.added ?? 0} new {r?.added === 1 ? "number" : "numbers"} added</DialogTitle>
+          <DialogDescription>Some numbers in the file were left out so nobody is called twice.</DialogDescription>
+        </DialogHeader>
+        {r && (
+          <div className="space-y-4 max-h-[60vh] overflow-auto text-sm">
+            <ul className="space-y-1 text-ink-2">
+              {r.alreadyOnList > 0 && <li>• {r.alreadyOnList} already on this list</li>}
+              {r.duplicatesInFile > 0 && <li>• {r.duplicatesInFile} repeated in the file</li>}
+              {r.invalidCount > 0 && <li>• {r.invalidCount} unreadable numbers (lines {r.invalidLines.slice(0, 8).join(", ")}{r.invalidCount > 8 ? "…" : ""})</li>}
+              {r.dnd > 0 && <li>• {r.dnd} marked DND — on the list, never called</li>}
+            </ul>
+            {groups.filter((g) => g.total > 0).map((g) => (
+              <section key={g.title} className="space-y-1.5">
+                <h3 className="font-medium text-ink">{g.title} · {g.total}</h3>
+                <p className="text-xs text-ink-3">{g.hint}</p>
+                <ul className="rounded-md border border-hairline divide-y divide-hairline">
+                  {g.rows.map((x) => (
+                    <li key={x.phone} className="px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate"><span className="font-medium">{x.name || x.phone}</span>{x.name && <span className="text-ink-3 font-mono text-xs"> · {x.phone}</span>}</p>
+                        <p className="text-xs text-ink-3 truncate">{x.reason}</p>
+                      </div>
+                      {x.leadId && (
+                        <Link href={`/leads?lead=${encodeURIComponent(x.leadId)}` as Route} className="text-xs text-amber hover:underline shrink-0">Open lead</Link>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {g.total > g.rows.length && <p className="text-xs text-ink-3">…and {g.total - g.rows.length} more.</p>}
+              </section>
+            ))}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="primary" onClick={onClose}>OK</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ContactItem({ contact: c }: { contact: ColdContact }) {
   const [open, setOpen] = React.useState(false);
   const move = useMoveToPipeline();
@@ -657,8 +712,13 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
   const doMove = async () => {
     try {
       const r = await move.mutateAsync(c.id);
-      toast.success("Moved to Sales & Pipeline", {
-        description: `${title} is now a lead with the call's summary.`,
+      const due = new Date(r.followUpAt).toLocaleString("en-IN", {
+        weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
+      });
+      toast.success(r.joined ? "Added to the existing lead" : "Moved to Sales & Pipeline", {
+        description: r.joined
+          ? `${title} was already a lead — the call notes are added there. Follow-up call task: ${due}.`
+          : `${title} is now a lead. A follow-up call task is on your Tasks for ${due}.`,
         action: { label: "Open lead", onClick: () => { window.location.href = `/leads?lead=${encodeURIComponent(r.leadId)}`; } },
       });
     } catch (err) { failToast(err, "Could not move it to the pipeline."); }
