@@ -28,9 +28,16 @@ describe("resolveTelecallProvider — bolna", () => {
     expect(resolveTelecallProvider({ ...env, BOLNA_AGENT_ID: "" })).toBeNull();
   });
 
+  it("the number is optional — a placeholder or no number means Bolna's default number", () => {
+    const base: NodeJS.ProcessEnv = { NODE_ENV: "test", TELECALL_PROVIDER: "bolna", BOLNA_API_KEY: "k", BOLNA_AGENT_ID: "a" };
+    expect(resolveTelecallProvider(base)?.fromNumber).toBe("");
+    expect(resolveTelecallProvider({ ...base, BOLNA_FROM_NUMBER: "+91..." })?.fromNumber).toBe("");
+    expect(resolveTelecallProvider({ ...base, BOLNA_FROM_NUMBER: "+918000000000" })?.fromNumber).toBe("+918000000000");
+  });
+
   it("names the missing Bolna variables", () => {
     expect(missingTelecallEnv({ NODE_ENV: "test", TELECALL_PROVIDER: "bolna", BOLNA_API_KEY: "k" }))
-      .toEqual(["BOLNA_FROM_NUMBER", "BOLNA_AGENT_ID"]);
+      .toEqual(["BOLNA_AGENT_ID"]);
   });
 });
 
@@ -61,6 +68,14 @@ describe("placeCall — bolna", () => {
         system_prompt: "You are Riya from Demo Co.",
       },
     });
+  });
+
+  it("with no number of our own, from_phone_number is left out (Bolna's default)", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "queued", execution_id: EXEC_ID }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await placeCall({ ...BOLNA, fromNumber: "" }, { toNumber: "+919000000001", systemPrompt: "", dynamicVariables: {}, metadata: {} });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).not.toHaveProperty("from_phone_number");
   });
 
   it("a refusal from Bolna is a failed result with Bolna's own words", async () => {

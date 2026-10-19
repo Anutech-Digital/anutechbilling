@@ -10,7 +10,7 @@ aur koi quote apne aap nahi banta — salesperson dekh ke khud karta hai.
 2. **Phone number** kharido (Indian, +91). KYC/DLT ke kaagaz Bolna maangega.
 3. **Agent** banao:
    - Language: Hindi / Hinglish. Voice: **Sarvam** ki Indian awaaz (sasti) ya ElevenLabs.
-   - **Prompt me sirf ye likho:** `{system_prompt}`
+   - **Prompt me sirf ye likho:** `{{system_prompt}}`
      (poori script — kaun ho, kya poochna hai, daam — app har call ke saath bhejta hai, catalogue se.)
    - **Extraction** (call ke baad nikaalne wali cheezein), ye 5 naam bilkul isi spelling me:
      - `customer_asked_for_quote` — true/false

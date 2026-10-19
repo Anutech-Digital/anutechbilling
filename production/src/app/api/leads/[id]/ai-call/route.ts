@@ -50,7 +50,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
         /* Nothing chosen yet → name Bolna's settings, the vendor this button was built for. */
         detail: process.env.TELECALL_PROVIDER?.trim()
           ? `Ask the owner to add ${missingTelecallEnv().join(", ")} on the server.`
-          : "Ask the owner to set TELECALL_PROVIDER=bolna and add BOLNA_API_KEY, BOLNA_AGENT_ID, BOLNA_FROM_NUMBER on the server (docs/telecall-bolna.md).",
+          : "Ask the owner to set TELECALL_PROVIDER=bolna and add BOLNA_API_KEY and BOLNA_AGENT_ID on the server (docs/telecall-bolna.md).",
       },
       { status: 409 },
     );

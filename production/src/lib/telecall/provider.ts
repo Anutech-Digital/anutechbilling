@@ -57,9 +57,13 @@ export function resolveTelecallProvider(
   /* R-1437: Bolna (bolna.ai) — Indian numbers and Hinglish voices on one account. */
   if (requested === "bolna") {
     const apiKey = env.BOLNA_API_KEY?.trim();
-    const fromNumber = env.BOLNA_FROM_NUMBER?.trim();
     const agentId = env.BOLNA_AGENT_ID?.trim();
-    if (!apiKey || !fromNumber || !agentId) return null;
+    if (!apiKey || !agentId) return null;
+    /* Optional for Bolna: with no number of our own (trial plan), Bolna dials from the
+       account's default number. Anything that is not a full E.164 number — "+91...", a
+       placeholder — counts as not set rather than being sent to Bolna. */
+    const rawFrom = env.BOLNA_FROM_NUMBER?.trim() ?? "";
+    const fromNumber = /^\+[1-9][0-9]{7,14}$/.test(rawFrom) ? rawFrom : "";
     return { name: "bolna", apiKey, fromNumber, agentId };
   }
 
@@ -83,7 +87,7 @@ export function missingTelecallEnv(env: NodeJS.ProcessEnv = process.env): string
     requested === "vapi"
       ? ["VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID", "VAPI_ASSISTANT_ID"]
       : requested === "bolna"
-        ? ["BOLNA_API_KEY", "BOLNA_FROM_NUMBER", "BOLNA_AGENT_ID"]
+        ? ["BOLNA_API_KEY", "BOLNA_AGENT_ID"]
         : ["RETELL_API_KEY", "RETELL_FROM_NUMBER", "RETELL_AGENT_ID"];
   return needed.filter((k) => !env[k]?.trim());
 }
@@ -190,15 +194,15 @@ function buildRequest(config: TelecallProviderConfig, req: PlaceCallRequest): Ve
 
   if (config.name === "bolna") {
     /* Bolna has no per-call system-prompt override and echoes no metadata. Everything goes in
-       `user_data`, which the agent's prompt on Bolna interpolates as {variable} — so the agent
-       there must be set up with a prompt of `{system_prompt}` (docs/telecall-bolna.md). The
+       `user_data`, which the agent's prompt on Bolna interpolates as {{variable}} — so the agent
+       there must be set up with a prompt of `{{system_prompt}}` (docs/telecall-bolna.md). The
        call row is still found by execution_id, never by anything echoed back. */
     return {
       url: `${BOLNA_API_BASE}/call`,
       body: {
         agent_id: config.agentId,
         recipient_phone_number: req.toNumber,
-        from_phone_number: config.fromNumber,
+        ...(config.fromNumber ? { from_phone_number: config.fromNumber } : {}),
         user_data: { ...req.dynamicVariables, ...req.metadata, system_prompt: req.systemPrompt },
       },
     };
