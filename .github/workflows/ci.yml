@@ -105,12 +105,11 @@ jobs:
       # brings back the newest cache for the same lockfile and Next rebuilds only what changed.
       # npm's download cache is the `cache: npm` on setup-node above.
       # R-1619: NOT .tsbuildinfo. tsconfig has `incremental`, so next build's type check writes
-      # .next/cache/.tsbuildinfo and, when one is there, rebuilds from it. A STALE one (restored
-      # by restore-key from an older commit) made that check run out of the 4 GB heap: every run
-      # that restored this cache died in "Checking validity of types"; the one cache miss was
-      # green. A red run saves no cache, so the same stale file came back on every push. The
-      # `!` line keeps the webpack/SWC cache and drops only that file (and, as it changes the
-      # path list, the cache version — the old entries holding it are not restored again).
+      # .next/cache/.tsbuildinfo and, when one is there, starts from it. A stale one from an
+      # older commit was the first suspect for the 4 GB OOM below; it was NOT the cause (run
+      # 39192223157 had no cache at all and still ran out — see the heap note on the Build
+      # step). The `!` line stays as cheap safety: the type check always starts clean, and
+      # the webpack/SWC cache — the part that saves time — is still restored.
       - name: Restore Next build cache
         uses: actions/cache@v4
         with:
@@ -149,7 +148,16 @@ jobs:
           # Worth being precise about the blast radius: this never affected production.
           # Cloud Build runs the Docker build with its own resources and has been green
           # throughout. It is CI, and only CI, that needed the bigger heap.
-          NODE_OPTIONS: --max-old-space-size=4096
+          #
+          # R-1619 (19 Oct 2026): 4096 is now too small as well. From 514efbdb on, next build's
+          # "Checking validity of types" died at ~4035 MB on every run, cache or no cache
+          # (39192223157 was a full cold build); 8eba80ea, a cold build just before, passed.
+          # No single heavy import — the app's type graph grew past it. ubuntu-latest has
+          # 16 GB, so 6144 leaves ~10 GB for webpack's own workers. Build step only: the
+          # typecheck step above (plain tsc) still fits in 4096. Cloud Build's image build is
+          # not affected: it skips this type check (SKIP_BUILD_TYPECHECK=1) and its builder
+          # stage already has 6144 (production/Dockerfile NODE_HEAP_MB).
+          NODE_OPTIONS: --max-old-space-size=6144
           # R-1102 (11 Oct 2026): `next build` pre-renders the marketing pages, which read the
           # price list (site/lib/live-catalog.ts). No app runs here, so without this the build
           # called the LIVE domain and logged 503s there from Azure runner IPs. A closed local
