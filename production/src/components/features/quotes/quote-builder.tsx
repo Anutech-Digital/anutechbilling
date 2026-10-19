@@ -87,6 +87,7 @@ import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
+import { LineAdjustControls, dropSeatsAdjustable } from "./line-adjust-controls";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
@@ -736,8 +737,10 @@ function QuoteBuilderBody() {
     // Copy line items + financial settings
     if (Array.isArray(sourceQuote.line_items)) {
       // Clone with fresh IDs so React keys stay unique if source items get edited
+      /* R-1674: a NEW quote (Duplicate / Revise) does not inherit "customer can change
+         seats" — the builder no longer offers it. In-place Edit keeps the line as saved. */
       const items = (sourceQuote.line_items as QuoteLineItem[]).map((l, i) => ({
-        ...l,
+        ...(editOf ? l : dropSeatsAdjustable(l)),
         id: `line-${Date.now()}-${i}`,
         list_rate: l.list_rate ?? l.rate,
       }));
@@ -3150,59 +3153,6 @@ function QuoteBuilderBody() {
         notes={notes}
         isProspect={isLeadMode}
       />
-    </div>
-  );
-}
-
-// ============================================================
-// LineAdjustControls — what the CUSTOMER may change on the public quote page.
-//
-// Off by default, and that default is the point: a quote where the buyer can edit
-// anything is an order form the seller has not seen. The reseller opts each line in,
-// and the server re-checks these flags before it prices anything, because the public
-// page has no session. See lib/quotes/configure.ts.
-// ============================================================
-function LineAdjustControls({ line, onChange }: {
-  line: QuoteLineItem;
-  onChange: (patch: Partial<QuoteLineItem>) => void;
-}) {
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
-      <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Customer can</span>
-      <label className="inline-flex items-center gap-1 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={!!line.seats_adjustable}
-          onChange={(e) => onChange({ seats_adjustable: e.target.checked || undefined })}
-          className="h-3.5 w-3.5 accent-amber"
-        />
-        <span className="text-ink-2">change seats</span>
-      </label>
-      <label className="inline-flex items-center gap-1 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={!!line.optional}
-          onChange={(e) => onChange({
-            optional: e.target.checked || undefined,
-            // Un-ticking "optional" must clear the default too, or a line that is no
-            // longer optional keeps a flag that only means something for optional lines.
-            included_by_default: e.target.checked ? (line.included_by_default ?? false) : undefined,
-          })}
-          className="h-3.5 w-3.5 accent-amber"
-        />
-        <span className="text-ink-2">add / remove this</span>
-      </label>
-      {line.optional && (
-        <label className="inline-flex items-center gap-1 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={!!line.included_by_default}
-            onChange={(e) => onChange({ included_by_default: e.target.checked || undefined })}
-            className="h-3.5 w-3.5 accent-amber"
-          />
-          <span className="text-ink-3">ticked to start</span>
-        </label>
-      )}
     </div>
   );
 }
