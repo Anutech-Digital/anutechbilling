@@ -29,11 +29,8 @@ async function openReceipt(path: string) {
 import {
   usePayments,
   useDeletePayment,
-  useRefundPayment,
-  fetchRefundCredit,
   useOutstandingReceivables,
   useMarkReminderSent,
-  useSuspendSubscription,
   useResumeSubscription,
   useWriteOffSubscription,
   type Payment,
@@ -62,6 +59,7 @@ import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
+import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -83,12 +81,7 @@ import { useRowOrder } from "./use-row-order";
 import { scopeToCustomer, paymentTotals, paymentsSummaryLine } from "./customer-scope";
 import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
 import { paymentFeeView } from "@/lib/razorpay/fee-expense";
-import { createClient } from "@/lib/supabase/client";
-import { toastError } from "@/lib/errors/toast-error";
-import { cashReceived } from "@/lib/payments/cash-received";
-import { refundCover } from "@/lib/payments/refund-cover";
-import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
-import type { Subscription } from "@/lib/supabase/database.types";
+import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
 
 const STATUS_TABS: TabBarItem[] = [
   { id: "all",       label: "All" },
@@ -161,7 +154,6 @@ function PaymentsPageInner() {
   /* R-1525: one payment across several invoices of a customer. */
   const [multiPayOpen, setMultiPayOpen] = React.useState(false);
   const [kpiOpen, setKpiOpen] = React.useState(true);
-  const confirm = useConfirm();
 
   // Lookup: bankAccountId → short label (for the "received in" hint on a row)
   const bankNameById = React.useMemo(() => {
@@ -170,7 +162,8 @@ function PaymentsPageInner() {
     return m;
   }, [bankAccounts]);
   const markReminderSent  = useMarkReminderSent();
-  const suspendSub        = useSuspendSubscription();
+  /* R-1681: the row being paused — the dialog asks why and links the unpaid invoice. */
+  const [suspendRow, setSuspendRow] = React.useState<{ id: string; customer_name: string; plan: string; outstanding_amount: number } | null>(null);
   const resumeSub         = useResumeSubscription();
   const writeOffSub       = useWriteOffSubscription();
 
@@ -550,11 +543,7 @@ function PaymentsPageInner() {
                           `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
                         window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                       }}
-                      onSuspend={async () => {
-                        if (await confirm({ title: `Pause subscription for ${o.customer_name}?`, body: "This pauses your service tracking. You'll need to suspend the actual licenses via Google CSP / M365 admin separately.", confirmLabel: "Pause" })) {
-                          suspendSub.mutate(o.subscription_id);
-                        }
-                      }}
+                      onSuspend={() => setSuspendRow({ id: o.subscription_id, customer_name: o.customer_name, plan: o.plan, outstanding_amount: o.outstanding_amount })}
                       onResume={() => resumeSub.mutate(o.subscription_id)}
                       onWriteOff={async () => {
                         const reason = await askText({
@@ -761,7 +750,7 @@ function PaymentsPageInner() {
                   </div>
                 </MaybeQuoteLink>
                 {(p.status === "received" || p.receipt_file_path) && (
-                <div className="flex border-t border-hairline/60">
+                <div className="flex flex-wrap border-t border-hairline/60">
                   {p.status === "received" && canWrite && (
                     <button
                       type="button"
@@ -779,6 +768,14 @@ function PaymentsPageInner() {
                     >
                       <Icon name="external" size={12} /> View receipt
                     </button>
+                  )}
+                  {/* R-1682: Refund at every width — it was only in the ≥1280px table's menu. */}
+                  {p.status === "received" && canWrite && (
+                    <PaymentRefundButton
+                      payment={p}
+                      invoiceId={ctx?.invoiceId ?? null}
+                      className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-medium text-rose active:bg-paper-2 border-l border-hairline/60"
+                    />
                   )}
                 </div>
                 )}
@@ -888,6 +885,13 @@ function PaymentsPageInner() {
 
       {/* Edit payment details (safe fields only — amount stays locked) */}
       <MultiInvoicePaymentDialog open={multiPayOpen && canRecordMoney(me?.role)} onOpenChange={setMultiPayOpen} />
+      {suspendRow && (
+        <SuspendSubscriptionDialog
+          sub={suspendRow}
+          open={!!suspendRow}
+          onOpenChange={(v) => { if (!v) setSuspendRow(null); }}
+        />
+      )}
       <RecordQuotePaymentDialog
         quoteId={payQuoteId}
         open={!!payQuoteId}
@@ -1073,98 +1077,18 @@ function PaymentRowView({
   });
   const confirm = useConfirm();
 
-  // Refund = paisa sach me wapas ja raha hai (delete = galat entry sudhaarna —
-  // dono alag cheezein). RPC ek transaction me RFV voucher + quote/subscription
-  // recompute + overpayment-credit band karta hai (audit A5b); gateway par
-  // paisa operator khud bhejta hai aur toast yahi kehta hai.
-  const refund = useRefundPayment({
+  /* Refund = paisa sach me wapas (delete = galat entry sudhaarna). R-1682: the flow lives in
+     features/payments/payment-refund.tsx so the card list below the table breakpoint has
+     it too, and it offers the partial refund of credit-note credit. */
+  const refundFlow = usePaymentRefundFlow({
+    payment: p,
+    invoiceId: ctx?.invoiceId ?? null,
     onBlocked: (msg) =>
       toast.error(msg, {
         description: canQuotes ? "This block is cleared on the quote or in Banking — the next step is there." : noQuoteHint,
         action: openQuote,
       }),
   });
-  const askText = useAskText();
-  /* R-455: after a refund, the customer is often leaving. Offer to END the subscription
-     from here (with the now-unreal due cleared) instead of leaving it active, in MRR and
-     renewals, showing "₹956 due" for someone who has been paid back. */
-  const [cancelAfterRefund, setCancelAfterRefund] = React.useState<{ sub: Subscription; reason: string } | null>(null);
-  const offerCancel = async (reason: string) => {
-    const { data } = await createClient()
-      .from("subscriptions")
-      .select("*")
-      .eq("quote_id", p.quote_id)
-      .neq("status", "cancelled")
-      .limit(1);
-    const sub = data?.[0];
-    if (!sub) return;
-    if (await confirm({
-      title: "Is the customer leaving?",
-      body: `${sub.customer_name}'s ${sub.plan} subscription is still active — it stays in MRR and renewals` +
-        ((sub.outstanding_amount ?? 0) > 0 ? ` and shows ${rupee(sub.outstanding_amount ?? 0)} due` : "") +
-        ". Cancel it too?",
-      confirmLabel: "Cancel subscription",
-      cancelLabel: "Keep it active",
-    })) setCancelAfterRefund({ sub, reason });
-  };
-
-  const handleRefund = async () => {
-    /* R-455 / R-1563: a payment whose quote has a GST invoice is refunded only against a
-       credit note (refund_payment checks it). Ask BEFORE the reason box how much credit-note
-       credit is open on that invoice: covered → straight on to the refund; not covered →
-       "Credit note first" with the exact amount still needed and the way to the invoice's
-       Issue credit note. It used to send the user to the invoice and, after the note, back
-       to the same dialog — a loop, because it never looked at the note. */
-    let creditNoteCover: number | null = null;
-    if (ctx?.invoiceId) {
-      let have: Awaited<ReturnType<typeof fetchRefundCredit>>;
-      try {
-        have = await fetchRefundCredit(p.id, ctx.invoiceId);
-      } catch (e) {
-        toastError(e);
-        return;
-      }
-      const { need, gap } = refundCover({ cash: cashReceived(p), ...have });
-      if (gap > 0) {
-        if (await confirm({
-          title: "Credit note first",
-          body:
-            `This payment's quote has GST invoice ${ctx.invoiceId}. Money on a tax invoice goes back only against a credit note.\n\n` +
-            `Refunding ${rupee(cashReceived(p))} needs ${rupee(need)} covered by credit notes on ${ctx.invoiceId}` +
-            (have.creditNoteCredit > 0 ? ` — ${rupee(have.creditNoteCredit)} is covered now.` : ` — none yet.`) +
-            `\n\nIssue a credit note of ${rupee(gap)} on it (Invoices → ${ctx.invoiceId} → ⋯ → Issue credit note), then press Refund here again.`,
-          confirmLabel: "Open invoice list",
-        })) router.push(`/invoices?q=${encodeURIComponent(ctx.invoiceId)}` as never);
-        return;
-      }
-      creditNoteCover = need;
-    }
-    /* In-app box, not window.prompt — that returned null in the desktop app, so Refund
-       did nothing (R-052). */
-    const reason = await askText({
-      title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
-      body: "The reason is printed on the RFV voucher.",
-      label: "Reason (at least 5 characters)",
-      confirmLabel: "Next",
-    });
-    if (reason === null) return;
-    if (reason.length < 5) {
-      toast.error("Enter a reason of at least 5 characters", { description: "It is printed on the voucher." });
-      return;
-    }
-    if (await confirm({
-      title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
-      body:
-        (creditNoteCover !== null
-          ? `In the books: the payment is marked refunded, an RFV voucher is created, and ${rupee(creditNoteCover)} of the ` +
-            `credit made by the credit note on ${ctx?.invoiceId} is paid out (it can no longer be used on another quote). The invoice stays settled.`
-          : "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
-            "and any credit from this payment is closed.") +
-        "\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
-      confirmLabel: "Book refund",
-      danger: true,
-    })) refund.mutate({ id: p.id, reason: reason.trim() }, { onSuccess: () => { void offerCancel(reason.trim()); } });
-  };
 
   // Delete = correct a wrong entry. Explains the reversal, then reverses via RPC
   // (guards block if a GST invoice was issued / it's bank-reconciled).
@@ -1304,8 +1228,8 @@ function PaymentRowView({
               {canWrite && (<>
               <DropdownMenuSeparator />
               {p.status === "received" && (
-                <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={handleRefund}>
-                  <Icon name="rupee" size={16} /> {ctx?.invoiceId ? "Refund (credit note first)" : "Refund payment"}
+                <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer text-rose" onClick={() => { void refundFlow.start(); }}>
+                  <Icon name="rupee" size={16} /> {refundFlow.label}
                 </DropdownMenuItem>
               )}
               {canDelete && (
@@ -1335,15 +1259,7 @@ function PaymentRowView({
             quoteId={p.quote_id}
           />
         )}
-        {cancelAfterRefund && (
-          <CancelSubscriptionDialog
-            sub={cancelAfterRefund.sub}
-            open={!!cancelAfterRefund}
-            onOpenChange={(v) => { if (!v) setCancelAfterRefund(null); }}
-            clearDueDefault
-            defaultReason={cancelAfterRefund.reason}
-          />
-        )}
+        {refundFlow.element}
       </td>
     </tr>
   );

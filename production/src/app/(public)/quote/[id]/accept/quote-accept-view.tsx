@@ -14,6 +14,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, cn } from "@/lib/utils";
 import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import { loadRazorpayCheckout } from "@/lib/razorpay/checkout-client";
 import type { LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
@@ -157,11 +158,16 @@ export function QuoteAcceptView({
   const taxableInr  = quote.subtotal - discountInr;
   const taxInr      = quoteDisplayTax(taxableInr, quote.tax_rate, quote.amount); // R-804: adds up to the stored total
   const totalInr    = quote.amount ?? (taxableInr + taxInr);
-  const dSubtotal = isForeign ? dRound(dispLines.reduce((s, x) => s + x.amount, 0)) : quote.subtotal;
-  const dDiscount = isForeign ? dRound(dSubtotal * (quote.discount_pct / 100)) : discountInr;
-  const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount) : taxableInr;
-  const dTax      = isForeign ? dRound(dTaxable * (quote.tax_rate / 100)) : taxInr;
-  const dTotal    = isForeign ? dRound(dTaxable + dTax) : totalInr;
+  /* R-1677: the foreign totals come from lib/quotes/foreign-totals — one rule for this page,
+     the builder, the staff preview, the quote PDF and the invoice. */
+  const fFig      = isForeign
+    ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct: quote.discount_pct, taxRate: quote.tax_rate })
+    : null;
+  const dSubtotal = fFig ? fFig.subtotal : quote.subtotal;
+  const dDiscount = fFig ? fFig.discount : discountInr;
+  const dTaxable  = fFig ? fFig.taxable  : taxableInr;
+  const dTax      = fFig ? fFig.tax      : taxInr;
+  const dTotal    = fFig ? fFig.total    : totalInr;
 
   // Format an ANNUAL display-currency figure, slicing per-invoice when the cycle
   // bills more than once a year.

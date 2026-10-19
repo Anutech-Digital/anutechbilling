@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -57,6 +58,7 @@ import {
   summarise,
   toRpcAllocations,
 } from "./multi-invoice-allocation";
+import { duplicateReferenceHref, duplicateReferenceOf } from "./duplicate-reference";
 
 const lineSchema = z.object({
   invoiceId:  z.string(),
@@ -125,6 +127,7 @@ export function MultiInvoicePaymentDialog({
   const { data: bankAccounts } = useBankAccounts();
   const receiveAccounts = React.useMemo(() => depositAccounts(bankAccounts), [bankAccounts]);
   const record = useRecordMultiInvoicePayment();
+  const router = useRouter();
 
   /* Lines follow the received amount (oldest first) until the operator types into one. */
   const [manual, setManual] = React.useState(false);
@@ -201,9 +204,18 @@ export function MultiInvoicePaymentDialog({
           }
           onOpenChange(false);
         },
-        onError: (e) => toastError(e, {
-          fallback: "Payment not saved — nothing was recorded on any invoice. Check the amounts and try again.",
-        }),
+        onError: (e) => {
+          /* R-1676: this UTR is already on another payment — the message names that receipt;
+             the button opens that customer's payments. */
+          const dup = duplicateReferenceOf(e);
+          toastError(e, {
+            fallback: "Payment not saved — nothing was recorded on any invoice. Check the amounts and try again.",
+            ...(dup ? {
+              action: { label: "Open that payment", onClick: () => router.push(duplicateReferenceHref(dup)) },
+              duration: 15000,
+            } : {}),
+          });
+        },
       },
     );
   };

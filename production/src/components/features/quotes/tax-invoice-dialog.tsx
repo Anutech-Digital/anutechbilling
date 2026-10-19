@@ -29,7 +29,8 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, toWhatsAppDigits, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
-import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import { invoiceFx } from "@/lib/pdf/build-props";
 import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import type { Invoice, Payment, QuoteLineItem } from "@/lib/supabase/database.types";
@@ -191,7 +192,14 @@ export function TaxInvoiceDialog({
   const fxRate = exchangeRate ?? 1;
   // Export invoices display in the CLIENT's currency (USD…); books stay ₹, so the
   // INR equivalent is shown as a GST reference. `money()` renders in that currency.
-  const money = (inr: number) => (isForeign ? formatForeign(foreignEquivalent(inr, fxRate), currency ?? "") : rupee(inr));
+  /* R-1677: an invoice covering the quote's lines prints the SAME dollar total the quote, the
+     accept page and the PDF asked for (lib/quotes/foreign-totals) — ₹32,400 ÷ 95.7485 per
+     figure gave $338.39 beside the customer's $338.40. */
+  const toForeign = foreignDocConverter({
+    lines: lineItems, fx: fxRate, discountPct, taxRate: fTax === 0 ? 0 : fRate,
+    inr: { subtotal, taxable: fTaxable, tax: fTax, total: fTotal },
+  });
+  const money = (inr: number) => (isForeign ? formatForeign(toForeign(inr), currency ?? "") : rupee(inr));
 
   // ── Advance adjustment ────────────────────────────────────────────────
   // Prefer FROZEN snapshot from invoice itself (legally correct — once issued,

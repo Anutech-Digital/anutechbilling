@@ -40,6 +40,9 @@ import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-suppl
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
+import { invoiceFx } from "@/lib/pdf/build-props";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
@@ -54,6 +57,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
+import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -79,6 +83,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
+  /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
+     invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
+     to issue one (and so no way to refund after a cancel). */
+  const [cnOpen, setCnOpen] = React.useState(false);
+  const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
   /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
   const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
   const openPayment = () => { setTdsOnly(null); setPayOpen(true); };
@@ -147,6 +156,18 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      receives was wrong in the same way. */
   const { subtotal, discount, taxable, taxRate, tax } = invoiceDisplayAmounts(invoice, quote);
   const total     = quote?.amount ?? invoice.amount;
+  /* R-1677: an export invoice billed in USD said only ₹32,400. Show the customer's amount and
+     the rate beside it — the same $ total the quote and the invoice PDF print. */
+  const fx = invoiceFx(invoice, quote ?? null);
+  const foreignTotal = isForeignCurrency(fx.currency) && fx.exchangeRate && fx.exchangeRate > 0
+    ? formatForeign(
+        foreignDocConverter({
+          lines: lineItems, fx: fx.exchangeRate, discountPct: quote?.discount_pct ?? 0,
+          taxRate: tax === 0 ? 0 : taxRate, inr: { subtotal, taxable, tax, total },
+        })(total),
+        fx.currency ?? "",
+      ) + ` @ ₹${fx.exchangeRate}/${fx.currency}`
+    : null;
 
   /* `supplier` is null until the identity is complete, so this cannot silently pick a
      side. `undefined` makes isInterStateSupply say "I don't know" instead of guessing —
@@ -222,6 +243,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   View quote
                 </Button>
               )}
+              {canCreditNote && (
+                <Button size="sm" variant="outline" icon="receipt" onClick={() => setCnOpen(true)}>
+                  Credit note
+                </Button>
+              )}
               {canWrite && (
                 <Button
                   size="sm"
@@ -280,6 +306,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Total Amount</p>
                       <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(total)}</p>
+                      {foreignTotal && (
+                        <p className="text-2xs text-ink-3 tabular-nums mt-0.5" data-testid="invoice-foreign-total">{foreignTotal}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Net Payable</p>
@@ -437,6 +466,19 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
       )}
       {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
           (record_payment flips this invoice to paid once the balance is covered). */}
+      {canCreditNote && (
+        <IssueCreditNoteDialog
+          open={cnOpen}
+          onOpenChange={setCnOpen}
+          invoiceId={invoice.id}
+          customerName={invoice.customer_name}
+          netPayable={invoice.net_payable ?? invoice.amount}
+          taxRate={invoice.tax_rate}
+          interState={invoice.inter_state}
+          isExport={(invoice.tax_rate ?? 18) === 0}
+          invoiceDate={invoice.invoice_date}
+        />
+      )}
       {payOpen && !quote && instalment?.quoteId && (
         <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
       )}

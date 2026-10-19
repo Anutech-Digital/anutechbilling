@@ -41,6 +41,7 @@ import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
+import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
@@ -110,7 +111,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
       prospect_state_code, prospect_country, currency, terms_conditions,
-      billing_cycle, exchange_rate, invoice_id
+      billing_cycle, exchange_rate, invoice_id,
+      approval_status, approval_tier, approval_requested_by, approved_by,
+      approved_discount_bps, approved_margin_bps, approval_rejection_reason
     `)
     .eq("id", params.id)
     .single();
@@ -124,6 +127,15 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json(
       { error: `cannot resend — quote is ${quote.status}` },
       { status: 400 }
+    );
+  }
+  /* R-1669: the same approval gate as "Mark as sent" and the PDF link — a quote waiting for
+     (or refused) discount / margin approval is not emailed, whatever the button showed. */
+  const approvalBlock = customerCopyBlock(quote);
+  if (approvalBlock) {
+    return NextResponse.json(
+      { error: `Needs approval first — ${approvalBlock.reason} ${approvalBlock.nextStep}` },
+      { status: 409 },
     );
   }
 

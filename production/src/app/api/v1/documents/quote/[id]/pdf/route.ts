@@ -18,6 +18,7 @@ import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { parseQuoteTemplate, proformaBank, quoteTemplateFileName } from "@/lib/pdf/quote-template";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { trustedOrigin } from "@/lib/app-url";
+import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,10 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const q = quote as Quote;
+  /* R-1669: this link is a customer copy. A quote still waiting for (or refused) discount /
+     margin approval is not rendered — the button is disabled too, but a link can be shared. */
+  const block = customerCopyBlock(q);
+  if (block) return deny(409, `This quote needs approval before it can go to the customer. ${block.reason} ${block.nextStep}`);
   const [{ data: customer }, { data: lead }, { data: tenant }, udyamNumber] = await Promise.all([
     q.customer_id
       ? admin.from("customers").select("*").eq("id", q.customer_id).maybeSingle()

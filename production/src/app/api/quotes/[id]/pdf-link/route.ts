@@ -15,6 +15,7 @@ import { createClient } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { pdfDownloadUrl } from "@/lib/pdf/pdf-token";
 import { parseQuoteTemplate } from "@/lib/pdf/quote-template";
+import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +31,17 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   }
 
   // RLS: returns the row only when it belongs to the caller's workspace.
-  const { data: q } = await supabase.from("quotes").select("id, tenant_id").eq("id", id).maybeSingle();
+  const { data: q } = await supabase
+    .from("quotes")
+    .select("id, tenant_id, status, line_items, approval_status, approval_tier, approval_requested_by, approved_by, approved_discount_bps, approved_margin_bps, approval_rejection_reason")
+    .eq("id", id)
+    .maybeSingle();
   if (!q) return NextResponse.json({ error: "Quote not found." }, { status: 404 });
+  /* R-1669: a signed PDF link is a customer copy — none while approval is pending / refused. */
+  const block = customerCopyBlock(q);
+  if (block) {
+    return NextResponse.json({ error: `Needs approval first — ${block.reason} ${block.nextStep}` }, { status: 409 });
+  }
 
   const template = parseQuoteTemplate(request.nextUrl.searchParams.get("template"));
   const url = pdfDownloadUrl(trustedOrigin(request.headers), "quote", q.id, q.tenant_id, { ttlDays: 1 });

@@ -377,25 +377,10 @@ export function useMarkReminderSent() {
 // ============================================================
 // Suspend / Cancel / Write-off
 // ============================================================
-export function useSuspendSubscription() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (subscriptionId: string) => {
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({ status: "paused" })
-        .eq("id", subscriptionId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      toast.info("Subscription paused — remember to suspend service via vendor (Google CSP / M365 admin)");
-    },
-    onError: (e) => toastError(e, { fallback: "Pause nahi hua — subscription abhi bhi active hai" }),
-  });
-}
+/* R-1681: pausing moved to useSuspendSubscription in
+   components/features/subscriptions/suspend-subscription-dialog.tsx (suspend_subscription RPC —
+   asks why, links the unpaid invoice). A bare status = 'paused' update kept no reason and never
+   came back on payment. */
 
 export function useResumeSubscription() {
   const qc = useQueryClient();
