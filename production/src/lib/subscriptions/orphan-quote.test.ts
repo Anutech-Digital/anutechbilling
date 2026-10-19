@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   orphanState, orphanNote, isOrphan, isSubscriptionLine, subscriptionExpectation,
-  missingLines, type OrphanInput,
+  missingLines, rebuildOutstanding, type OrphanInput,
 } from "./orphan-quote";
 
 /**
@@ -19,7 +19,9 @@ const TWO_LINES = [
 ];
 
 const q = (over: Partial<OrphanInput> = {}): OrphanInput => ({
-  status: "accepted", paymentStatus: "invoiced", received: 0,
+  /* R-1686: money IS in (₹1,000 recorded). Until 19 Oct this fixture said invoiced + ₹0 and
+     called it "money in" — the very shape "Invoice now (before payment)" leaves behind. */
+  status: "accepted", paymentStatus: "invoiced", received: 1000,
   isRenewal: false, isAddSeats: false,
   lines: TWO_LINES, existingSubs: 2,
   ...over,
@@ -35,7 +37,7 @@ const q = (over: Partial<OrphanInput> = {}): OrphanInput => ({
 describe("an absent subscription is usually correct", () => {
   it("says nothing on an unpaid accepted quote", () => {
     for (const ps of ["none", "awaiting", null, undefined]) {
-      const s = orphanState(q({ paymentStatus: ps, existingSubs: 0 }));
+      const s = orphanState(q({ paymentStatus: ps, received: 0, existingSubs: 0 }));
       expect(s.kind, `payment_status ${ps}`).toBe("not-due");
       expect(isOrphan(s)).toBe(false);
       expect(orphanNote(s)).toBeNull();
@@ -69,7 +71,7 @@ describe("an absent subscription is usually correct", () => {
 describe("money in, nothing created", () => {
   it("is a fault, and counts what should exist", () => {
     const s = orphanState(q({ existingSubs: 0 }));
-    expect(s).toEqual({ kind: "missing-all", expected: 2 });
+    expect(s).toEqual({ kind: "missing-all", expected: 2, paid: true });
     expect(isOrphan(s)).toBe(true);
   });
 
@@ -98,7 +100,7 @@ describe("money in, nothing created", () => {
 describe("some created, some gone", () => {
   it("is caught, and named apart from a total loss", () => {
     const s = orphanState(q({ existingSubs: 1 }));
-    expect(s).toEqual({ kind: "missing-some", expected: 2, found: 1 });
+    expect(s).toEqual({ kind: "missing-some", expected: 2, found: 1, paid: true });
     expect(isOrphan(s)).toBe(true);
     expect(orphanNote(s)).toContain("Only 1 of 2");
   });
@@ -274,5 +276,72 @@ describe("the two reports a tester filed", () => {
     const s = orphanState(q({ existingSubs: 0, received: 50000 }));
     expect(s.kind).toBe("missing-all");
     expect(isOrphan(s)).toBe(true);
+  });
+});
+
+/**
+ * R-1686 (19 Oct 2026): "Invoice now (before payment)" leaves payment_status 'invoiced' with
+ * ₹0 received. The quote page said "This quote is paid but has no subscription" — nothing was
+ * paid. The repair is still offered (an invoiced quote should have its subscription, so its
+ * unpaid invoice is in Subscription dues), but the words only say "paid" when money is in.
+ */
+describe("R-1686: invoiced before payment is not paid", () => {
+  const unpaidInvoiced = q({ paymentStatus: "invoiced", received: 0, existingSubs: 0 });
+
+  it("is still a missing subscription, marked unpaid", () => {
+    const s = orphanState(unpaidInvoiced);
+    expect(s).toEqual({ kind: "missing-all", expected: 2, paid: false });
+    expect(isOrphan(s)).toBe(true);
+  });
+
+  it("never says 'paid' when no money was received", () => {
+    const note = orphanNote(orphanState(unpaidInvoiced))!;
+    expect(note).not.toMatch(/\bpaid but\b/i);
+    expect(note).toMatch(/invoiced but not paid yet/i);
+    expect(note).toMatch(/Subscription dues/);
+  });
+
+  it("says 'paid' once money is in", () => {
+    const note = orphanNote(orphanState(q({ paymentStatus: "invoiced", received: 38232, existingSubs: 0 })))!;
+    expect(note).toMatch(/^This quote is paid but has no subscription/);
+  });
+
+  it("partial / received labels still count as paid", () => {
+    for (const ps of ["partial", "received"]) {
+      const s = orphanState(q({ paymentStatus: ps, received: 0, existingSubs: 0 }));
+      expect(s, ps).toMatchObject({ kind: "missing-all", paid: true });
+    }
+  });
+});
+
+describe("R-1668: a one-time line is never a subscription line", () => {
+  it("one_time is one-off", () => {
+    expect(subscriptionExpectation({ name: "Setup and migration", qty: 1, rate: 2000, commitment: "one_time" })).toBe("one-off");
+  });
+
+  it("an annual quote with a one-time setup line expects ONE subscription", () => {
+    const s = orphanState(q({
+      existingSubs: 0,
+      lines: [
+        { name: "Google Workspace Business Starter", qty: 10, rate: 3000, commitment: "annual_yearly" },
+        { name: "Setup and migration", qty: 1, rate: 2000, commitment: "one_time" },
+      ],
+    }));
+    expect(s).toMatchObject({ kind: "missing-all", expected: 1 });
+  });
+});
+
+describe("R-1686: a rebuilt subscription carries what is still owed", () => {
+  it("is the unpaid invoice when nothing else carries it", () => {
+    expect(rebuildOutstanding(38232, [])).toBe(38232);
+  });
+  it("is never counted twice with a surviving subscription", () => {
+    expect(rebuildOutstanding(38232, [30000])).toBe(8232);
+    expect(rebuildOutstanding(38232, [38232, 0])).toBe(0);
+  });
+  it("is 0 on a paid quote and never negative", () => {
+    expect(rebuildOutstanding(0, [])).toBe(0);
+    expect(rebuildOutstanding(100, [500])).toBe(0);
+    expect(rebuildOutstanding(Number.NaN, [])).toBe(0);
   });
 });

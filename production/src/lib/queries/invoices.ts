@@ -248,6 +248,10 @@ export function useGenerateInvoice() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      /* R-1686: "Invoice now (before payment)" files the subscription and its dues in the
+         same database call — the Subscriptions list and Payments → Subscription dues re-read. */
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       if (totalAdvances > 0 && netPayable > 0) {
         toast.success(
           `Invoice ${invoiceId} generated · ₹${totalAdvances.toLocaleString("en-IN")} advance adjusted · ₹${netPayable.toLocaleString("en-IN")} payable`,

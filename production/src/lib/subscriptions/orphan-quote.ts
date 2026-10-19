@@ -64,10 +64,10 @@ export type OrphanState =
   | { kind: "not-due"; because: string }
   /** Everything the quote should have created exists. */
   | { kind: "healthy"; subs: number }
-  /** Money is in and NOTHING was created. */
-  | { kind: "missing-all"; expected: number }
+  /** Money is in (or the GST invoice is out, R-1686) and NOTHING was created. */
+  | { kind: "missing-all"; expected: number; paid: boolean }
   /** Some were created and some are gone — the half-loss a zero-check misses. */
-  | { kind: "missing-some"; expected: number; found: number };
+  | { kind: "missing-some"; expected: number; found: number; paid: boolean };
 
 /* There was briefly a "monthly-untracked" state here, for the window in which monthly
    sales produced no subscription at all. 20260822120000 and 20260822140000 closed that,
@@ -102,7 +102,9 @@ export function subscriptionExpectation(l: QuoteLine): LineExpectation {
   const billable = (l.qty ?? 0) > 0 && (l.rate ?? 0) > 0 && Boolean((l.name ?? "").trim());
   if (!billable) return "one-off";
   const c = l.commitment?.trim().toLowerCase();
-  if (!c) return "one-off";
+  /* R-1668: a One-time line (setup, migration) is a one-off charge — never a subscription.
+     file_invoiced_quote_subscriptions (R-1686) skips it the same way. */
+  if (!c || c === "one_time") return "one-off";
   return c === "monthly" ? "monthly" : "annual";
 }
 
@@ -137,9 +139,13 @@ export function orphanState(input: OrphanInput): OrphanState {
      somebody has to remember to move, the payments are what happened. */
   const paid = input.received > 0
     || input.paymentStatus === "received"
-    || input.paymentStatus === "partial"
-    || input.paymentStatus === "invoiced";
-  if (!paid) {
+    || input.paymentStatus === "partial";
+  /* R-1686: "Invoice now (before payment)" leaves 'invoiced' with ₹0 received. Since
+     20261019162652 that path files the subscription (its unpaid invoice is the dues), so a
+     missing one is still a fault worth the repair button — but it is NOT paid, and the
+     sentence must not say so. */
+  const invoiced = input.paymentStatus === "invoiced";
+  if (!paid && !invoiced) {
     return {
       kind: "not-due",
       because: "No payment recorded yet — the subscription is created when the money arrives.",
@@ -152,8 +158,8 @@ export function orphanState(input: OrphanInput): OrphanState {
     return { kind: "not-due", because: "Nothing on this quote is a recurring line." };
   }
 
-  if (input.existingSubs === 0)        return { kind: "missing-all", expected };
-  if (input.existingSubs < expected)   return { kind: "missing-some", expected, found: input.existingSubs };
+  if (input.existingSubs === 0)        return { kind: "missing-all", expected, paid };
+  if (input.existingSubs < expected)   return { kind: "missing-some", expected, found: input.existingSubs, paid };
   return { kind: "healthy", subs: input.existingSubs };
 }
 
@@ -179,6 +185,10 @@ export function isOrphan(s: OrphanState): boolean {
 export function orphanNote(s: OrphanState): string | null {
   switch (s.kind) {
     case "missing-all":
+      if (!s.paid) {
+        /* R-1686: invoiced before payment — say exactly that, never "paid". */
+        return `This quote is invoiced but not paid yet, and has no subscription — so its unpaid invoice is missing from Subscription dues and nothing will chase its renewal. ${s.expected === 1 ? "One subscription" : `${s.expected} subscriptions`} should exist.`;
+      }
       return `This quote is paid but has no subscription, so nothing will ever chase its renewal and it is missing from your MRR. ${s.expected === 1 ? "One subscription" : `${s.expected} subscriptions`} should exist.`;
     case "missing-some":
       /* Named separately because the quote still LOOKS connected — which is exactly why
@@ -242,4 +252,21 @@ export function missingLines<T extends QuoteLine & { domain?: string | null }>(
     else out.push(l);
   }
   return out;
+}
+
+/* ── What a rebuilt subscription still owes (R-1686) ───────────────────────── */
+
+/**
+ * The outstanding to put on the FIRST rebuilt subscription.
+ *
+ * `openBalance` is what is still owed on the quote (quote_open_balance: its unpaid invoices,
+ * or amount − money received when none is out). The surviving subscriptions of the same quote
+ * may already carry some of it, so only the rest goes on the rebuilt row — the dues are never
+ * counted twice. Whole rupees, never negative. It wrote 0 before R-1686, so an unpaid annual
+ * invoice rebuilt from the quote never appeared in Payments → Subscription dues.
+ */
+export function rebuildOutstanding(openBalance: number, existingOutstanding: readonly number[]): number {
+  const owed = Number.isFinite(openBalance) ? Math.round(openBalance) : 0;
+  const carried = existingOutstanding.reduce((s, n) => s + (Number.isFinite(n) ? Math.max(0, n) : 0), 0);
+  return Math.max(0, owed - carried);
 }
