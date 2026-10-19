@@ -6,6 +6,10 @@ import * as React from "react";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const mutate = vi.fn();
+const push = vi.fn();
+const toastErrorSpy = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("sonner", () => ({ toast: { error: (...a: unknown[]) => toastErrorSpy(...a), success: vi.fn(), warning: vi.fn() } }));
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 vi.mock("@/lib/queries/bank", () => ({ useBankAccounts: () => ({ data: [] }) }));
 vi.mock("@/components/features/customers/customer-combobox", () => ({ CustomerCombobox: () => null }));
@@ -30,6 +34,8 @@ import { MultiInvoicePaymentDialog, multiInvoicePaymentSchema } from "./multi-in
 
 beforeEach(() => {
   mutate.mockReset();
+  push.mockReset();
+  toastErrorSpy.mockReset();
   /* Radix Checkbox measures itself; jsdom has no ResizeObserver. */
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 });
@@ -81,6 +87,26 @@ describe("R-1525 multi-invoice payment sheet", () => {
     fireEvent.click(screen.getByRole("button", { name: /Record ₹1,500/ }));
     await new Promise((r) => setTimeout(r, 50));
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("R-1676: a UTR already on another payment → the refusal names it and offers that payment", async () => {
+    render(<MultiInvoicePaymentDialog open onOpenChange={() => {}} customerId="c1" customerName="Acme" />);
+    fireEvent.change(document.getElementById("mip_received")!, { target: { value: "1180" } });
+    await waitFor(() => expect(lineValue(0)).toBe("1180"));
+    fireEvent.change(document.getElementById("mip_reference")!, { target: { value: "TESTUTR123456" } });
+    fireEvent.click(screen.getByRole("button", { name: /Record ₹1,180/ }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    const msg = "Ye UTR pehle se RV-2026-27-0004 par hai — reference TESTUTR123456 is already recorded (T-7, ₹22939, 05 Oct 2026).";
+    mutate.mock.calls[0][1].onError({
+      message: msg, code: "P0001",
+      details: "duplicate_payment_reference payment_id=11111111-2222-4333-8444-555555555555 customer_id=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    });
+    expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+    const [title, opts] = toastErrorSpy.mock.calls[0] as [string, { action?: { label: string; onClick: () => void } }];
+    expect(title).toBe(msg);
+    expect(opts.action?.label).toBe("Open that payment");
+    opts.action!.onClick();
+    expect(push).toHaveBeenCalledWith("/payments?customer=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
   });
 
   it("schema: a UPI reference must be 12 digits; cash may be blank", () => {
