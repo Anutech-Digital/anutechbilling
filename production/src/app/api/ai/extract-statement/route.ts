@@ -7,8 +7,17 @@
  * PDF layouts vary wildly (and are often image-only), so AI is far more reliable
  * than text extraction. Tenant-scoped Gemini key (Settings → Integrations → AI).
  *
- * Body: { fileBase64: string (raw base64, no data: prefix), mimeType: string }
- * Returns: { rows: [{txn_date, description, debit, credit, balance_after}], mode } or { error }.
+ * Body: { fileBase64: string (raw base64, no data: prefix), mimeType: string,
+ *         pages?: { from, to, total } }   ← R-1690: read only these pages of a PDF
+ * Returns: { rows: [{txn_date, description, debit, credit, balance_after}], mode, chunk? }
+ *          or { error, kind } with 504 (timeout), 503 (busy) or 502 (anything else).
+ *
+ * R-1690 (19 Oct 2026): a one-month statement in ONE call timed out at 60 s on both models,
+ * every time. The import dialog now counts the pages and asks for a few at a time
+ * (lib/banking/statement-chunks.ts has the why, the merge and the money rules). With
+ * `pages`, the rows' dates come back as read — the dialog fixes day/month swaps once over
+ * the merged statement, because that decision is for the whole statement, not two pages.
+ * Images, and a PDF sent without `pages`, are one call exactly as before.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -17,11 +26,36 @@ import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
+import { classifyStatementFailure } from "@/lib/banking/statement-chunks";
+
+/* Worst case for ONE request: 60 s + retry 60 s on the main model, then the same on the
+   lighter one ≈ 4 min. Cloud Run's request timeout is 600 s (cloudbuild.yaml --timeout=600);
+   this keeps a platform that reads `maxDuration` from cutting it shorter. A chunked statement
+   is several such requests, each well inside the limit — never one long one. */
+export const maxDuration = 300;
 
 const bodySchema = z.object({
   fileBase64: z.string().min(20, "Empty file"),
   mimeType: z.string().min(3),
+  pages: z.object({
+    from: z.number().int().min(1),
+    to: z.number().int().min(1),
+    total: z.number().int().min(1).max(1000),
+  }).refine((p) => p.from <= p.to && p.to <= p.total, "Bad page range").optional(),
 });
+
+type Pages = { from: number; to: number; total: number };
+
+/** Added to the prompt for one chunk. Names the pages, and who owns a row split by a page
+    break, so each row is read once — the merge drops an exact repeat at a border, but it
+    cannot bring back a row that both chunks skipped. */
+function pagesPrompt(p: Pages): string {
+  return `\n\nThis PDF has ${p.total} pages. Read ONLY pages ${p.from} to ${p.to} (page 1 = the first page of the file). ` +
+    "Return only the transaction rows printed on those pages and ignore every other page. " +
+    `A row that starts on page ${p.to} and continues onto the next page belongs to you` +
+    (p.from > 1 ? `; a row that started on page ${p.from - 1} and continues onto page ${p.from} does not. ` : ". ") +
+    "If those pages have no transaction rows, return { \"rows\": [] }.";
+}
 
 const PROMPT =
   "You are reading an INDIAN bank account statement (HDFC/ICICI/SBI/Axis/Kotak/etc.). " +
@@ -82,25 +116,27 @@ function sanitizeRows(rows: AiRow[]) {
    and then timed out, while gemini-flash-lite-latest answered in ~1.5s. Not used for a
    4xx — a file Gemini cannot open stays unopenable on any model. */
 const FALLBACK_MODEL = "gemini-flash-lite-latest";
+/* Decides the lighter-model retry only. The MESSAGE comes from classifyStatementFailure,
+   which keeps "slow" (a statement too big) and "busy" (Google's 503) apart — R-1690. */
 const isBusyOrSlow = (reason: string) =>
   /\b503\b|high demand|unavailable|overload|jawab nahi diya|timed out|paused/i.test(reason);
 
 async function extractWithFallback(
-  apiKey: string, model: string, mimeType: string, base64: string,
+  apiKey: string, model: string, mimeType: string, base64: string, prompt: string,
 ): Promise<{ rows: AiRow[] | null; reason: string }> {
   let reason = "";
-  const first = await extractWithGemini(apiKey, model, mimeType, base64, (r) => { reason = r; });
+  const first = await extractWithGemini(apiKey, model, mimeType, base64, prompt, (r) => { reason = r; });
   if (first) return { rows: first, reason: "" };
   if (model !== FALLBACK_MODEL && isBusyOrSlow(reason)) {
     console.warn(`[ai/extract-statement] ${model} failed (${reason}) — trying ${FALLBACK_MODEL}`);
-    const second = await extractWithGemini(apiKey, FALLBACK_MODEL, mimeType, base64, (r) => { reason = r; });
+    const second = await extractWithGemini(apiKey, FALLBACK_MODEL, mimeType, base64, prompt, (r) => { reason = r; });
     if (second) return { rows: second, reason: "" };
   }
   return { rows: null, reason };
 }
 
 async function extractWithGemini(
-  apiKey: string, model: string, mimeType: string, base64: string, onFailure?: (reason: string) => void,
+  apiKey: string, model: string, mimeType: string, base64: string, prompt: string, onFailure?: (reason: string) => void,
 ): Promise<AiRow[] | null> {
   /* Pehle yahan apna `fetch` tha — aur iske paas timeout bhi nahi tha. Ye bank statement
      padhta hai, yaani seedha paise ka data, aur ek atki hui call operator ko spinner par
@@ -112,10 +148,14 @@ async function extractWithGemini(
 
      Timeout 60s: pehle KOI nahi tha, phir 30s — par 25 Sep 2026 ko ek poore mahine ki
      statement 30s me do baar time out hui. PDF ka jawab text se dheema aata hai, aur
-     operator ke saamne progress spinner chalta rehta hai. */
+     operator ke saamne progress spinner chalta rehta hai.
+
+     19 Oct 2026 (R-1690): 60s bhi ek poore mahine ke liye kam pada (staging, dono model).
+     Timeout aur badhane ki jagah ab lamba PDF pages ke hisson me padha jata hai — har hissa
+     60s me aaram se aata hai. */
   const json = await geminiJson<{ rows?: AiRow[] }>({
     apiKey, model,
-    user: PROMPT,
+    user: prompt,
     attachment: { mimeType, base64 },
     temperature: 0,
     timeoutMs: 60_000,
@@ -153,24 +193,36 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { rows: ai, reason } = await extractWithFallback(gemini.apiKey, gemini.model, parsed.mimeType, parsed.fileBase64);
+  /* Pages only mean something for a PDF; a photo is always read whole. */
+  const pages = /pdf/i.test(parsed.mimeType) ? parsed.pages : undefined;
+  const prompt = pages ? PROMPT + pagesPrompt(pages) : PROMPT;
+
+  const { rows: ai, reason } = await extractWithFallback(gemini.apiKey, gemini.model, parsed.mimeType, parsed.fileBase64, prompt);
   if (!ai) {
-    /* Say WHICH failure it was. "Couldn't read this statement" used to cover a busy
-       Google, a timeout and an unopenable file alike — three different next steps. */
-    const why = isBusyOrSlow(reason)
-      ? "Google's AI is busy or slow right now. Try again in a minute"
-      : /\b400\b|invalid argument/i.test(reason)
-        ? "The AI couldn't open this file (a password-protected or damaged PDF does this)"
-        : reason
-          ? `The AI reader failed — ${reason.replace(/\.$/, "")}`
-          : "The AI reader failed";
-    return NextResponse.json(
-      { error: `${why}. The CSV / "Delimited" download from net banking always works and needs no AI.` },
-      { status: 502 },
-    );
+    /* Say WHICH failure it was — each has a different next step. Until 19 Oct 2026 a
+       timeout read "Google's AI is busy or slow", so people waited a minute and retried a
+       statement that could never fit in one call. A timeout now says the statement is big. */
+    const kind = classifyStatementFailure(reason);
+    const csv = `The CSV / "Delimited" download from net banking always works and needs no AI.`;
+    const error =
+      kind === "timeout"
+        ? "Statement bada hai — AI ko zyada samay laga. Chhota date-range ka PDF try karo, ya net banking ka CSV/Excel upload karo (usme AI nahi lagta)."
+        : kind === "busy"
+          ? `Google's AI is busy right now (overloaded). Try again in a minute. ${csv}`
+          : kind === "paused"
+            ? `AI ke kai call abhi lagatar fail hue, isliye ek minute ke liye ruke hain — ek minute baad dobara try karo. ${csv}`
+            : kind === "unreadable"
+              ? `The AI couldn't open this file (a password-protected or damaged PDF does this). ${csv}`
+              : `${reason ? `The AI reader failed — ${reason.replace(/\.$/, "")}` : "The AI reader failed"}. ${csv}`;
+    const status = kind === "timeout" ? 504 : kind === "busy" ? 503 : 502;
+    return NextResponse.json({ error, kind }, { status });
   }
 
   const clean = sanitizeRows(ai);
+  if (pages) {
+    /* One chunk: dates as read. The dialog merges every chunk and fixes dates once. */
+    return NextResponse.json({ rows: clean.rows, skipped: clean.skipped, mode: "gemini", chunk: pages });
+  }
   /* Real calendar dates only (the reader has returned "2026-21-08" for 21 Aug). Swaps are
      decided for the whole statement; a date impossible either way is dropped and counted. */
   const fix = fixStatementDates(clean.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
