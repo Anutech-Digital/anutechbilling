@@ -594,6 +594,13 @@ function QuoteBuilderBody() {
   const prefilledRef = React.useRef(false);
   React.useEffect(() => {
     if (prefilledRef.current) return;
+    /* R-1675: Edit / Duplicate / Revise copy an existing quote — ITS saved lines are the
+       truth. The lead-plan prefill is for a NEW quote from a lead only. On those paths the
+       quote's lead_id loads the lead (linkedLeadId), which fills leadCompany/leadPlan/leadSeats,
+       and this effect used to replace the saved lines with a catalogue-priced line (₹10,627
+       discounted → ₹12,960 list on staging, Q-5F40-27-0091). `prefillFrom` is read from the
+       URL, so it is known before the quote, the lead or the catalogue answers — any order. */
+    if (prefillFrom) { prefilledRef.current = true; return; }
     if (!leadCompany) return;
     /* Wait for the catalogue query to ANSWER — so we use the tenant's actual prices,
        not the hardcoded fallback map. R-388: this used to be `if (!catalog) return`, but
@@ -707,7 +714,7 @@ function QuoteBuilderBody() {
       (leadContact ? `Attn: ${leadContact}\n` : "") +
       `\nPricing valid for 30 days. Onboarding includes DNS, MX, SPF, DKIM, DMARC setup. Free training (2 sessions).`,
     );
-  }, [isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
+  }, [prefillFrom, isLeadMode, leadCompany, leadPlan, leadSeats, leadContact, catalog, catalogPending, linkedLeadId, leadsPending, leadCycle]);
 
   /* ── R-388: fill UNKNOWN costs when the catalogue arrives ───────────────────────
      The prefill above waits for the catalogue, but if that query failed (or a row
