@@ -11,6 +11,7 @@ const receipt = read("src/components/features/quotes/receipt-voucher-dialog.tsx"
 const pdf     = read("src/lib/pdf/ReceiptVoucherPDF.tsx");
 const profile = read("src/components/features/customers/customer-profile.tsx");
 const metric  = read("src/components/features/customers/customer-insights.tsx");
+const statement = read("src/components/features/customers/customer-statement.ts");
 const tdsPage = read("src/app/(app)/accounting/tds-receivable/page.tsx");
 const report  = read("src/app/(app)/accounting/tds-receivable/rate-check-report.tsx");
 const queries = read("src/lib/queries/tds-receivable.ts");
@@ -57,7 +58,10 @@ describe("R-523 receipt, statement, Lifetime paid show bank money and TDS apart"
   });
   it("customer statement credit row carries the split; Lifetime paid gets the TDS", () => {
     expect(profile).toMatch(/useTdsReceivables\(\{ customerId: params\.id \}\)/);
-    expect(profile).toMatch(/receiptSplitLine\(p\.amount, tdsOnPayment\[p\.id\]\)/);
+    // R-1682: the Statement is built by buildCustomerStatement; the profile hands it the
+    // bank/TDS split per payment, and the statement puts it on the payment (credit) row.
+    expect(profile).toMatch(/paymentSplit: \(id, amount\) => receiptSplitLine\(amount, tdsOnPayment\[id\]\)/);
+    expect(statement).toMatch(/const split = input\.paymentSplit\?\.\(p\.id, amount\) \?\? null;/);
     expect(profile).toMatch(/lifetimeTds=\{lifetimeTds\}/);
     expect(metric).toMatch(/hint=\{receiptSplitLine\(lifetimePaid, lifetimeTds\) \?\? undefined\}/);
   });
