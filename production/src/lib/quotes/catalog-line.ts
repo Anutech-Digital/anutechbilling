@@ -83,7 +83,8 @@ export function lineFromCatalog(
     qty: defaultQtyForUnit(unit, opts.qty),
     rate,
     cost,
-    ...(commitment ? { commitment } : {}),
+    /* R-1688: a one-time item carries the explicit marker (never a subscription). */
+    ...(commitment ? { commitment } : { one_time: true }),
   };
 }
 

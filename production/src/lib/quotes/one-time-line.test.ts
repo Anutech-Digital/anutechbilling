@@ -66,7 +66,9 @@ describe("R-1668 — a one-time line never becomes a subscription (so never MRR)
       .pop();
     expect(latest).toBeTruthy();
     const sql = readFileSync(join(dir, latest!), "utf8");
-    expect(sql).toMatch(/v_is_annual\s*:=\s*v_commitment is distinct from 'monthly' and v_commitment is not null/);
+    /* R-1688: the rule now lives in quote_line_is_subscription(); paid first keeps its old
+       meaning for a line with no commitment (false = no subscription). */
+    expect(sql).toMatch(/v_is_annual\s*:=\s*not v_is_monthly\s+and public\.quote_line_is_subscription\(v_first_line, v_tenant_id, false\)/);
     expect(sql).toMatch(/if \(v_is_annual or v_is_monthly\) and v_customer_id is not null then/);
   });
 });

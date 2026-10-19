@@ -38,7 +38,14 @@ import {
   useUpdateBankAccount,
 } from "@/lib/queries/bank";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
-import { isEncryptedPdf } from "@/lib/banking/pdf-check";
+import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
+import {
+  readStatementInChunks,
+  chunkResultFrom,
+  pagesLabel,
+  STATEMENT_CHUNK_PAGES,
+  type ChunkProgress,
+} from "@/lib/banking/statement-chunks";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { useTxnCategoryRules, useCreateTxnCategoryRule } from "@/lib/queries/txn-category-rules";
@@ -85,6 +92,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
   const [reading, setReading] = React.useState(false);
   const [readMsgIdx, setReadMsgIdx] = React.useState(0);
+  /* R-1690: real progress while a long PDF is read a few pages per call. null = one call. */
+  const [chunkProgress, setChunkProgress] = React.useState<ChunkProgress | null>(null);
   const importMut = useImportBankTransactions();
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
@@ -175,7 +184,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const readPdf = async (file: File) => {
     /* A password-protected PDF (bank e-statements usually are) cannot be read by the AI —
        it fails with a bare 400. Say so before uploading it, and say what works instead. */
-    if (/pdf/i.test(file.type) && isEncryptedPdf(new Uint8Array(await file.arrayBuffer()))) {
+    const isPdf = /pdf/i.test(file.type);
+    const bytes = isPdf ? new Uint8Array(await file.arrayBuffer()) : null;
+    if (bytes && isEncryptedPdf(bytes)) {
       toast.error("This PDF is password-protected, so it can't be read.", {
         description: "Download the statement as CSV / \"Delimited\" (.txt) from net banking — or open the PDF with its password, Print → Save as PDF, and upload that copy.",
         duration: 12000,
@@ -192,6 +203,49 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         r.onerror = () => reject(new Error("read failed"));
         r.readAsDataURL(file);
       });
+
+      /* R-1690: a PDF longer than one chunk is read a few pages per call. In one call a
+         month of entries timed out at 60 s on both models, every time (staging, 19 Oct). */
+      const pageCount = bytes ? await pdfPageCount(bytes) : null;
+      if (pageCount && pageCount > STATEMENT_CHUNK_PAGES) {
+        setChunkProgress({ pagesDone: 0, pageCount, reading: [] });
+        const out = await readStatementInChunks<ParsedRow>({
+          pageCount,
+          onProgress: setChunkProgress,
+          readChunk: async (pages) => {
+            const res = await fetch("/api/ai/extract-statement", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { ...pages, total: pageCount } }),
+            });
+            return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
+          },
+        });
+        if (out.allFailed) {
+          toastError(out.failed[0]?.error, {
+            fallback: "Couldn't read the statement.",
+            description: "Nothing was imported. Download the statement as CSV / Excel from net banking and upload that instead.",
+          });
+          setParsed(null);
+          return;
+        }
+        if (out.failed.length > 0) {
+          toast.warning(`Page ${out.failed.map(pagesLabel).join(", ")} nahi padh paaye — baaki rows preview mein hain.`, {
+            description: "Import se pehle preview ki warning padho: un pages ki entries alag se (CSV / chhota PDF) import karni hongi.",
+            duration: 12000,
+          });
+        }
+        setParsed(withRealDates({
+          rows: out.rows,
+          skipped: out.skipped,
+          warnings: [
+            ...out.warnings,
+            ...(out.rows.length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : []),
+          ],
+        }));
+        return;
+      }
+
       const res = await fetch("/api/ai/extract-statement", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -216,6 +270,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       setParsed(null);
     } finally {
       setReading(false);
+      setChunkProgress(null);
     }
   };
 
@@ -320,11 +375,40 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             {reading ? (
               <div className="flex flex-col items-center text-center gap-3 py-1">
                 <Icon name="sparkles" size={22} className="text-amber-ink animate-pulse" />
-                <span className="text-sm font-medium text-ink">{READ_MSGS[readMsgIdx]}</span>
-                <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
-                  <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
-                </div>
-                <span className="text-xs text-ink-3">Bade statement mein thoda zyada waqt lag sakta hai — ruko mat 😊</span>
+                {chunkProgress ? (
+                  /* R-1690: a long PDF, a few pages per call — real numbers, not a rotating line. */
+                  <>
+                    <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
+                      {chunkProgress.reading.length > 0
+                        ? `Page ${chunkProgress.reading[0].from}–${chunkProgress.reading[chunkProgress.reading.length - 1].to} of ${chunkProgress.pageCount} padh rahe hain…`
+                        : `${chunkProgress.pageCount} page ka statement padh rahe hain…`}
+                    </span>
+                    <div
+                      className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden"
+                      role="progressbar"
+                      aria-label="Statement pages read"
+                      aria-valuemin={0}
+                      aria-valuemax={chunkProgress.pageCount}
+                      aria-valuenow={chunkProgress.pagesDone}
+                    >
+                      <div
+                        className="h-full rounded-full bg-amber transition-[width] duration-500"
+                        style={{ width: `${Math.max(4, Math.round((chunkProgress.pagesDone / chunkProgress.pageCount) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-ink-3 tabular-nums">
+                      {chunkProgress.pagesDone} / {chunkProgress.pageCount} page ho gaye — lamba statement hisson mein padha ja raha hai
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium text-ink">{READ_MSGS[readMsgIdx]}</span>
+                    <div className="w-44 h-1.5 rounded-full bg-hairline overflow-hidden">
+                      <div className="h-full w-1/3 rounded-full bg-amber" style={{ animation: "ros-loadbar 1.1s ease-in-out infinite" }} />
+                    </div>
+                    <span className="text-xs text-ink-3">Bade statement mein thoda zyada waqt lag sakta hai — ruko mat 😊</span>
+                  </>
+                )}
               </div>
             ) : (
               <label className="cursor-pointer flex flex-col items-center text-center gap-2">

@@ -15160,6 +15160,7 @@ export type Database = {
       portal_touch_login: { Args: never; Returns: undefined }
       purge_ux_events: { Args: never; Returns: number }
       quote_line_terms_mixed: { Args: { p_lines: Json }; Returns: boolean }
+      quote_open_balance: { Args: { p_quote_id: string }; Returns: number }
       quote_split_due: {
         Args: { p_as_of: string; p_quote_id: string; p_term_start: string }
         Returns: number
