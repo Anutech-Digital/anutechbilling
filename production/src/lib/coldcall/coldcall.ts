@@ -194,6 +194,8 @@ export function nextWorkingDayAt(now: Date, hour: number): Date {
 export interface SkippedNumber {
   phone: string;
   name: string | null;
+  company?: string | null;
+  city?: string | null;
   /** Plain words, e.g. "On “Delhi CA — Oct” · Not interested · 12 Oct". */
   reason: string;
   leadId?: string | null;

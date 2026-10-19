@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseCallingList } from "@/lib/coldcall/coldcall";
+import { normaliseIndianPhone } from "@/lib/ai/telecall";
 import { importContacts } from "@/server/coldcall/coldcall.server";
 import { coldCallContext, UUID_RE } from "@/server/coldcall/route-context";
 
@@ -9,7 +10,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /* 2 MB of text — the same cap as the leads CSV import. */
-const body = z.object({ csv: z.string().min(1).max(2_000_000) });
+const body = z.object({
+  csv: z.string().min(1).max(2_000_000),
+  /* "Add anyway": numbers the person saw left out (already called / already in Sales) and chose to add. */
+  force: z.array(z.string().max(30)).max(5000).optional(),
+});
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
@@ -26,7 +31,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const list = parseCallingList(parsed.data.csv);
   if (list.error) return NextResponse.json({ error: list.error }, { status: 400 });
 
-  const r = await importContacts(ctx.run, ctx.session.tenantId, id, list.rows);
+  const force = new Set((parsed.data.force ?? []).map((p) => normaliseIndianPhone(p)).filter((p): p is string => !!p));
+  const r = await importContacts(ctx.run, ctx.session.tenantId, id, list.rows, force);
   if (!r) {
     return NextResponse.json({ error: "That campaign is not in your list any more — refresh the page." }, { status: 404 });
   }

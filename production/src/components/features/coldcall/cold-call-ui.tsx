@@ -29,7 +29,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
   ColdCallError, useColdContacts, useCreateCampaign, useImportList,
-  useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
+  useDeleteContact, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
 } from "@/lib/queries/cold-calling";
 
 type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline";
@@ -338,7 +338,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
 
       {/* The three steps */}
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" tabIndex={-1} />
-      <ImportReportDialog report={report} onClose={() => setReport(null)} />
+      <ImportReportDialog report={report} campaignId={campaign.id} onClose={() => setReport(null)} />
       <div className="grid gap-3 md:grid-cols-3">
         <Step n={1} title="Add numbers" done={numbers > 0} active={numbers === 0}>
           <p className="text-sm text-ink-3">
@@ -652,7 +652,31 @@ export function LiveStatus({ campaign, lastCheck }: {
 }
 
 /** After an import: what was added and, number by number, what was left out and why. */
-function ImportReportDialog({ report: r, onClose }: { report: ImportResult | null; onClose: () => void }) {
+/** A CSV cell, quoted when it holds a comma or a quote. */
+function cell(v: string | null | undefined): string {
+  const s = v ?? "";
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function ImportReportDialog({ report: r, campaignId, onClose }: {
+  report: ImportResult | null; campaignId: string; onClose: () => void;
+}) {
+  const importList = useImportList();
+  const [added, setAdded] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => { setAdded(new Set()); }, [r]);
+
+  /* "Add anyway": the person saw why a number was left out and still wants it called. */
+  const addAnyway = async (rows: SkippedNumber[]) => {
+    const todo = rows.filter((x) => !added.has(x.phone));
+    if (todo.length === 0) return;
+    const csv = "Phone,Name,Company,City\n" + todo.map((x) => [x.phone, x.name, x.company, x.city].map(cell).join(",")).join("\n");
+    try {
+      const res = await importList.mutateAsync({ id: campaignId, csv, force: todo.map((x) => x.phone) });
+      setAdded((prev) => new Set([...prev, ...todo.map((x) => x.phone)]));
+      toast.success(`${res.added} ${res.added === 1 ? "number" : "numbers"} added anyway`, { description: "They will be called with the rest of the list." });
+    } catch (err) { failToast(err, "Could not add them."); }
+  };
+
   const groups: { title: string; hint: string; rows: SkippedNumber[]; total: number }[] = r ? [
     { title: "Already called in another campaign", hint: "One person is cold-called only once.", rows: r.alreadyCalled, total: r.alreadyCalledCount },
     { title: "Already in Sales (lead or customer)", hint: "Your team already has them — no cold call.", rows: r.alreadyInSales, total: r.alreadyInSalesCount },
@@ -674,7 +698,12 @@ function ImportReportDialog({ report: r, onClose }: { report: ImportResult | nul
             </ul>
             {groups.filter((g) => g.total > 0).map((g) => (
               <section key={g.title} className="space-y-1.5">
-                <h3 className="font-medium text-ink">{g.title} · {g.total}</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-medium text-ink">{g.title} · {g.total}</h3>
+                  {g.rows.length > 1 && g.rows.some((x) => !added.has(x.phone)) && (
+                    <Button size="sm" variant="ghost" onClick={() => addAnyway(g.rows)} loading={importList.isPending}>Add all anyway</Button>
+                  )}
+                </div>
                 <p className="text-xs text-ink-3">{g.hint}</p>
                 <ul className="rounded-md border border-hairline divide-y divide-hairline">
                   {g.rows.map((x) => (
@@ -683,9 +712,14 @@ function ImportReportDialog({ report: r, onClose }: { report: ImportResult | nul
                         <p className="truncate"><span className="font-medium">{x.name || x.phone}</span>{x.name && <span className="text-ink-3 font-mono text-xs"> · {x.phone}</span>}</p>
                         <p className="text-xs text-ink-3 truncate">{x.reason}</p>
                       </div>
-                      {x.leadId && (
-                        <Link href={`/leads?lead=${encodeURIComponent(x.leadId)}` as Route} className="text-xs text-amber hover:underline shrink-0">Open lead</Link>
-                      )}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {x.leadId && (
+                          <Link href={`/leads?lead=${encodeURIComponent(x.leadId)}` as Route} className="text-xs text-amber hover:underline">Open lead</Link>
+                        )}
+                        {added.has(x.phone)
+                          ? <Badge kind="success" size="sm">Added</Badge>
+                          : <Button size="sm" onClick={() => addAnyway([x])} loading={importList.isPending}>Add anyway</Button>}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -705,6 +739,8 @@ function ImportReportDialog({ report: r, onClose }: { report: ImportResult | nul
 export function ContactItem({ contact: c }: { contact: ColdContact }) {
   const [open, setOpen] = React.useState(false);
   const move = useMoveToPipeline();
+  const del = useDeleteContact();
+  const [confirming, setConfirming] = React.useState(false);
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
   const hasDetail = !!(c.summary || c.transcript || c.error || (c.nextAttemptAt && c.status === "pending"));
@@ -722,6 +758,15 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
         action: { label: "Open lead", onClick: () => { window.location.href = `/leads?lead=${encodeURIComponent(r.leadId)}`; } },
       });
     } catch (err) { failToast(err, "Could not move it to the pipeline."); }
+  };
+
+  const doDelete = async () => {
+    try {
+      await del.mutateAsync(c.id);
+      toast.success("Number removed from this list", {
+        description: c.leadId ? "The lead it became stays in Sales & Pipeline." : "It will not be called.",
+      });
+    } catch (err) { failToast(err, "Could not remove the number."); setConfirming(false); }
   };
 
   return (
@@ -757,6 +802,15 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
               Open lead <Icon name="external" size={12} />
             </Link>
           )}
+          {c.status !== "calling" && (confirming ? (
+            <span className="inline-flex items-center gap-1">
+              <Button size="sm" variant="danger" onClick={doDelete} loading={del.isPending}>Delete</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Keep</Button>
+            </span>
+          ) : (
+            <Button size="icon" variant="ghost" icon="trash" onClick={() => setConfirming(true)}
+              aria-label={`Remove ${title} from this list`} title="Remove from this list" />
+          ))}
         </div>
       </div>
       {open && (

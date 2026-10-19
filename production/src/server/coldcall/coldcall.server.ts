@@ -162,6 +162,8 @@ export interface ImportReport {
  */
 export async function importContacts(
   run: Run, tenantId: string, campaignId: string, rows: readonly CallingListRow[],
+  /** Numbers the person chose to add anyway after seeing why they were left out. */
+  force: ReadonlySet<string> = new Set(),
 ): Promise<ImportReport | null> {
   return run(async (tx) => {
     const c = await tx.cold_call_campaigns.findUnique({ where: { id: campaignId }, select: { id: true } });
@@ -183,10 +185,13 @@ export async function importContacts(
     const fresh: CallingListRow[] = [];
     for (const r of rows) {
       if (onThisList.has(r.phone)) { report.alreadyOnThisList++; continue; }
+      /* DND rows go on the list as "not called" whatever else is true — they are never rung, and
+         offering "Add anyway" for one would lose the DND mark. */
+      if (r.dnd || force.has(r.phone)) { fresh.push(r); continue; }
       const other = elsewhere.get(r.phone);
       if (other) {
         report.alreadyCalled.push({
-          phone: r.phone, name: r.name,
+          phone: r.phone, name: r.name, company: r.company, city: r.city,
           reason: `On “${names.get(other.campaign_id) ?? "another campaign"}” · ${STATUS_WORDS[other.status] ?? other.status}` +
             (other.last_called_at ? ` · ${shortDate(other.last_called_at)}` : ""),
         });
@@ -194,7 +199,7 @@ export async function importContacts(
       }
       const inSales = sales.get(r.phone);
       if (inSales) {
-        report.alreadyInSales.push({ phone: r.phone, name: r.name, reason: `Already a ${inSales.label}`, leadId: inSales.leadId });
+        report.alreadyInSales.push({ phone: r.phone, name: r.name, company: r.company, city: r.city, reason: `Already a ${inSales.label}`, leadId: inSales.leadId });
         continue;
       }
       fresh.push(r);
@@ -308,6 +313,24 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
       data: { status: "moved", lead_id: leadId, moved_at: now, moved_by: userId, updated_at: now },
     });
     return { ok: true, leadId, joined, followUpAt: followUp.toISOString() };
+  });
+}
+
+export type DeleteResult = { ok: true } | { ok: false; status: number; error: string; detail?: string };
+
+/**
+ * Take a number off a campaign's list. Refused while its call is ringing (the result would land
+ * on nothing). A lead it already became stays in Sales & Pipeline — only the list row goes.
+ */
+export async function deleteContact(run: Run, contactId: string): Promise<DeleteResult> {
+  return run(async (tx) => {
+    const c = await tx.cold_call_contacts.findUnique({ where: { id: contactId }, select: { status: true } });
+    if (!c) return { ok: false, status: 404, error: "That number is not on the list any more.", detail: "Refresh the page." };
+    if (c.status === "calling") {
+      return { ok: false, status: 409, error: "This number is on a call right now.", detail: "Delete it after the call ends — about two minutes." };
+    }
+    await tx.cold_call_contacts.delete({ where: { id: contactId } });
+    return { ok: true };
   });
 }
 

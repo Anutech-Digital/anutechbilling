@@ -105,7 +105,9 @@ export function useUpdateCampaign() {
   });
 }
 
-export interface SkippedNumber { phone: string; name: string | null; reason: string; leadId?: string | null }
+export interface SkippedNumber {
+  phone: string; name: string | null; company?: string | null; city?: string | null; reason: string; leadId?: string | null;
+}
 
 export interface ImportResult {
   added: number; alreadyOnList: number; dnd: number; invalidLines: number[]; invalidCount: number; duplicatesInFile: number;
@@ -116,8 +118,8 @@ export interface ImportResult {
 export function useImportList() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, csv }: { id: string; csv: string }) =>
-      api<ImportResult>(`/api/cold-calling/campaigns/${id}/import`, { method: "POST", body: JSON.stringify({ csv }) }),
+    mutationFn: ({ id, csv, force }: { id: string; csv: string; force?: string[] }) =>
+      api<ImportResult>(`/api/cold-calling/campaigns/${id}/import`, { method: "POST", body: JSON.stringify({ csv, force }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -128,6 +130,14 @@ export function useTick() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api<TickResult>(`/api/cold-calling/campaigns/${id}/tick`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useDeleteContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (contactId: string) => api<{ ok: true }>(`/api/cold-calling/contacts/${contactId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
