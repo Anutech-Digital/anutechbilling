@@ -37,6 +37,14 @@ describe("month-end close", () => {
     expect(c.readyToLock).toBe(false);
   });
 
+  it("R-1583: a missing TDS challan names its real due date — March TDS by 30 April, others the 7th", () => {
+    const noTds = { challans: { tds: false, pf: true, esi: false, mixed: false } };
+    const mar = evaluateMonthClose({ ...base, ...noTds, period: "2027-03", monthEnd: "2027-03-31", today: "2027-04-10" });
+    expect(mar.steps.find((x) => x.key === "statutory")!.detail).toMatch(/TDS by 30 Apr 2027/);
+    const aug = evaluateMonthClose({ ...base, ...noTds });
+    expect(aug.steps.find((x) => x.key === "statutory")!.detail).toMatch(/TDS by 7 Sept? 2026/);
+  });
+
   it("a mixed challan covers every head", () => {
     const c = evaluateMonthClose({ ...base, challans: { tds: false, pf: false, esi: false, mixed: true } });
     expect(c.steps.find((x) => x.key === "statutory")!.status).toBe("done");
@@ -52,6 +60,15 @@ describe("month-end close", () => {
     expect(c.readyToLock).toBe(false);
     const c2 = evaluateMonthClose({ ...base, draftInvoices: 2, blockedItcCount: 1 });
     expect(c2.readyToLock).toBe(true);
+  });
+
+  it("R-1576: a vendor bill with no GST credit (proforma / no GSTIN) is an ITC warning too, pointing at Bills", () => {
+    const c = evaluateMonthClose({ ...base, blockedBillItcCount: 2 });
+    const s = c.steps.find((x) => x.key === "itc")!;
+    expect(s.status).toBe("warn");
+    expect(s.detail).toMatch(/2 vendor bill\(s\) give no GST credit/);
+    expect(s.href).toBe("/accounting/bills");
+    expect(evaluateMonthClose(base).steps.find((x) => x.key === "itc")!.status).toBe("done");
   });
 
   it("quarter end adds the TDS return step; an unticked manual step blocks", () => {

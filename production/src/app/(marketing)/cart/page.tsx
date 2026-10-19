@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { rupee, cycleLabel, isSingleUnit, isTrialLine, singleUnitNote } from "@/site/lib/money";
 import { DomainYears } from "@/site/components/cart/DomainYears";
+import { BundleNote, LinePrice } from "@/site/components/cart/LinePrice";
 import { hostingLimitWarning } from "@/lib/checkout/hosting-limit";
 
 export default function CartPage() {
@@ -41,17 +42,18 @@ export default function CartPage() {
       <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1.5fr .8fr", gap: 40, alignItems: "start" }} data-grid>
         <div>
           <h1 className="h1-narrow" style={{ marginBottom: 24 }}>Your cart</h1>
-          {cart.lines.map((l) => (
+          {t.priced.map((p) => { const l = p.line; return (
             <div key={l.key} style={{ display: "flex", gap: 16, padding: "18px 0", borderBottom: "1px solid var(--border-hairline)", flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 240px" }}>
                 <div style={{ fontSize: 16, fontWeight: 700 }}>{l.label}</div>
                 <div className="meta" style={{ margin: "2px 0" }}>{l.detail}</div>
+                <BundleNote p={p} />
                 {!isTrialLine(l) && (
                   (l.years ?? 1) > 1
                     ? <div className="meta">{rupee(l.unitPrice)} for {l.years} years</div>
                     : <div className="meta">{l.qty} × {rupee(l.unitPrice)} per {l.unit}</div>
                 )}
-                <DomainYears line={l} />
+                <DomainYears line={l} firstYearFree={p.freeNote !== null} />
                 <div style={{ fontSize: 13, marginTop: 2, color: l.cycle === "monthly" ? "var(--primary)" : "var(--text-muted)" }}>
                   {isTrialLine(l) ? `Free for 15 days · one trial per customer` : (l.years ?? 1) > 1 ? `Renews after ${l.years} years, then yearly` : cycleLabel(l.cycle)}
                 </div>
@@ -72,8 +74,8 @@ export default function CartPage() {
                   </span>
                 );
               })()}
-              <div style={{ alignSelf: "center", fontSize: 17, fontWeight: 700, minWidth: 90, textAlign: "right" }}>
-                {rupee(l.unitPrice * l.qty)}
+              <div style={{ alignSelf: "center", fontWeight: 700, minWidth: 90, textAlign: "right" }}>
+                <LinePrice p={p} size={17} />
               </div>
               <button
                 onClick={() => cart.remove(l.key)}
@@ -82,7 +84,7 @@ export default function CartPage() {
                 Remove
               </button>
             </div>
-          ))}
+          ); })}
         </div>
 
         {/* Sticky, quote page ke estimate jaisa — lambi cart me total hamesha dikhe. */}

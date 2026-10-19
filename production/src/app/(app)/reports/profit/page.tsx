@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { readRevenueQuoteLines } from "./read";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 
 interface ProductRow {
@@ -43,14 +44,11 @@ function useProfitByProduct() {
     queryFn: async (): Promise<ProductRow[]> => {
       const supabase = createClient();
       // Revenue-generating quotes only (money actually in the flow).
-      const { data, error } = await supabase
-        .from("quotes")
-        .select("line_items, payment_status")
-        .in("payment_status", ["received", "partial", "invoiced"]);
-      if (error) throw error;
+      // R-1586: every one of them — paged past the gateway's 1000-row cap.
+      const data = await readRevenueQuoteLines(supabase);
 
       const byName = new Map<string, ProductRow>();
-      for (const q of data ?? []) {
+      for (const q of data) {
         const lines = Array.isArray(q.line_items) ? (q.line_items as QuoteLineItem[]) : [];
         for (const li of lines) {
           const name = (li.name ?? "").trim() || "Unnamed";

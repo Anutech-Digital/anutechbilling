@@ -22,7 +22,7 @@
  *      behind DOMAIN_RENEWAL_LIVE=1 here and the engine's own gate there.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
+import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { rcConfigured, rcTldPricing } from "@/lib/resellerclub";
@@ -211,13 +211,6 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
     if (isExportSupply(cust?.country)) taxRate = 0;
   }
 
-  const { data: nextNumber } = await supabase.rpc("next_document_number", { p_doc_type: "quote", p_tenant_id: input.tenantId });
-  const quoteId = nextNumber as unknown as string;
-  if (!quoteId) {
-    console.error(`[domain-renewals] subscription ${input.subscriptionId}: no quote number was issued`);
-    return null;
-  }
-
   const subtotal = price.rupees;
   const amount = grossAmount(subtotal, taxRate);
   const lineItems: QuoteLineItem[] = [{
@@ -235,51 +228,50 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
   }];
 
   const validUntil = new Date(new Date(input.renewalDate).getTime() + (input.graceDays ?? 0) * 86400000);
-  const { error: insertErr } = await supabase.from("quotes").insert({
-    id: quoteId,
-    tenant_id: input.tenantId,
-    customer_id: input.customerId,
-    customer_name: input.customerName,
-    plan: DOMAIN_RENEWAL_PLAN,
-    seats: 1,
-    amount,
-    status: "sent",
-    payment_status: "awaiting",
-    owner_id: null,
-    domain: input.domain,
-    /* R-025. This was UTC, so a renewal quote raised before 05:30 IST carried
-       YESTERDAY's date and a validity window one day short. `validUntil` is
-       renewalDate (a YYYY-MM-DD, parsed as UTC midnight) plus whole days, so its UTC
-       parts are already the calendar date wanted. */
-    created_date: istToday(),
-    expires_date: utcDateISO(validUntil),
-    line_items: lineItems,
-    subtotal,
-    // 0, as the cart's own quotes store it: our cost is not known here. NOT null, because
-    // the quote screens (a blocked folder) read total_cost as always a number.
-    total_cost: 0,
-    discount_pct: 0,
-    tax_rate: taxRate,
-    is_renewal: true,
-    extension_months: 12,
-    notes: `Domain renewal for ${input.domain} (subscription ${input.subscriptionId}), at ResellerClub's live renewal price of ₹${subtotal} + GST.`,
+  /* R-1574: number, insert and link in ONE transaction (create_renewal_quote). This was three
+     separate calls, so two overlapping runs made two quotes, and the unlinked one, once paid,
+     opened a new subscription instead of renewing this one. The RPC sets status 'sent',
+     payment 'awaiting', is_renewal and discount 0, and takes the customer from the
+     subscription row. */
+  const { data: made, error: rpcErr } = await supabase.rpc("create_renewal_quote", {
+    p_subscription_id: input.subscriptionId,
+    p_tenant_id: input.tenantId,
+    p_quote: {
+      customer_name: input.customerName,
+      plan: DOMAIN_RENEWAL_PLAN,
+      seats: 1,
+      amount,
+      domain: input.domain,
+      /* R-025. This was UTC, so a renewal quote raised before 05:30 IST carried
+         YESTERDAY's date and a validity window one day short. `validUntil` is
+         renewalDate (a YYYY-MM-DD, parsed as UTC midnight) plus whole days, so its UTC
+         parts are already the calendar date wanted. */
+      created_date: istToday(),
+      expires_date: utcDateISO(validUntil),
+      line_items: lineItems,
+      subtotal,
+      // 0, as the cart's own quotes store it: our cost is not known here. NOT null, because
+      // the quote screens (a blocked folder) read total_cost as always a number.
+      total_cost: 0,
+      tax_rate: taxRate,
+      extension_months: 12,
+      notes: `Domain renewal for ${input.domain} (subscription ${input.subscriptionId}), at ResellerClub's live renewal price of ₹${subtotal} + GST.`,
+    } as unknown as Json,
   });
-  if (insertErr) {
-    console.error(`[domain-renewals] subscription ${input.subscriptionId}: renewal quote not saved — ${insertErr.message}`);
+  if (rpcErr || !made) {
+    // One transaction: nothing was stored, so there is no half-made quote to clean up.
+    console.error(`[domain-renewals] subscription ${input.subscriptionId}: renewal quote not saved — ${rpcErr?.message ?? "no result"}`);
     return null;
   }
 
-  const { data: linked, error: linkErr } = await supabase
-    .from("subscriptions")
-    .update({ renewal_quote_id: quoteId })
-    .eq("id", input.subscriptionId)
-    .eq("tenant_id", input.tenantId)
-    .select("id");
-  if (linkErr || !linked?.length) {
-    // The quote exists but the subscription does not point at it, so paying it would not
-    // be recognised as this renewal. Loud, because that is a real inconsistency (L84).
-    console.error(`[domain-renewals] renewal quote ${quoteId} created but NOT linked to subscription ${input.subscriptionId}: ${linkErr?.message ?? "no row matched"}`);
-  }
-
-  return { quoteId, amount, subtotal, discountPct: 0, taxRate, lineItems, created: true };
+  /* created false: another run made (or re-linked) this term's quote first — that one stands. */
+  return {
+    quoteId: made.quote_id,
+    amount: made.amount ?? 0,
+    subtotal: made.subtotal ?? 0,
+    discountPct: made.discount_pct ?? 0,
+    taxRate: made.tax_rate ?? 18,
+    lineItems: made.line_items ?? [],
+    created: made.created,
+  };
 }

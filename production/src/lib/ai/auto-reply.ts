@@ -83,8 +83,7 @@ export interface AutoReplyInput {
    *   · overruled the model to HANDOVER_TO_HUMAN on any failure, so a failing draft never
    *     arrives here at all
    * A caller that passes this flag WITHOUT such a check has switched the rule off. There is a
-   * test asserting `run-auto-reply.ts` — the acknowledgement path, which must keep promising
-   * nothing — does not pass it.
+   * test (auto-reply.test.ts) asserting no source file other than run-sales-agent.ts passes it.
    */
   promisesAlreadyChecked?: boolean;
   /**

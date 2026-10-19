@@ -5,6 +5,7 @@
  * them ("Placeholder draft — have your counsel review before publishing"). Do not quietly
  * drop that sentence: it is the difference between a draft and a representation.
  */
+import { DATA_LOCATION } from "../config";
 
 export const KB_ARTICLES = [
   { title: "How to point your domain at our nameservers", cat: "DOMAINS" },
@@ -55,7 +56,7 @@ export const DASH_INVOICES = [
 ] as const;
 
 export const DASH_TICKETS = [
-  { subject: "Move nirvaanclinics.co.in to the Bengaluru node", meta: "WhatsApp · replied 14 minutes ago" },
+  { subject: "Move nirvaanclinics.co.in to a bigger hosting plan", meta: "WhatsApp · replied 14 minutes ago" },
   { subject: "Add 6 mailboxes for the new sales team", meta: "Email · awaiting your confirmation" },
 ] as const;
 
@@ -89,13 +90,13 @@ export const LEGAL: Readonly<Record<"terms" | "privacy" | "refund", LegalPage>> 
   },
   privacy: {
     title: "Anutech Digital privacy policy",
-    updated: "Last updated 30 September 2026",
+    updated: "Last updated 19 October 2026", // R-1600: "Where data lives" corrected
     intro: "How Anutech Digital Pvt Ltd handles personal data, aligned to the Digital Personal Data Protection Act, 2023. Placeholder draft — have your counsel review before publishing.",
     blocks: [
       { h: "What we collect", p: "Contact details you give us (name, company, email, mobile), billing details including GSTIN, records of quotes, orders and invoices, support conversations, and basic technical logs needed to operate the service." },
       { h: "Why we collect it", p: "To supply and support what you bought, to raise GST-compliant invoices, to notify you about renewals and outages, and to meet statutory record-keeping obligations. We do not sell personal data." },
       { h: "Consent and choice", p: "Analytics and marketing cookies are set only if you accept them. You can decline and continue to use the site, and you can withdraw consent at any time by writing to us." },
-      { h: "Where data lives", p: "Customer records are held on Indian infrastructure. ResellerOS runs on Google Cloud in the Mumbai region. Vendor subscriptions are provisioned on the vendor's own platform under their policies." },
+      { h: "Where data lives", p: `Customer records are held in ResellerOS, our own system, which runs on ${DATA_LOCATION.label}, so they are stored outside India. Vendor subscriptions are provisioned on the vendor's own platform under their policies.` },
       { h: "Sharing", p: "We share data only with the vendor whose product you bought, with payment processors to collect payment, and where compelled by law. Each processor is bound by contract to purpose limitation." },
       { h: "Retention", p: "Invoices and tax records are retained as long as GST law requires. Other personal data is deleted within ninety days of a valid deletion request or of the account closing, whichever is later." },
       { h: "Your rights", p: "You may ask for access to your data, correction of it, or its deletion, and you may nominate another person to exercise these rights on your behalf. Write to us and we respond inside thirty days." },

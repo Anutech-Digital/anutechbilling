@@ -15,6 +15,7 @@ import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
 import { quoteUpiAmount } from "./upi-amount";
 import { acceptedPayNow } from "./accepted-pay";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { signerNameDefault } from "./signer-default";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
@@ -229,7 +230,11 @@ export default async function QuoteAcceptPage(props: Props) {
      customer pays twice). Null simply means the block does not render. */
   /* R-234: on a split-billed quote the QR asks for instalment 1 — the same figure the
      Pay button charges — not the whole term. See ./upi-amount.ts. */
-  const upiAmount = quoteUpiAmount(quote, lineItems[0]?.commitment ?? null);
+  /* R-1613: ONE figure for the Pay button, this QR and the accepted screen — what the pay
+     route will charge (lib/checkout/quote-order.ts readQuoteDueNow: total − money received,
+     or instalment 1 on a split quote; a foreign quote's figure in its own currency). */
+  const dueNow = await readQuoteDueNow(supabase, quote);
+  const upiAmount = quoteUpiAmount(dueNow);
   const upiQrImg = await buildQuoteUpiQr({
     vpa:        tenant?.upi_vpa,
     payeeName:  tenant?.upi_payee_name || tenant?.name,
@@ -241,8 +246,7 @@ export default async function QuoteAcceptPage(props: Props) {
   /* R-377: what the ACCEPTED screen offers to collect — the same figure the pay route
      charges, and only when this tenant has a way to be paid. See ./accepted-pay.ts. */
   const acceptedPay = acceptedPayNow({
-    quote,
-    firstCommitment: lineItems[0]?.commitment ?? null,
+    due: dueNow,
     payOnline,
     hasUpi: Boolean(upi),
   });
@@ -292,6 +296,7 @@ export default async function QuoteAcceptPage(props: Props) {
       tenantAddress={tenant?.address ?? null}
       upiQr={upi}
       acceptedPay={acceptedPay}
+      dueNow={dueNow}
       interState={interState}
       signerDefault={signerDefault}
       supportLine={supportLine ? { text: supportLine.text, detail: supportLine.detail } : null}

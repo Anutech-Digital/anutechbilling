@@ -19,6 +19,7 @@ import { useEsiRegister, usePfRegister, type EsiRegisterRow, type PfRegisterRow 
 import { buildEcr } from "@/lib/payroll/ecr";
 import { pfWageCeiling } from "@/lib/payroll/pf";
 import { toast } from "sonner";
+import { logExport } from "@/lib/export-log";
 
 function periodLabel(period: string): string {
   return formatMonthLabel(period);
@@ -46,6 +47,7 @@ function downloadEsicCsv(period: string, rows: EsiRegisterRow[]) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  void logExport({ what: "esic-monthly-contribution", rowCount: rows.length, format: "csv" });
 }
 
 /** EPFO ECR .txt for one month — what the unified portal imports under
@@ -61,6 +63,7 @@ function downloadEcr(period: string, rows: PfRegisterRow[]) {
   const a = document.createElement("a");
   a.href = url; a.download = `ECR-${period.replace("-", "")}.txt`;
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  void logExport({ what: "epf-ecr", rowCount: f.lines.length, format: "txt" });
   const assumed = f.lines.filter((l) => l.wageAssumed).length;
   let msg = `ECR ${period}: ${f.lines.length} member, EPF wages ${rupee(f.totals.epfWages)}, EE ${rupee(f.totals.ee)}, EPS ${rupee(f.totals.eps)}, ER diff ${rupee(f.totals.erDiff)}.`;
   if (f.skipped.length) msg += ` ⚠ ${f.skipped.length} chhoote: ${f.skipped.map((s) => s.employee).join(", ")} (UAN bharo).`;

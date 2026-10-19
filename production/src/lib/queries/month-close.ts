@@ -8,6 +8,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
 import { itcEligibility } from "@/lib/gst/itc";
+import { billItcEligibility } from "@/lib/gst/bill-itc";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { evaluateMonthClose, monthEndOf, MANUAL_STEPS, compliancePeriodKey, type MonthClose, type MonthCloseFacts } from "@/lib/accounting/month-close";
 
 function todayIso(): string {
@@ -24,7 +26,7 @@ export function useMonthClose(period: string) {
       const [
         { data: bankAccounts }, { data: unmatched }, { data: emps }, { data: sal }, { data: expTds },
         { data: dues }, { data: inv }, { data: cn }, { data: dn }, { data: gstPay }, { data: drafts },
-        { data: exps }, { data: vendors }, { data: tenant }, { data: manual }, { data: filedLog },
+        { data: exps }, { data: vendors }, { data: tenant }, { data: manual }, { data: filedLog }, { data: bills },
       ] = await Promise.all([
         supabase.from("bank_accounts").select("id").eq("is_active", true).neq("account_type", "cash"),
         supabase.from("bank_transactions").select("id").in("source", ["csv_upload", "api_fetch"]).is("matched_to_type", null).gte("txn_date", from).lte("txn_date", to),
@@ -39,15 +41,20 @@ export function useMonthClose(period: string) {
         supabase.from("invoices").select("id").eq("status", "draft").lte("invoice_date", to),
         supabase.from("expenses").select("gst_paid, bill_type, category, vendor_id").gte("expense_date", from).lte("expense_date", to).gt("gst_paid", 0),
         supabase.from("vendors").select("id, gstin"),
-        supabase.from("tenants").select("books_locked_until").limit(1).maybeSingle(),
+        supabase.from("tenants").select("books_locked_until, state_code, gstin").limit(1).maybeSingle(),
         supabase.from("month_close_checks").select("key, done_at, done_by").eq("period", period),
         supabase.from("compliance_log").select("obligation_key, period_key, filed_date").in("obligation_key", MANUAL_STEPS.map((m) => m.complianceKey)),
+        /* R-1576: bills this month with GST — the same credit rule as the GST page. */
+        supabase.from("vendor_bills").select("cgst, sgst, igst, category, document_type, vendor_gstin").gte("bill_date", from).lte("bill_date", to),
       ]);
       const vendorGstin = new Map((vendors ?? []).map((v) => [v.id, v.gstin ?? null]));
       const blockedItcCount = (exps ?? []).filter((e) => !itcEligibility({
         gst_paid: e.gst_paid, bill_type: e.bill_type, category: e.category,
         vendorGstin: e.vendor_id ? vendorGstin.get(e.vendor_id) ?? null : null,
       }).eligible).length;
+      const ownStateCode = tenant?.state_code?.trim() || stateCodeFromGstin(tenant?.gstin ?? null);
+      const blockedBillItcCount = (bills ?? []).filter((b) =>
+        (b.cgst ?? 0) + (b.sgst ?? 0) + (b.igst ?? 0) > 0 && !billItcEligibility({ ...b, ownStateCode }).eligible).length;
       const sum = <T extends object>(rows: T[] | null | undefined, k: keyof T) => (rows ?? []).reduce((s, r) => s + (Number(r[k] ?? 0) || 0), 0);
       const kinds = new Set((dues ?? []).map((d) => d.kind));
       const facts: MonthCloseFacts = {
@@ -67,6 +74,7 @@ export function useMonthClose(period: string) {
         gstPaid: (gstPay ?? []).length > 0,
         draftInvoices: (drafts ?? []).length,
         blockedItcCount,
+        blockedBillItcCount,
         booksLockedUntil: (tenant as { books_locked_until?: string | null } | null)?.books_locked_until ?? null,
         manual: {
           /* Filed on the Compliance Calendar counts; a tick here on top of it wins the date. */

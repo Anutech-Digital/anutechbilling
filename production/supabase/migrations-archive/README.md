@@ -5,6 +5,11 @@ These are the real history. Every one of them ran against the production databas
 been deleted or edited** — they moved out of `supabase/migrations/` on 15 Aug 2026 and
 that is all.
 
+**R-1609 (19 Oct 2026):** `0125`–`0130` had been sitting in a stray repo-root
+`supabase/migrations/` folder, outside the app, leaving a gap here between `0124` and
+`0131`. They were moved in unchanged (`git mv`), so the archive now holds 222 `.sql` files
+and the history has no gap. Nothing referenced their old path.
+
 ## Why they moved
 
 They cannot build a database from empty. Run in order against a fresh Postgres they stop

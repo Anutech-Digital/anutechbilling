@@ -12,6 +12,9 @@
 --   3. `due_date` never lands before the invoice date.
 --
 -- The fixture owns its data (L11) and rolls back.
+-- R-1616 (19 Oct 2026): "today" is public.ist_today(), the day raise_project_milestone_invoice
+-- stamps (R-1581: a document day is the IST day). It used current_date (UTC in the DB),
+-- so the test failed every night between 00:00 and 05:30 IST.
 begin;
 
 insert into public.tenants (id, name, email)
@@ -61,8 +64,8 @@ begin
   if v_d2 < v_d1 then
     raise exception 'FAIL 1: % is dated % but the earlier % is dated % — a higher number with an earlier date', v_second, v_d2, v_first, v_d1;
   end if;
-  if v_d1 <> current_date or v_d2 <> current_date then
-    raise exception 'FAIL 1b: invoices are dated % and %, not today (%) — something is still dating them from the payment', v_d1, v_d2, current_date;
+  if v_d1 <> public.ist_today() or v_d2 <> public.ist_today() then
+    raise exception 'FAIL 1b: invoices are dated % and %, not today IST (%) — something is still dating them from the payment', v_d1, v_d2, public.ist_today();
   end if;
 
   -- 2. The money keeps its own date. This is the half a blunter fix would have lost.

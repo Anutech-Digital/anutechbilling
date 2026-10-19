@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { BusinessLoanRow, BusinessLoanPaymentRow } from "@/lib/supabase/database.types";
 
 export type BusinessLoan = BusinessLoanRow & {
@@ -23,37 +24,44 @@ export type BusinessLoan = BusinessLoanRow & {
   emisPaid:      number;   // count of EMI payments
 };
 
+/**
+ * Every business loan with principal / interest paid and outstanding. R-1582: both reads page
+ * past the gateway's 1000-row cap — an EMI dropped at the cap made the outstanding bigger.
+ */
+export async function fetchBusinessLoans(supabase: ReturnType<typeof createClient>): Promise<BusinessLoan[]> {
+  const loans = await fetchAllRows((from, to) => supabase
+    .from("business_loans").select("*")
+    .order("created_at", { ascending: false }).order("id", { ascending: true })
+    .range(from, to));
+  const pays = await fetchAllRows((from, to) => supabase
+    .from("business_loan_payments").select("loan_id, principal_part, interest_part")
+    .order("id", { ascending: true })
+    .range(from, to));
+
+  const agg = new Map<string, { prin: number; int: number; count: number }>();
+  for (const p of pays) {
+    const cur = agg.get(p.loan_id) ?? { prin: 0, int: 0, count: 0 };
+    cur.prin += p.principal_part ?? 0;
+    cur.int  += p.interest_part ?? 0;
+    cur.count += 1;
+    agg.set(p.loan_id, cur);
+  }
+  return loans.map((l) => {
+    const a = agg.get(l.id) ?? { prin: 0, int: 0, count: 0 };
+    return {
+      ...(l as BusinessLoanRow),
+      principalPaid: a.prin,
+      interestPaid:  a.int,
+      outstanding:   (l.principal ?? 0) - a.prin,
+      emisPaid:      a.count,
+    };
+  });
+}
+
 export function useBusinessLoans() {
   return useQuery({
     queryKey: ["business-loans"],
-    queryFn: async (): Promise<BusinessLoan[]> => {
-      const supabase = createClient();
-      const { data: loans, error } = await supabase
-        .from("business_loans").select("*").order("created_at", { ascending: false });
-      if (error) throw error;
-      const { data: pays, error: pErr } = await supabase
-        .from("business_loan_payments").select("loan_id, principal_part, interest_part");
-      if (pErr) throw pErr;
-
-      const agg = new Map<string, { prin: number; int: number; count: number }>();
-      for (const p of pays ?? []) {
-        const cur = agg.get(p.loan_id) ?? { prin: 0, int: 0, count: 0 };
-        cur.prin += p.principal_part ?? 0;
-        cur.int  += p.interest_part ?? 0;
-        cur.count += 1;
-        agg.set(p.loan_id, cur);
-      }
-      return (loans ?? []).map((l) => {
-        const a = agg.get(l.id) ?? { prin: 0, int: 0, count: 0 };
-        return {
-          ...(l as BusinessLoanRow),
-          principalPaid: a.prin,
-          interestPaid:  a.int,
-          outstanding:   (l.principal ?? 0) - a.prin,
-          emisPaid:      a.count,
-        };
-      });
-    },
+    queryFn: (): Promise<BusinessLoan[]> => fetchBusinessLoans(createClient()),
     staleTime: 30_000,
   });
 }
@@ -64,10 +72,10 @@ export function useLoanPayments(loanId: string | undefined) {
     enabled: Boolean(loanId),
     queryFn: async (): Promise<BusinessLoanPaymentRow[]> => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("business_loan_payments").select("*").eq("loan_id", loanId!).order("paid_on", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as BusinessLoanPaymentRow[];
+      return (await fetchAllRows((from, to) => supabase
+        .from("business_loan_payments").select("*").eq("loan_id", loanId!)
+        .order("paid_on", { ascending: true }).order("id", { ascending: true })
+        .range(from, to))) as BusinessLoanPaymentRow[];
     },
   });
 }

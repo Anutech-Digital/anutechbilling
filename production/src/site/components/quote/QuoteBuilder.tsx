@@ -26,6 +26,7 @@ import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
+import { landingForForm } from "@/site/lib/ad-attribution";
 import { gstBreakup } from "@/lib/quotes/amounts";
 import { isIndianMobile, quoteMissing, quoteMissingMessage, type QuoteMissingKey } from "@/site/lib/quote-missing";
 
@@ -214,6 +215,9 @@ export function QuoteBuilder({ editions }: { editions?: MergedEdition[] }) {
           seats: primary ? lines[primary.name] : selected.reduce((s, p) => s + lines[p.name], 0),
           requirement,
           edition: primary?.name, term,
+          /* R-1598: the landing page (first ad URL of the visit, with gclid/utm) and where the
+             visitor came from — without them every /quote lead read "direct". */
+          ...landingForForm(),
         }),
       });
       const data = (await res.json().catch(() => ({ ok: false }))) as { ok: boolean; error?: string; ackSent?: boolean; reference?: string | null };

@@ -31,7 +31,8 @@ import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysFo
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
 import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
-import { calculateCtcBreakdown } from "@/lib/payroll/ctc";
+import { calculateCtcBreakdown, ctcFromEmployee } from "@/lib/payroll/ctc";
+import { computePt } from "@/lib/payroll/pt";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -69,7 +70,7 @@ import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-det
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
-import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel } from "@/lib/dates/ist";
+import { istToday as todayISO, istMonth as currentPeriod, monthBounds, addDaysISO, fyBounds, utcDateISO, formatMonthLabel, fyStartYear } from "@/lib/dates/ist";
 
 /** Previous month (YYYY-MM) — payroll is usually run for the month just ended. */
 function prevPeriod(): string {
@@ -438,8 +439,10 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [empTab, setEmpTab] = React.useState<"basic" | "ctc" | "statutory">("basic");
 
   // CTC Calculator State & Overrides
+  /* R-1585: an existing employee's CTC = their gross + employer PF/ESI + gratuity
+     (ctcFromEmployee) — monthly gross × 12 is the gross, not the CTC. */
   const [annualCtc, setAnnualCtc] = React.useState<string>(
-    employee?.monthly_gross ? String(employee.monthly_gross * 12) : "600000"
+    employee?.monthly_gross ? String(ctcFromEmployee(employee).annualCtc) : "600000"
   );
   const [isMetro, setIsMetro] = React.useState(false);
   const [basicPct, setBasicPct] = React.useState<number>(0.5);
@@ -448,13 +451,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [customConveyance, setCustomConveyance] = React.useState<string>("1600");
   const [customMedical, setCustomMedical] = React.useState<string>("1250");
   const [customSpecial, setCustomSpecial] = React.useState<string>("");
-  const [customPt, setCustomPt] = React.useState<string>("200");
+  const [customPt, setCustomPt] = React.useState<string>(""); // empty = PT slab from lib/payroll/pt.ts
   const [capPfCeiling, setCapPfCeiling] = React.useState<boolean>(true);
   const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
   const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
 
   const ctcBreakdown = React.useMemo(() => {
-    const val = Number(annualCtc) || (Number(gross) > 0 ? Number(gross) * 12 : 600000);
+    const val = Number(annualCtc) || (Number(gross) > 0
+      ? ctcFromEmployee({ monthly_gross: Number(gross), basic_monthly: basicMonthly !== "" ? Number(basicMonthly) : null, da_monthly: Number(daMonthly) || 0, pf_applicable: pfApplicable, esi_applicable: esiApplicable }).annualCtc
+      : 600000);
     return calculateCtcBreakdown(val, {
       isMetro,
       basicPct,
@@ -467,7 +472,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       capPfWageCeiling: capPfCeiling,
       includeGratuity,
     });
-  }, [annualCtc, gross, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
+  }, [annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves. Existing employees keep their saved value.
   React.useEffect(() => {
@@ -680,7 +685,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           min={0}
                           value={customPt}
                           onChange={(e) => setCustomPt(e.target.value)}
-                          placeholder="200"
+                          placeholder={`Auto: ${rupee(computePt(ctcBreakdown.grossMonthly).monthly)} (PT slab)`}
                         />
                       </Field>
 
@@ -1284,8 +1289,7 @@ function EmployeePayrollYearDialog({
   const { data: history, isLoading } = useEmployeeSalaryHistory(employee.id);
 
   // Indian FY containing the anchor month (Apr→Mar).
-  const [ay, am] = anchorPeriod.split("-").map(Number);
-  const fyStart = am >= 4 ? ay : ay - 1;
+  const fyStart = fyStartYear(anchorPeriod);
   const months = Array.from({ length: 12 }, (_, i) => {
     const abs = 4 + i;                                   // 4..15
     const year = abs <= 12 ? fyStart : fyStart + 1;
@@ -2015,9 +2019,8 @@ function LeaveDialog({ employees, onClose }: { employees: Employee[]; onClose: (
 
   // Paid-leave used in the leave-year (Indian FY, Apr–Mar) of the 'from' date.
   const fy = React.useMemo(() => {
-    const [y, m] = from.split("-").map(Number);
-    const sy = m >= 4 ? y : y - 1;
-    return { start: `${sy}-04-01`, end: `${sy + 1}-03-31` };
+    const { start, end } = fyBounds(from);
+    return { start, end };
   }, [from]);
   // Prorated for mid-year joiners, against the leave entry's own FY.
   const allowance = emp ? effectiveLeaveAllowance(emp, fy.start) : 0;

@@ -31,7 +31,7 @@ insert into public.customers (id, tenant_id, name)
   values ('dd012000-0000-4000-8000-00000000c001', 'dd012000-0000-4000-8000-00000000a001', 'R012 Annual Cust');
 -- The roll-forward raises an automatic PO; seed the series high so its id cannot collide.
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dd012000-0000-4000-8000-00000000a001', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 991000);
+  values ('dd012000-0000-4000-8000-00000000a001', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9100);
 
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items, is_renewal, extension_months)
   values ('Q-R012-ANNUAL', 'dd012000-0000-4000-8000-00000000a001', 'dd012000-0000-4000-8000-00000000c001',
@@ -82,7 +82,7 @@ insert into public.tenants (id, name, email, state_code)
 insert into public.customers (id, tenant_id, name)
   values ('dd012000-0000-4000-8000-00000000c002', 'dd012000-0000-4000-8000-00000000a002', 'R012 Monthly Cust');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dd012000-0000-4000-8000-00000000a002', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 992000);
+  values ('dd012000-0000-4000-8000-00000000a002', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9200);
 
 -- Pawan's case: Rs 250/month hosting. One month, ex-GST 250, payable 295.
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items, is_renewal, extension_months)
@@ -159,7 +159,7 @@ insert into public.tenants (id, name, email, state_code)
 insert into public.customers (id, tenant_id, name)
   values ('dd012000-0000-4000-8000-00000000c003', 'dd012000-0000-4000-8000-00000000a003', 'R012 Month End Cust');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('dd012000-0000-4000-8000-00000000a003', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 993000);
+  values ('dd012000-0000-4000-8000-00000000a003', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9300);
 
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items, is_renewal, extension_months)
   values ('Q-R012-MONTHEND', 'dd012000-0000-4000-8000-00000000a003', 'dd012000-0000-4000-8000-00000000c003',

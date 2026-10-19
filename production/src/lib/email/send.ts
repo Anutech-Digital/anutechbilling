@@ -42,8 +42,10 @@ export interface EmailAttachment {
 
 import { recordEmail } from "./log";
 import { isUndeliverableAddress } from "./reserved-address";
+import { guardMailRecipients } from "./staging-allowlist";
 import { resolveAutonomy, type AiAction } from "@/lib/ai/autonomy";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 export interface EmailMessage {
   /** Single recipient for now. Cc / Bcc come when needed. */
@@ -209,10 +211,26 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailSendResult> {
     }
   }
 
+  /* R-1403: staging mails only the team (@anutech.in + STAGING_MAIL_ALLOWLIST). Anything else
+     is dropped HERE, before any transport, and logged masked. Reported as "stubbed" — the same
+     answer a send without a mail key gives — so the person pressing Send sees no error. Live:
+     the guard is off and `msg` passes through unchanged. */
+  const guard = guardMailRecipients(msg.to);
+  if (guard.reason) {
+    console.warn(
+      `[sendEmail] dropped ${guard.reason}: to=${guard.droppedMasked.join(", ")} kind=${msg.kind ?? "-"}` +
+        (guard.allowedTo ? " (sent to the allowed recipients only)" : " — nothing sent"),
+    );
+  }
+  const stagingBlocked = guard.allowedTo === "";
+  if (guard.allowedTo && guard.allowedTo !== msg.to) msg = { ...msg, to: guard.allowedTo };
+
   /* R-361: an address on `.invalid` can never be delivered — it is what demo data gives
      every pretend customer, so the dunning and renewal crons, which do not know a row is
      demo, stop here instead of handing it to the provider. Recorded like any refusal. */
-  const result: EmailSendResult = isUndeliverableAddress(msg.to)
+  const result: EmailSendResult = stagingBlocked
+    ? { status: "stubbed", providerId: null, errorMessage: `not sent — ${guard.reason ?? "staging-allowlist"} (staging mails only the team)`, provider: "stub" }
+    : isUndeliverableAddress(msg.to)
     ? { status: "failed", providerId: null, errorMessage: "not sent — .invalid address (demo/test data)", provider: "stub" }
     : await sendEmailInner(msg);
   await recordEmail({
@@ -245,8 +263,10 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailSendResult> {
     await logAiAction({
       tenantId: msg.automated.tenantId,
       action:   msg.automated.action,
-      outcome:  result.status === "failed" ? "failed" : "did",
-      reason:   result.status === "failed"
+      outcome:  stagingBlocked ? "skipped" : result.status === "failed" ? "failed" : "did",
+      reason:   stagingBlocked
+        ? `not sent — ${guard.reason ?? "staging-allowlist"}`
+        : result.status === "failed"
         ? `send failed — ${result.errorMessage ?? "unknown error"}`
         : `sent to ${msg.to}`,
       mode:     "auto",
@@ -349,7 +369,7 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
       replyTo: msg.replyTo,
       attachments: msg.attachments,
     }, smtp);
-    console.info(`[email/send] smtp ${r.ok ? "sent" : "FAILED"} to ${msg.to} in ${Date.now() - t0} ms (${msg.kind ?? "no kind"})`);
+    console.info(`[email/send] smtp ${r.ok ? "sent" : "FAILED"} to ${maskContactValue(msg.to)} in ${Date.now() - t0} ms (${msg.kind ?? "no kind"})`);
     return r.ok
       ? { status: "sent", providerId: r.messageId, errorMessage: null, provider: "smtp" }
       : { status: "failed", providerId: null, errorMessage: `SMTP: ${r.detail}`, provider: "smtp" };
@@ -365,7 +385,7 @@ async function sendEmailInner(msg: EmailMessage): Promise<EmailSendResult> {
       // eslint-disable-next-line no-console
       console.warn(
         `[email/send] STUB MODE — RESEND_API_KEY not set. Would have sent:\n` +
-        `  to:      ${msg.to}\n` +
+        `  to:      ${maskContactValue(msg.to)}\n` +
         `  subject: ${msg.subject}\n` +
         `  attachments: ${msg.attachments?.map((a) => a.filename).join(", ") ?? "(none)"}`
       );

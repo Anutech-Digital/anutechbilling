@@ -18,6 +18,7 @@
  */
 import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import {
   aiConversion,
   aiFunnel,
@@ -77,23 +78,29 @@ export async function loadAiPerformance(args: {
   if (!db) return empty;
 
   try {
-    const [actions, turns] = await Promise.all([
-      db
+    /* R-1588: paged up to the old caps. `.limit(5000)` / `.limit(2000)` came back as 1000
+       rows — the gateway caps every answer — so the funnel counted at most 1000 actions. */
+    const [actionData, turnData] = await Promise.all([
+      fetchAllRows((from, to) => db
         .from("ai_action_log")
         .select("action, outcome, reason, created_at, entity, entity_id")
         .eq("tenant_id", args.tenantId)
         .gte("created_at", args.since)
         .order("created_at", { ascending: false })
-        .limit(5000),
-      db
+        .order("id", { ascending: true })
+        .range(from, to), { maxRows: 5000 }),
+      fetchAllRows((from, to) => db
         .from("ai_sales_conversations")
         .select("content")
         .eq("tenant_id", args.tenantId)
         .eq("role", "user")
         .gte("created_at", args.since)
         .order("created_at", { ascending: false })
-        .limit(2000),
+        .order("id", { ascending: true })
+        .range(from, to), { maxRows: 2000 }),
     ]);
+    const actions = { data: actionData };
+    const turns = { data: turnData };
 
     const actionRows = (actions.data ?? []) as {
       action: string | null;

@@ -34,9 +34,9 @@ import { TRUST } from "@/site/lib/data/copy";
 import { editionDelta } from "@/site/lib/edition-delta";
 import { buyWorkspaceHref } from "@/lib/checkout/buy-link";
 import { HOSTING_FROM_MO } from "@/site/lib/data/hosting-landing-v2";
-import { DOMAIN_TEASER } from "@/site/lib/data/domain-teaser";
+import { DOMAIN_TEASER_NO_PRICE, teaserCardPrice } from "@/site/lib/data/domain-teaser";
 import { HOSTING_DESCRIPTION } from "@/site/lib/data/hosting-copy";
-import { WHATSAPP_URL, COMPANY, SLA } from "@/site/lib/config";
+import { WHATSAPP_URL, COMPANY, SLA, PARTNER_BADGE, PARTNER_SHORT } from "@/site/lib/config";
 import { HOME_FAQS } from "@/site/lib/data/home-faqs";
 import { MAIL_OPTIONS } from "@/site/lib/data/copy";
 import { MAIL_RATES } from "@/site/lib/data/catalog";
@@ -128,7 +128,8 @@ const CROSS_ROWS: readonly { label: string; gw: string; ms: string; zoho: string
  *  simple line-art glyph that fills a tinted 16:9 band (consistent across all
  *  four — no half-empty photo slots). */
 export const CATALOGUE_V2: readonly { name: string; href: string; from: string; unit: string; gst: string; body: string; tags: string[]; cta: string; icon: "globe" | "server" | "lock" | "tag"; img?: string }[] = [
-  { name: "Domains", href: "/domains", from: DOMAIN_TEASER.from, unit: `from · ${DOMAIN_TEASER.tld} /year · ${DOMAIN_TEASER.renewNote}`, gst: "+ GST 18%", body: "500+ extensions, register and renew price on one row.", tags: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], cta: "See domain rates", icon: "globe", img: "/domain-search.jpg" },
+  /* R-1599: no number here — the server page passes the live teaser in (HomeCompany). */
+  { name: "Domains", href: "/domains", ...teaserCardPrice(DOMAIN_TEASER_NO_PRICE), gst: "+ GST 18%", body: "500+ extensions, register and renew price on one row.", tags: ["500+ TLDS", "FREE DNS", "WHOIS PRIVACY"], cta: "See domain rates", icon: "globe", img: "/domain-search.jpg" },
   { name: "Web hosting", href: "/hosting", from: HOSTING_FROM_MO, unit: "from · /mo, billed yearly", gst: "+ GST 18%", body: HOSTING_DESCRIPTION, tags: ["CPANEL", "LITESPEED", "99.9% SLA"], cta: "See hosting plans", icon: "server", img: "/cat-hosting.png" },
   { name: "SSL & security", href: "/ssl", from: "₹0", unit: "free DV", gst: "No charge", body: "Free DV on every hosted site; wildcard and OV when needed.", tags: ["DV", "OV", "WILDCARD"], cta: "See SSL options", icon: "lock", img: "/cat-ssl.jpg" },
   { name: "Reseller program", href: "/reseller", from: "₹0", unit: "to join", gst: "No charge", body: "Published wholesale rates. No slabs, no advance deposit.", tags: ["NO DEPOSIT", "ONE RATE", "WHITE LABEL"], cta: "See the rate card", icon: "tag", img: "/cat-reseller.png" },
@@ -209,7 +210,7 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
     <div style={{ background: C.surf, color: C.body, fontFamily: "var(--font-sans), 'Archivo', system-ui, sans-serif" }}>
       {/* ── HERO: pick a suite ─────────────────────────────────────────────── */}
       <section style={wrap({ padding: "34px 48px 6px", textAlign: "center" })}>
-        <div style={eyebrow}>Google Premier Partner · Delhi · Since 2014</div>
+        <div style={eyebrow}>{PARTNER_BADGE} · Delhi · Since 2014</div>
         <h1 style={{ fontSize: mob ? 30 : 38, fontWeight: 700, letterSpacing: "-0.04em", lineHeight: 1.06, margin: "12px auto", maxWidth: 900, color: C.ink, textWrap: "balance" as const }}>
           Business mail and Office — in rupees, supported on WhatsApp.
         </h1>
@@ -290,7 +291,7 @@ export function HomeV2({ editions, page = "email" }: { editions?: MergedEdition[
         <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr" : ".82fr 2.18fr", gap: mob ? 24 : 36, alignItems: "stretch" }}>
           {/* left explainer */}
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ ...eyebrow, marginBottom: 10 }}>Premier Partner · Since 2014</div>
+            <div style={{ ...eyebrow, marginBottom: 10 }}>{PARTNER_SHORT} · Since 2014</div>
             <h2 style={{ fontSize: 27, fontWeight: 700, letterSpacing: "-0.035em", lineHeight: 1.1, margin: "0 0 10px", color: C.ink, textWrap: "balance" as const }}>{vendor.blurb}</h2>
             <p style={{ fontSize: 14.5, lineHeight: 1.5, color: C.body, margin: "0 0 14px", textWrap: "pretty" as const }}>{vendor.sub}</p>
             <p style={{ fontSize: 12.5, color: C.sec, margin: "auto 0 0", paddingTop: 16, borderTop: `1px solid ${C.borderL}` }}>

@@ -30,11 +30,17 @@ vi.mock("@/lib/supabase/server", () => {
   const chain = (table: string) => {
     let inserted: Record<string, unknown> | null = null;
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "order", "limit", "in"]) q[m] = () => q;
-    q.insert = (row: Record<string, unknown>) => { inserted = row; st.inserts.push(row); return q; };
+    for (const m of ["select", "eq", "order", "limit", "in", "update"]) q[m] = () => q;
+    q.insert = (row: Record<string, unknown>) => {
+      inserted = row;
+      if (table !== "customer_email_sends") st.inserts.push(row);   // R-1544's send claim: lib/collections/email-send-once.test.ts
+      return q;
+    };
     const one = async () => {
       if (table === "users") return { data: { tenant_id: "T1", role: st.role }, error: null };
       if (table === "customers") return { data: st.customer, error: null };
+      if (["invoices", "quotes", "subscriptions"].includes(table)) return { data: { customer_id: CUST }, error: null };
+      if (table === "customer_email_sends") return { data: { id: "S1" }, error: null };
       if (table === "payment_followups") {
         return inserted ? { data: { id: "F1", assigned_to: inserted.assigned_to }, error: null } : { data: null, error: null };
       }
@@ -100,7 +106,7 @@ const get = (path: string) => new NextRequest(`https://app.example${path}`);
 const post = (body: unknown) => new NextRequest(`https://app.example/api/customers/${CUST}/pending-dues/email`, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
-const BODY = { subject: "Statement of pending dues: ₹72,300", message: "Hi Rahul, please find attached the statement: ₹72,300.\n\n• Invoice INV-1", nextFollowUpOn: "2026-10-20" };
+const BODY = { subject: "Statement of pending dues: ₹72,300", message: "Hi Rahul, please find attached the statement: ₹72,300.\n\n• Invoice INV-1", nextFollowUpOn: "2026-10-20", requestId: "99999999-9999-4999-8999-999999999999" };
 
 beforeEach(() => {
   st.role = "accountant";

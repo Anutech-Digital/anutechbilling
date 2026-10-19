@@ -6,6 +6,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import {
   creditSummary, isMissingDbObject, NeedsDatabaseUpdateError,
@@ -168,7 +169,7 @@ export function useAddLateInterest() {
       void qc.invalidateQueries({ queryKey: ["credit"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
       void qc.invalidateQueries({ queryKey: ["debit-notes"] });
-      void qc.invalidateQueries({ queryKey: ["aging"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.aging() });
     },
   });
 }

@@ -13,6 +13,7 @@
 import { fyBounds } from "@/lib/dates/ist";
 import { receivedThisFy, type ReceivedFacts } from "@/lib/customers/received-this-fy";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
@@ -536,7 +537,7 @@ export function useCreateProjectDirectInvoice() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["aging"] });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       toast.success(`Invoice ${res.invoice_id} raised`);
     },

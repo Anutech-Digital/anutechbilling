@@ -68,8 +68,19 @@ describe("decideCadence — T-30 early notice (migration 0228)", () => {
     expect(d.shouldSendEmail).toBe(true);
   });
 
-  it("a subscription already renewed never gets an early notice", () => {
+  /* R-1562: this said "renewed never gets an early notice" — and that was the money leak.
+     record_payment writes 'renewed' while rolling renewal_date one term on, so a renewed
+     row at T-30 is at T-30 of its NEW term and must be told. A renewed row with its new
+     date still far off stays quiet (renewed-rearm.test.ts). */
+  it("a renewed subscription gets the NEW term's early notice at T-30", () => {
     const d = decide("2026-08-31", "renewed");
+    expect(d.targetState).toBe("early_notice");
+    expect(d.shouldSendEmail).toBe(true);
+  });
+
+  it("a renewed subscription far from its new date stays quiet", () => {
+    const d = decide("2027-08-01", "renewed");
+    expect(d.targetState).toBe("pending");
     expect(d.shouldSendEmail).toBe(false);
   });
 
@@ -111,9 +122,14 @@ describe("decideCadence — idempotency & no-op", () => {
     expect(d.shouldSendEmail).toBe(false);
   });
 
-  it("terminal state 'renewed' near a trigger day → never re-enters cadence", () => {
+  it("R-1562: 'renewed' near a trigger day re-enters the cadence for the new term (catch-up)", () => {
     const d = decide("2026-08-03", "renewed"); // daysOut 2
-    expect(d.shouldSendEmail).toBe(false);
+    expect(d.targetState).toBe("reminder_4");
+    expect(d.shouldSendEmail).toBe(true);
+  });
+
+  it("'suspended' stays terminal near a trigger day", () => {
+    expect(decide("2026-08-03", "suspended").shouldSendEmail).toBe(false);
   });
 });
 

@@ -22,7 +22,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
@@ -147,8 +147,41 @@ export function mergeMessage(label, cards) {
   return `Staging train ${label}: ${cards.length ? cards.join(", ") : "no card ids"}`;
 }
 
-export function dbCommand(day) {
-  return `& "C:\\Program Files\\Git\\bin\\bash.exe" "/c/Users/mso50/new-reselleros/production/supabase/cloudsql/staging/deploy-db-${day}.sh"`;
+export const STAGING_SCRIPTS_DIR = "production/supabase/cloudsql/staging";
+
+/**
+ * R-1590 (18 Oct 2026): the staging DB script the manager actually runs. It used to be named
+ * after TODAY's IST date (deploy-db-2026-10-18.sh — never existed: gen-deploy-db writes one file
+ * per deploy date and keeps adding to it) under a path hard-coded to the main checkout. Now: the
+ * newest existing deploy-db-YYYY-MM-DD.sh, or null when there is none.
+ */
+export function newestDeployDb(names) {
+  const dated = names.filter((n) => /^deploy-db-\d{4}-\d{2}-\d{2}\.sh$/.test(n)).sort();
+  return dated.length ? dated[dated.length - 1] : null;
+}
+
+/** The PowerShell line that runs `scriptAbs` with Git Bash — path relative to `cwd`, the checkout the train runs in. */
+export function dbCommand(scriptAbs, cwd = process.cwd()) {
+  const rel = path.relative(cwd, scriptAbs).split(path.sep).join("/");
+  return `& "C:\\Program Files\\Git\\bin\\bash.exe" "${rel}"`;
+}
+
+/** DB-step lines for the newest staging deploy-db script under `root` (repo top), or a clear error. */
+export function dbStepLines(root, cwd = process.cwd(), list = (d) => (existsSync(d) ? readdirSync(d) : [])) {
+  const dir = path.join(root, ...STAGING_SCRIPTS_DIR.split("/"));
+  const name = newestDeployDb(list(dir));
+  if (!name) {
+    return [
+      `✗ ${STAGING_SCRIPTS_DIR} me koi deploy-db-<date>.sh nahi mila.`,
+      "  Pehle banao: node scripts/ops/gen-deploy-db.mjs --date <YYYY-MM-DD>",
+    ];
+  }
+  const date = name.slice("deploy-db-".length, -".sh".length);
+  return [
+    "PowerShell:",
+    `  ${dbCommand(path.join(dir, name), cwd)}`,
+    `(Naye migrations is file me hain? Jaancho: node scripts/ops/gen-deploy-db.mjs --date ${date} --check)`,
+  ];
 }
 
 /** Final Hinglish summary lines. */
@@ -265,7 +298,7 @@ function main() {
   }
 
   const decision = decide({ pick, alreadyInStaging, migrations, dbDone: args.dbDone, push: args.push });
-  const { label, day } = istStamp();
+  const { label } = istStamp();
 
   if (decision.action === "refuse" || decision.action === "nothing") {
     console.log(decision.message);
@@ -278,7 +311,7 @@ function main() {
     for (const m of migrations) console.log(`  ${m}`);
   }
   if (decision.action === "db-step") {
-    console.log(`\n${decision.message}\nPowerShell:\n  ${dbCommand(day)}`);
+    console.log(`\n${decision.message}\n${dbStepLines(root).join("\n")}`);
     for (const l of summaryLines({ pick, cards, migrations, decision })) console.log(l);
     process.exit(decision.exitCode);
   }

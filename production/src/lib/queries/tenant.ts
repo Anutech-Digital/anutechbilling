@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { shrinkLogo } from "@/lib/images/shrink-logo";
 import type { Database } from "@/lib/supabase/database.types";
+import { companyGstinStateConflict } from "@/lib/gst/gstin-state";
 
 type TenantUpdate = Database["public"]["Tables"]["tenants"]["Update"];
 
@@ -21,6 +22,11 @@ export function useUpdateTenant() {
 
   return useMutation({
     mutationFn: async (patch: TenantUpdate) => {
+      /* R-1128: last line before the write, for every screen that uses this hook (Settings and
+         the setup wizard check first and show the fix; this catches any caller that does not). */
+      const conflict = companyGstinStateConflict(patch.state_code, patch.gstin);
+      if (conflict) throw new Error(conflict.message);
+
       const supabase = createClient();
 
       // Resolve current tenant_id (RLS will further enforce ownership)

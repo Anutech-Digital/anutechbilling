@@ -41,6 +41,8 @@
  * plausible.
  */
 
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+
 export type LedgerKind = "customer" | "vendor";
 
 /**
@@ -273,13 +275,12 @@ export function buildLedgerFromWindow(
 
 /** Indian financial year containing this date: 1 Apr → 31 Mar. */
 export function fyOf(isoDate: string): number {
-  const [y, m] = isoDate.slice(0, 10).split("-").map(Number);
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(isoDate);
 }
 
-/** "FY 2026-27". */
+/** "FY 2026-27" — the ledger's screen label; the "2026-27" part is lib/dates/ist.ts fyLabelOfYear. */
 export function fyLabel(startYear: number): string {
-  return `FY ${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+  return `FY ${fyLabelOfYear(startYear)}`;
 }
 
 export function fyPeriod(startYear: number): LedgerPeriod {

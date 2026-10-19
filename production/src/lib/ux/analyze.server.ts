@@ -11,6 +11,7 @@
  * when there are enough new events since the last run and the last run is over an hour old.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { errorMessage, fetchAllRows } from "@/lib/ops/fetch-all";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { buyPageTenantIdOrEmpty } from "@/lib/checkout/live-guards";
 import { runUiAnalysis } from "@/lib/ui/analyze.server";
@@ -31,10 +32,13 @@ export function ownsWebsite(tenantId: string | null): boolean {
 export async function runUxAnalysis(admin: Admin, tenantId: string, mode: "auto" | "manual"): Promise<{ events: number; insights: number; mode: string; uiPages: number }> {
   const since = new Date(Date.now() - 7 * 86400_000).toISOString();
   const withSite = ownsWebsite(tenantId);
-  let q = admin.from("ux_events").select("kind, path, target, detail, ms, session_id, surface, created_at").gte("created_at", since).neq("kind", "ui_probe").limit(20000);
-  q = withSite ? q.or(`tenant_id.eq.${tenantId},tenant_id.is.null`) : q.eq("tenant_id", tenantId);
-  const { data: rows, error } = await q;
-  if (error) throw new Error(error.message);
+  /* R-1588: paged up to the old 20000 — `.limit(20000)` came back as 1000 rows (the gateway
+     caps every answer), so a busy week was judged on its first 1000 events. */
+  const rows = await fetchAllRows((from, to) => {
+    let q = admin.from("ux_events").select("kind, path, target, detail, ms, session_id, surface, created_at").gte("created_at", since).neq("kind", "ui_probe");
+    q = withSite ? q.or(`tenant_id.eq.${tenantId},tenant_id.is.null`) : q.eq("tenant_id", tenantId);
+    return q.order("id", { ascending: true }).range(from, to);
+  }, { maxRows: 20000 }).catch((e: unknown) => { throw new Error(errorMessage(e)); });
 
   const f = findings(aggregate((rows ?? []) as RowIn[]));
   let insights = f.length === 0 ? [] : null as ReturnType<typeof sanitizeInsights> | null;

@@ -11,6 +11,9 @@
  * three copies of this arithmetic is how a drawer total comes to disagree with the checkout
  * button, which on a commerce site is the least-forgivable class of bug.
  */
+import { bundleAllowance } from "@/lib/checkout/hosting-bundle";
+import { hostingDomain } from "@/lib/checkout/hosting-domain";
+
 export function rupee(n: number): string {
   return "₹" + Math.round(n).toLocaleString("en-IN");
 }
@@ -48,6 +51,11 @@ export interface CartLine {
    */
   years?: number;
   yearPrices?: Record<string, number>;
+  /**
+   * LEGACY (before R-1601): set when a line was ADDED as the ₹0 bundled domain, with its
+   * unitPrice already lowered. Read only to restore the full price of a stored cart
+   * (CartProvider's load). What is free is now derived on every render — priceCart().
+   */
   bundleFree?: boolean;
 }
 
@@ -111,7 +119,85 @@ export function couponSplit(
 
 export const GST_RATE = 0.18;
 
+/**
+ * One cart line as it is charged NOW (R-1601). `unitPrice` on the line stays the full price;
+ * what the yearly-hosting bundle makes free is worked out here on every render, from the
+ * current lines, by the server's own rule (lib/checkout/hosting-bundle.ts) — so adding or
+ * removing a yearly plan, or changing a domain's TLD, moves the price at once, and the cart
+ * shows what runCartCheckout will charge.
+ */
+export interface PricedLine {
+  line: CartLine;
+  /** The price of one charged unit: a free-first-year domain's term less its first year. */
+  price: number;
+  /** Units given free (mailboxes). */
+  freeQty: number;
+  /** What this line adds to the gross: price × (qty − freeQty). */
+  total: number;
+  /** "Free with yearly hosting" / "1st year free with yearly hosting" / "1 of 10 free…", or null. */
+  freeNote: string | null;
+}
+
+const skuOf = (l: Pick<CartLine, "sku">) => (l.sku ?? "").toLowerCase();
+
+/**
+ * Which hosting plan sits on which domain, as the server decides it (planDomains in
+ * lib/checkout/hosting-domain.ts): the domain typed for the plan; with ONE plan and nothing
+ * typed, the one domain being bought in the cart. Never refuses — the checkout form and the
+ * server say what is missing; here a plan without a domain simply frees no domain.
+ *
+ * `planTyped` — what the checkout form has for each plan, in cart order. Omitted (the cart
+ * page and drawer, before any form): the first plan is taken to be on the first domain in
+ * the cart, which is exactly what the checkout form pre-fills.
+ */
+function cartPlanDomains(plans: CartLine[], domains: string[], planTyped?: readonly (string | null | undefined)[]): (string | null)[] {
+  const typed = planTyped ?? (domains.length ? [domains[0]] : []);
+  return plans.map((_, i) => {
+    const t = (typed[i] ?? "").trim();
+    if (t) return hostingDomain(t);
+    return plans.length === 1 && domains.length === 1 ? hostingDomain(domains[0]) : null;
+  });
+}
+
+/** Every line, priced as the server will charge it — the bundle applied (see PricedLine). */
+export function priceCart(lines: readonly CartLine[], planTyped?: readonly (string | null | undefined)[]): PricedLine[] {
+  const plans = lines.filter((l) => skuOf(l).startsWith("hosting:"));
+  const domainLines = lines.filter((l) => skuOf(l).startsWith("domain:"));
+  const domains = domainLines.map((l) => (l.domain ?? "").trim().toLowerCase());
+  const planOn = cartPlanDomains(plans, domains, planTyped);
+  const mailboxes = lines.filter((l) => skuOf(l) === "mailbox:anutech");
+  const bundle = bundleAllowance(
+    plans.map((p, i) => ({ yearly: p.cycle !== "monthly", domain: planOn[i] })),
+    domains,
+    mailboxes.reduce((n, l) => n + l.qty, 0),
+  );
+  let boxesLeft = bundle.freeMailboxes;
+  return lines.map((line): PricedLine => {
+    const di = domainLines.indexOf(line);
+    if (di >= 0 && bundle.freeDomains.has(di)) {
+      // The first year only (R-156): a longer term pays for years 2..N, as bundledDomainRate.
+      const years = line.years ?? 1;
+      const firstYear = line.yearPrices?.["1"] ?? (years === 1 ? line.unitPrice : undefined);
+      if (firstYear !== undefined) {
+        const price = Math.max(0, Math.round(line.unitPrice - firstYear));
+        return { line, price, freeQty: 0, total: price * line.qty, freeNote: years > 1 ? "1st year free with yearly hosting" : "Free with yearly hosting" };
+      }
+    }
+    if (mailboxes.includes(line) && boxesLeft > 0) {
+      const freeQty = Math.min(boxesLeft, line.qty);
+      boxesLeft -= freeQty;
+      return {
+        line, price: line.unitPrice, freeQty, total: line.unitPrice * (line.qty - freeQty),
+        freeNote: freeQty === line.qty ? "Free with yearly hosting" : `${freeQty} of ${line.qty} free with yearly hosting`,
+      };
+    }
+    return { line, price: line.unitPrice, freeQty: 0, total: line.unitPrice * line.qty, freeNote: null };
+  });
+}
+
 export interface CartTotals {
+  /** Each line as charged now (R-1601) — show its `total`, never `unitPrice × qty`. */
+  priced: PricedLine[];
   gross: number;
   discountRate: number;
   discount: number;
@@ -126,11 +212,17 @@ export interface CartTotals {
  * `couponRate` is the server-confirmed rate of the cart's code (0..1; 0 = none) — never the
  * code itself: the code table is not in the browser (R-329).
  */
-export function cartTotals(lines: readonly CartLine[], couponRate: number): CartTotals {
-  const gross = lines.reduce((n, l) => n + l.unitPrice * l.qty, 0);
+export function cartTotals(lines: readonly CartLine[], couponRate: number, planTyped?: readonly (string | null | undefined)[]): CartTotals {
+  const priced = priceCart(lines, planTyped);
+  const gross = priced.reduce((n, p) => n + p.total, 0);
   const rate = Number.isFinite(couponRate) && couponRate > 0 && couponRate < 1 ? couponRate : 0;
+  // Free units count as their own ₹0 line, exactly as the server splits a mailbox line.
   const { discount } = couponSplit(
-    lines.map((l) => ({ qty: l.qty, price: l.unitPrice, exempt: isCouponExempt(l.sku) })),
+    priced.flatMap((p) => {
+      const exempt = isCouponExempt(p.line.sku);
+      const paid = { qty: p.line.qty - p.freeQty, price: p.price, exempt };
+      return p.freeQty > 0 ? [{ qty: p.freeQty, price: 0, exempt }, paid] : [paid];
+    }),
     rate,
   );
   // Reported only when it took something off — a domain-only cart shows no "10% off" row.
@@ -138,13 +230,14 @@ export function cartTotals(lines: readonly CartLine[], couponRate: number): Cart
   const subtotal = gross - discount;
   const gst = subtotal * GST_RATE;
   return {
+    priced,
     gross,
     discountRate,
     discount,
     subtotal,
     gst,
     payable: subtotal + gst,
-    recurring: lines.filter((l) => l.cycle === "monthly").reduce((n, l) => n + l.unitPrice * l.qty, 0),
+    recurring: priced.filter((p) => p.line.cycle === "monthly").reduce((n, p) => n + p.total, 0),
   };
 }
 

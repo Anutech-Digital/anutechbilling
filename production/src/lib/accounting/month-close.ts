@@ -12,8 +12,9 @@
  * refuses to offer it while an earlier step is red.
  */
 
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear } from "@/lib/dates/ist";
 import { formatDate } from "@/lib/utils";
+import { tdsDepositDueDate } from "@/lib/compliance/tds-due";
 
 export type StepKind = "auto" | "manual";
 export type StepStatus = "done" | "todo" | "na" | "warn";
@@ -44,6 +45,8 @@ export interface MonthCloseFacts {
   gstPaid: boolean;               // tax_payments kind=gst period=month exists
   draftInvoices: number;          // still draft, dated on/before month end
   blockedItcCount: number;        // expenses this month whose GST is not credit
+  /** R-1576: vendor bills this month whose GST is not credit (proforma, no GSTIN, wrong head, s.17(5)). */
+  blockedBillItcCount?: number;
   booksLockedUntil: string | null;
   manual: Record<string, { done_at: string; done_by: string | null; via?: "calendar" } | undefined>;
 }
@@ -60,8 +63,8 @@ export const MANUAL_STEPS: { key: string; title: string; detail: string; href?: 
  *  TDS return = "<fyStart>-q<n>" for the quarter the month closes. */
 export function compliancePeriodKey(stepKey: string, period: string): string {
   if (stepKey !== "tds_return_filed") return period;
-  const [y, m] = period.split("-").map(Number);
-  const fy = m >= 4 ? y : y - 1;
+  const m = Number(period.slice(5, 7));
+  const fy = fyStartYear(period);
   const q = m >= 4 && m <= 6 ? 1 : m >= 7 && m <= 9 ? 2 : m >= 10 ? 3 : 4;
   return `${fy}-q${q}`;
 }
@@ -113,7 +116,8 @@ export function evaluateMonthClose(f: MonthCloseFacts): MonthClose {
     href: "/accounting/payroll",
   });
 
-  // 3. Statutory challans — due by the 7th (TDS) / 15th (PF, ESI) of next month
+  // 3. Statutory challans — TDS by the 7th of next month (R-1583: March TDS by 30 April,
+  //    tdsDepositDueDate), PF / ESI by the 15th
   const needTds = f.withheld.tds > 0, needPf = f.withheld.pf > 0, needEsi = f.withheld.esi > 0;
   const anyNeed = needTds || needPf || needEsi;
   const covered = (need: boolean, paid: boolean) => !need || paid || f.challans.mixed;
@@ -126,7 +130,7 @@ export function evaluateMonthClose(f: MonthCloseFacts): MonthClose {
     status: !anyNeed ? "na" : allPaid ? "done" : "todo",
     detail: !anyNeed ? "Nothing withheld this month."
       : allPaid ? "This month's challans are booked (Payroll → Record statutory payment, or a bank line)."
-      : `Due: ${missing.join(", ")}. Pay the challan and book it with the month and challan no. (TDS by the 7th, PF/ESI by the 15th).`,
+      : `Due: ${missing.join(", ")}. Pay the challan and book it with the month and challan no. (TDS by ${formatDate(tdsDepositDueDate(f.period))}, PF/ESI by the 15th).`,
     href: "/accounting/payroll",
   });
 
@@ -148,13 +152,18 @@ export function evaluateMonthClose(f: MonthCloseFacts): MonthClose {
     href: "/invoices",
   });
 
-  // 6. ITC hygiene (info)
+  // 6. ITC hygiene (info) — expenses and (R-1576) vendor bills
+  const bills = f.blockedBillItcCount ?? 0;
   steps.push({
-    key: "itc", kind: "auto", title: "ITC on expenses is clean",
-    status: f.blockedItcCount === 0 ? "done" : "warn",
-    detail: f.blockedItcCount === 0 ? "Every expense with GST has a bill and a vendor GSTIN."
-      : `${f.blockedItcCount} expense(s) give no GST credit (no proper bill, no vendor GSTIN, or s.17(5)). Fix them now if you can; otherwise the GST stays a cost.`,
-    href: "/accounting/expenses",
+    key: "itc", kind: "auto", title: "ITC on expenses and bills is clean",
+    status: f.blockedItcCount === 0 && bills === 0 ? "done" : "warn",
+    detail: f.blockedItcCount === 0 && bills === 0 ? "Every expense and vendor bill with GST has a tax invoice and a vendor GSTIN."
+      : [
+          f.blockedItcCount > 0 ? `${f.blockedItcCount} expense(s) give no GST credit (no proper bill, no vendor GSTIN, or s.17(5)).` : "",
+          bills > 0 ? `${bills} vendor bill(s) give no GST credit (proforma / not a tax invoice, no vendor GSTIN, wrong GST head, or s.17(5)).` : "",
+          "Fix them now if you can (ask the vendor for a tax invoice); otherwise the GST stays a cost.",
+        ].filter(Boolean).join(" "),
+    href: f.blockedItcCount === 0 && bills > 0 ? "/accounting/bills" : "/accounting/expenses",
   });
 
   // 7–9. Manual portal steps

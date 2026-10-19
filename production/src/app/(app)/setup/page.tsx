@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUpdateTenant } from "@/lib/queries/tenant";
 import { gstStateFromGstin, isValidGstin, validateGstin } from "@/lib/utils";
-import { GST_STATE_OPTIONS, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
+import { GST_STATE_OPTIONS, companyGstinStateConflict, initialStateCode, normalizeStateCode, resolveCompanyState } from "./company-state";
 import { InvoiceCodeField, useInvoiceCode, useSaveInvoiceCode, type InvoiceCodeState } from "./invoice-code-field";
 import { invoiceCodeProblem, normalizeInvoiceCode, suggestInvoiceCode } from "./invoice-code";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
@@ -212,6 +212,19 @@ function StepCompany({
               Needed for the right GST on your invoices.
             </p>
           )}
+          {/* R-1128: a state that contradicts the GSTIN is refused on Continue — say so here, with the fix. */}
+          {(() => {
+            const conflict = companyGstinStateConflict(data.state, data.gstin);
+            if (!conflict) return null;
+            return (
+              <div id="setup-state-conflict" role="alert" className="mt-1 space-y-1">
+                <p className="text-3xs text-rose">{conflict.message}</p>
+                <Button type="button" variant="default" size="sm" onClick={() => update("state", conflict.gstinCode)}>
+                  Set state from GSTIN ({conflict.gstinState})
+                </Button>
+              </div>
+            );
+          })()}
         </Field>
         <Field htmlFor="setup-registered-address" label="Registered address" className="sm:col-span-2">
           <Input id="setup-registered-address"
@@ -652,6 +665,15 @@ export default function SetupPage() {
     const companyState = resolveCompanyState(data.state, data.gstin);
     if (!companyState) {
       toast.error("Choose your state", { description: "It decides IGST vs CGST + SGST on every invoice." });
+      return;
+    }
+    // R-1128: the chosen state must match the GSTIN's first two digits.
+    const conflict = companyGstinStateConflict(data.state, data.gstin);
+    if (conflict) {
+      toast.error("State does not match your GSTIN", {
+        description: conflict.message,
+        action: { label: `Use ${conflict.gstinState}`, onClick: () => update("state", conflict.gstinCode) },
+      });
       return;
     }
     // R-260: optional UPI / bank — blank is fine, a wrong UPI ID or IFSC is not.

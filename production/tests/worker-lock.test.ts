@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -148,5 +150,24 @@ describe("R-842: board v76 card contract (claim/push refuse an incomplete card)"
   it("flags come out of the args; areas stay positional", () => {
     expect(parseCardFlags(["C:/wt", "src/lib/deals", "--card", "c.json"])).toEqual({ rest: ["C:/wt", "src/lib/deals"], cardPath: "c.json", noCheck: false });
     expect(parseCardFlags(["--card=c.json", "--no-card-check"])).toEqual({ rest: [], cardPath: "c.json", noCheck: true });
+  });
+});
+
+/* R-1592 (18 Oct 2026): a <Link href="/wrong-page"> passed the push gate and `npm run typecheck`
+   (plain tsc: no .next/types in a fresh worktree / CI checkout → href is just a string) and only
+   `next build` went red. Both now run `next typegen` first, like the Cloud Build gate. */
+describe("type-check sees typed routes (R-1592)", () => {
+  const root = path.resolve(__dirname, "..");
+  it("the push gate's tsc step generates route types first", () => {
+    expect(TSC_STEPS[0]).toBe("npx next typegen");
+    expect(TSC_STEPS[TSC_STEPS.length - 1]).toMatch(/^npx tsc --noEmit/);
+  });
+  it("npm run typecheck (CI) runs next typegen before tsc", () => {
+    const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts.typecheck).toMatch(/next typegen && tsc --noEmit/);
+  });
+  it("tsconfig includes the generated route types and next.config keeps typedRoutes on", () => {
+    expect(readFileSync(path.join(root, "tsconfig.json"), "utf8")).toContain(".next/types/**/*.ts");
+    expect(readFileSync(path.join(root, "next.config.mjs"), "utf8")).toMatch(/^\s*typedRoutes: true,/m);
   });
 });

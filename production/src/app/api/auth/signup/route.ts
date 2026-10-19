@@ -39,6 +39,9 @@ import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
 import { startEmailVerification } from "@/lib/auth/email-verification";
 import { findVerifiedDomainTenant } from "@/lib/auth/tenant-match";
+import { checkNewPassword } from "@/lib/auth/password-rules";
+import { INVITE_EXPIRED_MESSAGE, inviteAcceptRefusal, isInviteExpired } from "@/lib/auth/invite-accept";
+import { CHECK_EMAIL_RESPONSE, SIGNUP_FAILED_MESSAGE, isEmailTaken } from "./signup-response";
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,6 +66,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    /* R-736: the same password rules as reset / change password (lib/auth/password-rules.ts).
+       Before this only GoTrue's own floor (6) applied, so "123456" made an owner account. */
+    const passwordProblem = checkNewPassword(password);
+    if (passwordProblem) {
+      return NextResponse.json({ error: passwordProblem.message, field: "password" }, { status: 400 });
+    }
+
     const admin = createAdminClient();
 
     // ── 1. Where does this person belong? Decided BEFORE anything is created,
@@ -80,12 +90,18 @@ export async function POST(request: NextRequest) {
     const { data: inviteRow } = inviteToken
       ? await admin
           .from("team_invites")
-          .select("tenant_id, role")
+          .select("tenant_id, role, expires_at")
           .eq("token", inviteToken)
           .eq("email", email)
           .is("accepted_at", null)
           .maybeSingle()
       : { data: null };
+
+    /* R-733: an expired link is refused BEFORE any account exists — the person is told to ask
+       for a new invite, not left with a login that belongs nowhere. */
+    if (inviteRow && isInviteExpired(inviteRow.expires_at)) {
+      return NextResponse.json({ error: INVITE_EXPIRED_MESSAGE }, { status: 410 });
+    }
 
     // Invite pending hai par token nahi/galat? Account banate hi NAHI —
     // warna wahi takeover, ya (ignore karne par) invited insaan ki apni
@@ -94,10 +110,13 @@ export async function POST(request: NextRequest) {
     if (!inviteRow) {
       const { data: pendingByEmail } = await admin
         .from("team_invites")
-        .select("id")
+        .select("id, expires_at")
         .eq("email", email)
         .is("accepted_at", null)
         .maybeSingle();
+      if (pendingByEmail && isInviteExpired(pendingByEmail.expires_at)) {
+        return NextResponse.json({ error: INVITE_EXPIRED_MESSAGE }, { status: 410 });
+      }
       if (pendingByEmail) {
         return NextResponse.json(
           {
@@ -136,31 +155,39 @@ export async function POST(request: NextRequest) {
     });
 
     if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 });
+      /* R-736: never echo the provider's text. "already registered" turned this form into a
+         lookup of who has an account; that case now gets exactly the answer a new company
+         signup gets (signup-response.ts). The real owner of the address can sign in or use
+         Forgot password; nobody else learns anything. */
+      if (isEmailTaken(authError)) {
+        return NextResponse.json(CHECK_EMAIL_RESPONSE);
+      }
+      console.warn("[signup] createUser failed:", authError.code ?? authError.status ?? "", authError.message);
+      return NextResponse.json({ error: SIGNUP_FAILED_MESSAGE }, { status: 400 });
     }
 
     const userId = authData.user.id;
 
     // ── 3a. Invited → join the inviting tenant. No tenant is created. ──────
+    /* R-733: claim the invite + create the membership in ONE transaction (accept_team_invite,
+       CLAUDE.md §17b). It used to be "insert users row, then mark the invite used" — two
+       requests on one link both joined, and a crash between them left the link reusable. */
     if (decision.mode === "join") {
-      const { error: joinErr } = await admin.from("users").insert({
-        id:        userId,
-        tenant_id: decision.tenantId,
-        email,
-        full_name: fullName,
-        initials:  initials(fullName),
-        role:      decision.role,
-        color:     "indigo",
+      const { error: joinErr } = await admin.rpc("accept_team_invite", {
+        p_email:     email,
+        p_user_id:   userId,
+        p_full_name: fullName,
+        p_initials:  initials(fullName),
+        p_token:     inviteToken,
       });
       if (joinErr) {
         await admin.auth.admin.deleteUser(userId);
-        return NextResponse.json({ error: "Could not add you to the workspace: " + joinErr.message }, { status: 500 });
+        console.warn("[signup] accept_team_invite refused:", joinErr.message);
+        const refusal = inviteAcceptRefusal(joinErr.message);
+        return NextResponse.json({ error: refusal.error }, { status: refusal.status });
       }
-      await admin.from("team_invites")
-        .update({ accepted_at: new Date().toISOString() })
-        .eq("token", inviteToken).eq("email", email).is("accepted_at", null);
 
-      return NextResponse.json({ success: true, status: "joined", userId, tenantId: decision.tenantId });
+      return NextResponse.json({ success: true, status: "joined" });
     }
 
     // ── 3b. Domain match → NO workspace; the join request waits for the email. ──
@@ -220,10 +247,11 @@ export async function POST(request: NextRequest) {
     await claimDomainQuietly(admin, tenantId, email);
 
     const verify = await startEmailVerification(admin, { userId, email, name: fullName, origin: originOf(request) });
-    return NextResponse.json({
-      success: true, status: "created", userId, tenantId,
-      needsVerification: true, verificationSent: verify.sent,
-    });
+    /* R-736: no ids in the body — an existing address gets CHECK_EMAIL_RESPONSE, and the two
+       must not be told apart. (The page never used userId/tenantId.) verificationSent stays
+       honest (§24): when the mail really failed the page must offer Resend, and that failure
+       is not something a visitor can cause on purpose. */
+    return NextResponse.json({ ...CHECK_EMAIL_RESPONSE, verificationSent: verify.sent });
   } catch (e) {
     const err = e as Error;
     return NextResponse.json({ error: err.message }, { status: 500 });

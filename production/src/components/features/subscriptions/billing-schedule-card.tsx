@@ -28,6 +28,9 @@ import { scheduleTotal, periodLastDay } from "@/lib/billing/schedule";
 import { cycleScheduleLabel } from "@/lib/quotes/billing";
 import { useScheduleInvoices } from "@/lib/queries/subscriptions";
 import { scheduleInvoices, nextUninvoiced, nextTermShowsNext, type ScheduleInvoice } from "./schedule-invoices";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canOpenRoute } from "@/lib/nav";
+import { InvoicePeekDialog } from "./invoice-peek-dialog";
 
 export function BillingScheduleCard({ subscription, todayISO }: {
   subscription: Subscription;
@@ -120,11 +123,7 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
                 <p className={cn("text-sm", dim ? "text-ink-3" : "text-ink")}>
                   {formatDate(p.billOn)}
                   {isNext && <Badge kind="warning" size="sm" className="ml-2">next</Badge>}
-                  {inv && (
-                    <Badge kind={inv.status === "paid" ? "success" : "muted"} size="sm" className="ml-2">
-                      Invoiced · {inv.invoiceId}{inv.status === "paid" ? " · paid" : ""}
-                    </Badge>
-                  )}
+                  {inv && <InvoicedChip inv={inv} />}
                   {past && <span className="ml-2 text-3xs uppercase tracking-wider text-ink-3">date passed</span>}
                 </p>
                 <p className="text-2xs text-ink-3">
@@ -139,5 +138,32 @@ function ScheduleTable({ rows, todayISO, label, muted, invoiced, showNext = true
         })}
       </ul>
     </div>
+  );
+}
+
+/**
+ * R-1620: the "Invoiced · INV-… · paid" chip opens that invoice in a popup. A role that
+ * cannot open /invoices (canOpenRoute — the same menu rule) sees the chip as plain text,
+ * not a button that leads nowhere.
+ */
+export function InvoicedChip({ inv }: { inv: ScheduleInvoice }) {
+  const { data: me } = useCurrentUser();
+  const [open, setOpen] = React.useState(false);
+  const label = `Invoiced · ${inv.invoiceId}${inv.status === "paid" ? " · paid" : ""}`;
+  const badge = <Badge kind={inv.status === "paid" ? "success" : "muted"} size="sm">{label}</Badge>;
+  if (!canOpenRoute(me?.role, "/invoices/x")) return <span className="ml-2">{badge}</span>;
+  return (
+    <>
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        title={`Open invoice ${inv.invoiceId}`}
+        onClick={() => setOpen(true)}
+        className="ml-2 cursor-pointer rounded-full align-middle transition hover:brightness-95 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-1"
+      >
+        {badge}
+      </button>
+      {open && <InvoicePeekDialog invoiceId={inv.invoiceId} open={open} onOpenChange={setOpen} />}
+    </>
   );
 }

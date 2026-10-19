@@ -2,7 +2,7 @@
  * Leads — server + client data hooks.
  *
  * Server: use `fetchLeads()` in Server Components.
- * Client: use `useLeads()` hook (TanStack Query).
+ * Client: the hooks below (TanStack Query) — bounded reads; none loads every lead.
  */
 "use client";
 
@@ -70,32 +70,30 @@ function restoreCachedLeads(qc: QueryClient, snapshot: LeadCacheSnapshot | undef
 // ============================================================
 // Read
 // ============================================================
+/** The lead columns the quote builder reads (prefill, place of supply, stage move on send). */
+export const QUOTE_LEAD_COLUMNS =
+  "id, company, plan, seats, billing_cycle, contact_name, contact_email, contact_phone, state_code, gstin, country, stage";
+export type QuoteLead = Pick<Lead,
+  | "id" | "company" | "plan" | "seats" | "billing_cycle" | "contact_name" | "contact_email"
+  | "contact_phone" | "state_code" | "gstin" | "country" | "stage">;
+
 /**
- * @deprecated WC-scale (30 Sep 2026): select("*") of every lead, and PostgREST stops at 1000
- * rows without saying so — any count or total built on it is wrong past the thousandth lead.
- * Use a bounded read instead: useLeadCounts / useLeadsInfinite (the leads page),
- * useLeadStageCounts / useLeadStageTotals (reports, dashboard), useLeadsCreatedSince (lead
- * sources), useLead(id) (one lead). Kept only for quote-builder.tsx (Abhishek's area), which
- * looks one lead up by id in it.
+ * R-1536: the one lead a quote is for — by id, only the columns the quote builder reads.
+ * The builder used to run useLeads(): select("*") of EVERY lead in 1000-row pages, then
+ * find(id) in the browser — at 20k leads, 20 requests and megabytes on every quote opened.
+ * useLeads() is gone (it had no other caller); for a full lead row use useLead(id). Its own
+ * key, not ["leads", id], so this slim row never stands in for useLead's full one; still
+ * under ["leads"], so every lead mutation's invalidation reaches it.
  */
-export function useLeads() {
+export function useQuoteLead(id: string | null | undefined) {
   return useQuery({
-    queryKey: ["leads"],
-    queryFn: async (): Promise<Lead[]> => {
+    queryKey: ["leads", "quote-lead", id ?? null],
+    enabled: Boolean(id),
+    queryFn: async (): Promise<QuoteLead | null> => {
       const supabase = createClient();
-      // Removed 2026-08-13: a fallback that re-queried with three hardcoded
-      // tenant UUIDs whenever this returned empty. It could never help — RLS
-      // (verified on prod: enabled on `leads` with 4 policies) applies to both
-      // queries, so the retry returns exactly the same rows. All it did was make
-      // "no leads yet" indistinguishable from "auth/tenant is broken". One of the
-      // three UUIDs also belonged to Gamma Co, an unrelated tenant.
-      /* R-294: paged past the 1000-row cap; order ends on the unique id. */
-      return fetchAllRows((from, to) => supabase
-        .from("leads")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(from, to));
+      const { data, error } = await supabase.from("leads").select(QUOTE_LEAD_COLUMNS).eq("id", id!).maybeSingle();
+      if (error) throw error;
+      return (data ?? null) as QuoteLead | null;
     },
   });
 }
@@ -168,6 +166,10 @@ const SLIM = LEAD_LIST_COLUMNS.join(", ");
 /** Workspace cut for a PostgREST read: listed owners OR unowned (list-selectors#inWorkspace). */
 function ownerOr(ids: readonly string[]): string {
   return ids.length > 0 ? `owner_id.is.null,owner_id.in.(${ids.join(",")})` : "owner_id.is.null";
+}
+/** ownerOr as one expression, so a paged read stays one statement (select … range). */
+function withOwners<Q extends { or(filters: string): Q }>(q: Q, ids: readonly string[] | null): Q {
+  return ids ? q.or(ownerOr(ids)) : q;
 }
 
 /** The board's columns (stage-meta.ts DEAL_STAGES) — lost has no column. */
@@ -261,18 +263,21 @@ export function useDueLeads(ownerIds: readonly string[] | null, enabled = true) 
   });
 }
 
-/** Lost leads, only the columns the loss-reasons card reads. */
+/**
+ * Lost leads, only the columns the loss-reasons card reads. R-1537: paged past PostgREST's
+ * 1000-row cap (it stopped there without saying so, so "All time" undercounted) and junk
+ * excluded, as every other lead number excludes it (useLeadStageCounts, the leads page).
+ */
 export function useLostLeads(ownerIds: readonly string[] | null, enabled = true) {
   return useQuery({
     queryKey: ["leads", "lost", ownerIds],
     enabled,
     queryFn: async () => {
       const supabase = createClient();
-      let q = supabase.from("leads").select("id, stage, value, lost_reason, lost_at").eq("stage", "lost");
-      if (ownerIds) q = q.or(ownerOr(ownerIds));
-      const { data, error } = await q;
-      if (error) throw error;
-      return data ?? [];
+      return fetchAllRows((from, to) => withOwners(
+        supabase.from("leads").select("id, stage, value, lost_reason, lost_at").eq("stage", "lost").eq("is_junk", false),
+        ownerIds,
+      ).order("id", { ascending: true }).range(from, to));
     },
   });
 }

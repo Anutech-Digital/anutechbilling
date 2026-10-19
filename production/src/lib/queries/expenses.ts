@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { deleteBlockAction } from "@/lib/accounting/delete-block";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, ExpenseRow } from "@/lib/supabase/database.types";
@@ -645,9 +646,12 @@ export function useUpdateExpense() {
 export function useDeleteExpense() {
   const qc = useQueryClient();
   return useMutation({
+    /* R-1577: one transaction in the database (delete_expense). It refuses — naming the
+       record and the page — when a salary, EMI, loan, tax challan, reimbursement, claim,
+       fixed asset or open payment run uses this expense, or a bank line is matched to it. */
     mutationFn: async (id: string) => {
       const supabase = createClient();
-      const { error } = await supabase.from("expenses").delete().eq("id", id);
+      const { error } = await supabase.rpc("delete_expense", { p_id: id });
       if (error) throw error;
       return id;
     },
@@ -657,7 +661,18 @@ export function useDeleteExpense() {
       qc.invalidateQueries({ queryKey: ["project_sales"] });
       toast.success("Expense deleted");
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastDeleteBlocked(err, "Ye kharcha yahan se nahi hata — neeche ke button se us page par jao jahan ise hataya jaata hai."),
+  });
+}
+
+/** R-1577: a refused delete shows the reason AND a button to the page that undoes it (§24). */
+export function toastDeleteBlocked(err: unknown, description: string) {
+  const action = deleteBlockAction(err);
+  if (!action) return toastError(err);
+  toastError(err, {
+    description,
+    action: { label: action.label, onClick: () => window.location.assign(action.href) },
+    duration: 12000,
   });
 }
 

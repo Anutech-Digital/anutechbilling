@@ -13,12 +13,19 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { fyStartYear, fyCodeOfYear } from "@/lib/dates/ist";
 
 type TdsInsert = Database["public"]["Tables"]["tds_receivable"]["Insert"];
 type TdsUpdate = Database["public"]["Tables"]["tds_receivable"]["Update"];
 
 export type TdsReceivable = TdsReceivableRow;
 export type { TdsStatus };
+
+/** R-1567 / R-1568: refund_payment / delete_payment set the TDS of a refunded or deleted
+ *  payment to this status — it is not receivable any more (trial balance and balance sheet
+ *  already count only pending_cert / cert_received / verified_26as). The list, KPI strip,
+ *  year-end, 26AS matching and ITR leave these rows out. */
+export const TDS_REVERSED_STATUS = "reversed";
 
 /** Lifecycle stages — order shown in the list / tabs. */
 export const TDS_STATUSES: TdsStatus[] = [
@@ -83,6 +90,7 @@ export function useTdsReceivables(opts?: {
         let q = supabase
           .from("tds_receivable")
           .select("*")
+          .filter("status", "neq", TDS_REVERSED_STATUS)
           .order("payment_received_date", { ascending: false })
           .order("id", { ascending: true });
         if (status === "claimable") q = q.in("status", ["cert_received", "verified_26as"]);
@@ -105,7 +113,8 @@ export function useTdsSummary(fiscalYear?: string) {
       const data = await fetchAllRows<{ status: string | null; tds_amount: number | null; fiscal_year: string | null }>((from, to) => {
         let q = supabase
           .from("tds_receivable")
-          .select("status, tds_amount, fiscal_year");
+          .select("status, tds_amount, fiscal_year")
+          .filter("status", "neq", TDS_REVERSED_STATUS);
         if (fiscalYear) q = q.eq("fiscal_year", fiscalYear);
         return q.order("id", { ascending: true }).range(from, to);
       });
@@ -151,11 +160,7 @@ function newTdsId(): string {
 
 /** Compute Indian fiscal year label from a date (Apr 1 → Mar 31). */
 export function fiscalYearFromDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  const yr = d.getUTCFullYear();
-  const m  = d.getUTCMonth(); // 0=Jan
-  const fyStart = m < 3 ? yr - 1 : yr;
-  return `FY${String(fyStart % 100).padStart(2, "0")}${String((fyStart + 1) % 100).padStart(2, "0")}`;
+  return fyCodeOfYear(fyStartYear(dateStr));
 }
 
 export function useCreateTdsReceivable() {

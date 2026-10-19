@@ -28,6 +28,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { FAB } from "@/components/ui/fab";
 import { KPI } from "@/components/shared/kpi";
+import { LoadError, LoadErrorInline } from "@/components/shared/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -60,7 +62,10 @@ export default function TeamPage() {
   const qc = useQueryClient();
   const [inviteOpen, setInviteOpen] = React.useState(false);
 
-  const { data: members = [] } = useQuery({
+  /* R-1533: loading, failed and empty are three different screens. These used to default to
+     `[]` and nothing read isLoading/isError, so a failed load printed "Members 0" and an
+     empty table — "my whole team is gone". */
+  const membersQ = useQuery({
     queryKey: ["team", "members"],
     queryFn: async () => {
       const supabase = createClient();
@@ -75,8 +80,11 @@ export default function TeamPage() {
       return (data ?? []) as Member[];
     },
   });
+  const members = React.useMemo(() => membersQ.data ?? [], [membersQ.data]);
+  /** A count is only a fact once the list has loaded — until then "—", never 0. */
+  const count = (n: number) => (membersQ.isSuccess ? n : "—");
 
-  const { data: invites = [] } = useQuery({
+  const invitesQ = useQuery({
     queryKey: ["team", "invites"],
     queryFn: async () => {
       const supabase = createClient();
@@ -90,6 +98,7 @@ export default function TeamPage() {
     },
     enabled: isOwner,
   });
+  const invites = React.useMemo(() => invitesQ.data ?? [], [invitesQ.data]);
 
   const removeInvite = useMutation({
     mutationFn: async (id: string) => {
@@ -150,12 +159,16 @@ export default function TeamPage() {
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KPI label="Members" value={members.length} icon="users" />
+        <KPI label="Members" value={count(members.length)} icon="users" />
         {/* openInvites, not invites — someone already inside is not pending. */}
-        <KPI label="Pending invites" value={openInvites.length} icon="mail" />
-        <KPI label="Owners" value={owners} icon="award" />
-        <KPI label="Active" value={members.filter((m) => m.is_active !== false).length} icon="check_circle" />
+        <KPI label="Pending invites" value={isOwner && !invitesQ.isSuccess ? "—" : openInvites.length} icon="mail" />
+        <KPI label="Owners" value={count(owners)} icon="award" />
+        <KPI label="Active" value={count(members.filter((m) => m.is_active !== false).length)} icon="check_circle" />
       </div>
+
+      {isOwner && invitesQ.isError && !membersQ.isError && (
+        <LoadErrorInline what="Pending invites" error={invitesQ.error} onRetry={() => void invitesQ.refetch()} />
+      )}
 
       {/* People waiting on a decision, and people who fell outside the workspace
           entirely. Both are above the member table because both are states where
@@ -181,6 +194,17 @@ export default function TeamPage() {
         </p>
       )}
 
+      {membersQ.isError && (
+        <LoadError what="Team members" error={membersQ.error} onRetry={() => void membersQ.refetch()} />
+      )}
+
+      {membersQ.isLoading && (
+        <Card className="p-4 space-y-3" data-testid="team-loading" aria-busy="true">
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+        </Card>
+      )}
+
+      {membersQ.isSuccess && (<>
       <Card flush className="hidden md:block">
           <table className="w-full text-sm">
             <thead className="bg-paper-2 border-b border-hairline">
@@ -424,6 +448,7 @@ export default function TeamPage() {
           ))}
         </ul>
       )}
+      </>)}
 
       <p className="mt-3 flex items-center gap-1.5 text-2xs text-ink-3">
         <Icon name="info" size={11} />

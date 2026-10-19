@@ -45,7 +45,6 @@ const FILES = [
   "src/components/features/leads/leads-hot-card.tsx",
   "src/components/features/leads/priority-call-queue.tsx",
   "src/components/features/leads/swipe-lead-card.tsx",
-  "src/components/features/leads/leads-right-rail.tsx",
   "src/components/features/leads/call-log-dialog.tsx",
   "src/app/(app)/dashboard/page.tsx",
   "src/app/(app)/tasks/page.tsx",

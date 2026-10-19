@@ -6,8 +6,14 @@
  * Writes, per subscription that reached its step today:
  *   notice  → email to the customer's primary contact (through the same autonomy switch as
  *             dunning: `dunning.send`) + an invoice_dunning_log row, step 'suspend_notice'.
- *             A refused or failed send is logged 'failed' and does NOT count as notice, so
- *             the pause never happens without the notice actually having gone out.
+ *             Only a row with status 'sent' (the provider accepted the email) counts as
+ *             notice, so the pause never happens without the notice actually having gone out.
+ *             R-1538 (18 Oct 2026): before, every row except 'failed' counted — and a customer
+ *             with no email ('no_recipient') or a server with no email set up ('stubbed') got
+ *             paused 3 days after a notice that reached nobody. Now an undelivered notice is
+ *             logged with its real status, retried next run (up to MAX_STEP_ATTEMPTS), reported
+ *             in `blocked` ("can't pause — final notice not delivered: <why>"), and the owner
+ *             is emailed once so they can fix it.
  *   suspend → subscriptions.status 'paused' + suspended_at / suspend_reason /
  *             suspended_by 'automation' / suspended_invoice_id, a row in ai_action_log, and an
  *             email to the company (not gated — it is the app telling its own user).
@@ -18,13 +24,14 @@ import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { payInstruction, upiPayLink } from "@/lib/invoices/pay-link";
-import { dunningLogStatus } from "@/lib/invoices/dunning-log-status";
+import { MAX_STEP_ATTEMPTS, stepHistory, type StepHistory } from "@/lib/invoices/dunning-log-status";
+import { sendDunningEmail } from "@/lib/invoices/dunning-send.server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { isEmailConfigured } from "@/lib/email/send";
-import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
+import { sendInternalEmail } from "@/lib/messaging";
 import { rupee, formatDate } from "@/lib/utils";
 import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
+  NOTICE_GRACE_DAYS,
   SUSPEND_NOTICE_STEP,
   decideOverdueSuspension,
   oldestOverdueInvoice,
@@ -43,6 +50,8 @@ export interface OverdueSuspensionResult {
   suspends: number;
   details: { subscription_id: string; invoice_id: string; action: SuspensionAction; days_overdue: number; pause_on: string | null; reason: string }[];
   errors: { subscription_id: string; message: string }[];
+  /** R-1538: pauses held back because the final notice did not reach the customer. */
+  blocked: { subscription_id: string; invoice_id: string; reason: string }[];
 }
 
 interface TenantRow {
@@ -62,7 +71,7 @@ export async function runOverdueSuspension(
   opts: { asOf: Date; dryRun: boolean; creditQuoteIds: ReadonlySet<string> },
 ): Promise<OverdueSuspensionResult> {
   const result: OverdueSuspensionResult = {
-    companies_on: 0, subscriptions_checked: 0, notices: 0, suspends: 0, details: [], errors: [],
+    companies_on: 0, subscriptions_checked: 0, notices: 0, suspends: 0, details: [], errors: [], blocked: [],
   };
   const today = istToday(opts.asOf);
 
@@ -100,19 +109,25 @@ export async function runOverdueSuspension(
       .order("id", { ascending: true }).range(from, to)) as Promise<{ subscription_id: string; invoice_id: string | null }[]>,
     fetchAllRowsIn(chaseable.map((i) => i.id), (ids, from, to) => supabase
       .from("invoice_dunning_log")
-      .select("invoice_id, sent_at, status")
-      .in("invoice_id", ids).eq("dunning_step", SUSPEND_NOTICE_STEP).neq("status", "failed")
-      .order("id", { ascending: true }).range(from, to)) as Promise<{ invoice_id: string | null; sent_at: string; status: string }[]>,
+      .select("invoice_id, dunning_step, sent_at, status, error_message")
+      .in("invoice_id", ids).eq("dunning_step", SUSPEND_NOTICE_STEP)
+      .order("id", { ascending: true }).range(from, to)) as Promise<{ invoice_id: string | null; dunning_step: string; sent_at: string; status: string; error_message: string | null }[]>,
   ]);
 
-  /* Earliest delivered notice per invoice, as an IST date. */
+  /* Earliest DELIVERED notice per invoice, as an IST date — status 'sent' only (R-1538).
+     Every notice row (any status) also feeds the per-invoice history: attempts and why. */
   const noticeOn = new Map<string, string>();
+  const noticeRows = new Map<string, typeof notices>();
   for (const n of notices) {
     if (!n.invoice_id) continue;
+    noticeRows.set(n.invoice_id, [...(noticeRows.get(n.invoice_id) ?? []), n]);
+    if (n.status !== "sent") continue;
     const d = toIstDate(n.sent_at);
     const prev = noticeOn.get(n.invoice_id);
     if (!prev || d < prev) noticeOn.set(n.invoice_id, d);
   }
+  const noticeHistory = (invoiceId: string): StepHistory | undefined =>
+    stepHistory(noticeRows.get(invoiceId) ?? []).get(SUSPEND_NOTICE_STEP);
 
   /* Invoices that bill each subscription: its source quote (only when that quote has ONE
      active subscription — suspending the wrong one of two is worse than none) + its billings. */
@@ -126,7 +141,10 @@ export async function runOverdueSuspension(
     if (inv) billedInv.set(b.subscription_id, [...(billedInv.get(b.subscription_id) ?? []), inv]);
   }
 
+  /* Tried this run (one notice per invoice even when it bills two subscriptions) vs. really
+     delivered this run — only the second may stand in for a notice date. */
   const noticedThisRun = new Set<string>();
+  const deliveredThisRun = new Set<string>();
 
   for (const sub of subs) {
     /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;
@@ -145,10 +163,26 @@ export async function runOverdueSuspension(
       thresholdDays: tenant.overdue_suspend_days,
       subscriptionStatus: sub.status,
       oldest,
-      noticeSentOn: oldest ? noticeOn.get(oldest.invoiceId) ?? (noticedThisRun.has(oldest.invoiceId) ? today : null) : null,
+      noticeSentOn: oldest ? noticeOn.get(oldest.invoiceId) ?? (deliveredThisRun.has(oldest.invoiceId) ? today : null) : null,
     }, today);
     if (decision.action === "none" || !oldest) continue;
     if (decision.action === "notice" && noticedThisRun.has(oldest.invoiceId)) continue;
+
+    /* R-1538: a notice that may have gone (claimed, result never recorded) is not re-sent;
+       one tried MAX_STEP_ATTEMPTS times without reaching the customer is not tried again.
+       Either way: no pause, and the run says why — every run, until the owner fixes it. */
+    if (decision.action === "notice") {
+      const h = noticeHistory(oldest.invoiceId);
+      const stuck = h?.inFlight
+        ? "final notice not delivered: its send started but the result was never recorded — check the email log"
+        : h && h.undelivered >= MAX_STEP_ATTEMPTS
+          ? `final notice not delivered after ${h.undelivered} tries: ${h.lastReason ?? "not sent"}`
+          : null;
+      if (stuck) {
+        result.blocked.push({ subscription_id: sub.id, invoice_id: oldest.invoiceId, reason: stuck });
+        continue;
+      }
+    }
 
     result.details.push({
       subscription_id: sub.id, invoice_id: oldest.invoiceId, action: decision.action,
@@ -177,24 +211,40 @@ export async function runOverdueSuspension(
             upiVpa: tenant.upi_vpa, payeeName: tenant.upi_payee_name ?? tenant.name, amountDue, invoiceId: inv.id,
           })),
         });
-        let status: string = dunningLogStatus({ recipient: resolved.email, hasMessage: true, emailConfigured: isEmailConfigured() });
-        let errorMessage: string | null = null;
-        if (resolved.email) {
-          const r = await sendCustomerEmail({
-            route: { tenantId: sub.tenant_id },
-            to: resolved.email, subject: msg.subject, text: msg.text,
-            kind: "invoice_dunning",
-            automated: { tenantId: sub.tenant_id, action: "dunning.send" },
-          });
-          if (r.status === "failed") { status = "failed"; errorMessage = (r.errorMessage ?? "not sent").slice(0, 500); }
-        }
-        const { error: logErr } = await supabase.from("invoice_dunning_log").insert({
-          tenant_id: sub.tenant_id, invoice_id: inv.id, dunning_step: SUSPEND_NOTICE_STEP,
-          days_overdue: decision.daysOverdue, action_taken: "email",
-          recipient_email: resolved.email, subject: msg.subject, status, error_message: errorMessage,
+        /* Claimed before the send, then set to what really happened (dunning-send.server.ts).
+           'sent' only when the provider accepted it. */
+        const sent = await sendDunningEmail(supabase, {
+          tenantId: sub.tenant_id, invoiceId: inv.id, step: SUSPEND_NOTICE_STEP,
+          daysOverdue: decision.daysOverdue, actionTaken: "email",
+          to: resolved.email, message: { subject: msg.subject, text: msg.text },
+          automated: { tenantId: sub.tenant_id, action: "dunning.send" },
         });
-        if (logErr) throw logErr;
-        if (status !== "failed") result.notices++;
+        if (sent.logError) result.errors.push({ subscription_id: sub.id, message: `dunning log: ${sent.logError}` });
+        if (sent.outcome.status === "sent") {
+          deliveredThisRun.add(inv.id);
+          result.notices++;
+          continue;
+        }
+        const why = sent.outcome.reason ?? sent.outcome.status;
+        result.blocked.push({ subscription_id: sub.id, invoice_id: inv.id, reason: `final notice not delivered: ${why}` });
+        /* §24: the owner hears it ONCE (first failed try), with what to do — not every morning. */
+        const priorTries = noticeHistory(inv.id)?.undelivered ?? 0;
+        if (priorTries === 0 && tenant.email) {
+          await sendInternalEmail({
+            route: { tenantId: sub.tenant_id },
+            to: tenant.email,
+            subject: `Not paused: ${sub.customer_name} — final notice did not reach them`,
+            text:
+`${service} for ${sub.customer_name} was NOT paused, because the final notice before the pause did not reach the customer.
+
+  Invoice             ${inv.id} — ${decision.daysOverdue} days overdue
+  Amount outstanding  ${rupee(amountDue)}
+  Why not delivered   ${why}
+
+The service stays on. ResellerOS tries the notice again on the next runs (up to ${MAX_STEP_ATTEMPTS} tries) and pauses only ${NOTICE_GRACE_DAYS} days after a notice really went out.
+To fix it: add an email address to the customer's primary contact, or turn on Customer messages in Automation. Or call the customer.`,
+          });
+        }
         continue;
       }
 

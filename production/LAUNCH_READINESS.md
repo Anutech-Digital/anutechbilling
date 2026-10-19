@@ -83,7 +83,7 @@ Code shape me hai. **Frontend + DB + automated workflows production-grade hain.*
 
 | Feature | Status | What's needed |
 |---|---|---|
-| Renewal cron daily | Code ✅, vercel.json ✅, BUT Vercel deploy pending | Firebase Cloud Scheduler migration once App Hosting deploys |
+| Renewal cron daily | Code ✅, Cloud Scheduler (`scripts/setup-cloud-scheduler.sh`) ✅ | — (vercel.json removed 19 Oct 2026, R-1604: Vercel crons never ran on Cloud Run) |
 | Email send (Resend) | Stub mode logs to DB. **Real send needs RESEND_API_KEY** | Pardeep signs up at resend.com, adds key, real emails fire |
 | Lead intelligence "Call top lead" | tel: + mailto: wired ✓ | Could add deeper Gemini-suggested scripts (P2) |
 | Bulk reminder on Renewals | Wired to FAB but currently shows toast | Replace with real `/api/cron/renewals` trigger (10 min) |

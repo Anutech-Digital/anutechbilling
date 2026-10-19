@@ -39,6 +39,10 @@ const SERVICE_ROLE_ONLY: Record<string, string> = {
     "R-051: returns the acting user only for admin-client (service_role) writes; called by " +
     "the SECURITY DEFINER log_row_change trigger. authenticated is revoked on purpose " +
     "(admin-actor.test.ts).",
+  r1004_backfill_account_managers:
+    "R-1004: one-time data backfill of customers.account_manager_id, run by the migration " +
+    "owner; only service_role may re-run it. authenticated is revoked on purpose " +
+    "(r1004_account_manager_backfill.test.sql case 4).",
 };
 
 /** Invoker functions only ever called from inside SECURITY DEFINER code (runs as owner). */

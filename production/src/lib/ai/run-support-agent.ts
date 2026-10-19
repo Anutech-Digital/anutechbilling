@@ -53,6 +53,11 @@ export interface RunSupportAgentArgs {
   subject: string;
   /** Display name or WhatsApp profile name. May be empty. */
   senderName: string;
+  /**
+   * R-726: the channel proved the sender owns `customerContact` (Meta signature for WhatsApp;
+   * DKIM/DMARC verdict for email, lib/inbound/sender-auth.ts). false → answered as a stranger.
+   */
+  senderVerified: boolean;
   /** An existing ticket to use, when the caller has already opened one. */
   ticketId?: string | null;
   /** Envelope sender for this deployment. */
@@ -267,6 +272,7 @@ export async function runSupportAgentForMessage(
     channel: args.channel,
     customerContact: args.customerContact,
     fallbackName: args.senderName,
+    senderVerified: args.senderVerified,
     ticketId,
     tier: ticket.tier,
   });

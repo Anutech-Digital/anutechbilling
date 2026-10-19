@@ -23,7 +23,7 @@
  * Isliye yahan andar paise (integer) me ginte hain aur milaan ₹1 ki chhoot se hota hai
  * (s.288B rounding) — ek hi jagah, ek hi unit.
  */
-import { utcDateISO } from "@/lib/dates/ist";
+import { utcDateISO, fyStartYear, fyCodeOfYear } from "@/lib/dates/ist";
 
 export type BookingStatus = "F" | "P" | "U" | "O" | "M" | "Z" | null;
 
@@ -294,9 +294,7 @@ const TOLERANCE_PAISE = 100; // ₹1 — s.288B rounding
 
 /** "2026-05-20" → "FY2627" (tds_receivable.fiscal_year ka format). */
 export function fyCodeOf(iso: string): string {
-  const [y, m] = iso.split("-").map(Number);
-  const s = m >= 4 ? y : y - 1;
-  return `FY${String(s % 100).padStart(2, "0")}${String((s + 1) % 100).padStart(2, "0")}`;
+  return fyCodeOfYear(fyStartYear(iso));
 }
 
 function days(a: string, b: string): number {

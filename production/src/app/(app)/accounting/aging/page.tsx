@@ -20,6 +20,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { AGING_BUCKETS } from "@/lib/navigation/drilldown";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { primaryContactsFor } from "@/lib/contacts/primary";
+import { readOpenInvoices } from "./read";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { MsmePayablesCard } from "@/components/features/accounting/msme-payables-card";
 import { OverduePauseCard } from "@/components/features/collections/overdue-pause-card";
@@ -68,7 +70,7 @@ function daysBetween(from: string, to: Date): number {
 
 function useAging() {
   return useQuery({
-    queryKey: ["accounting", "aging"],
+    queryKey: queryKeys.aging(),
     queryFn: async (): Promise<{ rows: CustomerAgingRow[]; totals: AgingTotals }> => {
       const supabase = createClient();
 
@@ -76,11 +78,8 @@ function useAging() {
       // We use `net_payable` when present (= amount − adjusted advances)
       // otherwise fall back to `amount`. Invoices already 'paid' or 'void'
       // are excluded.
-      const { data: invoices, error: invErr } = await supabase
-        .from("invoices")
-        .select("id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date")
-        .in("status", ["pending", "overdue"]);
-      if (invErr) throw invErr;
+      // R-1586: every open invoice, paged past the gateway's 1000-row cap.
+      const invoices = await readOpenInvoices(supabase);
 
       // Pull customer contact info so the row can offer WhatsApp / email.
       const customerIds = Array.from(

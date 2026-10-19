@@ -5,6 +5,7 @@
 
 import * as React from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -411,7 +412,7 @@ export function useSetCustomerActive() {
  *  Adjust it against their next bill in the record-payment sheet. */
 export function useCustomerOpenCredit(customerId: string | null | undefined) {
   return useQuery({
-    queryKey: ["customer_credits", "open-total", customerId ?? "none"],
+    queryKey: [...queryKeys.customerCredits(), "open-total", customerId ?? "none"],
     enabled: Boolean(customerId),
     queryFn: async (): Promise<number> => {
       const supabase = createClient();
@@ -428,7 +429,7 @@ export function useCustomerOpenCredit(customerId: string | null | undefined) {
  *  customers list "Unused credits" column. RLS scopes the read to this tenant. */
 export function useOpenCreditsByCustomer() {
   return useQuery({
-    queryKey: ["customer_credits", "open-by-customer"],
+    queryKey: [...queryKeys.customerCredits(), "open-by-customer"],
     queryFn: async (): Promise<Record<string, number>> => {
       const supabase = createClient();
       const { data, error } = await supabase

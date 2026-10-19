@@ -213,7 +213,7 @@ export default function PnLPage() {
         ["Licence cost basis", data.model.cogsBasis],
         ["Gross margin", data.model.grossMargin ?? "unknown"],
         ["Operating expenses", -(data.expenses - data.model.projectCost)],
-        ["Commissions", -data.commissions],
+        ["Commissions", -data.commissions], ["Depreciation", -data.depreciation],
         ["Net profit", data.model.netProfit ?? "unknown (cost of goods not recorded)"],
         ["", ""],
         ["Output GST (on sales)", data.outputGST],
@@ -369,8 +369,7 @@ export default function PnLPage() {
                    onHint={() => { setDrillExpenseCat(null); setDrill("expenses"); }}
                    tone="rose" />
 
-              {/* The per-category breakdown lives in the Expense report card below — listing
-                  it here as well was a third copy of the same numbers on one page. */}
+              {/* Per-category breakdown: the Expense report card below (a third copy here was too many). */}
 
               {data.commissions > 0 && (
                 <Row label="− Referral commissions"
@@ -378,7 +377,7 @@ export default function PnLPage() {
                      hint={`${data.commissionsCount} ${data.commissionsCount === 1 ? "payout" : "payouts"}`}
                      tone="rose" />
               )}
-
+              {data.depreciation > 0 && <Row label="− Depreciation" amount={-data.depreciation} tone="rose" hint="R-1578: Assets register, Income-tax WDV, days in this period" />}
               <Divider thick />
               {/* From `model`, like every other line of this statement. The flat
                   `data.netProfit` subtracts vendor-bill COGS, which is ₹0 when no bills are
@@ -436,7 +435,7 @@ export default function PnLPage() {
               </div>
               {data.itcBlocked > 0 && (
                 <div className="flex justify-between items-baseline text-xs">
-                  <span className="text-ink-3">GST with no credit (no proper bill, no GSTIN, or s.17(5)), counted as expense</span>
+                  <span className="text-ink-3">GST with no credit (no tax invoice, proforma, no GSTIN, wrong head, or s.17(5)), counted as expense / cost of goods</span>
                   <span className="font-mono text-ink-3">{rupee(data.itcBlocked)}</span>
                 </div>
               )}

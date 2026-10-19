@@ -133,8 +133,7 @@ export default function ImportContactsDialog({ open, onOpenChange }: Props) {
         (json.duplicates > 0 ? ` · ${json.duplicates} duplicates skipped` : "") +
         (json.skipped > 0    ? ` · ${json.skipped} invalid skipped` : "")
       );
-      qc.invalidateQueries({ queryKey: ["imported_contacts"] });
-      qc.invalidateQueries({ queryKey: ["contacts-merged"] });
+      qc.invalidateQueries({ queryKey: ["contacts", "all"] });
       reset();
       onOpenChange(false);
     } catch (err) {

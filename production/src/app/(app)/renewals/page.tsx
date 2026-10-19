@@ -34,7 +34,8 @@ import { Card } from "@/components/ui/card";
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
-import { rupee, formatDate, daysBetween } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
+import { daysUntilRenewal, onRenewalsPage, renewalBucket } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -48,6 +49,7 @@ import { Input } from "@/components/ui/input";
 import {
   bulkReminderTargets,
   bulkReminderConfirm,
+  isTerminalRenewal,
   sendNowStep,
   sendNowConfirm,
   sentToastText,
@@ -288,7 +290,7 @@ function RenewalBucket({
                       size="sm"
                       className="flex-1"
                       loading={generating === sub.id}
-                      disabled={sub.renewal_state === "suspended" || sub.renewal_state === "renewed"}
+                      disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                       onClick={() => handleGenerateQuote(sub)}
                     >
                       <Icon name="plus" size={12} />
@@ -300,7 +302,7 @@ function RenewalBucket({
                     size="sm"
                     className="flex-1"
                     loading={sending === sub.id}
-                    disabled={sub.renewal_state === "suspended" || sub.renewal_state === "renewed"}
+                    disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                     onClick={() => handleSendNow(sub)}
                   >
                     <Icon name="mail" size={12} />
@@ -496,10 +498,7 @@ function RenewalBucket({
                                   variant={kind === "rose" ? "primary" : "default"}
                                   size="sm"
                                   loading={generating === sub.id}
-                                  disabled={
-                                    sub.renewal_state === "suspended" ||
-                                    sub.renewal_state === "renewed"
-                                  }
+                                  disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                   onClick={() => handleGenerateQuote(sub)}
                                   title="Create the renewal quote now (early, e.g. customer asked 60 days ahead) — same logic as the T-15 cron auto-create"
                                 >
@@ -511,10 +510,7 @@ function RenewalBucket({
                                 variant="ghost"
                                 size="sm"
                                 loading={sending === sub.id}
-                                disabled={
-                                  sub.renewal_state === "suspended" ||
-                                  sub.renewal_state === "renewed"
-                                }
+                                disabled={isTerminalRenewal(sub.renewal_state, sub.renewal_date, sub.term_months)}
                                 onClick={() => handleSendNow(sub)}
                                 title="Send the appropriate renewal email immediately (overrides daily cron)"
                               >
@@ -625,19 +621,21 @@ export default function RenewalsPage() {
   }
 
   // Enrich with days-until-renewal (skip cancelled / no-date)
+  /* R-1541: the bucket rules live in lib/renewals/buckets.ts — the sidebar's Renewals badge
+     (nav_badges) counts the Urgent bucket with the same numbers and opens it. */
   const enriched = all
-    .filter((s) => s.renewal_date !== null && s.status !== "cancelled")
+    .filter(onRenewalsPage)
     .map((s) => ({
       sub: withRenewalQuote(s, openRenewalMap),
-      daysUntil: daysBetween(today, s.renewal_date!),
+      daysUntil: daysUntilRenewal(s.renewal_date!, today),
     }));
 
   // Urgency buckets. Urgent INCLUDES already-lapsed subs (daysUntil < 0, in grace
   // before auto-suspend) — otherwise the very rows about to suspend vanished from
   // every bucket. The row UI already renders the "Expired Nd ago" state.
-  const urgent   = enriched.filter((r) => r.daysUntil <= 7);
-  const upcoming = enriched.filter((r) => r.daysUntil > 7  && r.daysUntil <= 30);
-  const future   = enriched.filter((r) => r.daysUntil > 30 && r.daysUntil <= 90);
+  const urgent   = enriched.filter((r) => renewalBucket(r.daysUntil) === "urgent");
+  const upcoming = enriched.filter((r) => renewalBucket(r.daysUntil) === "upcoming");
+  const future   = enriched.filter((r) => renewalBucket(r.daysUntil) === "future");
 
   // KPI aggregates
   const urgentMrr   = urgent.reduce((s, r)   => s + r.sub.mrr, 0);

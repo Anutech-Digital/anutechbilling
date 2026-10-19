@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { decideAutoReply, type AutoReplyInput } from "./auto-reply";
 
@@ -268,15 +268,22 @@ describe("a draft that names an authorised price", () => {
     ).toBe(false);
   });
 
-  it("the acknowledgement path does NOT pass the flag", () => {
+  it("only the sales agent passes the flag", () => {
     /* Pinned on the SOURCE, because the failure is an absence and would read as normal in a
-       mock. run-auto-reply.ts writes a generic acknowledgement with no catalogue behind it —
-       if it ever passes this flag, it has switched the money rule off with nothing in its
-       place. run-sales-agent.ts is the only caller entitled to it. */
-    const ack = readFileSync(join(SRC, "lib/ai/run-auto-reply.ts"), "utf8");
-    expect(ack).not.toContain("promisesAlreadyChecked");
-
+       mock. run-sales-agent.ts is the only caller entitled to it: its draft went through the
+       catalogue check. R-1606 (19 Oct 2026): the acknowledgement path this used to read,
+       run-auto-reply.ts, was dead code and is deleted — so instead every other decideAutoReply
+       caller in src is checked: none may switch the money rule off. */
     const agent = readFileSync(join(SRC, "lib/ai/run-sales-agent.ts"), "utf8");
     expect(agent).toContain("promisesAlreadyChecked: true");
+
+    const others: string[] = [];
+    for (const rel of readdirSync(SRC, { recursive: true }) as string[]) {
+      const f = rel.replace(/\\/g, "/");
+      if (!/\.(ts|tsx)$/.test(f) || /\.test\.tsx?$/.test(f)) continue;
+      if (f === "lib/ai/run-sales-agent.ts" || f === "lib/ai/auto-reply.ts") continue;
+      if (readFileSync(join(SRC, f), "utf8").includes("promisesAlreadyChecked")) others.push(f);
+    }
+    expect(others).toEqual([]);
   });
 });

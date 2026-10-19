@@ -133,7 +133,6 @@ export function SendQuoteDialog({
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", quoteId] });
-      qc.invalidateQueries({ queryKey: ["quote-send-log", quoteId] });
 
       const out = quoteEmailOutcome(res, { quoteId, alreadySent });
       if (out.ok) {

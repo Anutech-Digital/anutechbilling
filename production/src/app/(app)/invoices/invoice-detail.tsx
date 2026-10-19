@@ -20,7 +20,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
-import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
+import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
+import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoiceBucket } from "@/lib/invoices/overdue";
 import { invoiceStatusBadge } from "./invoice-status";
@@ -37,6 +38,7 @@ import { TaxInvoiceDialog } from "@/components/features/quotes/tax-invoice-dialo
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
+import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
@@ -62,6 +64,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
 
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
   const { data: payments } = usePaymentsByQuote(quote?.id);
+  /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
+     its subscription's quote (record_instalment_payment), so the button shows for it too. */
+  const { data: instalment } = useInstalmentLink(invoice.quote_id ? null : invoice.id);
+  const canPay = !!quote?.id || !!instalment?.quoteId;
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
@@ -101,7 +107,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      The rule now lives in lib/invoices/supplier-identity.ts with its own regression
      test: there is no safe default for "who is selling this", so an unknown identity
      is reported and the document is withheld. */
-  const identity = supplierIdentity(me);
+  /* R-1529: an unregistered supplier's Bill of Supply has no GSTIN — the invoice row says
+     which document this is, frozen at issue. */
+  const identity = supplierIdentity(me, invoice);
   const supplier = identity.ok ? identity.supplier : null;
 
   /* R-248: `?pdf=1` (from Record payment's "Generate invoice" / "View invoice" toast
@@ -191,7 +199,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               </p>
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
-              {quote?.id && moneyDue && (
+              {canPay && moneyDue && (
                 /* R-237: record the payment HERE. Billing's only way used to be the quote
                    page, which middleware does not let billing open. */
                 <Button size="sm" variant="primary" icon="rupee" onClick={openPayment}>
@@ -233,8 +241,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 icon="file"
                 onClick={() => {
                   if (!supplier) {
-                    const msg = supplierIdentityMessage(identity)!;
-                    toast.error("Can't issue this Tax Invoice yet", {
+                    const msg = supplierIdentityMessage(identity, invoice)!;
+                    toast.error(`Can't issue this ${documentTitle(invoice)} yet`, {
                       description: msg,
                       action: identity.ok || !identity.hasSession ? undefined : {
                         label: "Open Settings",
@@ -376,7 +384,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <InvoicePaymentsAccordion
                     inv={invoice}
                     /* R-238: no receipt yet → the next step is right here. */
-                    onRecordPayment={quote?.id && moneyDue ? openPayment : undefined}
+                    onRecordPayment={canPay && moneyDue ? openPayment : undefined}
                   />
                 </div>
               )}
@@ -429,6 +437,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
       )}
       {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
           (record_payment flips this invoice to paid once the balance is covered). */}
+      {payOpen && !quote && instalment?.quoteId && (
+        <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
+      )}
       {payOpen && quote && (
         <RecordPaymentDialog
           open={payOpen}

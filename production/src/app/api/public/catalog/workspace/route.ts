@@ -19,21 +19,22 @@ import { createAdminClient } from "@/lib/supabase/server";
 /* R-076: Microsoft 365 and Zoho rows come through too (suiteRows keeps only the suites). */
 import { publicWorkspaceCatalog, suiteRows } from "@/lib/catalog/public-workspace";
 import { READ_BUDGET_MS, TIMED_OUT, recall, remember, withBudget } from "./last-good";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: tenant read per request — outside production an unset BUY_PAGE_TENANT_ID refuses (503,
+   which the website already treats as "use the fallback prices"), never the live tenant. */
 
 export const dynamic = "force-dynamic";
 
 type Shaped = ReturnType<typeof publicWorkspaceCatalog>;
 
 /** One read of the price list, shaped for the public. Throws on a database error. */
-async function readCatalog(): Promise<Shaped> {
+async function readCatalog(tenantId: string): Promise<Shaped> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("items")
     .select("name, msrp, prices, vendor")
-    .eq("tenant_id", BUY_PAGE_TENANT_ID)
+    .eq("tenant_id", tenantId)
     .in("vendor", ["google", "microsoft", "zoho"])
     .eq("kind", "main")
     .eq("is_active", true)
@@ -48,7 +49,9 @@ export async function GET() {
   /* R-703: a database that does not answer used to cost 40 s and end in 503 (847 times on
      9–10 Oct). The read now gets a budget; past it, or on an error, the last good list is
      served with `stale: true` — see last-good.ts for why that is safe and when it stops. */
-  const read = readCatalog();
+  const tenantId = websiteTenantId();
+  if (!tenantId) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
+  const read = readCatalog(tenantId);
   read.catch(() => {}); // a late failure after we answered from memory is already logged below
   let failure: unknown = null;
   try {

@@ -7,7 +7,7 @@
  * toast printed the raw state key ("Sent notice_sent to Acme"). Pure rules here, tested;
  * the page only wires them.
  */
-import { decideCadence, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
+import { decideCadence, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
 
 export interface RenewalSubLike {
   id: string;
@@ -23,14 +23,27 @@ export interface RenewalRowLike {
   daysUntil: number;
 }
 
-/** A renewed or suspended subscription must never get a renewal reminder. */
-export function isTerminalRenewal(state: string | null | undefined): boolean {
-  return state === "renewed" || state === "suspended";
+/**
+ * No reminder for a suspended subscription, nor for a renewed one whose NEW term's first
+ * reminder is still ahead. R-1562: a bare `state === "renewed"` held every renewed row
+ * back for good — record_payment writes 'renewed' while rolling renewal_date one term on,
+ * so at T-30 of that new term it owes again. Without a date, 'renewed' counts as settled.
+ */
+export function isTerminalRenewal(
+  state: string | null | undefined,
+  renewalDate?: string | null,
+  termMonths?: number | null,
+  today: Date = new Date(),
+): boolean {
+  if (state === "suspended") return true;
+  if (state !== "renewed") return false;
+  return renewalDate ? renewalIsSettled(state, renewalDate, termMonths, today) : true;
 }
 
-/** Who "Bulk reminder" emails: renewing in the next 30 days, not renewed / suspended. */
-export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[]): T[] {
-  return rows.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 30 && !isTerminalRenewal(r.sub.renewal_state));
+/** Who "Bulk reminder" emails: renewing in the next 30 days, not suspended / settled-renewed. */
+export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date()): T[] {
+  return rows.filter((r) => r.daysUntil >= 0 && r.daysUntil <= 30
+    && !isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today));
 }
 
 export function bulkReminderConfirm(targets: RenewalRowLike[]): { title: string; body: string } {

@@ -18,12 +18,12 @@ import type { LedgerVendor } from "@/lib/queries/ledger";
 import { incomeTaxPaidForFy, type TaxPaymentLike } from "@/lib/accounting/tax-payments";
 import { splitItc } from "@/lib/gst/itc";
 import { statutoryDues } from "@/lib/accounting/tds-deductor";
-import { bookValueNow, type AssetLike } from "@/lib/accounting/depreciation";
+import { netBlockAt, registerDepreciationForRange, type AssetLike } from "@/lib/accounting/depreciation";
 import { buildPnl } from "@/lib/accounting/pnl";
 import { buildExpenseReport } from "@/lib/accounting/expense-report";
 import { projectCostForPeriod } from "@/lib/accounting/project-cost";
 import type { PnLNumbers, PnlMasters } from "@/lib/accounting/pnl-assemble";
-import { toIstDate } from "@/lib/dates/ist";
+import { toIstDate, fyStartYear as fyStartYearOf, fyLabelOfYear } from "@/lib/dates/ist";
 
 type N = number | null;
 
@@ -116,8 +116,10 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const prepaidAdvances = r.advs.reduce((s, a) => s + Math.max(0, (a.total_amount ?? 0) - (a.consumed_amount ?? 0)), 0);
 
   const registeredEmi = new Set(r.fa.map((a) => a.emi_purchase_id).filter(Boolean));
-  const fixedAssets     = r.fa.reduce((s, a) => s + bookValueNow(a as AssetLike, todayIso), 0)
-                        + r.emiP.filter((x) => !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
+  /* R-1578: net block (cost − depreciation charged to date), same as report-rpc.ts. */
+  const block           = netBlockAt(r.fa as AssetLike[], todayIso);
+  const emiUnregistered = r.emiP.filter((x) => !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
+  const fixedAssets     = block.net + emiUnregistered;
   const emiFinanced     = r.emiP.reduce((s, x) => s + (x.financed ?? 0), 0);
   const emiPrincipalPaid = r.emiPay.reduce((s, x) => s + (x.principal_part ?? 0), 0);
   const emiLoansPayable = Math.max(0, emiFinanced - emiPrincipalPaid);
@@ -139,9 +141,8 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
 
   const reimbursementsPayable = r.reimb.reduce((s, x) => s + (x.amount ?? 0), 0);
 
-  const [y, m] = todayIso.split("-").map(Number);
-  const fyStartYear = m < 4 ? y - 1 : y;
-  const fyLabel = `FY ${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, "0")}`;
+  const fyStartYear = fyStartYearOf(todayIso);
+  const fyLabel = `FY ${fyLabelOfYear(fyStartYear)}`;
 
   const invGST = r.invoices.reduce(
     (s, i) => s + (i.tax_amount ?? Math.round((i.amount ?? 0) * (i.tax_rate ?? 18) / (100 + (i.tax_rate ?? 18)))), 0);
@@ -161,7 +162,7 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, fixedAssetsCost: block.cost + emiUnregistered, accumulatedDepreciation: block.accumulated, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
     /* S45 slice 2 heads (migration 20261009170000) are SQL-only — the old per-row code never had them. */
     expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel };
 }
@@ -257,9 +258,12 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
     revenueByProject,
   });
 
+  /* R-1578: depreciation for the range from the register (masters), as pnl-assemble.ts. */
+  const depreciation = registerDepreciationForRange(m.assets ?? [], range.from, range.to);
+
   const model = buildPnl({
     revenue,
-    expenses: expensesTotal + commissions,
+    expenses: expensesTotal + commissions + depreciation,
     billedCogs: cogs > 0 ? cogs : null,
     vendors: m.vendors,
     projectCost: projectCost.total,
@@ -267,7 +271,7 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
   });
 
   const grossMargin = revenue - cogs;
-  const netProfit   = grossMargin - expensesTotal - commissions;
+  const netProfit   = grossMargin - expensesTotal - commissions - depreciation;
   const inputGST    = billsGst + expensesGst;
   const netGST      = outputGST - inputGST;
   const marginPct = revenue > 0 ? (grossMargin / revenue) * 100 : 0;
@@ -276,7 +280,7 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
   return {
     revenue, revenueCount, cogs, cogsCount, grossMargin,
     expenses: expensesTotal, expensesCount, expensesByCategory, expenseReport,
-    commissions, commissionsCount, netProfit,
+    commissions, commissionsCount, depreciation, netProfit,
     outputGST, inputGST, netGST, itcBlocked: itc.blocked,
     marginPct, profitPct, model, projectCost, employeeNames: m.employeeNames,
   };

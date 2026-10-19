@@ -24,13 +24,14 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
    lib/email/owner-alert.ts for why there is no fallback constant. */
 const FROM_EMAIL    = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 const TRIAL_DAYS = 14;
 
@@ -46,6 +47,8 @@ const trialSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   try {
     const body   = await request.json();
     const parsed = trialSchema.safeParse(body);

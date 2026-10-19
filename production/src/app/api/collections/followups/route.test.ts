@@ -28,6 +28,8 @@ vi.mock("@/lib/supabase/server", () => {
     const one = async () => {
       if (table === "users") return { data: { tenant_id: "T1", role: db.role }, error: null };
       if (table === "customers") return { data: db.customer, error: null };
+      // R-1544: the linked bills are this customer's (cross-customer refusal: lib/collections/email-send-once.test.ts).
+      if (["invoices", "quotes", "subscriptions"].includes(table)) return { data: { customer_id: CUST }, error: null };
       if (table === "payment_followups") {
         if (inserted) return db.insertError ? { data: null, error: db.insertError } : { data: { id: "F1", assigned_to: inserted.assigned_to }, error: null };
         return { data: db.latest, error: null };

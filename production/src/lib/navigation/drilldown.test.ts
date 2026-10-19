@@ -115,6 +115,7 @@ describe("no dead drill-downs", () => {
       "app/(app)/dashboard/page.tsx",
       "components/features/deals/deals-strip.tsx",
       "components/features/dashboard/company-section.tsx",
+      "lib/hooks/nav-badge-views.ts",   // R-1541: the sidebar badges open these views
     ].map(read).join("\n");
     for (const name of Object.keys(DRILL) as DrillName[]) {
       expect(files, name).toContain(`drillHref("${name}")`);
@@ -284,7 +285,8 @@ describe("aging, expenses and the prepaid form", () => {
     const page = read("app/(app)/accounting/aging/page.tsx");
     expect(page).toMatch(/const owed = invoiceBalance\(/);
     expect(page).not.toMatch(/const owed = inv\.net_payable \?\? inv\.amount/);
-    expect(page).toMatch(/paid_amount, status, invoice_date/);
+    // R-1586: the paged read lives next to the page (aging/read.ts).
+    expect(read("app/(app)/accounting/aging/read.ts")).toMatch(/paid_amount, status, invoice_date/);
     expect(page).toMatch(/rows   = bucket \? allRows\.filter\(\(r\) => r\.buckets\[bucket\] > 0\) : allRows/);
   });
   it("expenses Top category opens that category; prepaid form points staff advances away", () => {

@@ -21,6 +21,7 @@
  * one table so a future Budget is a one-line change — and the table says when it was set.
  */
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { fyStartYear } from "@/lib/dates/ist";
 
 export type Severity = "stop" | "check";
 export interface LawWarning { code: string; severity: Severity; law: string; message: string }
@@ -94,9 +95,7 @@ export interface BillCheck {
 
 /** Last day to claim ITC on a bill — 30 Nov after the end of its financial year (CGST Act s.16(4)). */
 export function itcDeadline(billDate: string): string {
-  const [y, m] = billDate.split("-").map(Number);
-  const fyEndYear = m >= 4 ? y + 1 : y;
-  return `${fyEndYear}-11-30`;
+  return `${fyStartYear(billDate) + 1}-11-30`;
 }
 
 export function checkVendorBill(b: BillCheck, us: Party, todayIST: string): LawWarning[] {

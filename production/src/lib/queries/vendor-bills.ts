@@ -11,9 +11,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { toastDeleteBlocked } from "@/lib/queries/expenses";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
+import { billItcEligibility } from "@/lib/gst/bill-itc";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 
 type VendorBillInsert = Database["public"]["Tables"]["vendor_bills"]["Insert"];
 type VendorBillUpdate = Database["public"]["Tables"]["vendor_bills"]["Update"];
@@ -61,17 +64,32 @@ export function useVendorBills(opts?: {
   });
 }
 
+/** Our own GST state code ("07") — the tenant's state_code, else its GSTIN's first two digits. */
+async function fetchOwnStateCode(): Promise<string | null> {
+  const supabase = createClient();
+  const { data } = await supabase.from("tenants").select("state_code, gstin").limit(1).maybeSingle();
+  return data?.state_code?.trim() || stateCodeFromGstin(data?.gstin ?? null) || null;
+}
+
+/** R-1576: our state, for the bill ITC state check (Add Bill dialog). */
+export function useOwnStateCode() {
+  return useQuery({ queryKey: ["tenant", "own-state-code"], queryFn: fetchOwnStateCode, staleTime: 10 * 60 * 1000 });
+}
+
 /** Tiny aggregate used by dashboard widgets. */
 export function useVendorBillsTotals(opts: { from: string; to: string }) {
   return useQuery({
     queryKey: ["vendor_bills", "totals", opts],
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("vendor_bills")
-        .select("total, paid_amount, cgst, sgst, igst, category")
-        .gte("bill_date", opts.from)
-        .lte("bill_date", opts.to);
+      const [{ data, error }, ownStateCode] = await Promise.all([
+        supabase
+          .from("vendor_bills")
+          .select("total, paid_amount, cgst, sgst, igst, category, document_type, vendor_gstin")
+          .gte("bill_date", opts.from)
+          .lte("bill_date", opts.to),
+        fetchOwnStateCode(),
+      ]);
       if (error) throw error;
 
       const rows = data ?? [];
@@ -80,14 +98,19 @@ export function useVendorBillsTotals(opts: { from: string; to: string }) {
         total:         0,
         paid:          0,
         outstanding:   0,
-        inputGst:      0,    // CGST + SGST + IGST — claimable as input tax credit
+        /* R-1576: only GST that IS credit (tax invoice, vendor GSTIN, right head, not s.17(5)). */
+        inputGst:      0,
+        /** GST on these bills that gives no credit — it is cost. */
+        gstNoCredit:   0,
         cogs:          0,    // any category starting with COGS-
       };
       for (const r of rows) {
         totals.total       += r.total       ?? 0;
         totals.paid        += r.paid_amount ?? 0;
         totals.outstanding += (r.total ?? 0) - (r.paid_amount ?? 0);
-        totals.inputGst    += (r.cgst ?? 0) + (r.sgst ?? 0) + (r.igst ?? 0);
+        const gst = (r.cgst ?? 0) + (r.sgst ?? 0) + (r.igst ?? 0);
+        if (billItcEligibility({ ...r, ownStateCode }).eligible) totals.inputGst += gst;
+        else totals.gstNoCredit += gst;
         if (typeof r.category === "string" && r.category.startsWith("COGS-")) {
           totals.cogs += r.total ?? 0;
         }
@@ -218,9 +241,12 @@ export async function getBillAttachmentUrl(path: string): Promise<string | null>
 export function useDeleteVendorBill() {
   const qc = useQueryClient();
   return useMutation({
+    /* R-1577: one transaction in the database (delete_vendor_bill). A bill whose payment is
+       still matched to a bank line, or that sits in an open payment run, is refused with the
+       page to fix it — un-reconcile in Banking first, the delete_payment rule. */
     mutationFn: async (id: string) => {
       const supabase = createClient();
-      const { error } = await supabase.from("vendor_bills").delete().eq("id", id);
+      const { error } = await supabase.rpc("delete_vendor_bill", { p_id: id });
       if (error) throw error;
       return id;
     },
@@ -228,6 +254,6 @@ export function useDeleteVendorBill() {
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
       toast.success("Bill deleted");
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastDeleteBlocked(err, "Ye bill yahan se nahi hata — neeche ke button se us page par jao jahan ise theek kiya jaata hai."),
   });
 }

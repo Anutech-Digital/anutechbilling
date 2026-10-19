@@ -8,7 +8,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const search = readFileSync(join(process.cwd(), "src/site/components/home/DomainSearch.tsx"), "utf8");
-const dock = readFileSync(join(process.cwd(), "src/site/components/home/DomainSearchDock.tsx"), "utf8");
+// R-1606/R-1607 (19 Oct 2026): the always-on DomainSearchDock was never mounted and is deleted;
+// the /domains page (DomainLanding) is the search box visitors use, so it is pinned instead.
+const landing = readFileSync(join(process.cwd(), "src/site/components/domains/DomainLanding.tsx"), "utf8");
 const lookup = readFileSync(join(process.cwd(), "src/site/lib/domain-search.ts"), "utf8");
 // The route and the lookup it calls, read together: since 24 Sep 2026 the lookup lives in
 // lib/domains/live-lookup.ts so the checkout charges the same live price the search shows.
@@ -36,7 +38,7 @@ describe("DomainSearch reads real availability", () => {
     /* Comments are not code — both callers legitimately NAME the proxy while
        explaining themselves. Strip them, then assert on what actually runs. */
     const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-    for (const [name, src] of [["hero", search], ["dock", dock]] as const) {
+    for (const [name, src] of [["hero", search], ["/domains", landing]] as const) {
       expect(src, `${name} should import searchDomains`).toContain("searchDomains");
       expect(code(src), `${name} must not fetch availability itself`).not.toContain("/api/domains/availability");
     }

@@ -163,9 +163,24 @@ export function decideCadence(input: CadenceInput): CadenceDecision {
       return {
         targetState:    "grace_period",
         daysUntilRenewal: daysOut,
-        shouldSendEmail: input.currentState !== "grace_period" && input.currentState !== "renewed" && input.currentState !== "suspended",
+        /* R-1562: 'renewed' is the START of a term (see isTerminal below), so it gets the
+           grace notice like any step that has not reached grace yet. */
+        shouldSendEmail: input.currentState !== "grace_period" && input.currentState !== "suspended",
         tone:           "grace",
         shouldSuspend:  false,
+      };
+    }
+    /* R-1562: 'renewed' with renewal_date already past grace means this term was never
+       chased at all (the cron was off, or the row sat in the old dead end). Never suspend a
+       customer who was not told once: send the final notice now; if it stays unpaid, the
+       next run (state final_sent) suspends as usual. */
+    if (input.currentState === "renewed") {
+      return {
+        targetState:      "final_sent",
+        daysUntilRenewal: daysOut,
+        shouldSendEmail:  true,
+        tone:             "final",
+        shouldSuspend:    false,
       };
     }
     return {
@@ -173,7 +188,7 @@ export function decideCadence(input: CadenceInput): CadenceDecision {
       daysUntilRenewal: daysOut,
       shouldSendEmail: false,        // no email on hard suspend
       tone:           null,
-      shouldSuspend:  input.currentState !== "suspended" && input.currentState !== "renewed",
+      shouldSuspend:  input.currentState !== "suspended",
     };
   }
 
@@ -196,7 +211,13 @@ export function decideCadence(input: CadenceInput): CadenceDecision {
        subscription sitting at notice_sent (index 1 of 7 there, 0 of 3 here) would be read
        as further along than it is and skip its own reminders. */
     const rankOf = (s: RenewalState) => triggers.findIndex((t) => t.step === s);
-    const isTerminal = input.currentState === "renewed" || input.currentState === "suspended";
+    /* R-1562: only 'suspended' is terminal. 'renewed' was too, and that was a money leak:
+       record_payment writes it in the same UPDATE that rolls renewal_date one term on
+       (20261011120000_r718_money_roles.sql ~1800), so every trigger reached from here
+       belongs to the NEW term — which then got no reminder, no renewal quote and no
+       grace/suspend, for good. 'renewed' is not on the ladder, so it ranks -1 like
+       'pending' and the first reached step fires. */
+    const isTerminal = input.currentState === "suspended";
     return {
       targetState:      trigger.step,
       daysUntilRenewal: daysOut,
@@ -214,6 +235,37 @@ export function decideCadence(input: CadenceInput): CadenceDecision {
     tone:             null,
     shouldSuspend:    false,
   };
+}
+
+/** Days before renewal_date the first reminder of a term goes out: T-30, or T-7 on a one-month term. */
+export function firstReminderDaysOut(termMonths: number | null | undefined): number {
+  return triggersForTerm(termMonths)[0].daysOut;
+}
+
+/**
+ * R-1562 — "paid for this term, nothing due yet". True only while the state is 'renewed'
+ * AND the new term's first reminder is still ahead. The manual buttons (Generate quote,
+ * Send now) and the bulk reminder hold back on exactly this, instead of on the bare
+ * 'renewed' state — which would hold them back for every term after the first paid one.
+ */
+export function renewalIsSettled(
+  state: string | null | undefined,
+  renewalDate: Date | string | null | undefined,
+  termMonths: number | null | undefined,
+  today: Date = new Date(),
+): boolean {
+  if (state !== "renewed" || !renewalDate) return false;
+  const at = renewalDate instanceof Date ? renewalDate : new Date(renewalDate);
+  return daysBetween(today, at) > firstReminderDaysOut(termMonths);
+}
+
+/**
+ * R-1562 — the cron re-opens a paid row for its new term: 'renewed' and today's decision
+ * is past 'pending' (a reminder, grace or final notice is due). The cron writes 'pending'
+ * first, so the Renewals screen and Today inbox show the row even if the email fails.
+ */
+export function reopensForNewTerm(state: string | null | undefined, decision: CadenceDecision): boolean {
+  return state === "renewed" && decision.targetState !== "pending";
 }
 
 /** Friendly label for a renewal state, for UI badges. */

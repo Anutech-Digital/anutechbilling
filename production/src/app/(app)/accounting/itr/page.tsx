@@ -31,6 +31,7 @@ import { downloadCSV } from "@/lib/csv";
 import { useItrPack } from "@/lib/queries/itr";
 import { useComplianceLog, toFiledMap, useMarkComplianceFiled, useUnmarkComplianceFiled } from "@/lib/queries/compliance";
 import { currentFinancialYear, type ItrPack } from "@/lib/tax/itr";
+import { fyLabelOfYear } from "@/lib/dates/ist";
 import { itrCsvRows, ITR_CSV_HEADERS } from "@/lib/tax/itr-export";
 
 const ITR_OBLIGATION_KEY = "it_itr6";
@@ -64,8 +65,8 @@ export default function ItrPage() {
         <div>
           <h1 className="font-serif text-2xl text-ink">Income Tax (ITR) — taiyari</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-3">
-            Ye computation ANDAZA hai, assessment nahi — depreciation, disallowance aur audit
-            CA jodega. Return khud incometax.gov.in par, DSC se, file hota hai; ye pack us
+            Ye computation ANDAZA hai, assessment nahi — depreciation asset register se (IT Act
+            WDV) aata hai; disallowance aur audit CA jodega. Return khud incometax.gov.in par, DSC se, file hota hai; ye pack us
             kaam ko ghanton se minto me laata hai.
           </p>
         </div>
@@ -82,7 +83,7 @@ export default function ItrPage() {
                   : "rounded-full border border-hairline bg-paper px-3 py-1.5 text-xs text-ink-2 hover:border-hairline-strong"
               }
             >
-              FY {y}-{String((y + 1) % 100).padStart(2, "0")}
+              FY {fyLabelOfYear(y)}
               {y === nowFy.startYear ? " (chal raha)" : ""}
             </button>
           ))}

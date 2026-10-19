@@ -117,5 +117,10 @@ describe("Remind dialog", () => {
     expect(sent).toMatchObject({ customerId: CUST, subject: "Payment reminder: ₹72,500 pending", invoiceId: "INV-101", quoteId: "Q-1" });
     expect(sent.message).toContain(FIRST);
     expect(sent).not.toHaveProperty("to");
+    // R-1544: the same id on a retry (Send pressed again while this dialog is open).
+    expect(String(sent.requestId)).toMatch(/^[0-9a-f-]{36}$/);
+    fireEvent.click(screen.getByRole("button", { name: "Send email" }));
+    await waitFor(() => expect(st.calls.filter((c) => c.url.endsWith("/email"))).toHaveLength(2));
+    expect(st.calls.filter((c) => c.url.endsWith("/email"))[1].body.requestId).toBe(sent.requestId);
   });
 });

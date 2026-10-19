@@ -36,10 +36,13 @@ import { currentAuthUser } from "@/server/auth/compat";
 import { initials } from "@/lib/utils";
 import {
   EMAIL_UNVERIFIED_ERROR,
+  INVITE_EXPIRED_ERROR,
+  INVITE_USED_ERROR,
   LINK_CONFLICT_ERROR,
   isEmailVerified,
   linkRefusedLogRow,
 } from "./link-guard";
+import { inviteAcceptRefusal, isInviteExpired } from "@/lib/auth/invite-accept";
 import { normalizeEmail, type InviteMatch } from "@/lib/auth/membership";
 import { decideOnboarding } from "@/lib/auth/domain";
 import {
@@ -203,10 +206,17 @@ export async function GET(request: NextRequest) {
   // lower(email) guarantees at most one row, and invites are stored lower-cased.
   const { data: inviteRow } = await admin
     .from("team_invites")
-    .select("tenant_id, role")
+    .select("tenant_id, role, expires_at")
     .eq("email", normalizeEmail(email))
     .is("accepted_at", null)
     .maybeSingle();
+
+  /* R-733: an expired invite is not a reason to make this person a company of their own —
+     they were invited somewhere. Tell them to ask for a new invite. */
+  if (inviteRow && isInviteExpired(inviteRow.expires_at)) {
+    try { await createClient().auth.signOut(); } catch { /* the login page still explains */ }
+    return NextResponse.redirect(`${origin}/login?error=${INVITE_EXPIRED_ERROR}`);
+  }
 
   // No invite? Before assuming this is a new company, look at the domain — the
   // signal that was always available and never read. See domain.ts for why a
@@ -219,22 +229,25 @@ export async function GET(request: NextRequest) {
   });
 
   if (decision.mode === "join") {
-    const { error: joinErr } = await admin.from("users").insert({
-      id:        authUser.id,
-      tenant_id: decision.tenantId,
-      email,
-      full_name: fullName,
-      initials:  initials(fullName),
-      role:      decision.role,
-      color:     "indigo",
+    /* R-733: claim the invite + create the membership in ONE transaction (accept_team_invite).
+       It used to insert the users row and then mark the invite by `ilike(email)` — two
+       callbacks racing both joined, and a crash between the writes left the invite open.
+       No token here: Google proved the mailbox, so the verified email is the key. */
+    const { error: joinErr } = await admin.rpc("accept_team_invite", {
+      p_email:     normalizeEmail(email),
+      p_user_id:   authUser.id,
+      p_full_name: fullName,
+      p_initials:  initials(fullName),
     });
     if (joinErr) {
-      console.error("[oauth/callback] invite-join failed:", joinErr);
+      console.error("[oauth/callback] invite-join failed:", joinErr.message);
+      const refused = inviteAcceptRefusal(joinErr.message).status;
+      if (refused === 410 || refused === 409) {
+        try { await createClient().auth.signOut(); } catch { /* the login page still explains */ }
+        return NextResponse.redirect(`${origin}/login?error=${refused === 410 ? INVITE_EXPIRED_ERROR : INVITE_USED_ERROR}`);
+      }
       return NextResponse.redirect(`${origin}/login?error=provision_failed`);
     }
-    // One-time: mark the invite accepted so it can't be reused.
-    await admin.from("team_invites").update({ accepted_at: new Date().toISOString() })
-      .ilike("email", normalizeEmail(email)).is("accepted_at", null);
     // Joined an existing, set-up tenant — go straight to the app.
     return NextResponse.redirect(`${origin}${next}`);
   }

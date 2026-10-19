@@ -38,6 +38,7 @@ import {
   type TdsStatus,
 } from "@/lib/queries/tds-receivable";
 import { istToday } from "@/lib/dates/ist";
+import { logExport } from "@/lib/export-log";
 
 const STATUS_COLOR: Record<TdsStatus, "rose" | "emerald" | "amber" | "slate" | "indigo"> = {
   pending_cert:  "rose",
@@ -72,6 +73,7 @@ function downloadCSV(filename: string, headers: string[], rows: (string | number
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  void logExport({ what: filename, rowCount: rows.length, format: "csv" });
 }
 
 /**

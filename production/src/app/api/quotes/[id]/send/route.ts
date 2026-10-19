@@ -36,7 +36,8 @@ import { quoteContact } from "@/lib/quotes/quote-contact";
 import { firstChaseAfterSend } from "@/lib/ai/cadence";
 import { scheduleSalesLoop } from "@/lib/ai/sales-loops.server";
 import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteAmountDue } from "@/lib/payments/amount-due";
+import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
@@ -108,7 +109,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       id, tenant_id, customer_id, customer_name, plan, seats, amount,
       status, payment_status, line_items, subtotal, discount_pct, tax_rate,
       created_date, expires_date, notes, is_renewal, is_add_seats, is_one_off, is_extension, extension_months, public_token, lead_id,
-      prospect_state_code, prospect_country, currency, terms_conditions
+      prospect_state_code, prospect_country, currency, terms_conditions,
+      billing_cycle, exchange_rate, invoice_id
     `)
     .eq("id", params.id)
     .single();
@@ -257,15 +259,15 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
 
   // ── 7. Render PDF attachment ─────────────────────────────────────
   // This is the PDF the customer actually receives, so the scan-to-pay QR
-  // matters more here than on the in-app download. quoteAmountDue() decides
-  // whether one is offered at all — it refuses non-INR quotes (UPI settles only
-  // in rupees) and quotes already invoiced (the invoice owns that ask).
+  // matters more here than on the in-app download. R-1613: readQuoteDueNow gives the
+  // same figure the online Pay button charges (remainder / instalment 1) and none at all
+  // on a non-INR, paid or already-invoiced quote (the invoice owns that ask).
   const tenantUpi = tenant as { name?: string; upi_vpa?: string | null; upi_payee_name?: string | null };
   const upi = await buildQuoteUpiQr({
     vpa:       tenantUpi.upi_vpa,
     payeeName: tenantUpi.upi_payee_name ?? tenant.name,
     quoteId:   quote.id,
-    amountDue: quoteAmountDue(quote),
+    amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(supabase, quote)),
   });
 
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;

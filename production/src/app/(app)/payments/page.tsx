@@ -30,6 +30,7 @@ import {
   usePayments,
   useDeletePayment,
   useRefundPayment,
+  fetchRefundCredit,
   useOutstandingReceivables,
   useMarkReminderSent,
   useSuspendSubscription,
@@ -83,7 +84,9 @@ import { scopeToCustomer, paymentTotals, paymentsSummaryLine } from "./customer-
 import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
 import { paymentFeeView } from "@/lib/razorpay/fee-expense";
 import { createClient } from "@/lib/supabase/client";
-import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { toastError } from "@/lib/errors/toast-error";
+import { cashReceived } from "@/lib/payments/cash-received";
+import { refundCover } from "@/lib/payments/refund-cover";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -1106,16 +1109,35 @@ function PaymentRowView({
   };
 
   const handleRefund = async () => {
-    /* R-455: a payment whose quote has a GST invoice cannot be refunded until a credit note
-       exists (refund_payment refuses). Say so BEFORE the reason box, with the way there —
-       not after the operator has typed a reason and pressed Book refund. */
+    /* R-455 / R-1563: a payment whose quote has a GST invoice is refunded only against a
+       credit note (refund_payment checks it). Ask BEFORE the reason box how much credit-note
+       credit is open on that invoice: covered → straight on to the refund; not covered →
+       "Credit note first" with the exact amount still needed and the way to the invoice's
+       Issue credit note. It used to send the user to the invoice and, after the note, back
+       to the same dialog — a loop, because it never looked at the note. */
+    let creditNoteCover: number | null = null;
     if (ctx?.invoiceId) {
-      if (await confirm({
-        title: "Make a credit note first",
-        body: `This payment's quote has GST invoice ${ctx.invoiceId}. Make a credit note on that invoice, then come back and book the refund here.`,
-        confirmLabel: "Open invoice",
-      })) router.push(invoiceHref(ctx.invoiceId) as never);
-      return;
+      let have: Awaited<ReturnType<typeof fetchRefundCredit>>;
+      try {
+        have = await fetchRefundCredit(p.id, ctx.invoiceId);
+      } catch (e) {
+        toastError(e);
+        return;
+      }
+      const { need, gap } = refundCover({ cash: cashReceived(p), ...have });
+      if (gap > 0) {
+        if (await confirm({
+          title: "Credit note first",
+          body:
+            `This payment's quote has GST invoice ${ctx.invoiceId}. Money on a tax invoice goes back only against a credit note.\n\n` +
+            `Refunding ${rupee(cashReceived(p))} needs ${rupee(need)} covered by credit notes on ${ctx.invoiceId}` +
+            (have.creditNoteCredit > 0 ? ` — ${rupee(have.creditNoteCredit)} is covered now.` : ` — none yet.`) +
+            `\n\nIssue a credit note of ${rupee(gap)} on it (Invoices → ${ctx.invoiceId} → ⋯ → Issue credit note), then press Refund here again.`,
+          confirmLabel: "Open invoice list",
+        })) router.push(`/invoices?q=${encodeURIComponent(ctx.invoiceId)}` as never);
+        return;
+      }
+      creditNoteCover = need;
     }
     /* In-app box, not window.prompt — that returned null in the desktop app, so Refund
        did nothing (R-052). */
@@ -1133,8 +1155,12 @@ function PaymentRowView({
     if (await confirm({
       title: `Refund ${rupee(p.amount)} on ${p.quote_id}?`,
       body:
-        "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
-        "and any credit from this payment is closed.\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
+        (creditNoteCover !== null
+          ? `In the books: the payment is marked refunded, an RFV voucher is created, and ${rupee(creditNoteCover)} of the ` +
+            `credit made by the credit note on ${ctx?.invoiceId} is paid out (it can no longer be used on another quote). The invoice stays settled.`
+          : "In the books: the payment is marked refunded, an RFV voucher is created, the quote/subscription balance reopens " +
+            "and any credit from this payment is closed.") +
+        "\n\nYou must send the actual money yourself from Razorpay or the bank — this button does not touch the gateway.",
       confirmLabel: "Book refund",
       danger: true,
     })) refund.mutate({ id: p.id, reason: reason.trim() }, { onSuccess: () => { void offerCancel(reason.trim()); } });

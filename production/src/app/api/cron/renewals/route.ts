@@ -36,7 +36,7 @@ import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createAdminClient } from "@/lib/supabase/server";
 import { primaryContactEmail } from "@/lib/contacts/primary";
-import { decideCadence, CADENCE_TRIGGERS } from "@/lib/renewals/cadence";
+import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm } from "@/lib/renewals/cadence";
 import { renderTemplate } from "@/lib/renewals/templates";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
@@ -337,6 +337,25 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         emailStatus:    undefined as string | undefined,
       };
 
+      /* ── R-1562: a paid renewal re-opens for its NEW term ─────────────
+         record_payment writes 'renewed' while rolling renewal_date one term on. Once that
+         new term's first reminder is due, the row goes back to 'pending' BEFORE any email,
+         so the Renewals screen, its buttons and the Today inbox see it even if the send
+         below fails. Guarded on the state and date read: a payment landing in between
+         (new date, 'renewed' again) is not overwritten. */
+      if (reopensForNewTerm(sub.renewal_state, decision)) {
+        const { error: reopenErr } = await supabase
+          .from("subscriptions")
+          .update({ renewal_state: "pending" })
+          .eq("id", sub.id)
+          .eq("renewal_state", "renewed")
+          .eq("renewal_date", sub.renewal_date!);
+        if (reopenErr) {
+          result.errors.push({ subscription_id: sub.id, message: `Could not re-open the renewed subscription for its new term: ${reopenErr.message}` });
+          return;
+        }
+      }
+
       // ── Suspend path ─────────────────────────────────────────────
       if (decision.shouldSuspend) {
         await supabase
@@ -419,28 +438,31 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           notes:           `Auto-generated renewal quote for subscription ${sub.id}`,
         });
 
-        /* A domain whose live renewal price could not be read gets no email this run: a
-           reminder with no price and no way to pay is worse than one a day later. The
-           reason is logged by createDomainRenewalQuote and the step is retried next run,
-           because nothing was logged as sent. */
-        if (sub.vendor === "domain" && !quoteResult) {
-          detail.emailStatus = "(held: live domain renewal price unavailable — retried next run)";
+        /* No renewal quote → no email this run, for EVERY vendor (R-1571). This held only
+           domains; everything else went out with no quote, no accept link and an amount
+           made up as mrr × 12 — 12x wrong on a monthly term, 144x where mrr already held
+           a yearly figure (the exact case renewalTerm refuses). A reminder with no true
+           price and no way to pay is worse than one a day later. Nothing is logged as
+           sent, so the step is retried next run; the reason is in errors. */
+        if (!quoteResult) {
+          const why = sub.vendor === "domain" && sub.domain
+            ? `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.`
+            : `No renewal quote for ${sub.plan}: it could not be built (price check refused or no quote number — see the server log). No reminder sent; retried next run.`;
+          detail.emailStatus = "(held: no renewal quote — retried next run)";
           result.emails_skipped += 1;
-          result.errors.push({ subscription_id: sub.id, message: `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.` });
+          result.errors.push({ subscription_id: sub.id, message: why });
           result.details.push(detail);
           return;
         }
 
-        const renewalQuoteId = quoteResult?.quoteId ?? null;
-        const renewalQuote = quoteResult
-          ? {
-              amount:       quoteResult.amount,
-              subtotal:     quoteResult.subtotal,
-              discount_pct: quoteResult.discountPct,
-              tax_rate:     quoteResult.taxRate,
-            }
-          : null;
-        const lineItems: QuoteLineItem[] = quoteResult?.lineItems ?? [];
+        const renewalQuoteId = quoteResult.quoteId;
+        const renewalQuote = {
+          amount:       quoteResult.amount,
+          subtotal:     quoteResult.subtotal,
+          discount_pct: quoteResult.discountPct,
+          tax_rate:     quoteResult.taxRate,
+        };
+        const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
         // Public accept-link token (SEC-1)
         let renewalToken: string | null = null;
@@ -482,7 +504,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
             customer_name: resolvedContact.name || customer?.contact_name || customer?.name || sub.customer_name,
             seller_name:   tenant.name,
             plan:          sub.plan,
-            amount:        renewalQuote ? rupee(renewalQuote.amount) : null,
+            amount:        rupee(renewalQuote.amount),
             due_date:      new Date(sub.renewal_date!).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
             days:          Math.abs(decision.daysUntilRenewal),
             link:          renewalQuoteId && renewalToken
@@ -519,7 +541,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
           tenantPhone:     tenant.phone,
           planName:        sub.plan,
           seats:           sub.seats,
-          amount:          renewalQuote?.amount ?? (sub.mrr ?? 0) * 12,
+          amount:          renewalQuote.amount,
           renewalDate:     new Date(sub.renewal_date!).toLocaleDateString("en-IN", {
             day: "numeric", month: "short", year: "numeric",
           }),
@@ -537,7 +559,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
 
         // 4. Render PDF attachment (only when we have a quote)
         let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
-        if (renewalQuote && lineItems.length > 0) {
+        if (lineItems.length > 0) {
           try {
             const blob = await renderQuotePDF({
               tenantLogo:    await tenantLogo(sub.tenant_id, tenant.logo_url),
@@ -546,7 +568,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               tenantEmail:   tenant.email,
               tenantPhone:   tenant.phone,
               tenantAddress: tenant.address,
-              quoteId:       renewalQuoteId!,
+              quoteId:       renewalQuoteId,
               customerName:  sub.customer_name,
               contactName:   customer?.contact_name ?? null,
               contactEmail:  customer?.contact_email ?? null,
@@ -634,12 +656,12 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
 
       // ── No-op path: sync renewal_state if it drifted ─────────────
       // Guard against REGRESSING from terminal states:
-      //   - 'renewed': sub was just paid for this cycle. decideCadence
-      //     would return 'pending' for far-future renewal_dates, which
-      //     would wipe the "just renewed" signal until next T-15.
-      //   - 'suspended': sub was auto-suspended. Don't quietly revive it.
-      // Both states must be cleared explicitly (operator action or new
-      // renewal payment via record_payment).
+      //   - 'renewed': sub was just paid for this cycle and its new term's
+      //     first reminder is not due yet (decision 'pending'), so the
+      //     "Renewed" badge holds. R-1562: it does NOT hold past that —
+      //     the re-open step above moves it to 'pending' for the new term.
+      //   - 'suspended': sub was auto-suspended. Don't quietly revive it;
+      //     cleared by an operator or a renewal payment via record_payment.
       const isTerminalState =
         sub.renewal_state === "renewed" ||
         sub.renewal_state === "suspended";

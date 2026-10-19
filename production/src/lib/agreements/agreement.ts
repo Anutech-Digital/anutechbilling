@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Filling a lawyer's agreement template with facts — and never writing a clause.
  *

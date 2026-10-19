@@ -20,11 +20,10 @@ const strip = (f: string) =>
 const HOOKS = [
   ["src/lib/queries/contacts.ts",          "useAllContacts",            7],  // R-535: + customer_contacts
   ["src/lib/queries/contacts.ts",          "useCelebrations",           1],
-  ["src/lib/queries/leads.ts",             "useLeads",                  1],
+  ["src/lib/queries/leads.ts",             "useLostLeads",              1],  // R-1537 (useLeads removed, R-1536)
   ["src/lib/queries/trials.ts",            "useTrials",                 1],
   ["src/lib/queries/trials.ts",            "useActiveTrials",           1],
   ["src/lib/queries/trials.ts",            "useTrialsExpiringSoon",     1],
-  ["src/lib/queries/imported-contacts.ts", "useImportedContacts",       1],
   ["src/lib/queries/marketing-hub.ts",     "useSpendThisMonth",         1],
   ["src/lib/queries/marketing-hub.ts",     "useTrackingLinks",          2],
   ["src/lib/queries/marketing-hub.ts",     "useEmailSuppressions",      1],

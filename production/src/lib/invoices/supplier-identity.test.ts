@@ -119,3 +119,43 @@ describe("why a guessed state code is a money bug", () => {
     expect(isValidGstin("07ABDCA0298H1ZP")).toBe(true);
   });
 });
+
+/* R-1529 — a Bill of Supply (CGST Rule 49): GSTIN only "if registered". */
+describe("Bill of Supply", () => {
+  const unregBill = { document_kind: "bill_of_supply", supplier_gst_status: "unregistered" };
+  const compBill  = { document_kind: "bill_of_supply", supplier_gst_status: "composition" };
+
+  it("an unregistered supplier's Bill of Supply needs no GSTIN", () => {
+    const r = supplierIdentity(anutech({ tenantGstin: null }), unregBill);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.supplier.gstin).toBeNull();
+  });
+
+  it("but still needs the address — Rule 49 asks for it", () => {
+    const r = supplierIdentity(anutech({ tenantGstin: null, tenantAddress: null }), unregBill);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.missing.map((m) => m.field)).toEqual(["address"]);
+    expect(supplierIdentityMessage(r, unregBill)).toMatch(/bill of supply cannot be issued/i);
+  });
+
+  it("a composition supplier is registered — its GSTIN is still required", () => {
+    const r = supplierIdentity(anutech({ tenantGstin: null }), compBill);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.missing[0].field).toBe("gstin");
+    expect(r.missing[0].why).toMatch(/composition/i);
+  });
+
+  it("a Tax Invoice still refuses without a GSTIN (unchanged)", () => {
+    const r = supplierIdentity(anutech({ tenantGstin: null }), { document_kind: "tax_invoice" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(supplierIdentityMessage(r, { document_kind: "tax_invoice" })).toMatch(/tax invoice cannot be issued/i);
+  });
+
+  it("a GSTIN that is present is printed on the Bill of Supply too", () => {
+    const r = supplierIdentity(anutech(), compBill);
+    expect(r.ok && r.supplier.gstin).toBe("07ABDCA0298H1ZP");
+  });
+});

@@ -8,6 +8,7 @@
  * reopened only if its issue is measured again AFTER it was marked done.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { errorMessage, fetchAllRows } from "@/lib/ops/fetch-all";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { medianMetrics, scorePage, uiPrompt, sanitizeUiInsights, basicUiInsight, sanitizeMetrics, type UiMetrics, type UiPage, type UiInsight } from "@/lib/ui/score";
 
@@ -32,11 +33,14 @@ function pagesFrom(rows: readonly Row[], production: boolean): UiPage[] {
 
 export async function runUiAnalysis(admin: Admin, tenantId: string, withSite: boolean): Promise<{ pages: number; insights: number }> {
   const since = new Date(Date.now() - 7 * 86400_000).toISOString();
-  let q = admin.from("ux_events").select("surface, path, metrics, created_at").eq("kind", "ui_probe").gte("created_at", since).limit(5000);
-  q = withSite ? q.or(`tenant_id.eq.${tenantId},tenant_id.is.null`) : q.eq("tenant_id", tenantId);
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Row[];
+  /* R-1588: paged up to the old 5000 — `.limit(5000)` came back as 1000 rows (the gateway
+     caps every answer). Oldest-first on `id`, as the unordered read effectively was. */
+  const data = await fetchAllRows((from, to) => {
+    let q = admin.from("ux_events").select("surface, path, metrics, created_at").eq("kind", "ui_probe").gte("created_at", since);
+    q = withSite ? q.or(`tenant_id.eq.${tenantId},tenant_id.is.null`) : q.eq("tenant_id", tenantId);
+    return q.order("id", { ascending: true }).range(from, to);
+  }, { maxRows: 5000 }).catch((e: unknown) => { throw new Error(errorMessage(e)); });
+  const rows = data as Row[];
   const production = process.env.NODE_ENV === "production";
   const pages = pagesFrom(rows, production);
   if (pages.length === 0) return { pages: 0, insights: 0 };

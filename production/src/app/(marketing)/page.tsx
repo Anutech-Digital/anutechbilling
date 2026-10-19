@@ -6,8 +6,10 @@ import { siteKindForHost } from "@/site/lib/site-split";
 import { sitePreviewOn, SITE_PREVIEW_COOKIE } from "@/site/lib/site-preview";
 import { HomeCompany } from "@/site/components/home/HomeCompany";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
-import { COMPANY, SITE_URL } from "@/site/lib/config";
+import { COMPANY, SITE_URL, SHOW_PREMIER_PARTNER, PARTNER_BADGE } from "@/site/lib/config";
 import { emailFromRate, fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
+import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
+import { domainTeaser } from "@/site/lib/data/domain-teaser";
 
 /**
  * Home — the whole company (R-155, 5 Oct 2026). Pardeep: the home is about Anutech Digital,
@@ -67,7 +69,9 @@ export default async function HomePage(
 
   // "Business email from ₹…" on the IT card: the cheapest of the live licence rates and
   // the Anutech Mail mailbox, so the card never undercuts or overstates /email.
-  const editions = mergeEditions(await fetchLiveWorkspace());
+  // R-1599: the Domains card's ".in from ₹…" is the live price the checkout charges.
+  const [workspace, tlds] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices()]);
+  const editions = mergeEditions(workspace);
   const emailFrom = emailFromRate(editions);
 
   const jsonLd = {
@@ -81,9 +85,10 @@ export default async function HomePage(
         url: SITE_URL,
         logo: `${SITE_URL}/anutech-digital-logo.png`,
         description:
-          "Delhi-based software company (since 2014) building custom software and office automation for Indian businesses, and a Google Premier Partner selling Google Workspace, Microsoft 365 and Zoho licences, domains, hosting and business email with GST invoices. Maker of ResellerOS.",
+          `Delhi-based software company (since 2014) building custom software and office automation for Indian businesses, and a ${SHOW_PREMIER_PARTNER ? PARTNER_BADGE : "reseller"} selling Google Workspace, Microsoft 365 and Zoho licences, domains, hosting and business email with GST invoices. Maker of ResellerOS.`,
         foundingDate: "2014",
-        award: "Google Premier Partner",
+        // R-1602: the award is claimed only behind the flag (site/lib/config.ts).
+        ...(SHOW_PREMIER_PARTNER ? { award: PARTNER_BADGE } : {}),
         taxID: COMPANY.gstin,
         address: { "@type": "PostalAddress", addressLocality: "Rohini", addressRegion: "Delhi", addressCountry: "IN" },
         contactPoint: { "@type": "ContactPoint", contactType: "customer support", email: COMPANY.supportEmail, areaServed: "IN", availableLanguage: ["en", "hi"] },
@@ -124,7 +129,7 @@ export default async function HomePage(
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <HomeCompany emailFrom={emailFrom} />
+      <HomeCompany emailFrom={emailFrom} domainTeaser={domainTeaser(tlds)} />
     </>
   );
 }

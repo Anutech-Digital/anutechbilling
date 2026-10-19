@@ -287,11 +287,44 @@ export const ROUTE_DENY: Partial<Record<UserRole, string[]>> = {
   accountant: ["/customers/new"],
 };
 
-/** The route guard: allowed by the nav (prefix) and not denied for this role. */
+/**
+ * R-1542 (18 Oct 2026): app pages that sit under NO menu row, and the roles that may open
+ * them by URL. Every other page is decided by its menu row (nav-route-guard.test.ts fails
+ * when an (app) page is under neither). Kept to what each page did before: the protected
+ * ones here bounced every role but owner + manager; /platform, /products and /aa were not
+ * in middleware's list at all, so nothing gated them. /vendor-portal was here until R-1545
+ * (19 Oct 2026): its "not built yet" page is gone and next.config.mjs redirects the URL to
+ * /accounting/vendors.
+ */
+const OM_ONLY: UserRole[] = ["owner", "manager"];
+export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
+  "/mobile": OM_ONLY,
+  "/setup": OM_ONLY,
+  "/attendance/kiosk": OM_ONLY,         // the office tablet runs signed in as the owner
+  "/platform": OM_ONLY,                 // founder-only; the API refuses anyone else anyway
+  "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
+  /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
+  "/aa": ["owner", "manager", "billing", "accountant"],
+};
+
+/**
+ * The route guard — the SAME rule as the menu (R-1542, 18 Oct 2026). The most specific row
+ * whose href is `pathname` or a parent of it decides: the role may open the page only if
+ * that row is in its menu (filterNavForRole). Before, any row the role could see admitted
+ * every path under it, so the Companies row (billing/accountant) admitted Parent Accounts
+ * (an owner + manager child row), /reports admitted the Profit report, /settings admitted
+ * owner-only Backup. ROUTE_DENY still applies on top (sub-pages that are not menu rows).
+ */
 export function isRouteAllowed(role: UserRole, pathname: string, opts: NavFilterOpts = {}): boolean {
   const under = (a: string) => pathname === a || pathname.startsWith(a + "/");
   if ((ROUTE_DENY[role] ?? []).some(under)) return false;
-  return allowedRoutesForRole(role, opts).some(under);
+  const rows = flattenNav(APP_NAV).map((e) => e.item.href).filter(under);
+  const off = Object.keys(OFF_MENU_ROLES).filter(under);
+  const best = [...rows, ...off].sort((a, b) => b.length - a.length)[0];
+  if (!best) return false;
+  if (rows.includes(best)) return allowedRoutesForRole(role, opts).includes(best);
+  const visRole: UserRole = role === "sales_senior" ? "sales" : role;
+  return OFF_MENU_ROLES[best].includes(visRole);
 }
 
 /** Where each role lands by default (after login + on disallowed-route redirect). */
@@ -405,7 +438,6 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
-  "/vendor-portal": "Not built yet — the page says so",
   /* R-384 (7 Oct 2026, owner decision): one menu row "Products" (/items) instead of three. */
   "/items/subscriptions": "Subscriptions tab of Products (/items) — the menu row opens the page, the tab links here",
   "/items/products": "One-time products tab of Products (/items) — the menu row opens the page, the tab links here",

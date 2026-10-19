@@ -7,6 +7,7 @@ import { autonomyChangeReason,
   killSwitchFor,
   needsConfirmation,
   AI_ACTIONS,
+  visibleAiActions,
   type AiAction,
   type AutonomyPolicy,
 } from "./autonomy";
@@ -266,5 +267,20 @@ describe("route us faisle ko sach me likhta hai", () => {
     const saveAt = src.indexOf("await setAutonomy.mode(");
     const logAt  = src.indexOf("autonomyChangeReason(");
     expect(logAt).toBeGreaterThan(saveAt);
+  });
+});
+
+describe("R-1608 — a dial whose code nobody calls is not shown", () => {
+  it("payment.link.send stays declared but is hidden from /automation", () => {
+    expect(Object.keys(AI_ACTIONS)).toContain("payment.link.send");
+    expect(visibleAiActions()).not.toContain("payment.link.send");
+    expect(visibleAiActions()).toContain("dunning.send");
+    expect(visibleAiActions().length).toBe(Object.keys(AI_ACTIONS).length - 1);
+  });
+
+  it("the API lists only visible dials and refuses to switch a not-wired one", () => {
+    const src = readFileSync(join(__dirname, "../../app/api/ai/autonomy/route.ts"), "utf8");
+    expect(src).toContain("actions: visibleAiActions().map(");
+    expect(src).toMatch(/if \(spec\.notWired\)[\s\S]{0,200}status: 400/);
   });
 });

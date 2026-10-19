@@ -68,7 +68,12 @@ describe("saal ka har daawa flex par band hai", () => {
   it("saal ka figure sirf EK ternary me bacha hai — annual commitment wala", () => {
     /* Annual commitment par saal ASLI hai (saal ka sauda, 12 kishton me bill), isliye wo
        branch rehni chahiye. Ye jaanch us branch ke hataye jaane par lal hogi. */
-    expect(code).toMatch(/annualContractValue\(dTotal, billingN, firstCommitment\)/);
+    /* R-1570: the year is now computed once in lib/quotes/per-period-figures (the email
+       prints the same figure) — the PDF prints `pp.yearTotal`, and that helper still keeps
+       the annual-commitment branch through annualContractValue. */
+    expect(code).toMatch(/fmtC\(pp\.yearTotal\)/);
+    const helper = readFileSync(join(process.cwd(), "src", "lib", "quotes", "per-period-figures.ts"), "utf8");
+    expect(helper).toMatch(/annualContractValue\(i\.total, n, i\.lineCommitment\)/);
   });
 });
 

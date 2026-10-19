@@ -11,8 +11,10 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { queryKeys } from "@/lib/queries/keys";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
+import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
 
 // ============================================================
 // Read — all payments for a tenant (used by /payments dashboard)
@@ -51,6 +53,39 @@ export function usePaymentsByQuote(quoteId: string | null | undefined) {
         .order("received_at", { ascending: true });
       if (error) throw error;
       return (data ?? []) as Payment[];
+    },
+  });
+}
+
+// ============================================================
+// R-1564 — an instalment invoice's subscription + the quote it was sold on
+// ============================================================
+/**
+ * raise_subscription_billing leaves invoices.quote_id NULL on an instalment (the PDF would
+ * print the year's quote total); the link is subscription_billings.invoice_id. null = this
+ * invoice is not an instalment. quoteId null = the subscription was not sold on a quote.
+ */
+export function useInstalmentLink(invoiceId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["invoices", "instalment-link", invoiceId],
+    enabled: !!invoiceId,
+    queryFn: async (): Promise<{ subscriptionId: string; quoteId: string | null } | null> => {
+      const supabase = createClient();
+      const { data: b, error } = await supabase
+        .from("subscription_billings")
+        .select("subscription_id")
+        .eq("invoice_id", invoiceId!)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (!b) return null;
+      const { data: s, error: sErr } = await supabase
+        .from("subscriptions")
+        .select("quote_id")
+        .eq("id", b.subscription_id)
+        .maybeSingle();
+      if (sErr) throw sErr;
+      return { subscriptionId: b.subscription_id, quoteId: s?.quote_id ?? null };
     },
   });
 }
@@ -120,6 +155,23 @@ export function useUpdatePayment() {
 // double-guard, invoice-guard). GST-invoice/bank-reconciled wale case RPC
 // khud §24-shaili me refuse karta hai — message me agla kadam hota hai.
 // Gateway par paisa YE NAHI bhejta — wo operator Razorpay/bank se karta hai.
+/**
+ * R-1563: the open credit that can pay a refund on an invoiced quote — credit made by credit
+ * notes on that invoice (R-1566) and the payment's own open overpayment credit. Read just
+ * before the refund dialog; refund_payment checks the same thing again on the click.
+ */
+export async function fetchRefundCredit(paymentId: string, invoiceId: string): Promise<{ ownOpenCredit: number; creditNoteCredit: number }> {
+  const supabase = createClient();
+  const [own, cn] = await Promise.all([
+    supabase.from("customer_credits").select("amount").eq("source_payment_id", paymentId).eq("status", "open"),
+    supabase.from("customer_credits").select("amount").eq("source_invoice_id", invoiceId).eq("source", "credit_note").eq("status", "open"),
+  ]);
+  if (own.error) throw new Error(own.error.message);
+  if (cn.error) throw new Error(cn.error.message);
+  const sum = (rows: { amount: number }[] | null) => (rows ?? []).reduce((s, r) => s + (r.amount ?? 0), 0);
+  return { ownOpenCredit: sum(own.data), creditNoteCredit: sum(cn.data) };
+}
+
 export function useRefundPayment(opts?: { onBlocked?: (message: string) => void }) {
   const qc = useQueryClient();
   return useMutation({
@@ -136,8 +188,13 @@ export function useRefundPayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
-      qc.invalidateQueries({ queryKey: ["customer-credits"] });
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
+      // R-1567: the refund gives back credit this payment used and reverses its TDS receivable.
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
+      // R-1563: a refund on an invoiced quote pays out credit-note credit and moves the invoice.
+      qc.invalidateQueries({ queryKey: ["invoices"] });
       toast.success(`Refund booked — voucher ${r.refund_voucher_no}`, {
         description: "Kitab me darj hua. Asli paisa Razorpay/bank se aapko khud bhejna hai.",
       });
@@ -174,8 +231,12 @@ export function useDeletePayment(opts?: { onBlocked?: (message: string) => void 
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
-      qc.invalidateQueries({ queryKey: ["purchase-orders"] });
+      qc.invalidateQueries({ queryKey: queryKeys.purchaseOrders() });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
+      // R-1568: delete removes its open credit, gives back credit it used, reverses its TDS.
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
+      qc.invalidateQueries({ queryKey: ["tds_receivable"] });
       toast.success("Payment deleted & reversed");
     },
     // When the caller wants to surface blockers in a dialog (dependency-aware
@@ -395,11 +456,14 @@ export interface MultiPayInvoiceRow {
   status: string;
   tax_rate: number | null;
   quote_id: string | null;
+  /** R-1564: a subscription instalment (no quote of its own) — record_instalment_payment. */
+  instalment?: boolean;
 }
 
 /**
- * The customer's invoices that still owe money AND are the invoice their own quote points
- * at (quotes.invoice_id = invoices.id) — the only ones record_multi_invoice_payment accepts.
+ * The customer's invoices that still owe money AND are either the invoice their own quote
+ * points at (quotes.invoice_id = invoices.id) or, R-1564, a subscription instalment
+ * (subscription_billings.invoice_id) — the ones record_multi_invoice_payment accepts.
  * Paged (R-264): no silent 1000-row stop.
  */
 export function useCustomerOpenInvoices(customerId: string | null | undefined) {
@@ -414,7 +478,6 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
           .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id")
           .eq("customer_id", customerId!)
           .not("status", "in", "(paid,void)")
-          .not("quote_id", "is", null)
           .order("invoice_date", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to));
@@ -428,7 +491,25 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
         if (error) throw error;
         for (const q of data ?? []) if (q.invoice_id) own.add(`${q.id}|${q.invoice_id}`);
       }
-      return invoices.filter((i) => i.quote_id && own.has(`${i.quote_id}|${i.id}`));
+      /* R-1564: quote-less invoices that are subscription instalments — the OLDEST open one
+         of each subscription only. Two instalments of one subscription share its quote, and
+         quote + reference is the replay key, so the server takes one per receipt; anything
+         over that instalment's due is recorded from the invoice page, where it goes to the
+         next instalment by itself. */
+      const quoteless = invoices.filter((i) => !i.quote_id).map((i) => i.id);
+      const billing: Array<{ invoice_id: string | null; subscription_id: string; term_start: string; period_index: number }> = [];
+      for (let i = 0; i < quoteless.length; i += 200) {
+        const { data, error } = await supabase
+          .from("subscription_billings")
+          .select("invoice_id, subscription_id, term_start, period_index")
+          .in("invoice_id", quoteless.slice(i, i + 200));
+        if (error) throw error;
+        billing.push(...(data ?? []));
+      }
+      const instalments = new Set(oldestInstalmentPerSubscription(billing));
+      return invoices
+        .filter((i) => (i.quote_id ? own.has(`${i.quote_id}|${i.id}`) : instalments.has(i.id)))
+        .map((i) => (instalments.has(i.id) ? { ...i, instalment: true } : i));
     },
   });
 }
@@ -467,9 +548,13 @@ export function useRecordMultiInvoicePayment() {
       return data;
     },
     onSuccess: () => {
-      for (const key of ["payments", "invoices", "quotes", "customers", "customer-credits", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
+      for (const key of ["payments", "invoices", "quotes", "customers", "outstanding-receivables", "nav-badges", "tds_receivable", "subscriptions"]) {
         qc.invalidateQueries({ queryKey: [key] });
       }
+      /* R-1589: was "customer-credits" — no query reads that key, so the excess-to-credit
+         balance stayed old. Aging was not refreshed at all. */
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
     },
   });
 }

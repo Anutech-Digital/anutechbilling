@@ -10,6 +10,7 @@ import type { Metadata } from "next";
 import { PublicShell } from "../_components/public-shell";
 import { PLATFORM_OPERATOR } from "@/lib/platform";
 import { PRICING_LINE } from "@/site/lib/data/reselleros-home";
+import { DATA_LOCATION } from "@/site/lib/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -118,16 +119,17 @@ export default function AboutPage() {
         <section>
           <h2 className="font-serif text-2xl mb-3">Company facts</h2>
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            {/* "Hosted in Mumbai" neeche JAAN-BOOJHKAR raha — wo Google Cloud ka region
-                hai, company ka sheher nahi. Company Delhi ki hai. */}
+            {/* "Hosted in" = Google Cloud ka region, company ka sheher nahi (company Delhi ki
+                hai). R-1600: region ek hi jagah se — DATA_LOCATION (site/lib/config.ts).
+                "DPDP compliant" ka daava hataya: CA/vakeel ki haan ke bina nahi likhte. */}
             <Fact label="Legal entity"      value={PLATFORM_OPERATOR.legalName} />
             <Fact label="GSTIN"             value={PLATFORM_OPERATOR.gstin} />
             <Fact label="Country"           value="India" />
             <Fact label="Headquarters"      value="Rohini, Delhi" />
-            <Fact label="Hosted in"         value="Google Cloud, Mumbai (asia-south1)" />
-            <Fact label="Database"          value="Supabase Postgres (Mumbai)" />
+            <Fact label="Hosted in"         value={DATA_LOCATION.label} />
+            <Fact label="Database"          value={`${DATA_LOCATION.database} (${DATA_LOCATION.city})`} />
             <Fact label="Payments"          value="Razorpay (PCI-DSS compliant)" />
-            <Fact label="Data privacy"      value="DPDP Act 2023 compliant" />
+            <Fact label="Data privacy"      value="Privacy policy and grievance officer published" />
             <Fact label="GST compliance"    value="HSN 998313 · CGST §31" />
           </dl>
         </section>

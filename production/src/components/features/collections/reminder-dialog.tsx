@@ -103,8 +103,11 @@ export function ReminderDialog({ open, onOpenChange, customerId, customerName }:
 
   // Fill the form once per draft (a redraft replaces it; typing is never overwritten otherwise).
   const filledFrom = React.useRef<number>(0);
+  // R-1544: one id per opening of the dialog — a retry after a timeout sends the SAME id, so the
+  // server answers "already sent" instead of mailing the customer twice.
+  const [requestId, setRequestId] = React.useState(() => crypto.randomUUID());
   React.useEffect(() => {
-    if (!open) { filledFrom.current = 0; setProblem(null); setUnlogged(null); return; }
+    if (!open) { filledFrom.current = 0; setProblem(null); setUnlogged(null); setRequestId(crypto.randomUUID()); return; }
     if (draft.data && draft.dataUpdatedAt !== filledFrom.current) {
       filledFrom.current = draft.dataUpdatedAt;
       reset({ subject: draft.data.subject, message: draft.data.message, nextFollowUpOn: defaultNextFollowUp(istToday()) });
@@ -113,11 +116,14 @@ export function ReminderDialog({ open, onOpenChange, customerId, customerName }:
 
   const sendEmail = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      postJson<{ sentTo: string; logged: boolean; warning?: string }>("/api/collections/reminder/email", body),
+      postJson<{ sentTo: string; logged: boolean; warning?: string; alreadySent?: boolean }>("/api/collections/reminder/email", body),
     onSuccess: (out) => {
       void qc.invalidateQueries({ queryKey: ["collections"] });
       void qc.invalidateQueries({ queryKey: followupsKey(customerId) });
-      if (out.logged) {
+      if (out.alreadySent) {
+        toast.success(`Reminder already went to ${out.sentTo}`, { description: "It was not sent again." });
+        onOpenChange(false);
+      } else if (out.logged) {
         toast.success(`Reminder emailed to ${out.sentTo}`, { description: "Follow-up logged." });
         onOpenChange(false);
       } else {
@@ -186,6 +192,7 @@ export function ReminderDialog({ open, onOpenChange, customerId, customerName }:
       invoiceId: about?.invoiceId ?? undefined,
       quoteId: about?.quoteId ?? undefined,
       subscriptionId: about?.subscriptionId ?? undefined,
+      requestId,
     });
   };
 

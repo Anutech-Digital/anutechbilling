@@ -35,7 +35,7 @@
  */
 import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { NextResponse, type NextRequest } from "next/server";
-import { turnstileRefusal } from "@/lib/security/turnstile-guard";
+import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
 import { z } from "zod";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
@@ -54,6 +54,7 @@ import {
   TIER_DISPLAY_NAME,
 } from "@/lib/pricing/workspace";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
    (single tenant); resolve per-tenant once we go multi-tenant." That TODO came due
@@ -68,8 +69,8 @@ const APP_URL       = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resell
 // this from drifting when new tenants get added (the previous "oldest tenant"
 // heuristic broke when seed data created an earlier Demo Co tenant that
 // Pardeep wasn't logged in as). Falls back to the active Demo Co tenant.
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 const enquirySchema = z.object({
   fullName:    z.string().min(2).max(120),
@@ -101,10 +102,13 @@ function pagePath(body: unknown): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   try {
     const body = await request.json();
-    /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set. */
-    const botRefusal = await turnstileRefusal(request.headers, body);
+    /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set.
+       R-1549: the website chat's own lead call (marked in-process, never from the network) passes. */
+    const botRefusal = await turnstileRefusalFor(request, body);
     if (botRefusal) return botRefusal;
     const parsed = enquirySchema.safeParse(body);
 

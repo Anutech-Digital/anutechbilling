@@ -28,8 +28,10 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 
 export type FeedbackRow = Database["public"]["Tables"]["feedback"]["Row"];
@@ -75,10 +77,17 @@ const LIVE = {
 const STATUS_KEY = ["feedback", "statuses"] as const;
 export interface FeedbackStatusRow { id: string; status: string; resolution_note: string | null }
 async function fetchStatuses(): Promise<FeedbackStatusRow[]> {
-  const supabase = createClient();
-  const { data, error } = await supabase.from("feedback").select("id, status, resolution_note").limit(5000);
-  if (error) throw error;
-  return (data ?? []) as FeedbackStatusRow[];
+  return fetchFeedbackStatuses(createClient());
+}
+
+/**
+ * R-1588: every report's status. The old `.limit(5000)` came back as 1000 rows (the gateway
+ * caps every answer), so the tab counts stopped at 1000. Paged, ordered on `id`.
+ */
+export async function fetchFeedbackStatuses(supabase: SupabaseClient<Database>): Promise<FeedbackStatusRow[]> {
+  const data = await fetchAllRows((from, to) => supabase.from("feedback").select("id, status, resolution_note")
+    .order("id", { ascending: true }).range(from, to));
+  return data as FeedbackStatusRow[];
 }
 
 /**

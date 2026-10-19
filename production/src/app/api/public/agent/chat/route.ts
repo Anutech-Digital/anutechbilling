@@ -11,7 +11,7 @@
  * quota — the visitor gets the honest fallback: quote page + WhatsApp, never an error
  * page and never a made-up answer.
  */
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { publicWorkspaceCatalog } from "@/lib/catalog/public-workspace";
@@ -26,15 +26,23 @@ import {
   reflectionPrompt,
   promisesDelivery,
   honestNoDeliveryReply,
+  leadNotSavedReply,
   type PublicChatReply,
 } from "@/lib/ai/public-sales-chat";
+import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route";
+import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/route";
+import { passThroughHeaders, type LocalHandler } from "@/site/lib/app-forward";
+import { markTrustedInternalCall } from "@/lib/security/turnstile-guard";
+import { siteVisitorLimit } from "@/lib/security/rate-limit";
+import { redactContacts } from "@/lib/security/redact-contact";
 import { loadAutonomyPolicy, logAiAction } from "@/lib/ai/autonomy.server";
 import { createBareClient } from "@/lib/supabase/bare";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveAutonomy } from "@/lib/ai/autonomy";
+import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +59,8 @@ function bareLog(): SupabaseClient | null {
 }
 
 export async function POST(request: NextRequest) {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return NextResponse.json(websiteTenantMissingBody(), { status: 503 });
   let body: unknown;
   try {
     body = await request.json();
@@ -151,79 +161,88 @@ export async function POST(request: NextRequest) {
        3. The widget has not already been credited (leadAlreadyCaptured) — one chat, one
           lead. The app's own Duplicate? marker is the backstop behind that.
 
-     Then the enquiry goes to this deployment's OWN public enquiry endpoints — the same
-     machinery, gates, auto-quote and mails as the website form. Self-addressed via the
-     request's own origin rather than an env URL, because an env-configured self-URL in
-     this repo has already pointed at a dead service once. */
+     Then the enquiry goes to this deployment's OWN public enquiry handlers — the same
+     machinery, gates, auto-quote and mails as the website form.
+
+     ── R-1549 (19 Oct 2026): IN-PROCESS, as the visitor, past Turnstile only as ourselves ──
+     It used to fetch http://127.0.0.1:$PORT/api/public/enquiry/* (an earlier version used the
+     request's own origin, which on Cloud Run said https to a plain-HTTP container and every
+     lead failed). That loopback hop carried no visitor IP, so every chat visitor shared ONE
+     rate-limit bucket, and no Turnstile token, so with TURNSTILE_SECRET_KEY set every chat
+     lead was refused — and a refusal was only a log line, the visitor still read "our team
+     will contact you". Now the handler is called in-process (the same way /api/enquiry calls
+     it since R-1598), with the visitor's headers (IP, Referer), on a request object marked as
+     this server's own call so Turnstile lets it through; the lead counts against this
+     visitor's IP and email (siteVisitorLimit); and a lead that was not saved is SAID. */
   const alreadyCaptured = (body as Record<string, unknown>)?.leadAlreadyCaptured === true;
   let leadCreated: { quoteId: string | null } | null = null;
+  let leadSaveFailed = false;
 
   if (guarded.lead && !alreadyCaptured && leadDetailsAppearInTranscript(guarded.lead, messages)) {
     const L = guarded.lead;
-    /* ── LOOPBACK, not the request URL's own origin — measured failure, 1 Sep 2026 ──
-       The first version self-addressed via the incoming request's origin, and on Cloud
-       Run that resolves with the https scheme while the CONTAINER serves plain HTTP on
-       $PORT (TLS ends at the proxy). The live log, on the first real chat lead:
-
-           ERR_SSL_WRONG_VERSION_NUMBER … ssl3_get_record:wrong version number
-
-       — the reply went out, the lead silently did not. Loopback HTTP is what a
-       container can always say to itself; PORT is set by Cloud Run (8080) and the
-       request port covers local dev. (The test bans the origin accessor by name — and
-       this comment cannot name it either, or the comment defeats the test: the third
-       time this session that exact failure shape has appeared.) */
-    const origin = `http://127.0.0.1:${process.env.PORT || request.nextUrl.port || "3000"}`;
     const summary = messages
       .filter((m) => m.role === "user")
       .map((m) => m.text)
       .join(" | ")
       .slice(0, 1_500);
+    /* One enquiry handler call, built here and marked as ours — never a request from the network. */
+    const file = (path: string, handler: LocalHandler, payload: Record<string, unknown>) =>
+      handler(markTrustedInternalCall(new NextRequest(new URL(path, request.url), {
+        method: "POST",
+        headers: passThroughHeaders(request),
+        body: JSON.stringify(payload),
+      })));
     try {
-      if (L.tier && L.seats) {
-        const res = await fetch(new URL("/api/public/enquiry/workspace", origin), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fullName: L.fullName,
-            companyName: L.company || L.fullName,
-            email: L.email,
-            phone: L.phone,
-            seats: L.seats,
-            tierId: L.tier,
-            billing: L.term === "monthly" ? "monthly" : "annual",
-            message: `Via the website AI sales chat. Conversation: ${summary}`,
-          }),
-          signal: AbortSignal.timeout(15_000),
-          cache: "no-store",
+      const limit = await siteVisitorLimit("enquiry", request.headers, L.email);
+      if (!limit.ok) {
+        leadSaveFailed = true;
+        console.error(`[public/agent-chat] lead filing failed: rate-limited for this visitor (retry in ${limit.retryAfterSec}s)`);
+      } else if (L.tier && L.seats) {
+        const res = await file("/api/public/enquiry/workspace", workspaceEnquiry, {
+          fullName: L.fullName,
+          companyName: L.company || L.fullName,
+          email: L.email,
+          phone: L.phone,
+          seats: L.seats,
+          tierId: L.tier,
+          billing: L.term === "monthly" ? "monthly" : "annual",
+          message: `Via the website AI sales chat. Conversation: ${summary}`,
         });
         if (res.ok) {
           const data = (await res.json()) as { draftQuoteId?: string | null };
           leadCreated = { quoteId: data.draftQuoteId ?? null };
+        } else {
+          leadSaveFailed = true;
+          console.error(`[public/agent-chat] lead filing failed: workspace handler answered ${res.status}`);
         }
       } else {
-        const res = await fetch(new URL("/api/public/enquiry/general", origin), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fullName: L.fullName,
-            companyName: L.company || L.fullName,
-            email: L.email,
-            phone: L.phone,
-            product: "google-workspace",
-            ...(L.seats ? { seats: L.seats } : {}),
-            message: `Via the website AI sales chat. Conversation: ${summary}`,
-          }),
-          signal: AbortSignal.timeout(15_000),
-          cache: "no-store",
+        const res = await file("/api/public/enquiry/general", generalEnquiry, {
+          fullName: L.fullName,
+          companyName: L.company || L.fullName,
+          email: L.email,
+          phone: L.phone,
+          product: "google-workspace",
+          ...(L.seats ? { seats: L.seats } : {}),
+          message: `Via the website AI sales chat. Conversation: ${summary}`,
         });
         if (res.ok) leadCreated = { quoteId: null };
+        else {
+          leadSaveFailed = true;
+          console.error(`[public/agent-chat] lead filing failed: general handler answered ${res.status}`);
+        }
       }
     } catch (err) {
-      /* The chat reply still goes out — a failed lead write must not eat the answer. The
-         operator side loses nothing permanent: the visitor was told a person follows up,
-         and the transcript asks again on a later turn because the widget was not credited. */
-      console.error("[public/agent-chat] lead filing failed:", err);
+      /* The chat reply still goes out — a failed lead write must not eat the answer — but it
+         says the details were not saved (below), and the widget is not credited, so the
+         transcript asks again on a later turn. */
+      leadSaveFailed = true;
+      console.error("[public/agent-chat] lead filing failed:", redactContacts(err instanceof Error ? err.message : String(err)));
     }
+  }
+
+  /* R-1549: details given, not saved — the model's "our team will contact you" would be a lie. */
+  if (leadSaveFailed) {
+    guarded = { ...guarded, reply: leadNotSavedReply(messages[messages.length - 1]?.text ?? "") };
   }
 
   /* ── SELF-LEARNING, WRITE SIDE ───────────────────────────────────────────
@@ -238,7 +257,7 @@ export async function POST(request: NextRequest) {
      rahi hai" kehna TABHI sach hai jab isi turn me quotation sach me bani
      ho (leadCreated) — warna reply imandaar agle-kadam se badal di jati
      hai. suggestQuote/lead-nikaasi waise hi rehte hain. */
-  if (!leadCreated && promisesDelivery(guarded.reply)) {
+  if (!leadCreated && !leadSaveFailed && promisesDelivery(guarded.reply)) {
     /* R-235: visitor ke aakhri sandesh ki bhasha me (default English). */
     guarded = { ...guarded, reply: honestNoDeliveryReply(messages[messages.length - 1]?.text ?? "") };
   }
@@ -275,5 +294,5 @@ export async function POST(request: NextRequest) {
     })();
   }
 
-  return NextResponse.json({ ...guarded, leadCreated } satisfies PublicChatReply & { leadCreated: { quoteId: string | null } | null });
+  return NextResponse.json({ ...guarded, leadCreated, leadSaveFailed } satisfies PublicChatReply & { leadCreated: { quoteId: string | null } | null; leadSaveFailed: boolean });
 }

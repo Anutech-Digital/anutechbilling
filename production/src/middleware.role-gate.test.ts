@@ -100,3 +100,34 @@ describe("middleware role guard — every menu page is enforced (R-1440)", () =>
     expect(leaks).toEqual([]);
   });
 });
+
+/* R-1542 (18 Oct 2026): the guard matched by PREFIX, so a parent row's roles admitted every
+   child page — billing/accountant opened Parent Accounts (/customers/groups, an owner+manager
+   row under the Companies row), the Profit report and SaaS metrics (owner+manager rows under
+   the /reports and /accounting rows) by typing the URL. Billing reached /settings/backup
+   (owner-only row) through "/settings". And the manager skipped the guard entirely, so
+   ROUTE_DENY.manager (/accounting/loans-given) never ran. The most specific menu row decides now. */
+describe("middleware role guard — child rows win over their parent (R-1542)", () => {
+  it.each([
+    ["billing", "/customers/groups"], ["billing", "/customers/groups/abc"], ["billing", "/reports/profit"],
+    ["billing", "/accounting/saas-metrics"], ["billing", "/settings/backup"],
+    ["accountant", "/customers/groups"], ["accountant", "/customers/groups/abc"],
+    ["accountant", "/reports/profit"], ["accountant", "/accounting/saas-metrics"],
+    ["manager", "/accounting/loans-given"], ["manager", "/settings/backup"],
+  ])("%s on %s → bounced to its home", async (role, path) => {
+    st.role = role;
+    const r = await go(path);
+    expect(r.status).toBe(307);
+    expect(new URL(r.headers.get("location")!).pathname).toBe(ROLE_HOME[role as UserRole]);
+  });
+
+  it.each([
+    ["billing", "/customers"], ["billing", "/customers/abc"], ["billing", "/reports"],
+    ["billing", "/reports/purchases"], ["billing", "/settings"], ["accountant", "/accounting/pnl"],
+    ["manager", "/customers/groups"], ["manager", "/reports/profit"], ["manager", "/accounting/saas-metrics"],
+    ["owner", "/settings/backup"], ["owner", "/accounting/loans-given"], ["accountant", "/accounting/loans-given"],
+  ])("%s still opens %s", async (role, path) => {
+    st.role = role;
+    expect((await go(path)).status).toBe(200);
+  });
+});

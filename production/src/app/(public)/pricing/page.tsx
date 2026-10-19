@@ -12,7 +12,7 @@
  */
 import type { Metadata } from "next";
 import { PublicTopBar, PublicFooter } from "../_components/public-shell";
-import { SLA } from "@/site/lib/config";
+import { SLA, DATA_LOCATION } from "@/site/lib/config";
 import {
   PricingHero,
   BetaBanner,
@@ -130,7 +130,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What happens if I cancel?",
-    a: "You keep access until the end of the billing cycle, then your tenant goes read-only for 90 days (download anything you need). After that, data is permanently deleted per our DPDP Act 2023 retention policy.",
+    a: "You keep access until the end of the billing cycle, then your tenant goes read-only for 90 days (download anything you need). After that, data is permanently deleted as set out in the retention section of our privacy policy.",
   },
   {
     q: "Do you have a free forever plan?",
@@ -138,6 +138,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Is my data secure?",
-    a: "Postgres with row-level security (you only see your tenant&rsquo;s data). Daily backups. Hosted on Google Cloud Mumbai (asia-south1) for India data residency. DPDP Act 2023 compliant. See our privacy policy for details.",
+    // R-1600: region from DATA_LOCATION (the true one); no "India data residency" / "DPDP compliant" claim.
+    a: `Postgres with row-level security (you only see your tenant&rsquo;s data). Daily backups. Hosted on ${DATA_LOCATION.label} — ${DATA_LOCATION.database} and ${DATA_LOCATION.app}. See our privacy policy for where your data is stored and your rights.`,
   },
 ];

@@ -1,3 +1,4 @@
+// Not wired yet — R-1608 (built, kept for later)
 /**
  * Subscription start-date logic — pure, unit-tested.
  *

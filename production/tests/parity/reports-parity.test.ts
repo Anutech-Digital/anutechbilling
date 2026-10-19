@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 import { balanceSheetFromRpc, type BalanceSheetRpcRow } from "@/lib/accounting/report-rpc";
+import { bookValueAt } from "@/lib/accounting/depreciation";
 import { assemblePnl, type PnlRpcRow, type PnlMasters, type PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import {
   referenceBalanceSheet, referencePnl, referencePnlMonthlyRows,
@@ -236,7 +237,12 @@ run("S17 parity — report_* SQL functions reproduce the old TS numbers", () => 
     // Fixture ne sach me kuch ginaya — sab-zero par toEqual khaali jeet hoti (L7/L14).
     expect(want.cashAndBank).toBe(130500);
     expect(want.salaryDuesPayable).toBe(6450);
-    expect(want.fixedAssets).toBe(60000 + 9000 + 15000);
+    // R-1578: net block on as_of (cost − depreciation charged so far) + unregistered EMI at cost.
+    const asOf = d!.bsRpc.as_of;
+    expect(want.fixedAssets).toBe(
+      bookValueAt({ id: "l", name: "S17 Laptop", block: "computers", cost: 60000, put_to_use: "2026-04-20" }, asOf)
+      + bookValueAt({ id: "d", name: "S17 Desk", block: "furniture", cost: 10000, put_to_use: "2025-05-01" }, asOf)
+      + 15000);
   });
 
   it("P&L: every figure, model and project cost included", () => {

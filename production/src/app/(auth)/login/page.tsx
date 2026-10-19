@@ -21,9 +21,12 @@ import { ResendVerification } from "@/components/features/auth/resend-verificati
 import { MfaCodeForm } from "@/components/features/auth/mfa-code-form";
 import { LocalTestLogin } from "./local-test-login";
 import { DEACTIVATED_ERROR, DEACTIVATED_MESSAGE } from "@/lib/auth/deactivated";
+import { TOO_MANY_ATTEMPTS_CODE, TOO_MANY_ATTEMPTS_MESSAGE } from "@/lib/auth/browser-auth";
 import {
   EMAIL_UNVERIFIED_ERROR, EMAIL_UNVERIFIED_MESSAGE, LINK_CONFLICT_ERROR, LINK_CONFLICT_MESSAGE,
+  INVITE_EXPIRED_ERROR, INVITE_USED_ERROR,
 } from "../callback/link-guard";
+import { INVITE_EXPIRED_MESSAGE, INVITE_USED_MESSAGE } from "@/lib/auth/invite-accept";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -76,6 +79,8 @@ function LoginPageInner() {
   const [unconfirmed, setUnconfirmed] = React.useState<string | null>(null);
   /** R-048 part 2: password accepted, authenticator code still needed. */
   const [mfaStep, setMfaStep] = React.useState(false);
+  /** R-1548: too many wrong passwords for this email/IP — say so and offer a reset. */
+  const [tooMany, setTooMany] = React.useState(false);
 
   const {
     register,
@@ -96,7 +101,12 @@ function LoginPageInner() {
   async function onSubmit(values: FormData) {
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword(values);
+    setTooMany(false);
     if (error) {
+      if ((error as { code?: string }).code === TOO_MANY_ATTEMPTS_CODE) {
+        setTooMany(true);
+        return;
+      }
       if (/not confirmed/i.test(error.message)) {
         setUnconfirmed(values.email);
         return;
@@ -219,6 +229,20 @@ function LoginPageInner() {
       {(searchParams.get("error") === LINK_CONFLICT_ERROR || searchParams.get("error") === EMAIL_UNVERIFIED_ERROR) && (
         <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
           {searchParams.get("error") === LINK_CONFLICT_ERROR ? LINK_CONFLICT_MESSAGE : EMAIL_UNVERIFIED_MESSAGE}
+        </div>
+      )}
+
+      {/* R-733: the Google callback found this address's team invite expired / already used. */}
+      {(searchParams.get("error") === INVITE_EXPIRED_ERROR || searchParams.get("error") === INVITE_USED_ERROR) && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          {searchParams.get("error") === INVITE_EXPIRED_ERROR ? INVITE_EXPIRED_MESSAGE : INVITE_USED_MESSAGE}
+        </div>
+      )}
+
+      {tooMany && (
+        <div className="mb-4 rounded-md border border-amber bg-amber-soft p-3 text-sm text-amber-ink" role="alert">
+          <p className="mb-2">{TOO_MANY_ATTEMPTS_MESSAGE}</p>
+          <Link href="/forgot-password" className="font-medium underline">Forgot password</Link>
         </div>
       )}
 

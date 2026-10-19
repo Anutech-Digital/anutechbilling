@@ -1,6 +1,6 @@
 # Anutech Digital Pvt Ltd
 
-> Delhi-based Google Premier Partner (since 2014). We sell Google Workspace, Microsoft 365 and Zoho Workplace licences, domains, cPanel hosting, SSL and business email to Indian businesses — priced in rupees, with an 18% GST invoice (HSN 998313, input-credit eligible), free migration, and WhatsApp support. Maker of ResellerOS. GSTIN 07ABDCA0298H1ZP.
+> Delhi-based Google Workspace reseller (since 2014). We sell Google Workspace, Microsoft 365 and Zoho Workplace licences, domains, cPanel hosting, SSL and business email to Indian businesses — priced in rupees, with an 18% GST invoice (HSN 998313, input-credit eligible), free migration, and WhatsApp support. Maker of ResellerOS. GSTIN 07ABDCA0298H1ZP.
 
 ## Business email pricing (per user / month, GST 18% extra, annual billing)
 
@@ -18,7 +18,7 @@ Monthly (flexible) billing is higher per user; annual billing saves roughly 12�
 - .in ₹499 first year, renews ₹799 · .co.in ₹599/₹899 · .com ₹899/₹1,199 · .org ₹1,099/₹1,299 · .net ₹1,199/₹1,399 · .store ₹249/₹4,199 · .io ₹3,899/₹4,299 · .ai ₹6,999/₹7,499
 - The renewal price is always printed next to the first-year price. The domain is ₹0 with a yearly hosting plan.
 
-## Hosting (cPanel on NVMe, Mumbai/Bengaluru)
+## Hosting (cPanel, powered by Google Cloud)
 
 - Starter ₹159/mo (yearly), Business ₹359/mo, Agency ₹799/mo. Free SSL, daily backups, free migration.
 

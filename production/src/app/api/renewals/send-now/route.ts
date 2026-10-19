@@ -27,6 +27,8 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import {
   triggersForTerm,
   decideCadence,
+  renewalIsSettled,
+  firstReminderDaysOut,
   type CadenceTone,
 } from "@/lib/renewals/cadence";
 import { renderTemplate } from "@/lib/renewals/templates";
@@ -107,9 +109,17 @@ export async function POST(req: Request) {
   if (splitReason) {
     return NextResponse.json({ error: splitReason, code: "split_billed" }, { status: 400 });
   }
-  if (sub.renewal_state === "suspended" || sub.renewal_state === "renewed") {
+  if (sub.renewal_state === "suspended") {
     return NextResponse.json(
-      { error: `cannot send — subscription is ${sub.renewal_state}` },
+      { error: "This subscription is suspended — reactivate it before sending a renewal reminder." },
+      { status: 400 }
+    );
+  }
+  /* R-1562: 'renewed' blocks only while the NEW term's first reminder is still ahead. The
+     bare-state check blocked every term after the first paid one, for good. */
+  if (renewalIsSettled(sub.renewal_state, sub.renewal_date, sub.term_months)) {
+    return NextResponse.json(
+      { error: `Already renewed — the next term's reminders open ${firstReminderDaysOut(sub.term_months)} days before ${sub.renewal_date}.` },
       { status: 400 }
     );
   }
@@ -182,16 +192,22 @@ export async function POST(req: Request) {
     graceDays:       tenant.grace_period_days ?? 0,
     existingQuoteId: sub.renewal_quote_id,
   });
-  const renewalQuoteId = quoteResult?.quoteId ?? null;
-  const renewalQuote = quoteResult
-    ? {
-        amount:       quoteResult.amount,
-        subtotal:     quoteResult.subtotal,
-        discount_pct: quoteResult.discountPct,
-        tax_rate:     quoteResult.taxRate,
-      }
-    : null;
-  const lineItems: QuoteLineItem[] = quoteResult?.lineItems ?? [];
+  /* R-1571: no quote → no email. This went out with an amount made up as mrr × 12 (12x
+     wrong on a monthly term, 144x where mrr held a yearly figure) and no accept link. */
+  if (!quoteResult) {
+    return NextResponse.json(
+      { error: "The renewal quote could not be built, so no reminder was sent. Check the subscription's price against the catalogue (the price check refuses a figure far off the catalogue), then try again." },
+      { status: 422 }
+    );
+  }
+  const renewalQuoteId = quoteResult.quoteId;
+  const renewalQuote = {
+    amount:       quoteResult.amount,
+    subtotal:     quoteResult.subtotal,
+    discount_pct: quoteResult.discountPct,
+    tax_rate:     quoteResult.taxRate,
+  };
+  const lineItems: QuoteLineItem[] = quoteResult.lineItems ?? [];
 
   // Public accept-link token (SEC-1) — the link needs the quote's opaque token.
   let renewalToken: string | null = null;
@@ -234,7 +250,7 @@ export async function POST(req: Request) {
     tenantPhone:     tenant.phone,
     planName:        sub.plan,
     seats:           sub.seats,
-    amount:          renewalQuote?.amount ?? (sub.mrr ?? 0) * 12,
+    amount:          renewalQuote.amount,
     renewalDate:     new Date(sub.renewal_date).toLocaleDateString("en-IN", {
       day: "numeric", month: "short", year: "numeric",
     }),
@@ -252,7 +268,7 @@ export async function POST(req: Request) {
 
   // ── PDF attachment ──────────────────────────────────────────────
   let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
-  if (renewalQuote && lineItems.length > 0) {
+  if (lineItems.length > 0) {
     try {
       const blob = await renderQuotePDF({
         tenantLogo:    await logoDataUri((tenant as { logo_url?: string | null }).logo_url),
@@ -261,7 +277,7 @@ export async function POST(req: Request) {
         tenantEmail:   tenant.email,
         tenantPhone:   tenant.phone,
         tenantAddress: tenant.address,
-        quoteId:       renewalQuoteId!,
+        quoteId:       renewalQuoteId,
         customerName:  sub.customer_name,
         contactName:   customer?.contact_name ?? null,
         contactEmail:  customer?.contact_email ?? null,

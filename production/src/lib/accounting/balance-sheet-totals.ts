@@ -43,8 +43,9 @@ export function balanceSheetTotals(
   /* Paisa haath me (bank + mila par bank line se match nahi) — dono current.
      S45 slice 2: cash / UPI se diya kharcha jiski bank line abhi match nahi — paisa ja chuka. */
   const cashLike = (a?.cashAndBank ?? 0) + (a?.undepositedFunds ?? 0) - (a?.expensesPaidUnbanked ?? 0);
-  /* S45 slice 2: unpaid kharche + salary se kaata "other" — dono current liabilities. */
-  const otherPayables = (a?.expensesPayable ?? 0) + (a?.salaryOtherDeductions ?? 0);
+  /* S45 slice 2: unpaid kharche + salary se kaata "other" — dono current liabilities.
+     R-1580: + partner commission earned, abhi diya nahi (net; TDS dues me). */
+  const otherPayables = (a?.expensesPayable ?? 0) + (a?.salaryOtherDeductions ?? 0) + (a?.commissionsPayable ?? 0);
 
   const autoAssets =
     cashLike + (a?.receivables ?? 0) + (a?.projectReceivable ?? 0) + (a?.tdsReceivable ?? 0)

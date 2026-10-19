@@ -34,17 +34,27 @@ import { useSalaryPayments } from "@/lib/queries/payroll";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
+import { errorMessage } from "@/lib/ops/fetch-all";
 import { toast } from "sonner";
+import { build26QRows, read26Q } from "./tds-26q";
 import { groupExpenses, type GroupBy } from "@/lib/accounting/expense-groups";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { panFromGstin } from "@/lib/accounting/tds-deductor";
-import { istToday } from "@/lib/dates/ist";
+import { istToday, fyStartYear } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
+import { logExport } from "@/lib/export-log";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
+
+/** R-1577: what a delete changes — and that a linked expense is refused with where to undo it. */
+const DELETE_EXPENSE_CONFIRM = {
+  title: "Delete this expense?",
+  body: "Ye kharcha P&L aur GST se hat jaayega. Agar ye kisi salary, EMI, loan, tax challan, asset, payment run ya bank line se juda hai to delete nahi hoga — app batayega kahan se hatana hai.",
+  danger: true,
+  confirmLabel: "Delete",
+} as const;
 
 const iso = (y: number, m: number, d: number) =>
   `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -68,8 +78,8 @@ const RANGE_PRESETS: { id: string; label: string; range: () => DateRange }[] = [
       if (m >= 10)          return { from: iso(y, 10, 1), to: iso(y + 1, 3, 31) };   // H2 (Oct–Dec side)
       return { from: iso(y - 1, 10, 1), to: iso(y, 3, 31) };                          // H2 (Jan–Mar side)
     } },
-  { id: "fy",       label: "This FY",      range: () => { const { y, m } = istNow(); const fs = m >= 4 ? y : y - 1; return { from: iso(fs, 4, 1), to: iso(fs + 1, 3, 31) }; } },
-  { id: "prevfy",   label: "Previous FY",  range: () => { const { y, m } = istNow(); const fs = m >= 4 ? y : y - 1; return { from: iso(fs - 1, 4, 1), to: iso(fs, 3, 31) }; } },
+  { id: "fy",       label: "This FY",      range: () => { const { y, m } = istNow(); const fs = fyStartYear(iso(y, m, 1)); return { from: iso(fs, 4, 1), to: iso(fs + 1, 3, 31) }; } },
+  { id: "prevfy",   label: "Previous FY",  range: () => { const { y, m } = istNow(); const fs = fyStartYear(iso(y, m, 1)); return { from: iso(fs - 1, 4, 1), to: iso(fs, 3, 31) }; } },
 ];
 
 export default function ExpensesPage() {
@@ -272,47 +282,30 @@ export default function ExpensesPage() {
 
   // 26Q working — non-salary TDS you DEDUCTED (rent/professional/contractor…),
   // deductee-wise, for the current date range. For the CA / TDS software (RPU →
-  // FVU); the app can't produce the FVU itself. PAN derived from vendor GSTIN.
+  // FVU); the app can't produce the FVU itself. R-1580: + partner commissions (194H).
   async function export26Q() {
     const supabase = createClient();
-    const { data: exps } = await supabase
-      .from("expenses")
-      .select("id, expense_date, vendor_name, vendor_id, amount, gst_paid, tds_section, tds_amount")
-      .gte("expense_date", range.from).lte("expense_date", range.to)
-      .gt("tds_amount", 0);
-    if (!exps || exps.length === 0) {
-      toast.error("Is range me koi TDS-deducted expense nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
+    /* R-1586: every TDS expense of the range and its vendors, paged past the gateway's
+       1000-row cap (./tds-26q.ts). */
+    let read: Awaited<ReturnType<typeof read26Q>>;
+    try { read = await read26Q(supabase, range); }
+    catch (e) { toast.error(`26Q data load nahi hua: ${errorMessage(e)}`); return; }
+    /* R-1580: expenses + partner commissions (194H); PAN = deductee's own, else from GSTIN. */
+    const { rows, totalTds, missingPan } = build26QRows(read);
+    if (rows.length === 0) {
+      toast.error("Is range me koi TDS-deducted expense ya partner commission nahi. Pehle Add Expense me kisi vendor payment pe TDS record karo.");
       return;
     }
-    const vids = Array.from(new Set(exps.map((e) => e.vendor_id).filter(Boolean))) as string[];
-    /* PAN: the vendor's own (migration 20260927130000), else lifted from a well-formed GSTIN. */
-    const panByVid = new Map<string, string>();
-    if (vids.length) {
-      const { data: vends } = await supabase.from("vendors").select("id, gstin, pan").in("id", vids);
-      for (const v of vends ?? []) panByVid.set(v.id, v.pan ?? panFromGstin(v.gstin) ?? "");
-    }
-    const panFrom = (vid: string | null | undefined) => (vid ? panByVid.get(vid) ?? "" : "");
-    const rows = exps.slice()
-      .sort((a, b) => (a.vendor_name ?? "").localeCompare(b.vendor_name ?? "") || a.expense_date.localeCompare(b.expense_date))
-      .map((e) => [
-        e.vendor_name ?? "—",
-        panFrom(e.vendor_id),
-        e.tds_section ?? "",
-        e.expense_date,
-        (e.amount ?? 0) - (e.gst_paid ?? 0),   // amount on which TDS applies (ex-GST base)
-        e.tds_amount ?? 0,
-      ]);
     const esc = (v: string | number) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const csv = [["Deductee (vendor)", "PAN", "Section", "Date", "Amount paid (ex-GST)", "TDS deducted"], ...rows]
+    const csv = [["Deductee (vendor / partner)", "PAN", "Section", "Date", "Amount paid / credited (ex-GST)", "TDS deducted"], ...rows]
       .map((r) => r.map(esc).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url; a.download = `26Q-working-${range.from}-to-${range.to}.csv`; a.click();
     URL.revokeObjectURL(url);
-    const totalTds = exps.reduce((s, e) => s + (e.tds_amount ?? 0), 0);
-    const missingPan = rows.filter((r) => !r[1]).length;
+    void logExport({ what: "26q-working", rowCount: rows.length, format: "csv" });
     let msg = `26Q working — ${rows.length} rows, TDS ${rupee(totalTds)}. Import into your TDS software / RPU (app can't make the FVU).`;
-    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors page (bina PAN ke 20% u/s 206AA).`;
+    if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors / Referral partners page (bina PAN ke 20% u/s 206AA).`;
     toast.success(msg);
   }
 
@@ -378,7 +371,7 @@ export default function ExpensesPage() {
                 )}
                 <IconButton icon="edit" size="sm" variant="ghost" aria-label="Edit expense" onClick={() => setEditing(e)} />
                 <IconButton icon="trash" size="sm" variant="ghost" aria-label="Delete expense"
-                  onClick={async () => { if (await confirm({ title: `Delete this expense?`, danger: true, confirmLabel: "Delete" })) del.mutate(e.id); }} />
+                  onClick={async () => { if (await confirm(DELETE_EXPENSE_CONFIRM)) del.mutate(e.id); }} />
               </div>
             </td>
           </tr>
@@ -438,7 +431,7 @@ export default function ExpensesPage() {
                 aria-label="Delete expense"
                 onClick={async (ev) => {
                   ev.stopPropagation();
-                  if (await confirm({ title: `Delete this expense?`, danger: true, confirmLabel: "Delete" })) del.mutate(e.id);
+                  if (await confirm(DELETE_EXPENSE_CONFIRM)) del.mutate(e.id);
                 }}
               />
             </div>

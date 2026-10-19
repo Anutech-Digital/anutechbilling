@@ -37,7 +37,10 @@ import type { SitePromoRow, SitePromoBannerStyle } from "@/lib/supabase/database
 import { thanksUrl } from "./thanks/thanks-url";
 import { BusyPanel } from "@/components/ui/busy-panel";
 import { useTurnstile } from "@/components/shared/turnstile";
-import { COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay } from "@/site/lib/config";
+import {
+  COMPANY, SLA, WHATSAPP_NUMBER, WHATSAPP_READY, whatsappDisplay,
+  SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT,
+} from "@/site/lib/config";
 
 // ──────────────────────────────────────────────────────────────────────
 // Site promo — fetched from /api/public/site-promo/current. Updates as
@@ -513,71 +516,6 @@ const COMPARE_CATEGORIES: CompareCategory[] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────
-// Customer social proof data
-// PLACEHOLDER: replace with real customer logos + permission to display
-// before public launch. For now, illustrative Indian SME names + cities.
-// ──────────────────────────────────────────────────────────────────────
-interface CustomerLogo { name: string; city: string; }
-const CUSTOMER_LOGOS: CustomerLogo[] = [
-  { name: "Mehta Exports",     city: "Surat"      },
-  { name: "Acme Pvt Ltd",      city: "Pune"       },
-  { name: "Sharma Logistics",  city: "Delhi NCR"  },
-  { name: "Singhania & Co",    city: "Indore"     },
-  { name: "Rao Engineering",   city: "Bengaluru"  },
-  { name: "Patel Trading",     city: "Ahmedabad"  },
-];
-
-interface Testimonial {
-  name:    string;
-  role:    string;
-  company: string;
-  city:    string;
-  seats:   number;
-  quote:   string;
-  metric:  string;
-  initials: string;
-}
-const TESTIMONIALS: Testimonial[] = [
-  {
-    name:    "Rohit Mehta",
-    role:    "Managing Director",
-    company: "Mehta Exports",
-    city:    "Surat",
-    seats:   80,
-    quote:   "Switched from Microsoft 365 in one weekend. Pardeep's team did the entire migration — zero downtime, zero confusion. Old emails, calendars, drive — everything came across.",
-    metric:  "Saved ₹4.2L in year one",
-    initials: "RM",
-  },
-  {
-    name:    "Anita Rao",
-    role:    "CFO",
-    company: "Rao Engineering",
-    city:    "Bengaluru",
-    seats:   35,
-    quote:   "Phone-pickup support actually picks up. That's rare in this industry. The GST invoice has proper HSN codes — our accountant approved on first try.",
-    metric:  "Phone answered in under 30 sec",
-    initials: "AR",
-  },
-  {
-    name:    "Vikas Singhania",
-    role:    "Owner",
-    company: "Singhania & Co",
-    city:    "Indore",
-    seats:   12,
-    quote:   "I paid Saturday evening. Monday morning my whole team was on Gmail with custom domain. No tickets, no waiting, no English-only docs. Just done.",
-    metric:  "Live in 36 hours, weekend included",
-    initials: "VS",
-  },
-];
-
-// Gate the social-proof strip (logos + testimonials) OFF until real, permissioned
-// customer content exists. The names/quotes/₹-savings above are illustrative
-// placeholders — showing fabricated testimonials on a live checkout is a trust +
-// compliance risk (and against our "honest, not flattery" rule). Flip to `true`
-// once Pardeep supplies real, consented logos + testimonials.
-const SHOW_SOCIAL_PROOF = false;
-
-// ──────────────────────────────────────────────────────────────────────
 // Post-purchase timeline — removes ghosting fear
 // ──────────────────────────────────────────────────────────────────────
 interface TimelineStep { time: string; title: string; body: string; }
@@ -638,6 +576,8 @@ function GoogleGMark({ size = 32 }: { size?: number }) {
 
 /** Google Cloud "Sell · Premier Partner · Google Workspace" circular badge. */
 function PremierPartnerBadge({ size = 140 }: { size?: number }) {
+  // R-1602: shown only once the partner certificate is on file (site/lib/config.ts flag).
+  if (!SHOW_PREMIER_PARTNER) return null;
   return (
     <div
       style={{
@@ -722,8 +662,8 @@ function PremierBadgeShowcase() {
 function FounderHero({ waMessage }: { waMessage: string }) {
   return (
     <div className="relative w-full max-w-[440px]">
-      {/* Premier Partner badge — small corner accent, top-left */}
-      <div className="absolute -top-5 -left-5 z-20">
+      {/* Premier Partner badge — small corner accent, top-left (R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute -top-5 -left-5 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -736,7 +676,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <PremierPartnerBadge size={84} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Main card — white surface, generous padding, subtle border */}
       <div
@@ -756,7 +696,7 @@ function FounderHero({ waMessage }: { waMessage: string }) {
             <div className="font-serif text-xl text-ink leading-tight">Pardeep Sharma</div>
             <div className="text-sm text-ink-3 mt-0.5">Founder, ANUTECH DIGITAL PVT LTD</div>
             <div className="text-2xs text-amber-ink mt-1 font-medium">
-              Google Premier Partner · since 2014
+              {PARTNER_LINE}
             </div>
           </div>
         </div>
@@ -996,8 +936,8 @@ function HeroVisual() {
         </div>
       </div>
 
-      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out) */}
-      <div className="absolute top-0 left-0 z-20">
+      {/* TOP-LEFT — Premier Partner badge (credential stamp, extends out; R-1602: behind the flag) */}
+      {SHOW_PREMIER_PARTNER && <div className="absolute top-0 left-0 z-20">
         <div
           className="rounded-full p-1"
           style={{
@@ -1010,7 +950,7 @@ function HeroVisual() {
             <PremierPartnerBadge size={96} />
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* TOP-RIGHT — Custom email card (Workspace's #1 value prop, made
           prominent: bigger pad, larger email font, all-mono so it reads as
@@ -1348,7 +1288,7 @@ export function BuyWorkspaceClient({
               color: "#FCD34D",
             }}
           >
-            <span style={{ fontSize: 11 }}>★</span> Google Premier Partner
+            <span style={{ fontSize: 11 }}>★</span> {PARTNER_BADGE}
           </div>
           <Button asChild variant="primary" size="sm">
             <a href="#enquiry">Get started</a>
@@ -1411,7 +1351,7 @@ export function BuyWorkspaceClient({
 
             <p className="text-base text-ink-3 leading-relaxed mb-7 max-w-xl">
               <b className="text-ink">Indian SMEs</b> trust us with their email.
-              Google Premier Partner since 2014. GST invoice, Hindi support,
+              {PARTNER_LINE}. GST invoice, Hindi support,
               <b className="text-ink"> one person who picks up the phone.</b>
             </p>
 
@@ -1700,7 +1640,7 @@ export function BuyWorkspaceClient({
                   <CompareBullet positive>Razorpay · UPI · NEFT · card · net-banking</CompareBullet>
                   <CompareBullet positive>Domain verification + DNS setup done by us</CompareBullet>
                   <CompareBullet positive>Annual upfront with single invoice</CompareBullet>
-                  <CompareBullet positive>Direct Google escalation via Premier Partner status</CompareBullet>
+                  {SHOW_PREMIER_PARTNER && <CompareBullet positive>Direct Google escalation via {PARTNER_SHORT} status</CompareBullet>}
                 </ul>
               </div>
 
@@ -1727,40 +1667,6 @@ export function BuyWorkspaceClient({
           </Card>
         </div>
       </section>
-
-      {/* ── Customer logo strip + testimonials — gated until real content exists ── */}
-      {SHOW_SOCIAL_PROOF && (
-        <>
-          <section className="border-y border-hairline bg-paper-2/30 py-10">
-            <div className="max-w-[1240px] mx-auto px-6">
-              <p className="text-center text-xs uppercase tracking-[0.14em] text-ink-3 mb-6 font-medium">
-                Trusted by Indian businesses — from 5-person studios to 200-person factories
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 items-center">
-                {CUSTOMER_LOGOS.map((c) => (
-                  <LogoChip key={c.name} name={c.name} city={c.city} />
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="max-w-[1240px] mx-auto px-6 py-16 md:py-20">
-            <div className="text-center mb-12">
-              <div className="text-2xs uppercase tracking-[0.12em] font-semibold text-ink-3 mb-3">
-                Real customers · real outcomes
-              </div>
-              <h2 className="font-serif text-3xl md:text-4xl tracking-tight">
-                How others switched
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {TESTIMONIALS.map((t) => (
-                <TestimonialCard key={t.name} testimonial={t} />
-              ))}
-            </div>
-          </section>
-        </>
-      )}
 
       {/* ── Pricing section ── */}
       <section id="pricing" className="max-w-[1240px] mx-auto px-6 py-16 md:py-20">
@@ -1977,7 +1883,7 @@ export function BuyWorkspaceClient({
             <div className="font-serif text-sm">ANUTECH DIGITAL PVT LTD</div>
           </div>
           <div className="text-xs text-ink-3 font-mono">
-            Made in India · GSTIN registered · Google Premier Partner
+            Made in India · GSTIN registered · {PARTNER_BADGE}
           </div>
         </div>
       </footer>
@@ -2262,51 +2168,6 @@ function AppChip({ app }: { app: WsApp }) {
       <div className="text-xs font-medium text-ink leading-tight">{app.name}</div>
       <div className="text-3xs text-ink-3 mt-0.5 leading-tight">{app.tagline}</div>
     </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Customer logo chip — text-based brand "logo" with city tag.
-// PLACEHOLDER: in production, swap for actual SVG logos in /public/logos/
-// ──────────────────────────────────────────────────────────────────────
-function LogoChip({ name, city }: { name: string; city: string }) {
-  return (
-    <div className="text-center">
-      <div className="font-serif text-base md:text-lg text-ink leading-tight">{name}</div>
-      <div className="text-3xs uppercase tracking-wider text-ink-3 mt-1">{city}</div>
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Testimonial card — avatar + quote + metric badge
-// ──────────────────────────────────────────────────────────────────────
-function TestimonialCard({ testimonial: t }: { testimonial: Testimonial }) {
-  return (
-    <Card className="p-6 flex flex-col h-full">
-      {/* Metric badge — the bold outcome number */}
-      <div className="inline-flex items-center self-start gap-1.5 px-3 py-1 mb-4 rounded-full bg-emerald-soft text-emerald text-xs font-semibold">
-        <Icon name="trending_up" size={13} />
-        <span>{t.metric}</span>
-      </div>
-
-      {/* Quote */}
-      <blockquote className="text-sm text-ink-2 leading-relaxed mb-5 flex-1">
-        &ldquo;{t.quote}&rdquo;
-      </blockquote>
-
-      {/* Attribution */}
-      <div className="flex items-center gap-3 pt-4 border-t border-hairline">
-        <div className="w-10 h-10 rounded-full bg-amber-soft grid place-items-center font-serif text-base text-amber-ink flex-shrink-0">
-          {t.initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-ink text-sm leading-tight">{t.name}</div>
-          <div className="text-2xs text-ink-3 mt-0.5">{t.role}, {t.company}</div>
-          <div className="text-3xs text-ink-3 mt-0.5">{t.city} · {t.seats} users</div>
-        </div>
-      </div>
-    </Card>
   );
 }
 

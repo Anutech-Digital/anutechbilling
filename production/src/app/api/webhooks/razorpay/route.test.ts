@@ -137,7 +137,11 @@ function seed() {
         return { data: { payment_id: "p1", already_recorded: true, idempotent_replay: true }, error: null };
       }
       db.tables.payments.push({ id: `p-${String(args.p_reference)}`, tenant_id: q.tenant_id, quote_id: q.id, reference: args.p_reference, status: "received", amount: args.p_amount });
-      q.payment_status = "received";
+      /* R-747: as the SQL does — 'received' only once the ledger covers the quote, else 'partial'. */
+      const total = db.tables.payments
+        .filter((r) => r.quote_id === q.id && r.status === "received")
+        .reduce((s, r) => s + Number(r.amount), 0);
+      if (!q.invoice_id) q.payment_status = total >= Number(q.amount) ? "received" : "partial";
       return { data: { payment_id: "p1" }, error: null };
     }
     if (name === "generate_invoice") {
@@ -150,13 +154,16 @@ function seed() {
   };
 }
 
-function signed(event: Row, opts: { secret?: string; tenant?: string | null } = {}) {
+function signed(event: Row, opts: { secret?: string; tenant?: string | null; eventId?: string } = {}) {
   const raw = JSON.stringify(event);
   const sig = crypto.createHmac("sha256", opts.secret ?? SECRET).update(raw).digest("hex");
   const tenant = opts.tenant === undefined ? TENANT : opts.tenant;
   return new NextRequest(`https://shop.example.invalid/api/webhooks/razorpay${tenant ? `?tenant=${tenant}` : ""}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-razorpay-signature": sig },
+    headers: {
+      "content-type": "application/json", "x-razorpay-signature": sig,
+      ...(opts.eventId ? { "x-razorpay-event-id": opts.eventId } : {}),
+    },
     body: raw,
   });
 }
@@ -490,5 +497,271 @@ describe("R-045 — refund.processed leaves an instruction, once, and books noth
 
   it("a bad signature is still refused", async () => {
     expect((await POST(signed(refundEvt(), { secret: "whsec_wrong" }))).status).toBe(401);
+  });
+});
+
+/* R-1569 (audit 18 Oct): route.ts:360 answered `alreadyProcessed` for ANY event on a quote
+   already marked received — even a NEW Razorpay payment id. The customer had the pay page
+   open, the desk recorded the bank transfer, the customer paid online too: the money sat in
+   Razorpay and nothing in the app said so. R-1575: an old checkout paid after the quote was
+   combined/revised settled the REPLACED quote (provisioning it) while the new one still
+   asked for the money. Now: never dropped, never on a closed quote, owner told — once. */
+describe("R-1569 — a payment that arrives after the quote is settled or replaced is never lost", () => {
+  const DESK = { tenant_id: TENANT, quote_id: QUOTE, reference: "NEFT-DESK-1", status: "received", amount: 1180 };
+  const ALERT: Record<string, RegExp> = { "payment.duplicate": /dobara|Zyada paisa/i, "payment.replaced_quote": /^Purane quote/, "payment.unapplied": /record nahi hua/ };
+  const alerts = (type: string) => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0])
+    .filter((n) => n.kind === "payment.received" && n.entityId === "pay_AITEST1" && ALERT[type].test(n.title));
+  beforeEach(() => {
+    vi.mocked(notifyTenantOwners).mockClear();
+    vi.mocked(notifyTenantOwners).mockImplementation(async (n) => {
+      (db.tables.notifications ??= []).push({ tenant_id: n.tenantId, kind: n.kind, entity_id: n.entityId ?? null });
+    });
+  });
+  afterEach(() => { vi.mocked(notifyTenantOwners).mockImplementation(async () => undefined); });
+
+  it("desk already marked it paid → the online payment is recorded (excess → credit) and the owner is told", async () => {
+    db.tables.quotes[0].payment_status = "received";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.alreadyProcessed).toBeUndefined();
+    expect(body.latePayment).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]); // no second invoice
+    expect(db.rpcCalls[0].args).toMatchObject({ p_quote_id: QUOTE, p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(db.tables.payments).toHaveLength(2);
+    const a = alerts("payment.duplicate");
+    expect(a).toHaveLength(1);
+    expect(a[0].title).toMatch(/dobara/i);
+    expect(`${a[0].title} ${a[0].body}`).toMatch(/refund|credit/i);
+    expect(queueProvisioning).not.toHaveBeenCalled(); // already provisioned off the first payment
+    const customerMails = sendEmail.mock.calls.filter((c) => (c[0] as { kind: string }).kind === "razorpay_payment_customer");
+    expect(customerMails).toHaveLength(0);
+  });
+
+  it("the same late payment delivered again (and as order.paid) records nothing more and alerts once", async () => {
+    db.tables.quotes[0].payment_status = "received";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    await POST(signed(captured()));
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    const orderPaid = await POST(signed(captured("order.paid")));
+    expect((await orderPaid.json()).alreadyProcessed).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(db.tables.payments).toHaveLength(2);
+    expect(alerts("payment.duplicate")).toHaveLength(1);
+  });
+
+  it("an invoiced quote paid again online is recorded too, not dropped", async () => {
+    db.tables.quotes[0].payment_status = "invoiced";
+    db.tables.quotes[0].invoice_id = "INV-EXISTING";
+    db.tables.payments.push({ id: "p-desk", ...DESK });
+    const res = await POST(signed(captured()));
+    expect((await res.json()).latePayment).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(alerts("payment.duplicate")).toHaveLength(1);
+  });
+
+  it("R-1575: an old checkout paid after a COMBINE is recorded on the replacing quote, never on the closed one", async () => {
+    db.tables.quotes[0].status = "expired";
+    db.tables.quotes[0].superseded_by = "Q-AITEST-0002";
+    db.tables.quotes.push({
+      id: "Q-AITEST-0002", tenant_id: TENANT, customer_name: "AITEST Buyer Co", amount: 2360, payment_status: "awaiting",
+      status: "accepted", superseded_by: null, lead_id: LEAD, line_items: [], invoice_id: null,
+    });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.appliedTo).toBe("Q-AITEST-0002");
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(db.rpcCalls[0].args).toMatchObject({ p_quote_id: "Q-AITEST-0002", p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(String(db.rpcCalls[0].args.p_notes)).toContain(QUOTE);
+    expect(db.tables.quotes[0].payment_status).toBe("awaiting"); // the replaced quote is untouched
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    const a = alerts("payment.replaced_quote");
+    expect(a).toHaveLength(1);
+    expect(`${a[0].title} ${a[0].body}`).toContain("Q-AITEST-0002");
+
+    // Replay: found by the payment id wherever it was recorded — nothing more.
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+  });
+
+  /* R-1574 made record_payment refuse the first payment on a renewal quote whose term was
+     already renewed. Through the webhook that refusal was a 500 — Razorpay retries, nothing
+     is ever booked. */
+  const staleRenewal = () => {
+    db.tables.quotes[0].renewal_subscription_id = "sub-1";
+    const base = db.rpcImpl!;
+    db.rpcImpl = (name, args) =>
+      name === "record_payment" && args.p_quote_id === QUOTE
+        ? { data: null, error: { code: "P0001", message: `Renewal quote ${QUOTE} was made for the term of subscription "Starter" due on 2026-10-01, but that subscription now renews on 2027-10-01 — that term was already renewed (or its date was changed), so this payment would renew nothing.` } }
+        : base(name, args);
+  };
+
+  it("R-1574 refusal: an old-term renewal quote paid online → recorded on the CURRENT renewal quote (credit if paid), owner told, replay-safe", async () => {
+    staleRenewal();
+    db.tables.subscriptions.push({ id: "sub-1", tenant_id: TENANT, renewal_quote_id: "Q-AITEST-0003" });
+    db.tables.quotes.push({
+      id: "Q-AITEST-0003", tenant_id: TENANT, customer_name: "AITEST Buyer Co", amount: 1180, payment_status: "received",
+      status: "accepted", superseded_by: null, lead_id: LEAD, line_items: [], invoice_id: null,
+    });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).appliedTo).toBe("Q-AITEST-0003");
+    const rec = db.rpcCalls.filter((c) => c.name === "record_payment");
+    expect(rec.map((c) => c.args.p_quote_id)).toEqual([QUOTE, "Q-AITEST-0003"]);
+    expect(rec[1].args).toMatchObject({ p_amount: 1180, p_reference: "pay_AITEST1" });
+    expect(String(rec[1].args.p_notes)).toContain(QUOTE);
+    expect(rpcNames()).not.toContain("generate_invoice");
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(db.tables.payments.filter((p) => p.reference === "pay_AITEST1")).toHaveLength(1);
+    expect(alerts("payment.replaced_quote")).toHaveLength(1);
+  });
+
+  it("R-1574 refusal with no current renewal quote → not a 500 loop: owner told once to refund or book it", async () => {
+    staleRenewal();
+    db.tables.subscriptions.push({ id: "sub-1", tenant_id: TENANT, renewal_quote_id: null });
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).unapplied).toBe(true);
+    const a = alerts("payment.unapplied");
+    expect(a).toHaveLength(1);
+    expect(String(a[0].body)).toMatch(/refund/i);
+    expect(String(a[0].body)).toContain("pay_AITEST1");
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(alerts("payment.unapplied")).toHaveLength(1);
+  });
+
+  it("R-1575: a REJECTED quote with no replacement records nothing, and the owner is told once (refund or new quote)", async () => {
+    db.tables.quotes[0].status = "rejected";
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    expect((await res.json()).unapplied).toBe(true);
+    expect(rpcNames()).toEqual([]);
+    const a = alerts("payment.unapplied");
+    expect(a).toHaveLength(1);
+    expect(a[0].entityId).toBe("pay_AITEST1");
+    expect(`${a[0].title} ${a[0].body}`).toMatch(/refund/i);
+    const again = await POST(signed(captured()));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(alerts("payment.unapplied")).toHaveLength(1);
+  });
+});
+
+/* R-747 (security audit 9 Oct): the amount Razorpay captured is compared with what was due
+   before the quote is treated as paid; a payment in the wrong currency, for an order we cannot
+   find, or with no payment in it is never settled — it is flagged for the owner instead; and a
+   replayed event (same event id, same payment id) records nothing twice. */
+describe("R-747 — captured amount vs what was due; refuse what cannot be matched; replay-safe", () => {
+  const flags = () => vi.mocked(notifyTenantOwners).mock.calls.map((c) => c[0])
+    .filter((n) => n.entityId === "pay_AITEST1" && /jaanch|kam/i.test(n.title));
+  const mails = (kind: string) => sendEmail.mock.calls.filter((c) => (c[0] as { kind: string }).kind === kind);
+  const withPayment = (patch: Row, event = "payment.captured") => {
+    const e = captured(event);
+    Object.assign(e.payload.payment.entity, patch);
+    return e;
+  };
+  beforeEach(() => {
+    vi.mocked(notifyTenantOwners).mockClear();
+    vi.mocked(notifyTenantOwners).mockImplementation(async (n) => {
+      (db.tables.notifications ??= []).push({ tenant_id: n.tenantId, kind: n.kind, entity_id: n.entityId ?? null });
+    });
+  });
+  afterEach(() => { vi.mocked(notifyTenantOwners).mockImplementation(async () => undefined); });
+
+  it("underpaid (₹500 of ₹1,180): recorded as a ₹500 part-payment — no invoice, no activation, no 'order confirmed' mail; owner told once", async () => {
+    const res = await POST(signed(withPayment({ amount: 50000 })));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ underpaid: true, paid: 500, expected: 1180 });
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(db.rpcCalls[0].args).toMatchObject({ p_amount: 500, p_reference: "pay_AITEST1" });
+    expect(db.tables.quotes[0].payment_status).toBe("partial"); // never 'received'
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    expect(mails("razorpay_payment_customer")).toHaveLength(0);
+    expect(mails("razorpay_payment_owner")).toHaveLength(0);
+    const f = flags();
+    expect(f).toHaveLength(1);
+    expect(`${f[0].title} ${f[0].body}`).toMatch(/₹500/);
+    expect(`${f[0].title} ${f[0].body}`).toMatch(/₹1,180/);
+
+    const again = await POST(signed(withPayment({ amount: 50000 })));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(db.tables.payments).toHaveLength(1);
+    expect(flags()).toHaveLength(1);
+  });
+
+  it("overpaid (₹1,500 of ₹1,180): the whole ₹1,500 goes to record_payment (its excess→credit rule) and the sale settles normally", async () => {
+    const res = await POST(signed(withPayment({ amount: 150000 })));
+    const body = await res.json();
+    expect(body.underpaid).toBeUndefined();
+    expect(rpcNames()).toEqual(["record_payment", "generate_invoice"]);
+    expect(db.rpcCalls[0].args).toMatchObject({ p_amount: 1500 });
+    expect(flags()).toHaveLength(0);
+  });
+
+  it("a payment in another currency is never settled — flagged once, nothing recorded", async () => {
+    const res = await POST(signed(withPayment({ currency: "USD" })));
+    expect(res.status).toBe(200);
+    expect((await res.json()).needsReview).toBe(true);
+    expect(rpcNames()).toEqual([]);
+    expect(db.tables.payments).toHaveLength(0);
+    expect(flags()).toHaveLength(1);
+    await POST(signed(withPayment({ currency: "USD" })));
+    expect(flags()).toHaveLength(1);
+  });
+
+  it("a ₹ payment on a foreign-currency quote is never settled — flagged, nothing recorded", async () => {
+    db.tables.quotes[0].currency = "USD";
+    const res = await POST(signed(captured()));
+    expect((await res.json()).needsReview).toBe(true);
+    expect(rpcNames()).toEqual([]);
+    expect(flags()).toHaveLength(1);
+  });
+
+  it("an order we cannot find is flagged to the verified tenant (contact masked in the log), not retried forever", async () => {
+    const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = withPayment({ notes: { quoteId: "Q-NOPE" } });
+    e.payload.order.entity.receipt = "Q-NOPE";
+    const res = await POST(signed(e));
+    expect(res.status).toBe(200);
+    expect((await res.json()).needsReview).toBe(true);
+    expect(rpcNames()).toEqual([]);
+    const f = flags();
+    expect(f).toHaveLength(1);
+    expect(f[0].tenantId).toBe(TENANT);
+    const logged = errs.mock.calls.flat().map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+    expect(logged).toContain("Q-NOPE");
+    expect(logged).not.toContain("buyer@example.invalid");
+    errs.mockRestore();
+  });
+
+  it("an order-only event (no payment in it) never records the quote's total as if it were paid", async () => {
+    db.tables.quotes[0].payment_status = "partial";
+    db.tables.payments.push({ id: "p-part", tenant_id: TENANT, quote_id: QUOTE, reference: "NEFT-PART", status: "received", amount: 500 });
+    const res = await POST(signed({
+      event: "order.paid", created_at: 1,
+      payload: { order: { entity: { id: "order_AITEST2", receipt: QUOTE, amount: 68000 } } },
+    }));
+    expect(res.status).toBe(200);
+    expect(rpcNames()).toEqual([]);
+    expect(db.tables.payments).toHaveLength(1);
+  });
+
+  it("the same event id delivered twice records one payment; the event id is kept on it", async () => {
+    await POST(signed(captured(), { eventId: "evt_AITEST1" }));
+    const again = await POST(signed(captured(), { eventId: "evt_AITEST1" }));
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    expect(rpcNames().filter((n) => n === "record_payment")).toHaveLength(1);
+    expect(db.tables.payments).toHaveLength(1);
+    expect(String(db.rpcCalls[0].args.p_notes)).toContain("evt_AITEST1");
   });
 });

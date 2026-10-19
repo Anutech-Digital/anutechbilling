@@ -210,11 +210,16 @@ describe("lead — model ka daawa, transcript ka saboot", () => {
     expect(route).toContain("/api/public/enquiry/general");
     expect(route).toContain("leadAlreadyCaptured");
     expect(route).toContain("leadDetailsAppearInTranscript(guarded.lead, messages)");
-    /* Self-call LOOPBACK HTTP par — nextUrl.origin Cloud Run par https bolta hai jabki
+    /* Self-call kabhi nextUrl.origin par nahi — Cloud Run par wo https bolta hai jabki
        container plain HTTP sunta hai; pehli asli chat-lead isi par giri thi
-       (ERR_SSL_WRONG_VERSION_NUMBER, live log). */
-    expect(route).toContain("http://127.0.0.1:");
+       (ERR_SSL_WRONG_VERSION_NUMBER, live log). R-1549 (19 Oct 2026): ab koi HTTP hop hi
+       nahi — handler in-process (visitor ke IP ke saath, Turnstile sirf hamari marked call
+       ke liye skip); 127.0.0.1 loopback ne sab visitors ko ek bucket me daala tha. */
     expect(route.includes("request.nextUrl.origin")).toBe(false);
+    expect(route).not.toMatch(/fetch\(new URL\("\/api\/public\/enquiry/);
+    expect(route).toContain('import { POST as generalEnquiry } from "@/app/api/public/enquiry/general/route"');
+    expect(route).toContain("markTrustedInternalCall(");
+    expect(route).toContain("passThroughHeaders(request)");
   });
 
   it("prompt: sawaal ek-ek karke, contact ka IMANDAAR kaaran, daam kabhi lock nahi", () => {

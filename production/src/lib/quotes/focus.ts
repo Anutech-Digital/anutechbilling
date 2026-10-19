@@ -8,6 +8,10 @@
  */
 import { isPipelineQuote, quoteListTab } from "./list-tab";
 
+/** Paid in full, GST invoice not raised yet. R-1541: the Payments Received sidebar badge counts
+ *  these quotes (nav_badges().payments) and opens ?focus=to-invoice. */
+export const QUOTE_TO_INVOICE_PAYMENT_STATUS = "received";
+
 export const QUOTE_FOCI = ["", "pipeline", "review", "accepted", "partial", "to-invoice"] as const;
 export type QuoteFocus = (typeof QUOTE_FOCI)[number];
 
@@ -30,7 +34,7 @@ export function quoteInFocus(q: { status: string; payment_status?: string | null
      say "Out for review ₹73.3K (2)" over two empty tabs. */
   if (focus === "review") { const tab = quoteListTab(q); return tab === "sent" || tab === "viewed"; }
   if (focus === "partial") return q.payment_status === "partial";
-  if (focus === "to-invoice") return q.payment_status === "received";
+  if (focus === "to-invoice") return q.payment_status === QUOTE_TO_INVOICE_PAYMENT_STATUS;
   return q.status === "accepted";
 }
 

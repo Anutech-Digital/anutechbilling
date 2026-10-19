@@ -130,16 +130,35 @@ describe("readInboundSecret — header pehle, aur query ka hisaab rakho", () => 
   });
 });
 
-describe("querySecretAllowed — cut-over bina naye deploy ke", () => {
-  it("default khula hai, warna aaj hi mail ruk jaati", () => {
-    expect(querySecretAllowed(undefined)).toBe(true);
-    expect(querySecretAllowed("")).toBe(true);
-    expect(querySecretAllowed("0")).toBe(true);
+describe("querySecretAllowed — R-1554: header hi default, ?key= sirf legacy flag se", () => {
+  it("default BAND hai — env na ho tab bhi ?key= mana (secret URL = secret log me)", () => {
+    expect(querySecretAllowed({})).toBe(false);
+    expect(querySecretAllowed({ INBOUND_REQUIRE_HEADER: "" })).toBe(false);
+    expect(querySecretAllowed({ INBOUND_REQUIRE_HEADER: "0" })).toBe(false);
+    expect(querySecretAllowed({ INBOUND_ALLOW_QUERY_SECRET: "0" })).toBe(false);
+    expect(querySecretAllowed({ INBOUND_ALLOW_QUERY_SECRET: "true" })).toBe(false);
   });
 
-  it("INBOUND_REQUIRE_HEADER=1 par band", () => {
-    expect(querySecretAllowed("1")).toBe(false);
-    expect(querySecretAllowed(" 1 ")).toBe(false);
+  it("sirf INBOUND_ALLOW_QUERY_SECRET=1 (purana forwarder) par khulta hai", () => {
+    expect(querySecretAllowed({ INBOUND_ALLOW_QUERY_SECRET: "1" })).toBe(true);
+    expect(querySecretAllowed({ INBOUND_ALLOW_QUERY_SECRET: " 1 " })).toBe(true);
+  });
+
+  it("INBOUND_REQUIRE_HEADER=1 legacy flag ko bhi hara deta hai", () => {
+    expect(querySecretAllowed({ INBOUND_ALLOW_QUERY_SECRET: "1", INBOUND_REQUIRE_HEADER: "1" })).toBe(false);
+  });
+
+  it("process.env padhta hai jab kuch na diya ho", () => {
+    const keep = { a: process.env.INBOUND_ALLOW_QUERY_SECRET, r: process.env.INBOUND_REQUIRE_HEADER };
+    try {
+      delete process.env.INBOUND_ALLOW_QUERY_SECRET; delete process.env.INBOUND_REQUIRE_HEADER;
+      expect(querySecretAllowed()).toBe(false);
+      process.env.INBOUND_ALLOW_QUERY_SECRET = "1";
+      expect(querySecretAllowed()).toBe(true);
+    } finally {
+      if (keep.a === undefined) delete process.env.INBOUND_ALLOW_QUERY_SECRET; else process.env.INBOUND_ALLOW_QUERY_SECRET = keep.a;
+      if (keep.r === undefined) delete process.env.INBOUND_REQUIRE_HEADER; else process.env.INBOUND_REQUIRE_HEADER = keep.r;
+    }
   });
 });
 
@@ -149,7 +168,9 @@ describe("querySecretWarning — chetavni me secret nahi jata", () => {
     expect(w).toContain("webhooks/inbound-email");
     expect(w).not.toMatch(/key=/);
     expect(w).toMatch(/x-inbound-secret/);          // ab kya karein
-    expect(w).toMatch(/INBOUND_REQUIRE_HEADER/);    // aur uske baad kya
+    expect(w).toMatch(/INBOUND_ALLOW_QUERY_SECRET/); // aur uske baad kya hatana hai
+    /* health-digest / health-prod is shabd se is chetavni ko log me dhoondhte hain. */
+    expect(w).toMatch(/INBOUND_REQUIRE_HEADER/);
   });
 });
 

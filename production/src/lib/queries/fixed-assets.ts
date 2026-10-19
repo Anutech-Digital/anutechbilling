@@ -58,6 +58,9 @@ export function useCapitalisableExpenses() {
 function invalidate(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: KEY });
   qc.invalidateQueries({ queryKey: ["balance-sheet"] });
+  /* R-1578: an asset changes the P&L too — its depreciation, and its expense leaves the costs. */
+  qc.invalidateQueries({ queryKey: ["accounting", "pnl"] });
+  qc.invalidateQueries({ queryKey: ["itr-pack"] });
 }
 
 export function useCreateFixedAsset() {

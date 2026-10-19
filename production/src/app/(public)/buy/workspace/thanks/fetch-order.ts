@@ -5,9 +5,10 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import type { ThanksOrder } from "./thanks-client";
+import { websiteTenantId } from "@/lib/website-tenant";
 
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: tenant read per call (websiteTenantId) — outside production an unset BUY_PAGE_TENANT_ID
+   shows nothing (and logs why), never the live tenant's data. */
 
 /** Pull only the customer-safe slice of the quote row. Never expose cost,
  *  margin, internal notes, or other tenant data. */
@@ -20,6 +21,8 @@ export async function fetchOrder(quoteId: string, token: string | null | undefin
   if (!/^Q-(?:[A-Z0-9]{2,8}-)?(?:[0-9]{4}-)?[0-9]{2}-[0-9]{4,}$/.test(quoteId)) return null;
   // No token, no lookup: a guessed number never reaches the database.
   if (!token) return null;
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return null;
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("quotes")

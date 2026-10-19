@@ -94,7 +94,7 @@ const KNOWN = [
   "app/api/public/trial/hosting/confirm/route.ts",
   "app/api/v1/integrations/support-email-inbound/route.ts",
   "app/api/v1/integrations/support-whatsapp-inbound/route.ts",
-  "app/api/webhooks/razorpay/route.ts",
+  "app/api/webhooks/razorpay/webhook.server.ts",
   "lib/inbound/ingest.ts",
 ].sort();
 
@@ -158,7 +158,7 @@ describe("the dead fallback host does not spread", () => {
      * dead host for its internal staff links, so "does the string appear"
      * cannot tell whether this was fixed — pin the behaviour instead.
      */
-    const src = readFileSync(join(SRC, "app/api/webhooks/razorpay/route.ts"), "utf8");
+    const src = readFileSync(join(SRC, "app/api/webhooks/razorpay/webhook.server.ts"), "utf8");
     expect(src).toContain("const publicBase = trustedOrigin(request.headers);");
     expect(src).toContain('pdfDownloadUrl(publicBase, "invoice"');
     // The constant it used to take became unused and was deleted; if it comes

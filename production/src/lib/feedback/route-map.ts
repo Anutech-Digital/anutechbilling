@@ -200,7 +200,6 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { route: "/vault/personal/banking", file: "src/app/(app)/vault/personal/banking/page.tsx" },
   { route: "/vault/personal/expenses", file: "src/app/(app)/vault/personal/expenses/page.tsx" },
   { route: "/vault/personal/wealth", file: "src/app/(app)/vault/personal/wealth/page.tsx" },
-  { route: "/vendor-portal", file: "src/app/(app)/vendor-portal/page.tsx" },
   { route: "/verify-email", file: "src/app/(auth)/verify-email/page.tsx" },
   { route: "/welcome", file: "src/app/(auth)/welcome/page.tsx" },
   { route: "/whatsapp", file: "src/app/(app)/whatsapp/page.tsx" },

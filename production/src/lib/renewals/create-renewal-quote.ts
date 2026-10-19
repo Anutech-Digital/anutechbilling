@@ -9,19 +9,19 @@
  * Behaviour:
  *   1. If subscription.renewal_quote_id is set → load that quote, return it.
  *   2. Otherwise:
- *        - Issue a fresh quote number via the next_document_number RPC.
- *        - Build a single-line annual quote from the subscription's plan/seats/MRR.
+ *        - Build a single-line quote for the subscription's own term (plan/seats/MRR).
  *        - Validity = renewal_date + tenant.grace_period_days.
- *        - Insert the quote.
- *        - Link it back to subscription.renewal_quote_id.
- *        - Return the new quote.
+ *        - create_renewal_quote (R-1574) — ONE transaction, subscription row locked: number
+ *          (next_document_number), insert, link to subscription.renewal_quote_id; or the
+ *          quote another run already made/linked for this term.
+ *        - Return it.
  *
  * Server-only — needs a service-role Supabase client because it writes
  * across customers/quotes/subscriptions inside one tenant's data.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
+import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
@@ -114,14 +114,7 @@ export async function createOrGetRenewalQuote(
     // If the linked quote was deleted somehow, fall through and create fresh
   }
 
-  // ── Path 2: create a new quote ────────────────────────────────────
-  const { data: nextNumber } = await supabase.rpc("next_document_number", {
-    p_doc_type:  "quote",
-    p_tenant_id: input.tenantId,
-  });
-  const newQuoteId = nextNumber as unknown as string;
-  if (!newQuoteId) return null;
-
+  // ── Path 2: price a new quote; create_renewal_quote numbers, stores and links it ──
   // Export (international) customer → zero-rated under LUT: the renewal quote
   // must NOT add GST (the old hardcoded 18% wrongly taxed foreign auto-renewals).
   let renewalTaxRate = 18;
@@ -222,56 +215,63 @@ export async function createOrGetRenewalQuote(
   const renewalAt   = new Date(input.renewalDate);
   const validUntil  = new Date(renewalAt.getTime() + (input.graceDays ?? 0) * 86400000);
 
-  const { error: insertErr } = await supabase.from("quotes").insert({
-    id:             newQuoteId,
-    tenant_id:      input.tenantId,
-    customer_id:    input.customerId,
-    customer_name:  input.customerName,
-    plan:           input.plan,
-    seats:          input.seats,
-    amount:         grossAnnual,
-    status:         "sent",
-    payment_status: "awaiting",
-    owner_id:       null,
-    /* R-012, third item. These were `new Date().toISOString().slice(0, 10)`, which is
-       UTC — so between midnight and 05:30 IST every renewal quote was stamped with
-       YESTERDAY's date, and its validity window with it (AGENTS.md §6). The renewals
-       cron runs at 09:00 IST so it never saw this, but "Generate renewal quote" from
-       the subscription page is pressed by a person, and reps here work early. */
-    created_date:   istToday(),
-    expires_date:   toIstDate(validUntil),
-    line_items:     lineItems,
-    subtotal:       annualAmount,
-    total_cost:     cost.total,
-    discount_pct:   0,
-    tax_rate:       renewalTaxRate,   // 0 for an export (zero-rated) customer
-    is_renewal:       true,  // ← Drives the "Renewal" badge in /quotes list + detail + PDF
-    /* R-012, and this is the one that took money. It was a hardcoded 12 while the price
-       and the commitment beside it already came from the subscription's own term — so a
-       MONTHLY renewal was priced for one month and then extended the subscription by a
-       YEAR, because `record_payment` reads this field to roll the dates forward.
-       Measured by Pawan on a ₹250/month hosting subscription: paid ₹295, renewal date
-       went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
-       `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
-    extension_months: term.termMonths,
-    notes:            input.notes
-      ?? `Renewal quote for subscription ${input.subscriptionId}`,
+  /* R-1574. This used to be three separate calls — next_document_number, insert the quote,
+     then `subscriptions.update({ renewal_quote_id })` with no error check and no guard. Two
+     overlapping runs (the cron and "Generate renewal quote", or a retry) each saw no link and
+     each made a quote; the later link overwrote the earlier, and paying the earlier one was
+     treated by record_payment as a NEW sale — a second subscription, and the real one never
+     renewed. create_renewal_quote does all three in ONE transaction with the subscription row
+     locked: a second call gets the first call's quote back, and a quote for this term can
+     exist only once (unique index). The price stays worked out here; the RPC stores it.
+     customer_id comes from the subscription row itself inside the RPC. */
+  const { data: made, error: rpcErr } = await supabase.rpc("create_renewal_quote", {
+    p_subscription_id: input.subscriptionId,
+    p_tenant_id:       input.tenantId,
+    p_quote: {
+      customer_name:  input.customerName,
+      plan:           input.plan,
+      seats:          input.seats,
+      amount:         grossAnnual,
+      /* R-012, third item. These were `new Date().toISOString().slice(0, 10)`, which is
+         UTC — so between midnight and 05:30 IST every renewal quote was stamped with
+         YESTERDAY's date, and its validity window with it (AGENTS.md §6). The renewals
+         cron runs at 09:00 IST so it never saw this, but "Generate renewal quote" from
+         the subscription page is pressed by a person, and reps here work early. */
+      created_date:   istToday(),
+      expires_date:   toIstDate(validUntil),
+      line_items:     lineItems,
+      subtotal:       annualAmount,
+      total_cost:     cost.total,
+      tax_rate:       renewalTaxRate,   // 0 for an export (zero-rated) customer
+      /* R-012, and this is the one that took money. It was a hardcoded 12 while the price
+         and the commitment beside it already came from the subscription's own term — so a
+         MONTHLY renewal was priced for one month and then extended the subscription by a
+         YEAR, because `record_payment` reads this field to roll the dates forward.
+         Measured by Pawan on a ₹250/month hosting subscription: paid ₹295, renewal date
+         went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
+         `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
+      extension_months: term.termMonths,
+      notes:            input.notes
+        ?? `Renewal quote for subscription ${input.subscriptionId}`,
+    } as unknown as Json,   // is_renewal / status / discount 0 are set by the RPC itself
   });
-  if (insertErr) return null;
-
-  // Link back to subscription
-  await supabase
-    .from("subscriptions")
-    .update({ renewal_quote_id: newQuoteId })
-    .eq("id", input.subscriptionId);
+  if (rpcErr || !made) {
+    /* Same shape as every other failure here: the cron logs it and moves on; nothing was
+       stored, because the RPC is one transaction. */
+    console.error(
+      `[renewals] subscription ${input.subscriptionId}: renewal quote not made — ${rpcErr?.message ?? "no result"}`,
+    );
+    return null;
+  }
 
   return {
-    quoteId:     newQuoteId,
-    amount:      grossAnnual,
-    subtotal:    annualAmount,
-    discountPct: 0,
-    taxRate:     renewalTaxRate,
-    lineItems,
-    created:     true,
+    quoteId:     made.quote_id,
+    amount:      made.amount ?? 0,
+    subtotal:    made.subtotal ?? 0,
+    discountPct: made.discount_pct ?? 0,
+    taxRate:     made.tax_rate ?? 18,
+    lineItems:   made.line_items ?? [],
+    /* False when another run made (or linked) it first — its quote, not the one priced here. */
+    created:     made.created,
   };
 }

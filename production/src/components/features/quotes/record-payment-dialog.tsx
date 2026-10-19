@@ -11,6 +11,7 @@ import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { toast } from "sonner";
 import { isSubscriptionLine, type QuoteLine } from "@/lib/subscriptions/orphan-quote";
 import { useBankAccounts } from "@/lib/queries/bank";
@@ -69,6 +70,7 @@ import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/l
 import { istToday } from "@/lib/dates/ist";
 import { pickDomainStampTarget, domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
+import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
 
 const schema = z.object({
@@ -205,6 +207,14 @@ interface RecordPaymentDialogProps {
   /** Invoice ID already issued against this quote (if any) — drives correct footer messaging
    *  and signals "no new RV needed" since this payment is post-invoice. */
   invoiceId?: string | null;
+  /**
+   * R-1564: a subscription INSTALMENT invoice (no quote of its own). The sheet then expects
+   * THIS invoice's amount (expectedAmount / alreadyReceived are the invoice's) and saves
+   * through record_instalment_payment, which records the money on the subscription's quote
+   * (quoteId) AND applies it to this invoice in one transaction — so it is never credited to
+   * the next instalment while this one stays Pending.
+   */
+  instalmentInvoiceId?: string | null;
   /** Customer FK — used to fetch saved TAN + default TDS section/rate so the TDS section
    *  pre-fills correctly. Null for prospect quotes (no customer row yet). */
   customerId?: string | null;
@@ -247,6 +257,7 @@ export function RecordPaymentDialog({
   alreadyReceived = 0,
   isProspect = false,
   invoiceId = null,
+  instalmentInvoiceId = null,
   customerId = null,
   askDomain = false,
   defaultDomain = null,
@@ -615,8 +626,7 @@ export function RecordPaymentDialog({
       ].filter(Boolean).join(" · ") || null;
       const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
 
-      const { data: r, error } = await supabase.rpc("record_desk_payment", {
-        p_quote_id:           quoteId,
+      const deskArgs = {
         p_amount:             settledAmount,
         p_method:             method,
         p_reference:          data.reference,
@@ -633,16 +643,25 @@ export function RecordPaymentDialog({
               p_tds_section:  data.tdsSection ?? "194J",
               p_tds_rate_pct: tdsRatePct,
               p_customer_tan: data.customerTan?.trim() || null,
-              p_invoice_id:   invoiceId ?? null,
               /* R-025: the FY follows the PAYMENT date the operator chose, not the wall
                  clock — a payment received on 28 March and entered on 2 April belongs to the
                  earlier FY. `istToday()` is only the fallback for an empty field. */
               p_fiscal_year:  fiscalYearFromDate(data.receivedDate || istToday()),
             }
           : {}),
-      });
+      };
+      /* R-1564: an instalment invoice — the same arguments, keyed by the invoice; the RPC
+         finds the subscription's quote and applies the money to THIS invoice. */
+      const { data: r, error } = instalmentInvoiceId
+        ? await supabase.rpc("record_instalment_payment", { ...deskArgs, p_invoice_id: instalmentInvoiceId })
+        : await supabase.rpc("record_desk_payment", {
+            ...deskArgs,
+            p_quote_id: quoteId,
+            ...(tdsActive ? { p_invoice_id: invoiceId ?? null } : {}),
+          });
       if (error) throw error;
-      if (!r) throw new Error("record_desk_payment returned no result");
+      if (!r) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
+      const inst = instalmentInvoiceId ? (r as InstalmentPaymentResult) : null;
 
       // Idempotent replay (same reference re-submitted / RQ retry): the payment
       // already exists and nothing new was recorded — no credit was used either.
@@ -764,13 +783,16 @@ export function RecordPaymentDialog({
         newPaymentId:           r.payment_id,
         totalReceived:          r.total_received,
         expected:               r.expected,
-        outstanding:            r.outstanding,
-        isFirstPayment:         r.is_first_payment,
-        isFullyPaid:            r.is_fully_paid,
+        /* R-1564: an instalment speaks of THIS invoice — its due, paid or not — never of the
+           year's quote total the RPC also reports. */
+        outstanding:            inst ? Number(inst.invoice_due_after ?? 0) : r.outstanding,
+        isFirstPayment:         inst ? false : r.is_first_payment,
+        isFullyPaid:            inst ? Boolean(inst.invoice_paid) : r.is_fully_paid,
         convertedNow:           r.converted_now,
-        subscriptionCreated:    r.subscription_created,
+        subscriptionCreated:    inst ? false : r.subscription_created,
         invoicePaid:            r.invoice_paid,
-        hasExistingInvoice:     r.has_existing_invoice,
+        hasExistingInvoice:     inst ? true : r.has_existing_invoice,
+        instalmentLines:        inst ? instalmentPaymentLines(inst) : [],
         // Renewal roll-forward — added in migration 0010
         isRenewalQuote:         r.is_renewal_quote ?? false,
         renewalRolledForward:   r.renewal_rolled_forward ?? false,
@@ -798,7 +820,9 @@ export function RecordPaymentDialog({
       qc.invalidateQueries({ queryKey: ["outstanding-receivables"] });
       qc.invalidateQueries({ queryKey: ["nav-badges"] });
       qc.invalidateQueries({ queryKey: ["tds_receivable"] });
-      qc.invalidateQueries({ queryKey: ["customer_credits"] });
+      qc.invalidateQueries({ queryKey: queryKeys.customerCredits() });
+      // R-1589: Aging showed the old balance after a payment until a reload.
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
 
       /* R-374: the reference was already recorded — nothing new was saved. Say so, and keep
          the sheet open so the operator can enter the new payment's own reference. */
@@ -932,11 +956,14 @@ export function RecordPaymentDialog({
           })
         : toastBase;
       const firstRaised = splitRaise?.raised[0]?.invoice_id ?? null;
-      const t = issuedInvoiceId
+      const tBase = issuedInvoiceId
         ? withIssuedInvoice(splitToastBase, issuedInvoiceId)
         : firstRaised
         ? { ...withIssuedInvoice(splitToastBase, firstRaised), title: splitToastBase.title }
         : splitToastBase;
+      /* R-1564: where this instalment payment went (this invoice, any other open instalment,
+         and what waits for the next one). */
+      const t = res.instalmentLines.length ? { ...tBase, lines: [...res.instalmentLines, ...tBase.lines] } : tBase;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
         description: t.lines.length ? t.lines.join("\n") : undefined,
@@ -1537,7 +1564,13 @@ export function RecordPaymentDialog({
             <div data-testid="payment-outcome" className="bg-emerald-soft border border-emerald/20 rounded-md p-3 text-xs text-emerald flex gap-2 items-start">
               <Icon name="info" size={14} className="flex-shrink-0 mt-0.5" />
               <span>
-                {invoiceId ? (
+                {instalmentInvoiceId ? (
+                  /* R-1564: the money is applied to THIS instalment; any extra waits for the next. */
+                  <>
+                    Instalment invoice <b className="font-mono">{instalmentInvoiceId}</b> will be marked <b>paid</b>.
+                    {outcome.kind === "over" ? " The extra goes to this subscription's next instalment invoice." : null}
+                  </>
+                ) : invoiceId ? (
                   <>
                     Invoice <b className="font-mono">{invoiceId}</b> will be marked <b>paid</b>. No new receipt voucher — post-invoice payment.
                   </>
@@ -1610,7 +1643,9 @@ export function RecordPaymentDialog({
                   },
                   /* Null once an invoice already exists — a post-invoice payment issues no
                      new receipt voucher, and claiming a number would be wrong. */
-                  receiptSeries: invoiceId ? null : (series?.receiptVoucher ?? null),
+                  /* R-1564: an instalment's payment is recorded on its subscription's quote,
+                     which has no invoice of its own — record_payment does issue one. */
+                  receiptSeries: invoiceId && !instalmentInvoiceId ? null : (series?.receiptVoucher ?? null),
                 })}
               />
             </div>

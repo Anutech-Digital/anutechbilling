@@ -53,10 +53,15 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; stat
   return { ok: r.ok, status: r.status, data };
 }
 
+/** R-1548: Auth.js refused the try before checking the password (10 tries / 15 min per email). */
+export const TOO_MANY_ATTEMPTS_CODE = "too_many_attempts";
+export const TOO_MANY_ATTEMPTS_MESSAGE = "Bahut baar galat password — 15 minute baad koshish karo. Password yaad nahi? Forgot password se naya banao.";
+
 const LOGIN_MESSAGES: Record<string, string> = {
   invalid_credentials: "Invalid login credentials",
   email_not_confirmed: "Email not confirmed",
   banned: "User is banned",
+  [TOO_MANY_ATTEMPTS_CODE]: TOO_MANY_ATTEMPTS_MESSAGE,
 };
 
 export function browserAuth() {
@@ -82,7 +87,7 @@ export function browserAuth() {
       const res = await authjsSignIn("credentials", { email: creds.email, password: creds.password, redirect: false });
       if (!res || res.error) {
         const code = (res as { code?: string } | undefined)?.code ?? "invalid_credentials";
-        return { data: { user: null, session: null }, error: err(LOGIN_MESSAGES[code] ?? LOGIN_MESSAGES.invalid_credentials, 400, code) };
+        return { data: { user: null, session: null }, error: err(LOGIN_MESSAGES[code] ?? LOGIN_MESSAGES.invalid_credentials, code === TOO_MANY_ATTEMPTS_CODE ? 429 : 400, code) };
       }
       const t = await token(true);
       return { data: { user: t.user, session: t.access_token ? { access_token: t.access_token, user: t.user } : null }, error: null };

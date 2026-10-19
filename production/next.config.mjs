@@ -100,6 +100,15 @@ const nextConfig = {
       })(),
     ],
   },
+  /* R-1545 (19 Oct 2026, owner decision): /vendor-portal was only a "not built yet" notice.
+     The page is gone; old bookmarks land on the real vendor screen. Not permanent, so a
+     browser does not cache it if a vendor portal is ever built. */
+  async redirects() {
+    return [
+      { source: "/vendor-portal", destination: "/accounting/vendors", permanent: false },
+      { source: "/vendor-portal/:path*", destination: "/accounting/vendors", permanent: false },
+    ];
+  },
   async headers() {
     const isDev = process.env.NODE_ENV !== "production";
     /* CSP connect-src must name the Supabase host the browser actually talks to.

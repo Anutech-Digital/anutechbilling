@@ -14,7 +14,7 @@ import Razorpay from "razorpay";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { isQuoteExpired } from "@/lib/utils";
-import { quoteInstalments } from "@/lib/billing/instalments";
+import { quoteDueNow, type QuoteDueNow, type QuoteDueNowFields } from "@/lib/payments/quote-due-now";
 import { isQuoteAmountConsistent } from "@/lib/quotes/amounts";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
@@ -24,7 +24,7 @@ const ENV_RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
 
 /** The quote columns this needs — the pay route's select. */
 export const QUOTE_ORDER_COLUMNS =
-  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items";
+  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items, superseded_by";
 
 export interface QuoteForOrder {
   id: string;
@@ -41,6 +41,48 @@ export interface QuoteForOrder {
   discount_pct: number | null;
   tax_rate: number | null;
   line_items: unknown;
+  /** R-1569/R-1575: set when the quote was revised or combined into another. */
+  superseded_by?: string | null;
+}
+
+/**
+ * R-1569: rupees already received on the quote — the payments ledger, not the quote's
+ * `payment_status` label. A TDS settlement is recorded as one payment whose amount includes
+ * the TDS (record_payment_with_tds), so it counts here too. Refunded / deleted rows are
+ * not money in hand and are left out.
+ */
+export async function quoteAmountReceived(
+  admin: ReturnType<typeof createAdminClient>,
+  quote: { id: string; tenant_id: string },
+): Promise<number> {
+  const { data, error } = await admin
+    .from("payments")
+    .select("amount, status")
+    .eq("tenant_id", quote.tenant_id)
+    .eq("quote_id", quote.id)
+    .eq("status", "received");
+  if (error) throw new Error(`payments read failed: ${error.message}`);
+  return ((data ?? []) as { amount: number | null; status: string | null }[])
+    .filter((p) => p.status === "received")
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+}
+
+/**
+ * R-1613: what is due on the quote NOW, read the way the order reads it (ledger + quoteDueNow).
+ * For the accept page's Pay button / UPI QR and every quote-PDF QR, so none of them can ask
+ * for a figure the order would not charge. A ledger read failure → "nothing" (no QR, no
+ * button): asking for nothing is the safe direction; the customer can still pay via the link.
+ */
+export async function readQuoteDueNow(
+  admin: ReturnType<typeof createAdminClient>,
+  quote: QuoteDueNowFields & { id: string; tenant_id: string },
+): Promise<QuoteDueNow> {
+  try {
+    return quoteDueNow(quote, await quoteAmountReceived(admin, quote));
+  } catch (err) {
+    console.error(`[quote-due-now] ${quote.id}: ${(err as Error).message}`);
+    return { state: "nothing" };
+  }
 }
 
 export interface QuoteOrderOptions {
@@ -69,6 +111,17 @@ export async function startQuotePayment(
   if (quote.status === "rejected") {
     return { status: 400, body: { error: "This quote was rejected — please contact the reseller." } };
   }
+  /* R-1575: a quote revised or combined into another takes no money — the replacing quote
+     does. Named, so the customer knows which one to ask for. */
+  if (quote.superseded_by) {
+    return {
+      status: 400,
+      body: {
+        error: `This quote was replaced by ${quote.superseded_by} — it can't be paid any more.`,
+        nextStep: `Please pay quote ${quote.superseded_by} instead; ask the reseller to send you its link if you don't have it.`,
+      },
+    };
+  }
   /* R-448: 'expired' is also a replaced quote (superseded_by) — never take money on it. */
   if (quote.status === "expired") {
     return { status: 400, body: { error: "This quote is closed or was replaced — ask the reseller for the latest one." } };
@@ -80,28 +133,15 @@ export async function startQuotePayment(
   if (isQuoteExpired(quote.expires_date)) {
     return { status: 400, body: { error: "This quote has expired — ask the reseller for a fresh one." } };
   }
-  // ── 2a. Split billing — charge the FIRST INSTALMENT, not the term ────────
-  // A quarterly quote's own PDF prints "Per invoice (4/yr) ₹7,080/qtr" as its grand
-  // total. Charging ₹28,320 here would take the whole year from a customer who was
-  // shown a quarter, which is the difference between a billing cycle and a label.
-  //
-  // Derived from the same schedule engine the billing cron uses, so what is charged
-  // and what is later invoiced come out of one place. Returns null for yearly, and
-  // then everything below behaves exactly as it always has.
+  // ── 2a. Refuse a quote whose own total disagrees with its own GST ──────────
+  // Everything below charges from `quote.amount` and then invoices it. One production
+  // quote stores ₹45,360 where its 18% rate says ₹53,525 (Q-2026-9776 — migration
+  // 20260817100000 never ran). Left open, this path would take ₹8,165 too LITTLE and then
+  // issue a tax invoice for the short amount — a wrong tax invoice cannot be undone, a
+  // failed payment can. Measured 21 Aug 2026: 26 of 27 production quotes pass this.
+  // Wording stays customer-facing — the arithmetic is the reseller's problem, not the buyer's.
   const taxRate  = quote.tax_rate ?? 18;
   const subtotal = quote.subtotal ?? 0;
-
-  /* ── 2aa. Refuse a quote whose own total disagrees with its own GST ──────────
-     Everything below charges `quote.amount` and then invoices it. One production
-     quote stores ₹45,360 where its 18% rate says ₹53,525 (Q-2026-9776 — migration
-     20260817100000 never ran). Left open, this path would take ₹8,165 too LITTLE from
-     the customer and then issue a tax invoice for the short amount, which is the worst
-     of the three possible outcomes: the company loses the GST, the customer holds an
-     invoice that understates their input credit, and neither number can be edited
-     afterwards. Failing the payment is recoverable; a wrong tax invoice is not.
-     Measured 21 Aug 2026: 26 of 27 production quotes pass this, so nothing legitimate
-     is blocked. Wording stays customer-facing — the arithmetic is the reseller's
-     problem, not the buyer's. */
   if (!isQuoteAmountConsistent(subtotal, taxRate, quote.amount ?? 0, quote.discount_pct ?? 0)) {
     return {
       status: 409,
@@ -112,48 +152,55 @@ export async function startQuotePayment(
     };
   }
 
-  const instalments = quoteInstalments({
-    cycle:       quote.billing_cycle,
-    // Same taxable value generate_invoice computes — subtotal net of discount.
-    termTaxable: subtotal - Math.round(subtotal * (quote.discount_pct ?? 0) / 100),
-    termGross:   quote.amount ?? 0,
-    taxRate,
-    // Flex (pehli line commitment=monthly): stored aankde per-month hain — engine null dega
-    // aur neeche amountInr seedha quote.amount (mahine ki poori vasooli) banega. Iske bina
-    // flex par 12× under-charge thi (audit B9-deep, 1 Sep 2026).
-    lineCommitment: (Array.isArray(quote.line_items) ? (quote.line_items[0] as { commitment?: string } | undefined)?.commitment : null) ?? null,
-  });
-
-  /* A split-billed quote is paid ONCE here — the first instalment. Everything after
-     it is collected against the instalment INVOICES the billing cron raises. Without
-     this the customer could come back to the same link and pay another instalment
-     against the quote, money that no invoice would ever be matched to. The guard
-     above only catches 'received'/'invoiced'; a split-billed quote sits at 'partial'
-     for the rest of its term. */
-  if (instalments && quote.payment_status === "partial") {
+  // ── 2b. What is due NOW — R-1613: one helper for this order, the accept page's Pay
+  // button / UPI QR and the PDF QR (lib/payments/quote-due-now.ts), so the customer is
+  // never shown one figure and charged another. Its rules are R-1569's and R-234's:
+  //  - split billing (quarterly ₹28,320 → instalment 1 ₹7,080) charges the FIRST
+  //    instalment; once anything is paid the rest is collected from instalment invoices;
+  //  - otherwise quote total − money already received (ledger, TDS in, refunds out) —
+  //    a ₹50,000 quote with ₹20,000 recorded orders ₹30,000, never ₹50,000 again.
+  const quoteTotal = quote.amount ?? 0;
+  let alreadyPaid = 0;
+  try {
+    alreadyPaid = await quoteAmountReceived(admin, quote);
+  } catch (err) {
+    console.error(`${opts.logTag} ${(err as Error).message}`);
+    return { status: 500, body: { error: "Could not start payment. Please retry." } };
+  }
+  const due = quoteDueNow(quote, alreadyPaid);
+  if (due.state === "instalment-paid") {
+    const monthly = (quote.billing_cycle ?? "") === "monthly";
     return {
       status: 409,
       body: {
-        error: `The first ${instalments.cycle === "monthly" ? "month" : "instalment"} on this quote is already paid.`,
+        error: `The first ${monthly ? "month" : "instalment"} on this quote is already paid.`,
         nextStep: "The rest is invoiced one period at a time — pay those from the invoice you receive on each billing date.",
       },
     };
   }
-
-  const amountInr = instalments ? instalments.firstGross : (quote.amount ?? 0);
-  if (amountInr <= 0) {
+  if (due.state === "paid" || due.state === "invoiced") {
+    return {
+      status: 409,
+      body: {
+        error: "This quote is already paid in full.",
+        nextStep: "Nothing more is due on it. If you need a receipt or think this is wrong, please contact the reseller.",
+      },
+    };
+  }
+  if (due.state === "nothing") {
     return { status: 400, body: { error: "Nothing to pay on this quote." } };
   }
   // Razorpay (Indian account) charges INR. A foreign-currency quote shows a
   // non-₹ total to the customer, so charging ₹ here would mismatch what they
   // see — route those to offline settlement instead.
-  const isForeign = !!quote.currency && quote.currency.toUpperCase() !== "INR";
-  if (isForeign) {
+  if (!due.inr) {
     return {
       status: 400,
       body: { error: "Online payment is available for ₹ invoices only — please contact the reseller to pay.", notConfigured: true },
     };
   }
+  const amountInr = due.amount;
+  const instalments = due.instalment;
 
   // ── 3. Resolve the tenant's Razorpay creds (tenant_secrets → env) ────────
   let rzKeyId = "";
@@ -232,6 +279,8 @@ export async function startQuotePayment(
         /* So a ₹2,360 capture against a ₹28,320 quote is self-explaining in the
            gateway dashboard rather than looking like an underpayment. */
         ...(instalments ? { instalment: `1 of ${instalments.count}`, cycle: instalments.cycle } : {}),
+        /* R-1569: a part-paid quote's order is the remainder — say so in the gateway too. */
+        ...(alreadyPaid > 0 ? { quoteTotal: String(quoteTotal), alreadyPaid: String(alreadyPaid) } : {}),
       },
     });
     return {
@@ -240,6 +289,9 @@ export async function startQuotePayment(
         success: true,
         orderId: order.id,
         amount: amountInr * 100,
+        amountRupees: amountInr,
+        quoteTotal,
+        alreadyPaid,
         currency: "INR",
         razorpayKeyId: rzKeyId,
         razorpayMode: rzMode,

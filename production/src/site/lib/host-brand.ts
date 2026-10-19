@@ -42,7 +42,8 @@ const PRODUCT_BRAND: HostBrand = {
   back: null,
   titleDefault: "ResellerOS — Reseller business, operated.",
   titleTemplate: "%s · ResellerOS",
-  footer: "ResellerOS · DPDP Act compliant",
+  // R-1600: no "DPDP Act compliant" claim without a CA / lawyer's yes.
+  footer: "ResellerOS",
 };
 
 export function brandForHost(host: string | null | undefined): HostBrand {

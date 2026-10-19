@@ -29,9 +29,21 @@ on:
   push:
     branches: [main, deploy, 'session/**', manager-pardeep, billing-abhishek, website-pawan, accounts-hitesh, pardeep-sir, abhishek-pre-merge, pawan-api-system, hitesh-qa]
   pull_request:
+# ─── R-1593 (18 Oct 2026): STOP PAYING FOR RUNS NOBODY WILL READ ─────────────
+# ~90 workers push manager-pardeep back to back; every push ran the full gate (~17-20 min) and
+# every OLDER run on the same branch kept running too. R-1424: Actions hit the spending limit.
+# One group per workflow + ref (a PR's ref is refs/pull/N/merge, so per PR): a newer push
+# cancels the older run. main/deploy are NOT cancelled — each commit there keeps its own result.
+# Which checks run is unchanged; tests/ops/ci-workflow.test.ts pins all of this.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deploy' }}
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A normal run takes 17-20 min (gh run list, 18 Oct). A hung build/test stops here instead
+    # of burning GitHub's 6-hour default.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: production
@@ -88,6 +100,26 @@ jobs:
       - run: npm run lint
       - run: npm run lint:ratchet
 
+      # R-1593: Next's own build cache (webpack/SWC output). Keyed on the lockfile + every
+      # source/config file, so an unchanged tree is an exact hit; on any change the restore-key
+      # brings back the newest cache for the same lockfile and Next rebuilds only what changed.
+      # npm's download cache is the `cache: npm` on setup-node above.
+      # R-1619: NOT .tsbuildinfo. tsconfig has `incremental`, so next build's type check writes
+      # .next/cache/.tsbuildinfo and, when one is there, starts from it. A stale one from an
+      # older commit was the first suspect for the 4 GB OOM below; it was NOT the cause (run
+      # 39192223157 had no cache at all and still ran out — see the heap note on the Build
+      # step). The `!` line stays as cheap safety: the type check always starts clean, and
+      # the webpack/SWC cache — the part that saves time — is still restored.
+      - name: Restore Next build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            production/.next/cache
+            !production/.next/cache/.tsbuildinfo
+          key: nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-${{ hashFiles('production/src/**', 'production/public/**', 'production/next.config.mjs', 'production/tsconfig.json', 'production/tailwind.config.ts', 'production/postcss.config.mjs') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('production/package-lock.json') }}-
+
       # ── The build, and why the other three do not cover it ──────────────────
       # CLAUDE.md §25.2, written after a deploy attempt found the build broken while
       # typecheck, test and lint were all green: `next.config` sets
@@ -116,7 +148,16 @@ jobs:
           # Worth being precise about the blast radius: this never affected production.
           # Cloud Build runs the Docker build with its own resources and has been green
           # throughout. It is CI, and only CI, that needed the bigger heap.
-          NODE_OPTIONS: --max-old-space-size=4096
+          #
+          # R-1619 (19 Oct 2026): 4096 is now too small as well. From 514efbdb on, next build's
+          # "Checking validity of types" died at ~4035 MB on every run, cache or no cache
+          # (39192223157 was a full cold build); 8eba80ea, a cold build just before, passed.
+          # No single heavy import — the app's type graph grew past it. ubuntu-latest has
+          # 16 GB, so 6144 leaves ~10 GB for webpack's own workers. Build step only: the
+          # typecheck step above (plain tsc) still fits in 4096. Cloud Build's image build is
+          # not affected: it skips this type check (SKIP_BUILD_TYPECHECK=1) and its builder
+          # stage already has 6144 (production/Dockerfile NODE_HEAP_MB).
+          NODE_OPTIONS: --max-old-space-size=6144
           # R-1102 (11 Oct 2026): `next build` pre-renders the marketing pages, which read the
           # price list (site/lib/live-catalog.ts). No app runs here, so without this the build
           # called the LIVE domain and logged 503s there from Azure runner IPs. A closed local
@@ -143,6 +184,8 @@ jobs:
   e2e-smoke:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # R-1593: install + chromium + three no-auth specs; a hung browser stops here.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: production

@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { withRoute } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { requestFiData, fetchFiData } from "@/lib/aa/setu";
+import { refuseWithoutMfa } from "@/lib/aa/require-mfa";
 
 export const runtime = "nodejs";
 
@@ -19,16 +20,25 @@ export const POST = withRoute({
   route: "api/aa/setu/fetch/[connectionId]",
   roles: MONEY_RECORD_ROLES,
   roleHint: "Bank fetch sirf owner / manager / accountant / billing kar sakte hain.",
-}, async ({ supabase, params }) => {
+}, async ({ supabase, params, tenantId }) => {
+  /* R-879: bank statements need the second sign-in step too (lib/aa/require-mfa.ts). */
+  const mfa = await refuseWithoutMfa(supabase);
+  if (mfa) return mfa;
+
   const connectionId = params.connectionId;
 
+  /* R-879: tenant filter stated, not left to RLS alone. */
   const { data: conn, error: connErr } = await supabase
     .from("bank_aa_connections")
     .select("*")
     .eq("id", connectionId)
-    .single();
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
   if (connErr || !conn) {
-    return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+    return NextResponse.json(
+      { ok: false, error: "Ye bank connection is workspace mein nahi mila — Banking page refresh karke dobara 'Fetch' dabaiye." },
+      { status: 404 },
+    );
   }
   if (conn.status !== "active") {
     return NextResponse.json({ error: `Connection status is ${conn.status} — must be active` }, { status: 400 });

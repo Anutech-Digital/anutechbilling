@@ -1,5 +1,9 @@
 # Naya session shuru karne se pehle — ye file kholo
 
+> **STALE in parts — 19 Oct 2026, R-1609.** Jahan bhi neeche "TASKS.md ka HANDOFF block" likha
+> hai, uski jagah team board padho (root `CLAUDE.md` → "Session start"; board
+> https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n). TASKS.md 8 Sep 2026 se update nahi hui.
+
 > Har naye session me ye file kholo aur neeche ke steps kar lo. 2 minute lagte hain.
 > Likha 18 Aug 2026, ek session ke baad jo **paanch goals** tak chala aur usi wajah se slow
 > hua. Isme koi theory nahi hai — sirf wo cheezein jo aaj asli me kaam aayi.

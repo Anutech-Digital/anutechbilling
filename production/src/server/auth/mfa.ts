@@ -66,14 +66,25 @@ export async function enroll(userId: string, email: string, friendlyName?: strin
 /**
  * Check a code against one factor (enrollment) or any verified factor (sign-in).
  * On success an unverified factor becomes verified. Returns false for a wrong or replayed code.
+ *
+ * R-1547: a true result raises the session to aal2, so a NOT-yet-verified factor may only pass
+ * when it is the user's first one (no other verified factor) or the session is already aal2.
+ * Otherwise a password-only session could enroll a new authenticator and verify it to skip the
+ * real second step. Only the user's own factors are read (user_id = $1 in SELECT).
  */
-export async function verifyCode(userId: string, code: string, factorId?: string): Promise<boolean> {
+export async function verifyCode(userId: string, code: string, factorId?: string, currentAal: "aal1" | "aal2" = "aal1"): Promise<boolean> {
   return withAuthStore(async (tx) => {
     const rows = await tx.$queryRawUnsafe<FactorRow[]>(
       factorId ? `${SELECT} and id = $2::uuid for update` : `${SELECT} and status = 'verified' for update`,
       ...(factorId ? [userId, factorId] : [userId]));
     for (const r of rows) {
       if (!r.secret) continue;
+      if (r.status !== "verified" && currentAal !== "aal2") {
+        const [{ n }] = await tx.$queryRawUnsafe<{ n: number }[]>(
+          `select count(*)::int as n from auth.mfa_factors
+            where user_id = $1::uuid and factor_type = 'totp' and status = 'verified' and id <> $2::uuid`, userId, r.id);
+        if (Number(n) > 0) return false; // needs the existing authenticator's code first
+      }
       const step = matchStep(r.secret, code.trim());
       if (step === null) continue;
       const lastStep = r.last_challenged_at ? Math.floor(r.last_challenged_at.getTime() / 30_000) : -1;

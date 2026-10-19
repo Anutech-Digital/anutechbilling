@@ -9,13 +9,41 @@
  * the alias's number, or the dead service's number. (The numbers are deliberately not
  * written in this comment: that same test reads every file, including this one.)
  */
-export const RESELLEROS_URL =
-  process.env.NEXT_PUBLIC_RESELLEROS_URL?.trim() ||
-  // Use the STABLE domain, not the Cloud Run URL — the run.app host changes when
-  // the service moves region (asia-south1 → asia-southeast1 on 5 Sep 2026), but
-  // the custom domain is bound to whichever service is live. So live-price + enquiry
-  // self-calls, signup and demo links follow the domain and never break on a move.
-  "https://reselleros.anutech.in";
+/** The live product domain — the production default for RESELLEROS_URL. */
+export const LIVE_RESELLEROS_URL = "https://reselleros.anutech.in";
+
+/**
+ * R-1499 (19 Oct 2026): a laptop never defaults to LIVE. Pawan's local /quote press posted to the
+ * live app because this used to fall back to the live domain whatever the build. Now:
+ *   NEXT_PUBLIC_RESELLEROS_URL set → that (any build);
+ *   production build               → the live domain (unchanged);
+ *   anything else (next dev, test) → NEXT_PUBLIC_APP_URL, i.e. this same app, else localhost:3001.
+ * Explicit arguments (not a `process.env` object) so the browser bundle still inlines each
+ * literal NEXT_PUBLIC_* / NODE_ENV read.
+ */
+export function resolveResellerosUrl(
+  explicit: string | undefined,
+  nodeEnv: string | undefined,
+  appUrl: string | undefined,
+): string {
+  const set = explicit?.trim();
+  if (set) return set;
+  if (nodeEnv === "production") {
+    // Use the STABLE domain, not the Cloud Run URL — the run.app host changes when
+    // the service moves region (asia-south1 → asia-southeast1 on 5 Sep 2026), but
+    // the custom domain is bound to whichever service is live. So live-price + enquiry
+    // self-calls, signup and demo links follow the domain and never break on a move.
+    return LIVE_RESELLEROS_URL;
+  }
+  const local = appUrl?.trim().replace(/\/+$/, "");
+  return local || "http://localhost:3001";
+}
+
+export const RESELLEROS_URL = resolveResellerosUrl(
+  process.env.NEXT_PUBLIC_RESELLEROS_URL,
+  process.env.NODE_ENV,
+  process.env.NEXT_PUBLIC_APP_URL,
+);
 
 /**
  * The COMPANY site's canonical origin — anutech.in (R-520, 9 Oct 2026: Pardeep split the
@@ -136,6 +164,40 @@ export const AFTER_YOU_PAY: readonly string[] = [
   `Google Workspace is live ${SLA.workspaceLive}. SSL is active ${SLA.sslLive}.`,
 ];
 
+/**
+ * R-1602 (18 Oct 2026, owner decision): "Google Premier Partner since 2014" is NOT shown
+ * anywhere until proof (the Partner Advantage certificate) is on file. Restoring it is this
+ * one flag: set it to true and every place that reads PARTNER_LINE / PARTNER_BADGE (header,
+ * footer, home, /email, trial, buy/workspace, metadata, chat facts) shows it again.
+ * claims-truth.test.ts fails if "Premier Partner" is written anywhere else in user-facing copy.
+ */
+export const SHOW_PREMIER_PARTNER: boolean = false;
+const PREMIER_PARTNER_LINE = "Google Premier Partner, since 2014";
+/** What we can say without the certificate: we have resold Google Workspace since 2014. */
+const RESELLER_LINE = "Google Workspace reseller since 2014";
+export const PARTNER_LINE: string = SHOW_PREMIER_PARTNER ? PREMIER_PARTNER_LINE : RESELLER_LINE;
+/** Short badge text for chips, stamps and eyebrows. */
+export const PARTNER_BADGE: string = SHOW_PREMIER_PARTNER ? "Google Premier Partner" : "Google Workspace reseller";
+/** Shortest form, next to a "Google" label or "Since 2014". */
+export const PARTNER_SHORT: string = SHOW_PREMIER_PARTNER ? "Premier Partner" : "Authorised reseller";
+
+/**
+ * R-1600 (18 Oct 2026, owner decision): where ResellerOS data really lives. Production moved
+ * to Cloud SQL + Cloud Run in asia-southeast1 (Singapore) in Sep 2026
+ * (docs/adr/0001-database-on-cloud-sql.md, cloudbuild.yaml). Every public page that names a
+ * region reads it from here; claims-truth.test.ts fails on "Mumbai" / "asia-south1" /
+ * "Supabase" as a data-location claim. This is NOT India — never pair it with
+ * "data stays in India" or "India data residency".
+ */
+export const DATA_LOCATION = {
+  provider: "Google Cloud",
+  region: "asia-southeast1",
+  city: "Singapore",
+  database: "Cloud SQL for PostgreSQL",
+  app: "Cloud Run",
+  label: "Google Cloud, Singapore (asia-southeast1)",
+} as const;
+
 export const COMPANY = {
   name: "Anutech Digital Pvt Ltd",
   short: "Anutech Digital",
@@ -144,6 +206,6 @@ export const COMPANY = {
   city: "Rohini, Delhi",
   founder: "Pardeep Sharma",
   supportEmail: "support@anutech.in",
-  partnerLine: "Google Premier Partner, since 2014",
+  partnerLine: PARTNER_LINE,
   hours: SLA.hours,
 } as const;

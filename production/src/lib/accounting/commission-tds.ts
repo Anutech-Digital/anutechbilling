@@ -8,6 +8,8 @@
  * caught too. The screen suggests; the operator (and their CA) decides.
  */
 
+import { fyStartISO } from "@/lib/dates/ist";
+
 export const COMMISSION_CATEGORY = "Commission / Incentive (agents)";
 export const TDS_194H_THRESHOLD = 20_000;
 export const TDS_194H_RATE_PCT = 2;
@@ -43,6 +45,5 @@ export function commissionTdsView(input: {
 
 /** Indian FY start (1 April) for an ISO date, as YYYY-MM-DD. */
 export function fyStartOf(isoDate: string): string {
-  const [y, m] = isoDate.slice(0, 10).split("-").map(Number);
-  return `${m >= 4 ? y : y - 1}-04-01`;
+  return fyStartISO(isoDate);
 }

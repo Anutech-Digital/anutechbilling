@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import {
-  LeadsNoResults, LeadsStatusStates, hasActiveLeadFilters, showNoMatch,
+  LeadsNoResults, LeadsStatusStates, hasActiveLeadFilters, showNoMatch, deepLinkOutcome,
   type LeadFilterState, type LeadsNoResultsProps,
 } from "./leads-empty-states";
 
@@ -119,5 +119,44 @@ describe("the page wires it for List and Kanban", () => {
   });
   it("the Kanban is not drawn as empty columns when no card matches", () => {
     expect(page).toMatch(/effectiveView === "kanban" && boardLeads\.length > 0 && \(\s*<LeadsKanbanBoard/);
+  });
+});
+
+/* R-1535: a failed load is not an empty workspace, and its box speaks plain words. */
+describe("<LeadsStatusStates> on a failed load (R-1535)", () => {
+  const status = { isLoading: false, isSales: false, totalLeads: undefined, shownCount: 0,
+    smartView: "everything" as const, setAddOpen: () => {}, setCsvImportOpen: () => {}, setSmartView: () => {} };
+  const RAW = "permission denied for table leads";
+  it.each([false, true])("isDealsPage=%s: plain words + Try again, no raw text, no empty state", (isDealsPage) => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const refetch = vi.fn();
+    render(<LeadsStatusStates {...status} isDealsPage={isDealsPage} refetch={refetch} error={Object.assign(new Error(RAW), { code: "42501" })} />);
+    expect(screen.getByText(isDealsPage ? /Deals didn.t load/ : /Leads didn.t load/)).toBeTruthy();
+    expect(screen.queryByText(new RegExp(RAW))).toBeNull();
+    expect(screen.queryByText(/No (leads|deals) yet/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
+
+/* R-1535: /leads?lead=<id> — "not found" only when the read SUCCEEDED with no row. */
+describe("deepLinkOutcome", () => {
+  it("waits until the read has finished", () => {
+    expect(deepLinkOutcome({ isFetched: false, isError: false, data: undefined })).toBe("wait");
+  });
+  it("a failed read is 'error' (keep ?lead= and offer retry), not 'not-found'", () => {
+    expect(deepLinkOutcome({ isFetched: true, isError: true, data: undefined })).toBe("error");
+  });
+  it("a successful read with no row is 'not-found'", () => {
+    expect(deepLinkOutcome({ isFetched: true, isError: false, data: null })).toBe("not-found");
+  });
+  it("a row opens", () => {
+    expect(deepLinkOutcome({ isFetched: true, isError: false, data: { id: "l1" } })).toBe("open");
+  });
+  it("the page no longer says 'not found' on a failed read", () => {
+    const page = readFileSync(join(__dirname, "../../../app/(app)/leads/page.tsx"), "utf8");
+    expect(page).toMatch(/deepLinkOutcome\(/);
+    expect(page).not.toMatch(/toast\.error\(`Lead \$\{focusLeadId\} not found`\)/);
   });
 });

@@ -35,7 +35,8 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { useCreateVendorBill, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { useCreateVendorBill, useOwnStateCode, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { BILL_DOCUMENT_TYPES, BILL_DOCUMENT_TYPE_LABEL, billItcEligibility, isBillDocumentType, type BillDocumentType } from "@/lib/gst/bill-itc";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
@@ -80,6 +81,8 @@ export interface VendorBillPrefill {
   igst?:         number | null;
   total?:        number | null;
   category_guess?: string | null;
+  /** R-1510 reader: "tax_invoice" | "proforma" | "other". R-1576 saves it on the bill. */
+  document_type?: string | null;
   line_items?:   Array<{ description?: string; qty?: number | null; unit_price?: number | null; amount?: number | null }>;
 }
 
@@ -128,6 +131,13 @@ export function AddVendorBillDialog({
   const [fxRate, setFxRate]     = React.useState("");        // string for the input; "" until entered
   const [fxError, setFxError]   = React.useState<string | null>(null);
   const isForeign = currency !== "INR";
+
+  // R-1576: what kind of document this is — only a TAX INVOICE gives GST input credit.
+  // Saved on the bill; the GST page, 3B, P&L and Balance Sheet read it (lib/gst/bill-itc.ts).
+  const [docType, setDocType] = React.useState<BillDocumentType>("tax_invoice");
+  // Second press of Save on a bill whose GST gives no credit = "yes, save it as cost".
+  const [noCreditOk, setNoCreditOk] = React.useState(false);
+  const { data: ownStateCode } = useOwnStateCode();
   const rate = isForeign ? Number(fxRate || 0) : 1;
 
   // Line items (products/services on the bill) — amounts stay in the bill's own
@@ -185,6 +195,9 @@ export function AddVendorBillDialog({
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
         amount:      it.amount     != null ? String(it.amount)     : "",
       })));
+      /* R-1576: the reader's document type is saved on the bill (R-1510 only warned). */
+      const readType = (f as Record<string, unknown>).document_type;
+      if (isBillDocumentType(readType)) setDocType(readType);
       /* R-1510: a Proforma is a request for payment, not a GST tax invoice — no input
          credit can be claimed on it. Say so; the bill is still saved as typed. */
       const proformaWarn = (f as Record<string, unknown>).document_type === "proforma"
@@ -240,6 +253,8 @@ export function AddVendorBillDialog({
       setValue("category", String(prefill.category_guess));
     }
 
+    if (isBillDocumentType(prefill.document_type)) setDocType(prefill.document_type);
+
     const cur = String(prefill.currency ?? "INR") || "INR";
     setCurrency(cur);
     if (cur !== "INR") setFxRate("");   // force the operator to enter today's rate
@@ -259,6 +274,18 @@ export function AddVendorBillDialog({
   const sgst     = Number(watch("sgst")     || 0);
   const igst     = Number(watch("igst")     || 0);
   const computedTotal = subtotal + cgst + sgst + igst;
+
+  /* R-1576 (§24): say BEFORE saving whether this bill's GST will be input credit, and why not. */
+  const vendorGstinNow = watch("vendor_gstin");
+  const categoryNow = watch("category");
+  const itc = billItcEligibility({
+    document_type: docType, vendor_gstin: vendorGstinNow, category: categoryNow,
+    cgst, sgst, igst, ownStateCode: ownStateCode ?? null,
+  });
+  const gstOnBill = cgst + sgst + igst;
+  const noCredit = gstOnBill > 0 && !itc.eligible;
+  /* Any change to what decides the credit asks again. */
+  React.useEffect(() => { setNoCreditOk(false); }, [docType, vendorGstinNow, categoryNow, cgst, sgst, igst]);
 
   // Quick-fill: pretend the user typed only subtotal — auto-derive intra/inter
   function applyGST18Intra() {
@@ -286,6 +313,8 @@ export function AddVendorBillDialog({
       return;
     }
     setFxError(null);
+    /* R-1576: GST that gives no credit becomes cost — ask once, plainly, before saving. */
+    if (noCredit && !noCreditOk) { setNoCreditOk(true); return; }
     // Convert the bill's own-currency amounts to ₹ for the books (rate = 1 for INR).
     const inr = (n: number) => Math.round(n * rate);
 
@@ -341,6 +370,7 @@ export function AddVendorBillDialog({
       total:        inr(values.total),
       notes,
       status:       "unpaid",
+      document_type: docType,
       line_items,
     });
     // Told AFTER the write succeeded, so a caller linking its own record to this
@@ -502,6 +532,22 @@ export function AddVendorBillDialog({
             </p>
           </FormField>
 
+          <FormField label="Document type" required htmlFor="document_type">
+            <Select value={docType} onValueChange={(v) => { if (isBillDocumentType(v)) setDocType(v); }}>
+              <SelectTrigger id="document_type">
+                <SelectValue placeholder="Select document type" />
+              </SelectTrigger>
+              <SelectContent>
+                {BILL_DOCUMENT_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{BILL_DOCUMENT_TYPE_LABEL[t]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-ink-3 mt-1">
+              Bill ke upar likha naam dekho — sirf <b>Tax Invoice</b> par GST input credit milta hai.
+            </p>
+          </FormField>
+
           {/* Line items — products/services on the bill (auto-filled from AI). */}
           <div className="p-3 rounded-lg border border-hairline bg-paper-2/30">
             <div className="flex items-center justify-between mb-2">
@@ -595,6 +641,16 @@ export function AddVendorBillDialog({
                 Inter-state GST 18% (IGST 18)
               </button>
             </div>
+            {gstOnBill > 0 && (
+              <p role="status" className={`mt-3 flex items-start gap-1.5 text-xs ${itc.eligible ? "text-emerald" : "text-rose"}`}>
+                <Icon name={itc.eligible ? "check_circle" : "alert"} size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  {itc.eligible
+                    ? "ITC milega — ye GST input credit me jayega (GST Report, GSTR-3B 4(A))."
+                    : <>ITC nahi milega — {itc.reason}. Ye GST cost me jayega (P&amp;L), Input GST me nahi.</>}
+                </span>
+              </p>
+            )}
           </div>
 
           <FormField label={`Total (${isForeign ? currency : "₹"}) incl GST`} required htmlFor="total">
@@ -617,10 +673,17 @@ export function AddVendorBillDialog({
             <Textarea id="notes" rows={2} placeholder="Reference, period, comments…" {...register("notes")} />
           </FormField>
 
+          {noCredit && noCreditOk && (
+            <p role="alert" className="rounded-md bg-rose-soft/40 p-2.5 text-xs text-rose">
+              Is bill ke GST ({isForeign ? `${currency} ` : "₹"}{gstOnBill.toLocaleString("en-IN")}) ka credit nahi milega — {itc.reason}.
+              Ye cost me jayega. Phir bhi save karna hai to &quot;Save — GST cost me&quot; dabao; warna vendor se tax invoice maango.
+            </p>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="default" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant="primary" loading={isSubmitting}>
-              Save bill
+              {noCredit && noCreditOk ? "Save — GST cost me" : "Save bill"}
             </Button>
           </DialogFooter>
         </form>

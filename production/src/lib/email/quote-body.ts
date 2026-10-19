@@ -37,9 +37,9 @@
  * anybody noticing it never said "monthly".
  */
 import { rupee, formatDate } from "@/lib/utils";
-import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
-import { cycleScheduleLabel } from "@/lib/quotes/billing";
+import { cycleScheduleLabel, cycleFromLegacyCommitment } from "@/lib/quotes/billing";
+import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
 
 /** The supplier's own particulars, as they must appear on a GST document. */
 export interface SupplierIdentity {
@@ -133,7 +133,9 @@ const row = (label: string, value: string): string =>
 export function quoteEmailBody(input: QuoteBodyInput): string {
   const first  = input.lineItems[0];
   const isFlex = first?.commitment === "monthly";
-  const cycle  = (input.billingCycle ?? (isFlex ? "monthly" : "yearly")).toLowerCase();
+  /* R-1570: the same fallback the PDF uses (QuotePDF effectiveCycle), so a legacy row with
+     no billing_cycle reads the same schedule in the letter and the attachment. */
+  const cycle  = (input.billingCycle ?? cycleFromLegacyCommitment(first?.commitment)).toLowerCase();
   const unit   = cycleUnitSuffix(cycle);
 
   /* The flex tier's rate is per seat per MONTH; an annual line's is per seat per YEAR. That
@@ -159,15 +161,27 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
     ? `Sub:  Quotation for ${first.name} — ${seats} seat${seats === 1 ? "" : "s"}`
     : "Sub:  Quotation";
 
-  /* GST heads, split the way the invoice will be raised. Half each and NOT recomputed from
-     the rate: the halves must add back to the `tax` the row already committed to. R-212: the
-     split is lib/gst/tax-split's — the same one the preview and the PDF print. */
-  const intra = splitIntraStateTax(input.tax);
+  /* ── R-1570: ONE INVOICE'S FIGURES, FROM THE PDF'S OWN FUNCTION ──────────────────────
+     The row stores the TERM. On "annual, billed monthly" (annual line, billing_cycle monthly
+     — what the auto-quote saves) that is the YEAR, and this letter printed it with "/month"
+     after it: "PAYABLE EACH MONTH ₹57,348/month" beside an attachment saying ₹4,779/mo.
+     lib/quotes/per-period-figures is what the PDF prints from, so the two cannot differ:
+     yearly → the stored figures; flex → stored figures are one month already; an annual
+     commitment billed in instalments → the first instalment (lib/billing/instalments).
+     GST heads come from the same place (R-212 tax-split), split the way the invoice is. */
+  const pp = quotePerPeriodFigures({
+    cycle: cycle as BillingCycle,
+    lineCommitment: first?.commitment,
+    subtotal: input.subtotal, discount: input.discount,
+    taxable: input.subtotal - input.discount, tax: input.tax, total: input.total,
+    taxRate: input.taxRate,
+  });
+  const split = pp.perInvoice && !pp.flex;
   const gstRows = input.interState
-    ? [row(`IGST ${input.taxRate}%`, `${rupee(input.tax)}${unit}`)]
+    ? [row(`IGST ${input.taxRate}%`, `${rupee(pp.tax)}${unit}`)]
     : [
-        row(`CGST ${input.taxRate / 2}%`, `${rupee(intra.cgst)}${unit}`),
-        row(`SGST ${input.taxRate / 2}%`, `${rupee(intra.sgst)}${unit}`),
+        row(`CGST ${input.taxRate / 2}%`, `${rupee(pp.cgst)}${unit}`),
+        row(`SGST ${input.taxRate / 2}%`, `${rupee(pp.sgst)}${unit}`),
       ];
 
   const t = input.terms ?? {};
@@ -218,13 +232,16 @@ export function quoteEmailBody(input: QuoteBodyInput): string {
       : []),
     "",
     "COMMERCIALS",
-    row("Taxable value", `${rupee(input.subtotal)}${unit}`),
+    row("Taxable value", `${rupee(pp.subtotal)}${unit}`),
     ...(input.discountPct > 0
-      ? [row(`Discount ${input.discountPct}%`, `-${rupee(input.discount)}${unit}`)]
+      ? [row(`Discount ${input.discountPct}%`, `-${rupee(pp.discount)}${unit}`)]
       : []),
     ...gstRows,
     `  ${"─".repeat(34)}`,
-    row(totalLabel, `${rupee(input.total)}${unit}`),
+    row(totalLabel, `${rupee(pp.gross)}${unit}`),
+    /* The year the customer is committing to, on its own line and without a unit — the
+       same "Annual contract value" the PDF prints under its per-invoice total. */
+    ...(split ? [row("Annual total", `${rupee(pp.yearTotal)} (${pp.invoicesPerYear} invoices)`)] : []),
     ...(termLines.length ? ["", "TERMS", ...termLines] : []),
     "",
     "NEXT STEPS",

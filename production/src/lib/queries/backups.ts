@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
+import { countJsonRows, logExport } from "@/lib/export-log";
 
 const KEY = ["tenant_backups"] as const;
 
@@ -115,4 +116,5 @@ export async function downloadBackup(id: string, createdAt: string): Promise<voi
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  void logExport({ what: "full-backup", rowCount: countJsonRows(data), format: "json" });
 }

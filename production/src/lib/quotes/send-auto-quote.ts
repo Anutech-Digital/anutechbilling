@@ -38,7 +38,7 @@ import { quoteEmailBody } from "@/lib/email/quote-body";
 import { replySubject } from "@/lib/email/reply-subject";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import type { createAdminClient } from "@/lib/supabase/server";
-import type { QuoteLineItem } from "@/lib/supabase/database.types";
+import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 
 export interface SendAutoQuoteArgs {
@@ -205,6 +205,10 @@ export async function sendAutoQuote(
       validityDays:  30,
       notes:         quote.notes ?? undefined,
       isRenewal:     quote.is_renewal ?? false,
+      /* R-1570: the quote's own invoice frequency. Without it the renderer fell back to the
+         line's commitment — "annual, billed monthly" printed as one yearly total while the
+         covering letter (quote-body.ts) printed per month. Both now read the same cycle. */
+      billingCycle:  (quote.billing_cycle ?? undefined) as BillingCycle | undefined,
     });
     attachments = [{
       filename:    `Quote-${quote.id}.pdf`,

@@ -27,6 +27,7 @@ import { sendWhatsApp, type WhatsAppSendResult } from "@/lib/whatsapp/client";
 import { automationState } from "@/lib/automation/gate.server";
 import { cronTenantAllowed, currentCronRun, noteWouldSend } from "@/lib/automation/cron-gate";
 import { CUSTOMER_MESSAGES } from "@/lib/automation/jobs";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 export { isEmailConfigured };
 export type { EmailMessage, EmailSendResult, WhatsAppSendResult };
@@ -97,7 +98,7 @@ export async function sendCustomerMessage(m: CustomerMessage): Promise<CustomerM
 export async function sendCustomerEmail(msg: EmailMessage): Promise<EmailSendResult> {
   const tenantId = msg.route?.tenantId ?? msg.automated?.tenantId ?? null;
   if (!tenantId) {
-    console.error(`[messaging] customer email to ${msg.to} names no company — refused`);
+    console.error(`[messaging] customer email to ${maskContactValue(msg.to)} names no company — refused`);
     return { status: "failed", providerId: null, errorMessage: "Not sent — no company on this message.", provider: "stub" };
   }
   const r = await sendCustomerMessage({ channel: "email", tenantId, email: msg });

@@ -15,6 +15,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queries/keys";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -664,7 +665,7 @@ export function useBookCreditAsInvoice() {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: ["aging"] });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       toast.success(`Invoice ${inv.invoice_id} bana & reconcile ho gaya`);
     },
     onError: (err) => toastError(err),
@@ -955,7 +956,6 @@ export function useBookBankTxnAsVendorBill() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", input.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["vendor_bills"] });
-      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success(res?.replaced_synthetic ? "Bill payment reconciled — Bills page ki manual line hata di, ye asli line rahi" : "Bill payment booked & reconciled");
     },
@@ -979,7 +979,6 @@ export function useBookBankTxnAsCommission() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", input.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["referral-commissions"] });
-      qc.invalidateQueries({ queryKey: ["referral_commissions"] });
       qc.invalidateQueries({ queryKey: ["balance-sheet"] });
       toast.success(res?.replaced_synthetic ? "Commission reconciled — manual line hata di, ye asli line rahi" : "Commission paid & reconciled");
     },
@@ -1173,7 +1172,7 @@ export function useMatchCreditToInvoice() {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
-      qc.invalidateQueries({ queryKey: ["aging"] });
+      qc.invalidateQueries({ queryKey: queryKeys.aging() });
       toast.success(`Payment recorded on ${invoiceId} & line reconciled`);
     },
     onError: (err) => toastError(err, { fallback: "Match failed" }),

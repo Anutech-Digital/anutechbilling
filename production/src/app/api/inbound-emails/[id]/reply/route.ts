@@ -219,8 +219,12 @@ export async function GET(_req: Request, props: { params: Promise<{ id: string }
   if (!user) return NextResponse.json({ error: "Please sign in again." }, { status: 401 });
 
   const { data: me } = await supabase
-    .from("users").select("tenant_id").eq("id", user.id).maybeSingle();
+    .from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return NextResponse.json({ replies: [] });
+  /* R-1553: reading what was sent is for the same roles that may send (POST above). */
+  if (!mayOpenPage(me.role, ["/enquiries", "/leads"])) {
+    return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
+  }
 
   const admin = createAdminClientFor(user.id);
   const { data: enquiry } = await admin

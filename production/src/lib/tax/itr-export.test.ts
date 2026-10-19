@@ -8,8 +8,9 @@ import { itrCsvRows, ITR_CSV_HEADERS } from "./itr-export";
 
 const SOURCES: ItrSources = {
   revenueExGst: 1_500_000, invoiceCount: 10, creditNoteCount: 0, debitNoteCount: 0,
-  purchaseCost: 500_000, purchaseCount: 5,
-  expenses: [{ category: "Hosting", amount: 118_000, gst: 18_000, count: 3 }],
+  cogs: 500_000, cogsCount: 5, placedPoCost: 0, placedPoCount: 0,
+  commissions: 0, commissionsCount: 0,
+  expenses: [{ category: "Hosting", amount: 118_000, itc: 18_000, count: 3 }],
   tdsCredit: 50_000, tdsCount: 4,
   advanceTaxPaid: 0,
 };

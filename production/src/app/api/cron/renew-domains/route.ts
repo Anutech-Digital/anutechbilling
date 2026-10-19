@@ -24,13 +24,13 @@
  *     Holds are written to the row's note, which the /provisioning screen shows.
  *   Noticed later: every row stays `queued` with a note until activated or failed.
  *
- * Auth: Bearer(CRON_SECRET) or a signed-in owner, like register-domains.
+ * Auth: Bearer(CRON_SECRET) only (R-1552, 18 Oct 2026 — the "or a signed-in owner" path let
+ * any company's owner run this for EVERY company). Answer reported like every cron (R-1587).
  */
 import { NextResponse } from "next/server";
-import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
 import {
   listReadyDomainRenewals,
@@ -43,28 +43,15 @@ import { getEngineServices } from "@/lib/dms-engine/client";
 import { coverFromPaid } from "@/lib/provisioning/domain-registration";
 import { domainRenewalEnabled, expiryEpochSeconds, renewalCommandId } from "@/lib/domains/renewal";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { errorMessage } from "@/lib/ops/fetch-all";
+import { cronAuthFailure } from "@/app/api/cron/_lib/cron-auth";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { engineAnswered, engineDown, newEngineHealth, provisioningResponse } from "@/app/api/cron/_lib/provisioning-report";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-
-async function authorized(req: Request): Promise<boolean> {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (secret) {
-    const m = /^Bearer\s+(.+)$/i.exec(req.headers.get("authorization") ?? "");
-    if (timingSafeEqualStr(m?.[1] ?? "", secret)) return true;
-  }
-  try {
-    const supabase = createClient();
-    const { data: authData } = await supabase.auth.getUser();
-    if (!authData?.user) return false;
-    const { data: me } = await supabase.from("users").select("role").eq("id", authData.user.id).single();
-    return me?.role === "owner";
-  } catch {
-    return false;
-  }
-}
 
 /* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
 const gated = gatedCron("renew-domains", handle);
@@ -85,7 +72,8 @@ async function alertOwner(tenantId: string, subject: string, text: string) {
 }
 
 async function handle(req: Request) {
-  if (!(await authorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const denied = cronAuthFailure(req, process.env.CRON_SECRET);
+  if (denied) return denied;
 
   if (!domainRenewalEnabled()) {
     return NextResponse.json({ ran: true, renewed: 0, note: "automatic domain renewal is switched off (DOMAIN_RENEWAL_LIVE is not 1)" });
@@ -94,12 +82,19 @@ async function handle(req: Request) {
     return NextResponse.json({ error: "DMS_ENGINE_URL / DMS_ENGINE_COMMAND_KEY are not set, so nothing can be renewed." }, { status: 503 });
   }
 
-  const rows = await listReadyDomainRenewals();
+  let queue: Awaited<ReturnType<typeof listReadyDomainRenewals>>;
+  try {
+    queue = await listReadyDomainRenewals();
+  } catch (e) {
+    return cronDbFailure("renew-domains", e, `could not read the domain renewal queue: ${errorMessage(e)}`);
+  }
+  /* R-897: only the companies this pass may work on — and only they are counted (R-1552). */
+  const rows = queue.filter((r) => cronTenantAllowed(r.tenant_id));
   const admin = createAdminClient();
   const summary = { considered: rows.length, renewed: 0, held: 0, reconciling: 0, refused: 0, skipped: 0 };
+  const health = newEngineHealth();
 
   for (const row of rows) {
-    /* R-897 */ if (!cronTenantAllowed(row.tenant_id)) continue;
     const domain = (row.domain ?? "").trim().toLowerCase();
 
     const policy = await loadAutonomyPolicy(row.tenant_id);
@@ -129,6 +124,7 @@ async function handle(req: Request) {
 
     const services = await getEngineServices(email);
     if (!services.ok) {
+      engineDown(health, `${domain}: could not read DMS services (${services.reason}${services.detail ? `: ${services.detail}` : ""})`);
       await noteProvisioning(row.id, `Waiting: could not read ${domain}'s current expiry from DMS (${services.reason}${services.detail ? `: ${services.detail}` : ""}). It will be tried again on the next run.`);
       summary.skipped += 1;
       continue;
@@ -158,6 +154,9 @@ async function handle(req: Request) {
       },
     });
 
+    if (outcome.kind === "unreachable") engineDown(health, `${domain}: could not reach the DMS engine (${outcome.reason})`);
+    else engineAnswered(health);
+
     switch (outcome.kind) {
       case "done": {
         const ref = String(outcome.result.orderId ?? "renewed");
@@ -172,8 +171,9 @@ async function handle(req: Request) {
         break;
       case "gate_closed":
         await noteProvisioning(row.id, `Waiting: ${outcome.reason}`);
-        return NextResponse.json({ ...summary, note: "the DMS engine's domain.renew gate is closed — stopped" });
+        return provisioningResponse("renew-domains", summary, health, { note: "the DMS engine's domain.renew gate is closed — stopped" });
       case "needs_reconciliation":
+        health.errors.push(`${domain}: needs reconciling (${outcome.reason})`);
         if (await noteProvisioning(row.id, `RECONCILE: ${outcome.reason}`)) {
           await alertOwner(
             row.tenant_id,
@@ -184,6 +184,7 @@ async function handle(req: Request) {
         summary.reconciling += 1;
         break;
       case "refused":
+        health.errors.push(`${domain}: refused (${outcome.reason})`);
         await markProvisioningFailed(row.id, `Not renewed: ${outcome.reason}`);
         await alertOwner(
           row.tenant_id,
@@ -199,5 +200,5 @@ async function handle(req: Request) {
     }
   }
 
-  return NextResponse.json({ ran: true, ...summary });
+  return provisioningResponse("renew-domains", summary, health);
 }

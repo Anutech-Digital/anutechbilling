@@ -27,13 +27,13 @@ import { CashFlowMonthSheet } from "@/components/features/accounting/cash-flow-m
 import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
 import { loadCashFlow, type CashFlowData } from "./load";
 import { monthRows, runway as computeRunway, type MonthRow } from "@/lib/accounting/cash-flow-summary";
-import { formatMonthLabel, utcDateISO } from "@/lib/dates/ist";
+import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
+/** `d` is an IST-shifted Date (see rangeBounds), so its UTC calendar date is the IST date. */
 function fyStart(d: Date): Date {
-  const y = d.getUTCFullYear();
-  return new Date(Date.UTC(d.getUTCMonth() >= 3 ? y : y - 1, 3, 1));
+  return new Date(Date.UTC(fyStartYear(utcDateISO(d)), 3, 1));
 }
 function rangeBounds(key: RangeKey): { from: string | null; to: string | null; label: string } {
   const now = new Date(Date.now() + 5.5 * 3600 * 1000);

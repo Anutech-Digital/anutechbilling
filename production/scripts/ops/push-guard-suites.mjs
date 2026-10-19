@@ -43,7 +43,14 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/ai/autonomy-chokepoint.test.ts",
   "src/lib/ai/gemini.test.ts",
   "src/lib/app-url-fallback.test.ts",
+  // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
+  // past the push gate and CI stayed red ~2 h.
+  "src/lib/app-url.test.ts",
+  "src/lib/nav-route-guard.test.ts",
+  "src/lib/queries/__tests__/money-read-scan.test.ts",
+  "tests/secret-scan.test.ts",
   "src/lib/auth/no-passwords-in-source.test.ts",
+  "src/lib/security/no-public-admin-env.test.ts", // R-730: admin allowlists never NEXT_PUBLIC_
   "src/lib/email/no-hardcoded-recipient.test.ts",
   "src/lib/feedback/internal-links.test.ts",
   "src/lib/feedback/route-map.test.ts",
@@ -71,6 +78,8 @@ export const PUSH_GUARD_SUITES = [
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
+  // ── repo-wide file scans ──
+  "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
 ];
 
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. */

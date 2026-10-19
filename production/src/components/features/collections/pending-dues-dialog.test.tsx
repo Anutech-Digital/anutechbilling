@@ -93,7 +93,9 @@ describe("Send pending dues dialog", () => {
     await waitFor(() => expect(st.calls.some((c) => c.url.endsWith("/email"))).toBe(true));
     const sent = st.calls.find((c) => c.url.endsWith("/email"))!;
     expect(sent.url).toBe(`/api/customers/${CUST}/pending-dues/email`);
-    expect(Object.keys(sent.body ?? {}).sort()).toEqual(["message", "nextFollowUpOn", "subject"]);
+    expect(Object.keys(sent.body ?? {}).sort()).toEqual(["message", "nextFollowUpOn", "requestId", "subject"]);
+    // R-1544: one id per opening — a retry sends the same id, so the server sends one email.
+    expect(String(sent.body?.requestId)).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("no mobile number → WhatsApp button off, says how to fix it", async () => {

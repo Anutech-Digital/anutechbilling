@@ -7,7 +7,7 @@ import { istToday } from "@/lib/dates/ist";
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { useUrlState } from "@/lib/hooks/use-url-state";
-import { QUOTE_TABS } from "@/lib/navigation/drilldown";
+import { QUOTE_APPROVALS, QUOTE_TABS } from "@/lib/navigation/drilldown";
 import { useListKeys } from "@/lib/hooks/useKeyboard";
 import { useTeamTree } from "@/lib/queries/team-tree";
 import { TeamViewToggle } from "@/components/shared/team-view-toggle";
@@ -273,13 +273,19 @@ export default function QuotesPage() {
   const myApprovals = me
     ? quotesByWorkspace.filter((q) => awaitsMyApproval(q, { id: me.userId, role: me.role }))
     : [];
-  const [onlyMyApprovals, setOnlyMyApprovals] = React.useState(false);
+  /* R-1541: in the URL (?approvals=mine), so the sidebar's Quotes badge — which counts exactly
+     these quotes — opens this filter, and Back returns to it. */
+  const [approvalsParam, setApprovalsParam] = useUrlChoice<(typeof QUOTE_APPROVALS)[number]>("approvals", QUOTE_APPROVALS, "");
+  const onlyMyApprovals = approvalsParam === "mine";
+  const setOnlyMyApprovals = React.useCallback((on: boolean) => setApprovalsParam(on ? "mine" : ""), [setApprovalsParam]);
   /* Turn the filter off by itself once the queue empties — otherwise clearing the last
      approval leaves the operator on a filter with nothing in it, which reads as the list
-     having broken rather than the work being finished. */
+     having broken rather than the work being finished. Only once the quotes and the viewer
+     are loaded: arriving from the badge, the list is empty for a moment and would switch the
+     filter straight off. */
   React.useEffect(() => {
-    if (onlyMyApprovals && myApprovals.length === 0) setOnlyMyApprovals(false);
-  }, [onlyMyApprovals, myApprovals.length]);
+    if (onlyMyApprovals && quotes && me && myApprovals.length === 0) setOnlyMyApprovals(false);
+  }, [onlyMyApprovals, quotes, me, myApprovals.length, setOnlyMyApprovals]);
 
   const tabs: TabBarItem[] = [
     { id: "all",      label: "All",      count: counts.all ?? 0 },

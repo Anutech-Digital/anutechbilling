@@ -14,6 +14,9 @@
  * (date-only), which is fine for due-date tracking.
  */
 
+import { tdsDepositDueDate } from "./tds-due";
+import { fyStartYear, fyLabelOfYear } from "@/lib/dates/ist";
+
 export type ComplianceCategory = "roc" | "income_tax" | "tds" | "gst" | "payroll";
 export type ComplianceFreq = "monthly" | "quarterly" | "half_yearly" | "annual";
 
@@ -118,9 +121,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /** FY that a given date falls in → the starting calendar year (Apr–Mar). */
 function fyStart(d: Date): number {
-  return d.getMonth() + 1 >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+  // This module keeps dates as local-midnight Date objects (day0), so read the local calendar date.
+  return fyStartYear(iso(d.getFullYear(), d.getMonth() + 1, d.getDate()));
 }
-const fyLabel = (startYear: number) => `FY ${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+const fyLabel = (startYear: number) => `FY ${fyLabelOfYear(startYear)}`;
 
 /**
  * Pick the "actionable" instance: the earliest one still upcoming, OR — if the
@@ -209,6 +213,23 @@ function monthlyNext(dayNum: number): Obligation["next"] {
         periodKey: `${forMonth.getFullYear()}-${String(forMonth.getMonth() + 1).padStart(2, "0")}`,
         periodLabel: `${MONTHS[forMonth.getMonth()]} ${forMonth.getFullYear()}`,
       });
+    }
+    return pick(t, cands, isFiled);
+  };
+}
+
+/**
+ * R-1583 — "Deposit TDS deducted": the period is the month the TDS was deducted in and its
+ * due date comes from tdsDepositDueDate (7th of the next month; March → 30 April). Was
+ * monthlyNext(7), which made March due 7 April and showed it "overdue" 8–30 April.
+ */
+function tdsDepositNext(): Obligation["next"] {
+  return (t, isFiled) => {
+    const cands: ComplianceInstance[] = [];
+    for (let off = -3; off <= 1; off++) {
+      const p = new Date(t.getFullYear(), t.getMonth() + off, 1);
+      const periodKey = `${p.getFullYear()}-${String(p.getMonth() + 1).padStart(2, "0")}`;
+      cands.push({ dueDate: tdsDepositDueDate(periodKey), periodKey, periodLabel: `${MONTHS[p.getMonth()]} ${p.getFullYear()}` });
     }
     return pick(t, cands, isFiled);
   };
@@ -388,10 +409,10 @@ export const OBLIGATIONS: Obligation[] = [
     filingSteps: [
       "Total the TDS you deducted in the month — salary (sec 192) + non-salary (194C/J/I/H etc.).",
       "incometax.gov.in → e-Pay Tax → select TDS/TCS (challan 281) with the correct section codes.",
-      "Pay by the 7th → SAVE the challan (BSR code + serial + date) — you need it for the quarterly return.",
+      "Pay by the 7th (March TDS by 30 April) → SAVE the challan (BSR code + serial + date) — you need it for the quarterly return.",
       "Mark filed here (challan number in Reference).",
     ],
-    next: monthlyNext(7),
+    next: tdsDepositNext(),
   },
   {
     key: "tds_return", name: "TDS return (24Q / 26Q)", authority: "Income Tax (TRACES)",

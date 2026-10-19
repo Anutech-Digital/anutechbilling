@@ -18,7 +18,7 @@ select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('37300000-0000-4000-8000-000000000001', 'R373 TEST', 'r373@example.in', '07', 'R373');
 insert into public.document_series (tenant_id, doc_type, fiscal_year, prefix, last_number)
-  values ('37300000-0000-4000-8000-000000000001', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 990000);
+  values ('37300000-0000-4000-8000-000000000001', 'purchase_order', public.indian_fiscal_year(current_date), 'PO', 9000);
 
 insert into public.customers (id, tenant_id, name, contact_email, gstin, state_code, state, country) values
   ('37300000-0000-4000-8000-0000000000c1', '37300000-0000-4000-8000-000000000001', 'Mumbai Gstin Ltd', 'a@mg.in', '27AAPFU0939F1ZV', null, null, 'India'),

@@ -81,6 +81,17 @@ interface SubscriptionRow {
 }
 
 /**
+ * R-726: a value for a LIKE/ILIKE filter that matches only itself. `%` and `_` are LIKE
+ * wildcards and `\` is the escape character, so each is escaped; nothing else is special.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/** R-726: one plain mailbox address — no wildcard, comma, space, bracket or second @. */
+const PLAIN_EMAIL = /^[^\s@%*,;<>()\\]+@[^\s@%*,;<>()\\_]+\.[^\s@%*,;<>()\\_]+$/;
+
+/**
  * Match the sender to a customer, and read what they actually bought.
  *
  * ─── AN UNMATCHED SENDER IS A FACT, NOT A FAILURE ───────────────────────────
@@ -112,6 +123,12 @@ export async function loadSupportCustomerFacts(args: {
   ticketId: string | null;
   /** The tier already stamped on the ticket by `stamp_support_ticket_sla`, when there is one. */
   tier: "free" | "standard" | "enterprise" | null;
+  /**
+   * R-726: did the channel PROVE the sender owns this contact? WhatsApp: Meta-signed webhook.
+   * Email: a provider verdict that the From domain passed DKIM/DMARC (lib/inbound/sender-auth.ts).
+   * A From line alone is not proof — anyone can type any address into it. false → no lookup.
+   */
+  senderVerified: boolean;
 }): Promise<SupportCustomerFacts> {
   const { admin, tenantId, channel, customerContact } = args;
 
@@ -130,12 +147,18 @@ export async function loadSupportCustomerFacts(args: {
 
   let customer: CustomerRow | null = null;
 
+  /* R-726: fail closed — an unproven sender is answered as a stranger (general help only). */
+  if (args.senderVerified !== true) return unmatched;
+
   if (contact.includes("@")) {
+    /* R-726: exact, case-insensitive. Before this the raw address went into ILIKE, so a sender
+       of "%@victimco.com" matched a real customer and the bot read out their subscriptions. */
+    if (!PLAIN_EMAIL.test(contact)) return unmatched;
     const { data, error } = await admin
       .from("customers")
       .select("id, name, display_name, contact_email, contact_phone, contact_mobile")
       .eq("tenant_id", tenantId)
-      .ilike("contact_email", contact.toLowerCase())
+      .ilike("contact_email", escapeLikePattern(contact.toLowerCase()))
       .limit(1)
       .maybeSingle();
     if (error) console.error("[support-agent] customer lookup by email failed:", error.message);

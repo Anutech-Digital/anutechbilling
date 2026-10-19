@@ -1,10 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { buildRateCard } from "./rate-card";
-import { TLDS, CERTS, MAIL_RATES } from "./data/catalog";
+import { buildRateCard, PRICE_AT_SEARCH, type RateTld } from "./rate-card";
+import { CERTS, MAIL_RATES } from "./data/catalog";
 import { HOSTING_TIERS } from "./data/hosting-landing-v2";
 import { mergeEditions } from "./live-catalog";
 
-const card = buildRateCard({ tlds: TLDS, hosting: HOSTING_TIERS, editions: mergeEditions(null), mailRates: MAIL_RATES, certs: CERTS });
+/* Live rows as getSiteTldPrices returns them (R-1599) — one unknown transfer, one TLD unpriced. */
+const LIVE_TLDS: RateTld[] = [
+  { tld: ".in", use: "Indian businesses", reg: 799, renew: 899, transfer: 799, live: true },
+  { tld: ".com", use: "Anything", reg: 1049, renew: 1250, transfer: null, live: true },
+  { tld: ".io", use: "SaaS", reg: null, renew: null, transfer: null, live: false },
+];
+const card = buildRateCard({ tlds: LIVE_TLDS, hosting: HOSTING_TIERS, editions: mergeEditions(null), mailRates: MAIL_RATES, certs: CERTS });
 const section = (id: string) => card.find((s) => s.id === id)!;
 
 describe("rate card (R-075) — the same numbers the product pages show", () => {
@@ -13,12 +19,18 @@ describe("rate card (R-075) — the same numbers the product pages show", () => 
     expect(card.map((s) => s.href)).toEqual(["/domains", "/hosting", "/email", "/ssl"]);
   });
 
-  it("every domain row is the catalogue's register / renew / transfer", () => {
+  it("every domain row is the live register / renew / transfer (R-1599)", () => {
     const d = section("domains");
-    expect(d.rows).toHaveLength(TLDS.length);
+    expect(d.rows).toHaveLength(LIVE_TLDS.length);
     const com = d.rows.find((r) => r.name === ".com")!;
-    const src = TLDS.find((t) => t.tld === ".com")!;
-    expect(com.cells).toEqual([`₹${src.reg.toLocaleString("en-IN")}`, `₹${src.renew.toLocaleString("en-IN")}`, `₹${src.transfer.toLocaleString("en-IN")}`]);
+    expect(com.cells).toEqual(["₹1,049", "₹1,250", "—"]);
+    expect(com.live).toBe(true);
+  });
+
+  it("a TLD with no live price says 'Price at search' across the row, never a number", () => {
+    const io = section("domains").rows.find((r) => r.name === ".io")!;
+    expect(io.cells).toEqual([PRICE_AT_SEARCH]);
+    expect(io.live).toBe(false);
   });
 
   it("hosting rows are HOSTING_TIERS — the /hosting prices, whole rupees (R-1465)", () => {

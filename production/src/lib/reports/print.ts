@@ -22,6 +22,8 @@
  * shipping a rasteriser, and it buys a document the accountant can actually use.
  */
 
+import { logExport } from "@/lib/export-log";
+
 /**
  * Print the current report.
  *
@@ -29,9 +31,13 @@
  * the default PDF filename, so without this the CA saves twelve files all called
  * "ResellerOS". The previous title is restored afterwards so the tab (and the
  * workspace tab strip, which reads it) does not stay renamed.
+ *
+ * R-1006: the print is the report's PDF export, so it is recorded in export_log
+ * (`rowCount` = rows on the report, when the caller knows it).
  */
-export function printReport(documentTitle?: string): void {
+export function printReport(documentTitle?: string, rowCount = 0): void {
   if (typeof window === "undefined") return;
+  void logExport({ what: documentTitle || "report", rowCount, format: "pdf" });
 
   const previous = document.title;
   if (documentTitle) document.title = documentTitle;

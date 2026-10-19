@@ -33,13 +33,12 @@ import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
-import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
-import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "./invoice-divisor";
-import { quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { lineIsPerInvoice, perInvoiceDivisor } from "./invoice-divisor";
+import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
@@ -527,29 +526,18 @@ export function QuotePDF(props: QuotePDFProps) {
   const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount)                  : taxable;
   const dTax      = isForeign ? dRound(dTaxable * (taxRate / 100))             : tax;
   const dTotal    = isForeign ? dRound(dTaxable + dTax)                        : total;
-  /* R-212: CGST/SGST from lib/gst/tax-split — the split the preview and the email print.
-     A foreign quote's tax is in cents, so it is split as a whole number of cents: the helper
-     keeps a whole-unit tax in whole-unit heads (right for ₹, where every quote tax is whole
-     rupees), which would print $7.00 as $4.00 + $3.00. Integer cents also avoid the float
-     trap of the old `dRound(dTax / 2)` ($9.95 / 2 → $4.97, the odd cent going to SGST). */
-  const intra = isForeign
-    ? (({ cgst, sgst }) => ({ cgst: cgst / 100, sgst: sgst / 100 }))(splitIntraStateTax(Math.round(dTax * 100)))
-    : splitIntraStateTax(dTax);
-
-  /* R-527: per-instalment figures by ONE rounding rule — the instalment invoice's own
-     (taxable + round(taxable × GST%)), from lib/billing/instalments.ts, the plan the editor,
-     customer page and payment sheet read. "Per invoice" was the year's total ÷ 4 (₹7,647 on
-     Q-FBB9-27-0020) beside CGST/SGST of the year's tax ÷ 4 that summed to ₹7,646. ₹ quotes on
-     an annual commitment only; flex and foreign keep their own figures. */
-  const splitPlan = !isForeign && perInvoice && !noYearlyCommitment
-    ? quoteInstalmentPlan({
-        cycle: effectiveCycle, termTaxable: dTaxable, termGross: dTotal,
-        taxRate: isExport ? 0 : taxRate, lineCommitment: firstCommitment ?? null, termStart: "2000-01-01",
-      })
-    : null;
-  const firstInst = splitPlan?.lines[0] ?? null;
-  const fmtInst = (v: number) => `${fmtC(v)}${billingUnit}`;
-  const instHeads = firstInst ? splitIntraStateTax(firstInst.tax) : null;
+  /* R-212 / R-527 / R-1570: every per-invoice TOTAL (subtotal, taxable, CGST/SGST or IGST,
+     the invoice figure and the year) comes from lib/quotes/per-period-figures — the same
+     function the covering email prints from, so the letter and this attachment cannot differ.
+     It keeps the rules that lived here: a ₹ quote on an annual commitment prints its first
+     instalment by the instalment invoice's own rounding (lib/billing/instalments); flex divides
+     by nothing; foreign divides at 2dp and splits its tax as whole cents. */
+  const pp = quotePerPeriodFigures({
+    cycle: effectiveCycle, lineCommitment: firstCommitment,
+    subtotal: dSubtotal, discount: dDiscount, taxable: dTaxable, tax: dTax, total: dTotal,
+    taxRate: isExport ? 0 : taxRate, foreign: isForeign,
+  });
+  const fmtPer = (v: number) => (perInvoice ? `${fmtC(v)}${billingUnit}` : fmtC(v));
 
   return (
     <Document
@@ -740,17 +728,17 @@ export function QuotePDF(props: QuotePDFProps) {
                 <Text style={s.totalLabel}>
                   {perInvoice ? "Subtotal (per invoice)" : "Subtotal"}
                 </Text>
-                <Text style={s.totalValue}>{fmtInv(dSubtotal)}</Text>
+                <Text style={s.totalValue}>{fmtPer(pp.subtotal)}</Text>
               </View>
               {discountPct > 0 && (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>Discount ({discountPct}%)</Text>
-                  <Text style={s.totalValueAccent}>-{fmtInv(dDiscount)}</Text>
+                  <Text style={s.totalValueAccent}>-{fmtPer(pp.discount)}</Text>
                 </View>
               )}
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>Taxable amount</Text>
-                <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.taxable) : fmtInv(dTaxable)}</Text>
+                <Text style={s.totalValue}>{fmtPer(pp.taxable)}</Text>
               </View>
               {isExport ? (
                 <View style={s.totalRow}>
@@ -760,17 +748,17 @@ export function QuotePDF(props: QuotePDFProps) {
               ) : interState ? (
                 <View style={s.totalRow}>
                   <Text style={s.totalLabel}>IGST ({taxRate}%)</Text>
-                  <Text style={s.totalValue}>{firstInst ? fmtInst(firstInst.tax) : fmtInv(dTax)}</Text>
+                  <Text style={s.totalValue}>{fmtPer(pp.tax)}</Text>
                 </View>
               ) : (
                 <>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>CGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.cgst) : fmtInv(intra.cgst)}</Text>
+                    <Text style={s.totalValue}>{fmtPer(pp.cgst)}</Text>
                   </View>
                   <View style={s.totalRow}>
                     <Text style={s.totalLabel}>SGST ({taxRate / 2}%)</Text>
-                    <Text style={s.totalValue}>{instHeads ? fmtInst(instHeads.sgst) : fmtInv(intra.sgst)}</Text>
+                    <Text style={s.totalValue}>{fmtPer(pp.sgst)}</Text>
                   </View>
                 </>
               )}
@@ -782,11 +770,7 @@ export function QuotePDF(props: QuotePDFProps) {
                       : "Grand total"}
                   </Text>
                   <Text style={s.grandValue}>
-                    {firstInst
-                      ? fmtInst(firstInst.gross)
-                      : perInvoice
-                      ? `${fmtC(dRound(dTotal / invoiceDivisor))}${billingUnit}`
-                      : fmtC(dTotal)}
+                    {fmtPer(pp.gross)}
                   </Text>
                 </View>
                 {perInvoice && (
@@ -813,10 +797,9 @@ export function QuotePDF(props: QuotePDFProps) {
                     <View style={s.perInvoiceRow}>
                       <Text>Annual contract value</Text>
                       {/* The mirror of the divisor above: on an annual commitment billed
-                          monthly, `dTotal` IS the year. `annualContractValue` keeps the two
-                          in step, and its tests keep the flex branch honest even though this
-                          document no longer renders it. */}
-                      <Text>{splitPlan ? fmtC(splitPlan.instalmentsGross) : fmtC(annualContractValue(dTotal, billingN, firstCommitment))}/yr</Text>
+                          monthly, `dTotal` IS the year (the sum of instalments on a ₹ quote).
+                          per-period-figures uses `annualContractValue` for the rest. */}
+                      <Text>{fmtC(pp.yearTotal)}/yr</Text>
                     </View>
                   )
                 )}

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "@/site/components/ui/SiteLink";
 import { SectionHead } from "@/site/components/ui/bits";
-import { TLDS, CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
+import { CERTS, MAIL_RATES } from "@/site/lib/data/catalog";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
 import { fetchLiveWorkspace, mergeEditions } from "@/site/lib/live-catalog";
 import { buildRateCard } from "@/site/lib/rate-card";
+import { getSiteTldPrices } from "@/site/lib/live-tld-pricing";
 
 /**
  * /rates — every customer price on one page (R-075, 1 Oct 2026).
@@ -20,13 +21,14 @@ export const metadata: Metadata = {
     "Anutech Digital's full rate card in rupees: domain register, renew and transfer prices, web hosting, business email and SSL. All prices exclusive of 18% GST.",
 };
 
-/* The live Workspace prices revalidate every 10 minutes, same as /email. */
+/* The live Workspace and domain prices revalidate every 10 minutes, same as /email. */
 export const revalidate = 600;
 
 export default async function RatesPage() {
-  const live = await fetchLiveWorkspace();
+  /* R-1599: domain rows are the live registry prices the checkout charges, never TLDS. */
+  const [live, tlds] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices()]);
   const sections = buildRateCard({
-    tlds: TLDS,
+    tlds,
     hosting: HOSTING_TIERS,
     editions: mergeEditions(live),
     mailRates: MAIL_RATES,

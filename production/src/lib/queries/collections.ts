@@ -17,7 +17,9 @@
  *
  * FOLLOW-UPS (R-1515, table payment_followups): per customer, the newest row gives the
  * next follow-up date and last note; the newest row that carries a promise date gives the
- * promise. A promise is BROKEN when its date has passed and the customer still owes.
+ * promise. Its status (kept / broken / due / open) is followup-rules.ts promiseStatus — R-1540:
+ * the same rule as the weekly report and the history; BROKEN = the date has passed and the
+ * promised cash did not come in between logging and that date (and the customer still owes).
  * The owner is customers.account_manager_id (R-1514 decision), the newest follow-up's
  * `assigned_to` may hand it to someone else — "Mere" matches either.
  *
@@ -31,7 +33,10 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
-import { istToday } from "@/lib/dates/ist";
+import { istDayStartUtc, istToday, toIstDate } from "@/lib/dates/ist";
+import {
+  promiseLoggedOn, promiseReceipts, promiseStatus, type PromisePayment, type PromiseStatus,
+} from "@/lib/collections/followup-rules";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 
@@ -94,6 +99,11 @@ export interface CollectionsInput {
   invoicedQuoteIds: ReadonlySet<string>;
   customers: readonly CollectionCustomer[];
   followups: readonly CollectionFollowup[];
+  /**
+   * R-1540: received payments of these customers since their oldest promise was logged — what
+   * keeps a promise (promiseStatus). Absent → only "owes nothing" keeps one.
+   */
+  payments?: readonly PromisePayment[];
 }
 
 // ─── What the page shows ─────────────────────────────────────────────────────
@@ -128,7 +138,12 @@ export interface CollectionRow {
   daysOverdue: number;
   promisedOn: string | null;
   promisedAmount: number | null;
+  /** R-1540: promiseStatus of the newest promise — the same answer as the weekly report. */
+  promiseStatus: PromiseStatus | null;
+  /** promiseStatus === "broken". */
   promiseBroken: boolean;
+  /** This customer's payments (input.payments) — the follow-up history needs them for the same rule. */
+  payments: PromisePayment[];
   nextFollowUpOn: string | null;
   /** Next follow-up is today or already past. */
   followUpDue: boolean;
@@ -231,7 +246,9 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
         daysOverdue: 0,
         promisedOn: null,
         promisedAmount: null,
+        promiseStatus: null,
         promiseBroken: false,
+        payments: [],
         nextFollowUpOn: null,
         followUpDue: false,
         lastNote: null,
@@ -287,6 +304,14 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
     else followupsByCustomer.set(f.customer_id, [f]);
   }
 
+  const paymentsByCustomer = new Map<string, PromisePayment[]>();
+  for (const p of input.payments ?? []) {
+    if (!p.customer_id) continue;
+    const list = paymentsByCustomer.get(p.customer_id);
+    if (list) list.push(p);
+    else paymentsByCustomer.set(p.customer_id, [p]);
+  }
+
   for (const row of rows.values()) {
     row.items.sort((a, b) => b.daysOverdue - a.daysOverdue || b.amountDue - a.amountDue);
     row.amountDue = row.items.reduce((s, i) => s + i.amountDue, 0);
@@ -302,11 +327,23 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       row.lastNote = latest.note?.trim() || null;
       row.lastNoteOn = latest.created_at.slice(0, 10);
     }
+    if (row.customerId) row.payments = paymentsByCustomer.get(row.customerId) ?? [];
     const promise = fus.find((f) => !!f.promised_on);
     if (promise?.promised_on) {
-      row.promisedOn = promise.promised_on.slice(0, 10);
+      const on = promise.promised_on.slice(0, 10);
+      row.promisedOn = on;
       row.promisedAmount = promise.promised_amount;
-      row.promiseBroken = row.promisedOn < today && row.amountDue > 0;
+      // R-1540: the one rule (followup-rules.ts promiseStatus) — the weekly report and the
+      // history ask the same function, so "kept" there is never "broken" here.
+      row.promiseStatus = promiseStatus({
+        promisedOn: on,
+        promisedAmount: promise.promised_amount,
+        loggedOn: promiseLoggedOn(fus, on) ?? toIstDate(promise.created_at),
+        today,
+        receipts: promiseReceipts(row.payments),
+        stillOwes: row.amountDue > 0,
+      }).status;
+      row.promiseBroken = row.promiseStatus === "broken";
     }
   }
 
@@ -388,7 +425,27 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to)),
   ]);
 
+  // R-1540: the cash that can keep a promise — received payments since the oldest promise was logged.
+  let oldestPromise: string | null = null;
+  for (const f of followups) {
+    if (f.promised_on && (oldestPromise === null || f.created_at < oldestPromise)) oldestPromise = f.created_at;
+  }
+  const promiseCustomerIds = [...new Set(followups.filter((f) => !!f.promised_on).map((f) => f.customer_id))];
+  const payments = oldestPromise === null ? [] : await fetchAllRowsIn<PromisePayment & { id: string }, string>(
+    promiseCustomerIds,
+    (ids, from, to) => supabase
+      .from("payments")
+      .select("id, customer_id, amount, credit_applied, received_at, status")
+      .in("customer_id", ids)
+      .eq("status", "received")
+      .gte("received_at", istDayStartUtc(toIstDate(oldestPromise as string)).toISOString())
+      .order("received_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+
   return {
+    payments,
     invoices,
     subscriptions,
     quoteSubscriptions,

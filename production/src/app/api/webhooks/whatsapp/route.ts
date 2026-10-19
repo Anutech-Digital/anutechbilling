@@ -25,7 +25,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
+import { answerHandshake } from "@/lib/whatsapp/handshake";
 import { verifyMetaSignature, signatureRefusalReason } from "@/lib/crypto/webhook-signature";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { runSalesAgentForLead } from "@/lib/ai/run-sales-agent";
@@ -33,6 +33,7 @@ import { downloadWhatsAppMedia } from "@/lib/whatsapp/media";
 import { transcribeVoiceNote } from "@/lib/voice/stt";
 import { decideVoiceNote, isTranscribable, voiceContextNote } from "@/lib/voice/voice-note";
 import { isStopMessage } from "@/lib/marketing/whatsapp-broadcast";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 /* Envelope sender + trading name for anything the AI sales agent sends off the back of a
    WhatsApp message. Mirrors the inbound-email webhook so one reseller cannot end up sending
@@ -50,34 +51,15 @@ export const runtime  = "nodejs";
 //   Expected: 200 with the challenge string as the body, OR 403 on mismatch.
 // ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  const url       = new URL(req.url);
-  const tenantId  = url.searchParams.get("tenant");
-  const mode      = url.searchParams.get("hub.mode");
-  const token     = url.searchParams.get("hub.verify_token");
-  const challenge = url.searchParams.get("hub.challenge");
-
-  if (!tenantId) return NextResponse.json({ error: "missing tenant" }, { status: 400 });
-  if (mode !== "subscribe" || !token || !challenge) {
-    return NextResponse.json({ error: "invalid handshake" }, { status: 400 });
-  }
-
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from("tenant_secrets")
-    .select("whatsapp_verify_token")
-    .eq("tenant_id", tenantId)
-    .maybeSingle();
-  if (!data?.whatsapp_verify_token) {
-    return NextResponse.json({ error: "no verify token configured" }, { status: 403 });
-  }
-  /* Constant-time — wahi niyam jo 17 cron aur HMAC-signature par hai (audit C8).
-     Handshake ka token bhi ek secret hai; !== uska ek-ek akshar timing se batata hai. */
-  if (!timingSafeEqualStr(token, data.whatsapp_verify_token)) {
-    return NextResponse.json({ error: "verify_token mismatch" }, { status: 403 });
-  }
-
-  // Echo the challenge back as plain text — Meta needs this exact body.
-  return new NextResponse(challenge, { status: 200, headers: { "content-type": "text/plain" } });
+  /* R-1550: sealed token decrypt hota hai, aur har refusal ka ek hi 403 — lib/whatsapp/handshake.ts. */
+  return answerHandshake(new URL(req.url), async (tenantId) => {
+    const { data } = await createAdminClient()
+      .from("tenant_secrets")
+      .select("whatsapp_verify_token")
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    return data;
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -368,7 +350,7 @@ async function handleVoiceNote(
   }
 
   if (outcome.kind === "file_only") {
-    console.warn(`[/api/webhooks/whatsapp] voice note from ${phone}: ${outcome.note}`);
+    console.warn(`[/api/webhooks/whatsapp] voice note from ${maskContactValue(phone)}: ${outcome.note}`);
     return;
   }
 

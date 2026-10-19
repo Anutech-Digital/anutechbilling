@@ -63,7 +63,7 @@ import { CustomerCombobox } from "@/components/features/customers/customer-combo
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
 import { useCreateQuote, useQuote } from "@/lib/queries/quotes";
 import { useGenerateInvoice } from "@/lib/queries/invoices";
-import { useUpdateLead, useLeads, useCreateLead } from "@/lib/queries/leads";
+import { useUpdateLead, useQuoteLead, useCreateLead } from "@/lib/queries/leads";
 import { prospectContactProblem, hasProspectContact, prospectLeadRow } from "@/lib/quotes/prospect-contact";
 import { sameProductSubscriptions, sameProductNote } from "@/lib/quotes/same-product";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
@@ -202,8 +202,8 @@ function QuoteBuilderBody() {
   const leadId      = searchParams.get("leadId") || searchParams.get("lead");
   // The lead drawer "Send Quote" button supplies these chained params for
   // instant prefill without a network round-trip. We also support the
-  // shortcut form (`?lead=L-XXX` alone) by falling back to a useLeads()
-  // lookup below.
+  // shortcut form (`?lead=L-XXX` alone) by falling back to a by-id lead
+  // lookup below (useQuoteLead).
   const urlCompany  = searchParams.get("company");
   const urlPlan     = searchParams.get("plan");
   const urlSeats    = searchParams.get("seats");
@@ -238,7 +238,7 @@ function QuoteBuilderBody() {
   }, [isInvoiceMode]);
   const { data: sourceQuote } = useQuote(prefillFrom ?? undefined);
 
-  // Look up the lead from the cached useLeads() query so the operator can
+  // Look up the lead by id (useQuoteLead) so the operator can
   // navigate to /quotes/new?lead=L-XXX with JUST the ID — we fill in the
   // rest from the lead row. This makes the URL bookmarkable / shareable
   // and unblocks the "type URL" workflow that was hitting "No customers yet".
@@ -261,12 +261,12 @@ function QuoteBuilderBody() {
    *      source only when `editOf`), producing exactly the orphan quotes that started this
    *      whole investigation — a quote for a lead, attached to no lead.
    */
-  const { data: allLeads, isPending: leadsPending } = useLeads();
   const linkedLeadId = leadId ?? sourceQuote?.lead_id ?? null;
-  const leadFromQuery = React.useMemo(() => {
-    if (!linkedLeadId || !allLeads) return null;
-    return allLeads.find((l) => l.id === linkedLeadId) ?? null;
-  }, [linkedLeadId, allLeads]);
+  /* R-1536: just this lead, by id, only the columns read here — not every lead (useLeads()).
+     `isPending` stays true while it loads (and for a disabled query, but the one gate that
+     reads it, the prefill below, checks linkedLeadId first). */
+  const { data: leadRow, isPending: leadsPending } = useQuoteLead(linkedLeadId);
+  const leadFromQuery = linkedLeadId ? (leadRow ?? null) : null;
 
   // Effective lead fields — URL param wins, lead row fills in the rest.
   // Stays null until the lead has loaded OR all URL params are present.
@@ -305,7 +305,7 @@ function QuoteBuilderBody() {
   React.useEffect(() => { if (leadGstinInit) setLeadGstin(leadGstinInit); }, [leadGstinInit]);
 
   // Sync local state when the lead loads asynchronously (initial mount the
-  // values are empty strings; once allLeads arrives they get populated).
+  // values are empty strings; once the lead row arrives they get populated).
   React.useEffect(() => { if (leadCompanyInit) setLeadCompany(leadCompanyInit); }, [leadCompanyInit]);
   React.useEffect(() => { if (leadContactInit) setLeadContact(leadContactInit); }, [leadContactInit]);
   React.useEffect(() => { if (leadPhoneInit)   setLeadPhone(leadPhoneInit);     }, [leadPhoneInit]);

@@ -36,6 +36,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import type { InboundEmailRow } from "@/lib/supabase/database.types";
+import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import {
   INBOX_LIST_COLUMNS, INBOX_LIST_MAX_ROWS, idsNeedingHtml, withHtmlFallback,
 } from "@/lib/inbound/list-columns";
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
   if (user) {
     const { data: me } = await supabase
       .from("users")
-      .select("tenant_id")
+      .select("tenant_id, role")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -86,6 +87,11 @@ export async function GET(request: Request) {
         { error: "Your account is not attached to a workspace yet." },
         { status: 403 },
       );
+    }
+    /* R-1553: the inbox is read by Enquiries and a lead's Email tab — the same roles the write
+       routes beside this one admit (R-1470). Workspace alone let support/billing read it. */
+    if (!mayOpenPage(me.role, ["/enquiries", "/leads"])) {
+      return NextResponse.json({ error: ROLE_GATE_ERROR }, { status: 403 });
     }
     tenantId = me.tenant_id;
   } else if (isLocalDemo()) {

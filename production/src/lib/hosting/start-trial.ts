@@ -24,10 +24,12 @@ import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { makeTrialToken } from "@/lib/hosting/trial-token";
 import { TRIAL_PLAN_ID, TRIAL_PLAN_NAME } from "@/lib/hosting/trial-plan";
 import { checkTrialHistory, recordTrialInDms } from "@/lib/dms-engine/trials";
+import { maskContactValue, redactContacts } from "@/lib/security/redact-contact";
+import { websiteTenantId, WEBSITE_TENANT_MISSING_MESSAGE } from "@/lib/website-tenant";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const BUY_PAGE_TENANT_ID =
-  process.env.BUY_PAGE_TENANT_ID?.trim() || "fbb976f1-9090-4f10-9726-0901bd144e42";
+/* R-1499: the website tenant is read per call (websiteTenantId) — outside production an unset
+   BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
 
 export const TRIAL_DAYS = 15;
 
@@ -101,6 +103,8 @@ export async function checkTrialEligibility(
   // Local testing only (Pawan, 1 Oct 2026): start trial after trial on the same details.
   // Never in a production build, whatever the variable says.
   if (repeatTrialsAllowed()) return { ok: true, eligible: true };
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return { ok: false, error: WEBSITE_TENANT_MISSING_MESSAGE };
   const tierName = TRIAL_PLAN_NAME;
   const cleanDomain = normaliseTrialDomain(input.domain);
 
@@ -169,6 +173,8 @@ export async function startHostingTrial(
   request: NextRequest,
   utmBody: Record<string, unknown>,
 ): Promise<StartTrialResult> {
+  const BUY_PAGE_TENANT_ID = websiteTenantId();
+  if (!BUY_PAGE_TENANT_ID) return { ok: false, error: WEBSITE_TENANT_MISSING_MESSAGE };
   const { fullName, companyName, email, phone, domain, cycle } = input;
   const domainStatus: "have" | "need" = (domain ?? "").trim().length >= 3 ? "have" : "need";
   const tierId = TRIAL_PLAN_ID;
@@ -362,7 +368,7 @@ ${signOff}`;
   }).catch((e: unknown) => ({ status: "failed" as const, errorMessage: (e as Error).message }));
   const confirmationSent = confirmation.status === "sent";
   if (!confirmationSent) {
-    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${email}: ${confirmation.errorMessage ?? confirmation.status}`);
+    console.error(`[trial/hosting] lead ${leadId}: the confirmation link did NOT reach ${maskContactValue(email)}: ${redactContacts(confirmation.errorMessage ?? confirmation.status)}`);
   }
 
   /* No owner email for a trial (owner, 30 Sep 2026: "remove this feature completely — that

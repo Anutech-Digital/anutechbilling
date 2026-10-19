@@ -462,23 +462,30 @@ export function useDeleteSalaryPayment() {
 type SalaryDuesRow = { tds: number | null; pf: number | null; esi: number | null; esi_employer: number | null; pf_employer: number | null };
 
 /**
- * Salary TDS/PF/ESI (both shares) + TDS withheld on vendor payments (26Q), less every
+ * Salary TDS/PF/ESI (both shares) + TDS withheld on vendor payments and partner
+ * commissions (26Q; commissions since R-1580), less every
  * challan — lib/accounting/tds-deductor.ts. The Balance Sheet uses the same sum.
  * R-1519: all three reads paged — every payslip ever had no filter at all, so a team past
  * 1000 payslips showed withheld PF/ESI/TDS (and the amount payable) short.
  */
 export async function fetchStatutoryDues(supabase: ReturnType<typeof createClient>): Promise<DuesSummary> {
-  const [sal, paid, vt] = await Promise.all([
+  const [sal, paid, vt, ct] = await Promise.all([
     fetchAllRows<SalaryDuesRow>((from, to) => supabase.from("salary_payments")
       .select("tds, pf, esi, esi_employer, pf_employer").order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ kind: string; amount: number | null }>((from, to) => supabase.from("statutory_dues_payments")
       .select("kind, amount").order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("expenses")
       .select("tds_amount").gt("tds_amount", 0).order("id", { ascending: true }).range(from, to)),
+    /* R-1580: TDS withheld on partner commissions (194H) — owed from the day it is credited
+       (earned), paid or not; a cancelled commission withholds nothing. Same rule as
+       report_balance_sheet.dues_vendor_tds. */
+    fetchAllRows<{ tds_amount: number | null }>((from, to) => supabase.from("referral_commissions")
+      .select("tds_amount").gt("tds_amount", 0).neq("status", "cancelled").order("id", { ascending: true }).range(from, to)),
   ]);
+  const sumTds = (rows: { tds_amount: number | null }[]) => rows.reduce((s, r) => s + (r.tds_amount ?? 0), 0);
   return statutoryDues({
     salaries: sal,
-    vendorTds: vt.reduce((s, r) => s + (r.tds_amount ?? 0), 0),
+    vendorTds: sumTds(vt) + sumTds(ct),
     paid,
   });
 }

@@ -34,7 +34,8 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
   const [duesOpen, setDuesOpen] = React.useState(false);
 
   const stillOwes = (row.data?.amountDue ?? 0) > 0;
-  const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], istToday(), stillOwes), [history.data, stillOwes]);
+  const payments = row.data?.payments;
+  const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], istToday(), stillOwes, payments), [history.data, stillOwes, payments]);
   if (!allowed) return null;
 
   const r = row.data;
@@ -56,8 +57,8 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
       {r && (r.promisedOn || r.nextFollowUpOn) && (
         <div className="flex flex-wrap gap-1.5 mb-3 text-sm">
           {r.promisedOn && (
-            <Badge kind={r.promiseBroken ? "danger" : "info"} dot>
-              {r.promiseBroken ? "Promise broken" : "Promised"} · {formatDate(r.promisedOn)}
+            <Badge kind={r.promiseBroken ? "danger" : r.promiseStatus === "kept" ? "success" : "info"} dot>
+              {r.promiseBroken ? "Promise broken" : r.promiseStatus === "kept" ? "Promise kept" : "Promised"} · {formatDate(r.promisedOn)}
               {r.promisedAmount ? ` · ${rupee(r.promisedAmount)}` : ""}
             </Badge>
           )}
@@ -86,6 +87,7 @@ export function CustomerFollowupCard({ customerId, customerName }: { customerId:
         ownerId={r?.ownerId ?? owner.data ?? null}
         items={r?.items ?? []}
         stillOwes={stillOwes}
+        payments={payments}
         amountDue={r?.amountDue}
       />
       {duesOpen && (

@@ -38,7 +38,7 @@ async function fetchReportRows(today: string): Promise<{ followups: ReportFollow
   const since = istDayStartUtc(paymentsFrom(followups, today)).toISOString();
   const payments = await fetchAllRows<ReportPayment>((from, to) => supabase
     .from("payments")
-    .select("customer_id, amount, received_at, status")
+    .select("customer_id, amount, credit_applied, received_at, status")
     .eq("status", "received")
     .gte("received_at", since)
     .order("received_at", { ascending: true })

@@ -11,11 +11,16 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { sniff, type SniffedKind } from "@/server/postgrest/storage-safety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+/* R-1546: no SVG — the logo is served from the app's own origin and an SVG can carry a
+   script. The bytes decide the type, not the browser's claim (a .png name with SVG inside
+   is refused). */
+const ALLOWED = ["image/png", "image/jpeg", "image/webp"];
+const TYPE_OF: Partial<Record<SniffedKind, string>> = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
@@ -46,7 +51,7 @@ export async function POST(req: NextRequest) {
 
   const f = file as File;
   if (!ALLOWED.includes(f.type)) {
-    return NextResponse.json({ error: "Use PNG, JPG, WEBP or SVG" }, { status: 400 });
+    return NextResponse.json({ error: "Use PNG, JPG or WEBP" }, { status: 400 });
   }
   if (f.size > 5 * 1024 * 1024) {
     return NextResponse.json({ error: "Logo must be under 5 MB" }, { status: 400 });
@@ -55,9 +60,13 @@ export async function POST(req: NextRequest) {
   const clean = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path  = `${me.tenant_id}/${Date.now()}-${clean}`;
   const buf   = Buffer.from(await f.arrayBuffer());
+  const contentType = TYPE_OF[sniff(buf)];
+  if (!contentType) {
+    return NextResponse.json({ error: "This file is not a PNG, JPG or WEBP image" }, { status: 400 });
+  }
 
   const { error: upErr } = await admin.storage
-    .from("logos").upload(path, buf, { upsert: true, contentType: f.type });
+    .from("logos").upload(path, buf, { upsert: true, contentType });
   if (upErr) {
     /* Logged with its detail — on 2 Oct a production upload failed with only "500" in the
        request log and no way to tell storage RLS from a missing bucket. */

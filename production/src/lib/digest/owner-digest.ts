@@ -16,10 +16,11 @@ import { addDaysISO, istToday, toIstDate } from "@/lib/dates/ist";
 import { invoiceIsOverdue, type OverdueInvoice } from "@/lib/invoices/overdue";
 import { invoiceBalance } from "@/lib/invoices/kpis";
 import { folderCounts, folderMrr, type FolderRow } from "@/lib/subscriptions/folders";
+import { cashReceived } from "@/lib/payments/cash-received";
 
 export const HELD_WINDOW_DAYS = 7;
 
-export interface DigestPayment { status: string; amount: number; received_at: string | null }
+export interface DigestPayment { status: string; amount: number; credit_applied?: number | null; received_at: string | null }
 export interface DigestProjectPayment { amount: number; received_at: string | null }
 export interface DigestInvoice extends OverdueInvoice { net_payable?: number | null }
 export interface DigestHeld { created_at: string; reason: string | null }
@@ -61,7 +62,10 @@ export function buildOwnerDigest(input: OwnerDigestInput): OwnerDigest {
   for (const p of input.payments) {
     if (p.status !== "received" || !p.received_at) continue;
     if (toIstDate(p.received_at) !== day) continue;
-    moneyIn.count++; moneyIn.value += p.amount ?? 0;
+    /* R-1565: advance credit applied is not money in; a payment paid wholly by credit is not counted. */
+    const cash = cashReceived(p);
+    if (cash <= 0) continue;
+    moneyIn.count++; moneyIn.value += cash;
   }
   for (const p of input.projectPayments) {
     /* project_payments.received_at is a plain date; an instant is read in IST. */

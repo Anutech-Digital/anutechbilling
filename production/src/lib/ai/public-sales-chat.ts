@@ -49,10 +49,8 @@ export interface CompanyFacts {
  * Current promotions the agent may STATE — each with its own expiry, checked per request
  * (the route is force-dynamic, so there is no build-time freeze here).
  *
- * ⚠️ TWIN: website/src/lib/offers.ts carries the same offer for the site's own pages.
- * Two copies because the repos cannot import each other; both self-expire on the same
- * date, so the worst drift is Pardeep editing one and not the other DURING the offer —
- * each file names its twin so that edit finds both.
+ * This is the only copy. The old standalone website/ app (and its offers.ts twin) and the
+ * unused src/site/lib/offers.ts were deleted by R-1607 (19 Oct 2026).
  */
 const PROMOTIONS: readonly { line: string; figures: readonly number[]; until: string }[] = [
   {
@@ -203,8 +201,8 @@ export function systemPrompt(facts: string, learnings: readonly string[] = []): 
     "SALES CRAFT — how a good salesperson behaves, and you do too:",
     "· Listen first: answer what was ASKED before adding anything, and mirror the visitor's language and formality.",
     "· Qualify before pitching: understand seats, current setup and timeline before recommending.",
-    "· Sell with benefit + proof from the FACTS: free migration done by us, setup/DNS handled, GST invoice with GSTIN, Google Premier Partner since 2014 — never a claim the facts do not back.",
-    "· Objections: price → compare the annual and flexible tiers honestly and note what is included free; trust → GSTIN, Premier Partner status, published prices; 'sochenge/will think' → summarise what they told you and offer one small next step (the quote form), never pressure.",
+    "· Sell with benefit + proof from the FACTS: free migration done by us, setup/DNS handled, GST invoice with GSTIN, selling Google Workspace since 2014 — never a claim the facts do not back (never claim any Google partner tier or badge).",
+    "· Objections: price → compare the annual and flexible tiers honestly and note what is included free; trust → GSTIN, published prices, in business since 2014; 'sochenge/will think' → summarise what they told you and offer one small next step (the quote form), never pressure.",
     "· Cross-sell exactly ONE related offering when natural (e.g. business email buyers often need a domain — mention the /domains page and any CURRENT PROMOTION line above), and drop it entirely if the visitor is not interested.",
     "· Urgency only when TRUE: a promotion's stated end date is honest urgency; anything else is not.",
     "· Every reply ends with either one question or one clear next step — never a dead end.",
@@ -299,6 +297,25 @@ export function honestNoDeliveryReply(visitorText = ""): string {
     "Your quotation has not been created yet — I can create it right now. " +
     "Just type your name, email and phone number, and the formal GST quotation goes to " +
     "your email straight away. Or use the Get a quote page for an instant priced estimate."
+  );
+}
+
+/**
+ * R-1549 (19 Oct 2026): the visitor gave their details but the lead could NOT be saved (the
+ * enquiry handler refused it, it timed out, or this email sent too many in a short time). The
+ * model's reply ("our team will contact you") would be a lie, so it is replaced with what
+ * happened and what to do — in the visitor's language, like honestNoDeliveryReply.
+ */
+export function leadNotSavedReply(visitorText = ""): string {
+  if (prefersHinglish(visitorText)) {
+    return (
+      "Maaf kijiye — main abhi aapki details save nahi kar paaya, isliye hamari team ko ye abhi nahi mili hain. " +
+      "Kuch minute baad dobara likhiye, ya Get a quote page se bhejiye, ya WhatsApp par message kariye."
+    );
+  }
+  return (
+    "Sorry — I could not save your details just now, so our team has not received them yet. " +
+    "Please try again in a few minutes, use the Get a quote page, or message us on WhatsApp."
   );
 }
 

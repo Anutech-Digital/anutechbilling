@@ -18,3 +18,28 @@ export async function turnstileRefusal(headers: Headers, body: unknown): Promise
     { status: 403 },
   );
 }
+
+/* ─── R-1549 (19 Oct 2026): a call this server made to itself ─────────────────────────────────
+ * The website AI chat files its lead through the enquiry handlers. A chat has no Turnstile
+ * widget, so once TURNSTILE_SECRET_KEY is set every chat lead was refused (403, one log line).
+ * The chat route builds that request object itself and marks it here; the enquiry handlers skip
+ * Turnstile only for a request object in this set. Nothing that arrives over the network can be
+ * in it — no header, cookie or body field puts a request here — so a visitor cannot claim it.
+ * The chat itself is bounded per visitor (siteVisitorLimit) and only files details the visitor
+ * typed (leadDetailsAppearInTranscript). */
+const trustedInternal = new WeakSet<Request>();
+
+export function markTrustedInternalCall<R extends Request>(req: R): R {
+  trustedInternal.add(req);
+  return req;
+}
+
+export function isTrustedInternalCall(req: Request): boolean {
+  return trustedInternal.has(req);
+}
+
+/** turnstileRefusal for a route handler: a request this server marked as its own is let through. */
+export async function turnstileRefusalFor(req: Request, body: unknown): Promise<NextResponse | null> {
+  if (isTrustedInternalCall(req)) return null;
+  return turnstileRefusal(req.headers, body);
+}

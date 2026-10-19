@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LoadError } from "@/components/shared/load-error";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
@@ -38,7 +39,10 @@ import { useGstReport, useGstPaidInRange } from "./report";
 import { gstCashHeadline, gstr3bFromReport, outputTaxBridge, toGstr1Doc } from "./cash-to-pay";
 import { OutputTaxBridgeCard } from "./output-tax-bridge-card";
 import { GstWarnings } from "./gst-warnings";
+import { CompositionReturnCard } from "./composition-card";
+import { downloadCSV } from "./download-csv";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
+import { logExport } from "@/lib/export-log";
 
 // ────────────────────────────────────────────────────────────────
 // Date range helpers — month default (most common GST filing cadence)
@@ -56,31 +60,7 @@ const thisQuarter = () => gstThisQuarter();
 
 // GSTR-3B worksheet — lib/gst/gstr3b.ts (RCM, s.17(5) reversal, cash per head).
 
-// ────────────────────────────────────────────────────────────────
-// CSV export helpers
-// ────────────────────────────────────────────────────────────────
-
-function csvEscape(s: unknown): string {
-  const v = String(s ?? "");
-  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
-
-function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
-  const lines = [
-    headers.map(csvEscape).join(","),
-    ...rows.map((r) => r.map(csvEscape).join(",")),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+// CSV export helper: ./download-csv.ts (R-1530 — shared with the composition card).
 
 // ────────────────────────────────────────────────────────────────
 // Page
@@ -106,8 +86,9 @@ function GstReportInner() {
   /* R-257: ?from=&to= opens the page on the range a link names (the Overview tile);
      otherwise last month on the 1st–20th (the return being filed), this month after. */
   const [range, setRange] = React.useState<DateRange>(() => gstRangeFromParams(search.get("from"), search.get("to")));
-  const { data, isLoading } = useGstReport(range);
-  const { paid: gstPaidInRange } = useGstPaidInRange(range);
+  const { data, isLoading, isError: reportError, refetch: refetchReport } = useGstReport(range);
+  const { paid: gstPaidInRange, isError: paidError, refetch: refetchPaid } = useGstPaidInRange(range);
+  const reportFailed = reportError || paidError; // R-1581: GST paid feeds cash-to-pay — failed read = failed page
 
   /* ── GSTR-2B milaan (27 Sep 2026) ────────────────────────────────────────
      The portal's JSON is read in the browser and matched against this period's ITC rows;
@@ -259,6 +240,7 @@ function GstReportInner() {
     a.download = `GSTR1_${data.sellerGstin}_${range.from}_to_${range.to}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    void logExport({ what: "gstr1-json", rowCount: data.outputRows.length, format: "json" });
     const parts = [
       secs.b2b.length && `B2B ${secs.b2b.length}`, secs.b2cl.length && `B2CL ${secs.b2cl.length}`, secs.b2cs.length && `B2CS ${secs.b2cs.length}`,
       secs.cdnr.length && `CDNR ${secs.cdnr.length}`, secs.cdnur.length && `CDNUR ${secs.cdnur.length}`, secs.exp.length && `EXP ${secs.exp.length}`,
@@ -343,6 +325,10 @@ function GstReportInner() {
           </div>
         </div>
       </Card>
+      {/* R-1530: composition business — CMP-08 per quarter + GSTR-4 for the year (own FY picker). */}
+      <CompositionReturnCard />
+      {/* R-1581: a report read failed — say so instead of printing ₹0 / "no invoices" (CLAUDE.md §17c). */}
+      {reportFailed ? <LoadError what="GST report" onRetry={() => { void refetchReport(); void refetchPaid(); }} /> : (<>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6">
@@ -720,7 +706,7 @@ function GstReportInner() {
       {data && data.blockedItc.blocked > 0 && (
         <Card className="p-4 mb-4 border-amber/40 bg-amber-soft/20">
           <p className="text-sm font-semibold text-ink">GST jo credit nahi bana — {rupee(data.blockedItc.blocked)}</p>
-          <p className="text-xs text-ink-2 mt-0.5 mb-2">Ye kharche mein hi gina hai, ITC mein nahi. Wajah theek ho (GST bill lo, vendor ka GSTIN bharo) to agli baar credit milega.</p>
+          <p className="text-xs text-ink-2 mt-0.5 mb-2">Ye kharche / bill ki cost mein hi gina hai, ITC mein nahi (kharche aur vendor bills dono). Wajah theek ho (vendor se tax invoice lo, vendor ka GSTIN bharo) to agli baar credit milega.</p>
           <ul className="text-xs text-ink-2 space-y-0.5">
             {data.blockedItc.blockedByReason.map((r) => (
               <li key={r.reason} className="flex justify-between gap-3"><span>{r.reason} · {r.count}</span><span className="font-mono tabular-nums">{rupee(r.amount)}</span></li>
@@ -841,6 +827,7 @@ function GstReportInner() {
           </div>
         </Card>
       )}
+      </>)}
     </div>
   );
 }

@@ -21,6 +21,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { quoteTokenMatches } from "@/lib/quotes/accept-token";
 import { sendInternalEmail } from "@/lib/messaging";
 import { rupee } from "@/lib/utils";
+import { maskContactValue } from "@/lib/security/redact-contact";
 
 export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -80,6 +81,6 @@ the customer's word and not a confirmation. Check your bank account, then record
 payment in ResellerOS so the invoice and the customer's balance are right.`,
   });
 
-  console.info(`[upi-notify] ${quote.id} — claim relayed to ${tenant.email}, nothing recorded`);
+  console.info(`[upi-notify] ${quote.id} — claim relayed to ${maskContactValue(tenant.email)}, nothing recorded`);
   return NextResponse.json({ ok: true, recorded: false });
 }

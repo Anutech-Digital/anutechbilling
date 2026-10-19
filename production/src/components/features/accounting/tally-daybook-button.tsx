@@ -17,6 +17,7 @@ import {
   tallyVouchersXml, salesFromInvoices, receiptsFromPayments, paymentsFromBills,
   type InvoiceForTally, type PaymentForTally, type BillForTally,
 } from "@/lib/accounting/tally-vouchers";
+import { logExport } from "@/lib/export-log";
 
 interface TallyDaybookButtonProps {
   period: LedgerPeriod;
@@ -37,7 +38,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
           .select("id, customer_name, invoice_date, status, amount, taxable_value, tax_amount, inter_state")
           .gte("invoice_date", period.from).lte("invoice_date", period.to),
         supabase.from("payments")
-          .select("id, receipt_voucher_no, customer_id, amount, received_at, method, reference")
+          .select("id, receipt_voucher_no, customer_id, amount, credit_applied, received_at, method, reference")
           .gte("received_at", fromTs).lte("received_at", toTs),
         supabase.from("expenses")
           .select("id, vendor_name, bill_no, amount, paid, paid_date, payment_method, category")
@@ -69,6 +70,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      void logExport({ what: "tally-daybook", rowCount: s.sales.length + r.receipts.length + p.payments.length, format: "xml" });
 
       const skipped = s.skipped.length + r.skipped.length + p.skipped.length;
       toast.success(`Tally day book: ${s.sales.length} sales · ${r.receipts.length} receipts · ${p.payments.length} payments`, {

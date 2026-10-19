@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { ReimbursementRow } from "@/lib/supabase/database.types";
 
 export type Reimbursement = ReimbursementRow & { employee_name: string | null };
@@ -46,27 +47,28 @@ export const REIMBURSEMENT_CATEGORIES = [
   "Hosting", "Software", "Office", "Marketing", "Travel", "Professional", "Other",
 ];
 
+/** Every reimbursement, pending first. R-1582: paged past the gateway's 1000-row cap. */
+export async function fetchReimbursements(supabase: ReturnType<typeof createClient>): Promise<Reimbursement[]> {
+  const rows = (await fetchAllRows((from, to) => supabase
+    .from("reimbursements").select("*")
+    .order("status", { ascending: true })          // pending first
+    .order("incurred_on", { ascending: false })
+    .order("id", { ascending: true })
+    .range(from, to))) as ReimbursementRow[];
+
+  // Resolve linked employee names in one follow-up query.
+  const empIds = Array.from(new Set(rows.map((r) => r.employee_id).filter(Boolean))) as string[];
+  const nameById = new Map<string, string>();
+  const emps = await fetchAllRowsIn(empIds, (run, from, to) => supabase.from("employees")
+    .select("id, name").in("id", run).order("id", { ascending: true }).range(from, to));
+  for (const e of emps) nameById.set(e.id, e.name);
+  return rows.map((r) => ({ ...r, employee_name: r.employee_id ? (nameById.get(r.employee_id) ?? null) : null }));
+}
+
 export function useReimbursements() {
   return useQuery({
     queryKey: ["reimbursements"],
-    queryFn: async (): Promise<Reimbursement[]> => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("reimbursements").select("*")
-        .order("status", { ascending: true })          // pending first
-        .order("incurred_on", { ascending: false });
-      if (error) throw error;
-      const rows = (data ?? []) as ReimbursementRow[];
-
-      // Resolve linked employee names in one follow-up query.
-      const empIds = Array.from(new Set(rows.map((r) => r.employee_id).filter(Boolean))) as string[];
-      const nameById = new Map<string, string>();
-      if (empIds.length) {
-        const { data: emps } = await supabase.from("employees").select("id, name").in("id", empIds);
-        for (const e of emps ?? []) nameById.set(e.id, e.name);
-      }
-      return rows.map((r) => ({ ...r, employee_name: r.employee_id ? (nameById.get(r.employee_id) ?? null) : null }));
-    },
+    queryFn: (): Promise<Reimbursement[]> => fetchReimbursements(createClient()),
   });
 }
 

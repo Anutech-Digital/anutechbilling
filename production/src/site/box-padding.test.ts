@@ -12,7 +12,6 @@ import { readFileSync } from "node:fs";
 const FILES = [
   "src/app/(marketing)/rates/page.tsx",
   "src/app/(marketing)/why-us/page.tsx",
-  "src/site/components/ui/RateTable.tsx",
   "src/site/components/email/EditionTabs.tsx",
 ];
 

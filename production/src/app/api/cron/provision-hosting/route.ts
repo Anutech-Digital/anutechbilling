@@ -30,14 +30,18 @@
  *   Told: the owner is emailed on a lost response or a refusal.
  *   Noticed later: rows stay `queued` with a note until activated or failed.
  *
- * Auth: Bearer(CRON_SECRET) or a signed-in owner.
+ * Auth: Bearer(CRON_SECRET) only (R-1552, 18 Oct 2026 — the "or a signed-in owner" path let
+ * any company's owner run this for EVERY company). Answer reported like every cron (R-1587).
  */
 import { NextResponse } from "next/server";
-import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
-import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { loadAutonomyPolicy } from "@/lib/ai/autonomy.server";
+import { errorMessage } from "@/lib/ops/fetch-all";
+import { cronAuthFailure } from "@/app/api/cron/_lib/cron-auth";
+import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
+import { engineAnswered, engineDown, newEngineHealth, provisioningResponse } from "@/app/api/cron/_lib/provisioning-report";
 import {
   listReadyHostingRequests,
   markProvisioningActivated,
@@ -58,23 +62,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-
-async function authorized(req: Request): Promise<boolean> {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (secret) {
-    const m = /^Bearer\s+(.+)$/i.exec(req.headers.get("authorization") ?? "");
-    if (timingSafeEqualStr(m?.[1] ?? "", secret)) return true;
-  }
-  try {
-    const supabase = createClient();
-    const { data: authData } = await supabase.auth.getUser();
-    if (!authData?.user) return false;
-    const { data: me } = await supabase.from("users").select("role").eq("id", authData.user.id).single();
-    return me?.role === "owner";
-  } catch {
-    return false;
-  }
-}
 
 /* R-897: the automation gate runs FIRST — off → 200 {skipped:"off"}, nothing read or sent. */
 const gated = gatedCron("provision-hosting", handle);
@@ -124,7 +111,8 @@ function lineForRequest(lineItems: unknown, requestPlan: string | null, requestD
 }
 
 async function handle(req: Request) {
-  if (!(await authorized(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const denied = cronAuthFailure(req, process.env.CRON_SECRET);
+  if (denied) return denied;
 
   if (!hostingProvisioningEnabled()) {
     return NextResponse.json({ ran: true, activated: 0, note: "automatic hosting provisioning is switched off (HOSTING_PROVISIONING_LIVE is not 1)" });
@@ -133,12 +121,19 @@ async function handle(req: Request) {
     return NextResponse.json({ error: "DMS_ENGINE_URL / DMS_ENGINE_COMMAND_KEY are not set, so nothing can be provisioned." }, { status: 503 });
   }
 
+  let queue: Awaited<ReturnType<typeof listReadyHostingRequests>>;
+  try {
+    queue = await listReadyHostingRequests();
+  } catch (e) {
+    return cronDbFailure("provision-hosting", e, `could not read the hosting queue: ${errorMessage(e)}`);
+  }
+  /* R-897: only the companies this pass may work on — and only they are counted (R-1552). */
+  const rows = queue.filter((r) => cronTenantAllowed(r.tenant_id));
   const admin = createAdminClient();
-  const rows = await listReadyHostingRequests();
   const summary = { considered: rows.length, activated: 0, held: 0, reconciling: 0, refused: 0, skipped: 0 };
+  const health = newEngineHealth();
 
   for (const row of rows) {
-    /* R-897 */ if (!cronTenantAllowed(row.tenant_id)) continue;
     const policy = await loadAutonomyPolicy(row.tenant_id);
     if (policy.killSwitch) {
       await noteProvisioning(row.id, "Waiting: automation is switched off for this workspace (Automation page). Nothing was created.");
@@ -195,6 +190,9 @@ async function handle(req: Request) {
       },
     });
 
+    if (outcome.kind === "unreachable") engineDown(health, `${domain}: could not reach the DMS engine (${outcome.reason})`);
+    else engineAnswered(health);
+
     switch (outcome.kind) {
       case "done":
         await markProvisioningActivated(row.id, String(outcome.result.daUsername ?? "provisioned"));
@@ -207,8 +205,9 @@ async function handle(req: Request) {
         break;
       case "gate_closed":
         await noteProvisioning(row.id, `Waiting: ${outcome.reason}`);
-        return NextResponse.json({ ...summary, note: "the DMS engine's hosting.provision gate is closed — stopped" });
+        return provisioningResponse("provision-hosting", summary, health, { note: "the DMS engine's hosting.provision gate is closed — stopped" });
       case "needs_reconciliation":
+        health.errors.push(`${domain}: needs reconciling (${outcome.reason})`);
         if (await noteProvisioning(row.id, `RECONCILE: ${outcome.reason}`)) {
           await alertOwner(
             row.tenant_id,
@@ -219,6 +218,7 @@ async function handle(req: Request) {
         summary.reconciling += 1;
         break;
       case "refused":
+        health.errors.push(`${domain}: refused (${outcome.reason})`);
         await markProvisioningFailed(row.id, `DirectAdmin refused: ${outcome.reason}`);
         await alertOwner(
           row.tenant_id,
@@ -234,5 +234,5 @@ async function handle(req: Request) {
     }
   }
 
-  return NextResponse.json({ ran: true, ...summary });
+  return provisioningResponse("provision-hosting", summary, health);
 }

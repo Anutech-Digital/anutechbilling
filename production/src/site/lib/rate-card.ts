@@ -7,13 +7,13 @@
  *
  * ONE RULE: every row here comes from the SAME source its product page shows, so the rate
  * card and the product page can never disagree:
- *   · domains  → TLDS              (what /domains' rate table shows)
+ *   · domains  → getSiteTldPrices() (what /domains' rate table shows — live, R-1599)
  *   · hosting  → HOSTING_TIERS     (what /hosting shows; priced from LANDING_PLANS)
  *   · email    → mergeEditions(live) + MAIL_RATES (what /email shows, live GW overlay)
  *   · SSL      → CERTS             (what /ssl shows)
  * Nothing is typed in here. A price changes in its source, and both pages follow.
  */
-import type { Tld, Cert } from "./data/catalog";
+import type { Cert } from "./data/catalog";
 import type { HostingTier } from "./data/hosting-landing-v2";
 import type { MergedEdition } from "./live-catalog";
 import { rupee } from "./money";
@@ -42,8 +42,27 @@ export interface RateSection {
    checkout charges (₹600, not ₹599.88). */
 const inr = rupee;
 
+/**
+ * R-1599: what a domain price says when the live registry price is not known right now.
+ * The search shows the live price; a placeholder figure is never printed instead.
+ */
+export const PRICE_AT_SEARCH = "Price at search";
+
+/** A live TLD price, or "—" when that one figure is unknown. */
+export const tldCell = (n: number | null): string => (n == null ? "—" : inr(n));
+
+/** The fields a domain rate row needs. Live rows (SiteTld) satisfy it; TLDS does not (no `live`). */
+export interface RateTld {
+  tld: string;
+  use: string;
+  reg: number | null;
+  renew: number | null;
+  transfer: number | null;
+  live: boolean;
+}
+
 export function buildRateCard(src: {
-  tlds: readonly Tld[];
+  tlds: readonly RateTld[];
   hosting: readonly HostingTier[];
   editions: readonly MergedEdition[];
   mailRates: Readonly<Record<string, number>>;
@@ -55,7 +74,13 @@ export function buildRateCard(src: {
       title: "Domains",
       unit: "per year",
       columns: ["Register", "Renew", "Transfer"],
-      rows: src.tlds.map((t) => ({ name: t.tld, note: t.use, cells: [inr(t.reg), inr(t.renew), inr(t.transfer)] })),
+      /* No live register price → one cell across the row, never a placeholder number. */
+      rows: src.tlds.map((t) => ({
+        name: t.tld,
+        note: t.use,
+        cells: t.reg == null ? [PRICE_AT_SEARCH] : [inr(t.reg), tldCell(t.renew), tldCell(t.transfer)],
+        live: t.live,
+      })),
       href: "/domains",
       cta: "Search a domain",
     },
