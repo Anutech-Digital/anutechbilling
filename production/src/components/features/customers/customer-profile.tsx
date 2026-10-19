@@ -71,6 +71,7 @@ import { COPY } from "@/lib/copy";
 import { useCustomerContacts } from "@/lib/queries/contacts";
 import { PrimaryContactLine } from "@/components/features/customers/primary-contact-line";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
+import { buildCustomerStatement, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 
 export interface CustomerProfileProps {
@@ -105,6 +106,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: projects } = useCustomerProjects(params.id);
   const { data: projPay } = useCustomerProjectPayments(params.id);
   const { data: openCredit } = useCustomerOpenCredit(params.id);
+  /* R-1682: credit / debit notes belong on the Statement. */
+  const { data: customerNotes } = useCustomerNotes(params.id);
   const { data: allPayments } = usePayments();
   /* R-523: TDS this customer deducted — the statement and Lifetime paid show the bank
      money and the TDS apart, else the bank reconciliation can never match. */
@@ -293,21 +296,22 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const hasKids = new Set<string>();
   for (const r of hierRows) { parentOf[r.key] = r.parentKey; if (r.parentKey) hasKids.add(r.parentKey); }
 
-  // Running-balance ledger (Zoho "Statement" tab). Invoice = debit (owed),
-  // payment = credit; positive closing balance = receivable still owed.
-  const ledgerRaw = [
-    ...allInvoices.map((i) => ({ date: i.invoice_date, desc: `Invoice ${i.id}`, debit: i.amount, credit: 0, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) })),
-    ...customerPayments.filter((p) => p.status === "received").map((p) => {
-      const split = receiptSplitLine(p.amount, tdsOnPayment[p.id]);
-      return { date: p.received_at, desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`, debit: 0, credit: p.amount, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts) };
-    }),
-    ...customerPayments.filter((p) => p.status === "refunded").map((p) => ({ date: p.refunded_at ?? p.received_at, desc: `Refund${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}`, debit: p.amount, credit: 0, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts) })),
-    // Project milestone receipts credit the ledger against their raised invoices.
-    ...projPayments.map((p) => ({ date: p.received_at, desc: `Payment received · ${p.reference?.trim() || p.project_title}`, debit: 0, credit: p.amount, href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts) })),
-  ].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-  let runningBal = 0;
-  const ledger = ledgerRaw.map((e) => { runningBal += e.debit - e.credit; return { ...e, balance: runningBal }; });
-  const closingBalance = runningBal;
+  // Running-balance ledger (Zoho "Statement" tab). R-1682: built by buildCustomerStatement —
+  // invoices + debit notes − payments − credit notes + refunds, the same entries as the books'
+  // customer ledger (a refunded payment shows its receipt AND the refund).
+  const statement = buildCustomerStatement({
+    invoices: allInvoices,
+    payments: customerPayments,
+    creditNotes: customerNotes?.creditNotes ?? [],
+    debitNotes: customerNotes?.debitNotes ?? [],
+    projectPayments: projPayments,
+    paymentSplit: (id, amount) => receiptSplitLine(amount, tdsOnPayment[id]),
+  });
+  const ledger = statement.rows.map((e) => ({
+    ...e,
+    href: txnHref(e.link.kind === "payment" ? { kind: "payment", quoteId: e.link.quoteId, customerId: params.id } : e.link, linkOpts),
+  }));
+  const closingBalance = statement.closing;
 
   // Guarded delete — Zoho-Books parity: a customer can be hard-deleted ONLY when
   // it is truly empty (no subscriptions, payments, invoices, quotes, or projects).
@@ -713,7 +717,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
             {ledger.length > 0 ? (
               <>
                 <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-sm text-ink-3">Account statement — invoices billed vs payments received.</p>
+                  <p className="text-sm text-ink-3">Account statement — invoices and debit notes billed vs payments, credit notes and refunds.</p>
                   <div className="text-right">
                     <div className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Closing balance</div>
                     <div className={cn("font-serif text-xl tabular-nums", closingBalance > 0 ? "text-rose" : "text-emerald")}>

@@ -35,3 +35,20 @@ export function refundCover({ cash, ownOpenCredit, creditNoteCredit }: RefundCov
   const need = Math.max(0, rupees(cash) - rupees(ownOpenCredit));
   return { need, gap: Math.max(0, need - rupees(creditNoteCredit)) };
 }
+
+/**
+ * R-1682 (19 Oct 2026): the most that can go back WITHOUT another credit note — the open
+ * credit-note credit on the invoice, never more than the cash this payment brought in.
+ * refund_credit_note_credit (20261019132853) checks the same cap on the click.
+ */
+export function partialRefundMax({ cash, creditNoteCredit }: { cash: number; creditNoteCredit: number }): number {
+  return Math.min(rupees(cash), rupees(creditNoteCredit));
+}
+
+/** Why a typed partial-refund amount cannot be booked, or null when it can. */
+export function partialRefundProblem(amount: number, max: number): string | null {
+  if (!Number.isFinite(amount) || amount <= 0) return "Enter the amount to refund (more than ₹0).";
+  if (!Number.isInteger(amount)) return "Whole rupees only — no paise.";
+  if (amount > max) return `At most ₹${max.toLocaleString("en-IN")} can be refunded — that is the open credit-note credit.`;
+  return null;
+}

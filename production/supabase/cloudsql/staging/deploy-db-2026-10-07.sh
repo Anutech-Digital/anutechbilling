@@ -166,6 +166,7 @@ MIGS=(
   "r1676paymentrefonce|20261019125620_r1676_payment_ref_once.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_payments_ref_once' and tgrelid = to_regclass('public.payments')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1676%') and to_regprocedure('public.payment_reference_duplicates()') is not null"
   "r1681manualsuspend|20261019130206_r1681_manual_suspend_reason.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'subscriptions' and column_name = 'resume_when_paid') and to_regprocedure('public.suspend_subscription(uuid,text,boolean)') is not null and exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_pause_reason' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_invoice_overdue_resume()') and prosrc like '%R-1681%')"
   "r1677exportcountry|20261019132621_r1677_export_customer_country.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_quote_export_customer_country')"
+  "r1682partialrefund|20261019132853_r1682_partial_credit_refund.sql|resellersos_migration|to_regprocedure('public.refund_credit_note_credit(uuid,integer,text)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -57,6 +57,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
+import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -82,6 +83,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
+  /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
+     invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
+     to issue one (and so no way to refund after a cancel). */
+  const [cnOpen, setCnOpen] = React.useState(false);
+  const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
   /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
   const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
   const openPayment = () => { setTdsOnly(null); setPayOpen(true); };
@@ -235,6 +241,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   }}
                 >
                   View quote
+                </Button>
+              )}
+              {canCreditNote && (
+                <Button size="sm" variant="outline" icon="receipt" onClick={() => setCnOpen(true)}>
+                  Credit note
                 </Button>
               )}
               {canWrite && (
@@ -455,6 +466,19 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
       )}
       {/* R-237: the same quote-keyed sheet the invoices list and the quote page use
           (record_payment flips this invoice to paid once the balance is covered). */}
+      {canCreditNote && (
+        <IssueCreditNoteDialog
+          open={cnOpen}
+          onOpenChange={setCnOpen}
+          invoiceId={invoice.id}
+          customerName={invoice.customer_name}
+          netPayable={invoice.net_payable ?? invoice.amount}
+          taxRate={invoice.tax_rate}
+          interState={invoice.inter_state}
+          isExport={(invoice.tax_rate ?? 18) === 0}
+          invoiceDate={invoice.invoice_date}
+        />
+      )}
       {payOpen && !quote && instalment?.quoteId && (
         <RecordSubscriptionPaymentContainer invoice={invoice} open={payOpen} onOpenChange={setPayOpen} />
       )}
