@@ -1,4 +1,8 @@
--- deploy-peek: exists(select 1 from storage.buckets where id = 'employee-docs' and allowed_mime_types is not null)
+-- deploy-peek: true
+-- (R-1622, 19 Oct: the old peek read storage.buckets, but the PEEK runs as resellersos_migration, which has no
+--  USAGE on schema storage on Cloud SQL — "permission denied for schema storage" killed the whole step 2. No
+--  catalog object marks this file, so the peek cannot see it; the script skips it and this file is applied BY
+--  HAND as postgres (step on card R-1546). It is idempotent. The app gateway enforces the same rule meanwhile.)
 -- deploy-key: r1546bucketmime
 -- deploy-user: postgres
 --   (storage.buckets belongs to the storage admin, as in 20261011133000_r724_storage_roles)
