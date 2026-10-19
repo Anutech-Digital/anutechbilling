@@ -43,6 +43,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { istToday, fyStartYear } from "@/lib/dates/ist";
 import { reconcileTag, ReconcileTag, PayBadge, BillChip, isPayrollExpense } from "./expense-badges";
 import { filterExpenses, EXPENSE_SORT, expenseViewState, readExpenseView } from "./expense-table";
+import { logExport } from "@/lib/export-log";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
@@ -302,6 +303,7 @@ export default function ExpensesPage() {
     const a = document.createElement("a");
     a.href = url; a.download = `26Q-working-${range.from}-to-${range.to}.csv`; a.click();
     URL.revokeObjectURL(url);
+    void logExport({ what: "26q-working", rowCount: rows.length, format: "csv" });
     let msg = `26Q working — ${rows.length} rows, TDS ${rupee(totalTds)}. Import into your TDS software / RPU (app can't make the FVU).`;
     if (missingPan) msg += ` ⚠ ${missingPan} row(s) missing PAN — add it on the Vendors / Referral partners page (bina PAN ke 20% u/s 206AA).`;
     toast.success(msg);

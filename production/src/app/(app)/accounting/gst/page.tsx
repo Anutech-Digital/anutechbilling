@@ -42,6 +42,7 @@ import { GstWarnings } from "./gst-warnings";
 import { CompositionReturnCard } from "./composition-card";
 import { downloadCSV } from "./download-csv";
 import { compareGstr1, gstr1VsBooksCsv, parseGstr1Json, returnFromBooks, GSTR1_VS_BOOKS_HEADERS, type Gstr1VsBooks } from "@/lib/gst/gstr1a";
+import { logExport } from "@/lib/export-log";
 
 // ────────────────────────────────────────────────────────────────
 // Date range helpers — month default (most common GST filing cadence)
@@ -239,6 +240,7 @@ function GstReportInner() {
     a.download = `GSTR1_${data.sellerGstin}_${range.from}_to_${range.to}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    void logExport({ what: "gstr1-json", rowCount: data.outputRows.length, format: "json" });
     const parts = [
       secs.b2b.length && `B2B ${secs.b2b.length}`, secs.b2cl.length && `B2CL ${secs.b2cl.length}`, secs.b2cs.length && `B2CS ${secs.b2cs.length}`,
       secs.cdnr.length && `CDNR ${secs.cdnr.length}`, secs.cdnur.length && `CDNUR ${secs.cdnur.length}`, secs.exp.length && `EXP ${secs.exp.length}`,

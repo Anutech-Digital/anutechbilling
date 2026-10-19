@@ -5309,6 +5309,51 @@ export type Database = {
           },
         ]
       }
+      export_log: {
+        Row: {
+          at: string
+          format: string
+          id: string
+          row_count: number
+          tenant_id: string
+          user_id: string | null
+          what: string
+        }
+        Insert: {
+          at?: string
+          format: string
+          id?: string
+          row_count: number
+          tenant_id: string
+          user_id?: string | null
+          what: string
+        }
+        Update: {
+          at?: string
+          format?: string
+          id?: string
+          row_count?: number
+          tenant_id?: string
+          user_id?: string | null
+          what?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "export_log_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "export_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback: {
         Row: {
           agent_card: string | null
@@ -14850,6 +14895,10 @@ export type Database = {
           p_entity_id?: string
           p_label?: string
         }
+        Returns: undefined
+      }
+      log_export: {
+        Args: { p_format: string; p_row_count: number; p_what: string }
         Returns: undefined
       }
       log_lead_activity: {

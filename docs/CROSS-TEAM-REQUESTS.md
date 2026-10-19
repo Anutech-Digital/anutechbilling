@@ -701,6 +701,24 @@ the correct renewal date and MRR. Don't fix them yourself.
 - **Done when:** the trial banner is gone, Billing → Overview shows the account upgraded, and pardeep@anutech.in holds
   Billing Account Administrator.
 
+### R-018 · Export log (board card R-1006) — 4 Billing exports still need one line each
+- **For:** Abhishek
+- **Status:** Open
+- **Raised:** 2026-10-19
+- **Why accounting needs it:** R-1006 records every export (who, what, how many rows) in `export_log`, owner-only.
+  Every export through `downloadCSV` (lib/csv) — customers list, quotes, renewals, subscriptions — is already logged
+  with no change to your screens. Four of your screens build the CSV by hand, so they are not logged yet.
+- **What to change:** right after the `a.click()` of each, add
+  `void logExport({ what: "<report>", rowCount: <data rows>, format: "csv" });`
+  (`import { logExport } from "@/lib/export-log";`) — or switch the screen to `downloadCSV` from `@/lib/csv`:
+  - `production/src/app/(app)/customers/page.tsx` (~line 580, the hand-built customers CSV)
+  - `production/src/app/(app)/invoices/page.tsx` (~line 724, selected-invoices CSV)
+  - `production/src/app/(app)/payments/page.tsx` (~line 322, payments CSV)
+  - `production/src/components/features/subscriptions/reconcile-google-dialog.tsx` (~line 133, reconcile bucket CSV)
+  Then delete that file's "R-1006 pending" line from `ALLOW` in `src/lib/export-log/export-log-scan.test.ts`
+  (the scan fails on a stale entry, so it tells you).
+- **Done when:** the four lines are gone from the scan's allowlist and `npx vitest run src/lib/export-log` passes.
+
 > Live status for R-013 to R-017 is on the board (https://claude.ai/artifact/2E442MT5zCLxm2oE1Lipos), not here —
 > this file is the written record; the board is where the status changes.
 <!-- Template — copy for each new request:

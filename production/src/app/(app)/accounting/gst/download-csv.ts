@@ -1,3 +1,4 @@
+import { logExport } from "@/lib/export-log";
 /**
  * The GST page's CSV download (moved out of page.tsx unchanged by R-1530, so the
  * composition card uses the same one).
@@ -22,4 +23,5 @@ export function downloadCSV(filename: string, headers: string[], rows: (string |
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  void logExport({ what: filename, rowCount: rows.length, format: "csv" });
 }

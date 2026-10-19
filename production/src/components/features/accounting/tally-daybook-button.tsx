@@ -17,6 +17,7 @@ import {
   tallyVouchersXml, salesFromInvoices, receiptsFromPayments, paymentsFromBills,
   type InvoiceForTally, type PaymentForTally, type BillForTally,
 } from "@/lib/accounting/tally-vouchers";
+import { logExport } from "@/lib/export-log";
 
 interface TallyDaybookButtonProps {
   period: LedgerPeriod;
@@ -69,6 +70,7 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      void logExport({ what: "tally-daybook", rowCount: s.sales.length + r.receipts.length + p.payments.length, format: "xml" });
 
       const skipped = s.skipped.length + r.skipped.length + p.skipped.length;
       toast.success(`Tally day book: ${s.sales.length} sales · ${r.receipts.length} receipts · ${p.payments.length} payments`, {

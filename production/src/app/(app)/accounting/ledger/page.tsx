@@ -52,6 +52,7 @@ import {
 import { downloadCSV } from "@/lib/csv";
 import TallyDaybookButton from "@/components/features/accounting/tally-daybook-button";
 import { localDateISO } from "@/lib/leads/outcomes";
+import { logExport } from "@/lib/export-log";
 
 /** The FY we are in now — the default window, because that is what a CA asks for. */
 function currentFy(): number {
@@ -144,6 +145,7 @@ function LedgerPageInner() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    void logExport({ what: ledgerFileName(partyName, statement, "xml"), rowCount: ledgerCsvRows(statement).length, format: "xml" });
     /* Said plainly rather than implying a one-click merge: Tally rejects a voucher whose
        LEDGERNAME does not already exist in the target company, silently for that row. */
     toast.success("Tally XML downloaded", {

@@ -32,6 +32,8 @@ import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, type SalaryP
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
+import { logExport } from "@/lib/export-log";
+import { printReport } from "@/lib/reports/print";
 
 /** Previous month (YYYY-MM) — the register shows the month that was just paid. */
 function prevPeriod(): string {
@@ -83,6 +85,7 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
+  void logExport({ what: filename, rowCount: rows.length, format: "csv" });
 }
 
 export default function SalaryRegisterPage() {
@@ -352,7 +355,7 @@ function MonthRegister() {
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" icon="download" onClick={exportCsv}>Export CSV (for CA)</Button>
                 <Button variant="outline" size="sm" icon="download" onClick={export24Q} title="Salary-TDS deductee working for this month's quarter (section 192)">24Q working (TDS)</Button>
-                <Button variant="ghost" size="sm" icon="file" onClick={() => window.print()}>Print</Button>
+                <Button variant="ghost" size="sm" icon="file" onClick={() => printReport(`Salary-Register-${period}`, rows.length)}>Print</Button>
               </div>
             )}
           </div>
@@ -465,7 +468,7 @@ function EmployeeRegister({ employeeId }: { employeeId: string }) {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" icon="download" onClick={exportCsv}>Export CSV</Button>
             <Button variant="outline" size="sm" icon="download" onClick={exportForm16} title="Form 16 Part B / 24Q Annexure II working (new regime)">Form 16 working</Button>
-            <Button variant="ghost" size="sm" icon="file" onClick={() => window.print()}>Print</Button>
+            <Button variant="ghost" size="sm" icon="file" onClick={() => printReport(`Salary-Register-${toTitleCase(emp?.name ?? "employee").replace(/\s+/g, "-")}`, rows.length)}>Print</Button>
           </div>
         )}
       </div>

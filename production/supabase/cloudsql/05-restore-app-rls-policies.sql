@@ -384,7 +384,7 @@ CREATE POLICY invoices_insert ON public.invoices AS PERMISSIVE FOR INSERT TO aut
 DROP POLICY IF EXISTS invoices_select ON public.invoices;
 CREATE POLICY invoices_select ON public.invoices AS PERMISSIVE FOR SELECT TO authenticated USING ((tenant_id = current_tenant_id()));
 DROP POLICY IF EXISTS invoices_select_own_customer ON public.invoices;
-CREATE POLICY invoices_select_own_customer ON public.invoices AS PERMISSIVE FOR SELECT TO public USING ((customer_id = current_customer_id()));
+-- R-728 (migration 20261019013050): not re-created — it showed portal logins whole invoice rows, cost included.
 DROP POLICY IF EXISTS invoices_update ON public.invoices;
 CREATE POLICY invoices_update ON public.invoices AS PERMISSIVE FOR UPDATE TO authenticated USING ((tenant_id = current_tenant_id())) WITH CHECK ((tenant_id = current_tenant_id()));
 DROP POLICY IF EXISTS items_delete ON public.items;

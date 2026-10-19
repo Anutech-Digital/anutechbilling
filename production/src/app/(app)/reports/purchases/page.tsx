@@ -25,6 +25,8 @@ import { rupee, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { formatMonthLabel, utcDateISO, fyStartYear } from "@/lib/dates/ist";
+import { logExport } from "@/lib/export-log";
+import { printReport } from "@/lib/reports/print";
 
 type RangeKey = "month" | "fy" | "12m" | "all";
 
@@ -185,6 +187,7 @@ export default function PurchasesReportPage() {
     const a = document.createElement("a");
     a.href = url; a.download = `purchases-${range}.csv`; a.click();
     URL.revokeObjectURL(url);
+    void logExport({ what: "purchases", rowCount: byVendor.length + byCategory.length, format: "csv" });
   };
 
   const empty = !isLoading && !error && (lines?.length ?? 0) === 0;
@@ -202,7 +205,7 @@ export default function PurchasesReportPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button icon="download" variant="ghost" onClick={exportCsv} disabled={empty}>Export CSV</Button>
-          <Button icon="file" variant="ghost" onClick={() => window.print()} disabled={empty}>Print</Button>
+          <Button icon="file" variant="ghost" onClick={() => printReport(`purchases-${range}`, byVendor.length + byCategory.length)} disabled={empty}>Print</Button>
         </div>
       </div>
 
