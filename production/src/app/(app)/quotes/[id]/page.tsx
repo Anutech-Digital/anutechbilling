@@ -1901,6 +1901,9 @@ export default function QuoteDetailPage() {
         interState={interState}
         placeOfSupply={pos.label}
         isExport={pos.isExport}
+        /* R-1677: a USD quote previews in USD — without these the staff preview showed ₹32,400. */
+        currency={quote.currency}
+        exchangeRate={quote.exchange_rate}
         /* R-527: without it the preview fell back to the line's commitment and printed a
            quarterly quote as "billed yearly" with the year's CGST/SGST. */
         billingCycle={quote.billing_cycle as BillingCycle}

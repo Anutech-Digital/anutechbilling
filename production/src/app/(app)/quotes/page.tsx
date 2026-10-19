@@ -1304,6 +1304,9 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       interState={interState}
       placeOfSupply={pos.label}
       isExport={pos.isExport}
+      /* R-1677: a USD quote previews in USD — without these the staff preview showed ₹32,400. */
+      currency={quote.currency}
+      exchangeRate={quote.exchange_rate}
       validityDays={validity}
       /* R-809/R-811: add-seats, one-off and month extensions are paid once. */
       oneTime={isOneTimeQuote({

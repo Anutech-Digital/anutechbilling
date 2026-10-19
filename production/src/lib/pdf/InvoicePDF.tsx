@@ -39,7 +39,8 @@ import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { exportEndorsement } from "@/lib/gst/export-lut";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
 import { billOfSupplyDeclarations, billOfSupplyPlace, documentTitle, isBillOfSupply } from "@/lib/invoices/document-kind";
-import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import type {
   Invoice,
   QuoteLineItem,
@@ -488,7 +489,13 @@ export function InvoicePDF(props: InvoicePDFProps) {
   // — that's what an international customer asks for. The books stay ₹, so the INR
   // equivalent is printed as a GST/GSTR-1 reference. `money()` renders every amount
   // in the invoice's display currency.
-  const money = (inr: number) => (isForeign ? formatForeign(foreignEquivalent(inr, rate), currency ?? "") : pdfRupee(inr));
+  /* R-1677: the same dollar total the quote, accept page and staff dialog show
+     (lib/quotes/foreign-totals) — not ₹ ÷ rate per figure ($338.39 vs the quoted $338.40). */
+  const toForeign = foreignDocConverter({
+    lines: lineItems, fx: rate, discountPct, taxRate: tax === 0 ? 0 : taxRate,
+    inr: { subtotal, taxable, tax, total },
+  });
+  const money = (inr: number) => (isForeign ? formatForeign(toForeign(inr), currency ?? "") : pdfRupee(inr));
 
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);

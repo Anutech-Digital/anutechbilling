@@ -80,6 +80,7 @@ import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/curr
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -512,7 +513,10 @@ function QuoteBuilderBody() {
   // converted at the rate. Per-quote choice; line rates stay hand-editable.
   const [usdPricingBasis, setUsdPricingBasis] = React.useState<"international" | "india">("international");
   // Round off the final foreign payable total (default on). Display-only — books stay ₹.
-  const [roundTotal, setRoundTotal] = React.useState(true);
+  /* R-1677: OFF by default — the customer is asked for the cent-exact total (accept page, PDF,
+     invoice: lib/quotes/foreign-totals). Whole dollars on by default made the builder say $338
+     for a $338.40 quote. Still display-only; books stay ₹. */
+  const [roundTotal, setRoundTotal] = React.useState(false);
 
   /* R-1675: the pricing basis (currency | rate | USD basis) the lines of an in-place EDIT were
      saved at. While the builder still sits on that basis, the lines are the saved quote — a
@@ -878,7 +882,12 @@ function QuoteBuilderBody() {
   // GST is added. Detected from the customer's country (foreign = export).
   // For a prospect/lead quote (no customer record yet) export can't be inferred
   // here — mark the customer as export once created. (Phase 1c: lead country.)
-  const isExport          = isExportSupply(isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null)));
+  /* R-1677: the ONE country the export decision is made on — and the one the "Export (…)" lines
+     name. The totals block printed customer?.country even for a typed prospect, so a USD
+     prospect quote read "Export () → zero-rated". */
+  const supplyCountry     = isLeadMode ? leadCountry : (customer?.country ?? (!customerId ? prospectCountry : null));
+  const isExport          = isExportSupply(supplyCountry);
+  const exportCountryName = supplyCountry?.trim() || "outside India";
   /* R-376 (f): the preview names the state — "Haryana (06) · IGST", not "Inter-state". */
   /* R-431 (board R-406): the company's OWN state decides the head as much as the buyer's.
      Empty → isInterStateSupply() answered intra-state and this screen printed
@@ -952,12 +961,13 @@ function QuoteBuilderBody() {
   const toDisp = (inr: number) => (isUsdBill ? dRound(inr / fxRate) : inr);
   const fmtDispC = (v: number) => (isUsdBill ? formatForeign(v, currency ?? "USD") : rupee(v));
   const dispAmt  = (perSeatInr: number, qty: number, discPct = 0) => dRound(qty * toDisp(perSeatInr) * (1 - discPct / 100));
-  const dispGross    = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.rate)), 0)) : grossSubtotal;
-  const dispLineDisc = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.rate) * ((l.discount_pct ?? 0) / 100)), 0)) : lineDiscountTotal;
-  const dispSubtotal = isUsdBill ? dRound(dispGross - dispLineDisc) : subtotal;
+  /* R-1677: the foreign totals come from lib/quotes/foreign-totals — the same function the
+     accept page, preview, quote PDF and invoice use, so all of them show one total. */
+  const usdFig       = isUsdBill ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, taxRate: effectiveTaxRate }) : null;
+  const dispSubtotal = usdFig ? usdFig.subtotal : subtotal;
   const dispTaxable  = dispSubtotal;
-  const dispTax      = isUsdBill ? dRound(dispTaxable * (effectiveTaxRate / 100)) : tax;
-  const dispTotal    = isUsdBill ? dRound(dispTaxable + dispTax) : total;
+  const dispTax      = usdFig ? usdFig.tax : tax;
+  const dispTotal    = usdFig ? usdFig.total : total;
   const dispListGross = isUsdBill ? dRound(lineItems.reduce((s, l) => s + dRound(l.qty * toDisp(l.list_rate ?? l.rate)), 0)) : listGross;
   const dispCustomerDiscount = Math.max(0, dRound(dispListGross - dispSubtotal));
   /* R-369: what the stored totals are divided by for one invoice — the PDF's own rule
@@ -1952,7 +1962,7 @@ function QuoteBuilderBody() {
                   {customer && (
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
-                        <span className="text-indigo-ink">🌍 Export ({customer?.country}) → zero-rated under LUT, no GST</span>
+                        <span className="text-indigo-ink">🌍 Export ({exportCountryName}) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
                       ) : !buyerStateCode ? (
@@ -2653,7 +2663,7 @@ function QuoteBuilderBody() {
               {isExport ? (
                 <div className="text-2xs text-indigo-ink flex items-start gap-1 py-1">
                   <span>🌍</span>
-                  <span>Export ({customer?.country}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
+                  <span>Export ({exportCountryName}) → <b>zero-rated under LUT</b> · no GST (CGST/SGST/IGST) applies</span>
                 </div>
               ) : (
                 <div className="text-2xs text-ink-3 italic flex items-center gap-1 py-1">

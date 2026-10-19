@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
+import { foreignQuoteFigures, cents } from "@/lib/quotes/foreign-totals";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
@@ -139,6 +140,17 @@ export function QuotePreviewDialog({
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
   const fmt          = (n: number) =>
     perInvoice ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
+  /* R-1677: a foreign quote is totalled the one way the accept page, PDF, builder and invoice
+     total it (lib/quotes/foreign-totals) — per-unit to the cent, lines summed. Converting each
+     ₹ figure on its own printed $338.39 beside the customer's $338.40. */
+  const ff           = isForeign
+    ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct, taxRate: isExport ? 0 : taxRate })
+    : null;
+  const fgn          = (v: number) => formatForeign(v, currency ?? "");
+  const fmtF         = (inr: number, foreign: number | undefined) =>
+    ff && foreign !== undefined
+      ? (perInvoice ? `${fgn(cents(foreign / totalsDiv))}${billingUnit}` : fgn(foreign))
+      : fmt(inr);
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
   const intra        = splitIntraStateTax(tax);
@@ -293,7 +305,7 @@ export function QuotePreviewDialog({
                   </td>
                 </tr>
               ) : (
-                lineItems.map((line) => {
+                lineItems.map((line, li) => {
                   // Frequency is quote-level now (0161) — every line shares it.
                   /* R-369: a flex line's rate is already one month; only annual lines divide. */
                   const lineN    = billingN;
@@ -328,10 +340,10 @@ export function QuotePreviewDialog({
                       </td>
                       <td className="py-3 text-right text-sm tabular-nums">{line.qty}</td>
                       <td className="py-3 text-right text-sm tabular-nums">
-                        {money(rate)}{showPer ? lineUnit : ""}
+                        {ff && !showPer ? fgn(ff.lines[li].unit) : money(rate)}{showPer ? lineUnit : ""}
                       </td>
                       <td className="py-3 text-right text-sm tabular-nums font-medium">
-                        <div>{money(amount)}{showPer ? lineUnit : ""}</div>
+                        <div>{ff && !showPer ? fgn(ff.lines[li].gross) : money(amount)}{showPer ? lineUnit : ""}</div>
                         {showPer && (
                           <div className="text-3xs font-normal text-ink-3">
                             = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
@@ -351,20 +363,20 @@ export function QuotePreviewDialog({
               <div className="w-full max-w-xs space-y-2 text-sm">
                 <Row
                   label={perInvoice ? `Subtotal (per invoice)` : "Subtotal"}
-                  value={fmt(subtotal)}
+                  value={fmtF(subtotal, ff?.subtotal)}
                 />
                 {discountPct > 0 && (
                   <Row
                     label={`Discount (${discountPct}%)`}
-                    value={`−${fmt(discount)}`}
+                    value={`−${fmtF(discount, ff?.discount)}`}
                     accent
                   />
                 )}
-                <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmt(taxable)} />
+                <Row label="Taxable amount" value={firstInst ? fmtInst(firstInst.taxable) : fmtF(taxable, ff?.taxable)} />
                 {isExport ? (
                   <Row label="Export — zero-rated (LUT), no GST" value={money(0)} />
                 ) : interState ? (
-                  <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmt(tax)} />
+                  <Row label={`IGST (${taxRate}%)`} value={firstInst ? fmtInst(firstInst.tax) : fmtF(tax, ff?.tax)} />
                 ) : (
                   <>
                     <Row label={`CGST (${taxRate / 2}%)`} value={instHeads ? fmtInst(instHeads.cgst) : fmt(intra.cgst)} />
@@ -379,6 +391,8 @@ export function QuotePreviewDialog({
                     <span className="font-serif text-2xl tabular-nums">
                       {firstInst
                         ? fmtInst(firstInst.gross)
+                        : ff
+                        ? fmtF(total, ff.total)
                         : perInvoice
                         ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}

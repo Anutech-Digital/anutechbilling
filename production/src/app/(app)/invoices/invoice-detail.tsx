@@ -40,6 +40,9 @@ import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-suppl
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
+import { invoiceFx } from "@/lib/pdf/build-props";
+import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignDocConverter } from "@/lib/quotes/foreign-totals";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
@@ -147,6 +150,18 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      receives was wrong in the same way. */
   const { subtotal, discount, taxable, taxRate, tax } = invoiceDisplayAmounts(invoice, quote);
   const total     = quote?.amount ?? invoice.amount;
+  /* R-1677: an export invoice billed in USD said only ₹32,400. Show the customer's amount and
+     the rate beside it — the same $ total the quote and the invoice PDF print. */
+  const fx = invoiceFx(invoice, quote ?? null);
+  const foreignTotal = isForeignCurrency(fx.currency) && fx.exchangeRate && fx.exchangeRate > 0
+    ? formatForeign(
+        foreignDocConverter({
+          lines: lineItems, fx: fx.exchangeRate, discountPct: quote?.discount_pct ?? 0,
+          taxRate: tax === 0 ? 0 : taxRate, inr: { subtotal, taxable, tax, total },
+        })(total),
+        fx.currency ?? "",
+      ) + ` @ ₹${fx.exchangeRate}/${fx.currency}`
+    : null;
 
   /* `supplier` is null until the identity is complete, so this cannot silently pick a
      side. `undefined` makes isInterStateSupply say "I don't know" instead of guessing —
@@ -280,6 +295,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Total Amount</p>
                       <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{rupee(total)}</p>
+                      {foreignTotal && (
+                        <p className="text-2xs text-ink-3 tabular-nums mt-0.5" data-testid="invoice-foreign-total">{foreignTotal}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-3xs text-ink-3 uppercase tracking-wider font-semibold">Net Payable</p>

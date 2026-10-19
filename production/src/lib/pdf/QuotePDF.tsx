@@ -33,6 +33,7 @@ import { fxEquivalentLine } from "@/lib/fx/rate-source";
 import { pdfText } from "./pdf-text";
 import { lineDomainNote } from "./invoice-display";
 import { isForeignCurrency, formatForeign } from "@/lib/currency";
+import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import type { QuoteLineItem, LineCommitment, BillingCycle } from "@/lib/supabase/database.types";
 import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
@@ -520,12 +521,14 @@ export function QuotePDF(props: QuotePDFProps) {
   // printed lines + totals agree (qty × rate == amount, Σ lines == total). For a
   // domestic ₹ quote, keep the canonical stored figures untouched (no rounding
   // drift vs the saved amount). Discounting is quote-level; per-line is legacy/0.
-  const dLineAnnual = lineItems.map((l) => dRound(l.qty * toDisp(l.rate)));
-  const dSubtotal = isForeign ? dRound(dLineAnnual.reduce((s, v) => s + v, 0)) : subtotal;
-  const dDiscount = isForeign ? dRound(dSubtotal * (discountPct / 100))        : discount;
-  const dTaxable  = isForeign ? dRound(dSubtotal - dDiscount)                  : taxable;
-  const dTax      = isForeign ? dRound(dTaxable * (taxRate / 100))             : tax;
-  const dTotal    = isForeign ? dRound(dTaxable + dTax)                        : total;
+  /* R-1677: the foreign rule lives in lib/quotes/foreign-totals — the accept page, builder,
+     staff preview and invoice total a foreign quote with the same function. */
+  const fFig      = isForeign ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct, taxRate }) : null;
+  const dSubtotal = fFig ? fFig.subtotal : subtotal;
+  const dDiscount = fFig ? fFig.discount : discount;
+  const dTaxable  = fFig ? fFig.taxable  : taxable;
+  const dTax      = fFig ? fFig.tax      : tax;
+  const dTotal    = fFig ? fFig.total    : total;
   /* R-212 / R-527 / R-1570: every per-invoice TOTAL (subtotal, taxable, CGST/SGST or IGST,
      the invoice figure and the year) comes from lib/quotes/per-period-figures — the same
      function the covering email prints from, so the letter and this attachment cannot differ.
