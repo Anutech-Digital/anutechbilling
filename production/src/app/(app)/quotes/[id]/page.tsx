@@ -76,6 +76,7 @@ import { requiredApproval, canSend, canApprove, approvalBadge } from "@/lib/quot
 import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-approval";
 import { useTeamMembers } from "@/lib/queries/team";
 import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
+import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived as sumReceived } from "@/lib/queries/payments";
@@ -176,9 +177,18 @@ export default function QuoteDetailPage() {
   const searchParams = useSearchParams();
   const sendIntent   = searchParams.get("send");
   const sendIntentHandled = React.useRef(false);
+  /* R-1669: every way a copy reaches the customer (PDF, WhatsApp, link, email) is locked while
+     the quote waits for — or was refused — discount / margin approval. Preview stays open. */
+  const customerBlock = React.useMemo(() => (quote ? customerCopyBlock(quote) : null), [quote]);
   React.useEffect(() => {
     if (sendIntentHandled.current) return;
     if (!quote)                     return;            // wait for data
+    if (customerBlock && (sendIntent === "whatsapp" || sendIntent === "email")) {
+      sendIntentHandled.current = true;
+      toast.error("Needs approval first", { description: customerBlock.reason });
+      router.replace(`/quotes/${quote.id}` as never);
+      return;
+    }
     if (sendIntent === "whatsapp") {
       setWhatsOpen(true);
       sendIntentHandled.current = true;
@@ -188,7 +198,7 @@ export default function QuoteDetailPage() {
       sendIntentHandled.current = true;
       router.replace(`/quotes/${quote.id}` as never);
     }
-  }, [sendIntent, quote, router]);
+  }, [sendIntent, quote, router, customerBlock]);
 
   /* Approval state. Derived from the quote's own lines every render rather than read
      from a stored flag — the flag records a DECISION, the lines are the facts, and if
@@ -948,14 +958,17 @@ export default function QuoteDetailPage() {
             variant="primary"
             icon="whatsapp"
             loading={sharingWa}
+            disabled={!!customerBlock}
             onClick={shareQuoteOnWhatsApp}
-            title="WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"
+            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : "WhatsApp par bhejein — PDF download hoga, chat me attach kar dein"}
           >
             Send on WhatsApp
           </Button>
           <Button
             icon="download"
             loading={downloadingPdf}
+            disabled={!!customerBlock}
+            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : undefined}
             onClick={async () => {
               setDownloadingPdf(true);
               try {
@@ -971,6 +984,11 @@ export default function QuoteDetailPage() {
           >
             Download PDF
           </Button>
+          {customerBlock && (
+            <p className="basis-full text-2xs leading-snug text-amber-ink" role="status">
+              Download PDF, WhatsApp, email and the customer link are locked until this quote is approved — {customerBlock.reason} Preview still works.
+            </p>
+          )}
           {/* Secondary utilities collapse into an overflow menu so the header
               has one clear reading order — the money next-step lives in the
               status action bar below, not fighting these buttons. Delete is
@@ -982,6 +1000,7 @@ export default function QuoteDetailPage() {
             <DropdownMenuContent align="end" className="min-w-[13rem]">
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
+                disabled={!!customerBlock}
                 onClick={() => {
                   navigator.clipboard?.writeText(acceptUrl);
                   toast.success("Customer link copied · share via email or WhatsApp");
@@ -993,18 +1012,21 @@ export default function QuoteDetailPage() {
                   UPI QR, bank details and pay link exactly as the emailed copy does. */}
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
+                disabled={!!customerBlock}
                 onClick={() => { void openProformaPdf(); }}
               >
                 <Icon name="file" size={15} /> Proforma Invoice PDF
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
+                disabled={!!customerBlock}
                 onClick={() => setSendOpen(true)}
               >
                 <Icon name="mail" size={15} /> {quote.status === "sent" ? "Resend via email" : "Send via email"}
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
+                disabled={!!customerBlock}
                 onClick={() => setWhatsOpen(true)}
               >
                 <Icon name="whatsapp" size={15} /> Send via WhatsApp automation (Cloud API)

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 let tenantRow: Record<string, unknown> = {};
+let quoteOver: Record<string, unknown> = {};
 const rendered: Array<Record<string, unknown>> = [];
 
 const quoteRow = {
@@ -15,7 +16,7 @@ const quoteRow = {
 };
 
 function builder(table: string) {
-  const data = table === "quotes" ? quoteRow : table === "tenants" ? tenantRow : null;
+  const data = table === "quotes" ? { ...quoteRow, ...quoteOver } : table === "tenants" ? tenantRow : null;
   const b: Record<string, unknown> = {};
   for (const k of ["select", "eq"]) b[k] = () => b;
   b.maybeSingle = async () => ({ data, error: null });
@@ -49,7 +50,7 @@ const baseTenant = {
   remit_ifsc: "HDFC0001234", remit_branch: null,
 };
 
-beforeEach(() => { rendered.length = 0; });
+beforeEach(() => { rendered.length = 0; quoteOver = {}; });
 
 describe("GET /api/v1/documents/quote/[id]/pdf — R-1523", () => {
   it("?template=proforma → proforma template, same quote number, bank details, pay link", async () => {
@@ -82,5 +83,33 @@ describe("GET /api/v1/documents/quote/[id]/pdf — R-1523", () => {
     tenantRow = { ...baseTenant, upi_vpa: null };
     await call("&template=proforma");
     expect(rendered[0].upiQrDataUrl).toBeNull();
+  });
+});
+
+/* R-1669: the public PDF link is a customer copy — an 18%-off draft waiting for approval
+   must not render, whoever holds the link. */
+describe("GET /api/v1/documents/quote/[id]/pdf — R-1669 approval gate", () => {
+  const discounted = [{ id: "l1", name: "GW Standard", qty: 10, rate: 10627, list_rate: 12960, cost: 8640, commitment: "annual_yearly" }];
+
+  it("approval pending → 409 with the reason, nothing rendered", async () => {
+    tenantRow = { ...baseTenant, upi_vpa: null };
+    quoteOver = { status: "draft", line_items: discounted, approval_status: "pending", approval_tier: "manager", approval_requested_by: "u1" };
+    const res = await call("");
+    expect(res.status).toBe(409);
+    expect(await res.text()).toMatch(/approv/i);
+    expect(rendered).toHaveLength(0);
+  });
+
+  it("approval rejected → 409", async () => {
+    tenantRow = { ...baseTenant, upi_vpa: null };
+    quoteOver = { status: "draft", line_items: discounted, approval_status: "rejected", approval_tier: "manager" };
+    expect((await call("&template=proforma")).status).toBe(409);
+  });
+
+  it("approved → renders", async () => {
+    tenantRow = { ...baseTenant, upi_vpa: null };
+    quoteOver = { status: "draft", line_items: discounted, approval_status: "approved", approval_tier: "manager", approved_by: "u2", approved_discount_bps: 1800 };
+    expect((await call("")).status).toBe(200);
+    expect(rendered).toHaveLength(1);
   });
 });
