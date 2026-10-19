@@ -15,12 +15,12 @@ import { rateLimitShared, MAKE_CALL_PER_KEY } from "@/lib/security/rate-limit";
 import { loadSalesCatalog } from "@/lib/ai/sales-agent.server";
 import { dispatchTelecall } from "@/lib/ai/actions/telecall-dispatcher";
 import { loadLeadSubject } from "@/lib/telecall/subject.server";
-import { missingTelecallEnv, resolveTelecallProvider } from "@/lib/telecall/provider";
+import { listBolnaAgents, missingTelecallEnv, resolveTelecallProvider } from "@/lib/telecall/provider";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(_req: Request, props: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const { id: leadId } = await props.params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -54,6 +54,21 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
       },
       { status: 409 },
     );
+  }
+
+  /* R-1664: an agent picked on the lead. Only one that is on this Bolna account is accepted —
+     the id comes from the browser and is checked, not trusted. */
+  const body = (await req.json().catch(() => ({}))) as { agentId?: unknown };
+  const pickedAgentId = typeof body.agentId === "string" && body.agentId.trim() ? body.agentId.trim() : null;
+  if (pickedAgentId) {
+    const provider = resolveTelecallProvider();
+    const agents = provider ? await listBolnaAgents(provider) : null;
+    if (!agents || !agents.ok || !agents.agents.some((a) => a.id === pickedAgentId)) {
+      return NextResponse.json(
+        { error: "That agent is not on your Bolna account.", detail: "Close the menu, open it again and pick an agent from the list." },
+        { status: 400 },
+      );
+    }
   }
 
   const rl = await rateLimitShared(`lead-ai-call:${user.id}`, MAKE_CALL_PER_KEY);
@@ -99,6 +114,7 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
     subjectClosedReason: subject.closedReason,
     now: new Date(),
     humanApproved: { userName: me.full_name?.trim() || "A team member" },
+    agentId: pickedAgentId,
   });
 
   const status = result.outcome === "queued" ? 200 : result.outcome === "failed" ? 502 : 409;

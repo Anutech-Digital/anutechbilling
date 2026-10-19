@@ -10,6 +10,10 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { subscriptionFromLeadHref } from "@/lib/subscriptions/lead-prefill";
 import { toast } from "sonner";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
+import { useBolnaAgents } from "@/lib/queries/cold-calling";
 
 /**
  * R-1437: "AI call" — the voice agent (Bolna) rings this lead now. Only on a press: Abhishek
@@ -18,10 +22,17 @@ import { toast } from "sonner";
  */
 function AiCallButton({ leadId }: { leadId: string }) {
   const [busy, setBusy] = React.useState(false);
-  const run = async () => {
+  /* R-1664: pick which Bolna agent rings. If the list can't be read, the default agent calls. */
+  const agents = useBolnaAgents();
+  const list = agents.data?.agents ?? [];
+  const run = async (agentId?: string) => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/leads/${encodeURIComponent(leadId)}/ai-call`, { method: "POST" });
+      const res = await fetch(`/api/leads/${encodeURIComponent(leadId)}/ai-call`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(agentId ? { agentId } : {}),
+      });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string; error?: string };
       if (res.ok && body.ok) {
         toast.success("AI call lag rahi hai", {
@@ -38,10 +49,29 @@ function AiCallButton({ leadId }: { leadId: string }) {
       setBusy(false);
     }
   };
+  if (list.length < 2) {
+    return (
+      <Button icon="sparkles" onClick={() => run(list[0]?.id)} loading={busy} title="AI voice agent (Bolna) is lead ko abhi call karega">
+        AI call
+      </Button>
+    );
+  }
   return (
-    <Button icon="sparkles" onClick={run} loading={busy} title="AI voice agent (Bolna) is lead ko abhi call karega">
-      AI call
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button icon="sparkles" loading={busy} title="Agent chuno — wo is lead ko abhi call karega">
+          AI call
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        <DropdownMenuLabel>Kaunsa agent call kare?</DropdownMenuLabel>
+        {list.map((a) => (
+          <DropdownMenuItem key={a.id} onSelect={() => run(a.id)}>
+            {a.name}{a.id === agents.data?.defaultAgentId ? " (default)" : ""}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

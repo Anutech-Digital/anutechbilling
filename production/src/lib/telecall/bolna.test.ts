@@ -157,3 +157,23 @@ describe("normalisePostCall — bolna execution", () => {
     expect(looksLikeBolnaExecution({ message: { type: "end-of-call-report" } })).toBe(false);
   });
 });
+
+describe("listBolnaAgents", () => {
+  it("reads GET /v2/agent/all (a bare array) into id + name, dropping anything without a uuid", async () => {
+    const { listBolnaAgents } = await import("./provider");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      { id: EXEC_ID, agent_name: "Anutech Sales Agent", agent_status: "processed" },
+      { id: "not-a-uuid", agent_name: "Broken" },
+      { id: "223e4567-e89b-12d3-a456-426614174000", agent_name: "" },
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await listBolnaAgents(BOLNA);
+    expect(r).toEqual({ ok: true, agents: [
+      { id: EXEC_ID, name: "Anutech Sales Agent" },
+      { id: "223e4567-e89b-12d3-a456-426614174000", name: "Unnamed agent" },
+    ] });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${BOLNA_API_BASE}/v2/agent/all`);
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer test-key");
+  });
+});

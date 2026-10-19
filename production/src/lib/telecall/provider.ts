@@ -289,3 +289,51 @@ export async function fetchBolnaExecution(
     clearTimeout(timer);
   }
 }
+
+export interface BolnaAgent {
+  id: string;
+  name: string;
+}
+
+export type ListAgentsResult = { ok: true; agents: BolnaAgent[] } | { ok: false; error: string };
+
+/**
+ * R-1661: the agents on this Bolna account (`GET /v2/agent/all`, a bare JSON array) — the
+ * dropdown on Cold Calling and on a lead's "AI call". Read live rather than stored, so an agent
+ * added or renamed on Bolna shows up without a deploy. Never throws.
+ */
+export async function listBolnaAgents(config: TelecallProviderConfig): Promise<ListAgentsResult> {
+  if (config.name !== "bolna") return { ok: false, error: "not a Bolna configuration" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BOLNA_API_BASE}/v2/agent/all`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const text = await res.text();
+    if (!res.ok) return { ok: false, error: `bolna refused the agent list (${res.status}): ${text.slice(0, 200)}` };
+    const parsed: unknown = JSON.parse(text);
+    const list = Array.isArray(parsed) ? parsed : [];
+    const agents = list.flatMap((a): BolnaAgent[] => {
+      if (typeof a !== "object" || a === null) return [];
+      const o = a as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim() : "";
+      if (!UUID_RE.test(id)) return [];
+      const name = typeof o.agent_name === "string" && o.agent_name.trim() ? o.agent_name.trim() : "Unnamed agent";
+      return [{ id, name }];
+    });
+    return { ok: true, agents };
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    return {
+      ok: false,
+      error: aborted ? `bolna did not respond within ${REQUEST_TIMEOUT_MS / 1000}s`
+        : err instanceof Error ? err.message : "unknown error",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}

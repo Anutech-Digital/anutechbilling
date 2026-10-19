@@ -64,6 +64,11 @@ export interface TelecallDispatchArgs {
    * still obeyed — a person cannot dial past "automation is switched off".
    */
   humanApproved?: { userName: string } | null;
+  /**
+   * R-1664: the vendor agent a person picked for this call (Bolna). Checked against the account's
+   * agent list by the route before it reaches here; absent = the configured default agent.
+   */
+  agentId?: string | null;
   subjectIsOpen: boolean;
   subjectClosedReason: string | null;
   /** Passed in so the decision is testable at 21:01 on a Saturday. */
@@ -243,7 +248,9 @@ export async function dispatchTelecall(
     }
 
     /* ── 5. Auto. Only now is a vendor contacted. ────────────────────────── */
-    const provider = resolveTelecallProvider();
+    const resolved = resolveTelecallProvider();
+    /* R-1664: the person may pick which agent rings; the rest of the vendor config stays. */
+    const provider = resolved && args.agentId ? { ...resolved, agentId: args.agentId } : resolved;
     if (!provider) {
       const missing = missingTelecallEnv().join(", ");
       const detail =

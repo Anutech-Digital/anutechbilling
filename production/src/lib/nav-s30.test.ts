@@ -125,6 +125,9 @@ const R1003_BILLING_REMOVED = [
   "/accounting/attendance", "/accounting/leave", "/accounting/esi-register",
 ];
 const ADDED_11OCT_ACCOUNTANT = ["/accounting/loans", "/accounting/employees", "/accounting/attendance", "/accounting/leave"];
+/** R-1663 (19 Oct 2026): Cold Calling — a new page under Marketing Hub for owner, manager and sales
+ *  (RLS on cold_call_* checks the same four roles). */
+const ADDED_19OCT_COLD_CALLING = ["/marketing/cold-calling"];
 const REMOVED_3OCT: Record<string, string[]> = { billing: ["/accounting/balance-sheet", ...R1003_BILLING_REMOVED] };
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
@@ -145,6 +148,7 @@ const addedFor = (role: string) => [
   ...(BOOKS_ROLES.includes(role) ? ADDED_FOR_BOOKS : []),
   ...(role === "owner" || role === "accountant" ? ADDED_10OCT_OWNER_ACCOUNTANT : []),
   ...(role === "accountant" ? ADDED_11OCT_ACCOUNTANT : []),
+  ...(["owner", "manager", "sales", "sales_senior"].includes(role) ? ADDED_19OCT_COLD_CALLING : []),
   ...ADDED_FOR_EVERY_ROLE,
 ];
 
@@ -333,7 +337,9 @@ describe("2. structure", () => {
   it("R-497: an accordion child with a role its parent lacks is reachable through a heading-only parent", () => {
     const wider = flat.filter((e) => e.parent && e.via === "child").flatMap((e) =>
       (e.item.roles ?? []).filter((r) => !(e.parent!.roles ?? []).includes(r)).map((r) => ({ e, r: r as UserRole })));
-    expect(wider.map(({ e, r }) => `${e.item.href} (${r})`)).toEqual(["/contacts (sales)"]);
+    /* R-1663 (19 Oct 2026): Cold Calling is the second — sales use it, the Hub stays owner/manager. */
+    expect(wider.map(({ e, r }) => `${e.item.href} (${r})`).sort()).toEqual(
+      ["/contacts (sales)", "/marketing/cold-calling (sales)", "/marketing/cold-calling (sales_senior)"]);
     for (const { e, r } of wider) {
       const parent = filterNavForRole(APP_NAV, r).flatMap((s) => s.items).find((i) => i.id === e.parent!.id);
       expect(parent?.headerOnly, `${r}: ${e.parent!.href} should be a heading`).toBe(true);
