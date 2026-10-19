@@ -26,6 +26,7 @@ const ALLOW: Record<string, string> = {
   // one business document the user is looking at, not a bulk export
   "lib/pdf/index.tsx": "single quote / invoice / receipt / payslip PDF",
   "components/features/quotes/tax-invoice-dialog.tsx": "single invoice PDF",
+  "components/features/subscriptions/invoice-peek-dialog.tsx": "single invoice PDF",
   "components/features/quotes/quote-preview-dialog.tsx": "prints the one quote on screen",
   "app/(public)/quote/[id]/accept/quote-accept-view.tsx": "public quote page, the customer prints their own quote",
   "site/components/quote/QuoteBuilder.tsx": "public website quote builder, no company session",
