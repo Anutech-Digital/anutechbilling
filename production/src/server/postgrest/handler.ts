@@ -10,7 +10,7 @@
  */
 import "server-only";
 import { withIdentity, type Identity } from "@/server/db/gateway";
-import { getCatalog } from "./catalog";
+import { getCatalog, isCatalogMiss, reloadCatalog } from "./catalog";
 import { buildDelete, buildInsert, buildRead, buildRpc, buildUpdate, type Built, type ReadRole } from "./build";
 import { explainMfaPending } from "./mfa-pending";
 import { PgrstError, parseAccept, parsePrefer, parseQuery } from "./parse";
@@ -115,7 +115,18 @@ export async function handlePostgrest(req: GatewayRequest, identity: Identity): 
     const prefer = parsePrefer(req.headers.get("prefer"));
     const accept = parseAccept(req.headers.get("accept"));
     const role: ReadRole = identity.mode === "user" ? "authenticated" : identity.mode === "anon" ? "anon" : "service";
-    const { built, write, status: okStatus } = build(req, cat, role);
+    let b: ReturnType<typeof build>;
+    try {
+      b = build(req, cat, role);
+    } catch (e) {
+      // R-1671: a name not in the catalog may be new since this instance read it (a DB step after
+      // the deploy). Re-read it (rate-limited, shared) and build once more; still missing → same error.
+      if (!isCatalogMiss(e)) throw e;
+      const fresh = await reloadCatalog();
+      if (!fresh) throw e;
+      b = build(req, fresh, role);
+    }
+    const { built, write, status: okStatus } = b;
     const representation = !write || prefer.return === "representation";
 
     const result = await withIdentity(identity, async (tx) => {

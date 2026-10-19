@@ -79,8 +79,7 @@ import { COUNTRIES } from "@/lib/gst/countries";
 import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/currency";
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
-import { lineFromCatalog, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
-import { headlinePrice } from "@/lib/catalog/headline-price";
+import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
@@ -523,27 +522,13 @@ function QuoteBuilderBody() {
       if (!it) return l;
       /* R-369: "annualRate" is the line's STORED unit — the year on an annual line, one
          month on a flex ("monthly") line. ×12 on a flex line re-priced every saved flex
-         quote to twelve months the moment it was opened for editing. */
-      const lineCommitment = l.commitment ?? "annual_yearly";
-      let annualRate: number, annualCost: number;
+         quote to twelve months the moment it was opened for editing.
+         R-1668: and ONCE on a one-time line (no commitment) — never ×12. The arithmetic
+         lives in lib/quotes/catalog-line.ts (catalogLineListRate), tested there. */
       const usd = it.prices?.usd;
-      if (usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0) {
-        annualRate = storedLineRate(usd.msrp * fx, lineCommitment);
-        annualCost = storedLineRate(usd.wholesale * fx, lineCommitment);
-      } else if (headlinePrice(it).unit === "yr" || unitYearMultiplier(billingUnitOf(it)) !== 12) {
-        /* A yearly-total plan (support "(Yearly)", msrp 0). msrp × 12 here re-priced it
-           to ₹0 the moment this effect re-ran (2 Oct 2026).
-           R-526: and any row priced per YEAR or ONCE (domain registration, migration) —
-           the tier branch below would ×12 it again every time the catalogue loads. */
-        const p = catalogYearlyPrice(it);
-        const perMonthLine = lineCommitment === "monthly";
-        annualRate = perMonthLine ? Math.round(p.rate / 12) : p.rate;
-        annualCost = perMonthLine ? Math.round(p.cost / 12) : p.cost;
-      } else {
-        const tier = it.prices?.[lineCommitment === "monthly" ? "monthly" : "annual"];
-        annualRate = storedLineRate(tier?.msrp ?? it.msrp, lineCommitment);
-        annualCost = storedLineRate(tier?.wholesale ?? it.wholesale, lineCommitment);
-      }
+      const useUsd = usdMode && usdPricingBasis === "international" && usd && usd.msrp > 0;
+      const { rate: annualRate, cost: annualCost } = catalogLineListRate(it, l.commitment,
+        useUsd ? { msrp: usd.msrp, wholesale: usd.wholesale, fx } : null);
       /* Keep the line's discount: a package (or a rep) priced it below list, and a
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
       const listBefore = l.list_rate ?? l.rate;
@@ -605,7 +590,7 @@ function QuoteBuilderBody() {
 
     const seatsNum = leadSeats ? parseInt(leadSeats, 10) : 0;
 
-    // 1. Find the matching catalog item — exact / substring / tier-keyword (lib/quotes/lead-plan-match.ts).
+    // 1. Find the matching catalog item — exact / substring / family-then-tier (lib/quotes/lead-plan-match.ts).
     const catalogItem = matchCatalogItemForPlan(catalog, leadPlan);
 
     let rate = 0;
@@ -626,18 +611,14 @@ function QuoteBuilderBody() {
       }
     }
 
-    // 2. Fallback to the hardcoded plan map — tries exact then substring match too.
+    // 2. Fallback to the hardcoded plan map — the SAME family-then-tier matcher (R-1667),
+    //    so a bare tier word never borrows another product's price here either.
     if (!rate && leadPlan) {
-      const lpLower = leadPlan.toLowerCase();
-      let monthlyPPS = PLAN_PRICE_PER_SEAT_PM[leadPlan];
-      if (!monthlyPPS) {
-        // Try substring match against known plan names
-        const key = Object.keys(PLAN_PRICE_PER_SEAT_PM).find((k) => {
-          const kl = k.toLowerCase();
-          return kl.includes(lpLower) || lpLower.includes(kl);
-        });
-        if (key) monthlyPPS = PLAN_PRICE_PER_SEAT_PM[key];
-      }
+      const key = matchCatalogItemForPlan(
+        Object.keys(PLAN_PRICE_PER_SEAT_PM).map((k) => ({ name: k })),
+        leadPlan,
+      )?.name;
+      const monthlyPPS = key ? PLAN_PRICE_PER_SEAT_PM[key] : undefined;
       if (monthlyPPS) {
         rate = monthlyPPS * 12;
         /* Cost stays 0 — DELIBERATELY, and this is the important line in the block.
@@ -688,6 +669,13 @@ function QuoteBuilderBody() {
           duration: 10_000,
         });
       }
+    } else if (leadPlan && seatsNum > 0) {
+      /* R-1667: the plan did not match ONE catalogue item. The line stays empty on purpose —
+         a guessed item is a wrong price on a customer's quote. */
+      toast.warning(`"${leadPlan}" did not match one catalogue item — line left empty`, {
+        description: `Pick the right item for ${seatsNum} seat${seatsNum === 1 ? "" : "s"} yourself. Nothing was guessed.`,
+        duration: 10_000,
+      });
     } else {
       toast.info(`Add line items for ${leadCompany}'s quote`);
     }
@@ -1091,12 +1079,30 @@ function QuoteBuilderBody() {
   };
   const updateCommitment = (id: string, commitment: LineCommitment | null) => {
     /* R-389 (F4): "One-time" = no commitment — record_payment makes no subscription for it.
-       The rate is kept as typed: a one-time price has no per-month / per-year unit. */
+       A typed (custom) line keeps its rate: a one-time price has no per-month / per-year unit.
+       R-1668: a CATALOGUE line is re-priced to the catalogue price once per unit — it used to
+       keep its ×12 annual rate, so a ₹199 migration stayed ₹2,388 a seat on a One-time line. */
+    const usdFor = (it: (typeof catalog)[number]) => {
+      const usd = it.prices?.usd;
+      const fx = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
+      return (currency ?? "INR").toUpperCase() === "USD" && usdPricingBasis === "international" && usd && usd.msrp > 0
+        ? { msrp: usd.msrp, wholesale: usd.wholesale, fx }
+        : null;
+    };
     if (commitment === null) {
       setLineItems((s) => s.map((l) => {
         if (l.id !== id) return l;
         const { commitment: _was, ...oneTime } = l;
-        return oneTime;
+        const item = l.item_id && !l.bulk ? catalog.find((c) => c.id === l.item_id) : undefined;
+        if (!item) return oneTime;
+        const once = catalogLineListRate(item, null, usdFor(item));
+        if (once.rate <= 0) return oneTime;
+        return {
+          ...oneTime,
+          rate: once.rate,
+          list_rate: once.rate,
+          cost: costTypedRef.current.has(l.id) || once.cost <= 0 ? l.cost : once.cost,
+        };
       }));
       return;
     }
@@ -1108,6 +1114,18 @@ function QuoteBuilderBody() {
         // If this line came from the catalog, recalc rate based on new commitment tier
         if (l.item_id && catalog) {
           const item = catalog.find((c) => c.id === l.item_id);
+          /* R-1668: from One-time (a once price) back to a term — price it from the catalogue
+             for that term. The unit conversion below reads a missing commitment as annual
+             and would leave ₹199 on an Annual line. */
+          if (item && !l.commitment && !l.bulk) {
+            const p = catalogLineListRate(item, commitment, usdFor(item));
+            if (p.rate > 0) {
+              return {
+                ...l, commitment, rate: p.rate, list_rate: p.rate,
+                cost: costTypedRef.current.has(l.id) || p.cost <= 0 ? l.cost : p.cost,
+              };
+            }
+          }
           // Map line commitment → underlying item price tier
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";

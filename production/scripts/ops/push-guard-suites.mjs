@@ -25,6 +25,7 @@ export const PUSH_GUARD_SUITES = [
   "src/app/api/admin-client-ratchet.test.ts",
   "src/app/api/role-gate-ratchet.test.ts", // R-732
   "src/app/(app)/page-widths-ratchet.test.ts", // R-1489: §20 page widths
+  "tests/ops/gen-api-doc.test.ts", // R-1665: docs/API.md regenerated when a route changes
   // ── migration scans ──
   "tests/rls-initplan-migrations.test.ts",
   "src/lib/security/definer-hardening-holds.test.ts",

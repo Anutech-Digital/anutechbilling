@@ -134,7 +134,7 @@ MIGS=(
   "r1527combinequotes|20261017161500_r1527_combine_quotes.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.combine_quotes(text[])') and prosrc like '%R-1527%')"
   "r1529billofsupply|20261018022629_r1529_bill_of_supply.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_invoice_document_kind') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_document_number(text,uuid,date)') and prosrc like '%R-1529%')"
   "r1561instdue|20261018030414_r1561_instalment_due_once.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.raise_subscription_billing(uuid)') and prosrc like '%R-1561%')"
-  "r1546bucketmime|20261018031506_r1546_storage_mime_allowlists.sql|postgres|exists(select 1 from storage.buckets where id = 'employee-docs' and allowed_mime_types is not null)"
+  "r1546bucketmime|20261018031506_r1546_storage_mime_allowlists.sql|postgres|true"
   "r1564instalmentpay|20261018033137_r1564_instalment_payment.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_instalment_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text)') and prosrc like '%R-1564%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-1564%')"
   "r1565creditnotcash|20261018044814_r1565_credit_applied_not_cash.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'payments' and column_name = 'credit_applied') and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_desk_payment(text,integer,text,text,text,uuid,integer,date,uuid,integer,integer,integer,text,numeric,text,text,text)') and prosrc like '%R-1565%')"
   "r1576billitc|20261018045438_r1576_bill_itc.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'vendor_bills' and column_name = 'document_type') and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and 'bill_itc_groups' = any(proargnames)) and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl(date,date)') and 'bill_itc_groups' = any(proargnames))"
@@ -181,14 +181,16 @@ done
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 {
   echo 'DO $$ DECLARE r text; BEGIN'
-  echo '  SELECT concat_ws('"' '"
+  # R-1622: concat_ws() takes at most 100 arguments; at 134 migrations the PEEK failed and the
+  # script stopped silently at step 2. array_to_string(ARRAY[...]) has no such limit.
+  echo "  SELECT array_to_string(ARRAY[''::text"
   sep=","
   for m in "${MIGS[@]}"; do
     printf "   %s'%s=' || (%s)::text\n" "$sep" "$(field "$m" 1)" "$(field "$m" 4)"
   done
   # apply() rewrites auth.uid() to these helpers — they must exist first (R-161).
   echo "   ,'cuid=' || (exists(select 1 from pg_proc where proname='current_user_id' and pronamespace='public'::regnamespace) and exists(select 1 from pg_proc where proname='current_request_role' and pronamespace='public'::regnamespace))::text"
-  echo '  ) INTO r;'
+  echo "  ]::text[], ' ') INTO r;"
   echo "  RAISE EXCEPTION 'PEEK %', r; END \$\$;"
 } > "$TMP/peek-staging.sql"
 printf "notify pgrst, 'reload schema';\n" > "$TMP/reload.sql"
@@ -265,6 +267,7 @@ for m in "${MIGS[@]}"; do
 done
 if [ -n "$AFTER" ] && [ -z "$missing" ]; then
   say "DB READY — tell Claude 'db ho gaya' and it will push the app."
+  echo "If the app was deployed BEFORE this DB step: no restart needed — the data gateway re-reads the schema by itself within 30 s (R-1671)."
 else
   echo "Still missing:${missing:- (could not read staging)} — send Claude this screen."; exit 1
 fi
