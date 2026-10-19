@@ -23,7 +23,7 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-const TENANT = "11111111-1111-1111-1111-111111111111";
+const TENANT = "2b6f4c1e-8a3d-4f7a-9c21-5d0e7b3a9f14";
 const base = { subject: "Invite", text: "Join us", kind: "team_invite", route: { tenantId: TENANT } };
 
 let fetchMock: ReturnType<typeof vi.fn>;
