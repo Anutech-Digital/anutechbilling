@@ -23,6 +23,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatDate } from "@/lib/utils";
+import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
   ColdCallError, useBolnaAgents, useColdCampaigns, useColdContacts, useCreateCampaign, useImportList,
   useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact,
@@ -169,7 +170,9 @@ export default function ColdCallingPage() {
                     )}
                   >
                     {c.name}
-                    <span className="ml-2 text-xs text-ink-3">{CAMPAIGN_STATUS[c.status].label}</span>
+                    <span className="ml-2 text-xs text-ink-3">
+                      {CAMPAIGN_STATUS[c.status].label} · {total(c) - countOf(c, ["pending", "calling", "skipped_dnd"])}/{total(c) - countOf(c, ["skipped_dnd"])} called
+                    </span>
                   </button>
                 );
               })}
@@ -291,8 +294,27 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const tick = useTick();
   const fileRef = React.useRef<HTMLInputElement>(null);
 
+  /* While the page is open and the campaign runs, check every minute: results come in and the
+     next calls go out. On the live server the cron does this too; on localhost this is the only
+     thing that does. Quiet — no toast; the Live box shows what happened. */
+  const [lastCheck, setLastCheck] = React.useState<{ at: Date; note: string | null; placed: number } | null>(null);
+  const tickRef = React.useRef(tick.mutateAsync);
+  tickRef.current = tick.mutateAsync;
+  React.useEffect(() => {
+    if (campaign.status !== "running") return;
+    let stop = false;
+    const go = async () => {
+      try {
+        const r = await tickRef.current(campaign.id);
+        if (!stop) setLastCheck({ at: new Date(), note: r.note, placed: r.placed });
+      } catch { /* the Live box keeps the last good check; Refresh results shows the error */ }
+    };
+    void go();
+    const t = window.setInterval(go, 60_000);
+    return () => { stop = true; window.clearInterval(t); };
+  }, [campaign.id, campaign.status]);
+
   const numbers = total(campaign);
-  const reached = countOf(campaign, ["interested", "callback", "answered", "not_interested", "moved"]);
   const toMove = countOf(campaign, ["interested", "callback"]);
   const running = campaign.status === "running";
   const started = campaign.status !== "draft";
@@ -328,6 +350,7 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const runNow = async () => {
     try {
       const r = await tick.mutateAsync(campaign.id);
+      setLastCheck({ at: new Date(), note: r.note, placed: r.placed });
       toast.success(`${r.placed} calls placed · ${r.finished} results updated`, { description: r.note ?? "Results appear here a minute or two after each call." });
     } catch (err) { failToast(err, "Could not check the calls."); }
   };
@@ -355,6 +378,8 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
         )}
       </div>
 
+      {started && <LiveStatus campaign={campaign} lastCheck={lastCheck} />}
+
       {/* The three steps */}
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" tabIndex={-1} />
       <div className="grid gap-3 md:grid-cols-3">
@@ -376,7 +401,7 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
         <Step n={2} title="Start calling" done={started && !running && campaign.status === "done"} active={numbers > 0 && !running && campaign.status !== "done"}>
           <p className="text-sm text-ink-3">
             {running
-              ? <>The agent is calling — <strong className="text-ink">{reached}</strong> people reached so far.</>
+              ? <>On. See <strong className="text-ink">Live status</strong> above for who is being called now.</>
               : campaign.status === "done"
                 ? <>Every number on the list has been called.</>
                 : campaign.status === "paused"
@@ -468,6 +493,98 @@ function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
         )}
       </section>
     </Card>
+  );
+}
+
+/**
+ * "Is it calling right now, and if not, why?" — the first question after pressing Start
+ * (Abhishek, 19 Oct). Progress, who is on the line, and the plain reason when nothing is ringing.
+ */
+function LiveStatus({ campaign, lastCheck }: {
+  campaign: ColdCampaign;
+  lastCheck: { at: Date; note: string | null; placed: number } | null;
+}) {
+  const ringing = useColdContacts(campaign.status === "running" ? campaign.id : null, "calling");
+  const dnd = countOf(campaign, ["skipped_dnd"]);
+  const pending = countOf(campaign, ["pending"]);
+  const calling = countOf(campaign, ["calling"]);
+  const failed = countOf(campaign, ["failed"]);
+  const callable = total(campaign) - dnd;
+  const done = callable - pending - calling;
+  const pct = callable > 0 ? Math.round((done / callable) * 100) : 0;
+  const now = new Date();
+
+  let tone: "live" | "wait" | "stop" = "wait";
+  let headline: string;
+  let detail: string | null = null;
+  if (campaign.status === "paused") {
+    tone = "stop"; headline = "Paused — no calls are going out."; detail = "Press Start again to continue.";
+  } else if (campaign.status === "done" || (pending === 0 && calling === 0)) {
+    tone = "stop"; headline = "Finished — every number has been called."; detail = "Add more numbers to call again.";
+  } else if (calling > 0) {
+    tone = "live";
+    const who = (ringing.data ?? []).map((c) => c.name || c.company || c.phone);
+    headline = `Calling now: ${who.length ? who.slice(0, 3).join(", ") + (who.length > 3 ? ` +${who.length - 3}` : "") : `${calling} ${calling === 1 ? "number" : "numbers"}`}`;
+    detail = "The result shows up here a minute or two after the call ends.";
+  } else if (!canCallNow(now, campaign.windowStart, campaign.windowEnd)) {
+    headline = "Waiting for calling hours.";
+    detail = `Calls go out only Mon–Fri ${campaign.windowStart}:00–${campaign.windowEnd}:00 IST. It starts again by itself.`;
+  } else if (campaign.calledToday >= campaign.dailyLimit) {
+    headline = `Today's limit of ${campaign.dailyLimit} calls is reached.`;
+    detail = "It continues tomorrow by itself.";
+  } else {
+    tone = "live"; headline = "Next call within a minute.";
+    detail = lastCheck?.note && lastCheck.placed === 0 ? `Last check: ${lastCheck.note}.` : null;
+  }
+
+  return (
+    <section aria-label="Live status" aria-live="polite" className="rounded-lg border border-hairline bg-paper-2/60 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <span aria-hidden className="relative mt-1.5 flex h-2.5 w-2.5 shrink-0">
+            {tone === "live" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald opacity-60" />}
+            <span className={cn("relative inline-flex h-2.5 w-2.5 rounded-full",
+              tone === "live" ? "bg-emerald" : tone === "wait" ? "bg-amber" : "bg-ink-3")} />
+          </span>
+          <div className="min-w-0">
+            <p className="font-medium text-ink">{headline}</p>
+            {detail && <p className="text-sm text-ink-3">{detail}</p>}
+          </div>
+        </div>
+        <p className="text-xs text-ink-3">
+          {campaign.status === "running"
+            ? lastCheck ? `Checked ${lastCheck.at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · checks every minute` : "Checking…"
+            : null}
+        </p>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between text-xs text-ink-3 mb-1">
+          <span><strong className="text-ink">{done}</strong> of {callable} called</span>
+          <span>{pct}%</span>
+        </div>
+        <div className="h-2 rounded-full bg-paper border border-hairline overflow-hidden" role="progressbar"
+          aria-valuemin={0} aria-valuemax={callable} aria-valuenow={done} aria-label="Numbers called">
+          <div className="h-full bg-emerald transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm">
+        {[
+          { k: "Called", v: done },
+          { k: "Left to call", v: pending },
+          { k: "Calling now", v: calling },
+          { k: "Skipped (DND)", v: dnd },
+          { k: "Call failed", v: failed },
+        ].map((x) => (
+          <div key={x.k} className="rounded-md bg-paper border border-hairline px-3 py-2">
+            <dt className="text-xs text-ink-3">{x.k}</dt>
+            <dd className="font-serif text-lg leading-tight text-ink">{x.v}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-xs text-ink-3">Today: {campaign.calledToday} of {campaign.dailyLimit} calls used.</p>
+    </section>
   );
 }
 
