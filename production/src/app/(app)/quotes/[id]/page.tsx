@@ -1886,6 +1886,9 @@ export default function QuoteDetailPage() {
         tenantPhone={me?.tenantPhone}
         tenantAddress={me?.tenantAddress}
         quoteId={quote.id}
+        /* R-1694: the PDF's scan-to-pay QR, or a "add UPI ID" hint for the owner. */
+        upiVpa={me?.tenantUpiVpa ?? null}
+        payQrQuoteId={quote.id}
         customerName={quote.customer_name}
         contactName={contact.contactName}
         contactEmail={contact.contactEmail}

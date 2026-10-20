@@ -3173,6 +3173,9 @@ function QuoteBuilderBody() {
         tenantPhone={currentUser?.tenantPhone}
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
+        /* R-1694: the PDF QR (shown once the quote is saved) or a "add UPI ID" hint. */
+        upiVpa={currentUser?.tenantUpiVpa ?? null}
+        payQrQuoteId={quoteId}
         customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
         contactName={previewContact.contactName}
         contactEmail={previewContact.contactEmail}

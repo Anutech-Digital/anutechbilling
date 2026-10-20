@@ -10,8 +10,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { verifyPdfToken } from "@/lib/pdf/pdf-token";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { buildQuotePdfProps, type TenantPdfInfo } from "@/lib/pdf/build-props";
-import { buildQuoteUpiQr } from "@/lib/pdf/upi-qr";
-import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
+import { quotePayQr, type QuotePayQrTenant } from "@/lib/pdf/quote-pay-qr";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import type { Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
@@ -79,13 +78,12 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   // Scan-to-pay. R-1613: the QR asks for exactly what the online Pay button charges —
   // readQuoteDueNow (total − money received, instalment 1 on a split quote). No QR on a
   // non-INR quote (UPI settles only in rupees), a paid one, or one already invoiced (the
-  // invoice owns that ask, at its own balance).
-  const t = tenant as { name?: string; upi_vpa?: string | null; upi_payee_name?: string | null } | null;
-  const upi = await buildQuoteUpiQr({
-    vpa:       t?.upi_vpa,
-    payeeName: t?.upi_payee_name ?? t?.name,
-    quoteId:   q.id,
-    amountDue: quoteDueNowUpiAmount(await readQuoteDueNow(admin, q)),
+  // invoice owns that ask, at its own balance). R-1694: one shared rule (quotePayQr) so the
+  // staff preview shows the same QR the customer's PDF carries.
+  const upi = await quotePayQr({
+    tenant:  tenant as QuotePayQrTenant | null,
+    quoteId: q.id,
+    due:     await readQuoteDueNow(admin, q),
   });
 
   /* R-1523: ?template=proforma → the same quote as a "Proforma Invoice" (quote number, no GST
