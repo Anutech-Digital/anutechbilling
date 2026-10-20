@@ -154,8 +154,8 @@ describe("statement import never duplicates past the 1000th existing line (R-150
     const lines = statement(1500);
     const { client } = gatewayClient({ bank_transactions: [...lines] });
     const keys = await fetchExistingTxnKeys(client, "acc1");
-    // two keys a line (description key + balance key)
-    expect(keys.size).toBe(3000);
+    // every line carries a running balance, so every line has its balance key (R-1691 index)
+    expect(keys.bal.size).toBe(1500);
   });
 
   it("re-importing the same 1500-line statement inserts 0 lines", async () => {

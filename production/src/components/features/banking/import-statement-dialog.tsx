@@ -33,7 +33,7 @@ import { Icon } from "@/components/ui/icon";
 import {
   useImportBankTransactions,
   useExistingTxnKeys,
-  bankTxnKeys,
+  planBankImport,
   useBankAccount,
   useUpdateBankAccount,
 } from "@/lib/queries/bank";
@@ -162,12 +162,18 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   );
   const excludedCount = parsed ? parsed.rows.filter(isExcluded).length : 0;
 
-  // How many parsed rows are already in the books (will be skipped on import).
-  const dupCount = React.useMemo(() => {
-    if (!parsed || !existingKeys) return 0;
-    return parsed.rows.filter((r) => !isExcluded(r) && bankTxnKeys(r).some((k) => existingKeys.has(k))).length;
+  /* How many parsed rows are already in the books (will be skipped on import) — the same
+     function the import itself runs (planBankImport, R-1691), so the count shown here is
+     the count skipped. It also counts a line repeated within this upload. */
+  const plan = React.useMemo(() => {
+    if (!parsed) return null;
+    const rows = parsed.rows.filter((r) => !isExcluded(r));
+    if (!existingKeys) return { duplicates: 0, freshCount: rows.length };
+    const p = planBankImport(rows, existingKeys);
+    return { duplicates: p.duplicates, freshCount: p.fresh.length };
   }, [parsed, existingKeys, isExcluded]);
-  const freshCount = (parsed?.rows.length ?? 0) - excludedCount - dupCount;
+  const dupCount = plan?.duplicates ?? 0;
+  const freshCount = plan?.freshCount ?? 0;
 
   React.useEffect(() => {
     if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); }
