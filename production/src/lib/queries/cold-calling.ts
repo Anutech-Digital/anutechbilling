@@ -152,6 +152,26 @@ export function useDeleteCampaign() {
   });
 }
 
+export interface BulkDeleteReport { deleted: number; skippedRinging: string[] }
+
+export function useDeleteCampaigns() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      api<BulkDeleteReport>("/api/cold-calling/campaigns/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useDeleteContacts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      api<BulkDeleteReport>("/api/cold-calling/contacts/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useDeleteContact() {
   const qc = useQueryClient();
   return useMutation({

@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { BulkActionBar, BulkBarConfirmButton } from "@/components/ui/bulk-action-bar";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -29,7 +31,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
   ColdCallError, useColdContacts, useColdProducts, useCreateCampaign, useImportList,
-  useDeleteContact, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
+  useDeleteContact, useDeleteContacts, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
 } from "@/lib/queries/cold-calling";
 
 type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline";
@@ -103,23 +105,38 @@ export function countOf(c: ColdCampaign, statuses: readonly string[]): number {
 }
 
 /** One campaign on the list page: what it is, how far it got, what needs a person. */
-export function CampaignCard({ campaign: c }: { campaign: ColdCampaign }) {
+export function CampaignCard({ campaign: c, selected, onToggle }: {
+  campaign: ColdCampaign; selected?: boolean; onToggle?: (on: boolean) => void;
+}) {
   const dnd = countOf(c, ["skipped_dnd"]);
   const callable = total(c) - dnd;
   const done = callable - countOf(c, ["pending", "calling"]);
   const pct = callable > 0 ? Math.round((done / callable) * 100) : 0;
   const hot = countOf(c, ["interested", "callback", "moved"]);
   return (
+    <div className="relative">
+    {onToggle && (
+      <div className="absolute top-3 left-3 z-10">
+        <Checkbox checked={!!selected} onCheckedChange={(v) => onToggle(v === true)} aria-label={`Select ${c.name}`} />
+      </div>
+    )}
     <Link
       href={`/marketing/cold-calling/${c.id}` as Route}
-      className="group block rounded-lg border border-hairline bg-paper p-4 transition-colors hover:border-amber hover:bg-paper-2/40 focus:outline-none focus:ring-2 focus:ring-amber/40"
+      className={cn(
+        "group block rounded-lg border bg-paper p-4 transition-colors hover:border-amber hover:bg-paper-2/40 focus:outline-none focus:ring-2 focus:ring-amber/40",
+        onToggle && "pl-11",
+        selected ? "border-amber bg-amber-soft/30" : "border-hairline",
+      )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium text-ink truncate group-hover:text-amber">{c.name}</p>
           <p className="text-xs text-ink-3 truncate mt-0.5">{c.productName ?? "Any product"} · {c.agentName ?? c.agentId}</p>
         </div>
-        <Badge kind={CAMPAIGN_STATUS[c.status].kind} dot={c.status === "running"} size="sm">{CAMPAIGN_STATUS[c.status].label}</Badge>
+        {(() => {
+          const shown: ColdCampaign["status"] = c.status === "done" && countOf(c, ["pending", "calling"]) > 0 ? "paused" : c.status;
+          return <Badge kind={CAMPAIGN_STATUS[shown].kind} dot={c.status === "running"} size="sm">{CAMPAIGN_STATUS[shown].label}</Badge>;
+        })()}
       </div>
       <div className="mt-3">
         <div className="flex justify-between text-xs text-ink-3 mb-1">
@@ -137,6 +154,7 @@ export function CampaignCard({ campaign: c }: { campaign: ColdCampaign }) {
       </dl>
       <p className="mt-3 text-xs text-amber font-medium">Open campaign →</p>
     </Link>
+    </div>
   );
 }
 
@@ -266,6 +284,25 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const tick = useTick();
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [report, setReport] = React.useState<ImportResult | null>(null);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const bulkDel = useDeleteContacts();
+  React.useEffect(() => { setPicked(new Set()); }, [filter]);
+  const visible = contactsList(contacts.data);
+  const selectable = visible.filter((c) => c.status !== "calling");
+  const allPicked = selectable.length > 0 && selectable.every((c) => picked.has(c.id));
+  const togglePick = (id: string, on: boolean) =>
+    setPicked((prev) => { const n = new Set(prev); if (on) n.add(id); else n.delete(id); return n; });
+  const deletePicked = async () => {
+    try {
+      const r = await bulkDel.mutateAsync([...picked]);
+      setPicked(new Set());
+      toast.success(`${r.deleted} ${r.deleted === 1 ? "number" : "numbers"} removed from this list`, {
+        description: r.skippedRinging.length
+          ? `Left alone (on a call right now): ${r.skippedRinging.slice(0, 3).join(", ")}${r.skippedRinging.length > 3 ? "…" : ""}.`
+          : "Leads they already became stay in Sales & Pipeline.",
+      });
+    } catch (err) { failToast(err, "Could not remove the numbers."); }
+  };
 
   /* While the page is open and the campaign runs, check every minute: results come in and the
      next calls go out. On the live server the cron does this too; on localhost this is the only
@@ -480,16 +517,28 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
           />
         ) : (
           <div className="rounded-lg border border-hairline overflow-hidden">
-            <div className="hidden md:grid grid-cols-[minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] gap-3 px-4 py-2 bg-paper-2 text-xs font-medium text-ink-3">
-              <span>Person</span><span>Result</span><span>Last call</span><span className="text-right">Next step</span>
+            <div className="grid grid-cols-[20px_minmax(0,1fr)] md:grid-cols-[20px_minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] gap-3 px-4 py-2 bg-paper-2 text-xs font-medium text-ink-3 items-center">
+              <Checkbox
+                checked={allPicked}
+                onCheckedChange={(v) => setPicked(v === true ? new Set(selectable.map((c) => c.id)) : new Set())}
+                aria-label="Select all numbers shown"
+              />
+              <span>Person</span>
+              <span className="hidden md:block">Result</span><span className="hidden md:block">Last call</span>
+              <span className="hidden md:block text-right">Next step</span>
             </div>
             <ul className="divide-y divide-hairline" aria-label="Numbers on this list">
-              {(contacts.data ?? []).map((c) => <ContactItem key={c.id} contact={c} />)}
+              {visible.map((c) => (
+                <ContactItem key={c.id} contact={c} picked={picked.has(c.id)} onPick={(on) => togglePick(c.id, on)} />
+              ))}
             </ul>
           </div>
         )}
       </section>
       )}
+      <BulkActionBar count={picked.size} noun="number" onClear={() => setPicked(new Set())}>
+        <BulkBarConfirmButton icon="trash" onConfirm={deletePicked}>Delete</BulkBarConfirmButton>
+      </BulkActionBar>
     </Card>
   );
 }
@@ -764,13 +813,19 @@ function ImportReportDialog({ report: r, campaignId, onClose }: {
   );
 }
 
+function contactsList(rows: ColdContact[] | undefined): ColdContact[] {
+  return rows ?? [];
+}
+
 function callbackWhen(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {
     weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
   });
 }
 
-export function ContactItem({ contact: c }: { contact: ColdContact }) {
+export function ContactItem({ contact: c, picked, onPick }: {
+  contact: ColdContact; picked?: boolean; onPick?: (on: boolean) => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const move = useMoveToPipeline();
   const del = useDeleteContact();
@@ -804,8 +859,18 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
   };
 
   return (
-    <li className="px-4 py-3">
-      <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] md:gap-3 md:items-center">
+    <li className={cn("px-4 py-3", picked && "bg-amber-soft/20")}>
+      <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-x-3 gap-y-2 md:grid-cols-[20px_minmax(0,2fr)_150px_140px_minmax(0,1.2fr)] md:gap-3 md:items-center">
+        <div className="row-span-4 md:row-span-1 pt-0.5 md:pt-0">
+          {onPick && (
+            <Checkbox
+              checked={!!picked}
+              disabled={c.status === "calling"}
+              onCheckedChange={(v) => onPick(v === true)}
+              aria-label={`Select ${title}`}
+            />
+          )}
+        </div>
         <div className="min-w-0">
           <p className="text-ink truncate">
             <span className="font-medium">{title}</span>

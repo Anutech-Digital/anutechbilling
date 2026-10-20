@@ -356,6 +356,38 @@ export async function deleteCampaign(run: Run, campaignId: string): Promise<{ ok
   });
 }
 
+export interface BulkDeleteReport {
+  deleted: number;
+  /** Left alone because a call was going on — names, for the message. */
+  skippedRinging: string[];
+}
+
+/** Delete several campaigns at once. One with a call going on is left alone and named. */
+export async function deleteCampaigns(run: Run, ids: readonly string[]): Promise<BulkDeleteReport> {
+  return run(async (tx) => {
+    const ringing = await tx.cold_call_contacts.findMany({
+      where: { campaign_id: { in: [...ids] }, status: "calling" }, select: { campaign_id: true }, distinct: ["campaign_id"],
+    });
+    const busy = new Set(ringing.map((r) => r.campaign_id));
+    const names = busy.size
+      ? (await tx.cold_call_campaigns.findMany({ where: { id: { in: [...busy] } }, select: { name: true } })).map((c) => c.name)
+      : [];
+    const r = await tx.cold_call_campaigns.deleteMany({ where: { id: { in: ids.filter((id) => !busy.has(id)) } } });
+    return { deleted: r.count, skippedRinging: names };
+  });
+}
+
+/** Take several numbers off a list at once. A number on a call right now is left alone. */
+export async function deleteContacts(run: Run, ids: readonly string[]): Promise<BulkDeleteReport> {
+  return run(async (tx) => {
+    const ringing = await tx.cold_call_contacts.findMany({
+      where: { id: { in: [...ids] }, status: "calling" }, select: { name: true, phone: true },
+    });
+    const r = await tx.cold_call_contacts.deleteMany({ where: { id: { in: [...ids] }, status: { not: "calling" } } });
+    return { deleted: r.count, skippedRinging: ringing.map((x) => x.name || x.phone) };
+  });
+}
+
 export type DeleteResult = { ok: true } | { ok: false; status: number; error: string; detail?: string };
 
 /**

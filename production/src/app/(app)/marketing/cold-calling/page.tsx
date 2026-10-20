@@ -15,14 +15,29 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
-import { ColdCallError, useBolnaAgents, useColdCampaigns } from "@/lib/queries/cold-calling";
-import { CampaignCard, NewCampaignForm } from "@/components/features/coldcall/cold-call-ui";
+import { BulkActionBar, BulkBarConfirmButton } from "@/components/ui/bulk-action-bar";
+import { toast } from "sonner";
+import { ColdCallError, useBolnaAgents, useColdCampaigns, useDeleteCampaigns } from "@/lib/queries/cold-calling";
+import { CampaignCard, NewCampaignForm, failToast } from "@/components/features/coldcall/cold-call-ui";
 
 export default function ColdCallingPage() {
   const router = useRouter();
   const agents = useBolnaAgents();
   const campaigns = useColdCampaigns();
   const [creating, setCreating] = React.useState(false);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const bulkDel = useDeleteCampaigns();
+  const deletePicked = async () => {
+    try {
+      const r = await bulkDel.mutateAsync([...picked]);
+      setPicked(new Set());
+      toast.success(`${r.deleted} ${r.deleted === 1 ? "campaign" : "campaigns"} deleted`, {
+        description: r.skippedRinging.length
+          ? `Not deleted — a call is going on: ${r.skippedRinging.join(", ")}. Pause it, wait two minutes, then delete.`
+          : "Leads they already sent to Sales & Pipeline stay there.",
+      });
+    } catch (err) { failToast(err, "Could not delete the campaigns."); }
+  };
 
   const list = campaigns.data ?? [];
   const notConnected = agents.error instanceof ColdCallError && agents.error.status === 409 ? agents.error : null;
@@ -77,9 +92,19 @@ export default function ColdCallingPage() {
         )
       ) : (
         <section aria-label="Campaigns" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {list.map((c) => <CampaignCard key={c.id} campaign={c} />)}
+          {list.map((c) => (
+            <CampaignCard
+              key={c.id}
+              campaign={c}
+              selected={picked.has(c.id)}
+              onToggle={(on) => setPicked((prev) => { const n = new Set(prev); if (on) n.add(c.id); else n.delete(c.id); return n; })}
+            />
+          ))}
         </section>
       )}
+      <BulkActionBar count={picked.size} noun="campaign" onClear={() => setPicked(new Set())}>
+        <BulkBarConfirmButton icon="trash" onConfirm={deletePicked}>Delete</BulkBarConfirmButton>
+      </BulkActionBar>
     </div>
   );
 }
