@@ -23,6 +23,8 @@ import { localDateISO } from "@/lib/leads/outcomes";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
+import { sortImports, type BankImportRow, type BankImportSource, type RemoveImportArgs } from "@/lib/banking/import-history";
+import type { Json } from "@/lib/supabase/database.types";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +67,8 @@ export type BankTransactionRow = {
   imported_at:      string;
   created_at:       string;
   updated_at:       string;
+  /** R-1623: the Import click that brought this line in; null for lines from before batches. */
+  import_batch_id?: string | null;
 };
 
 export type BankAccountInsert = Omit<
@@ -96,6 +100,7 @@ export type BankTransactionInsert = Omit<
   | "matched_at"
   | "matched_by"
   | "match_confidence"
+  | "import_batch_id"
 >;
 
 // ─── Bank accounts ─────────────────────────────────────────────────────────
@@ -601,6 +606,9 @@ export function useExistingTxnKeys(accountId: string | null) {
 export type BankImportInput = {
   accountId: string;
   rows: Array<Omit<BankTransactionInsert, "bank_account_id" | "source">>;
+  /** R-1623: shown in the account's Imports list. */
+  fileName?: string | null;
+  source?: Exclude<BankImportSource, "legacy">;
 };
 
 export async function importBankTransactions(
@@ -609,35 +617,41 @@ export async function importBankTransactions(
 ): Promise<{ inserted: number; duplicates: number }> {
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) throw new Error("Not authenticated");
-  const { data: me, error: meErr } = await supabase
-    .from("users")
-    .select("tenant_id")
-    .eq("id", authData.user.id)
-    .single();
-  if (meErr) throw meErr;
 
   // Skip lines already in this account (re-uploaded / overlapping statement).
   const existing = await fetchExistingTxnKeys(supabase, input.accountId);
   const { fresh, duplicates } = planBankImport(input.rows, existing);
 
-  const validRows = fresh.map((r) => ({
-    ...r,
-    tenant_id:       me!.tenant_id,
-    bank_account_id: input.accountId,
-    source:          "csv_upload" as const,
-  }));
-
-  if (validRows.length === 0) {
-    if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported
+  if (fresh.length === 0) {
+    if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported — no batch
     throw new Error("No valid transactions to import (each row needs exactly one of debit or credit > 0)");
   }
 
-  const { data, error } = await supabase
-    .from("bank_transactions")
-    .insert(validRows)
-    .select("id");
+  /* R-1623: one Import click = one batch. import_bank_statement creates the batch and inserts
+     every line stamped with it in ONE transaction (CLAUDE.md §17b), so a wrong import can be
+     taken back whole ("Ye import hatao"). Company, account check, source and batch are set
+     in the database — only the line fields travel. */
+  const rows = fresh.map((r) => {
+    const line: Record<string, unknown> = {
+      txn_date: r.txn_date, description: r.description, debit: r.debit, credit: r.credit,
+      balance_after: r.balance_after, reference: r.reference,
+    };
+    if (r.category) {
+      line.category = r.category;
+      line.category_source = (r as { category_source?: string }).category_source ?? null;
+      line.category_confidence = (r as { category_confidence?: number }).category_confidence ?? null;
+    }
+    return line;
+  });
+  const { data, error } = await supabase.rpc("import_bank_statement", {
+    p_account_id: input.accountId,
+    p_rows: rows as unknown as Json,
+    p_file_name: input.fileName ?? undefined,
+    p_source: input.source ?? "csv",
+  });
   if (error) throw error;
-  return { inserted: data?.length ?? 0, duplicates };
+  const out = data as { batch_id?: string; inserted?: number } | null;
+  return { inserted: Number(out?.inserted ?? 0), duplicates };
 }
 
 export function useImportBankTransactions() {
@@ -647,6 +661,7 @@ export function useImportBankTransactions() {
     onSuccess: ({ inserted, duplicates }, vars) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
+      qc.invalidateQueries({ queryKey: ["bank_imports", vars.accountId] });
       const dupMsg = duplicates > 0 ? ` · ${duplicates} duplicate skip` : "";
       if (inserted === 0 && duplicates > 0) toast.success(`Sab ${duplicates} lines pehle se hain — kuch naya nahi mila`);
       else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
@@ -654,6 +669,53 @@ export function useImportBankTransactions() {
     // toastError() already digs the message out of non-Error PostgREST objects,
     // so the hand-rolled unwrapping that used to live here is gone.
     onError: (err) => toastError(err, { fallback: "Import failed" }),
+  });
+}
+
+// ─── R-1623: import history + "Ye import hatao" ──────────────────────────────
+
+/** The account's imports — batches and old imports grouped by insert time (bank_import_history). */
+export function useBankImportHistory(accountId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["bank_imports", accountId],
+    enabled: Boolean(accountId),
+    queryFn: async (): Promise<BankImportRow[]> => {
+      const { data, error } = await createClient().rpc("bank_import_history", { p_account_id: accountId as string });
+      if (error) throw error;
+      return sortImports((data ?? []) as unknown as BankImportRow[]);
+    },
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * "Ye import hatao": remove_bank_import deletes that import's lines in one transaction —
+ * only when none is reconciled / booked and none is inside the books lock; it refuses whole
+ * otherwise, with the next step in its message. The batch row stays, marked removed.
+ */
+export function useRemoveBankImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: RemoveImportArgs): Promise<{ removed: number }> => {
+      /* Every argument is sent, nulls included: the function has no defaults, and an omitted
+         key would not find it. */
+      const { data, error } = await createClient().rpc("remove_bank_import", {
+        p_account_id: args.p_account_id,
+        p_batch_id: args.p_batch_id,
+        p_legacy_from: args.p_legacy_from,
+        p_legacy_to: args.p_legacy_to,
+        p_reason: args.p_reason,
+      } as never);
+      if (error) throw error;
+      return { removed: Number((data as { removed?: number } | null)?.removed ?? 0) };
+    },
+    onSuccess: ({ removed }, args) => {
+      // Lines, balances, the Statement check's gaps and the list all recompute from these.
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      qc.invalidateQueries({ queryKey: ["bank_imports", args.p_account_id] });
+      toast.success(`Import hata diya — ${removed} line${removed === 1 ? "" : "s"} account se nikal gayi`);
+    },
   });
 }
 

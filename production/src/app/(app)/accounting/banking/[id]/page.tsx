@@ -42,6 +42,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
+import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
 import { checkStatement } from "@/lib/banking/statement-check";
 import { ReconcileTransactionDialog } from "@/components/features/banking/reconcile-transaction-dialog";
 import { UnreconcileDialog } from "@/components/features/banking/unreconcile-dialog";
@@ -75,7 +76,8 @@ export default function BankAccountDetailPage() {
   const { data: transactions, isLoading: txnLoading } = txnQ;
   const autoReconcile = useAutoReconcile();
   /* R-254: billing reads the statement; only owner / manager / accountant may import or reconcile. */
-  const canWrite = canWriteMoney(useCurrentUser().data?.role);
+  const role = useCurrentUser().data?.role;
+  const canWrite = canWriteMoney(role);
 
   const [tab,           setTab]           = React.useState<FilterTab>("all");
   const [search,        setSearch]        = React.useState("");
@@ -313,6 +315,15 @@ export default function BankAccountDetailPage() {
           onImport={() => setImportOpen(true)}
         />
       )}
+
+      {/* R-1623: every import of this account — and "Ye import hatao" for a wrong one. */}
+      <BankImportsSection
+        accountId={account.id}
+        transactions={allTxns}
+        openingBalance={openingBal}
+        role={role}
+        onUnreconcileLine={(t) => setUnreconcileTxn(t)}
+      />
 
       {/* Filter tabs + one-tap auto-reconcile */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">

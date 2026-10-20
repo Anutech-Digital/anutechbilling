@@ -33,9 +33,24 @@ type Row = Record<string, unknown>;
 /** A fake PostgREST that caps like the real gateway. */
 function gatewayClient(tables: Record<string, Row[]>) {
   const inserted: Row[] = [];
+  const rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
   let requests = 0;
   const client = {
     auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) },
+    /* R-1623: the import is one import_bank_statement call; the server stamps tenant, source
+       and the batch on every line, as the real function does. */
+    rpc: async (name: string, args: { p_account_id: string; p_rows: Row[] }) => {
+      requests++;
+      rpcCalls.push({ name, args });
+      if (name !== "import_bank_statement") throw new Error(`unexpected rpc ${name}`);
+      const rows = args.p_rows.map((r, i) => ({
+        ...r, id: `new-${inserted.length + i}`, bank_account_id: args.p_account_id,
+        tenant_id: "ten1", source: "csv_upload", import_batch_id: "batch-1",
+      }));
+      inserted.push(...rows);
+      (tables.bank_transactions ??= []).push(...rows);
+      return { data: { batch_id: "batch-1", inserted: rows.length }, error: null };
+    },
     from(table: string) {
       requests++;
       const filters: [string, string, unknown][] = [];
@@ -78,7 +93,7 @@ function gatewayClient(tables: Record<string, Row[]>) {
       return b;
     },
   };
-  return { client: client as never, inserted, requests: () => requests };
+  return { client: client as never, inserted, rpcCalls, requests: () => requests };
 }
 
 /** `n` statement lines of one account, a running balance that agrees with every line. */
@@ -183,6 +198,37 @@ describe("statement import never duplicates past the 1000th existing line (R-150
     expect(res).toEqual({ inserted: 200, duplicates: 1300 });
     expect(inserted.map((r) => r.description)).toEqual(all.slice(1500).map((t) => t.description));
     expect(inserted.every((r) => r.bank_account_id === "acc1" && r.tenant_id === "ten1" && r.source === "csv_upload")).toBe(true);
+  });
+
+  it("R-1623: one Import click = ONE import_bank_statement call carrying the file and its source; every line stamped with that batch", async () => {
+    const all = statement(1300);
+    const { client, inserted, rpcCalls } = gatewayClient({ bank_transactions: all.slice(0, 1000) });
+    const rows = all.map(({ txn_date, description, debit, credit, balance_after, reference }) =>
+      ({ txn_date, description, debit, credit, balance_after, reference }));
+    const res = await importBankTransactions(client, { accountId: "acc1", rows, fileName: "HDFC Oct.pdf", source: "pdf" });
+    expect(res).toEqual({ inserted: 300, duplicates: 1000 });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].name).toBe("import_bank_statement");
+    expect(rpcCalls[0].args).toMatchObject({ p_account_id: "acc1", p_file_name: "HDFC Oct.pdf", p_source: "pdf" });
+    expect(rpcCalls[0].args.p_rows as Row[]).toHaveLength(300);
+    // only the line fields travel — tenant, account, source and batch are the server's to set
+    expect(Object.keys((rpcCalls[0].args.p_rows as Row[])[0]).sort()).toEqual(
+      ["balance_after", "credit", "debit", "description", "reference", "txn_date"]);
+    expect(inserted.every((r) => r.import_batch_id === "batch-1")).toBe(true);
+  });
+
+  it("R-1623: nothing new to import → no batch is created", async () => {
+    const lines = statement(20);
+    const { client, rpcCalls } = gatewayClient({ bank_transactions: [...lines] });
+    const rows = lines.map(({ txn_date, description, debit, credit, balance_after, reference }) =>
+      ({ txn_date, description, debit, credit, balance_after, reference }));
+    expect(await importBankTransactions(client, { accountId: "acc1", rows, fileName: "x.csv", source: "csv" }))
+      .toEqual({ inserted: 0, duplicates: 20 });
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("R-1623: bank.ts never inserts bank_transactions directly — imports go through the batch RPC", () => {
+    expect(strip("src/lib/queries/bank.ts")).not.toMatch(/\.from\("bank_transactions"\)\s*\.insert\(/);
   });
 });
 

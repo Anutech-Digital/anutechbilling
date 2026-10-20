@@ -39,6 +39,12 @@ function fakeClient(existing: Row[]) {
   const inserted: Row[] = [];
   const client = {
     auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) },
+    /* R-1623: an import is one import_bank_statement call — the batch and its lines together. */
+    rpc: async (name: string, args: { p_rows: Row[] }) => {
+      if (name !== "import_bank_statement") throw new Error(`unexpected rpc ${name}`);
+      inserted.push(...args.p_rows);
+      return { data: { batch_id: "batch-1", inserted: args.p_rows.length }, error: null };
+    },
     from(table: string) {
       let insertRows: Row[] | null = null;
       let from = 0, to = Infinity;

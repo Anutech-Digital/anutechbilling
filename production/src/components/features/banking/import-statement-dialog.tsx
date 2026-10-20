@@ -113,6 +113,9 @@ function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   return { ...p, rows, skipped: p.skipped + dropped, warnings };
 }
 
+/** R-1623: where an import came from (bank_import_batches.source). */
+type ImportOrigin = "pdf" | "csv" | "xlsx" | "paste" | "image";
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
@@ -127,6 +130,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   /* R-1693: pages being read again one at a time because the balance chain broke. */
   const [rereadProgress, setRereadProgress] = React.useState<{ done: number; total: number; reading: number[] } | null>(null);
   const importMut = useImportBankTransactions();
+  /* R-1623: which file (and kind) this import came from — the account's Imports list shows it. */
+  const [origin, setOrigin] = React.useState<{ name: string | null; source: ImportOrigin } | null>(null);
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
   const READ_MSGS = ["File khol rahe hai…", "Transactions dhoondh rahe hai…", "Rows nikaal rahe hai…", "Amounts check kar rahe hai…", "Almost done…"];
@@ -217,7 +222,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const freshCount = plan?.freshCount ?? 0;
 
   React.useEffect(() => {
-    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); }
+    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); }
   }, [open]);
 
   // Re-parse the textarea (CSV mode only — don't clobber an AI/PDF result).
@@ -365,6 +370,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           return;
         }
         setMode("csv");
+        setOrigin({ name: file.name, source: "xlsx" });
         setCsvText(rowsToCsv(rows));
       } catch {
         toast.error("Couldn't read this Excel file.", {
@@ -377,8 +383,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       return;
     }
     // PDF / image → AI reader; CSV / text → parse in the browser.
-    if (/pdf|image/i.test(file.type)) { await readPdf(file); return; }
+    if (/pdf|image/i.test(file.type)) {
+      setOrigin({ name: file.name, source: /pdf/i.test(file.type) ? "pdf" : "image" });
+      await readPdf(file);
+      return;
+    }
     setMode("csv");
+    setOrigin({ name: file.name, source: "csv" });
     setCsvText(await file.text());
   };
 
@@ -399,6 +410,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       if (freshCount > 0) {
         await importMut.mutateAsync({
           accountId,
+          fileName: origin?.name ?? null,
+          source: origin?.source ?? "paste",
           rows: parsed.rows.flatMap((r, i) => {
             if (isExcluded(r)) return [];
             const category = categoryFor(i);
@@ -521,7 +534,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               placeholder={"Date,Description,Debit,Credit,Balance\n28/05/2026,UPI/RAZORPAY/...,0,521088,..."}
               className="mt-1 w-full rounded-md border border-hairline bg-paper px-3 py-2 text-xs font-mono text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
               value={csvText}
-              onChange={(e) => { setMode("csv"); setCsvText(e.target.value); }}
+              onChange={(e) => { setMode("csv"); setOrigin((o) => (o && o.source !== "pdf" && o.source !== "image" ? o : { name: null, source: "paste" })); setCsvText(e.target.value); }}
             />
           </div>
 
