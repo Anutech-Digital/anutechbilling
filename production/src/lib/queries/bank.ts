@@ -456,28 +456,118 @@ export function bankTxnKey(r: { txn_date?: string | null; debit?: number | null;
   return `${d}|${Math.round(r.debit ?? 0)}|${Math.round(r.credit ?? 0)}|${desc}`;
 }
 
-/**
- * Every identity a bank line has: the description key above, plus — when the statement
- * printed a running balance — date + amount + balance. The balance changes after every
- * line, so two different lines never share all three; the same line read twice (CSV once,
- * the AI from a PDF once) always does, however differently its narration came out.
- * A line is a duplicate when ANY of its keys is already known.
- */
-export function bankTxnKeys(r: { txn_date?: string | null; debit?: number | null; credit?: number | null; description?: string | null; balance_after?: number | null }): string[] {
-  const keys = [bankTxnKey(r)];
-  if (r.balance_after != null) {
-    keys.push(`bal|${(r.txn_date ?? "").slice(0, 10)}|${Math.round(r.debit ?? 0)}|${Math.round(r.credit ?? 0)}|${Math.round(r.balance_after)}`);
-  }
-  return keys;
+type KeyedLine = { txn_date?: string | null; debit?: number | null; credit?: number | null; description?: string | null; balance_after?: number | null };
+
+/** date + amount + the bank's running balance after the line — null when the statement printed none. */
+export function bankTxnBalanceKey(r: KeyedLine): string | null {
+  if (r.balance_after == null) return null;
+  return `bal|${(r.txn_date ?? "").slice(0, 10)}|${Math.round(r.debit ?? 0)}|${Math.round(r.credit ?? 0)}|${Math.round(r.balance_after)}`;
 }
 
 /**
- * Every existing bank-line key of an account — what an import must not insert again.
+ * What an account already holds, indexed for the duplicate check (R-1691).
+ *  - `bal`: balance keys of stored lines that carry a running balance;
+ *  - `prefix`: narration-prefix keys of EVERY stored line (for new lines with no balance);
+ *  - `prefixNoBal`: narration-prefix keys of stored lines WITHOUT a balance, with a count —
+ *    each such stored line can stand for one balance-carrying line of a re-upload.
+ */
+export type BankLineIndex = {
+  bal: Set<string>;
+  prefix: Set<string>;
+  prefixNoBal: Map<string, number>;
+};
+
+function addToIndex(ix: BankLineIndex, r: KeyedLine): void {
+  const bal = bankTxnBalanceKey(r);
+  const pre = bankTxnKey(r);
+  ix.prefix.add(pre);
+  if (bal) ix.bal.add(bal);
+  else ix.prefixNoBal.set(pre, (ix.prefixNoBal.get(pre) ?? 0) + 1);
+}
+
+export function indexBankLines(rows: KeyedLine[]): BankLineIndex {
+  const ix: BankLineIndex = { bal: new Set(), prefix: new Set(), prefixNoBal: new Map() };
+  for (const r of rows) addToIndex(ix, r);
+  return ix;
+}
+
+/**
+ * THE duplicate rule — the import (importBankTransactions) and the dialog's "N lines pehle se
+ * books me hain" preview both call this, so the count shown is the count skipped.
+ *
+ * R-1691: the narration-prefix key alone dropped REAL lines. Two ₹500 credits on one day
+ * whose narrations share their first 25 characters ("UPI-RAZORPAY SOFTWARE PRIVA…") were
+ * one line to it, so the second never reached the books — and the Statement check then
+ * showed "Lines missing" for exactly that money. The running balance tells them apart.
+ *
+ *  1. A line WITH a running balance is a duplicate when a stored (or earlier in this upload)
+ *     line has the same date + debit + credit + balance. The narration is not looked at: the
+ *     balance changes after every line, and the same line read twice (CSV once, the AI from
+ *     a PDF once) keeps it however its narration came out.
+ *  2. …or when a stored line WITHOUT a balance has its narration-prefix key — an earlier
+ *     import from a file with no balance column. Each such stored line absorbs ONE new line
+ *     (a count, not a set), so a re-upload never doubles the line, and the second of two
+ *     same-prefix lines (the one the old rule dropped) still comes in.
+ *  3. A line WITHOUT a balance keeps the R-1509 narration-prefix rule against every stored
+ *     line and the rest of the upload (spacing / masking variants of one line still match).
+ *
+ * The index passed in is not changed — the dialog keeps it in its query cache.
+ */
+export function splitNewBankLines<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: R[]; duplicates: number } {
+  const ix: BankLineIndex = {
+    bal: new Set(existing.bal),
+    prefix: new Set(existing.prefix),
+    prefixNoBal: new Map(existing.prefixNoBal),
+  };
+  const fresh: R[] = [];
+  let duplicates = 0;
+  for (const r of rows) {
+    const bal = bankTxnBalanceKey(r);
+    const pre = bankTxnKey(r);
+    let dup: boolean;
+    if (bal) {
+      if (ix.bal.has(bal)) dup = true;
+      else {
+        const left = ix.prefixNoBal.get(pre) ?? 0;
+        dup = left > 0;
+        if (dup) ix.prefixNoBal.set(pre, left - 1);
+      }
+    } else {
+      dup = ix.prefix.has(pre);
+    }
+    if (dup) { duplicates++; continue; }
+    addToIndex(ix, r);   // also dedup within the same upload
+    fresh.push(r);
+  }
+  return { fresh, duplicates };
+}
+
+/**
+ * What an import of these rows will insert and how many it will skip as already in the books.
+ * importBankTransactions runs exactly this, and the import dialog's preview count runs it too
+ * (R-1691), so the number the owner is shown is the number that happens.
+ */
+export function planBankImport<R extends KeyedLine>(rows: R[], existing: BankLineIndex): { fresh: (R & { debit: number; credit: number })[]; duplicates: number } {
+  const cleaned = rows
+    .map((r) => {
+      // A bank line is debit XOR credit — coerce to non-negative integers so
+      // a stray minus/decimal can't break the integer column or the
+      // debit_xor_credit CHECK, then keep only clean single-sided rows.
+      const debit  = Math.max(0, Math.round(r.debit  ?? 0));
+      const credit = Math.max(0, Math.round(r.credit ?? 0));
+      return { ...r, debit, credit };
+    })
+    .filter((r) => (r.debit > 0) !== (r.credit > 0));   // exactly one side positive
+  return splitNewBankLines(cleaned, existing);
+}
+
+/**
+ * Every existing bank line of an account, indexed — what an import must not insert again.
  * R-1509: paged — `.limit(5000)` came back as 1000 rows, so a re-uploaded statement
- * inserted every older line a second time. Throws on a failed read: an empty "seen" set
+ * inserted every older line a second time. Throws on a failed read: an empty index
  * would let the whole statement in as new.
  */
-export async function fetchExistingTxnKeys(supabase: BankClient, accountId: string): Promise<Set<string>> {
+export async function fetchExistingTxnKeys(supabase: BankClient, accountId: string): Promise<BankLineIndex> {
   const rows = await fetchAllRows<{
     txn_date: string; debit: number; credit: number; description: string | null;
     reference: string | null; balance_after: number | null;
@@ -487,7 +577,7 @@ export async function fetchExistingTxnKeys(supabase: BankClient, accountId: stri
     .eq("bank_account_id", accountId)
     .order("id", { ascending: true })
     .range(from, to));
-  return new Set(rows.flatMap((r) => bankTxnKeys(r)));
+  return indexBankLines(rows);
 }
 
 /** Existing bank-line keys for an account — to flag/skip duplicate imports. */
@@ -495,7 +585,7 @@ export function useExistingTxnKeys(accountId: string | null) {
   return useQuery({
     queryKey: ["bank_transactions", accountId, "keys"],
     enabled: !!accountId,
-    queryFn: async (): Promise<Set<string>> => fetchExistingTxnKeys(createClient(), accountId as string),
+    queryFn: async (): Promise<BankLineIndex> => fetchExistingTxnKeys(createClient(), accountId as string),
     staleTime: 15_000,
   });
 }
@@ -503,7 +593,8 @@ export function useExistingTxnKeys(accountId: string | null) {
 /**
  * Bulk insert bank transactions from a parsed CSV/PDF upload.
  * Skips rows where both debit and credit are zero, AND skips DUPLICATES already
- * in the account (same date + amount + description/reference) — so re-uploading
+ * in the account (splitNewBankLines: date + amount + running balance, else the narration
+ * prefix — R-1691) — so re-uploading
  * a statement, or an overlapping date range, never double-counts. Auto-assigns
  * source='csv_upload' for the whole batch.
  */
@@ -525,27 +616,9 @@ export async function importBankTransactions(
     .single();
   if (meErr) throw meErr;
 
-  const cleaned = input.rows
-    .map((r) => {
-      // A bank line is debit XOR credit — coerce to non-negative integers so
-      // a stray minus/decimal can't break the integer column or the
-      // debit_xor_credit CHECK, then keep only clean single-sided rows.
-      const debit  = Math.max(0, Math.round(r.debit  ?? 0));
-      const credit = Math.max(0, Math.round(r.credit ?? 0));
-      return { ...r, debit, credit };
-    })
-    .filter((r) => (r.debit > 0) !== (r.credit > 0));   // exactly one side positive
-
   // Skip lines already in this account (re-uploaded / overlapping statement).
-  const seen = await fetchExistingTxnKeys(supabase, input.accountId);
-  const fresh: typeof cleaned = [];
-  let duplicates = 0;
-  for (const r of cleaned) {
-    const keys = bankTxnKeys(r as never);
-    if (keys.some((k) => seen.has(k))) { duplicates++; continue; }
-    keys.forEach((k) => seen.add(k));   // also dedup within the same batch
-    fresh.push(r);
-  }
+  const existing = await fetchExistingTxnKeys(supabase, input.accountId);
+  const { fresh, duplicates } = planBankImport(input.rows, existing);
 
   const validRows = fresh.map((r) => ({
     ...r,
