@@ -9,7 +9,8 @@
  *
  * Body: { fileBase64: string (raw base64, no data: prefix), mimeType: string,
  *         pages?: { from, to, total } }   ← R-1690: read only these pages of a PDF
- * Returns: { rows: [{txn_date, description, debit, credit, balance_after}], mode, chunk? }
+ * Returns: { rows: [{txn_date, description, debit, credit, balance_after}], mode, chunk?,
+ *            rowCount (the model's own count of lines on those pages, or null), rowsReturned }
  *          or { error, kind } with 504 (timeout), 503 (busy) or 502 (anything else).
  *
  * R-1690 (19 Oct 2026): a one-month statement in ONE call timed out at 60 s on both models,
@@ -57,10 +58,19 @@ function pagesPrompt(p: Pages): string {
     "If those pages have no transaction rows, return { \"rows\": [] }.";
 }
 
+/* R-1693 (20 Oct 2026): every chunk of a 24-page HDFC PDF came back 200, yet lines were
+   simply missing from the answers — ₹7,96,835 short after import. So the prompt now insists
+   on every line and asks the model to COUNT the lines per page; the browser compares that
+   count with the rows written, and checks the running-balance chain (statement-verify.ts). */
 const PROMPT =
   "You are reading an INDIAN bank account statement (HDFC/ICICI/SBI/Axis/Kotak/etc.). " +
-  "Extract EVERY transaction row. Return ONLY JSON:\n" +
-  "{ \"rows\": [ { \"date\": string, \"description\": string, \"debit\": number, \"credit\": number, \"balance\": number|null } ] }\n" +
+  "Extract EVERY transaction line printed — one JSON row per printed line. Never summarise, merge, sample or skip lines, " +
+  "and do not stop early: a page often has 25–40 lines, many of them alike (several UPI lines on one day are separate lines). " +
+  "Return ONLY JSON:\n" +
+  "{ \"pages\": [ { \"page\": number, \"rowCount\": number } ], " +
+  "\"rows\": [ { \"date\": string, \"description\": string, \"debit\": number, \"credit\": number, \"balance\": number|null } ] }\n" +
+  "pages: one entry per page you read (page 1 = the first page of the file); rowCount = how many transaction lines are printed on that page, counted from the page itself. " +
+  "rows must hold exactly that many lines for each page. " +
   "RULES: date as YYYY-MM-DD (Indian statements are DD/MM/YYYY — convert). " +
   "A row is EITHER a debit (money out / withdrawal) OR a credit (money in / deposit) — put the amount in the right field and 0 in the other; never both. " +
   "Amounts are plain numbers, no commas or ₹. balance = running/closing balance if the statement shows one, else null. " +
@@ -123,21 +133,41 @@ const isBusyOrSlow = (reason: string) =>
 
 async function extractWithFallback(
   apiKey: string, model: string, mimeType: string, base64: string, prompt: string,
-): Promise<{ rows: AiRow[] | null; reason: string }> {
+): Promise<{ answer: AiAnswer | null; reason: string }> {
   let reason = "";
   const first = await extractWithGemini(apiKey, model, mimeType, base64, prompt, (r) => { reason = r; });
-  if (first) return { rows: first, reason: "" };
+  if (first) return { answer: first, reason: "" };
   if (model !== FALLBACK_MODEL && isBusyOrSlow(reason)) {
     console.warn(`[ai/extract-statement] ${model} failed (${reason}) — trying ${FALLBACK_MODEL}`);
     const second = await extractWithGemini(apiKey, FALLBACK_MODEL, mimeType, base64, prompt, (r) => { reason = r; });
-    if (second) return { rows: second, reason: "" };
+    if (second) return { answer: second, reason: "" };
   }
-  return { rows: null, reason };
+  return { answer: null, reason };
+}
+
+type AiAnswer = { rows: AiRow[]; pages: unknown };
+
+/**
+ * R-1693: the model's own count of transaction lines on the pages it was asked for — null
+ * when it gave none for any of them (then no count check is claimed). A page outside the
+ * range, or a count that is not a whole number ≥ 0, is ignored.
+ */
+function countedRows(pagesJson: unknown, range: { from: number; to: number } | null): number | null {
+  if (!Array.isArray(pagesJson)) return null;
+  let total = 0, seen = 0;
+  for (const p of pagesJson as Array<{ page?: unknown; rowCount?: unknown }>) {
+    const page = Number(p?.page), n = Number(p?.rowCount);
+    if (!Number.isInteger(n) || n < 0) continue;
+    if (range && (!Number.isInteger(page) || page < range.from || page > range.to)) continue;
+    total += n;
+    seen++;
+  }
+  return seen > 0 ? total : null;
 }
 
 async function extractWithGemini(
   apiKey: string, model: string, mimeType: string, base64: string, prompt: string, onFailure?: (reason: string) => void,
-): Promise<AiRow[] | null> {
+): Promise<AiAnswer | null> {
   /* Pehle yahan apna `fetch` tha — aur iske paas timeout bhi nahi tha. Ye bank statement
      padhta hai, yaani seedha paise ka data, aur ek atki hui call operator ko spinner par
      baithaye rakhti.
@@ -153,7 +183,7 @@ async function extractWithGemini(
      19 Oct 2026 (R-1690): 60s bhi ek poore mahine ke liye kam pada (staging, dono model).
      Timeout aur badhane ki jagah ab lamba PDF pages ke hisson me padha jata hai — har hissa
      60s me aaram se aata hai. */
-  const json = await geminiJson<{ rows?: AiRow[] }>({
+  const json = await geminiJson<{ rows?: AiRow[]; pages?: unknown }>({
     apiKey, model,
     user: prompt,
     attachment: { mimeType, base64 },
@@ -163,7 +193,7 @@ async function extractWithGemini(
     onFailure,
   });
   if (!json) return null;
-  return Array.isArray(json.rows) ? json.rows : [];
+  return { rows: Array.isArray(json.rows) ? json.rows : [], pages: json.pages };
 }
 
 export async function POST(request: NextRequest) {
@@ -197,8 +227,8 @@ export async function POST(request: NextRequest) {
   const pages = /pdf/i.test(parsed.mimeType) ? parsed.pages : undefined;
   const prompt = pages ? PROMPT + pagesPrompt(pages) : PROMPT;
 
-  const { rows: ai, reason } = await extractWithFallback(gemini.apiKey, gemini.model, parsed.mimeType, parsed.fileBase64, prompt);
-  if (!ai) {
+  const { answer, reason } = await extractWithFallback(gemini.apiKey, gemini.model, parsed.mimeType, parsed.fileBase64, prompt);
+  if (!answer) {
     /* Say WHICH failure it was — each has a different next step. Until 19 Oct 2026 a
        timeout read "Google's AI is busy or slow", so people waited a minute and retried a
        statement that could never fit in one call. A timeout now says the statement is big. */
@@ -218,15 +248,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error, kind }, { status });
   }
 
-  const clean = sanitizeRows(ai);
+  const clean = sanitizeRows(answer.rows);
+  /* R-1693: the model's own line count for the pages asked, and how many rows it wrote out —
+     the browser treats "wrote fewer than it counted" like a break in the balance chain. */
+  const rowCount = countedRows(answer.pages, pages ?? null);
+  const rowsReturned = answer.rows.length;
   if (pages) {
     /* One chunk: dates as read. The dialog merges every chunk and fixes dates once. */
-    return NextResponse.json({ rows: clean.rows, skipped: clean.skipped, mode: "gemini", chunk: pages });
+    return NextResponse.json({ rows: clean.rows, skipped: clean.skipped, mode: "gemini", chunk: pages, rowCount, rowsReturned });
   }
   /* Real calendar dates only (the reader has returned "2026-21-08" for 21 Aug). Swaps are
      decided for the whole statement; a date impossible either way is dropped and counted. */
   const fix = fixStatementDates(clean.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
   const rows = clean.rows.flatMap((r, i) => (fix.dates[i] ? [{ ...r, txn_date: fix.dates[i]! }] : []));
   const skipped = clean.skipped + (clean.rows.length - rows.length);
-  return NextResponse.json({ rows, skipped, mode: "gemini", datesSwapped: fix.swapped, datesSwappedAll: fix.swappedAll });
+  return NextResponse.json({ rows, skipped, mode: "gemini", datesSwapped: fix.swapped, datesSwappedAll: fix.swappedAll, rowCount, rowsReturned });
 }

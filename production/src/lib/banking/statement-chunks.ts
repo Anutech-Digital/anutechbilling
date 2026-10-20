@@ -51,7 +51,17 @@ export type StatementRowLike = {
   balance_after: number | null;
 };
 
-export type ChunkResult<R> = { ok: true; rows: R[]; skipped: number } | { ok: false; error: string };
+export type ChunkResult<R> =
+  | {
+      ok: true;
+      rows: R[];
+      skipped: number;
+      /** R-1693: transaction lines the model says its pages hold (absent = it did not say). */
+      rowCount?: number;
+      /** R-1693: rows the model actually wrote out, before junk was dropped. */
+      returned?: number;
+    }
+  | { ok: false; error: string; /** classifyStatementFailure's kind, when the route said. */ kind?: string };
 
 export type ChunkProgress = {
   /** Pages whose call has finished (worked or failed). */
@@ -124,13 +134,21 @@ export function mergeChunkRows<R extends StatementRowLike>(chunks: (R[] | null)[
 
 /** The route's JSON → a chunk result. Anything but an ok response with a rows array is a failure. */
 export function chunkResultFrom<R>(ok: boolean, json: unknown): ChunkResult<R> {
-  const j = (json ?? {}) as { rows?: unknown; skipped?: unknown; error?: unknown };
-  if (ok && Array.isArray(j.rows)) return { ok: true, rows: j.rows as R[], skipped: Number(j.skipped) || 0 };
-  return { ok: false, error: typeof j.error === "string" && j.error ? j.error : "The AI reader failed." };
+  const j = (json ?? {}) as { rows?: unknown; skipped?: unknown; error?: unknown; kind?: unknown; rowCount?: unknown; rowsReturned?: unknown };
+  if (ok && Array.isArray(j.rows)) {
+    const out: ChunkResult<R> = { ok: true, rows: j.rows as R[], skipped: Number(j.skipped) || 0 };
+    /* R-1693: the model's own count of the lines on its pages, and how many it wrote. */
+    if (typeof j.rowCount === "number" && Number.isFinite(j.rowCount)) out.rowCount = j.rowCount;
+    if (typeof j.rowsReturned === "number" && Number.isFinite(j.rowsReturned)) out.returned = j.rowsReturned;
+    return out;
+  }
+  const fail: ChunkResult<R> = { ok: false, error: typeof j.error === "string" && j.error ? j.error : "The AI reader failed." };
+  if (typeof j.kind === "string") fail.kind = j.kind;
+  return fail;
 }
 
 /** Run `fn` over `items` with at most `limit` running at once; results keep the input order. */
-async function mapLimited<T, U>(items: T[], limit: number, fn: (item: T, i: number) => Promise<U>): Promise<U[]> {
+export async function mapLimited<T, U>(items: T[], limit: number, fn: (item: T, i: number) => Promise<U>): Promise<U[]> {
   const out = new Array<U>(items.length);
   let next = 0;
   const worker = async () => {
@@ -156,6 +174,8 @@ export async function readStatementInChunks<R extends StatementRowLike>(opts: {
   allFailed: boolean;
   borderDuplicates: number;
   warnings: string[];
+  /** R-1693: every chunk's own answer, in page order — the balance-chain check re-reads from these. */
+  chunks: Array<{ range: PageRange; result: ChunkResult<R> }>;
 }> {
   const plan = planPageChunks(opts.pageCount, opts.chunkPages ?? STATEMENT_CHUNK_PAGES);
   const reading = new Set<number>();
@@ -186,29 +206,39 @@ export async function readStatementInChunks<R extends StatementRowLike>(opts: {
   const failed = results.flatMap((r, i) => (r.ok ? [] : [{ ...plan[i], error: r.error }]));
   const skipped = results.reduce((s, r) => s + (r.ok ? r.skipped : 0), 0);
 
-  const warnings: string[] = [];
-  if (failed.length > 0 && failed.length < plan.length) {
-    const which = failed.map(pagesLabel).join(", ");
-    warnings.push(
-      `Page ${which} (${opts.pageCount} me se) nahi padh paaye — ${failed[0].error.replace(/\.$/, "")}. ` +
-      `In pages ki entries is preview mein NAHI hain: baaki import karke, un dates ka chhota PDF ya CSV/Excel alag se import karo.`,
-    );
-  }
-  if (merged.repeatsAcrossChunks > 0) {
-    warnings.push(
-      `${merged.repeatsAcrossChunks} entr${merged.repeatsAcrossChunks === 1 ? "y" : "ies"} ek se zyada hisson (pages) mein bilkul same aayi — ` +
-      `ho sakta hai AI ne ek page do baar padha. Import se pehle preview mein dobara wali lines check karo.`,
-    );
-  }
-
   return {
     rows: merged.rows,
     skipped,
     failed,
     allFailed: plan.length > 0 && failed.length === plan.length,
     borderDuplicates: merged.borderDuplicates,
-    warnings,
+    warnings: chunkWarnings(failed, opts.pageCount, plan.length, merged.repeatsAcrossChunks),
+    chunks: plan.map((range, i) => ({ range, result: results[i] })),
   };
+}
+
+/** The preview warnings for pages that could not be read, and rows seen in two non-adjacent chunks. */
+export function chunkWarnings(
+  failed: Array<PageRange & { error: string }>,
+  pageCount: number,
+  chunkCount: number,
+  repeatsAcrossChunks: number,
+): string[] {
+  const warnings: string[] = [];
+  if (failed.length > 0 && failed.length < chunkCount) {
+    const which = failed.map(pagesLabel).join(", ");
+    warnings.push(
+      `Page ${which} (${pageCount} me se) nahi padh paaye — ${failed[0].error.replace(/\.$/, "")}. ` +
+      `In pages ki entries is preview mein NAHI hain: baaki import karke, un dates ka chhota PDF ya CSV/Excel alag se import karo.`,
+    );
+  }
+  if (repeatsAcrossChunks > 0) {
+    warnings.push(
+      `${repeatsAcrossChunks} entr${repeatsAcrossChunks === 1 ? "y" : "ies"} ek se zyada hisson (pages) mein bilkul same aayi — ` +
+      `ho sakta hai AI ne ek page do baar padha. Import se pehle preview mein dobara wali lines check karo.`,
+    );
+  }
+  return warnings;
 }
 
 /**

@@ -131,6 +131,44 @@ describe("chunked PDF — 12 pages read a few at a time", () => {
   });
 });
 
+describe("R-1693 — every line, and the model's own count of them", () => {
+  it("the prompt asks for EVERY line (no summarising / skipping) and a rowCount per page", async () => {
+    ai.json.mockResolvedValue({ rows: [aiRow(3)] });
+    await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 3, to: 4, total: 12 } });
+    const prompt = (ai.json.mock.calls[0][0] as GeminiArgs).user;
+    expect(prompt).toMatch(/EVERY transaction line/);
+    expect(prompt).toMatch(/never summarise|do not summarise/i);
+    expect(prompt).toMatch(/rowCount/);
+  });
+
+  it("returns the model's page counts (summed over the asked pages) and how many rows it wrote", async () => {
+    ai.json.mockResolvedValue({
+      pages: [{ page: 3, rowCount: 2 }, { page: 4, rowCount: 1 }, { page: 9, rowCount: 7 }],   // page 9 is outside the range
+      rows: [aiRow(3), aiRow(4)],
+    });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 3, to: 4, total: 12 } });
+    expect(r.json.rowCount).toBe(3);
+    expect(r.json.rowsReturned).toBe(2);
+    const back = chunkResultFrom<StatementRowLike>(true, r.json);
+    expect(back).toMatchObject({ ok: true, rowCount: 3, returned: 2 });
+  });
+
+  it("no page counts from the model → rowCount null (no check claimed)", async () => {
+    ai.json.mockResolvedValue({ rows: [aiRow(3)] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 3, to: 4, total: 12 } });
+    expect(r.json.rowCount).toBeNull();
+  });
+
+  it("a failure carries its kind so the browser can stop re-reading when Gemini is paused", async () => {
+    ai.json.mockImplementation(async (a: GeminiArgs) => {
+      a.onFailure?.("Gemini failed repeatedly just now, so calls are paused for a minute. It retries on its own.");
+      return null;
+    });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 3, to: 3, total: 12 } });
+    expect(chunkResultFrom<StatementRowLike>(false, r.json)).toMatchObject({ ok: false, kind: "paused" });
+  });
+});
+
 describe("honest failure messages", () => {
   it("a timeout says the statement is big and offers CSV / Excel — never 'busy'", async () => {
     ai.json.mockImplementation(async (a: GeminiArgs) => {
