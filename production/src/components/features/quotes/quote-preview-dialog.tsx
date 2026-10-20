@@ -232,9 +232,15 @@ export function QuotePreviewDialog({
           </div>
         </div>
 
-        {/* Staff-only notes — outside the customer's document, never printed (R-1694) */}
-        {(upiHint || unsavedHint) && (
+        {/* Staff-only notes — outside the customer's document, never printed (R-1694).
+            R-1673: the prospect note used to sit under "Bill to" INSIDE the document. */}
+        {(isProspect || upiHint || unsavedHint) && (
           <div className="space-y-1 border-b border-hairline bg-amber-soft px-5 py-2 text-xs text-amber-ink print:hidden" data-testid="preview-staff-notes">
+            {isProspect && (
+              <p data-testid="preview-staff-hint-prospect">
+                Sirf aapke liye: ye quote ek lead ka hai — customer record payment ke baad banega.
+              </p>
+            )}
             {upiHint && (
               <p data-testid="preview-staff-hint-upi">
                 QR ke liye Settings me UPI ID daalo —{" "}
@@ -310,11 +316,6 @@ export function QuotePreviewDialog({
               )}
               {contactPhone && (
                 <p className="text-sm text-ink-3 font-mono">{contactPhone}</p>
-              )}
-              {isProspect && (
-                <p className="text-2xs text-amber-ink mt-2 italic print:hidden">
-                  Internal: this is a prospect — customer record pending payment
-                </p>
               )}
             </div>
             <div className="text-right">
