@@ -85,7 +85,9 @@ import { useCustomers } from "@/lib/queries/customers";
 import { usePrimaryContacts } from "@/lib/queries/contacts";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
-import { rowTerm, renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { renewalDistance, termValue, termValueLabel } from "@/lib/subscriptions/renewal-display";
+import { subscriptionCycle, cycleInvoiceTitle, matchesCycle, cycleOptions, CYCLE_FILTERS, type CycleFilter } from "@/lib/subscriptions/billing-cycle";
+import { BillingCycleFilter } from "@/components/features/subscriptions/billing-cycle-filter";
 import { useQuotes } from "@/lib/queries/quotes";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { SubCustomerLink, SubQuoteLink } from "./sub-links";
@@ -242,6 +244,9 @@ export default function SubscriptionsPage() {
   const tabOn = (t: string) => { setFocus(""); setTab(t); };
   const focusOn = (f: SubFocus) => { setTab("all"); setFocus(f); };
   const [vendor, setVendor] = React.useState("all");
+  /* R-1696: billing cycle, kept in ?cycle= like ?tab= — one rule with the row label
+     (lib/subscriptions/billing-cycle.ts). */
+  const [cycle, setCycle] = useUrlChoice<CycleFilter>("cycle", CYCLE_FILTERS, "all");
   const [search, setSearch] = React.useState("");
   /* R-244: ?q= pre-fills the search — Ctrl+K opens a subscription as the list filtered to it.
      Read once after mount (no useSearchParams: build rule, see ?from_lead below). */
@@ -448,7 +453,9 @@ export default function SubscriptionsPage() {
   );
   const { data: primaryContacts } = usePrimaryContacts(customerIdsForExport);
 
-  const filtered = subsByWorkspace.filter((s) => {
+  /* Every filter EXCEPT the billing cycle — the cycle chips count over these rows, so the
+     number on a chip is exactly what clicking it leaves on screen (R-1696). */
+  const beforeCycle = subsByWorkspace.filter((s) => {
     if (tab === "trials") return false;  // trials handled in separate table below
     if (tab !== "all" && folderOf(s, todayISO) !== tab) return false;
     if (focus && !subInFocus(s, focus)) return false;   // the tile's own predicate
@@ -476,6 +483,8 @@ export default function SubscriptionsPage() {
     }
     return true;
   });
+  const cycleChips = cycleOptions(beforeCycle, cycle);
+  const filtered = beforeCycle.filter((s) => matchesCycle(s, cycle));
 
   /* ── Newest first, except in Expiring ─────────────────────────────────────
      `useSubscriptions` fetches in renewal-date order, which is right for the dashboard
@@ -643,7 +652,7 @@ export default function SubscriptionsPage() {
     reportBulk(done, failed, "Deleted");
   };
   const hasMore = ordered.length > shown.length;
-  React.useEffect(() => { setVisible(60); }, [tab, vendor, search]);
+  React.useEffect(() => { setVisible(60); }, [tab, vendor, cycle, search]);
 
   // Trial-specific filter (for the Trials tab)
   const filteredTrials = (trials ?? []).filter((t) => {
@@ -978,6 +987,8 @@ export default function SubscriptionsPage() {
               ].map((opt) => (
                 <button
                   key={opt.value}
+                  type="button"
+                  aria-pressed={vendor === opt.value}
                   onClick={() => setVendor(opt.value)}
                   className={cn(
                     "px-3 py-1 text-xs font-medium rounded transition-colors cursor-pointer",
@@ -988,6 +999,9 @@ export default function SubscriptionsPage() {
                 </button>
               ))}
             </div>
+            {tab !== "trials" && (
+              <BillingCycleFilter options={cycleChips} value={cycle} onChange={setCycle} />
+            )}
             <div className="w-full sm:w-64">
               <Input
                 prefix={<Icon name="search" size={14} />}
@@ -1002,9 +1016,12 @@ export default function SubscriptionsPage() {
             <Button
               variant="outline"
               icon="download"
+              disabled={ordered.length === 0}
               onClick={() => {
-                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, [...PORTABLE_SUBSCRIPTION_HEADERS], exportRows(subs ?? []));
-                toast.success(`Exported ${(subs ?? []).length} subscriptions to CSV`, {
+                /* R-1696: the rows on screen — tab, vendor, billing cycle and search —
+                   not the whole book behind them. */
+                downloadCSV(`subscriptions-${new Date().toISOString().slice(0, 10)}.csv`, [...PORTABLE_SUBSCRIPTION_HEADERS], exportRows(ordered));
+                toast.success(`Exported ${ordered.length} subscription${ordered.length === 1 ? "" : "s"} to CSV`, {
                   description: "Includes the customer and contact details, so this file can be imported back.",
                 });
               }}
@@ -1062,7 +1079,8 @@ export default function SubscriptionsPage() {
         <ul className="xl:hidden space-y-2 mb-3">
           {shown.map((s) => {
             const dl = daysUntil(s.renewal_date);
-            const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
+            const cyc = subscriptionCycle(s);
+            const t  = cyc.term;
             const vm = vendorMeta(s.vendor);
             /* Seat gap only — the money needs the catalogue, and this card deliberately
                shows no margin figure (see the note further down about estimateMargin). */
@@ -1137,7 +1155,7 @@ export default function SubscriptionsPage() {
                   <Badge kind={vm.kind} size="sm" dot>{vm.label}</Badge>
                   {t && (
                     <Badge kind="muted" size="sm"
-                           title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
+                           title={cycleInvoiceTitle(cyc, termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee))}>
                       {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
                     </Badge>
                   )}
@@ -1263,7 +1281,8 @@ export default function SubscriptionsPage() {
                     pricePerSeatMonth: s.seats > 0 ? Math.round(s.mrr / s.seats) : null,
                   });
                   const dl = daysUntil(s.renewal_date);
-                  const t  = rowTerm(s.billing_cycle, s.start_date, s.renewal_date);
+                  const cyc = subscriptionCycle(s);
+                  const t  = cyc.term;
                   const isUrgent = dl !== null && dl >= 0 && dl <= 30;
                   /* Postpaid credit clock. `none` for everything else, so prepaid rows
                      and pre-10-Sep-2026 rows look exactly as they did. */
@@ -1360,7 +1379,7 @@ export default function SubscriptionsPage() {
                         <div className="break-words leading-snug">{s.plan}</div>
                         {t && (
                           <Badge kind="muted" size="sm" className="mt-1"
-                                 title={`${t.label} — ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)} per invoice`}>
+                                 title={cycleInvoiceTitle(cyc, termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee))}>
                             {t.label}{t.months > 1 ? ` · ${termValueLabel(termValue(s.mrr, t.months, annualFor(s)), rupee)}` : ""}
                           </Badge>
                         )}
@@ -1656,7 +1675,7 @@ export default function SubscriptionsPage() {
             icon="search"
             title="No subscriptions match"
             body="Try changing tab, vendor filter, or search term."
-            action={<Button icon="x" onClick={() => { setTab("all"); setVendor("all"); setSearch(""); }}>Clear filters</Button>}
+            action={<Button icon="x" onClick={() => { setTab("all"); setVendor("all"); setCycle("all"); setSearch(""); }}>Clear filters</Button>}
             compact
           />
         </div>
