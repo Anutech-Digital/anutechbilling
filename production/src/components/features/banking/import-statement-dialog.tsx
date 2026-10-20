@@ -45,7 +45,15 @@ import {
   pagesLabel,
   STATEMENT_CHUNK_PAGES,
   type ChunkProgress,
+  type PageRange,
 } from "@/lib/banking/statement-chunks";
+import {
+  checkPreview,
+  importBlocked,
+  rereadBrokenPages,
+  type RowCountIssue,
+} from "@/lib/banking/statement-verify";
+import { StatementChainBlock } from "./statement-chain-block";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { useTxnCategoryRules, useCreateTxnCategoryRule } from "@/lib/queries/txn-category-rules";
@@ -65,13 +73,35 @@ interface Props {
   accountId: string;
 }
 
+/** A preview row may carry the PDF pages it was read from (R-1693) — never sent to the database. */
+type PreviewRow = ParsedRow & { page?: PageRange };
+type Preview = {
+  rows: PreviewRow[];
+  skipped: number;
+  warnings: string[];
+  /** R-1693: pages where the AI wrote fewer lines than it counted. */
+  rowCountIssues?: RowCountIssue[];
+  /** R-1693: what was re-read page by page, if anything. */
+  rereadNote?: string | null;
+};
+
+/** Exactly the columns of a bank line — the preview's page tag stays behind. */
+const toLine = (r: PreviewRow): ParsedRow => ({
+  txn_date: r.txn_date,
+  description: r.description,
+  debit: r.debit,
+  credit: r.credit,
+  balance_after: r.balance_after,
+  reference: r.reference,
+});
+
 /**
  * Last gate before the preview (CSV and AI alike): every date must be a real calendar
  * date. A day/month swap is corrected — for the whole statement when it was read
  * day-first — and said out loud; a date impossible either way skips its row, counted.
  * Without this one bad date ("2026-21-08") failed the whole import in Postgres.
  */
-function withRealDates(p: ParseResult, serverSwapped = 0): ParseResult {
+function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   const fix = fixStatementDates(p.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
   const rows = p.rows.flatMap((r, i) => (fix.dates[i] ? [{ ...r, txn_date: fix.dates[i]! }] : []));
   const dropped = p.rows.length - rows.length;
@@ -80,20 +110,22 @@ function withRealDates(p: ParseResult, serverSwapped = 0): ParseResult {
   if (fix.swappedAll) warnings.push(`The dates were in day-first order — all ${fix.swapped} were flipped. Check a few dates in the preview before importing.`);
   else if (swapped > 0) warnings.push(`${swapped} date${swapped === 1 ? " had its" : "s had their"} day and month swapped and ${swapped === 1 ? "was" : "were"} corrected — check ${swapped === 1 ? "it" : "them"} in the preview.`);
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} had an impossible date and ${dropped === 1 ? "was" : "were"} skipped.`);
-  return { rows, skipped: p.skipped + dropped, warnings };
+  return { ...p, rows, skipped: p.skipped + dropped, warnings };
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
   const [csvText, setCsvText] = React.useState("");
-  const [parsed, setParsed]   = React.useState<{ rows: ParsedRow[]; skipped: number; warnings: string[] } | null>(null);
+  const [parsed, setParsed]   = React.useState<Preview | null>(null);
   // "csv" = parsed from pasted/CSV text; "ai" = read from a PDF/photo via Gemini.
   const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
   const [reading, setReading] = React.useState(false);
   const [readMsgIdx, setReadMsgIdx] = React.useState(0);
   /* R-1690: real progress while a long PDF is read a few pages per call. null = one call. */
   const [chunkProgress, setChunkProgress] = React.useState<ChunkProgress | null>(null);
+  /* R-1693: pages being read again one at a time because the balance chain broke. */
+  const [rereadProgress, setRereadProgress] = React.useState<{ done: number; total: number; reading: number[] } | null>(null);
   const importMut = useImportBankTransactions();
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
@@ -126,7 +158,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      cannot silently discard a choice somebody made, and so "set to no category" stays
      distinguishable from "never touched". */
   const [override, setOverride] = React.useState<Record<number, string>>({});
-  React.useEffect(() => { setOverride({}); setRuleDone({}); }, [parsed]);
+  /* R-1693: does the preview hold every line? The bank's running balance must chain from
+     line to line (lib/banking/statement-verify.ts). Lines missing → Import waits for an
+     explicit tick. Same check for CSV / Excel as for a PDF. */
+  const [ackIncomplete, setAckIncomplete] = React.useState(false);
+  const chainCheck = React.useMemo(
+    () => (parsed && parsed.rows.length > 0 ? checkPreview(parsed.rows, parsed.rowCountIssues ?? []) : null),
+    [parsed],
+  );
+  const blocked = importBlocked(chainCheck, ackIncomplete);
+  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [parsed]);
 
   const categoryFor = (i: number): string | null =>
     override[i] !== undefined ? (override[i] || null) : (suggestions[i]?.category ?? null);
@@ -235,19 +276,37 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           setParsed(null);
           return;
         }
-        if (out.failed.length > 0) {
-          toast.warning(`Page ${out.failed.map(pagesLabel).join(", ")} nahi padh paaye — baaki rows preview mein hain.`, {
+        /* R-1693: every chunk can come back 200 with lines simply left out. Check the
+           running-balance chain now; where it breaks, read those pages again one at a time. */
+        setChunkProgress(null);
+        const checked = await rereadBrokenPages<ParsedRow>({
+          chunks: out.chunks,
+          today: localDateISO(new Date(Date.now() + 86_400_000)),   // +1 day, as withRealDates
+          onProgress: setRereadProgress,
+          readPage: async (page) => {
+            const res = await fetch("/api/ai/extract-statement", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { from: page, to: page, total: pageCount } }),
+            });
+            return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
+          },
+        });
+        if (checked.failed.length > 0) {
+          toast.warning(`Page ${checked.failed.map(pagesLabel).join(", ")} nahi padh paaye — baaki rows preview mein hain.`, {
             description: "Import se pehle preview ki warning padho: un pages ki entries alag se (CSV / chhota PDF) import karni hongi.",
             duration: 12000,
           });
         }
         setParsed(withRealDates({
-          rows: out.rows,
-          skipped: out.skipped,
+          rows: checked.rows,
+          skipped: checked.skipped,
           warnings: [
-            ...out.warnings,
-            ...(out.rows.length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : []),
+            ...checked.warnings,
+            ...(checked.rows.length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : []),
           ],
+          rowCountIssues: checked.rowCountIssues,
+          rereadNote: checked.note,
         }));
         return;
       }
@@ -266,10 +325,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
         setParsed(null);
         return;
       }
+      /* R-1693: one call reads the whole file, so its rows are tagged with all its pages and
+         the model's own count is compared with what it wrote (no re-read on this path). */
+      const whole: PageRange = { from: 1, to: pageCount ?? 1 };
+      const counted = typeof json.rowCount === "number" ? json.rowCount : null;
+      const returned = typeof json.rowsReturned === "number" ? json.rowsReturned : (json.rows ?? []).length;
       setParsed(withRealDates({
-        rows: (json.rows ?? []) as ParsedRow[],
+        rows: ((json.rows ?? []) as ParsedRow[]).map((r) => ({ ...r, page: whole })),
         skipped: json.skipped ?? 0,
         warnings: (json.rows ?? []).length === 0 ? ["The AI found no transactions in this file — download the statement as CSV and use that instead."] : [],
+        rowCountIssues: counted !== null && returned < counted ? [{ pages: whole, counted, returned }] : [],
       }, Number(json.datesSwapped) || 0));
     } catch {
       toast.error("Upload failed.", { description: "Nothing was imported. Check your connection and try again — or paste the CSV instead." });
@@ -277,6 +342,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     } finally {
       setReading(false);
       setChunkProgress(null);
+      setRereadProgress(null);
     }
   };
 
@@ -321,6 +387,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       toast.error("Nothing to import yet.", { description: "Upload the statement file or paste its CSV text above first." });
       return;
     }
+    if (blocked) {
+      toast.error("Statement ki kuch lines preview mein nahi hain.", { description: "Preview ka laal block padho — CSV / Excel import karo, ya jaante hue adhoore import ke liye tick lagao." });
+      return;
+    }
     try {
       /* Categories travel with the rows. category_source is 'manual' where the operator
          picked it and 'rule' where a layer did, because the DB refuses a category with no
@@ -332,10 +402,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           rows: parsed.rows.flatMap((r, i) => {
             if (isExcluded(r)) return [];
             const category = categoryFor(i);
-            if (!category) return [r];
+            if (!category) return [toLine(r)];
             const touched = override[i] !== undefined;
             return [{
-              ...r,
+              ...toLine(r),
               category,
               category_source: touched ? ("manual" as const) : ("rule" as const),
               category_confidence: 100,
@@ -381,7 +451,19 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             {reading ? (
               <div className="flex flex-col items-center text-center gap-3 py-1">
                 <Icon name="sparkles" size={22} className="text-amber-ink animate-pulse" />
-                {chunkProgress ? (
+                {rereadProgress ? (
+                  /* R-1693: the balance chain broke — those pages are read again, one at a time. */
+                  <>
+                    <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
+                      {rereadProgress.reading.length > 0
+                        ? `Balance chain toot rahi thi — page ${rereadProgress.reading.join(", ")} dobara padh rahe hain…`
+                        : "Balance chain jaanch rahe hain…"}
+                    </span>
+                    <span className="text-xs text-ink-3 tabular-nums">
+                      {rereadProgress.done} / {rereadProgress.total} page dobara padhe — chhooti lines dhoondh rahe hain
+                    </span>
+                  </>
+                ) : chunkProgress ? (
                   /* R-1690: a long PDF, a few pages per call — real numbers, not a rotating line. */
                   <>
                     <span className="text-sm font-medium text-ink" role="status" aria-live="polite">
@@ -456,6 +538,15 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   <Badge kind="danger" dot size="sm">Couldn&apos;t parse</Badge>
                 )}
               </div>
+              {chainCheck && (
+                <StatementChainBlock
+                  check={chainCheck}
+                  source={mode === "ai" ? "ai" : "csv"}
+                  ack={ackIncomplete}
+                  onAck={setAckIncomplete}
+                  note={parsed.rereadNote}
+                />
+              )}
               {parsed.warnings.length > 0 && (
                 <ul className="text-xs text-rose space-y-0.5 mb-2">
                   {parsed.warnings.map((w, i) => <li key={i}>• {w}</li>)}
@@ -674,7 +765,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <Button
             variant="primary"
             icon="upload"
-            disabled={freshCount === 0 && !openingOn}
+            disabled={(freshCount === 0 && !openingOn) || blocked}
+            title={blocked ? "Statement ki kuch lines nahi hain — preview ka laal block dekho" : undefined}
             loading={importMut.isPending || updateAccount.isPending}
             onClick={handleImport}
           >

@@ -89,4 +89,19 @@ describe("checkStatement", () => {
     ], 0);
     expect(r).toMatchObject({ impliedOpening: 300301, openingDifference: -300301, gaps: [] });
   });
+
+  it("R-1693: whole-rupee rounding of paise amounts never adds up to a false gap", () => {
+    // Statements carry paise; lines are stored in whole rupees. ₹10.40 a line rounds to ₹10,
+    // so over 60 days Σ(rounded) drifts ₹24 from the bank's own balance. Each line still
+    // follows from the one before (±1) — that is not a missing line.
+    const lines: StatementLine[] = [];
+    let bal = 100000;
+    for (let d = 1; d <= 60; d++) {
+      bal -= 10.4;
+      const date = new Date(Date.UTC(2026, 3, d)).toISOString().slice(0, 10);
+      lines.push(L(date, 10, 0, Math.round(bal)));
+    }
+    const r = checkStatement(lines, 100000);
+    expect(r?.gaps).toEqual([]);
+  });
 });
