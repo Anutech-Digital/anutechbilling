@@ -1288,6 +1288,9 @@ function QuotePreviewContainer({ quote, onClose }: { quote: Quote; onClose: () =
       tenantEmail={currentUser?.tenantEmail}
       tenantPhone={currentUser?.tenantPhone}
       tenantAddress={currentUser?.tenantAddress}
+      /* R-1694: the PDF's scan-to-pay QR, or a "add UPI ID" hint for the owner. */
+      upiVpa={currentUser?.tenantUpiVpa ?? null}
+      payQrQuoteId={quote.id}
       quoteId={quote.id}
       customerName={quote.customer_name}
       contactName={contact.contactName}

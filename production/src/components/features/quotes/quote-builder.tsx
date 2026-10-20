@@ -16,7 +16,7 @@ import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
-import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix } from "@/lib/quotes/line-rate-unit";
+import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
 import { perInvoiceDivisor } from "@/lib/pdf/invoice-divisor";
 import { useDraftGuard } from "@/lib/hooks/useDraftGuard";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
@@ -52,7 +52,7 @@ import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { GeminiCard } from "@/components/shared/gemini-card";
 import { AddLineItemDialog } from "@/components/features/quotes/add-line-item-dialog";
 import { BulkDomainsDialog } from "@/components/features/quotes/bulk-domains-dialog";
-import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/products";
+import { domainLineYears } from "@/lib/provisioning/products";
 import { ViewDomainsDialog } from "@/components/features/quotes/view-domains-dialog";
 import { matchLeadToCustomer, matchNote } from "@/lib/quotes/match-customer";
 import { SUPPORT_TIERS, findSupportSku, isSupportSkuId } from "@/lib/support/tiers";
@@ -97,7 +97,7 @@ import { lineCostUnknown, fillUnknownCosts } from "@/lib/quotes/line-cost";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { COMMIT_CHOICES, commitChoiceOf, commitmentForChoice, markOneTimeLines } from "@/lib/quotes/line-commit-choice";
 import { leadLinePrice } from "./lead-line-commitment";
-import { quoteSeatCount } from "@/lib/quotes/seat-lines";
+import { quoteSeatCount, isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
 import { leadQuoteName, PLACEHOLDER_QUOTE_NAME } from "@/lib/quotes/quote-party-name";
 import { SolutionPackagePicker } from "@/components/features/quotes/solution-package-picker";
 import { SupportPlanPicker } from "@/components/features/quotes/support-plan-picker";
@@ -113,8 +113,7 @@ const NO_APPROVAL_ROW = {
 
 /** R-156: show the term picker on a domain REGISTRATION line — by its name too, so it is there
  *  before the domain is typed (isDomainPurchaseLine needs the name filled in). */
-const isRegistrationLine = (l: QuoteLineItem) =>
-  !l.bulk && (isDomainPurchaseLine(l) || /\b(domain|registration)\b/i.test(l.name ?? ""));
+const isRegistrationLine = (l: QuoteLineItem) => isDomainRegistrationLine(l);   // R-1673: same rule as seats + PDF label
 
 // Quote IDs are allocated at SAVE time via the central document-numbering RPC
 // (see migration 0004_document_series.sql) — this guarantees sequential per-tenant
@@ -2245,7 +2244,7 @@ function QuoteBuilderBody() {
           <div className="md:hidden divide-y divide-hairline">
             {lineItems.map((line) => {
               const commitment  = line.commitment ?? "annual_yearly";
-              const unitLabel   = billingUnit;   // quote-level frequency (0161)
+              const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
               /* R-369: a flex line already IS one month; only an annual line is divided. */
               const lineDiv     = perInvoiceDivisor(billingN, commitment);
               const displayRate = Math.round(line.rate / lineDiv);
@@ -2394,6 +2393,8 @@ function QuoteBuilderBody() {
           </div>
 
           {/* Desktop / tablet table */}
+          {/* R-1673 (2): the editor scrolls inside its own box — it pushed the whole page sideways. */}
+          <div className="hidden md:block overflow-x-auto">
           <table className="hidden md:table w-full">
             <thead className="bg-paper-2 border-b border-hairline">
               <tr>
@@ -2416,7 +2417,7 @@ function QuoteBuilderBody() {
                 // line stores ₹/seat/YEAR and is divided by invoices-per-year; a flex
                 // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
-                const unitLabel   = billingUnit;   // quote-level frequency (0161)
+                const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
                 const lineDiv     = perInvoiceDivisor(billingN, commitment);
                 const displayRate = Math.round(line.rate / lineDiv);
                 const displayCost = Math.round(line.cost / lineDiv);
@@ -2616,6 +2617,7 @@ function QuoteBuilderBody() {
               })}
             </tbody>
           </table>
+          </div>
           </>
         )}
 
@@ -2966,7 +2968,7 @@ function QuoteBuilderBody() {
           {isInvoiceMode ? (
             /* Invoice mode — one-time/recurring choice + a single "Create invoice".
                On phones Preview moves into the More menu so the row stays one line. */
-            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+            <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0 md:shrink md:min-w-0 md:justify-end">
               <div className="inline-flex rounded-lg border border-hairline bg-paper-2/40 p-1 text-xs">
                 {[{ k: false, l: "One-time" }, { k: true, l: "Recurring" }].map((o) => (
                   <button
@@ -3007,7 +3009,7 @@ function QuoteBuilderBody() {
               </Button>
             </div>
           ) : (
-          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0">
+          <div className="flex gap-2 flex-nowrap md:flex-wrap items-center shrink-0 md:shrink md:min-w-0 md:justify-end">
           <Button variant="ghost" icon="copy" className="hidden md:inline-flex" onClick={() => handleSubmit("draft")} loading={createQuote.isPending}>
             Save draft
           </Button>
@@ -3173,6 +3175,9 @@ function QuoteBuilderBody() {
         tenantPhone={currentUser?.tenantPhone}
         tenantAddress={currentUser?.tenantAddress}
         quoteId={quoteId ?? "(pending)"}
+        /* R-1694: the PDF QR (shown once the quote is saved) or a "add UPI ID" hint. */
+        upiVpa={currentUser?.tenantUpiVpa ?? null}
+        payQrQuoteId={quoteId}
         customerName={isLeadMode ? (leadDisplayName || PLACEHOLDER_QUOTE_NAME) : (customer?.name ?? prospectName.trim() ?? "—")}
         contactName={previewContact.contactName}
         contactEmail={previewContact.contactEmail}

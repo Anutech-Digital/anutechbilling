@@ -7,6 +7,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { lineUnitLabel } from "@/lib/quotes/line-unit-label";
 import { linePriceBreakdown, linePriceBreakdownText } from "@/lib/quotes/line-price-breakdown";
 
@@ -30,6 +32,29 @@ import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-diviso
 import { quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { ONE_TIME_SCHEDULE } from "@/lib/quotes/service-period";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
+import { UPI_SETTINGS_HREF } from "@/lib/pdf/quote-template";
+
+/** R-1694: the scan-to-pay QR the customer's PDF carries (api/quotes/[id]/pay-qr → quotePayQr). */
+interface PreviewPayQr { dataUrl: string; vpa: string; amount: number }
+
+/**
+ * Fetches the PDF's own QR for a SAVED quote. Null while loading, on any failure, and whenever
+ * the PDF would print none (no UPI ID, non-₹, paid, invoiced) — the server decides, not this.
+ */
+function usePreviewPayQr(enabled: boolean, quoteId: string | null | undefined): PreviewPayQr | null {
+  const [qr, setQr] = React.useState<PreviewPayQr | null>(null);
+  React.useEffect(() => {
+    setQr(null);
+    if (!enabled || !quoteId) return;
+    let live = true;
+    fetch(`/api/quotes/${encodeURIComponent(quoteId)}/pay-qr`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { qr?: PreviewPayQr | null } | null) => { if (live) setQr(j?.qr ?? null); })
+      .catch(() => { /* no QR in the preview — the PDF itself is unaffected */ });
+    return () => { live = false; };
+  }, [enabled, quoteId]);
+  return qr;
+}
 
 /** Price tier + billing frequency, combined for a line (frequency is quote-level). */
 function scheduleLabel(commitment: LineCommitment | undefined, cycle: BillingCycle): string {
@@ -81,6 +106,10 @@ interface Props {
   oneTime?:      boolean;
   /** R-811: "3-month extension" / "1-year extension" under the heading (extensionTitle()). */
   extensionTitle?: string | null;
+  /** R-1694: the workspace's UPI ID (useCurrentUser().tenantUpiVpa). Omitted → no QR logic at all. */
+  upiVpa?:       string | null;
+  /** R-1694: the SAVED quote's id, for its PDF QR. Null → not saved yet (builder), no QR to fetch. */
+  payQrQuoteId?: string | null;
 }
 
 export function QuotePreviewDialog({
@@ -116,6 +145,8 @@ export function QuotePreviewDialog({
   isProspect = false,
   oneTime = false,
   extensionTitle = null,
+  upiVpa,
+  payQrQuoteId = null,
 }: Props) {
   /* R-813: this previews what the CUSTOMER sees — never the staff-only audit part. */
   const notes = customerQuoteNotes(rawNotes, lineItems);
@@ -168,6 +199,13 @@ export function QuotePreviewDialog({
   // R-367: the same "Support: Free — Included" line the PDF prints (one builder).
   const includedSupport = includedSupportLine(lineItems);
 
+  /* R-1694: the PDF's scan-to-pay QR. `upiVpa === undefined` means the caller did not wire it. */
+  const qrWired      = upiVpa !== undefined;
+  const hasUpi       = !!upiVpa?.trim();
+  const payQr        = usePreviewPayQr(open && qrWired && hasUpi, payQrQuoteId);
+  const upiHint      = qrWired && !hasUpi && !isForeign;
+  const unsavedHint  = qrWired && hasUpi && !isForeign && !payQrQuoteId;
+
   const handlePrint = () => {
     window.print();
   };
@@ -194,8 +232,33 @@ export function QuotePreviewDialog({
           </div>
         </div>
 
+        {/* Staff-only notes — outside the customer's document, never printed (R-1694).
+            R-1673: the prospect note used to sit under "Bill to" INSIDE the document. */}
+        {(isProspect || upiHint || unsavedHint) && (
+          <div className="space-y-1 border-b border-hairline bg-amber-soft px-5 py-2 text-xs text-amber-ink print:hidden" data-testid="preview-staff-notes">
+            {isProspect && (
+              <p data-testid="preview-staff-hint-prospect">
+                Sirf aapke liye: ye quote ek lead ka hai — customer record payment ke baad banega.
+              </p>
+            )}
+            {upiHint && (
+              <p data-testid="preview-staff-hint-upi">
+                QR ke liye Settings me UPI ID daalo —{" "}
+                <Link href={UPI_SETTINGS_HREF as Route} className="font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                  Settings kholo
+                </Link>
+              </p>
+            )}
+            {unsavedHint && (
+              <p data-testid="preview-staff-hint-unsaved">
+                Scan-to-pay QR quote save hone ke baad dikhega (PDF me bhi tabhi aata hai).
+              </p>
+            )}
+          </div>
+        )}
+
         {/* ─────── PDF-style document ─────── */}
-        <div className="bg-paper p-10 print:p-0 font-sans text-ink">
+        <div className="bg-paper p-10 print:p-0 font-sans text-ink" data-testid="preview-document">
           {/* Brand header */}
           <div className="flex items-start justify-between border-b-2 border-ink pb-5 mb-6">
             <div className="flex items-center gap-3">
@@ -253,11 +316,6 @@ export function QuotePreviewDialog({
               )}
               {contactPhone && (
                 <p className="text-sm text-ink-3 font-mono">{contactPhone}</p>
-              )}
-              {isProspect && (
-                <p className="text-2xs text-amber-ink mt-2 italic print:hidden">
-                  Internal: this is a prospect — customer record pending payment
-                </p>
               )}
             </div>
             <div className="text-right">
@@ -455,6 +513,27 @@ export function QuotePreviewDialog({
             <p>
               <b>Quote validity:</b> {validityDays} days from issue date.
             </p>
+            {payQr && (
+              /* R-1694: the same block QuotePDF prints (upiRow) — same QR, same words. */
+              <div className="flex items-start gap-3 py-2" data-testid="preview-upi-block">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={payQr.dataUrl}
+                  alt={`UPI QR code to pay ${tenantName} ${rupee(payQr.amount)}`}
+                  className="h-24 w-24 shrink-0 rounded border border-hairline bg-white"
+                  data-testid="preview-upi-qr"
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-ink-2">Scan to pay this advance</p>
+                  <p>Any UPI app — GPay, PhonePe, Paytm, BHIM.</p>
+                  <p className="font-mono text-xs font-semibold text-ink-2 break-all">{payQr.vpa}</p>
+                  <p>
+                    Amount and quote number are pre-filled. You&apos;ll receive a receipt
+                    voucher, and a GST tax invoice when the order is provisioned.
+                  </p>
+                </div>
+              </div>
+            )}
             <p>
               Thank you for considering {tenantName}.{tenantEmail && (
                 <> Reach out at <span className="font-mono">{tenantEmail}</span> for any clarifications.</>

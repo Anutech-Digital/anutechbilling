@@ -42,3 +42,17 @@ export function lineAmountSuffix(commitment: LineCommitment | null | undefined, 
   if (!isAnnualTier(commitment)) return " /mo";
   return invoicesPerYear > 1 ? " /yr" : "";
 }
+
+/**
+ * R-1673 (3b): the unit after a line's RATE in the builder. On a yearly quote a one-time line
+ * (no commitment — migration, setup; R-1688 `one_time`) is charged once, so "/yr" was wrong.
+ * On split billing the shown rate is the per-invoice share, so the cycle unit stays. Label only.
+ */
+export function lineRateUnitSuffix(
+  line: { commitment?: LineCommitment | null; one_time?: boolean | null },
+  invoicesPerYear: number,
+  cycleUnit: string,
+): string {
+  const oneTime = !line.commitment || line.one_time === true;
+  return oneTime && invoicesPerYear <= 1 ? " one-time" : cycleUnit;
+}
