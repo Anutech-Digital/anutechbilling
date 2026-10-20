@@ -111,7 +111,7 @@ export interface BuildTelecallPromptArgs {
    * R-1663: a cold call — the person never enquired. `product` is what the campaign is for
    * (null = let them say what they need).
    */
-  coldCall?: { product: string | null } | null;
+  coldCall?: { product: string | null; callback?: boolean } | null;
 }
 
 export interface BuiltTelecallPrompt {
@@ -268,8 +268,24 @@ function boundaryBlock(): string {
  * same catalogue array that produced the price lines in the prompt.
  */
 /** R-1663: the person did NOT enquire — say who we are and why, once, then qualify or leave. */
-function coldCallBlock(product: string | null): string {
+function coldCallBlock(product: string | null, callback = false): string {
   const what = product?.trim() || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
+  if (callback) {
+    return [
+      "WHY YOU ARE CALLING",
+      `This is a CALL BACK. On an earlier call about ${what}, {{customer_name}} asked us to call`,
+      "again later. Say so in one sentence and ask if now is a good time.",
+      "If it is still not a good time, ask once when would suit, thank them and end the call.",
+      "",
+      "IF THEY ARE OPEN TO IT, COME AWAY WITH, in this order:",
+      "1. HOW MANY people would need an account.",
+      "2. What they use today, if anything.",
+      "3. Their city or state.",
+      "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
+      "",
+      "If they are not interested, do not push: thank them and end the call.",
+    ].join("\n");
+  }
   return [
     "WHY YOU ARE CALLING",
     "This is a COLD CALL. {{customer_name}} has NOT enquired with us — never say they did.",
@@ -294,7 +310,7 @@ export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecal
   const systemPrompt = [
     personaBlock(sellerName),
     "",
-    args.coldCall ? coldCallBlock(args.coldCall.product) : objectiveBlock(callType),
+    args.coldCall ? coldCallBlock(args.coldCall.product, args.coldCall.callback) : objectiveBlock(callType),
     "",
     moneyRules(catalogue),
     "",

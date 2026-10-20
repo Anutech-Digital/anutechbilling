@@ -117,6 +117,8 @@ export type ColdCallStatus =
 
 /** One try plus two retries (Abhishek: "no answer → next day, max 2 retries"). */
 export const MAX_ATTEMPTS = 3;
+/** An asked-for call back goes out at this IST hour on the next working day. */
+export const CALLBACK_HOUR_IST = 11;
 /** A retry waits about a day, so a second ring is never the same afternoon. */
 export const RETRY_AFTER_HOURS = 20;
 
@@ -149,7 +151,11 @@ export function outcomeFromCall(signals: PostCallSignals, attemptsSoFar: number,
   if (signals.customerAskedForQuote || (signals.seatsDiscussed ?? 0) > 0) {
     return { status: "interested", nextAttemptAt: null };
   }
-  if (signals.customerAskedForCallback) return { status: "callback", nextAttemptAt: null };
+  /* "Call me later": the agent rings again the next working morning (Abhishek, 20 Oct), within
+     the same three-call limit, so a person who keeps saying "later" is not rung for ever. */
+  if (signals.customerAskedForCallback) {
+    return { status: "callback", nextAttemptAt: attemptsSoFar < MAX_ATTEMPTS ? nextWorkingDayAt(now, CALLBACK_HOUR_IST) : null };
+  }
   return { status: "answered", nextAttemptAt: null };
 }
 

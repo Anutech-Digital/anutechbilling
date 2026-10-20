@@ -437,6 +437,7 @@ export async function runCampaignTick(
     const call = normalisePostCall(got.execution);
     if (!call) continue; // still ringing / in progress
     const outcome = outcomeFromCall(call.signals, c.attempts, now);
+    /* (next_attempt_at below is overwritten either way, so an answered call back never rings again.) */
     await run((tx) => tx.cold_call_contacts.update({
       where: { id: c.id },
       data: {
@@ -475,8 +476,13 @@ export async function runCampaignTick(
   const { due, catalogue, sellerName } = await run(async (tx) => {
     const rows = await tx.cold_call_contacts.findMany({
       where: {
-        campaign_id: campaignId, status: "pending", dnd: false,
-        OR: [{ next_attempt_at: null }, { next_attempt_at: { lte: now } }],
+        campaign_id: campaignId, dnd: false,
+        OR: [
+          { status: "pending", next_attempt_at: null },
+          { status: "pending", next_attempt_at: { lte: now } },
+          /* A person who asked to be called back, once their time has come. */
+          { status: "callback", next_attempt_at: { lte: now } },
+        ],
       },
       orderBy: { created_at: "asc" },
       take: room,
@@ -487,7 +493,7 @@ export async function runCampaignTick(
     const mine: typeof rows = [];
     for (const r of rows) {
       const claimed = await tx.cold_call_contacts.updateMany({
-        where: { id: r.id, status: "pending" },
+        where: { id: r.id, status: r.status },
         data: { status: "calling", last_called_at: now, updated_at: now, error: null },
       });
       if (claimed.count === 1) mine.push(r);
@@ -502,20 +508,24 @@ export async function runCampaignTick(
 
   if (due.length === 0) {
     const left = await run((tx) => tx.cold_call_contacts.count({
-      where: { campaign_id: campaignId, status: { in: ["pending", "calling"] } },
+      where: {
+        campaign_id: campaignId,
+        OR: [{ status: { in: ["pending", "calling"] } }, { status: "callback", next_attempt_at: { not: null } }],
+      },
     }));
     if (left === 0) {
       await run((tx) => tx.cold_call_campaigns.updateMany({ where: { id: campaignId, status: "running" }, data: { status: "done", updated_at: now } }));
       return { ...report, note: "every number on the list has been called" };
     }
-    return { ...report, note: "no number is due right now (retries wait about a day)" };
+    return { ...report, note: "no number is due right now (retries and call backs wait for their time)" };
   }
 
   const agent = { ...config, agentId: campaign.agent_id };
   for (const c of due) {
     const built = buildTelecallPrompt({
       callType: "lead_qualification", sellerName, customerName: c.name, currentPlan: null, seats: null,
-      renewalDate: null, pendingAmount: null, catalogue, coldCall: { product: campaign.product_name },
+      renewalDate: null, pendingAmount: null, catalogue,
+      coldCall: { product: campaign.product_name, callback: c.status === "callback" },
     });
     const placed = await placeCall(agent, {
       toNumber: c.phone,

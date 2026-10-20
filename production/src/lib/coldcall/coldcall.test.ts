@@ -104,3 +104,20 @@ describe("staleCallAction — rows stuck on 'calling'", () => {
     expect(staleCallAction({ providerCallId: "x", lastCalledAt: ago(46) }, now)).toBe("give_up");
   });
 });
+
+describe("call back — the agent rings again", () => {
+  const now = new Date("2026-10-20T09:30:00Z"); // Tue 15:00 IST
+  const base = {
+    disposition: "completed", durationSec: 40, transcript: "", summary: "",
+    customerAskedForQuote: false, customerAskedForCallback: true, customerConfirmedRenewal: false,
+    customerNotInterested: false, seatsDiscussed: null,
+  };
+  it("schedules the next working day at 11:00 IST", () => {
+    const o = outcomeFromCall(base, 1, now);
+    expect(o.status).toBe("callback");
+    expect(o.nextAttemptAt?.toISOString()).toBe("2026-10-21T05:30:00.000Z");
+  });
+  it("stops after the third call", () => {
+    expect(outcomeFromCall(base, MAX_ATTEMPTS, now).nextAttemptAt).toBeNull();
+  });
+});

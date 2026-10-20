@@ -607,6 +607,9 @@ export function LiveStatus({ campaign, lastCheck }: {
     tone = "stop"; headline = "Paused — no calls are going out."; detail = "Press Start again to continue.";
   } else if (campaign.status !== "running" && calling === 0 && pending > 0) {
     tone = "stop"; headline = `${pending} ${pending === 1 ? "number is" : "numbers are"} waiting — calling is off.`; detail = "Press Start again to call them.";
+  } else if (pending === 0 && calling === 0 && campaign.status === "running" && countOf(campaign, ["callback"]) > 0) {
+    headline = `Waiting for ${countOf(campaign, ["callback"])} call ${countOf(campaign, ["callback"]) === 1 ? "back" : "backs"}.`;
+    detail = "Everyone else has been called. The agent rings these people again at the time shown on each one.";
   } else if (pending === 0 && calling === 0) {
     tone = "stop"; headline = "Finished — every number has been called."; detail = "Add more numbers to call again.";
   } else if (calling > 0) {
@@ -761,6 +764,12 @@ function ImportReportDialog({ report: r, campaignId, onClose }: {
   );
 }
 
+function callbackWhen(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", {
+    weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
+  });
+}
+
 export function ContactItem({ contact: c }: { contact: ColdContact }) {
   const [open, setOpen] = React.useState(false);
   const move = useMoveToPipeline();
@@ -768,7 +777,7 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
   const [confirming, setConfirming] = React.useState(false);
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
-  const hasDetail = !!(c.summary || c.transcript || c.error || (c.nextAttemptAt && c.status === "pending"));
+  const hasDetail = !!(c.summary || c.transcript || c.error || c.nextAttemptAt);
 
   const doMove = async () => {
     try {
@@ -810,6 +819,9 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
         <div className="flex items-center gap-1.5 flex-wrap">
           <Badge kind={s.kind} size="sm">{s.label}</Badge>
           {c.seatsHeard ? <Badge kind="info" size="sm">{c.seatsHeard} users</Badge> : null}
+          {c.status === "callback" && c.nextAttemptAt && (
+            <span className="text-[11px] text-ink-3 w-full">AI calls again {callbackWhen(c.nextAttemptAt)}</span>
+          )}
         </div>
         <span className="text-xs text-ink-3">
           {c.lastCalledAt ? formatDate(c.lastCalledAt) : "Not called yet"}{c.attempts > 1 ? ` · ${c.attempts} tries` : ""}
@@ -854,6 +866,9 @@ export function ContactItem({ contact: c }: { contact: ColdContact }) {
           {c.error && <p className="text-rose-ink">Call failed: {c.error}</p>}
           {c.nextAttemptAt && c.status === "pending" && (
             <p className="text-ink-3">No answer last time — the agent tries again after {formatDate(c.nextAttemptAt)}.</p>
+          )}
+          {c.nextAttemptAt && c.status === "callback" && (
+            <p className="text-ink-3">They asked to be called back — the agent calls again on {callbackWhen(c.nextAttemptAt)}.</p>
           )}
           {c.transcript && (
             <details>
