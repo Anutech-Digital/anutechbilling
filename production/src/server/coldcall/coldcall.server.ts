@@ -339,6 +339,23 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
   });
 }
 
+/**
+ * Delete a whole campaign and its list (the rows go with it — ON DELETE CASCADE). Refused while
+ * a call is ringing. Leads it already made stay in Sales & Pipeline.
+ */
+export async function deleteCampaign(run: Run, campaignId: string): Promise<{ ok: true } | { ok: false; status: number; error: string; detail?: string }> {
+  return run(async (tx) => {
+    const c = await tx.cold_call_campaigns.findUnique({ where: { id: campaignId }, select: { id: true } });
+    if (!c) return { ok: false, status: 404, error: "That campaign is not here any more.", detail: "Refresh the page." };
+    const ringing = await tx.cold_call_contacts.count({ where: { campaign_id: campaignId, status: "calling" } });
+    if (ringing > 0) {
+      return { ok: false, status: 409, error: "A call from this campaign is going on right now.", detail: "Press Pause, wait two minutes for it to end, then delete." };
+    }
+    await tx.cold_call_campaigns.delete({ where: { id: campaignId } });
+    return { ok: true };
+  });
+}
+
 export type DeleteResult = { ok: true } | { ok: false; status: number; error: string; detail?: string };
 
 /**

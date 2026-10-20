@@ -144,6 +144,14 @@ export function useTick() {
   });
 }
 
+export function useDeleteCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`/api/cold-calling/campaigns/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useDeleteContact() {
   const qc = useQueryClient();
   return useMutation({
