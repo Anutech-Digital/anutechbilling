@@ -17,11 +17,31 @@ vi.mock("@/lib/queries/bank", () => ({
   useRemoveBankImport: () => ({ mutateAsync, isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
+/* R-1695: chainEffect is the real one unless a test sets `forcedFx` (the amber "chain mel nahi" case). */
+let forcedFx: { before: number; after: number } | null = null;
+vi.mock("@/lib/banking/import-history", async (orig) => {
+  const real = await orig<typeof import("@/lib/banking/import-history")>();
+  return { ...real, chainEffect: (...a: Parameters<typeof real.chainEffect>) => forcedFx ?? real.chainEffect(...a) };
+});
+
+/* jsdom here has no localStorage — a stand-in (the component must also work without one). */
+const store = new Map<string, string>();
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    get length() { return store.size; },
+  } as Storage,
+});
 
 import { BankImportsSection } from "./bank-imports-section";
 
 afterEach(cleanup);
-beforeEach(() => { mutateAsync.mockReset(); mutateAsync.mockResolvedValue({ removed: 2 }); });
+beforeEach(() => { mutateAsync.mockReset(); mutateAsync.mockResolvedValue({ removed: 2 }); forcedFx = null; store.clear(); });
 
 const row = (over: Partial<BankImportRow>): BankImportRow => ({
   kind: "batch", batch_id: null, legacy_from: null, legacy_to: null, file_name: null, source: "pdf",
@@ -55,27 +75,116 @@ function renderSection(role = "owner", ls = lines, onUnreconcileLine = vi.fn()) 
   return { onUnreconcileLine };
 }
 
-describe("Imports list", () => {
-  it("lists every import newest first — file, source, lines, who, dates; an old import by its insert time; a removed one with why", () => {
+/** The "Dikhao / Chhupao" toggle of the whole card. */
+const mainToggle = () => screen.getByRole("button", { name: /^(Dikhao|Chhupao)$/ });
+function expand() { fireEvent.click(screen.getByRole("button", { name: /^Dikhao$/ })); }
+
+describe("R-1695 — compact Imports card", () => {
+  it("starts collapsed: one summary line with chalu / hataye counts and the latest import; no rows", () => {
     history = [pdf, removed, old];
     renderSection();
+    const summary = screen.getByTestId("imports-summary");
+    expect(summary.textContent).toContain("2 chalu");
+    expect(summary.textContent).toContain("1 hataye");
+    expect(summary.textContent).toContain("aakhri: 19 Oct 2026");
+    expect(summary.textContent).toContain("HDFC Aug.pdf");
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
+  });
+
+  it("the latest import with no file name shows as 'Purana import'", () => {
+    history = [old];
+    renderSection();
+    expect(screen.getByTestId("imports-summary").textContent).toContain("Purana import");
+  });
+
+  it("aria-expanded follows the toggle, and the choice is remembered for the next visit", () => {
+    history = [pdf];
+    renderSection();
+    expand();
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(mainToggle().textContent).toBe("Chhupao");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    cleanup();
+    renderSection();
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(mainToggle());
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("an active import whose chain does not match starts the card open, with the warning in the summary and under its row", () => {
+    history = [pdf, old];
+    forcedFx = { before: 5000, after: 0 };
+    renderSection();
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("imports-summary").textContent).toMatch(/chain mel nahi/);
+    expect(screen.getAllByText(/balance chain baaki lines se mel nahi khaati/).length).toBeGreaterThan(0);
+  });
+
+  it("expanded shows ACTIVE imports only, newest first, one row each with date, source, file, lines, range and its remove button", () => {
+    history = [old, removed, pdf];
+    renderSection();
+    expand();
     const items = screen.getAllByRole("listitem");
-    expect(items).toHaveLength(3);
+    expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain("HDFC Aug.pdf");
     expect(items[0].textContent).toContain("PDF");
     expect(items[0].textContent).toContain("2 lines");
-    expect(items[0].textContent).toContain("Pardeep");
     expect(items[0].textContent).toContain("1 Aug 2026 – 31 Aug 2026");
-    expect(items[2].textContent).toContain("Purana import");
-    expect(items[2].textContent).toContain("17 Oct 2026");
-    expect(items[1].textContent).toContain("Hataya");
-    expect(items[1].textContent).toContain("dobara chadh gaya");
-    expect(within(items[1]).queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
+    expect(within(items[0]).getByText("HDFC Aug.pdf").getAttribute("title")).toContain("Pardeep");
+    expect(within(items[0]).getByRole("button", { name: /Ye import hatao/ })).toBeTruthy();
+    expect(items[1].textContent).toContain("Purana import");
+    expect(items[1].textContent).toContain("17 Oct 2026");
+    expect(screen.queryByText(/galat\.csv/)).toBeNull();
   });
 
+  it("shows 5 active imports, then 'Aur N dikhao' for the rest", () => {
+    history = Array.from({ length: 7 }, (_, i) => row({ batch_id: `b${i}`, file_name: `f${i}.pdf`, line_count: 1,
+      imported_at: `2026-10-${String(10 + i).padStart(2, "0")}T06:00:00+00:00` }));
+    renderSection();
+    expand();
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.getAllByRole("listitem")[0].textContent).toContain("f6.pdf");
+    fireEvent.click(screen.getByRole("button", { name: "Aur 2 dikhao" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(7);
+  });
+
+  it("removed imports sit behind their own 'Hataye gaye (M)' toggle — grey, one line with when / who / why, no remove button", () => {
+    history = [pdf, removed];
+    renderSection();
+    expand();
+    const t = screen.getByRole("button", { name: "Hataye gaye (1)" });
+    expect(t.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/dobara chadh gaya/)).toBeNull();
+    fireEvent.click(t);
+    expect(t.getAttribute("aria-expanded")).toBe("true");
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    const gone = items[1];
+    expect(gone.textContent).toContain("galat.csv");
+    expect(gone.textContent).toContain("5 lines thi");
+    expect(gone.textContent).toContain("Hataya 18 Oct 2026");
+    expect(gone.textContent).toContain("Pardeep");
+    expect(gone.textContent).toContain("dobara chadh gaya");
+    expect(within(gone).queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
+  });
+
+  it("renders fine when localStorage throws", () => {
+    const spy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    history = [pdf];
+    renderSection();
+    expect(mainToggle().getAttribute("aria-expanded")).toBe("false");
+    spy.mockRestore();
+  });
+});
+
+describe("Imports list", () => {
   it("a sales login sees the list but is told only owner / accountant can remove", () => {
     history = [pdf];
     renderSection("sales");
+    expand();
     expect(screen.queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
     expect(screen.getByText(/sirf owner ya accountant/)).toBeTruthy();
   });
@@ -85,6 +194,7 @@ describe("Ye import hatao", () => {
   it("asks for a reason, then sends exactly that old import's insert-time range", async () => {
     history = [old];
     renderSection("accountant");
+    expand();
     fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("2 lines");
@@ -104,6 +214,7 @@ describe("Ye import hatao", () => {
     history = [pdf];
     const ls = [txn("p1", { import_batch_id: "b1", matched_to_type: "expense", debit: 4500 }), txn("p2", { import_batch_id: "b1" })];
     const { onUnreconcileLine } = renderSection("owner", ls);
+    expand();
     fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("Ye 1 lines reconcile hain — pehle Un-reconcile karo");
@@ -117,6 +228,7 @@ describe("Ye import hatao", () => {
     history = [pdf];
     mutateAsync.mockRejectedValueOnce({ message: "Is import ki 2 lines (pehli 02 Aug 2026 ki) band books me hain — books 31 Aug 2026 tak lock hain. Owner Accounting → Month-end close par lock kholein, phir import hatao." });
     renderSection();
+    expand();
     fireEvent.click(screen.getByRole("button", { name: /Ye import hatao/ }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText(/Kyun hata rahe ho/), { target: { value: "galat file" } });
