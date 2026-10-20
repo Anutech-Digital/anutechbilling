@@ -58,6 +58,7 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { RecordQuotePaymentDialog } from "./record-quote-payment";
+import { DuesPayButton, duesPaymentRoute, useDuesQuoteLinks } from "./dues-pay";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { PaymentRefundButton, usePaymentRefundFlow } from "@/components/features/payments/payment-refund";
 import {
@@ -142,6 +143,9 @@ function PaymentsPageInner() {
   const { data: projectPayments } = useAllProjectPayments();
   const { data: quotes } = useQuotes();
   const { data: outstanding } = useOutstandingReceivables();
+  /* R-1697: each dues row's own quote / renewal quote, so a row with no customer quote still
+     gets "Record payment" through the same record_payment path. */
+  const { data: duesQuoteLinks } = useDuesQuoteLinks((outstanding ?? []).map((o) => o.subscription_id));
   const { data: customers } = useCustomers();
   const { data: bankAccounts } = useBankAccounts();
   const { data: me } = useCurrentUser();
@@ -461,7 +465,7 @@ function PaymentsPageInner() {
 
             {/* Mobile card list — phones only. The desktop table's advanced
                 money ops (suspend / write-off) stay desktop-only; mobile keeps
-                the safe primary action (Record payment → the quote). */}
+                the safe primary action (Record payment → the quote, R-1697). */}
             <ul className="md:hidden space-y-2">
               {outstanding.map((o) => {
                 const ageKind =
@@ -504,10 +508,8 @@ function PaymentsPageInner() {
                         <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot>{o.days_outstanding}d</Badge>
                         <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
                       </div>
-                      {o.quote_id && canWrite && (
-                        <Button size="sm" variant="primary" icon="rupee" onClick={() => setPayQuoteId(o.quote_id)}>
-                          Record payment
-                        </Button>
+                      {canWrite && (
+                        <DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />
                       )}
                     </div>
                   </li>
@@ -557,7 +559,7 @@ function PaymentsPageInner() {
                           writeOffSub.mutate({ id: o.subscription_id, reason });
                         }
                       }}
-                      onRecordPayment={o.quote_id ? () => setPayQuoteId(o.quote_id) : null}
+                      payButton={<DuesPayButton route={duesPaymentRoute(o, duesQuoteLinks?.get(o.subscription_id))} onRecord={setPayQuoteId} />}
                       readOnly={!canWrite}
                     />
                   ))}
@@ -936,7 +938,7 @@ function OutstandingRowView({
   onSuspend,
   onResume,
   onWriteOff,
-  onRecordPayment,
+  payButton,
   readOnly = false,
 }: {
   o: OutstandingRow;
@@ -946,8 +948,9 @@ function OutstandingRowView({
   onSuspend:  () => void;
   onResume:   () => void;
   onWriteOff: () => void;
-  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open). */
-  onRecordPayment: (() => void) | null;
+  /** R-237: opens the payment dialog on this page (was a /quotes link billing could not open).
+      R-1697: "Record payment" on every row — DuesPayButton picks the quote or says why not. */
+  payButton: React.ReactNode;
 }) {
   const aging =
     o.days_outstanding <= 7   ? "fresh" :
@@ -984,11 +987,7 @@ function OutstandingRowView({
       <td className="p-2 text-right">
         {readOnly ? <span className="text-2xs text-ink-3">View only</span> : (
         <div className="flex justify-end gap-1 flex-wrap">
-          {onRecordPayment && (
-            <Button size="sm" variant="primary" icon="rupee" onClick={onRecordPayment}>
-              Pay
-            </Button>
-          )}
+          {payButton}
           <Button size="sm" icon="mail" onClick={onReminder}>
             Remind
           </Button>
