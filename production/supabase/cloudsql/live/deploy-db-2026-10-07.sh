@@ -169,6 +169,7 @@ MIGS=(
   "r1682partialrefund|20261019132853_r1682_partial_credit_refund.sql|resellersos_migration|to_regprocedure('public.refund_credit_note_credit(uuid,integer,text)') is not null"
   "r1686invoicenowsubs|20261019162652_r1686_invoice_now_files_subscriptions.sql|resellersos_migration|to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') is not null and to_regprocedure('public.quote_open_balance(text)') is not null"
   "r1688onetimeline|20261019164713_r1688_one_time_line_never_a_subscription.sql|resellersos_migration|to_regprocedure('public.quote_line_is_subscription(jsonb,uuid,boolean)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1688%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.activate_quote_on_credit(text,integer,boolean,text)') and prosrc like '%R-1688%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.file_invoiced_quote_subscriptions(text,integer)') and prosrc like '%R-1688%')"
+  "r1623imports|20261020050000_r1623_bank_import_batches.sql|resellersos_migration|to_regclass('public.bank_import_batches') is not null and to_regprocedure('public.remove_bank_import(uuid,uuid,text,text,text)') is not null and to_regprocedure('public.import_bank_statement(uuid,jsonb,text,text)') is not null and to_regprocedure('public.bank_import_history(uuid)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

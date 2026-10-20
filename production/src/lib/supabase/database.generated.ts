@@ -2234,6 +2234,93 @@ export type Database = {
           },
         ]
       }
+      bank_import_batches: {
+        Row: {
+          bank_account_id: string
+          created_at: string
+          created_by: string | null
+          file_name: string | null
+          id: string
+          line_count: number
+          remove_reason: string | null
+          removed_at: string | null
+          removed_by: string | null
+          removed_lines: number | null
+          source: string
+          tenant_id: string
+          txn_from: string | null
+          txn_to: string | null
+        }
+        Insert: {
+          bank_account_id: string
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          id?: string
+          line_count?: number
+          remove_reason?: string | null
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_lines?: number | null
+          source: string
+          tenant_id: string
+          txn_from?: string | null
+          txn_to?: string | null
+        }
+        Update: {
+          bank_account_id?: string
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          id?: string
+          line_count?: number
+          remove_reason?: string | null
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_lines?: number | null
+          source?: string
+          tenant_id?: string
+          txn_from?: string | null
+          txn_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_import_batches_bank_account_id_fkey"
+            columns: ["bank_account_id"]
+            isOneToOne: false
+            referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_batches_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_batches_removed_by_fkey"
+            columns: ["removed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transactions: {
         Row: {
           balance_after: number | null
@@ -2246,6 +2333,7 @@ export type Database = {
           debit: number
           description: string
           id: string
+          import_batch_id: string | null
           imported_at: string
           match_confidence: string | null
           matched_at: string | null
@@ -2269,6 +2357,7 @@ export type Database = {
           debit?: number
           description: string
           id?: string
+          import_batch_id?: string | null
           imported_at?: string
           match_confidence?: string | null
           matched_at?: string | null
@@ -2292,6 +2381,7 @@ export type Database = {
           debit?: number
           description?: string
           id?: string
+          import_batch_id?: string | null
           imported_at?: string
           match_confidence?: string | null
           matched_at?: string | null
@@ -2310,6 +2400,13 @@ export type Database = {
             columns: ["bank_account_id"]
             isOneToOne: false
             referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transactions_import_batch_id_fkey"
+            columns: ["import_batch_id"]
+            isOneToOne: false
+            referencedRelation: "bank_import_batches"
             referencedColumns: ["id"]
           },
           {
@@ -14256,6 +14353,29 @@ export type Database = {
         Args: { p_account_id: string }
         Returns: number
       }
+      bank_import_history: {
+        Args: { p_account_id: string }
+        Returns: {
+          batch_id: string
+          file_name: string
+          first_balance: number
+          imported_at: string
+          imported_by: string
+          kind: string
+          last_balance: number
+          legacy_from: string
+          legacy_to: string
+          line_count: number
+          reconciled_count: number
+          remove_reason: string
+          removed_at: string
+          removed_by: string
+          removed_lines: number
+          source: string
+          txn_from: string
+          txn_to: string
+        }[]
+      }
       bill_late_charges: {
         Args: {
           p_fee: number
@@ -14741,6 +14861,15 @@ export type Database = {
       }
       guard_backup_owner_only: { Args: never; Returns: undefined }
       hierarchy_sees_all: { Args: never; Returns: boolean }
+      import_bank_statement: {
+        Args: {
+          p_account_id: string
+          p_file_name?: string
+          p_rows: Json
+          p_source?: string
+        }
+        Returns: Json
+      }
       import_indiamart_lead: {
         Args: {
           p_company: string
@@ -15203,6 +15332,7 @@ export type Database = {
           debit: number
           description: string
           id: string
+          import_batch_id: string | null
           imported_at: string
           match_confidence: string | null
           matched_at: string | null
@@ -15481,6 +15611,16 @@ export type Database = {
       reject_expense_claim: {
         Args: { p_claim_id: string; p_reason?: string }
         Returns: undefined
+      }
+      remove_bank_import: {
+        Args: {
+          p_account_id: string
+          p_batch_id: string
+          p_legacy_from: string
+          p_legacy_to: string
+          p_reason: string
+        }
+        Returns: Json
       }
       reopen_quote: { Args: { p_quote_id: string }; Returns: undefined }
       report_balance_sheet: {
