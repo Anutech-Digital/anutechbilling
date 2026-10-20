@@ -18,7 +18,7 @@ import { bolnaReasons, normalisePostCall } from "@/lib/telecall/inbound";
 import { fetchBolnaExecution, placeCall, type TelecallProviderConfig } from "@/lib/telecall/provider";
 import type { ItemPrices } from "@/lib/supabase/database.types";
 import {
-  canCallNow, istDayStart, nextWorkingDayAt, outcomeFromCall,
+  canCallNow, istDayStart, nextWorkingDayAt, outcomeFromCall, staleCallAction, NO_RESULT_GIVE_UP_MINUTES,
   type CallingListRow, type ColdCallStatus, type SkippedNumber,
 } from "@/lib/coldcall/coldcall";
 import { normaliseIndianPhone } from "@/lib/ai/telecall";
@@ -226,6 +226,11 @@ export async function importContacts(
     });
     report.added = created.count;
     report.dnd = fresh.filter((x) => x.dnd).length;
+    /* New numbers on a finished campaign: it was "done" with no Start button, so they could
+       never be called. Paused instead — the person presses Start again. */
+    if (fresh.some((x) => !x.dnd) && created.count > 0) {
+      await tx.cold_call_campaigns.updateMany({ where: { id: campaignId, status: "done" }, data: { status: "paused", updated_at: new Date() } });
+    }
     return report;
   });
 }
@@ -282,6 +287,9 @@ export async function moveToPipeline(run: Run, tenantId: string, userId: string,
     const c = await tx.cold_call_contacts.findUnique({ where: { id: contactId } });
     if (!c) return { ok: false, status: 404, error: "That number is not on your list any more — refresh the page." };
     if (c.lead_id) return { ok: false, status: 409, error: "Already in Sales & Pipeline.", leadId: c.lead_id };
+    if (!["interested", "callback", "answered"].includes(c.status)) {
+      return { ok: false, status: 409, error: "Only people who talked to the agent can be moved — this one has not." };
+    }
 
     const now = new Date();
     const who = c.name?.trim() || c.company?.trim() || c.phone;
@@ -393,6 +401,29 @@ export async function runCampaignTick(
 ): Promise<TickReport> {
   const report: TickReport = { checked: 0, finished: 0, placed: 0, failed: 0, note: null };
 
+  /* 0. Rows stuck on "calling" (20 Oct review): a row claimed by a tick that stopped before
+     the call went out has no call id and was never polled — it sat "Calling now" for ever and
+     the campaign could never finish. Back in the queue; and a placed call the agent never
+     reported on is given up after a while, so nobody waits on it. */
+  const stuck = await run((tx) => tx.cold_call_contacts.findMany({
+    where: { campaign_id: campaignId, status: "calling" },
+    select: { id: true, provider_call_id: true, last_called_at: true },
+  }));
+  for (const s of stuck) {
+    const action = staleCallAction({ providerCallId: s.provider_call_id, lastCalledAt: s.last_called_at }, now);
+    if (action === "requeue") {
+      await run((tx) => tx.cold_call_contacts.updateMany({
+        where: { id: s.id, status: "calling", provider_call_id: null },
+        data: { status: "pending", updated_at: now },
+      }));
+    } else if (action === "give_up") {
+      await run((tx) => tx.cold_call_contacts.updateMany({
+        where: { id: s.id, status: "calling" },
+        data: { status: "failed", error: `No result from the agent ${NO_RESULT_GIVE_UP_MINUTES} minutes after the call.`, updated_at: now },
+      }));
+    }
+  }
+
   /* 1. Results. Bolna is asked directly, so this works where its webhook cannot reach. */
   const inFlight = await run((tx) => tx.cold_call_contacts.findMany({
     where: { campaign_id: campaignId, status: "calling", provider_call_id: { not: null } },
@@ -450,15 +481,20 @@ export async function runCampaignTick(
       orderBy: { created_at: "asc" },
       take: room,
     });
-    /* Claimed in the same transaction: a second tick running at the same moment sees them as
-       "calling" and leaves them alone, so nobody is rung twice. */
-    const claimed = await tx.cold_call_contacts.updateMany({
-      where: { id: { in: rows.map((r) => r.id) }, status: "pending" },
-      data: { status: "calling", last_called_at: now, updated_at: now, error: null },
-    });
+    /* Claimed one by one: a second tick running at the same moment sees a row as "calling" and
+       leaves it alone, so nobody is rung twice — and a row this tick claimed is always one it
+       rings (an all-or-nothing claim used to strand the claimed ones when another tick won one). */
+    const mine: typeof rows = [];
+    for (const r of rows) {
+      const claimed = await tx.cold_call_contacts.updateMany({
+        where: { id: r.id, status: "pending" },
+        data: { status: "calling", last_called_at: now, updated_at: now, error: null },
+      });
+      if (claimed.count === 1) mine.push(r);
+    }
     const tenant = await tx.tenants.findUnique({ where: { id: tenantId }, select: { name: true } });
     return {
-      due: claimed.count === rows.length ? rows : [],
+      due: mine,
       catalogue: catalogueFromRows(await loadCatalogue(tx, campaignProduct(campaignId, tx))),
       sellerName: tenant?.name?.trim() || "our team",
     };

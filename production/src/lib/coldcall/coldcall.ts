@@ -200,3 +200,20 @@ export interface SkippedNumber {
   reason: string;
   leadId?: string | null;
 }
+
+/** A claimed row that never got a call id (the server stopped mid-tick) goes back after this. */
+export const UNPLACED_RESET_MINUTES = 10;
+/** A placed call with no final result from the agent by now is given up on. */
+export const NO_RESULT_GIVE_UP_MINUTES = 45;
+
+/**
+ * A row stuck on "calling": put it back in the queue (never rung), give up on it (rung, but the
+ * agent never reported), or leave it (still inside the normal call time).
+ */
+export function staleCallAction(
+  row: { providerCallId: string | null; lastCalledAt: Date | null }, now: Date,
+): "requeue" | "give_up" | "wait" {
+  const since = row.lastCalledAt ? (now.getTime() - row.lastCalledAt.getTime()) / 60_000 : Infinity;
+  if (!row.providerCallId) return since >= UNPLACED_RESET_MINUTES ? "requeue" : "wait";
+  return since >= NO_RESULT_GIVE_UP_MINUTES ? "give_up" : "wait";
+}

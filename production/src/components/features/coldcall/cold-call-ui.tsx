@@ -291,6 +291,10 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const toMove = countOf(campaign, ["interested", "callback"]);
   const running = campaign.status === "running";
   const started = campaign.status !== "draft";
+  /* "Finished" only means something while nothing is left; numbers added or put back later
+     make it startable again. */
+  const finished = campaign.status === "done" && countOf(campaign, ["pending", "calling"]) === 0;
+  const shownStatus: ColdCampaign["status"] = campaign.status === "done" && !finished ? "paused" : campaign.status;
 
   const setStatus = async (status: "running" | "paused" | "done") => {
     try {
@@ -334,7 +338,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="font-serif text-2xl leading-tight truncate">{campaign.name}</h2>
-            <Badge kind={CAMPAIGN_STATUS[campaign.status].kind} dot={running}>{CAMPAIGN_STATUS[campaign.status].label}</Badge>
+            <Badge kind={CAMPAIGN_STATUS[shownStatus].kind} dot={running}>{CAMPAIGN_STATUS[shownStatus].label}</Badge>
           </div>
           <p className="text-sm text-ink-3 mt-1">
             Product <strong className="text-ink font-medium">{campaign.productName ?? "Any"}</strong>
@@ -372,11 +376,11 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
           </div>
         </Step>
 
-        <Step n={2} title="Start calling" done={started && !running && campaign.status === "done"} active={numbers > 0 && !running && campaign.status !== "done"}>
+        <Step n={2} title="Start calling" done={finished} active={numbers > 0 && !running && !finished}>
           <p className="text-sm text-ink-3">
             {running
               ? <>On. See <strong className="text-ink">Live status</strong> above for who is being called now.</>
-              : campaign.status === "done"
+              : finished
                 ? <>Every number on the list has been called.</>
                 : campaign.status === "paused"
                   ? <>Paused. No calls go out until you press Start.</>
@@ -385,12 +389,12 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
           <div className="flex gap-2 flex-wrap mt-auto">
             {running ? (
               <Button size="sm" icon="square" onClick={() => setStatus("paused")} loading={update.isPending}>Pause</Button>
-            ) : campaign.status !== "done" ? (
+            ) : !finished ? (
               numbers === 0 ? (
                 <p className="text-xs text-ink-3">Add numbers first (step 1).</p>
               ) : (
                 <Button size="sm" variant="primary" icon="play" onClick={() => setStatus("running")} loading={update.isPending}>
-                  {campaign.status === "paused" ? "Start again" : "Start calling"}
+                  {campaign.status === "draft" ? "Start calling" : "Start again"}
                 </Button>
               )
             ) : null}
@@ -601,7 +605,9 @@ export function LiveStatus({ campaign, lastCheck }: {
     tone = "live"; headline = `Reading ${calling} call ${calling === 1 ? "result" : "results"}…`; detail = "Press Refresh results if it does not update in a minute.";
   } else if (campaign.status === "paused") {
     tone = "stop"; headline = "Paused — no calls are going out."; detail = "Press Start again to continue.";
-  } else if (campaign.status === "done" || (pending === 0 && calling === 0)) {
+  } else if (campaign.status !== "running" && calling === 0 && pending > 0) {
+    tone = "stop"; headline = `${pending} ${pending === 1 ? "number is" : "numbers are"} waiting — calling is off.`; detail = "Press Start again to call them.";
+  } else if (pending === 0 && calling === 0) {
     tone = "stop"; headline = "Finished — every number has been called."; detail = "Add more numbers to call again.";
   } else if (calling > 0) {
     tone = "live";

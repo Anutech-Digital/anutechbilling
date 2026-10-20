@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PostCallSignals } from "@/lib/ai/telecall";
-import { canCallNow, istDayStart, MAX_ATTEMPTS, nextWorkingDayAt, outcomeFromCall, parseCallingList } from "./coldcall";
+import { canCallNow, istDayStart, MAX_ATTEMPTS, nextWorkingDayAt, outcomeFromCall, parseCallingList, staleCallAction } from "./coldcall";
 
 describe("parseCallingList", () => {
   it("reads phone, name, company, city and DND; normalises numbers to +91", () => {
@@ -89,5 +89,18 @@ describe("nextWorkingDayAt", () => {
     // Sat 24 Oct 2026 20:00 UTC = Sun 01:30 IST
     const d = nextWorkingDayAt(new Date("2026-10-24T20:00:00Z"), 11);
     expect(d.toISOString()).toBe("2026-10-26T05:30:00.000Z");
+  });
+});
+
+describe("staleCallAction — rows stuck on 'calling'", () => {
+  const now = new Date("2026-10-20T08:00:00Z");
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+  it("claimed but never placed (server stopped mid-tick) → back in the queue after 10 min", () => {
+    expect(staleCallAction({ providerCallId: null, lastCalledAt: ago(5) }, now)).toBe("wait");
+    expect(staleCallAction({ providerCallId: null, lastCalledAt: ago(11) }, now)).toBe("requeue");
+  });
+  it("placed but the agent never reported → given up after 45 min", () => {
+    expect(staleCallAction({ providerCallId: "x", lastCalledAt: ago(30) }, now)).toBe("wait");
+    expect(staleCallAction({ providerCallId: "x", lastCalledAt: ago(46) }, now)).toBe("give_up");
   });
 });
