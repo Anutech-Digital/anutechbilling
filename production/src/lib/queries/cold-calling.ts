@@ -184,6 +184,14 @@ export function useDeleteContact() {
   });
 }
 
+export function useCallNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (contactId: string) => api<{ ok: true }>(`/api/cold-calling/contacts/${contactId}/call`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useMoveToPipeline() {
   const qc = useQueryClient();
   return useMutation({

@@ -18,7 +18,7 @@ import { bolnaReasons, normalisePostCall } from "@/lib/telecall/inbound";
 import { fetchBolnaExecution, placeCall, type TelecallProviderConfig } from "@/lib/telecall/provider";
 import type { ItemPrices } from "@/lib/supabase/database.types";
 import {
-  canCallNow, istDayStart, nextWorkingDayAt, notReachedReason, outcomeFromCall, staleCallAction, NO_RESULT_GIVE_UP_MINUTES,
+  canCallNow, istClock, istDayStart, nextWorkingDayAt, notReachedReason, outcomeFromCall, staleCallAction, NO_RESULT_GIVE_UP_MINUTES,
   type CallingListRow, type ColdCallStatus, type SkippedNumber,
 } from "@/lib/coldcall/coldcall";
 import { normaliseIndianPhone } from "@/lib/ai/telecall";
@@ -643,6 +643,73 @@ export async function runCampaignTick(
     if (placed.ok) report.placed++; else report.failed++;
   }
   return report;
+}
+
+export type CallNowResult = { ok: true } | { ok: false; status: number; error: string; detail?: string };
+
+/**
+ * "Call now" (Abhishek, 21 Oct 2026): a person rings one number with the agent straight away —
+ * outside the campaign's schedule, beyond the two-try rule. Still never a DND number, never
+ * outside 9 am–9 pm IST, never past the AI kill switch, and never while another call of this
+ * campaign is on the line.
+ */
+export async function callContactNow(
+  run: Run, tenantId: string, contactId: string, config: TelecallProviderConfig, now: Date,
+): Promise<CallNowResult> {
+  const c = await run((tx) => tx.cold_call_contacts.findUnique({ where: { id: contactId } }));
+  if (!c) return { ok: false, status: 404, error: "That number is not on the list any more.", detail: "Refresh the page." };
+  if (c.dnd || c.status === "skipped_dnd") {
+    return { ok: false, status: 409, error: "This number is marked DND.", detail: "DND numbers are never called by the agent." };
+  }
+  if (c.status === "moved" && c.lead_id) {
+    return { ok: false, status: 409, error: "This person is already a lead.", detail: "Open the lead in Sales & Pipeline and use its AI call button." };
+  }
+  if (c.status === "calling") return { ok: false, status: 409, error: "This number is on a call right now." };
+  const hour = istClock(now).hour;
+  if (hour < 9 || hour >= 21) {
+    return { ok: false, status: 409, error: "Calls are allowed only between 9 am and 9 pm.", detail: "Try again in calling hours." };
+  }
+  const verdict = resolveAutonomy("telecall.place", await loadAutonomyPolicy(tenantId));
+  if (verdict.mode === "off") return { ok: false, status: 409, error: "AI calls are switched off.", detail: verdict.reason };
+
+  const campaign = await run((tx) => tx.cold_call_campaigns.findUnique({ where: { id: c.campaign_id } }));
+  if (!campaign) return { ok: false, status: 404, error: "That campaign is not here any more." };
+  const onLine = await run((tx) => tx.cold_call_contacts.count({ where: { campaign_id: c.campaign_id, status: "calling" } }));
+  if (onLine > 0) {
+    return { ok: false, status: 409, error: "Another call of this campaign is going on.", detail: "Press Call now again in a minute." };
+  }
+
+  const claimed = await run((tx) => tx.cold_call_contacts.updateMany({
+    where: { id: contactId, status: c.status },
+    data: { status: "calling", last_called_at: now, next_attempt_at: null, provider_call_id: null, error: null, updated_at: now },
+  }));
+  if (claimed.count !== 1) return { ok: false, status: 409, error: "Somebody else just started a call to this number." };
+
+  const { catalogue, sellerName } = await run(async (tx) => {
+    const tenant = await tx.tenants.findUnique({ where: { id: tenantId }, select: { name: true } });
+    return {
+      catalogue: catalogueFromRows(await loadCatalogue(tx, campaignProduct(c.campaign_id, tx))),
+      sellerName: tenant?.name?.trim() || "our team",
+    };
+  });
+  const built = buildTelecallPrompt({
+    callType: "lead_qualification", sellerName, customerName: c.name, currentPlan: null, seats: null,
+    renewalDate: null, pendingAmount: null, catalogue,
+    coldCall: { product: campaign.product_name, callback: c.status === "callback" },
+  });
+  const placed = await placeCall({ ...config, agentId: campaign.agent_id }, {
+    toNumber: c.phone,
+    systemPrompt: built.systemPrompt,
+    dynamicVariables: { ...built.dynamicVariables } as unknown as Record<string, string>,
+    metadata: { tenant_id: tenantId, cold_call_contact_id: c.id, call_type: "cold_call" },
+  });
+  await run((tx) => tx.cold_call_contacts.update({
+    where: { id: contactId },
+    data: placed.ok
+      ? { provider_call_id: placed.providerCallId, attempts: { increment: 1 }, updated_at: new Date() }
+      : { status: "failed", error: placed.error.slice(0, 500), attempts: { increment: 1 }, updated_at: new Date() },
+  }));
+  return placed.ok ? { ok: true } : { ok: false, status: 502, error: "The call could not be placed.", detail: placed.error.slice(0, 200) };
 }
 
 export function isColdCallStatus(s: string): s is ColdCallStatus {

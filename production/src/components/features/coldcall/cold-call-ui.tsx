@@ -31,7 +31,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { canCallNow } from "@/lib/coldcall/coldcall";
 import {
   ColdCallError, useColdContacts, useColdProducts, useCreateCampaign, useImportList,
-  useDeleteContact, useDeleteContacts, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
+  useCallNow, useDeleteContact, useDeleteContacts, useMoveToPipeline, useTick, useUpdateCampaign, type ColdCampaign, type ColdContact, type ImportResult, type SkippedNumber,
 } from "@/lib/queries/cold-calling";
 
 type BadgeKind = "muted" | "success" | "warning" | "danger" | "info" | "outline";
@@ -849,6 +849,14 @@ export function ContactItem({ contact: c, picked, onPick }: {
   const [open, setOpen] = React.useState(false);
   const move = useMoveToPipeline();
   const del = useDeleteContact();
+  const callNow = useCallNow();
+  const canCallNow = !["calling", "moved", "skipped_dnd"].includes(c.status);
+  const doCallNow = async () => {
+    try {
+      await callNow.mutateAsync(c.id);
+      toast.success(`Calling ${title} now`, { description: "The result shows up here a minute or two after the call ends." });
+    } catch (err) { failToast(err, "Could not start the call."); }
+  };
   const [confirming, setConfirming] = React.useState(false);
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
@@ -896,7 +904,10 @@ export function ContactItem({ contact: c, picked, onPick }: {
             <span className="font-medium">{title}</span>
             {c.company && c.name && <span className="text-ink-3"> · {c.company}</span>}
           </p>
-          <p className="text-xs text-ink-3 font-mono truncate">{c.phone}{c.city ? ` · ${c.city}` : ""}</p>
+          <p className="text-xs text-ink-3 font-mono truncate">
+            <a href={`tel:${c.phone}`} className="hover:text-amber hover:underline" title="Call this number yourself">{c.phone}</a>
+            {c.city ? ` · ${c.city}` : ""}
+          </p>
           {!open && (c.reasons[0]
             ? <p className="text-xs text-ink-2 mt-1 line-clamp-1"><span className="text-ink-3">Why: </span>{c.reasons[0]}</p>
             : c.summary && <p className="text-xs text-ink-2 mt-1 line-clamp-1">“{c.summary}”</p>)}
@@ -921,6 +932,12 @@ export function ContactItem({ contact: c, picked, onPick }: {
           {hasDetail && (
             <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
               {open ? "Hide call" : "See call"}
+            </Button>
+          )}
+          {canCallNow && (
+            <Button size="sm" variant="ghost" icon="phone" onClick={doCallNow} loading={callNow.isPending}
+              title="The AI agent calls this number right now">
+              Call now
             </Button>
           )}
           {MOVABLE.has(c.status) && (
