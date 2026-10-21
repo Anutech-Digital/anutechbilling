@@ -51,7 +51,12 @@ describe("R-237 no unguarded quote link on billing screens", () => {
     const src = readFileSync(join(SRC, "app/(app)/payments/page.tsx"), "utf8");
     expect(src).not.toMatch(/recordPaymentHref/);
     expect(src).toMatch(/<RecordQuotePaymentDialog/);
-    expect(src).toMatch(/onRecordPayment=\{o\.quote_id \? \(\) => setPayQuoteId\(o\.quote_id\)/);
+    // R-1697: both dues layouts (table + phone cards) go through DuesPayButton, which hands the
+    // chosen quote to the same in-page dialog (setPayQuoteId) — never a link to /quotes/<id>.
+    expect(src.match(/<DuesPayButton route=\{duesPaymentRoute\(o, [^\n]*? onRecord=\{setPayQuoteId\} \/>/g)?.length).toBe(2);
+    const btn = readFileSync(join(SRC, "app/(app)/payments/dues-pay.tsx"), "utf8");
+    expect(btn).toMatch(/onClick=\{route\.kind === "quote" \? \(\) => onRecord\(route\.quoteId\)/);
+    expect(btn).not.toMatch(/\/quotes\//);
   });
 
   it("/invoices/<id> has its own Record payment", () => {
