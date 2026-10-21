@@ -34,7 +34,18 @@ function fakeQuery(table: string) {
   return q;
 }
 
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: (t: string) => fakeQuery(t) }) }));
+/* R-1718: quote_open_balances() answered from db.open_balances (absent = the read fails). */
+vi.mock("@/lib/supabase/client", () => ({
+  createClient: () => ({
+    from: (t: string) => fakeQuery(t),
+    rpc: (fn: string) => {
+      if (fn !== "quote_open_balances" || !db.open_balances) {
+        return { order: () => ({ range: () => Promise.resolve({ data: null, error: { message: `no function ${fn}` } }) }) };
+      }
+      return fakeQuery("open_balances");
+    },
+  }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 import { useOutstandingReceivables, type OutstandingRow } from "@/lib/queries/payments";
@@ -114,7 +125,9 @@ describe("R-1701 subscription dues rows are per subscription", () => {
     expect(fresh.started_at.slice(0, 10)).toBe("2026-10-10");
   });
 
-  it("an open renewal quote is the row's quote, and an instalment invoice sets the age", async () => {
+  it("an open renewal quote is the row's quote once its own quote is paid, and an instalment invoice sets the age", async () => {
+    /* R-1718: while its own quote still owes, the row records there (see below). */
+    db.quotes[1] = { ...db.quotes[1], payment_status: "received" };
     db.subscriptions[1] = { ...db.subscriptions[1], renewal_quote_id: "Q-R" };
     db.quotes.push({ id: "Q-R", customer_id: CUST, amount: 9000, payment_status: "pending" });
     db.subscription_billings.push({ id: "b1", subscription_id: "s-new", invoice_id: "INV-I1" });
@@ -140,6 +153,60 @@ describe("R-1701 subscription dues rows are per subscription", () => {
     const fresh = rows.find((r) => r.subscription_id === "s-new")!;
     expect(fresh.quote_id).toBeNull();
     expect(fresh.paid_amount).toBe(0);
+  });
+});
+
+describe("R-1718 Balance due and Record payment read the same quote", () => {
+  /* The local record (21 Oct): R818 Test Co — R818 Second License. Balance due ₹1,180 is its
+     own accepted quote Q-F588-27-0012 (₹1,180, nothing paid). Its renewal link points at a
+     1-year EXTENSION quote Q-F588-27-0015 (₹1,175, only `sent` — an offer, not owed). The row
+     opened the extension quote, so the dialog said "Quote total / Expected ₹1,175" under a
+     ₹1,180 balance — and ₹1,180 recorded there would pay the offer and leave the debt. */
+  function r818() {
+    db = {
+      subscriptions: [sub({
+        id: "s-818", customer_name: "R818 Test Co", plan: "R818 Second License", outstanding_amount: 1180,
+        quote_id: "Q-F588-27-0012", renewal_quote_id: "Q-F588-27-0015",
+        start_date: "2026-10-10", created_at: "2026-10-10T06:00:00Z",
+      })],
+      quotes: [
+        { id: "Q-F588-27-0012", amount: 1180, status: "accepted", payment_status: "awaiting", invoice_id: null, superseded_by: null },
+        { id: "Q-F588-27-0015", amount: 1175, status: "sent", payment_status: "awaiting", invoice_id: null, superseded_by: null },
+      ],
+      payments: [], invoices: [], subscription_billings: [],
+      open_balances: [
+        { quote_id: "Q-F588-27-0012", open_balance: 1180 },
+        { quote_id: "Q-F588-27-0015", open_balance: 1175 },
+      ],
+    };
+  }
+
+  it("the row's quote is the one the balance is owed on — ₹1,180 both places", async () => {
+    r818();
+    const [row] = await readRows();
+    expect(row.quote_id).toBe("Q-F588-27-0012");
+    expect(row.total_quote_amount).toBe(row.outstanding_amount);
+  });
+
+  it("once the own quote is settled (open balance 0, e.g. a credit note), the renewal/extension quote is next", async () => {
+    r818();
+    db.open_balances = [{ quote_id: "Q-F588-27-0012", open_balance: 0 }, { quote_id: "Q-F588-27-0015", open_balance: 1175 }];
+    const [row] = await readRows();
+    expect(row.quote_id).toBe("Q-F588-27-0015");
+  });
+
+  it("an ACCEPTED renewal quote still waits behind the older debt on the own quote (oldest bill first)", async () => {
+    r818();
+    db.quotes[1] = { ...db.quotes[1], status: "accepted" };
+    const [row] = await readRows();
+    expect(row.quote_id).toBe("Q-F588-27-0012");
+  });
+
+  it("without the open-balance read it falls back to amount − received, never to 'nothing owed'", async () => {
+    r818();
+    delete db.open_balances;
+    const [row] = await readRows();
+    expect(row.quote_id).toBe("Q-F588-27-0012");
   });
 });
 

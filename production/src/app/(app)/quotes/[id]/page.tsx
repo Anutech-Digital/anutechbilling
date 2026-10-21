@@ -30,6 +30,8 @@ import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
+import { quotePaymentBadge } from "@/lib/quotes/status-badge";
+import { quoteSentEvent, useQuoteSends } from "@/lib/quotes/sent-event";
 import { staffDisplayNotes } from "@/lib/quotes/customer-notes";
 import { COMPANY_STATE_FIX, companyStateFixFor } from "@/lib/onboarding/setup-links";
 import { createClient } from "@/lib/supabase/client";
@@ -130,6 +132,8 @@ export default function QuoteDetailPage() {
   const router = useRouter();
   const { data: quote, isLoading, error } = useQuote(params.id);
   const { data: paymentHistory } = usePaymentsByQuote(params.id);
+  /* R-1718: the timeline says "Sent to customer" only for an email that really went. */
+  const { data: quoteSends } = useQuoteSends(params.id);
   const { data: customer } = useCustomer(quote?.customer_id ?? undefined);
   // Prospect quotes have no customer yet — fall back to the lead's phone so the
   // WhatsApp recipient still prefills (quotes usually go to that same contact).
@@ -647,7 +651,9 @@ export default function QuoteDetailPage() {
   /* R-448: a replaced quote reads "Replaced", not "Expired". */
   const status = quote.superseded_by ? { kind: "muted" as const, label: "Replaced" } : STATUS_META[quote.status];
   const revise = canReviseQuote(quote, totalReceivedSoFar);
-  const payment = PAYMENT_META[quote.payment_status];
+  /* R-1718: one rule with the list — no "Awaiting payment" on a rejected / expired / replaced quote. */
+  const paymentBadge = quotePaymentBadge(quote);
+  const payment = paymentBadge ? PAYMENT_META[paymentBadge] : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
@@ -868,8 +874,9 @@ export default function QuoteDetailPage() {
       body: `Draft created with ${items.length} line items`,
       time: historyTime(quoteCreatedAt(quote)) },
   ];
-  if (quote.status !== "draft") {
-    events.push({ icon: "send", kind: "indigo", title: "Sent to customer", body: `Quote shared with ${quote.customer_name}`, time: historyTime(quote.updated_at) });
+  const sentEvent = quoteSentEvent(quote, quoteSends);
+  if (sentEvent) {
+    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at ?? quote.updated_at) });
   }
   if (quote.status === "accepted") {
     events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(quote.updated_at) });
@@ -963,7 +970,7 @@ export default function QuoteDetailPage() {
                   <Badge kind="info">Renewal</Badge>
                 </>
               )}
-              {quote.payment_status !== "none" && (
+              {payment && (
                 <>
                   <span>·</span>
                   <Badge kind={payment.kind} dot>{payment.label}</Badge>

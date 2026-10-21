@@ -67,6 +67,30 @@ export function unifiedStatus(q: QuoteStatusFields): { label: string; kind: Quot
   }
 }
 
+/**
+ * R-1718: a quote that is CLOSED — rejected, expired or replaced by a revision — is not waiting
+ * for money. Rejecting leaves payment_status at "awaiting" (Q-F588-27-0031 showed "Rejected"
+ * and "Awaiting payment" side by side), so the payment status is read through this rule.
+ */
+export function isClosedQuote(q: Pick<QuoteStatusFields, "status" | "superseded_by">): boolean {
+  return q.status === "rejected" || q.status === "expired" || !!q.superseded_by;
+}
+
+/**
+ * R-1718: the payment status to show beside the quote's status, or null for none. The ONE rule
+ * for the detail header badge and the list's cash note. "none" is never shown; "awaiting" is
+ * not shown on a closed quote. Money that really came in (partial / received / invoiced) is a
+ * fact and stays visible whatever the status says.
+ */
+export function quotePaymentBadge(
+  q: Pick<QuoteStatusFields, "status" | "payment_status" | "superseded_by">,
+): Exclude<Quote["payment_status"], "none"> | null {
+  const ps = q.payment_status;
+  if (!ps || ps === "none") return null;
+  if (ps === "awaiting" && isClosedQuote(q)) return null;
+  return ps;
+}
+
 export interface QuoteCashNote {
   text: string;
   /** `owed` = real money outstanding (render in rose). `waiting` = nothing received yet. */
@@ -93,8 +117,8 @@ export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
     return { text: `${inr(due)} due`, tone: "owed" };
   }
   if (
-    q.payment_status === "awaiting" ||
-    (q.status === "accepted" && (!q.payment_status || q.payment_status === "none"))
+    quotePaymentBadge(q) === "awaiting" ||
+    (q.status === "accepted" && !q.superseded_by && (!q.payment_status || q.payment_status === "none"))
   ) {
     return { text: "Awaiting payment", tone: "waiting" };
   }

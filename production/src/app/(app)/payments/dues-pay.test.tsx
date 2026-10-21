@@ -30,14 +30,18 @@ describe("duesPaymentRoute", () => {
     expect(duesPaymentRoute(row(), links)).toEqual({ kind: "quote", quoteId: "Q-OWN" });
   });
 
-  it("an open renewal quote comes first — that is what the balance is for", () => {
-    const links = { quoteId: "Q-OWN", quoteStatus: "awaiting", renewalQuoteId: "Q-REN", renewalQuoteStatus: "none" };
-    expect(duesPaymentRoute(row({ quote_id: "Q-OTHER" }), links)).toEqual({ kind: "quote", quoteId: "Q-REN" });
+  /* R-1718: since R-1701 the row's quote_id IS this subscription's quote, picked by the dues
+     list (buildDuesRows) from what is really owed. The button must open that same quote, or
+     "Balance due" and the Record payment dialog read two different bills (₹1,180 vs ₹1,175). */
+  it("the dues row's own quote wins — the same quote its Balance due is owed on", () => {
+    const links = { quoteId: "Q-F588-27-0012", quoteStatus: "awaiting", renewalQuoteId: "Q-F588-27-0015", renewalQuoteStatus: "awaiting" };
+    expect(duesPaymentRoute(row({ quote_id: "Q-F588-27-0012" }), links)).toEqual({ kind: "quote", quoteId: "Q-F588-27-0012" });
   });
 
-  it("the subscription's own quote beats another quote of the same customer", () => {
-    const links = { quoteId: "Q-OWN", quoteStatus: "partial", renewalQuoteId: null, renewalQuoteStatus: null };
-    expect(duesPaymentRoute(row({ quote_id: "Q-OTHER" }), links)).toEqual({ kind: "quote", quoteId: "Q-OWN" });
+  it("no row quote → an open renewal quote, else the own open quote", () => {
+    const links = { quoteId: "Q-OWN", quoteStatus: "awaiting", renewalQuoteId: "Q-REN", renewalQuoteStatus: "none" };
+    expect(duesPaymentRoute(row(), links)).toEqual({ kind: "quote", quoteId: "Q-REN" });
+    expect(duesPaymentRoute(row(), { ...links, renewalQuoteId: null, renewalQuoteStatus: null })).toEqual({ kind: "quote", quoteId: "Q-OWN" });
   });
 
   it("no quote at all (import / Correct details) → blocked with a reason and a link", () => {
