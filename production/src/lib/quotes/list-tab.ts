@@ -28,11 +28,24 @@ export interface ListTabQuote {
   invoice_id?: string | null;
   amount?: number | null;
   payment_amount?: number | null;
+  /** R-1707: quote_open_balance() for this quote (lib/quotes/open-balances.ts). null/absent =
+   *  not loaded → the old amount − payment_amount, never 0. */
+  open_balance?: number | null;
 }
 
-/** Balance still to collect on an invoiced quote (₹, never negative). */
-function invoicedBalance(q: ListTabQuote): number {
+/**
+ * Balance still to collect on a quote (₹, never negative).
+ * R-1707: the database's quote_open_balance when the list has it — it counts credit notes,
+ * refunds and what the invoice itself still says is payable. amount − payment_amount did not:
+ * a refunded, credit-noted #0020 showed "₹38,232 due" and sat in Awaiting payment.
+ */
+export function quoteBalanceDue(q: Pick<ListTabQuote, "amount" | "payment_amount" | "open_balance">): number {
+  if (typeof q.open_balance === "number") return Math.max(0, q.open_balance);
   return Math.max(0, (q.amount ?? 0) - (q.payment_amount ?? 0));
+}
+
+function invoicedBalance(q: ListTabQuote): number {
+  return quoteBalanceDue(q);
 }
 
 export function quoteListTab(q: ListTabQuote): QuoteListTab {

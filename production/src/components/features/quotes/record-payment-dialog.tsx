@@ -1118,25 +1118,6 @@ export function RecordPaymentDialog({
           noValidate
         >
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Customer domain — R-407 / R-444 (1): shown only when the quote makes a subscription,
-              and optional (no "*"): Confirm never blocked on it, so the star was a false promise.
-              Saved to the subscription, the customer and the provisioning task (blanks only). */}
-          {showDomain && (
-            <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
-              <FormField label="Customer domain (optional)" htmlFor="domain">
-                <Input
-                  id="domain"
-                  placeholder="e.g. acme.com"
-                  className="font-mono text-sm font-semibold bg-paper"
-                  {...register("domain")}
-                />
-              </FormField>
-              <p className="text-2xs text-ink-3">
-                Needed to set up Google Workspace / Microsoft 365. You can add it later on Subscriptions.
-              </p>
-            </div>
-          )}
-
           {/* Prospect → Customer activation notice — fires on FIRST payment now (advance ok) */}
           {isProspect && !hasPriorPayments && (
             <div className="rounded-md bg-amber-soft border border-amber/40 px-3 py-2.5 text-xs flex items-start gap-2">
@@ -1265,6 +1246,27 @@ export function RecordPaymentDialog({
               ? { tone: "error", message: "Amount must be more than ₹0." }
               : checkMoney(Number.isFinite(watchedAmount) ? String(watchedAmount) : "")} />
           </FormField>
+
+          {/* R-1701: below the amount — the money is what this sheet is for; the domain was the
+              FIRST field even on a subscription that already had one.
+              Customer domain — R-407 / R-444 (1): shown only when the quote makes a subscription,
+              and optional (no "*"): Confirm never blocked on it, so the star was a false promise.
+              Saved to the subscription, the customer and the provisioning task (blanks only). */}
+          {showDomain && (
+            <div className="rounded-xl border border-primary/30 bg-primary-soft/30 p-3 space-y-1.5 shadow-xs">
+              <FormField label="Customer domain (optional)" htmlFor="domain">
+                <Input
+                  id="domain"
+                  placeholder="e.g. acme.com"
+                  className="font-mono text-sm font-semibold bg-paper"
+                  {...register("domain")}
+                />
+              </FormField>
+              <p className="text-2xs text-ink-3">
+                Needed to set up Google Workspace / Microsoft 365. You can add it later on Subscriptions.
+              </p>
+            </div>
+          )}
 
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
               Was one list of hard-coded rows with our own company name shown to every company,

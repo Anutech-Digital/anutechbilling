@@ -15,6 +15,7 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { lutMissingWarning } from "@/lib/gst/export-lut";
 import { COMPANY_STATE_FIX, isCompanyStateMissingError } from "@/lib/onboarding/setup-links";
+import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
 
 /**
  * R-431 (board R-406): generate_invoice refuses when the company's own state is empty. The
@@ -200,11 +201,25 @@ export function useGenerateInvoice() {
          why, and the next step. */
       const check = await supabase
         .from("quotes")
-        .select("subtotal, tax_rate, amount, discount_pct")
+        .select("subtotal, tax_rate, amount, discount_pct, customer_id, status")
         .eq("id", quoteId)
         .single();
       if (check.error) throw check.error;
       const { subtotal, tax_rate, amount, discount_pct } = check.data;
+
+      /* R-1706: no customer → generate_invoice used to say "<name> has no state on record …
+         Customers → <name> → Edit" about a customer that did not exist. A prospect quote accepted
+         before R-1706 has none: accepting again (same route and role check as Mark accepted)
+         creates it from the quote. Not yet accepted → say so. */
+      const step = customerBeforeInvoice({ customer_id: check.data.customer_id, status: check.data.status });
+      if (step.kind === "refuse") throw new Error(step.message);
+      if (step.kind === "accept_first") {
+        const res = await fetch(`/api/quotes/${encodeURIComponent(quoteId)}/mark-accepted`, { method: "POST" });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? "This quote has no customer record yet and it could not be created. Reload the quote and try again.");
+        }
+      }
       // R-082: net of the quote's discount, as generate_invoice computes it.
       if (!isQuoteAmountConsistent(subtotal ?? 0, tax_rate ?? 0, amount ?? 0, discount_pct ?? 0)) {
         const taxable = taxableAfterDiscount(subtotal ?? 0, discount_pct ?? 0);

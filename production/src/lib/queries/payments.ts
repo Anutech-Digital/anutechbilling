@@ -10,7 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { todayIST } from "@/lib/subscriptions/payment-due";
 import { queryKeys } from "@/lib/queries/keys";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
@@ -252,104 +253,202 @@ export function useDeletePayment(opts?: { onBlocked?: (message: string) => void 
 // ============================================================
 // Outstanding receivables — subscriptions with unpaid balance
 // ============================================================
+/* R-1701 (Pardeep, 20 Oct): every number on a dues row is THAT subscription's, never the
+   customer's. Before: Paid = every received payment of the customer (two rows of one customer
+   both read "Paid ₹2,46,564"), Age = days since the customer's FIRST EVER payment ("166d" on a
+   subscription started 10 days earlier — and Age > 30 offers "Write off"), quote = the
+   customer's "latest" partial/invoiced quote (both rows opened the ₹8,424 quote, so money for
+   the ₹14,406 row could be recorded on the wrong bill). Now, per subscription:
+     quote  = its open renewal quote, else its own open quote (the same rule as R-1697's
+              duesPaymentRoute) — null when neither is open; no per-customer guess.
+     paid   = received payments on the row's quote (instalment and invoice payments carry the
+              quote id too); refunded payments are status 'refunded' and not counted.
+     age    = days (IST) since the oldest UNPAID invoice of the subscription fell due (its own
+              quote's / renewal quote's invoice, or an instalment invoice), else since its
+              agreed payment_due_date, else since it started — never negative. */
 export interface OutstandingRow {
   subscription_id:    string;
   customer_id:        string | null;
   customer_name:      string;
   plan:               string;
   outstanding_amount: number;
+  /** The amount of the row's quote (open renewal, else own quote); 0 when it has none. */
   total_quote_amount: number;
+  /** Received on the row's quote — this subscription's money, not the customer's total. */
   paid_amount:        number;
   status:             "active" | "paused" | "expired" | "cancelled";
-  first_payment_at:   string;
+  /** When the subscription started (start_date, else created) — used in the reminder email. */
+  started_at:         string;
+  /** The date the age counts from (YYYY-MM-DD): oldest unpaid invoice due, else due date, else start. */
+  age_from:           string;
   last_reminder_at:   string | null;
+  /** Whole days since `age_from` in IST, never negative. */
   days_outstanding:   number;
+  /** The subscription's OWN open quote (renewal first) — where Record payment records. */
   quote_id:           string | null;
   /** Postpaid credit clock; null when there is no agreed date. */
   payment_due_date:   string | null;
 }
 
+export interface DuesSubRow {
+  id: string;
+  customer_id: string | null;
+  customer_name: string;
+  plan: string;
+  outstanding_amount: number;
+  status: string;
+  last_reminder_at: string | null;
+  created_at: string;
+  start_date: string | null;
+  payment_due_date: string | null;
+  quote_id: string | null;
+  renewal_quote_id: string | null;
+}
+export interface DuesQuoteRow { id: string; amount: number | null; payment_status: string | null }
+export interface DuesPaymentRow { quote_id: string; amount: number }
+export interface DuesInvoiceRow {
+  id: string;
+  quote_id: string | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  status: string;
+  amount: number;
+  net_payable: number | null;
+  paid_amount: number | null;
+}
+export interface DuesBillingRow { subscription_id: string; invoice_id: string | null }
+
+const DAY_MS = 86_400_000;
+const ymd = (d: string) => d.slice(0, 10);
+/** Whole days from `from` to `today` (both YYYY-MM-DD), never negative. */
+export function daysSince(from: string, today: string): number {
+  const n = Math.round((Date.parse(`${ymd(today)}T00:00:00Z`) - Date.parse(`${ymd(from)}T00:00:00Z`)) / DAY_MS);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** An issued invoice that still owes money (draft = not issued, void = cancelled). */
+const invoiceOwes = (i: DuesInvoiceRow) =>
+  (i.status === "pending" || i.status === "overdue") &&
+  (i.paid_amount ?? 0) < (i.net_payable ?? i.amount);
+
+/** Pure: the dues rows from the rows read. Exported for the R-1701 tests. */
+export function buildDuesRows(
+  subs: DuesSubRow[],
+  quotes: DuesQuoteRow[],
+  payments: DuesPaymentRow[],
+  invoices: DuesInvoiceRow[],
+  billings: DuesBillingRow[],
+  today: string,
+): OutstandingRow[] {
+  const quoteById = new Map(quotes.map((q) => [q.id, q]));
+  const paidByQuote = new Map<string, number>();
+  for (const p of payments) paidByQuote.set(p.quote_id, (paidByQuote.get(p.quote_id) ?? 0) + (p.amount ?? 0));
+  const invoicesByQuote = new Map<string, DuesInvoiceRow[]>();
+  const invoiceById = new Map<string, DuesInvoiceRow>();
+  for (const i of invoices) {
+    invoiceById.set(i.id, i);
+    if (i.quote_id) invoicesByQuote.set(i.quote_id, [...(invoicesByQuote.get(i.quote_id) ?? []), i]);
+  }
+  const instalmentInvoices = new Map<string, string[]>();
+  for (const b of billings) {
+    if (b.invoice_id) instalmentInvoices.set(b.subscription_id, [...(instalmentInvoices.get(b.subscription_id) ?? []), b.invoice_id]);
+  }
+  /* A quote the reader cannot see (deleted / other tenant) counts as no quote. */
+  const openQuote = (id: string | null) => {
+    const q = id ? quoteById.get(id) : undefined;
+    return q && q.payment_status !== "received" ? q : undefined;
+  };
+
+  return subs.map((s): OutstandingRow => {
+    const actionQuote = openQuote(s.renewal_quote_id) ?? openQuote(s.quote_id);
+    /* What Paid / "of" describe: the quote money is recorded on, else the subscription's own
+       quote even when fully paid (R-1697 then blocks the button and says why). */
+    const shownQuote = actionQuote ?? (s.quote_id ? quoteById.get(s.quote_id) : undefined);
+
+    const ownInvoices = new Map<string, DuesInvoiceRow>();
+    for (const qid of [s.quote_id, s.renewal_quote_id]) {
+      for (const i of qid ? invoicesByQuote.get(qid) ?? [] : []) ownInvoices.set(i.id, i);
+    }
+    for (const id of instalmentInvoices.get(s.id) ?? []) {
+      const i = invoiceById.get(id);
+      if (i) ownInvoices.set(i.id, i);
+    }
+    /* An invoice with no due date fell due the day it was issued. */
+    const unpaidDue = [...ownInvoices.values()]
+      .filter(invoiceOwes)
+      .map((i) => i.due_date ?? i.invoice_date)
+      .filter((d): d is string => !!d)
+      .map(ymd)
+      .sort();
+    const startedAt = s.start_date ?? s.created_at;
+    const ageFrom = unpaidDue[0] ?? (s.payment_due_date ? ymd(s.payment_due_date) : ymd(startedAt));
+
+    return {
+      subscription_id:    s.id,
+      customer_id:        s.customer_id,
+      customer_name:      s.customer_name,
+      plan:               s.plan,
+      outstanding_amount: s.outstanding_amount,
+      total_quote_amount: shownQuote?.amount ?? 0,
+      paid_amount:        shownQuote ? paidByQuote.get(shownQuote.id) ?? 0 : 0,
+      status:             s.status as OutstandingRow["status"],
+      started_at:         startedAt,
+      age_from:           ageFrom,
+      last_reminder_at:   s.last_reminder_at,
+      days_outstanding:   daysSince(ageFrom, today),
+      quote_id:           actionQuote?.id ?? null,
+      payment_due_date:   s.payment_due_date ?? null,
+    };
+  }).sort((a, b) => b.days_outstanding - a.days_outstanding);
+}
+
+type DuesClient = ReturnType<typeof createClient>;
+
+/** Every read paged / chunked (R-264, R-1519): six batched reads, however many rows. */
+export async function fetchOutstandingReceivables(supabase: DuesClient, today: string): Promise<OutstandingRow[]> {
+  // 1. Subscriptions with a balance (written-off ones excluded) — the dues TOTAL rule, unchanged.
+  const subs = await fetchAllRows<DuesSubRow>((from, to) =>
+    supabase
+      .from("subscriptions")
+      /* payment_due_date added 10 Sep 2026 — the postpaid credit clock, so the
+         Outstanding card can show the same countdown the subscriptions list does. */
+      .select("id, customer_id, customer_name, plan, outstanding_amount, status, last_reminder_at, created_at, start_date, payment_due_date, quote_id, renewal_quote_id")
+      .gt("outstanding_amount", 0)
+      .is("written_off_at", null)
+      .order("id")
+      .range(from, to) as never,
+  );
+  if (subs.length === 0) return [];
+
+  const quoteIds = [...new Set(subs.flatMap((s) => [s.quote_id, s.renewal_quote_id]).filter((q): q is string => !!q))];
+  // 2. Those subscriptions' own quotes.
+  const quotes = await fetchAllRowsIn<DuesQuoteRow, string>(quoteIds, (ids, from, to) =>
+    supabase.from("quotes").select("id, amount, payment_status").in("id", ids).order("id").range(from, to) as never,
+  );
+  // 3. Money received on those quotes (refunded payments have status 'refunded').
+  const payments = await fetchAllRowsIn<DuesPaymentRow, string>(quoteIds, (ids, from, to) =>
+    supabase.from("payments").select("id, quote_id, amount").in("quote_id", ids).eq("status", "received").order("id").range(from, to) as never,
+  );
+  // 4. Instalment invoices of these subscriptions (subscription_billings).
+  const billings = await fetchAllRowsIn<DuesBillingRow, string>(subs.map((s) => s.id), (ids, from, to) =>
+    supabase.from("subscription_billings").select("id, subscription_id, invoice_id").in("subscription_id", ids).not("invoice_id", "is", null).order("id").range(from, to) as never,
+  );
+  // 5. Their open invoices: the quotes' own invoices, and the instalment invoices.
+  const INVOICE_COLS = "id, quote_id, invoice_date, due_date, status, amount, net_payable, paid_amount";
+  const byQuote = await fetchAllRowsIn<DuesInvoiceRow, string>(quoteIds, (ids, from, to) =>
+    supabase.from("invoices").select(INVOICE_COLS).in("quote_id", ids).in("status", ["pending", "overdue"]).order("id").range(from, to) as never,
+  );
+  const byId = await fetchAllRowsIn<DuesInvoiceRow, string>(billings.map((b) => b.invoice_id), (ids, from, to) =>
+    supabase.from("invoices").select(INVOICE_COLS).in("id", ids).in("status", ["pending", "overdue"]).order("id").range(from, to) as never,
+  );
+
+  return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today);
+}
+
 export function useOutstandingReceivables() {
   return useQuery({
     queryKey: ["outstanding-receivables"],
-    queryFn: async (): Promise<OutstandingRow[]> => {
-      const supabase = createClient();
-      // 1. Fetch subscriptions with outstanding balance (excluding written-off/cancelled)
-      const { data: subs, error } = await supabase
-        .from("subscriptions")
-        /* payment_due_date added 10 Sep 2026 — the postpaid credit clock, so the
-           Outstanding card can show the same countdown the subscriptions list does. */
-        .select("id, customer_id, customer_name, plan, outstanding_amount, status, last_reminder_at, created_at, written_off_at, payment_due_date")
-        .gt("outstanding_amount", 0)
-        .is("written_off_at", null);
-      if (error) throw error;
-      if (!subs || subs.length === 0) return [];
-
-      // 2. Find the most-recent paid quote per customer (partial OR invoiced — both have
-      //    outstanding balance possible; the invoice-issued case is post-advance pending).
-      //    Without this fix, post-invoice quotes returned no row → "Pay" button + paid
-      //    amount disappeared from Outstanding card even though balance was still owed.
-      const customerIds = subs.map((s) => s.customer_id).filter(Boolean) as string[];
-      const { data: quotes } = customerIds.length > 0
-        ? await supabase
-            .from("quotes")
-            .select("id, customer_id, amount, payment_amount, customer_name, payment_status")
-            .in("customer_id", customerIds)
-            .in("payment_status", ["partial", "invoiced"])
-        : { data: [] };
-
-      // 3. Fetch ALL received payments (we need both: earliest date for aging anchor +
-      //    accurate per-customer total paid, since payment_amount on the quote can be
-      //    stale after invoice generation).
-      const { data: receivedPayments } = customerIds.length > 0
-        ? await supabase
-            .from("payments")
-            .select("customer_id, amount, received_at")
-            .in("customer_id", customerIds)
-            .eq("status", "received")
-            .order("received_at", { ascending: true })
-        : { data: [] };
-
-      const earliestByCustomer = new Map<string, string>();
-      const paidByCustomer     = new Map<string, number>();
-      for (const p of receivedPayments ?? []) {
-        if (!p.customer_id) continue;
-        if (!earliestByCustomer.has(p.customer_id)) {
-          earliestByCustomer.set(p.customer_id, p.received_at);
-        }
-        paidByCustomer.set(p.customer_id, (paidByCustomer.get(p.customer_id) ?? 0) + p.amount);
-      }
-
-      const quoteByCustomer = new Map<string, { id: string; amount: number }>();
-      for (const q of quotes ?? []) {
-        if (q.customer_id) {
-          // Keep the latest quote per customer (in case of multiple)
-          quoteByCustomer.set(q.customer_id, { id: q.id, amount: q.amount ?? 0 });
-        }
-      }
-
-      const now = Date.now();
-      return subs.map((s) => {
-        const firstPaymentAt = earliestByCustomer.get(s.customer_id ?? "") ?? s.created_at;
-        const quoteCtx = quoteByCustomer.get(s.customer_id ?? "");
-        return {
-          subscription_id:    s.id,
-          customer_id:        s.customer_id,
-          customer_name:      s.customer_name,
-          plan:               s.plan,
-          outstanding_amount: s.outstanding_amount,
-          total_quote_amount: quoteCtx?.amount ?? 0,
-          // Compute paid from actual payments ledger (not stale quote.payment_amount)
-          paid_amount:        paidByCustomer.get(s.customer_id ?? "") ?? 0,
-          status:             s.status as "active" | "paused" | "expired" | "cancelled",
-          first_payment_at:   firstPaymentAt,
-          last_reminder_at:   s.last_reminder_at,
-          days_outstanding:   Math.floor((now - new Date(firstPaymentAt).getTime()) / 86400000),
-          quote_id:           quoteCtx?.id ?? null,
-          payment_due_date:   s.payment_due_date ?? null,
-        };
-      }).sort((a, b) => b.days_outstanding - a.days_outstanding);
-    },
+    queryFn: async (): Promise<OutstandingRow[]> => fetchOutstandingReceivables(createClient(), todayIST()),
   });
 }
 

@@ -32,6 +32,7 @@
  * The dialog charges ₹/seat/YEAR, so both are × 12 here — once, in one place.
  */
 import type { Item } from "@/lib/supabase/database.types";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 export interface CatalogProduct {
   /** items.id — what gets stored in subscriptions.item_id. */
@@ -130,10 +131,17 @@ function annualCost(it: Item): number | null {
  *
  * One-time items are excluded: they are not something a subscription renews. Inactive
  * items are the caller's business — useItems() already filters them.
+ *
+ * R-1704 (21 Oct 2026): every row goes through R-205's floorWorkspaceRow first — the SAME
+ * rule the quote builder, the Add-item dialog and catalog-line.ts use. Without it a tenant
+ * row still on the old seed (Business Starter ₹136/mo = ₹1,632/yr, below our ₹3,080 cost)
+ * was offered here while the quote builder offered ₹3,240 for the same SKU, and the
+ * renewal quote then copied the low price. Cost (wholesale) is never touched by the floor.
  */
 export function subscriptionProducts(items: readonly Item[]): CatalogProduct[] {
   return items
     .filter((it) => it.item_type !== "one_time")
+    .map((raw) => floorWorkspaceRow(raw))
     .map((it) => ({
       id:     it.id,
       name:   it.name,

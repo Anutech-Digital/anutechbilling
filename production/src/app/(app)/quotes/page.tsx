@@ -70,6 +70,7 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { COPY } from "@/lib/copy";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
+import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 
@@ -138,7 +139,12 @@ const TEAM_MODES: readonly TeamViewMode[] = ["team", "mine"];
 
 export default function QuotesPage() {
   const router = useRouter();
-  const { data: quotes, isLoading, error, refetch } = useQuotes();
+  const { data: rawQuotes, isLoading, error, refetch } = useQuotes();
+  /* R-1707: every quote's real open balance (credit notes, refunds and the invoice's own
+     net payable counted), read in ONE call. The tab, the due chip and the cash note all use it;
+     until it loads they fall back to amount − payment_amount as before. */
+  const { data: openBalances } = useQuoteOpenBalances();
+  const quotes = React.useMemo(() => withOpenBalances(rawQuotes, openBalances), [rawQuotes, openBalances]);
   /* R-278: a quote for a lead with no company was saved as "Prospect" and could not be
      found by the lead's email or phone. The lead's contact is read alongside, so the row
      shows a real name (old rows too, no data change) and search covers name/email/phone. */

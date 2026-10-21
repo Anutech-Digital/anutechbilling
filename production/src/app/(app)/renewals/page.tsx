@@ -57,6 +57,7 @@ import {
   readJsonSafe,
 } from "./reminders";
 import { renewalRisk } from "./risk";
+import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, withRenewalQuote } from "./open-renewal-quotes";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
@@ -225,6 +226,7 @@ function RenewalBucket({
         <ul className="xl:hidden p-3 space-y-2">
           {rows.map(({ sub, daysUntil: days }) => {
             const risk = renewalRisk(sub);
+            const priorDue = priorTermDueText(sub);  // R-1703
             return (
               <li
                 key={sub.id}
@@ -265,6 +267,13 @@ function RenewalBucket({
                     <Badge kind="danger" size="sm">HIGH RISK</Badge>
                   )}
                 </div>
+
+                {priorDue && (
+                  <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
+                    <Icon name="alert" size={12} className="shrink-0" />
+                    {priorDue}
+                  </p>
+                )}
 
                 {/* Bottom row: actions */}
                 <div className="flex items-center gap-1.5 pt-2 border-t border-hairline/60">
@@ -368,6 +377,7 @@ function RenewalBucket({
                 <tbody>
                   {rows.map(({ sub, daysUntil: days }) => {
                     const risk = renewalRisk(sub);
+                    const priorDue = priorTermDueText(sub);  // R-1703
                     return (
                       <tr
                         key={sub.id}
@@ -478,6 +488,12 @@ function RenewalBucket({
                         {/* Action */}
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-start gap-1.5">
+                            {priorDue && (
+                              <p role="status" className="flex items-center gap-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
+                                <Icon name="alert" size={12} className="shrink-0" />
+                                {priorDue}
+                              </p>
+                            )}
                             <div className="flex items-center gap-1.5">
                               {sub.renewal_quote_id && !canQuotes ? (
                                 <span className="text-2xs text-ink-3" title="Owner or sales sends it">Renewal quote ready</span>

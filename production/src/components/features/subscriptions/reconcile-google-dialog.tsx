@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useItems } from "@/lib/queries/items";
 import { buildPlanPriceIndex, planKey } from "@/lib/subscriptions/plan-match";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { createClient } from "@/lib/supabase/client";
 import { rupee, cn } from "@/lib/utils";
 import { PORTALS } from "@/components/shared/portal-dock";
@@ -97,7 +98,8 @@ export function ReconcileGoogleDialog({ open, onOpenChange, onAddMissing }: Prop
      note in lib/subscriptions/plan-match.ts. */
   const priceIndex = React.useMemo(
     () => buildPlanPriceIndex((items ?? []).map((it) => ({
-      name: it.name, vendor: it.vendor, msrpPerSeatMonth: it.msrp,
+      /* R-1704: the R-205 Workspace list-price floor, the same rule as the quote builder. */
+      name: it.name, vendor: it.vendor, msrpPerSeatMonth: floorWorkspaceRow(it).msrp,
     }))),
     [items],
   );

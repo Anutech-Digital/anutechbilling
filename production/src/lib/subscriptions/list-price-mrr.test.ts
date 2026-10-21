@@ -36,7 +36,7 @@ describe("R-317 bug: the Google importer wrote mrr 0 for a KNOWN edition", () =>
     );
     expect(rows[0].estMrr).toBe(0);              // the defect, pinned
     /* The fix: list price × seats from the catalogue. */
-    expect(withListPriceMrr(rows, CATALOG, "google")[0].estMrr).toBe(136 * 5);
+    expect(withListPriceMrr(rows, CATALOG, "google")[0].estMrr).toBe(270 * 5); // R-1704: list floor
   });
 });
 
@@ -62,9 +62,10 @@ describe("workspaceEdition — never guesses", () => {
 describe("listPriceMrr", () => {
   it("known edition → list price × seats (plan text)", () => {
     expect(listPriceMrr(CATALOG, { vendor: "google", plan: "Business Starter", seats: 2 }))
-      .toEqual({ ok: true, mrr: 272, itemId: "GW-STR", via: "edition" });
+      /* R-1704: the stale ₹136 / ₹736 rows are lifted to the R-205 list price (₹270 / ₹1,080). */
+      .toEqual({ ok: true, mrr: 540, itemId: "GW-STR", via: "edition" });
     expect(listPriceMrr(CATALOG, { vendor: "google", plan: "Google Workspace Business Standard", seats: 3 }))
-      .toEqual({ ok: true, mrr: 736 * 3, itemId: "GW-STD", via: "name" });
+      .toEqual({ ok: true, mrr: 1080 * 3, itemId: "GW-STD", via: "name" });
   });
 
   it("item_id wins over the plan text", () => {
@@ -98,7 +99,8 @@ describe("listPriceMrr", () => {
   });
 
   it("two catalogue rows disagreeing → ambiguous", () => {
-    const clash = [...CATALOG, { id: "GW-STR-2", name: "Google Workspace Starter", vendor: "google", kind: "main", msrp: 270, prices: {} }];
+    /* R-1704: ₹300 (above list) vs the stale row floored to ₹270 — a real disagreement. */
+    const clash = [...CATALOG, { id: "GW-STR-2", name: "Google Workspace Starter", vendor: "google", kind: "main", msrp: 300, prices: {} }];
     expect(listPriceMrr(clash, { vendor: "google", plan: "Business Starter", seats: 1 }))
       .toEqual({ ok: false, reason: "ambiguous" });
   });
@@ -130,7 +132,7 @@ describe("R-317: CSV import with no price column — known edition gets list × 
   it("known edition → mrr = list × seats (was refused before R-317)", () => {
     const [r] = parseSubsCsv(csv("C-1,Google Workspace - Business Starter,4,one.com"), custs, new Map(), CATALOG);
     expect(r.error).toBeUndefined();
-    expect(r.mrr).toBe(136 * 4);
+    expect(r.mrr).toBe(270 * 4); // R-1704: list-price floor, not the stale ₹136
     expect(r.listPriced).toBe(true);
   });
 
