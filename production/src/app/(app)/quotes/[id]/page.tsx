@@ -25,6 +25,7 @@ import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage"
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-quote";
+import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-due";
 import { useSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
@@ -716,6 +717,14 @@ export default function QuoteDetailPage() {
     lines:         (quote.line_items ?? []) as { name?: string | null; qty?: number | null; rate?: number | null }[],
     existingSubs:  quoteSubs.length,
   });
+  /* R-1703: a renewal quote for a subscription whose previous term is still unpaid. Paying
+     this quote renews the subscription; it does not pay the old term (record_payment keeps
+     that balance in Subscription dues since 20261021023154). Say so before anyone records it. */
+  const renewalSub = renewalSubOfQuote(
+    quote as typeof quote & { renewal_subscription_id?: string | null },
+    allSubs ?? [],
+  );
+  const priorDueText = renewalSub ? priorTermDueText(renewalSub) : null;
 
   /* Margin comes from the LINE ITEMS, not from quotes.total_cost.
      The column is an aggregate written at save time and at least one writer forgot
@@ -1326,6 +1335,25 @@ export default function QuoteDetailPage() {
             Above the money row on purpose: a paid deal with no subscription is a
             bigger problem than anything the money row can offer, and it is the one
             nobody would otherwise notice. */}
+        {priorDueText && renewalSub && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber/50 bg-amber-soft/40 px-4 py-3"
+          >
+            <div className="flex items-start gap-2 text-sm">
+              <Icon name="alert" size={16} className="mt-0.5 shrink-0 text-amber" />
+              <span className="text-ink">
+                <span className="font-medium">{priorDueText}</span>
+                {" on this subscription. This renewal quote pays only the new term — record the earlier amount separately under Payments → Subscription dues."}
+              </span>
+            </div>
+            <Button asChild variant="ghost" size="sm">
+              <Link href={subscriptionHref({ domain: renewalSub.domain, customer_name: renewalSub.customer_name ?? quote.customer_name }) as never}>
+                Open subscription
+              </Link>
+            </Button>
+          </div>
+        )}
         {isOrphan(orphan) && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose/50 bg-rose-soft/40 px-4 py-3">
             <div className="flex items-start gap-2 text-sm">
