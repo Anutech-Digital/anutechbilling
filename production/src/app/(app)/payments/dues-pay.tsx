@@ -10,8 +10,9 @@
  * record_payment on the subscription's quote (it rewrites the balance of subscriptions with
  * quote_id = that quote, and a paid renewal quote clears its subscription). Instalment and
  * multi-invoice payments also go through the subscription's quote. So a row routes to:
- *   1. its open renewal quote, else 2. its own open quote, else 3. the customer quote the
- *   dues list already found (the old behaviour), else
+ *   1. its open renewal quote, else 2. its own open quote, else 3. the quote the dues list
+ *   found for THIS subscription (R-1701: the same rule, read with the dues rows — it used to be
+ *   the customer's "latest" quote, which sent a two-subscription customer's rows to one bill), else
  *   4. blocked — disabled, with the reason and a link to Subscriptions to fix the link.
  * "Open" = the quote's payment_status is not "received" (fully paid). Recording on a fully
  * received quote would only become advance credit and leave this balance where it is.

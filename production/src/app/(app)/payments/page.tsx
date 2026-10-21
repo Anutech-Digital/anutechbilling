@@ -518,7 +518,7 @@ function PaymentsPageInner() {
                     </div>
                     <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline/60">
                       <div className="flex items-center gap-1.5">
-                        <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot>{o.days_outstanding}d</Badge>
+                        <Badge kind={ageKind === "fresh" ? "muted" : ageKind === "warning" ? "warning" : "danger"} size="sm" dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
                         <Badge kind={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "muted"} size="sm">{o.status}</Badge>
                       </div>
                       {canWrite && (
@@ -553,7 +553,7 @@ function PaymentsPageInner() {
                         const subject = `Payment reminder · ${rupee(o.outstanding_amount)} pending`;
                         const body =
                           `Hi ${o.customer_name},\n\nThis is a friendly reminder that ${rupee(o.outstanding_amount)} is still pending against ` +
-                          `your subscription for ${o.plan} (started ${formatDate(o.first_payment_at)}).\n\n` +
+                          `your subscription for ${o.plan} (started ${formatDate(o.started_at)}).\n\n` +
                           `You've paid ${rupee(o.paid_amount)} of ${rupee(o.total_quote_amount)}.\n\n` +
                           `Please complete the payment at your earliest convenience to keep your service uninterrupted.\n\n— Anutech Digital`;
                         window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -1011,10 +1011,11 @@ function OutstandingRowView({
         <div className="font-medium text-sm text-ink">{o.customer_name}</div>
         <div className="text-3xs text-ink-3">{o.plan}</div>
       </td>
-      <td className="p-2 text-right tabular-nums text-xs text-emerald">{rupee(o.paid_amount)}</td>
+      {/* R-1701: received on THIS subscription's quote, not the customer's total. */}
+      <td className="p-2 text-right tabular-nums text-xs text-emerald" title={o.quote_id ? `Received on ${o.quote_id}` : "Received on this subscription's quote"}>{rupee(o.paid_amount)}</td>
       <td className="p-2 text-right tabular-nums text-sm font-medium text-rose">{rupee(o.outstanding_amount)}</td>
       <td className="p-2">
-        <Badge kind={ageKind} dot>{o.days_outstanding}d</Badge>
+        <Badge kind={ageKind} dot title={`Age counted from ${formatDate(o.age_from)}`}>{o.days_outstanding}d</Badge>
       </td>
       <td className="p-2">
         {o.status === "active" ? (
