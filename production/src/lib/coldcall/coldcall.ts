@@ -119,6 +119,8 @@ export type ColdCallStatus =
 export const MAX_ATTEMPTS = 3;
 /** An asked-for call back goes out at this IST hour on the next working day. */
 export const CALLBACK_HOUR_IST = 11;
+/** A busy line is tried again after this many hours. */
+export const BUSY_RETRY_HOURS = 2;
 /** A retry waits about a day, so a second ring is never the same afternoon. */
 export const RETRY_AFTER_HOURS = 20;
 
@@ -141,7 +143,9 @@ export function outcomeFromCall(signals: PostCallSignals, attemptsSoFar: number,
 
   if (status === "no_answer" || status === "busy") {
     if (attemptsSoFar < MAX_ATTEMPTS) {
-      return { status: "pending", nextAttemptAt: new Date(now.getTime() + RETRY_AFTER_HOURS * 3_600_000) };
+      /* Busy = on another call right now, so a couple of hours is enough; no answer waits a day. */
+      const hours = status === "busy" ? BUSY_RETRY_HOURS : RETRY_AFTER_HOURS;
+      return { status: "pending", nextAttemptAt: new Date(now.getTime() + hours * 3_600_000) };
     }
     return { status: "no_answer", nextAttemptAt: null };
   }

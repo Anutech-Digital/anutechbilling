@@ -1,5 +1,5 @@
 /**
- * Cron: Cold Calling (R-1662) — every 10 minutes on weekdays (Cloud Scheduler "resellersos-cold-calls").
+ * Cron: Cold Calling (R-1662) — every 2 minutes on weekdays (one call at a time per campaign) (Cloud Scheduler "resellersos-cold-calls").
  *
  * For every running campaign of every tenant: read finished calls back from Bolna, then place
  * the next calls inside the campaign's window and daily limit. Each tenant through

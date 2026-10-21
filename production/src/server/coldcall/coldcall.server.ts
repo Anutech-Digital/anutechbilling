@@ -47,6 +47,10 @@ export interface CampaignSummary {
   createdAt: string;
   counts: Record<string, number>;
   calledToday: number;
+  /** Numbers waiting that may be rung now (not a retry/call back still waiting for its time). */
+  dueNow: number;
+  /** The earliest retry / call back time still in the future, if any. */
+  nextDueAt: string | null;
 }
 
 export async function listCampaigns(run: Run, now: Date): Promise<CampaignSummary[]> {
@@ -60,6 +64,16 @@ export async function listCampaigns(run: Run, now: Date): Promise<CampaignSummar
     const today = await tx.cold_call_contacts.groupBy({
       by: ["campaign_id"], where: { campaign_id: { in: ids }, last_called_at: { gte: istDayStart(now) } }, _count: { _all: true },
     });
+    const due = await tx.cold_call_contacts.groupBy({
+      by: ["campaign_id"],
+      where: { campaign_id: { in: ids }, status: "pending", OR: [{ next_attempt_at: null }, { next_attempt_at: { lte: now } }] },
+      _count: { _all: true },
+    });
+    const later = await tx.cold_call_contacts.groupBy({
+      by: ["campaign_id"],
+      where: { campaign_id: { in: ids }, status: { in: ["pending", "callback"] }, next_attempt_at: { gt: now } },
+      _min: { next_attempt_at: true },
+    });
     return campaigns.map((c) => {
       const counts: Record<string, number> = {};
       for (const g of grouped) if (g.campaign_id === c.id) counts[g.status] = g._count._all;
@@ -69,6 +83,8 @@ export async function listCampaigns(run: Run, now: Date): Promise<CampaignSummar
         dailyLimit: c.daily_limit, windowStart: c.window_start, windowEnd: c.window_end,
         createdAt: c.created_at.toISOString(), counts,
         calledToday: today.find((t) => t.campaign_id === c.id)?._count._all ?? 0,
+        dueNow: due.find((d) => d.campaign_id === c.id)?._count._all ?? 0,
+        nextDueAt: later.find((l) => l.campaign_id === c.id)?._min.next_attempt_at?.toISOString() ?? null,
       };
     });
   });
@@ -124,6 +140,10 @@ const STATUS_WORDS: Record<string, string> = {
   callback: "asked for a call back", not_interested: "not interested", no_answer: "did not answer",
   failed: "call failed", skipped_dnd: "DND", moved: "moved to Sales",
 };
+
+function istWhen(d: Date): string {
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+}
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
@@ -251,6 +271,8 @@ export interface ContactRow {
   seatsHeard: number | null;
   error: string | null;
   leadId: string | null;
+  /** What the phone network said on the last try: completed, busy, no-answer… */
+  callStatus: string | null;
   /** Why the agent rated the call as it did, in its own words (quote asked, seats heard…). */
   reasons: string[];
 }
@@ -267,6 +289,7 @@ export async function listContacts(run: Run, campaignId: string, status: string[
     nextAttemptAt: r.next_attempt_at?.toISOString() ?? null, durationSec: r.duration_sec,
     summary: r.summary, transcript: r.transcript, seatsHeard: r.seats_heard, error: r.error, leadId: r.lead_id,
     reasons: bolnaReasons(r.extracted).slice(0, 4),
+    callStatus: r.call_status,
   }));
 }
 
@@ -408,8 +431,12 @@ export async function deleteContact(run: Run, contactId: string): Promise<Delete
 
 /* ── The runner (R-1662) ─────────────────────────────────────────────────── */
 
-/** At most this many new calls per tick, so a tick stays short and calls go out one by one. */
-export const CALLS_PER_TICK = 5;
+/**
+ * One call at a time per campaign (21 Oct 2026): five calls placed in the same second came back
+ * "busy" from Bolna — one caller number, one line. A new call goes out only when the last one
+ * has finished.
+ */
+export const CALLS_PER_TICK = 1;
 /** At most this many in-flight calls read back from Bolna per tick. */
 export const POLLS_PER_TICK = 20;
 
@@ -521,6 +548,8 @@ export async function runCampaignTick(
   }));
   const room = Math.min(CALLS_PER_TICK, campaign.daily_limit - calledToday);
   if (room <= 0) return { ...report, note: `today's limit of ${campaign.daily_limit} calls is reached` };
+  const onLine = await run((tx) => tx.cold_call_contacts.count({ where: { campaign_id: campaignId, status: "calling" } }));
+  if (onLine > 0) return { ...report, note: "a call is going on — the next one starts when it ends" };
 
   const { due, catalogue, sellerName } = await run(async (tx) => {
     const rows = await tx.cold_call_contacts.findMany({
@@ -566,7 +595,16 @@ export async function runCampaignTick(
       await run((tx) => tx.cold_call_campaigns.updateMany({ where: { id: campaignId, status: "running" }, data: { status: "done", updated_at: now } }));
       return { ...report, note: "every number on the list has been called" };
     }
-    return { ...report, note: "no number is due right now (retries and call backs wait for their time)" };
+    const next = await run((tx) => tx.cold_call_contacts.findFirst({
+      where: { campaign_id: campaignId, status: { in: ["pending", "callback"] }, next_attempt_at: { gt: now } },
+      orderBy: { next_attempt_at: "asc" }, select: { next_attempt_at: true },
+    }));
+    return {
+      ...report,
+      note: next?.next_attempt_at
+        ? `everyone left was busy, did not answer or asked for a call back — next try ${istWhen(next.next_attempt_at)}`
+        : "no number is due right now",
+    };
   }
 
   const agent = { ...config, agentId: campaign.agent_id };

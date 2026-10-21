@@ -121,3 +121,16 @@ describe("call back — the agent rings again", () => {
     expect(outcomeFromCall(base, MAX_ATTEMPTS, now).nextAttemptAt).toBeNull();
   });
 });
+
+describe("busy is retried sooner than no answer", () => {
+  const now = new Date("2026-10-21T09:45:00Z");
+  const base = {
+    durationSec: 0, transcript: "", summary: "", customerAskedForQuote: false, customerAskedForCallback: false,
+    customerConfirmedRenewal: false, customerNotInterested: false, seatsDiscussed: null,
+  };
+  it("busy → about two hours", () => {
+    const o = outcomeFromCall({ ...base, disposition: "busy" }, 1, now);
+    expect(o.status).toBe("pending");
+    expect(o.nextAttemptAt?.toISOString()).toBe("2026-10-21T11:45:00.000Z");
+  });
+});

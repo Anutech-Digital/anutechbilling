@@ -81,7 +81,7 @@ JOBS=(
   # R-524: "Try the demo" sample workspace — fresh sample rows nightly. Does nothing while DEMO_ENABLED is off.
   "resellersos-demo-reset|30 2 * * *|/api/cron/demo-reset|Reset the read-only demo workspace sample data"
   "resellersos-lead-finder|30 3 * * *|/api/cron/lead-finder|AI Lead Finder — nightly prospect discovery"
-  "resellersos-cold-calls|*/10 9-19 * * 1-5|/api/cron/cold-calls|AI Cold Calling — calls + results every 10 min, 9:00-19:59 IST Mon-Fri (each campaign keeps its own window)"
+  "resellersos-cold-calls|*/2 9-19 * * 1-5|/api/cron/cold-calls|AI Cold Calling — one call at a time, checked every 2 min, 9:00-19:59 IST Mon-Fri (each campaign keeps its own window)"
   # S34. Every 15 min, 08:00–21:45 IST — IndiaMART asks for >= 5 min between calls per key,
   # and an enquiry answered within the hour is the one that converts. Harmless before any
   # company saves a key: the route returns `disabled: true` without calling IndiaMART.

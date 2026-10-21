@@ -20,6 +20,8 @@ export interface ColdCampaign {
   createdAt: string;
   counts: Record<string, number>;
   calledToday: number;
+  dueNow: number;
+  nextDueAt: string | null;
 }
 
 export interface ColdContact {
@@ -39,6 +41,7 @@ export interface ColdContact {
   error: string | null;
   leadId: string | null;
   reasons: string[];
+  callStatus: string | null;
 }
 
 /** An API refusal, carrying the route's own "what to do next" line. */

@@ -364,7 +364,13 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
     try {
       const r = await tick.mutateAsync(campaign.id);
       setLastCheck({ at: new Date(), note: r.note, placed: r.placed });
-      toast.success(`${r.placed} calls placed · ${r.finished} results updated`, { description: r.note ?? "Results appear here a minute or two after each call." });
+      if (r.placed === 0 && r.finished === 0) {
+        toast.info("Nothing new right now", { description: r.note ? `${r.note[0].toUpperCase()}${r.note.slice(1)}.` : "Results appear here a minute or two after each call." });
+      } else {
+        toast.success(`${r.placed} ${r.placed === 1 ? "call" : "calls"} placed · ${r.finished} ${r.finished === 1 ? "result" : "results"} updated`, {
+          description: r.note ?? "Results appear here a minute or two after each call.",
+        });
+      }
     } catch (err) { failToast(err, "Could not check the calls."); }
   };
 
@@ -673,8 +679,13 @@ export function LiveStatus({ campaign, lastCheck }: {
     headline = `Today's limit of ${campaign.dailyLimit} calls is reached.`;
     detail = "It continues tomorrow by itself.";
   } else {
-    tone = "live"; headline = "Next call within a minute.";
-    detail = lastCheck?.note && lastCheck.placed === 0 ? `Last check: ${lastCheck.note}.` : null;
+    if (campaign.dueNow === 0 && campaign.nextDueAt) {
+      headline = `Waiting — next try ${callbackWhen(campaign.nextDueAt)}.`;
+      detail = "Everyone left was busy, did not pick up, or asked to be called later. The agent tries them again at that time by itself.";
+    } else {
+      tone = "live"; headline = "Next call within a minute.";
+      detail = "Calls go out one at a time.";
+    }
   }
 
   return (
@@ -817,6 +828,14 @@ function contactsList(rows: ColdContact[] | undefined): ColdContact[] {
   return rows ?? [];
 }
 
+/** "Busy — retry" / "No answer — retry" for a number that was rung and is waiting to be rung again. */
+function retryLabel(c: ColdContact): string | null {
+  if (c.status !== "pending" || c.attempts === 0) return null;
+  if (c.callStatus === "busy") return "Busy — will retry";
+  if (c.callStatus === "no-answer") return "No answer — will retry";
+  return "Will retry";
+}
+
 function callbackWhen(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {
     weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
@@ -882,7 +901,7 @@ export function ContactItem({ contact: c, picked, onPick }: {
             : c.summary && <p className="text-xs text-ink-2 mt-1 line-clamp-1">“{c.summary}”</p>)}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge kind={s.kind} size="sm">{s.label}</Badge>
+          <Badge kind={s.kind} size="sm">{retryLabel(c) ?? s.label}</Badge>
           {c.seatsHeard ? <Badge kind="info" size="sm">{c.seatsHeard} users</Badge> : null}
           {c.status === "callback" && c.nextAttemptAt && (
             <span className="text-[11px] text-ink-3 w-full">AI calls again {callbackWhen(c.nextAttemptAt)}</span>
@@ -930,7 +949,9 @@ export function ContactItem({ contact: c, picked, onPick }: {
           {c.summary && <p><span className="text-ink-3">Call summary:</span> {c.summary}</p>}
           {c.error && <p className="text-rose-ink">Call failed: {c.error}</p>}
           {c.nextAttemptAt && c.status === "pending" && (
-            <p className="text-ink-3">No answer last time — the agent tries again after {formatDate(c.nextAttemptAt)}.</p>
+            <p className="text-ink-3">
+              {c.callStatus === "busy" ? "The line was busy" : "They did not pick up"} last time — the agent tries again {callbackWhen(c.nextAttemptAt)}.
+            </p>
           )}
           {c.nextAttemptAt && c.status === "callback" && (
             <p className="text-ink-3">They asked to be called back — the agent calls again on {callbackWhen(c.nextAttemptAt)}.</p>
