@@ -34,7 +34,7 @@ import {
 } from "@/lib/queries/customers";
 import { createClient } from "@/lib/supabase/client";
 import {
-  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, type ViewCtx,
+  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, type ViewCtx,
 } from "./server-list";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -169,25 +169,23 @@ export default function CustomersPage() {
   const canDeleteCustomer = canDeleteMoney(myRole);
   /* R-885: issuing an invoice (generate_invoice / create_direct_invoice) is a money role. */
   const canInvoice = canRecordMoney(myRole);
-  /* `?contact=` arrives from the "Serves N customers" chip on a contact. It seeds the
-     search box rather than living as a filter of its own, so the operator lands on an
-     ordinary search they can widen, narrow or clear — and so there is one filter to
+  /* `?q=` (R-1720, like /invoices?q=) and `?contact=` (the "Serves N customers" chip on a
+     contact) seed the search box rather than living as a filter of its own, so the
+     operator lands on an ordinary search they can widen, narrow or clear — and so there is one filter to
      reason about instead of two that could disagree.
 
-     Read once, in the initialiser: as an effect it would fight the user, re-seeding the
-     box every time the URL re-rendered while they were typing.
+     Read ONCE, on mount (the effect below the debounce, with no dependencies), so it never
+     fights the user by re-seeding the box while they type. R-1720: not in the useState
+     initialiser — the server pass has no window and renders an empty box, and React keeps
+     the server's empty input value on hydration, so the box looked empty even when the
+     list state held the search.
 
      Read from `window`, not from `useSearchParams()` — that hook opts the whole page out
      of prerendering unless it sits inside a Suspense boundary, and `npm run build` fails
      on it ("useSearchParams() should be wrapped in a suspense boundary at page
      /customers"). Wrapping this entire page in Suspense to seed one text box would be a
-     large change for a small convenience. The guard is for the server pass, where there
-     is no window and the box simply starts empty. */
-  const [search, setSearch] = React.useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : new URLSearchParams(window.location.search).get("contact") ?? "",
-  );
+     large change for a small convenience. */
+  const [search, setSearch] = React.useState("");
   const [importOpen, setImportOpen] = React.useState(false);
   const [domainsOpen, setDomainsOpen] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -263,6 +261,11 @@ export default function CustomersPage() {
     const t = setTimeout(() => setServerSearch(search), 250);
     return () => clearTimeout(t);
   }, [search]);
+  /* R-1720: seed the box (and the server read, without the 250 ms wait) from ?q= / ?contact=. */
+  React.useEffect(() => {
+    const fromUrl = customerSearchFromUrl(window.location.search);
+    if (fromUrl) { setSearch(fromUrl); setServerSearch(fromUrl); }
+  }, []);
   const contactIds = React.useMemo(
     () => contactMatchedCustomerIds(contactIndex, serverSearch),
     [contactIndex, serverSearch],

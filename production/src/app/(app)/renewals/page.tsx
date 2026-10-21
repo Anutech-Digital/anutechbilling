@@ -221,9 +221,11 @@ function RenewalBucket({
         )}
       </div>
 
-      {/* Adaptive card list — viewports < 1280px */}
+      {/* Adaptive card list — viewports < 1536px (R-1720: at a ~1280px laptop the 9-column
+          table was wider than its card and hid the Action column behind a scroll), two cards
+          per row from xl. */}
       {isOpen && rows.length > 0 && (
-        <ul className="xl:hidden p-3 space-y-2">
+        <ul className="2xl:hidden p-3 space-y-2 xl:grid xl:grid-cols-2 xl:gap-2 xl:space-y-0">
           {rows.map(({ sub, daysUntil: days }) => {
             const risk = renewalRisk(sub);
             const priorDue = priorTermDueText(sub);  // R-1703
@@ -276,7 +278,7 @@ function RenewalBucket({
                 )}
 
                 {/* Bottom row: actions */}
-                <div className="flex items-center gap-1.5 pt-2 border-t border-hairline/60">
+                <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-hairline/60">
                   {sub.renewal_quote_id && !canQuotes ? (
                     <span className="flex-1 truncate text-center font-mono text-2xs text-ink-3" title="Renewal quote ready — owner or sales sends it">
                       {sub.renewal_quote_id}
@@ -338,9 +340,9 @@ function RenewalBucket({
         </div>
       )}
 
-      {/* Desktop table — viewports >= 1280px */}
+      {/* Desktop table — viewports >= 1536px (R-1720), where every column fits */}
       {isOpen && rows.length > 0 && (
-        <div className="hidden xl:block">
+        <div className="hidden 2xl:block">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
                 <thead>
@@ -494,7 +496,7 @@ function RenewalBucket({
                                 {priorDue}
                               </p>
                             )}
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {sub.renewal_quote_id && !canQuotes ? (
                                 <span className="text-2xs text-ink-3" title="Owner or sales sends it">Renewal quote ready</span>
                               ) : sub.renewal_quote_id ? (

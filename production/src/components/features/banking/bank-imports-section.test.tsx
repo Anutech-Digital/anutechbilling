@@ -93,6 +93,12 @@ describe("R-1695 — compact Imports card", () => {
     expect(screen.queryByRole("button", { name: /Ye import hatao/ })).toBeNull();
   });
 
+  it("R-1720: a ' · ' separates the latest import's date from its file label", () => {
+    history = [row({ batch_id: "b9", file_name: null, source: "csv", line_count: 1, imported_at: "2026-10-20T06:00:00+00:00" })];
+    renderSection();
+    expect(screen.getByTestId("imports-summary").textContent).toContain("aakhri: 20 Oct 2026 · file ka naam nahi");
+  });
+
   it("the latest import with no file name shows as 'Purana import'", () => {
     history = [old];
     renderSection();
