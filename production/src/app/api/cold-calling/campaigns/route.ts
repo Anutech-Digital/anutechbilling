@@ -19,7 +19,7 @@ const body = z.object({
   agentId: z.string().trim().min(1).max(100),
   dailyLimit: z.coerce.number().int().min(1).max(1000).default(50),
   /* null / missing = "any product — let the customer say". */
-  productItemId: z.string().uuid().nullable().optional(),
+  productItemId: z.string().trim().min(1).max(100).nullable().optional(),
 });
 
 export async function POST(req: Request) {
