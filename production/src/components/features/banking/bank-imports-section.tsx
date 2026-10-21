@@ -129,7 +129,7 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
               {" · "}{active.length} chalu{" · "}{gone.length} hataye
               {latest && (
                 <>
-                  {" · "}aakhri: {formatDate(latest.imported_at)}{" "}
+                  {" · "}aakhri: {formatDate(latest.imported_at)}{" · "}
                   <span className="text-ink-2 break-all" title={fileLabel(latest)}>{fileLabel(latest)}</span>
                 </>
               )}

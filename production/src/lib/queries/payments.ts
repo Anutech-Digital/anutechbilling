@@ -10,7 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
+import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-balances";
 import { todayIST } from "@/lib/subscriptions/payment-due";
 import { queryKeys } from "@/lib/queries/keys";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
@@ -304,7 +305,15 @@ export interface DuesSubRow {
   quote_id: string | null;
   renewal_quote_id: string | null;
 }
-export interface DuesQuoteRow { id: string; amount: number | null; payment_status: string | null }
+export interface DuesQuoteRow {
+  id: string;
+  amount: number | null;
+  payment_status: string | null;
+  /** R-1718: whether the quote is OWED (accepted / invoiced) or only an offer (sent). */
+  status?: string | null;
+  invoice_id?: string | null;
+  superseded_by?: string | null;
+}
 export interface DuesPaymentRow { quote_id: string; amount: number }
 export interface DuesInvoiceRow {
   id: string;
@@ -331,7 +340,9 @@ const invoiceOwes = (i: DuesInvoiceRow) =>
   (i.status === "pending" || i.status === "overdue") &&
   (i.paid_amount ?? 0) < (i.net_payable ?? i.amount);
 
-/** Pure: the dues rows from the rows read. Exported for the R-1701 tests. */
+/** Pure: the dues rows from the rows read. Exported for the R-1701 tests.
+ *  R-1718: `openBalances` = quote_open_balance() per quote (credit notes and refunds counted);
+ *  a quote missing from it falls back to amount − received, never to 0. */
 export function buildDuesRows(
   subs: DuesSubRow[],
   quotes: DuesQuoteRow[],
@@ -339,6 +350,7 @@ export function buildDuesRows(
   invoices: DuesInvoiceRow[],
   billings: DuesBillingRow[],
   today: string,
+  openBalances?: ReadonlyMap<string, number>,
 ): OutstandingRow[] {
   const quoteById = new Map(quotes.map((q) => [q.id, q]));
   const paidByQuote = new Map<string, number>();
@@ -359,8 +371,26 @@ export function buildDuesRows(
     return q && q.payment_status !== "received" ? q : undefined;
   };
 
+  /* R-1718: a quote is OWED — part of the subscription's balance — when it was accepted (and
+     not replaced) or invoiced, and still has money open. A renewal / extension quote that is
+     only `sent` is an offer: R818's ₹1,175 extension offer took the Record payment button while
+     the ₹1,180 Balance due was its own accepted quote. Same test record_payment uses for
+     R-1703's "what the subscription's other quotes still owe". */
+  const openOf = (q: DuesQuoteRow) =>
+    openBalances?.get(q.id) ?? Math.max(0, (q.amount ?? 0) - (paidByQuote.get(q.id) ?? 0));
+  const owedQuote = (id: string | null) => {
+    const q = openQuote(id);
+    if (!q || openOf(q) <= 0) return undefined;
+    const committed = (q.status === "accepted" && !q.superseded_by) || !!q.invoice_id
+      || q.payment_status === "invoiced" || q.payment_status === "partial";
+    return committed ? q : undefined;
+  };
+
   return subs.map((s): OutstandingRow => {
-    const actionQuote = openQuote(s.renewal_quote_id) ?? openQuote(s.quote_id);
+    /* Oldest bill first: the subscription's own quote while it still owes, then an owed renewal
+       quote, then (nothing owed found) the R-1697 order — open renewal, else own open quote. */
+    const actionQuote = owedQuote(s.quote_id) ?? owedQuote(s.renewal_quote_id)
+      ?? openQuote(s.renewal_quote_id) ?? openQuote(s.quote_id);
     /* What Paid / "of" describe: the quote money is recorded on, else the subscription's own
        quote even when fully paid (R-1697 then blocks the button and says why). */
     const shownQuote = actionQuote ?? (s.quote_id ? quoteById.get(s.quote_id) : undefined);
@@ -423,8 +453,23 @@ export async function fetchOutstandingReceivables(supabase: DuesClient, today: s
   const quoteIds = [...new Set(subs.flatMap((s) => [s.quote_id, s.renewal_quote_id]).filter((q): q is string => !!q))];
   // 2. Those subscriptions' own quotes.
   const quotes = await fetchAllRowsIn<DuesQuoteRow, string>(quoteIds, (ids, from, to) =>
-    supabase.from("quotes").select("id, amount, payment_status").in("id", ids).order("id").range(from, to) as never,
+    supabase.from("quotes").select("id, amount, payment_status, status, invoice_id, superseded_by").in("id", ids).order("id").range(from, to) as never,
   );
+  /* R-1718: what is really still open on each quote (quote_open_balance, R-1707's batched read).
+     If it cannot be read the rows still build — buildDuesRows falls back to amount − received. */
+  let openBalances: Map<string, number> | undefined;
+  try {
+    const rpc = supabase.rpc as unknown as (fn: "quote_open_balances") => {
+      order: (c: "quote_id", o: { ascending: boolean }) => { range: (from: number, to: number) => PageQuery<QuoteOpenBalanceRow> };
+    };
+    const wanted = new Set(quoteIds);
+    const rows = await fetchAllRows<QuoteOpenBalanceRow>((from, to) =>
+      rpc.call(supabase, "quote_open_balances").order("quote_id", { ascending: true }).range(from, to),
+    );
+    openBalances = new Map(toOpenBalanceMap(rows.filter((r) => wanted.has(r.quote_id))));
+  } catch (e) {
+    console.warn("[dues] quote_open_balances unavailable — using amount − received:", e);
+  }
   // 3. Money received on those quotes (refunded payments have status 'refunded').
   const payments = await fetchAllRowsIn<DuesPaymentRow, string>(quoteIds, (ids, from, to) =>
     supabase.from("payments").select("id, quote_id, amount").in("quote_id", ids).eq("status", "received").order("id").range(from, to) as never,
@@ -442,7 +487,7 @@ export async function fetchOutstandingReceivables(supabase: DuesClient, today: s
     supabase.from("invoices").select(INVOICE_COLS).in("id", ids).in("status", ["pending", "overdue"]).order("id").range(from, to) as never,
   );
 
-  return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today);
+  return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today, openBalances);
 }
 
 export function useOutstandingReceivables() {

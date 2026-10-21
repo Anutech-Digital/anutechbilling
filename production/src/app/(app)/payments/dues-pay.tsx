@@ -47,9 +47,11 @@ export function duesPaymentRoute(
   row: { subscription_id: string; customer_name: string; quote_id: string | null },
   links: DuesQuoteLinks | undefined,
 ): DuesPaymentRoute {
+  /* R-1718: the dues list's own pick first (buildDuesRows — the quote this row's Balance due is
+     owed on), so the button and the Record payment dialog read the same bill as the row. */
+  if (row.quote_id) return { kind: "quote", quoteId: row.quote_id };
   if (links?.renewalQuoteId && isOpen(links.renewalQuoteStatus)) return { kind: "quote", quoteId: links.renewalQuoteId };
   if (links?.quoteId && isOpen(links.quoteStatus)) return { kind: "quote", quoteId: links.quoteId };
-  if (row.quote_id) return { kind: "quote", quoteId: row.quote_id };
   if (!links) return { kind: "loading" };
   const fixHref = `/subscriptions?q=${encodeURIComponent(row.customer_name)}`;
   if (links.quoteId) {

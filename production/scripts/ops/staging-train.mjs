@@ -17,8 +17,15 @@
  * stop) → push only with --push. NEVER a force push: staging carries R-161 commits that
  * manager-pardeep lacks, so a force push would break staging.
  *
+ * R-1721 (21 Oct 2026): after --push it no longer trusts --db-done. It waits until staging's
+ * /api/version shows the merge commit (7 characters — 21 Oct an 8-char compare never matched),
+ * then reads /api/health/migrations: green "✓ Sab migrations DB par", or red "DB step chhoot
+ * gaya: <keys>" and exit 5. No MIGRATIONS_HEALTH_TOKEN here → a yellow line, never silence.
+ * (scripts/ops/migrations-health-check.mjs)
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
- * 3 = DB step needed. Run from production/.
+ * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
+ * staging DB is missing migrations. Run from production/.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -26,6 +33,7 @@ import { mkdtempSync, existsSync, rmSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
+import { runCheck, colour, STAGING_URL } from "./migrations-health-check.mjs";
 
 export const STAGING = "staging";
 export const MIGRATIONS_DIR = "production/supabase/migrations";
@@ -196,7 +204,7 @@ export function summaryLines({ pick, cards, migrations, decision, merged, pushed
   else if (decision.action === "db-step") next = "Upar wala DB command chalao (Pardeep ki haan), phir `--db-done` ke saath train dobara.";
   else if (merged === null) next = "Error — upar ka message dekho, phir dobara.";
   else if (merged === false) next = "Merge CONFLICT — upar ki files theek karo (manager-pardeep par), phir dobara.";
-  else if (pushed) next = "Push ho gaya — Cloud Build staging bana raha hai; ~10 min baad staging URL par jaanch.";
+  else if (pushed) next = "Push ho gaya — upar ki migration line padho (hara = DB theek; laal = DB step chalao; peela = khud jaancho).";
   else next = "Merge saaf hai. Asli push ke liye `--push` ke saath dobara chalao.";
   lines.push(`Agla kadam: ${next}`);
   return lines;
@@ -246,7 +254,7 @@ function removeWorktree(root, dir) {
   }
 }
 
-function main() {
+async function main() {
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
@@ -321,6 +329,7 @@ function main() {
   rmSync(dir, { recursive: true, force: true }); // git worktree add wants a missing/empty path
   let merged = null; // null = merge not tried (error), false = conflict
   let pushed = false;
+  let pushedSha = null;
   let exitCode = 0;
   try {
     git(["worktree", "add", "-q", "--detach", dir, `${REMOTE}/${STAGING}`], { cwd: root });
@@ -345,6 +354,7 @@ function main() {
       console.log(`Push command (worktree me, HEAD = merge commit): git ${PUSH_ARGS.join(" ")}`);
       if (args.push) {
         /* Plain push — a non-fast-forward (staging moved meanwhile) is REFUSED by git, never forced. */
+        pushedSha = git(["rev-parse", "HEAD"], { cwd: dir }).trim();
         execFileSync("git", PUSH_ARGS, { cwd: dir, stdio: "inherit" });
         pushed = true;
         console.log("✓ staging par push ho gaya.");
@@ -358,10 +368,20 @@ function main() {
   } finally {
     removeWorktree(root, dir);
   }
+  if (pushed && pushedSha) {
+    /* R-1721: does staging's DB really have every migration this build carries? */
+    const v = await runCheck({ base: process.env.STAGING_URL || STAGING_URL, sha: pushedSha });
+    console.log(`
+${colour(v)}`);
+    if (v.exitCode && !exitCode) exitCode = v.exitCode;
+  }
   for (const l of summaryLines({ pick, cards, migrations, decision, merged, pushed })) console.log(l);
   process.exit(exitCode);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((e) => {
+    console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
 }
