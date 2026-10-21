@@ -12,6 +12,9 @@
  * This calls the accept_quote() RPC which:
  *   - Sets quote.status = 'accepted'
  *   - Converts lead → customer (if linked + not already converted)
+ *   - R-1706: a typed PROSPECT (no lead, no customer) → creates the customer from the quote's
+ *     name, place of supply and country (customer_from_prospect_quote), so Invoice now and
+ *     Activate now, pay later have a customer to bill
  *   - Marks lead.stage = 'won'
  *   - DOES NOT create payment / receipt voucher / subscription
  *     (those land via record_payment when the money actually arrives)
