@@ -1,6 +1,6 @@
 ---
 name: label-and-logic-check
-description: Check a card's words and rules BEFORE building and before calling it done — a button label that reads like a status, a second name for an action the app already names, a "fix" that passes on synthetic data but not on the owner's real path, or a null/empty value that means different things to different readers. Load at the start of every card that adds or renames a label, a button, a status, a money rule or a filter, and again before writing aiResult. Every rule here is a real mistake from 19–20 Oct 2026 that the owner caught, not the tests.
+description: Check a card's words and rules BEFORE building and before calling it done — a button label that reads like a status, a second name for an action the app already names, a "fix" that passes on synthetic data but not on the owner's real path, or a null/empty value that means different things to different readers. Load at the start of every card that adds or renames a label, a button, a status, a money rule or a filter — and on every card that touches a screen (§4: nine screen and data-entry rules) — and again before writing aiResult. Every rule here is a real mistake from 19–21 Oct 2026 that the owner caught, not the tests.
 ---
 
 # label-and-logic-check
@@ -30,8 +30,8 @@ button sat under a header button already called "Record payment — multiple inv
 
 **1c. Words an Indian accountant already knows.** Prefer Zoho Books / Tally vocabulary
 (Record payment, Credit note, Receipt voucher, Outstanding, TDS receivable) over invented ones
-("close the loop", "MTD" without explanation). Hinglish helper text is fine; the action verb on
-the button stays the standard term.
+("close the loop", "MTD" without explanation). All screen text is English, helper text and
+tooltips included — see §4 rule 4.
 
 **1d. Customer-facing vs staff-only.** Anything rendered inside a "this is how the customer will
 see it" area, a PDF, an email or a public page must contain nothing internal. ✗ "Internal: this
@@ -78,9 +78,42 @@ duplication, don't rename one of them.
 - [ ] The test reproduces the owner's real record shape (2a), and fails on the old code.
 - [ ] Every null/empty field you touched has one meaning at every reader (2b).
 - [ ] Per-row actions are keyed by the row's own id (2c).
+- [ ] UI card: the §4 screen and data-entry checklist passed (one line per rule in your notes).
 - [ ] UI card: design-critique, accessibility-review and layout-audit were run (CLAUDE.md §9).
 - [ ] Say in aiResult what you did NOT check (e.g. "real PDF only on staging").
 
-## 4. New rules (append one line per owner catch: date · card · rule)
+## 4. Screen and data-entry rules (Pardeep, 21 Oct 2026)
+
+From the 21 Oct review: design ~7/10, data entry ~6/10, and most mistakes were again found by
+the owner AFTER the build. Run this checklist on every card that touches a screen, before
+building and again before aiResult. Where a rule already lives elsewhere, the link is the rule;
+this list does not restate it.
+
+- [ ] **1. One fact, one place.** A number or status appears once per screen. ✗ /payments showed
+  "Awaiting Invoice ₹55.9K (3)" twice, as a strip and as a box. Same family as 2f.
+- [ ] **2. Statuses never contradict.** A closed document (rejected, cancelled, expired) shows no
+  live-money status, and a count equals the rows it opens. ✗ Rejected quote showing "Awaiting
+  payment" (R-1718). ✗ "Out for Review ₹0 (0)" over a list of 9 rows (R-1713).
+- [ ] **3. The primary button is the right next step for THIS state.** ✗ "Send on WhatsApp" as
+  the main button on a rejected quote (R-1724). Wording of the button: 1a–1b.
+- [ ] **4. One screen, one language: English** (R-246) — labels, helper text, tooltips, toasts.
+  ✗ "chalu/hataye"; tooltip "Customer ne paisa diya — yahan darj karo". Hinglish is for chat
+  with Pardeep, never for the UI.
+- [ ] **5. Tables fit a 1280px laptop with today's action column visible** without a side
+  scroll; if they can't, use cards. ✗ Renewals Action column cut off at 1280 (R-1720). Measure
+  with `layout-audit`; phone rules are CLAUDE.md §20.
+- [ ] **6. One task, one way.** Every entry point to a task opens the same dialog with the same
+  defaults. ✗ Three different ways to record a payment.
+- [ ] **7. Ask only what the task needs.** Setup fields live in setup, not in a money dialog.
+  ✗ "Customer domain" inside the Record payment dialog.
+- [ ] **8. Fewest steps, smart defaults.** Count the clicks against Zoho Books / Tally; when
+  there is one option (or one usual option), pre-select it. ✗ The first payment took 6 steps
+  (lead → quote → send → mark accepted → invoice → record payment), and "Received in" defaulted
+  to "Not sure yet" with only one bank account.
+- [ ] **9. Every card carries 2–3 of the owner's own examples, and the first test uses them.**
+  Same as 2a; a card without examples gets them before it is built.
+
+## 5. New rules (append one line per owner catch: date · card · rule)
 
 - 20 Oct 2026 · R-1697 · Button labels are actions; reuse the page's existing name for the action.
+- 21 Oct 2026 · R-1725 · Nine screen and data-entry rules (§4), checked on every card that touches a screen.
