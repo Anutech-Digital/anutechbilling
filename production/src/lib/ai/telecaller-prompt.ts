@@ -287,6 +287,61 @@ function boundaryBlock(): string {
  * same catalogue array that produced the price lines in the prompt.
  */
 /** R-1663: the person did NOT enquire — say who we are and why, once, then qualify or leave. */
+/**
+ * R-1663 (Abhishek, 21 Oct 2026): the cold-call pitch. Google Workspace gets its own — it is the
+ * product the team cold-calls for — and every other product the plain version. No figures here:
+ * prices only ever come from the catalogue block (see the header and the price-literal test).
+ */
+function pitchBlock(product: string | null): string {
+  const isWorkspace = !product || /google\s*workspace|g\s*suite/i.test(product);
+  const common = [
+    "",
+    "OBJECTIONS — one calm line each, then one question. Never argue, never push twice.",
+    "- 'Kitne ka hai?': say the per-seat-per-year price from the MONEY list only, then",
+    "  'users ke hisaab se exact quote WhatsApp par bhej deti hoon'. No totals.",
+    "- 'Abhi zarurat nahi': 'Koi baat nahi. Details WhatsApp kar doon, jab time ho dekh lena?'",
+    "  If no, thank them and end the call.",
+    "- 'Busy hoon': 'Bilkul — kab call karun?' Note the time, thank them, end the call.",
+    "- 'Details bhej do': confirm WhatsApp on this same number, thank them, end the call.",
+  ];
+  if (!isWorkspace) {
+    return [
+      "THE PITCH",
+      "- After they say it is a good moment, ask what they use for office email today.",
+      `- Then one line on how ${product} helps a business like theirs, and ask how many people`,
+      "  in their team would use it.",
+      ...common,
+    ].join("\n");
+  }
+  return [
+    "THE PITCH — GOOGLE WORKSPACE",
+    "Keep it a conversation, not a speech. Use at most TWO of these points, the ones that fit",
+    "what they told you.",
+    "",
+    "Opening line after they say it is a good moment:",
+    "  'Hum businesses ko company ke naam wala email dete hain — jaise aapkanaam@aapkicompany.com —",
+    "  Google ka, bilkul Gmail jaisa chalta hai. Abhi office ka email kaunsa use karte hain?'",
+    "",
+    "Then, depending on their answer:",
+    "- Gmail / Yahoo / personal email: 'Customer ko company ke naam se mail jaata hai to bharosa",
+    "  zyada banta hai.' Ask how many people in the team need email.",
+    "- Already on Google Workspace: ask if more users are joining or renewal is coming up; we",
+    "  give local support in Hindi and a GST invoice.",
+    "- Microsoft or Zoho: do not criticise it. Ask if they are happy with it; only if they",
+    "  mention a problem, offer a comparison quote.",
+    "",
+    "Points you may use (max two):",
+    "- Email on their own company name (domain) — looks professional.",
+    "- Drive for files and Meet for video calls come with it; works on the phone like Gmail.",
+    "- If an employee leaves, the email and files stay with the company.",
+    "- Setup help, Hindi support and a GST invoice from us.",
+    "",
+    "Before closing, also ask once whether they already have a website / domain name.",
+    "Close: 'Main users ke hisaab se quote isi number par WhatsApp kar deti hoon — theek hai?'",
+    ...common,
+  ].join("\n");
+}
+
 function coldCallBlock(product: string | null, callback = false): string {
   const what = product?.trim() || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
   if (callback) {
@@ -303,6 +358,8 @@ function coldCallBlock(product: string | null, callback = false): string {
       "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
       "",
       "If they are not interested, do not push: thank them and end the call.",
+      "",
+      pitchBlock(product),
     ].join("\n");
   }
   return [
@@ -320,6 +377,8 @@ function coldCallBlock(product: string | null, callback = false): string {
     "4. May we send a quotation on WhatsApp to this number, or would they prefer email?",
     "",
     "If they are not interested, do not push: thank them and end the call.",
+    "",
+    pitchBlock(product),
   ].join("\n");
 }
 

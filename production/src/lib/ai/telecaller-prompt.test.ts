@@ -219,3 +219,25 @@ describe("spokenDate", () => {
     expect(spokenDate("not-a-date")).toBe("");
   });
 });
+
+describe("cold-call pitch (R-1663)", () => {
+  it("Google Workspace campaigns get the Workspace pitch and objection lines", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: "Google Workspace Business Starter" } }).systemPrompt;
+    expect(p).toContain("THE PITCH — GOOGLE WORKSPACE");
+    expect(p).toContain("OBJECTIONS");
+    expect(p).toContain("has NOT enquired");
+  });
+  it("another product gets the plain pitch, never the Workspace one", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: "Zoho Mail Lite" } }).systemPrompt;
+    expect(p).toContain("THE PITCH");
+    expect(p).not.toContain("GOOGLE WORKSPACE");
+  });
+  it("a call back carries the pitch too", () => {
+    const p = buildTelecallPrompt({ ...BASE, coldCall: { product: null, callback: true } }).systemPrompt;
+    expect(p).toContain("CALL BACK");
+    expect(p).toContain("OBJECTIONS");
+  });
+  it("lead and renewal calls are unchanged — no pitch", () => {
+    expect(buildTelecallPrompt(BASE).systemPrompt).not.toContain("THE PITCH");
+  });
+});
