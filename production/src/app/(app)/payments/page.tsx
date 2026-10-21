@@ -37,6 +37,8 @@ import {
   type OutstandingRow,
 } from "@/lib/queries/payments";
 import { useQuotes } from "@/lib/queries/quotes";
+import { useOpenSeatQuotes } from "@/lib/queries/seat-quotes";
+import { seatQuotePendingText } from "@/lib/subscriptions/seat-quotes-pending";
 import { useAllProjectPayments } from "@/lib/queries/projects";
 import { collectedInMonth } from "@/lib/company/summary";
 import { useCustomers } from "@/lib/queries/customers";
@@ -146,6 +148,9 @@ function PaymentsPageInner() {
   /* R-1697: each dues row's own quote / renewal quote, so a row with no customer quote still
      gets "Record payment" through the same record_payment path. */
   const { data: duesQuoteLinks } = useDuesQuoteLinks((outstanding ?? []).map((o) => o.subscription_id));
+  /* R-1705: added seats whose pro-rata quote is unpaid — not in subscriptions.outstanding_amount,
+     so listed beside the dues (additive; the dues rows and their total are unchanged). */
+  const { data: seatQuotes } = useOpenSeatQuotes();
   const { data: customers } = useCustomers();
   const { data: bankAccounts } = useBankAccounts();
   const { data: me } = useCurrentUser();
@@ -271,6 +276,8 @@ function PaymentsPageInner() {
   const tabsWithCounts = STATUS_TABS.map((t) => ({ ...t, count: counts[t.id] ?? 0 }));
   const allReceived = scopedPayments.filter((p) => p.status === "received");
   const scopedOutstanding = scoped.outstanding;
+  const scopedSeatQuotes = (seatQuotes ?? []).filter((q) => !customerFilter || q.customerId === customerFilter);
+  const seatQuotesTotal = scopedSeatQuotes.reduce((s, q) => s + q.pending, 0);
 
   // Awaiting-invoice: quotes with payment_status = 'received' (fully paid, no invoice yet)
   const awaitingInvoiceQuotes = scoped.quotes.filter((q) => q.payment_status === "received");
@@ -443,7 +450,7 @@ function PaymentsPageInner() {
       )}
 
       {/* ── Outstanding Receivables — actionable card ── */}
-      {scopedOutstanding.length > 0 && (() => {
+      {(scopedOutstanding.length > 0 || scopedSeatQuotes.length > 0) && (() => {
         const outstanding = scopedOutstanding;
         const totalDue = outstanding.reduce((s, o) => s + o.outstanding_amount, 0);
         const overdueCount = outstanding.filter((o) => o.days_outstanding > 30).length;
@@ -459,6 +466,11 @@ function PaymentsPageInner() {
                     {overdueCount > 0 && <> · <b className="text-rose">{overdueCount} overdue 30+ days</b></>}
                     {" · "}<Link href="/accounting/aging" className="text-amber-ink hover:text-amber">all receivables (incl. projects & invoices)</Link>
                   </p>
+                  {seatQuotesTotal > 0 && (
+                    <p className="text-xs text-amber-ink">
+                      + {rupee(seatQuotesTotal)} in {scopedSeatQuotes.length} unpaid seat quote{scopedSeatQuotes.length === 1 ? "" : "s"} (seats already added, listed below)
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -466,6 +478,7 @@ function PaymentsPageInner() {
             {/* Mobile card list — phones only. The desktop table's advanced
                 money ops (suspend / write-off) stay desktop-only; mobile keeps
                 the safe primary action (Record payment → the quote, R-1697). */}
+            {outstanding.length > 0 && (<>
             <ul className="md:hidden space-y-2">
               {outstanding.map((o) => {
                 const ageKind =
@@ -566,6 +579,37 @@ function PaymentsPageInner() {
                 </tbody>
               </table>
             </div>
+            </>)}
+
+            {/* R-1705: open add-seats quotes — the seats are live, the money is not in. */}
+            {scopedSeatQuotes.length > 0 && (
+              <div className="mt-3 rounded-md border border-amber/40 bg-paper p-3">
+                <h3 className="text-xs font-semibold text-ink mb-2">Seat quotes pending · {rupee(seatQuotesTotal)}</h3>
+                <ul className="space-y-2">
+                  {scopedSeatQuotes.map((q) => (
+                    <li key={q.quoteId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0">
+                        <span className="font-medium text-ink">{q.customerName}</span>
+                        <span className="text-ink-3"> · {q.plan} · </span>
+                        <span className="text-amber-ink">{seatQuotePendingText(q)}</span>
+                        {" "}
+                        {canQuotes ? (
+                          <Link href={`/quotes/${q.quoteId}` as never} className="font-mono text-xs text-amber-ink hover:underline">{q.quoteId}</Link>
+                        ) : (
+                          <span className="font-mono text-xs text-ink-3">{q.quoteId}</span>
+                        )}
+                      </span>
+                      {canWrite && (
+                        <Button size="sm" variant="default" icon="rupee" onClick={() => setPayQuoteId(q.quoteId)}>
+                          Record payment
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-2xs text-ink-3">Not paid for? Reject the quote — that takes the seats and MRR back off the subscription.</p>
+              </div>
+            )}
 
             <p className="text-2xs text-ink-3 mt-2 flex items-center gap-1">
               <Icon name="info" size={11} />

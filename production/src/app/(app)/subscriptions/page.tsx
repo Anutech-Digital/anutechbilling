@@ -57,6 +57,7 @@ import { LicenseLeakageCard } from "@/components/features/subscriptions/license-
 import { SeatRequestsCard } from "@/components/features/subscriptions/seat-requests-card";
 import { useSeatRequests, useAmendments } from "@/lib/queries/seat-requests";
 import { AmendmentHistory } from "@/components/features/subscriptions/amendment-history";
+import { SeatQuotesPending } from "@/components/features/subscriptions/seat-quotes-pending";
 import { LateChargesPreview } from "@/components/features/late-charges/customer-late-charges";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { localDateISO } from "@/lib/leads/outcomes";
@@ -1804,6 +1805,8 @@ export default function SubscriptionsPage() {
                   </div>
                 ))}
               </dl>
+              {/* R-1705: added seats whose pro-rata quote is still unpaid. */}
+              <SeatQuotesPending subscriptionId={scheduleSub.id} />
               <BillingScheduleCard subscription={scheduleSub} todayISO={todayIST()} />
               {/* The contract's own history, next to its schedule — the two questions a
                   rep opens this drawer with are "what will they be billed?" and "what

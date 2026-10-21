@@ -379,6 +379,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     tax_rate:         input.taxRatePct,
     is_renewal:       false,
     is_add_seats:     true,   // 0052: record_payment skips sub handling → no duplicate sub
+    /* R-1705: which subscription these seats went on, and the MRR they added — rejecting the
+       quote takes exactly that back (trigger trg_quotes_add_seats_take_back). */
+    add_seats_subscription_id: input.subscriptionId,
+    add_seats_mrr_added:       priced.newMrr - input.currentMrr,
     extension_months: 0,
     /* R-813: the customer reads only the first part — the period, in words. The audit text
        (subscription id, who backdated, the exact factor) sits after STAFF_NOTE_MARKER, and

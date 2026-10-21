@@ -172,6 +172,7 @@ MIGS=(
   "r1623imports|20261020050000_r1623_bank_import_batches.sql|resellersos_migration|to_regclass('public.bank_import_batches') is not null and to_regprocedure('public.remove_bank_import(uuid,uuid,text,text,text)') is not null and to_regprocedure('public.import_bank_statement(uuid,jsonb,text,text)') is not null and to_regprocedure('public.bank_import_history(uuid)') is not null"
   "r1703renewalpriordues|20261021023154_r1703_renewal_payment_keeps_prior_dues.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and prosrc like '%R-1703%')"
   "r1706acceptprospect|20261021025234_r1706_accept_prospect_creates_customer.sql|resellersos_migration|to_regprocedure('public.customer_from_prospect_quote(uuid,text,integer)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_quote(text)') and prosrc like '%R-1706%')"
+  "r1705seatquotetakeback|20261021025445_r1705_seat_quote_reject_takes_seats_back.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quotes_add_seats_take_back()') and prosrc like '%R-1705%') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quotes' and column_name = 'add_seats_taken_back_at')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

@@ -9888,6 +9888,9 @@ export type Database = {
       }
       quotes: {
         Row: {
+          add_seats_mrr_added: number | null
+          add_seats_subscription_id: string | null
+          add_seats_taken_back_at: string | null
           amount: number | null
           approval_rejection_reason: string | null
           approval_requested_at: string | null
@@ -9961,6 +9964,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          add_seats_mrr_added?: number | null
+          add_seats_subscription_id?: string | null
+          add_seats_taken_back_at?: string | null
           amount?: number | null
           approval_rejection_reason?: string | null
           approval_requested_at?: string | null
@@ -10034,6 +10040,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          add_seats_mrr_added?: number | null
+          add_seats_subscription_id?: string | null
+          add_seats_taken_back_at?: string | null
           amount?: number | null
           approval_rejection_reason?: string | null
           approval_requested_at?: string | null
