@@ -55,6 +55,9 @@ const nextConfig = {
      again and again (10–25 s each) and every click behind it looked stuck. Keep them for an
      hour. `next build` / production ignore this setting. */
   onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 200 },
+  /* Local dev with `next dev --turbopack` (much faster compiles on this machine). Same `fs`
+     stand-in as the webpack hook above; `next build` still uses webpack and ignores this. */
+  turbopack: { resolveAlias: { fs: { browser: "./src/lib/empty-module.js" } } },
   /* 2 Oct 2026 go-live: `next build`'s own "Linting and checking validity of types" ran past
      the 30-minute Cloud Build limit, and lint is the part with a separate home — CI runs
      `next lint` on every push (.github/workflows/ci.yml) and the local gate runs it too.
