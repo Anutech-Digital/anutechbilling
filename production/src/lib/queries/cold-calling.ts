@@ -184,6 +184,17 @@ export function useDeleteContact() {
   });
 }
 
+export interface ContactEdit { phone?: string; name?: string | null; company?: string | null; city?: string | null; dnd?: boolean }
+
+export function useUpdateContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: ContactEdit & { id: string }) =>
+      api<{ ok: true }>(`/api/cold-calling/contacts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useCallNow() {
   const qc = useQueryClient();
   return useMutation({

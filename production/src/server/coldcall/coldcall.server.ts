@@ -422,6 +422,48 @@ export async function deleteContacts(run: Run, ids: readonly string[]): Promise<
   });
 }
 
+export interface ContactPatch {
+  phone?: string;
+  name?: string | null;
+  company?: string | null;
+  city?: string | null;
+  dnd?: boolean;
+}
+
+/**
+ * Change one number's details (Abhishek, 21 Oct 2026). Not while it is on a call. Marking DND
+ * takes it out of the queue; un-marking puts a never-called number back in. A changed phone
+ * must still be unique on this list.
+ */
+export async function updateContact(
+  run: Run, contactId: string, patch: ContactPatch,
+): Promise<{ ok: true } | { ok: false; status: number; error: string; detail?: string }> {
+  return run(async (tx) => {
+    const c = await tx.cold_call_contacts.findUnique({ where: { id: contactId } });
+    if (!c) return { ok: false, status: 404, error: "That number is not on the list any more.", detail: "Refresh the page." };
+    if (c.status === "calling") return { ok: false, status: 409, error: "This number is on a call right now.", detail: "Edit it after the call ends." };
+    if (patch.phone && patch.phone !== c.phone) {
+      const clash = await tx.cold_call_contacts.count({ where: { campaign_id: c.campaign_id, phone: patch.phone, id: { not: contactId } } });
+      if (clash) return { ok: false, status: 409, error: "That number is already on this list.", detail: "Search the list for it, or delete the other one first." };
+    }
+    let status = c.status;
+    if (patch.dnd === true && !["moved", "interested", "callback", "answered", "not_interested"].includes(c.status)) status = "skipped_dnd";
+    if (patch.dnd === false && c.status === "skipped_dnd") status = "pending";
+    await tx.cold_call_contacts.update({
+      where: { id: contactId },
+      data: {
+        ...(patch.phone ? { phone: patch.phone } : {}),
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.company !== undefined ? { company: patch.company } : {}),
+        ...(patch.city !== undefined ? { city: patch.city } : {}),
+        ...(patch.dnd !== undefined ? { dnd: patch.dnd } : {}),
+        status, updated_at: new Date(),
+      },
+    });
+    return { ok: true };
+  });
+}
+
 export type DeleteResult = { ok: true } | { ok: false; status: number; error: string; detail?: string };
 
 /**

@@ -23,6 +23,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { BulkActionBar, BulkBarConfirmButton } from "@/components/ui/bulk-action-bar";
+import { AddContactDialog, EditContactDialog } from "@/components/features/coldcall/contact-dialogs";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -284,6 +285,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
   const tick = useTick();
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [report, setReport] = React.useState<ImportResult | null>(null);
+  const [addingOne, setAddingOne] = React.useState(false);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const bulkDel = useDeleteContacts();
   React.useEffect(() => { setPicked(new Set()); }, [filter]);
@@ -403,6 +405,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
       {/* The three steps */}
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="sr-only" onChange={onFile} aria-label="Choose a CSV file to import" tabIndex={-1} />
       <ImportReportDialog report={report} campaignId={campaign.id} onClose={() => setReport(null)} />
+      <AddContactDialog open={addingOne} campaignId={campaign.id} onClose={() => setAddingOne(false)} />
       <div className="grid gap-3 md:grid-cols-3">
         <Step n={1} title="Add numbers" done={numbers > 0} active={numbers === 0}>
           <p className="text-sm text-ink-3">
@@ -415,6 +418,7 @@ export function CampaignPanel({ campaign }: { campaign: ColdCampaign }) {
               onClick={() => fileRef.current?.click()} loading={importList.isPending}>
               {numbers === 0 ? "Upload list" : "Add more"}
             </Button>
+            <Button size="sm" variant="ghost" icon="plus" onClick={() => setAddingOne(true)}>Add one number</Button>
             <Button size="sm" variant="ghost" icon="download" onClick={downloadSample}>Sample file</Button>
           </div>
         </Step>
@@ -858,6 +862,7 @@ export function ContactItem({ contact: c, picked, onPick }: {
     } catch (err) { failToast(err, "Could not start the call."); }
   };
   const [confirming, setConfirming] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
   const hasDetail = !!(c.summary || c.transcript || c.error || c.nextAttemptAt || c.status === "no_answer");
@@ -949,6 +954,10 @@ export function ContactItem({ contact: c, picked, onPick }: {
               Open lead <Icon name="external" size={12} />
             </Link>
           )}
+          {c.status !== "calling" && !confirming && (
+            <Button size="icon" variant="ghost" icon="pencil" onClick={() => setEditing(true)}
+              aria-label={`Edit ${title}`} title="Edit name, company, city, phone or DND" />
+          )}
           {c.status !== "calling" && (confirming ? (
             <span className="inline-flex items-center gap-1">
               <Button size="sm" variant="danger" onClick={doDelete} loading={del.isPending}>Delete</Button>
@@ -960,6 +969,7 @@ export function ContactItem({ contact: c, picked, onPick }: {
           ))}
         </div>
       </div>
+      <EditContactDialog open={editing} contact={c} onClose={() => setEditing(false)} />
       {open && (
         <div className="mt-3 space-y-2 text-sm rounded-md bg-paper-2 p-3">
           {c.reasons.length > 0 && (
