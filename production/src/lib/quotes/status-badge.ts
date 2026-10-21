@@ -23,12 +23,15 @@
  * reader needs first.
  */
 import type { Quote } from "@/lib/supabase/database.types";
+import { quoteBalanceDue } from "./list-tab";
 
 export type QuoteBadgeKind = "muted" | "success" | "warning" | "danger" | "info";
 
 type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "payment_amount"> & {
   /** R-448: set when a revision replaced this quote. Optional so older callers still fit. */
   superseded_by?: string | null;
+  /** R-1707: quote_open_balance() (lib/quotes/open-balances.ts). null/absent = not loaded. */
+  open_balance?: number | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -78,7 +81,8 @@ export interface QuoteCashNote {
  * is collected, and "₹20,000 paid" hides that it is not finished.
  */
 export function cashNote(q: QuoteStatusFields): QuoteCashNote | null {
-  const due = outstanding(q);
+  /* R-1707: the same balance the list tab uses (credit notes and refunds counted). */
+  const due = quoteBalanceDue(q);
   const paid = q.payment_amount ?? 0;
   const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
 
