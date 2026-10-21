@@ -33,6 +33,7 @@
  * prices.annual_total.msrp is a YEAR total and is divided by 12.
  */
 import { planKey } from "./plan-match";
+import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 
 export interface ListPriceItem {
   id: string;
@@ -79,7 +80,10 @@ export function workspaceEdition(plan: string | null | undefined): WorkspaceEdit
  * MRR for `seats` seats of a catalogue row at LIST price, whole rupees, or null when
  * the row carries no usable price.
  */
-export function itemListMrr(item: ListPriceItem, seats: number): number | null {
+export function itemListMrr(raw: ListPriceItem, seats: number): number | null {
+  /* R-1704: the R-205 Workspace list-price floor, the same rule every other price reader uses —
+     a stale Starter row (₹136) must not price an imported subscription below list (₹270). */
+  const item = floorWorkspaceRow(raw);
   const p = (item.prices ?? null) as { annual?: { msrp?: unknown }; annual_total?: { msrp?: unknown } } | null;
   const monthly = typeof p?.annual?.msrp === "number" && p.annual.msrp > 0 ? p.annual.msrp
     : typeof item.msrp === "number" && item.msrp > 0 ? item.msrp

@@ -37,7 +37,8 @@ const products = subscriptionProducts(CATALOG);
 describe("subscriptionProducts — ₹/seat/month becomes ₹/seat/year, once", () => {
   it.each([
     ["GW-STR-fbb",  3_240,  1_320],
-    ["GW-STD-fbb", 10_368,  7_440],
+    /* R-1704: ₹864/mo is under the R-205 list price ₹1,080 — lifted, like the quote builder. */
+    ["GW-STD-fbb", 12_960,  7_440],
     ["MS-STD",     11_880,  9_840],
     ["MS-PRM",     22_800, 19_440],
     ["ZO-STD",      1_440,  1_140],

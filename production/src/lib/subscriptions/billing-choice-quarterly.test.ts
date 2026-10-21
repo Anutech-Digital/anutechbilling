@@ -17,7 +17,9 @@ import { buildBillingSchedule, termEndInclusive, CYCLE_MONTHS } from "@/lib/bill
 import type { Item } from "@/lib/supabase/database.types";
 
 const item = (over: Partial<Item> & { prices?: unknown } = {}): Item => ({
-  id: "GW-STD", name: "Google Workspace Standard", vendor: "google",
+  /* R-1704: not a Google Workspace name — GW rows are lifted to the R-205 list price, and
+     this file pins billing-period arithmetic on a row priced as written. */
+  id: "MS-STD", name: "Microsoft 365 Business Standard", vendor: "microsoft",
   msrp: 864, wholesale: 620,
   prices: { annual: { msrp: 864, wholesale: 620 }, monthly: { msrp: 1_000, wholesale: 700 } },
   item_type: "subscription",
