@@ -830,10 +830,11 @@ function contactsList(rows: ColdContact[] | undefined): ColdContact[] {
 
 /** "Busy — retry" / "No answer — retry" for a number that was rung and is waiting to be rung again. */
 function retryLabel(c: ColdContact): string | null {
-  if (c.status !== "pending" || c.attempts === 0) return null;
-  if (c.callStatus === "busy") return "Busy — will retry";
-  if (c.callStatus === "no-answer") return "No answer — will retry";
-  return "Will retry";
+  const why = c.notReached ?? "Not reached";
+  if (c.status === "pending" && c.attempts > 0) return why;
+  if (c.status === "no_answer") return why;
+  if (c.status === "failed" && c.notReached) return c.notReached;
+  return null;
 }
 
 function callbackWhen(iso: string): string {
@@ -851,7 +852,7 @@ export function ContactItem({ contact: c, picked, onPick }: {
   const [confirming, setConfirming] = React.useState(false);
   const s = STATUS[c.status] ?? { label: c.status, kind: "muted" as BadgeKind };
   const title = c.name || c.company || c.phone;
-  const hasDetail = !!(c.summary || c.transcript || c.error || c.nextAttemptAt);
+  const hasDetail = !!(c.summary || c.transcript || c.error || c.nextAttemptAt || c.status === "no_answer");
 
   const doMove = async () => {
     try {
@@ -906,6 +907,12 @@ export function ContactItem({ contact: c, picked, onPick }: {
           {c.status === "callback" && c.nextAttemptAt && (
             <span className="text-[11px] text-ink-3 w-full">AI calls again {callbackWhen(c.nextAttemptAt)}</span>
           )}
+          {c.status === "pending" && c.attempts > 0 && c.nextAttemptAt && (
+            <span className="text-[11px] text-ink-3 w-full">Next try {callbackWhen(c.nextAttemptAt)}</span>
+          )}
+          {c.status === "no_answer" && (
+            <span className="text-[11px] text-ink-3 w-full">Stopped — no more tries</span>
+          )}
         </div>
         <span className="text-xs text-ink-3">
           {c.lastCalledAt ? formatDate(c.lastCalledAt) : "Not called yet"}{c.attempts > 1 ? ` · ${c.attempts} tries` : ""}
@@ -950,7 +957,12 @@ export function ContactItem({ contact: c, picked, onPick }: {
           {c.error && <p className="text-rose-ink">Call failed: {c.error}</p>}
           {c.nextAttemptAt && c.status === "pending" && (
             <p className="text-ink-3">
-              {c.callStatus === "busy" ? "The line was busy" : "They did not pick up"} last time — the agent tries again {callbackWhen(c.nextAttemptAt)}.
+              Last try: {(c.notReached ?? "not reached").toLowerCase()}. The agent tries once more on {callbackWhen(c.nextAttemptAt)}.
+            </p>
+          )}
+          {c.status === "no_answer" && (
+            <p className="text-ink-3">
+              Last try: {(c.notReached ?? "not reached").toLowerCase()}. Stopped after {c.attempts} tries — call them yourself if they matter.
             </p>
           )}
           {c.nextAttemptAt && c.status === "callback" && (

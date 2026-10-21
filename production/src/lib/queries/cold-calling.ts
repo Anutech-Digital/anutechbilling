@@ -42,6 +42,7 @@ export interface ColdContact {
   leadId: string | null;
   reasons: string[];
   callStatus: string | null;
+  notReached: string | null;
 }
 
 /** An API refusal, carrying the route's own "what to do next" line. */

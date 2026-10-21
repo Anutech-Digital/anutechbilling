@@ -5040,6 +5040,8 @@ model cold_call_contacts {
   next_attempt_at  DateTime? @db.Timestamptz(6)
   provider_call_id String?
   call_status      String?
+  hangup_reason    String?
+  hangup_by        String?
   duration_sec     Int?
   transcript       String?
   summary          String?

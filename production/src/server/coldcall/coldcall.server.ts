@@ -18,7 +18,7 @@ import { bolnaReasons, normalisePostCall } from "@/lib/telecall/inbound";
 import { fetchBolnaExecution, placeCall, type TelecallProviderConfig } from "@/lib/telecall/provider";
 import type { ItemPrices } from "@/lib/supabase/database.types";
 import {
-  canCallNow, istDayStart, nextWorkingDayAt, outcomeFromCall, staleCallAction, NO_RESULT_GIVE_UP_MINUTES,
+  canCallNow, istDayStart, nextWorkingDayAt, notReachedReason, outcomeFromCall, staleCallAction, NO_RESULT_GIVE_UP_MINUTES,
   type CallingListRow, type ColdCallStatus, type SkippedNumber,
 } from "@/lib/coldcall/coldcall";
 import { normaliseIndianPhone } from "@/lib/ai/telecall";
@@ -140,6 +140,14 @@ const STATUS_WORDS: Record<string, string> = {
   callback: "asked for a call back", not_interested: "not interested", no_answer: "did not answer",
   failed: "call failed", skipped_dnd: "DND", moved: "moved to Sales",
 };
+
+/** One text field from Bolna's telephony_data (hang-up reason, who hung up), trimmed. */
+function telephonyText(execution: Record<string, unknown>, key: string): string | null {
+  const t = execution.telephony_data;
+  if (!t || typeof t !== "object") return null;
+  const v = (t as Record<string, unknown>)[key];
+  return typeof v === "string" && v.trim() ? v.trim().slice(0, key === "hangup_by" ? 40 : 300) : null;
+}
 
 function istWhen(d: Date): string {
   return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
@@ -273,6 +281,8 @@ export interface ContactRow {
   leadId: string | null;
   /** What the phone network said on the last try: completed, busy, no-answer… */
   callStatus: string | null;
+  /** The same in plain words — "Cut the call", "Did not pick up", "Busy" — when not reached. */
+  notReached: string | null;
   /** Why the agent rated the call as it did, in its own words (quote asked, seats heard…). */
   reasons: string[];
 }
@@ -290,6 +300,7 @@ export async function listContacts(run: Run, campaignId: string, status: string[
     summary: r.summary, transcript: r.transcript, seatsHeard: r.seats_heard, error: r.error, leadId: r.lead_id,
     reasons: bolnaReasons(r.extracted).slice(0, 4),
     callStatus: r.call_status,
+    notReached: notReachedReason(r.call_status, r.hangup_by, r.hangup_reason),
   }));
 }
 
@@ -519,10 +530,13 @@ export async function runCampaignTick(
       data: {
         status: outcome.status, next_attempt_at: outcome.nextAttemptAt,
         call_status: call.signals.disposition, duration_sec: call.signals.durationSec,
+        hangup_reason: telephonyText(got.execution, "hangup_reason"),
+        hangup_by: telephonyText(got.execution, "hangup_by"),
         transcript: call.signals.transcript || null, summary: call.signals.summary || null,
         seats_heard: call.signals.seatsDiscussed,
         extracted: (got.execution.extracted_data ?? {}) as object,
-        provider_call_id: outcome.status === "pending" ? null : c.provider_call_id,
+        /* Kept so the last try can be looked up at Bolna; a new claim clears it before dialling. */
+        provider_call_id: c.provider_call_id,
         updated_at: now,
       },
     }));
@@ -572,7 +586,7 @@ export async function runCampaignTick(
     for (const r of rows) {
       const claimed = await tx.cold_call_contacts.updateMany({
         where: { id: r.id, status: r.status },
-        data: { status: "calling", last_called_at: now, updated_at: now, error: null },
+        data: { status: "calling", last_called_at: now, updated_at: now, error: null, provider_call_id: null },
       });
       if (claimed.count === 1) mine.push(r);
     }
@@ -602,7 +616,7 @@ export async function runCampaignTick(
     return {
       ...report,
       note: next?.next_attempt_at
-        ? `everyone left was busy, did not answer or asked for a call back — next try ${istWhen(next.next_attempt_at)}`
+        ? `everyone left was busy, did not pick up, cut the call or asked for a call back — next try ${istWhen(next.next_attempt_at)}`
         : "no number is due right now",
     };
   }

@@ -124,6 +124,7 @@ MIGS=(
   "r1661coldcall|20261019070000_r1661_cold_calling.sql|resellersos_migration|(to_regclass('public.cold_call_campaigns') is not null and to_regclass('public.cold_call_contacts') is not null)"
   "r1663coldproduct|20261019110000_r1663_cold_call_product.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'cold_call_campaigns' and column_name = 'product_name')"
   "r1663coldproducttext|20261021090000_r1663_cold_call_product_text.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'cold_call_campaigns' and column_name = 'product_item_id' and data_type = 'text')"
+  "r1662coldhangup|20261021100000_r1662_cold_call_hangup.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'cold_call_contacts' and column_name = 'hangup_reason')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

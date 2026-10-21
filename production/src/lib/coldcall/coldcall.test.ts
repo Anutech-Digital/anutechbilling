@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PostCallSignals } from "@/lib/ai/telecall";
-import { canCallNow, istDayStart, MAX_ATTEMPTS, nextWorkingDayAt, outcomeFromCall, parseCallingList, staleCallAction } from "./coldcall";
+import { canCallNow, istDayStart, MAX_ATTEMPTS, nextWorkingDayAt, notReachedReason, outcomeFromCall, parseCallingList, staleCallAction } from "./coldcall";
 
 describe("parseCallingList", () => {
   it("reads phone, name, company, city and DND; normalises numbers to +91", () => {
@@ -46,11 +46,11 @@ describe("outcomeFromCall", () => {
     expect(outcomeFromCall(base, 1, now).status).toBe("answered");
   });
 
-  it("no answer / busy → retried about a day later, until the attempts run out", () => {
+  it("no answer / busy → retried the next working day, until the attempts run out", () => {
     const first = outcomeFromCall({ ...base, disposition: "no-answer" }, 1, now);
     expect(first.status).toBe("pending");
-    expect(first.nextAttemptAt?.getTime()).toBe(now.getTime() + 20 * 3_600_000);
-    expect(outcomeFromCall({ ...base, disposition: "busy" }, 2, now).status).toBe("pending");
+    expect(first.nextAttemptAt?.getTime()).toBe(nextWorkingDayAt(now, 11).getTime());
+    expect(outcomeFromCall({ ...base, disposition: "busy" }, 1, now).status).toBe("pending");
     expect(outcomeFromCall({ ...base, disposition: "no-answer" }, MAX_ATTEMPTS, now))
       .toEqual({ status: "no_answer", nextAttemptAt: null });
     expect(outcomeFromCall({ ...base, disposition: "error" }, 1, now).status).toBe("failed");
@@ -122,15 +122,28 @@ describe("call back — the agent rings again", () => {
   });
 });
 
-describe("busy is retried sooner than no answer", () => {
-  const now = new Date("2026-10-21T09:45:00Z");
+describe("two tries, the second the next working day (Abhishek, 21 Oct)", () => {
+  const now = new Date("2026-10-21T09:45:00Z"); // Wed 15:15 IST
   const base = {
     durationSec: 0, transcript: "", summary: "", customerAskedForQuote: false, customerAskedForCallback: false,
     customerConfirmedRenewal: false, customerNotInterested: false, seatsDiscussed: null,
   };
-  it("busy → about two hours", () => {
+  it("busy on the first try → next working day 11:00 IST", () => {
     const o = outcomeFromCall({ ...base, disposition: "busy" }, 1, now);
     expect(o.status).toBe("pending");
-    expect(o.nextAttemptAt?.toISOString()).toBe("2026-10-21T11:45:00.000Z");
+    expect(o.nextAttemptAt?.toISOString()).toBe("2026-10-22T05:30:00.000Z");
+  });
+  it("not reached on the second try → stop", () => {
+    expect(outcomeFromCall({ ...base, disposition: "no-answer" }, 2, now)).toEqual({ status: "no_answer", nextAttemptAt: null });
+  });
+});
+
+describe("notReachedReason — the carrier's answer in plain words", () => {
+  it("reads Bolna's real hang-up reasons", () => {
+    expect(notReachedReason("busy", "Callee", "Call recipient rejected")).toBe("Cut the call");
+    expect(notReachedReason("busy", "Carrier", "Call recipient was busy")).toBe("Busy");
+    expect(notReachedReason("no-answer", "Carrier", "Call recipient rejected")).toBe("Call rejected");
+    expect(notReachedReason("no-answer", null, null)).toBe("Did not pick up");
+    expect(notReachedReason("completed", "Caller", "end_call_tool")).toBeNull();
   });
 });

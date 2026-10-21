@@ -115,14 +115,15 @@ export type ColdCallStatus =
   | "pending" | "calling" | "answered" | "interested" | "callback"
   | "not_interested" | "no_answer" | "failed" | "skipped_dnd" | "moved";
 
-/** One try plus two retries (Abhishek: "no answer → next day, max 2 retries"). */
-export const MAX_ATTEMPTS = 3;
+/**
+ * Two tries in all (Abhishek, 21 Oct 2026: "max two attempts — if nobody picks up or they cut
+ * it, try the next day; after that we stop", the usual cold-calling rule).
+ */
+export const MAX_ATTEMPTS = 2;
 /** An asked-for call back goes out at this IST hour on the next working day. */
 export const CALLBACK_HOUR_IST = 11;
-/** A busy line is tried again after this many hours. */
-export const BUSY_RETRY_HOURS = 2;
-/** A retry waits about a day, so a second ring is never the same afternoon. */
-export const RETRY_AFTER_HOURS = 20;
+/** A number not reached is tried again at this IST hour on the next working day. */
+export const RETRY_HOUR_IST = 11;
 
 export interface ColdCallOutcome {
   status: ColdCallStatus;
@@ -143,9 +144,8 @@ export function outcomeFromCall(signals: PostCallSignals, attemptsSoFar: number,
 
   if (status === "no_answer" || status === "busy") {
     if (attemptsSoFar < MAX_ATTEMPTS) {
-      /* Busy = on another call right now, so a couple of hours is enough; no answer waits a day. */
-      const hours = status === "busy" ? BUSY_RETRY_HOURS : RETRY_AFTER_HOURS;
-      return { status: "pending", nextAttemptAt: new Date(now.getTime() + hours * 3_600_000) };
+      /* Not picked up, busy or cut: the second try is the next working day, mid-morning. */
+      return { status: "pending", nextAttemptAt: nextWorkingDayAt(now, RETRY_HOUR_IST) };
     }
     return { status: "no_answer", nextAttemptAt: null };
   }
@@ -226,4 +226,21 @@ export function staleCallAction(
   const since = row.lastCalledAt ? (now.getTime() - row.lastCalledAt.getTime()) / 60_000 : Infinity;
   if (!row.providerCallId) return since >= UNPLACED_RESET_MINUTES ? "requeue" : "wait";
   return since >= NO_RESULT_GIVE_UP_MINUTES ? "give_up" : "wait";
+}
+
+/**
+ * The phone network's answer in plain words, for the list: did not pick up, cut the call, busy,
+ * switched off… Bolna gives a disposition plus the carrier's own reason and who hung up.
+ */
+export function notReachedReason(callStatus: string | null, hangupBy: string | null, hangupReason: string | null): string | null {
+  const reason = (hangupReason ?? "").toLowerCase();
+  const by = (hangupBy ?? "").toLowerCase();
+  if (reason.includes("rejected") && by === "callee") return "Cut the call";
+  if (reason.includes("rejected")) return "Call rejected";
+  if (reason.includes("busy") || callStatus === "busy") return "Busy";
+  if (reason.includes("switched off") || reason.includes("unreachable") || reason.includes("not reachable")) return "Switched off / not reachable";
+  if (reason.includes("invalid") || reason.includes("not exist")) return "Number not in service";
+  if (callStatus === "no-answer" || reason.includes("no answer") || reason.includes("not answered")) return "Did not pick up";
+  if (callStatus === "failed" || callStatus === "error") return "Call failed";
+  return null;
 }
