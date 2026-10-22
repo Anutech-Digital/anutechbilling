@@ -59,6 +59,25 @@ import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
 import { lastUsedCategory, moreNeeded } from "@/app/(app)/accounting/expenses/expense-form";
+import { buildExpenseNote, lineCategoryFromBill, paidFromBill, rcmSuggested } from "@/app/(app)/accounting/expenses/bill-autofill";
+
+/* R-1744: a small "AI" tag beside a field the bill reader filled. It goes away as soon as the
+   operator changes that field — then the value is theirs, not the AI's. */
+function AiMark({ field, on }: { field: string; on: boolean }) {
+  if (!on) return null;
+  return (
+    <span
+      data-ai-mark={field}
+      title="Filled by AI from the bill — change it if it is wrong"
+      className="inline-flex items-center rounded bg-amber-soft px-1 py-px text-3xs font-semibold leading-none text-amber-ink"
+    >
+      AI<span className="sr-only"> filled this from the bill</span>
+    </span>
+  );
+}
+
+/** R-1744: what the bill reader can read — the same types /api/ai/extract-bill accepts. */
+const BILL_FILE = /^(image\/(png|jpe?g|webp|heic|heif)|application\/pdf)$/i;
 
 const CURRENCY_OPTIONS = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"] as const;
 
@@ -192,7 +211,9 @@ export function AddExpenseDialog({
   // books use the converted `amount`. Same shape + behaviour as COGS bills.
   // Each line carries its OWN category so a mixed invoice auto-splits into one
   // expense per category on save. Blank category = falls back to the header one.
-  type Line = { description: string; qty: string; unit_price: string; amount: string; category: string };
+  /* `aiCat` (R-1744): the line's category came from the bill reader — shows the "AI" tag
+     until the operator picks one themselves. */
+  type Line = { description: string; qty: string; unit_price: string; amount: string; category: string; aiCat?: boolean };
   const [lines, setLines] = React.useState<Line[]>(
     (expense?.line_items ?? []).map((li) => ({
       description: li.name ?? "",
@@ -224,6 +245,21 @@ export function AddExpenseDialog({
   const [reading, setReading] = React.useState(false);
   const [aiNote, setAiNote]   = React.useState<string | null>(null);
   const [aiError, setAiError] = React.useState<string | null>(null);
+  /* R-1744: the fields the AI filled after "Yes, fill it in" — each shows a small "AI" tag
+     until the operator edits it. Keyed by field name (lines carry their own `aiCat`). */
+  const [aiFilled, setAiFilled] = React.useState<Record<string, boolean>>({});
+  const clearAi = React.useCallback((field: string) => {
+    setAiFilled((m) => (m[field] ? { ...m, [field]: false } : m));
+  }, []);
+  /* R-1744: a foreign bill with no GST → SUGGEST reverse charge (a chip). Never ticked for
+     the operator: an OIDAR vendor (Anthropic, Google LLC) that already charged GST must not
+     be taxed twice, and only the operator knows the service was imported. */
+  const [rcmHint, setRcmHint] = React.useState(false);
+  /* R-1744: the whole dialog is a drop zone for the bill. A counter, because dragenter/leave
+     fire for every child the pointer crosses. */
+  const [dragging, setDragging] = React.useState(false);
+  const dragDepth = React.useRef(0);
+  const cameraRef = React.useRef<HTMLInputElement>(null);
   // The uploaded bill file — kept and attached to the expense on save (proof),
   // whether or not the AI read is confirmed.
   const [attachFile, setAttachFile] = React.useState<File | null>(null);
@@ -261,7 +297,13 @@ export function AddExpenseDialog({
     /** AI ki chuni hui category — list se milayi hui, warna undefined. */
     aiCategory?: string;
     billType:    "gst" | "kaccha";
-    items:       { description: string; qty: string; unit_price: string; amount: string }[];
+    /* R-1744: each line's own AI category (undefined → the bill's category). */
+    items:       { description: string; qty: string; unit_price: string; amount: string; category?: string }[];
+    /** R-1744: short name of the main item ("Workspace") — for the "What for?" note. */
+    itemShort?:  string;
+    /** R-1744: "paid" only when the bill clearly says so; the method as one of PAYMENT_METHODS. */
+    paidStatus?: string;
+    paymentMode?: string;
   };
   const [pending, setPending] = React.useState<PendingExtract | null>(null);
   // Vendor GSTIN read from the invoice — saved to the Vendors master on save so
@@ -306,6 +348,7 @@ export function AddExpenseDialog({
 
   async function handleBillFile(file: File) {
     setAiError(null); setAiNote(null); setPending(null);
+    if (!BILL_FILE.test(file.type)) { setAiError("Drop a PDF or a photo (JPG/PNG) of the bill."); return; }
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
     setAttachFile(file);   // keep it — attaches to the expense on save (proof)
     setReading(true);
@@ -322,7 +365,13 @@ export function AddExpenseDialog({
         body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
       });
       const json = await res.json();
-      if (!res.ok) { setAiError(json.error ?? "Couldn't read the bill — fill the fields yourself. 📎 The bill will still be attached."); return; }
+      if (!res.ok) {
+        /* R-1744: no Gemini key for this company → say so plainly; the form stays manual. */
+        setAiError(json.code === "ai_not_configured"
+          ? "AI bill reading is not set up for your company (Settings → Integrations → AI). Fill the form by hand — the bill will still be attached."
+          : (json.error ?? "Couldn't read the bill — fill the fields yourself. 📎 The bill will still be attached."));
+        return;
+      }
       const f = json.fields as Record<string, unknown>;
       const cur = String(f.currency ?? "INR").toUpperCase();
       /* Teeno ALAG bhi rakhe jate hain, sirf jod kar nahi. `gst` kul hai (form aur
@@ -351,7 +400,11 @@ export function AddExpenseDialog({
           qty:         it.qty        != null ? String(it.qty)        : "",
           unit_price:  it.unit_price != null ? String(it.unit_price) : "",
           amount:      it.amount     != null ? String(it.amount)     : "",
+          category:    typeof it.category === "string" && it.category ? it.category : undefined,
         })),
+        itemShort:   typeof f.item_short === "string" && f.item_short ? f.item_short : undefined,
+        paidStatus:  typeof f.paid_status === "string" ? f.paid_status : undefined,
+        paymentMode: typeof f.payment_mode === "string" ? f.payment_mode : undefined,
       });
     } catch {
       setAiError("Upload failed — try again, or fill the fields yourself.");
@@ -414,8 +467,44 @@ export function AddExpenseDialog({
     setCurrency(pending.currency);
     if (pending.total != null) setValue("amount", pending.total);
     setValue("gst_paid", pending.gst);
-    setLines(pending.items.map((it) => ({ ...it, category: "" })));   // category set per line by operator
+    /* R-1744: each line gets its category too — the line's own AI category, else the bill's.
+       Blank only when the AI had no idea; then the operator picks (save stops until they do). */
+    setLines(pending.items.map((it) => {
+      const category = lineCategoryFromBill(it.category, pending.aiCategory);
+      return { description: it.description, qty: it.qty, unit_price: it.unit_price, amount: it.amount, category, aiCat: Boolean(category) };
+    }));
     if (pending.items.length) setShowItems(true);   // AI found line items → show them
+
+    /* R-1744: the short "What for?" note — vendor — main item — month. The name the form now
+       shows (the existing vendor's, when the GSTIN matched) is the one in the note. */
+    const note = buildExpenseNote({ vendorName: match?.name ?? nm, itemShort: pending.itemShort, items: pending.items, billDate: pending.billDate });
+    if (note) setValue("description", note);
+
+    /* R-1744: "Paid already" + method ONLY when the bill itself says paid. Otherwise nothing
+       changes — the form keeps what it had. */
+    const paidOnBill = paidFromBill(pending.paidStatus, pending.paymentMode, PAYMENT_METHODS);
+    if (paidOnBill) {
+      setPaid(true); setReimburse(false);
+      if (paidOnBill.method) setValue("payment_method", paidOnBill.method);
+    }
+
+    /* R-1744: reverse charge is a SUGGESTION after a bill read, never a tick — the auto-tick on
+       a foreign currency (above) is switched off for this entry; the chip below offers it. */
+    setRcm(false); setRcmEdited(true);
+    setRcmHint(rcmSuggested(pending.currency, pending.gst));
+
+    setAiFilled({
+      amount:         pending.total != null,
+      expense_date:   Boolean(pending.billDate),
+      vendor_name:    Boolean(match || nm),
+      category:       Boolean(pending.aiCategory),
+      currency:       true,
+      gst_paid:       pending.gst > 0,
+      bill_no:        Boolean(pending.billNo),
+      description:    Boolean(note),
+      paid:           Boolean(paidOnBill),
+      payment_method: Boolean(paidOnBill?.method),
+    });
     if (pending.currency !== "INR") {
       setFxRate("");   // force today's rate before it hits the ₹ books
       setAiNote(`Filled in · the bill is in ${pending.currency} — enter the exchange rate (₹/${pending.currency}) under More, then save. 📎 The bill will be attached.`);
@@ -429,6 +518,7 @@ export function AddExpenseDialog({
   // extraction (NO items, NO amounts auto-added), but keep the bill attached.
   function discardExtract() {
     setPending(null);
+    setAiFilled({}); setRcmHint(false);
     setAiNote(`OK — fill in the fields and items yourself. 📎 "${attachFile?.name ?? "bill"}" will be attached to the expense.`);
   }
 
@@ -766,7 +856,9 @@ export function AddExpenseDialog({
     /* Upar wali jaanch (`expenseCategoryError`) guarantee kar chuki hai ki in dono me se
        ek to hai — warna hum yahan pahunchte hi nahi. */
     const category = (showItems && catLines.length > 0 ? (catLines[0].category || values.category) : values.category) ?? "";
-    const derivedDescription = line_items.map((l) => l.name).filter(Boolean).join(", ") || values.description?.trim() || null;
+    /* R-1744: the "What for?" note is on screen in both modes now, so what the operator (or the
+       bill read) wrote there wins; the item names are the fallback, as before. */
+    const derivedDescription = values.description?.trim() || line_items.map((l) => l.name).filter(Boolean).join(", ") || null;
 
     // Duplicate guard — same vendor + bill no. + category (or vendor+date+amount).
     const dup = findDuplicateExpense(
@@ -802,7 +894,34 @@ export function AddExpenseDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="md:!max-w-xl">
+      {/* R-1744: the whole dialog is a drop zone for the bill (PDF or photo). */}
+      <DialogContent
+        className={cn("md:!max-w-xl", dragging && "ring-2 ring-amber ring-offset-2 ring-offset-paper")}
+        data-bill-dropzone=""
+        data-dragging={dragging ? "true" : "false"}
+        onDragEnter={(e) => {
+          if (isPayroll || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (isPayroll || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        }}
+        onDrop={(e) => {
+          dragDepth.current = 0;
+          setDragging(false);
+          const file = e.dataTransfer?.files?.[0];
+          if (isPayroll || !file) return;
+          e.preventDefault();
+          handleBillFile(file);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{projectId ? (isEdit ? "Edit project cost" : "Add project cost") : (isEdit ? "Edit expense" : "Add expense")}</DialogTitle>
           <DialogDescription>
@@ -819,17 +938,182 @@ export function AddExpenseDialog({
           </div>
         )}
 
+        {/* ── R-1744 (Pardeep, 22 Oct 2026): the bill comes FIRST. Upload or drop it here and the
+            AI fills the form after you confirm — before anyone starts typing Amount by hand. ── */}
+        {!isPayroll && (
+          <div className={cn(
+            "rounded-md border border-dashed p-2.5 transition-colors",
+            dragging ? "border-amber bg-amber-soft/40" : "border-amber/50 bg-amber-soft/15",
+          )}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <Icon name="sparkles" size={16} className="text-amber-ink shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[12px] font-medium text-ink">
+                    {dragging ? "Drop it — AI reads the bill" : "Have a bill? Drop the PDF or photo here — AI fills everything"}
+                  </p>
+                  <p className="text-xs text-ink-3">AI reads the bill; you check it and confirm before anything is filled</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {/* Phones: open the camera straight away. */}
+                <Button type="button" variant="default" size="sm" icon="camera" className="sm:hidden" disabled={reading} onClick={() => cameraRef.current?.click()}>
+                  Take a photo
+                </Button>
+                <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
+                  {reading ? "Reading…" : "Upload bill"}
+                </Button>
+              </div>
+              <input
+                ref={fileRef}
+                id="bill-file"
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
+              />
+              <input
+                ref={cameraRef}
+                id="bill-camera"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
+              />
+            </div>
+            {aiNote && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} className="mt-0.5 shrink-0" /> {aiNote}</p>}
+            {aiError && <p className="mt-2 flex items-start gap-1.5 text-xs text-rose"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {aiError}</p>}
+
+            {/* Confirmation gate — AI read something; confirm before it fills. */}
+            {pending && (() => {
+              const fmt = (n: number) => pending.currency !== "INR" ? (formatForeignAmount(pending.currency, n) ?? `${pending.currency} ${n}`) : rupee(n);
+              const pg = pending.gstin?.trim().toUpperCase();
+              const pv = pending.vendorName?.trim().toLowerCase();
+              const existing = (vendors ?? []).find(
+                (v) => (pg && (v.gstin ?? "").trim().toUpperCase() === pg) || (pv && v.name.trim().toLowerCase() === pv),
+              );
+              const shownGstin = pending.gstin || existing?.gstin || null;
+              const dupInReview = findDuplicateExpense(
+                { vendorId: existing?.id ?? vendorId, vendorName: pending.vendorName, billNo: pending.billNo, billDate: pending.billDate, amountInr: pending.currency === "INR" ? (pending.total ?? null) : null },
+                (dupList ?? []) as never,
+                expense?.id,
+              );
+              return (
+                <div className="mt-2.5 rounded-md border border-amber/40 bg-paper p-3">
+                  <p className="text-[12px] font-medium text-ink mb-2">AI read this — is it right? The form fills only after you confirm.</p>
+                  {dupInReview && (
+                    <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
+                      <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+                      <span>This bill{` (${pending.billNo ? `#${pending.billNo}` : `${formatDate(dupInReview.expense_date)} · ${rupee(dupInReview.amount)}`})`} already has an entry. Fine if this is the <b>part for a different category</b> — otherwise it will be a duplicate.</span>
+                    </div>
+                  )}
+                  {/* ── Label ke SAATH value, dono kinaron par nahi (29 Aug 2026) ──────
+                      Har row `flex justify-between` thi. Chaudi screen par wo label ko
+                      bilkul baayen aur value ko bilkul daayen phenk deti thi. Pardeep ne
+                      pakda; naapa to haal ye tha:
+
+                          Vendor    1,089px khaali    Coca Industries
+                          GSTIN     1,143px           23EZFPS9892N2Z7
+                          Bill no.  1,185px           TLTK-4450
+
+                      Poore ek hazaar pixel se zyada khaali jagah — aankh label aur uski
+                      value ko jod hi nahi paati. Aur ye panel ka poora kaam hi yahi hai:
+                      aadmi ise PADHKAR confirm karta hai, aur uske baad ye aankde seedha
+                      uski books me jaate hain. Jo jodi padhi na ja sake, wo jaanchi bhi
+                      nahi ja sakti.
+
+                      Ab do-column grid: label utni hi chaudi jitna uska text, value
+                      uske theek baad. `max-w-xl` isliye ki dialog chahe kitna bhi chauda
+                      ho, padhne ki chaudai ek hi rehti hai.
+
+                      `<dl>/<dt>/<dd>` isliye ki ye sach me ek definition list hai —
+                      screen reader ko bhi wahi jodi milti hai jo aankh ko. */}
+                  <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[12px] text-ink-2">
+                    <dt className="text-ink-3">Vendor</dt>
+                    <dd className="min-w-0 text-ink flex items-center gap-1.5 flex-wrap">
+                      <span className="break-words">{pending.vendorName || "—"}</span>
+                      {existing
+                        ? <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald/10 text-emerald px-1.5 py-0.5 text-3xs font-medium"><Icon name="check_circle" size={10} /> Existing</span>
+                        : (pending.vendorName && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-soft text-amber-ink px-1.5 py-0.5 text-3xs font-medium"><Icon name="plus" size={10} /> New</span>)}
+                    </dd>
+                    {shownGstin && <><dt className="text-ink-3">GSTIN</dt><dd className="min-w-0 font-mono text-ink break-all">{shownGstin}</dd></>}
+                    {pending.billNo && <><dt className="text-ink-3">Bill no.</dt><dd className="min-w-0 font-mono text-ink break-all">{pending.billNo}</dd></>}
+                    <dt className="text-ink-3">Bill date</dt>
+                    <dd className="min-w-0">{pending.billDate || "—"}</dd>
+                    <dt className="text-ink-3">Total{pending.currency !== "INR" ? ` (${pending.currency})` : ""}</dt>
+                    <dd className="min-w-0 font-mono text-ink">{pending.total != null ? fmt(pending.total) : "—"}{pending.gst > 0 ? ` · GST ${fmt(pending.gst)}` : ""}</dd>
+                  </dl>
+                  {pending.items.length > 0 && (
+                    <div className="mt-2 border-t border-hairline pt-2">
+                      <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{pending.items.length} item{pending.items.length > 1 ? "s" : ""}</p>
+                      {/* `min-w-0` ke bina `truncate` kuch nahi karta: flex ka bachcha apne
+                          content se chhota hota hi nahi, aur wo lamba naam poore panel ko
+                          bahar dhakel deta hai — yahi 56px ka overflow tha (Amazon ka
+                          product naam 180+ akshar ka hota hai).
+
+                          `title` isliye ki jo kata wo hover par poora mile — a11y §4. */}
+                      <ul className="space-y-0.5 max-h-28 overflow-y-auto">
+                        {pending.items.map((it, i) => (
+                          <li key={i} className="flex justify-between gap-2 text-xs">
+                            <span className="min-w-0 truncate text-ink-2" title={it.description || undefined}>
+                              {it.description || "—"}{it.qty ? ` × ${it.qty}` : ""}
+                            </span>
+                            <span className="font-mono text-ink-3 shrink-0">{it.amount ? fmt(Number(it.amount)) : "—"}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Yes, fill it in</Button>
+                    <Button type="button" variant="default" size="sm" onClick={discardExtract}>Wrong — I&apos;ll fill it myself</Button>
+                  </div>
+                  <p className="mt-2 text-xs text-ink-3">Either way, 📎 <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile?.name}</button> will be attached. (Click to view.)</p>
+                  {previewUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
+                      className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
+                  )}
+                </div>
+              );
+            })()}
+
+            {attachFile && !pending && (
+              <div className="mt-2">
+                <p className="flex items-center gap-1.5 text-xs text-ink-2">
+                  <Icon name="file" size={12} />
+                  <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile.name}</button>
+                  — will be attached to the expense
+                </p>
+                {previewUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
+                    className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* The mutation already shows the reason (e.g. "Only ₹4800 is left …"); catching here
             stops the same refusal also landing in the console as an uncaught promise. */}
         <form onSubmit={handleSubmit(async (v) => { try { await onSubmit(v); } catch { /* toast shown by the mutation */ } })} className="space-y-4">
           {/* ── R-1729 (owner journey audit, 21 Oct 2026): Amount first, then Date, then who was
               paid, then Category — the order a bill is read in. Amount used to be the 6th field. ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField label={amountLabel} required htmlFor="amount">
-              <Input id="amount" type="number" min={1} step="any" readOnly={itemiseActive} error={errors.amount?.message} {...register("amount")} />
+            <FormField label={amountLabel} required htmlFor="amount" hint={<AiMark field="amount" on={!!aiFilled.amount} />}>
+              <Input id="amount" type="number" min={1} step="any" readOnly={itemiseActive} error={errors.amount?.message} {...register("amount", { onChange: () => clearAi("amount") })} />
+              {/* R-1744: itemised GST bill — the field holds the items' subtotal, so the bill's
+                  total (what was actually paid) is said once, right under it. */}
+              {itemiseActive && isGstBill && Number(watch("gst_paid")) > 0 && (
+                <p className="mt-1 text-xs text-ink-3">
+                  {`Total ${isForeign ? (formatForeignAmount(currency, lineSubtotalNum + Number(watch("gst_paid"))) ?? `${currency} ${lineSubtotalNum + Number(watch("gst_paid"))}`) : rupee(lineSubtotalNum + Number(watch("gst_paid")))} incl GST`}
+                </p>
+              )}
             </FormField>
-            <FormField label="Date" required htmlFor="expense_date">
-              <Input id="expense_date" type="date" error={errors.expense_date?.message} {...register("expense_date")} />
+            <FormField label="Date" required htmlFor="expense_date" hint={<AiMark field="expense_date" on={!!aiFilled.expense_date} />}>
+              <Input id="expense_date" type="date" error={errors.expense_date?.message} {...register("expense_date", { onChange: () => clearAi("expense_date") })} />
             </FormField>
           </div>
 
@@ -838,13 +1122,14 @@ export function AddExpenseDialog({
             label={isCommission ? "Paid to (commission agent)" : isGstBill ? "Vendor (GST invoice)" : "Paid to (optional)"}
             required={isCommission}
             htmlFor="vendor_name"
+            hint={<AiMark field="vendor_name" on={!!aiFilled.vendor_name} />}
           >
             <div className="relative">
               <Input
                 id="vendor_name"
                 autoComplete="off"
                 placeholder={isCommission ? "e.g. Ramesh Kumar" : "e.g. Anthropic / Airtel / Office Landlord"}
-                {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorMatch(null); setVendorOpen(true); } })}
+                {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorMatch(null); setVendorOpen(true); clearAi("vendor_name"); } })}
                 onFocus={() => setVendorOpen(true)}
                 onBlur={() => setTimeout(() => setVendorOpen(false), 130)}
               />
@@ -936,8 +1221,8 @@ export function AddExpenseDialog({
 
           {/* ── Category — starts empty and is required (R-1729); the last-used one is offered. ── */}
           {!showItems && (
-            <FormField label="Category" required htmlFor="category">
-              <Select value={watch("category")} onValueChange={(v) => { setValue("category", v); setCategoryTouched(true); setCategoryAuto(false); }}>
+            <FormField label="Category" required htmlFor="category" hint={<AiMark field="category" on={!!aiFilled.category} />}>
+              <Select value={watch("category")} onValueChange={(v) => { setValue("category", v); setCategoryTouched(true); setCategoryAuto(false); clearAi("category"); }}>
                 <SelectTrigger id="category"><SelectValue placeholder="Select…" /></SelectTrigger>
                 <SelectContent>
                   {EXPENSE_CATEGORIES
@@ -945,7 +1230,7 @@ export function AddExpenseDialog({
                     .map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {categoryAuto && !categoryTouched && (
+              {categoryAuto && !categoryTouched && !aiFilled.category && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-amber-ink">
                   <Icon name="sparkles" size={10} /> Picked automatically — change it if wrong.
                 </p>
@@ -1036,151 +1321,16 @@ export function AddExpenseDialog({
             </p>
           </div>
 
-          {/* ── Upload the bill (only when there IS one). AI fills → confirm. ── */}
-          {billType !== "none" && (
-            <div className="rounded-md border border-dashed border-amber/50 bg-amber-soft/15 p-2.5">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Icon name="sparkles" size={16} className="text-amber-ink shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-[12px] font-medium text-ink">Upload the bill — AI fills the form</p>
-                    <p className="text-xs text-ink-3">Photo or PDF — AI reads the fields and items; you confirm, then save</p>
-                  </div>
-                </div>
-                <Button type="button" variant="primary" size="sm" icon="upload" loading={reading} onClick={() => fileRef.current?.click()}>
-                  {reading ? "Reading…" : "Upload bill"}
-                </Button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*,application/pdf"
-                  className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBillFile(f); e.target.value = ""; }}
-                />
-              </div>
-              {aiNote && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} className="mt-0.5 shrink-0" /> {aiNote}</p>}
-              {aiError && <p className="mt-2 flex items-start gap-1.5 text-xs text-rose"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {aiError}</p>}
-
-              {/* Confirmation gate — AI read something; confirm before it fills. */}
-              {pending && (() => {
-                const fmt = (n: number) => pending.currency !== "INR" ? (formatForeignAmount(pending.currency, n) ?? `${pending.currency} ${n}`) : rupee(n);
-                const pg = pending.gstin?.trim().toUpperCase();
-                const pv = pending.vendorName?.trim().toLowerCase();
-                const existing = (vendors ?? []).find(
-                  (v) => (pg && (v.gstin ?? "").trim().toUpperCase() === pg) || (pv && v.name.trim().toLowerCase() === pv),
-                );
-                const shownGstin = pending.gstin || existing?.gstin || null;
-                const dupInReview = findDuplicateExpense(
-                  { vendorId: existing?.id ?? vendorId, vendorName: pending.vendorName, billNo: pending.billNo, billDate: pending.billDate, amountInr: pending.currency === "INR" ? (pending.total ?? null) : null },
-                  (dupList ?? []) as never,
-                  expense?.id,
-                );
-                return (
-                  <div className="mt-2.5 rounded-md border border-amber/40 bg-paper p-3">
-                    <p className="text-[12px] font-medium text-ink mb-2">AI read this — is it right? The form fills only after you confirm.</p>
-                    {dupInReview && (
-                      <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
-                        <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
-                        <span>This bill{` (${pending.billNo ? `#${pending.billNo}` : `${formatDate(dupInReview.expense_date)} · ${rupee(dupInReview.amount)}`})`} already has an entry. Fine if this is the <b>part for a different category</b> — otherwise it will be a duplicate.</span>
-                      </div>
-                    )}
-                    {/* ── Label ke SAATH value, dono kinaron par nahi (29 Aug 2026) ──────
-                        Har row `flex justify-between` thi. Chaudi screen par wo label ko
-                        bilkul baayen aur value ko bilkul daayen phenk deti thi. Pardeep ne
-                        pakda; naapa to haal ye tha:
-
-                            Vendor    1,089px khaali    Coca Industries
-                            GSTIN     1,143px           23EZFPS9892N2Z7
-                            Bill no.  1,185px           TLTK-4450
-
-                        Poore ek hazaar pixel se zyada khaali jagah — aankh label aur uski
-                        value ko jod hi nahi paati. Aur ye panel ka poora kaam hi yahi hai:
-                        aadmi ise PADHKAR confirm karta hai, aur uske baad ye aankde seedha
-                        uski books me jaate hain. Jo jodi padhi na ja sake, wo jaanchi bhi
-                        nahi ja sakti.
-
-                        Ab do-column grid: label utni hi chaudi jitna uska text, value
-                        uske theek baad. `max-w-xl` isliye ki dialog chahe kitna bhi chauda
-                        ho, padhne ki chaudai ek hi rehti hai.
-
-                        `<dl>/<dt>/<dd>` isliye ki ye sach me ek definition list hai —
-                        screen reader ko bhi wahi jodi milti hai jo aankh ko. */}
-                    <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[12px] text-ink-2">
-                      <dt className="text-ink-3">Vendor</dt>
-                      <dd className="min-w-0 text-ink flex items-center gap-1.5 flex-wrap">
-                        <span className="break-words">{pending.vendorName || "—"}</span>
-                        {existing
-                          ? <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald/10 text-emerald px-1.5 py-0.5 text-3xs font-medium"><Icon name="check_circle" size={10} /> Existing</span>
-                          : (pending.vendorName && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-soft text-amber-ink px-1.5 py-0.5 text-3xs font-medium"><Icon name="plus" size={10} /> New</span>)}
-                      </dd>
-                      {shownGstin && <><dt className="text-ink-3">GSTIN</dt><dd className="min-w-0 font-mono text-ink break-all">{shownGstin}</dd></>}
-                      {pending.billNo && <><dt className="text-ink-3">Bill no.</dt><dd className="min-w-0 font-mono text-ink break-all">{pending.billNo}</dd></>}
-                      <dt className="text-ink-3">Bill date</dt>
-                      <dd className="min-w-0">{pending.billDate || "—"}</dd>
-                      <dt className="text-ink-3">Total{pending.currency !== "INR" ? ` (${pending.currency})` : ""}</dt>
-                      <dd className="min-w-0 font-mono text-ink">{pending.total != null ? fmt(pending.total) : "—"}{pending.gst > 0 ? ` · GST ${fmt(pending.gst)}` : ""}</dd>
-                    </dl>
-                    {pending.items.length > 0 && (
-                      <div className="mt-2 border-t border-hairline pt-2">
-                        <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">{pending.items.length} item{pending.items.length > 1 ? "s" : ""}</p>
-                        {/* `min-w-0` ke bina `truncate` kuch nahi karta: flex ka bachcha apne
-                            content se chhota hota hi nahi, aur wo lamba naam poore panel ko
-                            bahar dhakel deta hai — yahi 56px ka overflow tha (Amazon ka
-                            product naam 180+ akshar ka hota hai).
-
-                            `title` isliye ki jo kata wo hover par poora mile — a11y §4. */}
-                        <ul className="space-y-0.5 max-h-28 overflow-y-auto">
-                          {pending.items.map((it, i) => (
-                            <li key={i} className="flex justify-between gap-2 text-xs">
-                              <span className="min-w-0 truncate text-ink-2" title={it.description || undefined}>
-                                {it.description || "—"}{it.qty ? ` × ${it.qty}` : ""}
-                              </span>
-                              <span className="font-mono text-ink-3 shrink-0">{it.amount ? fmt(Number(it.amount)) : "—"}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Yes, fill it in</Button>
-                      <Button type="button" variant="default" size="sm" onClick={discardExtract}>Wrong — I&apos;ll fill it myself</Button>
-                    </div>
-                    <p className="mt-2 text-xs text-ink-3">Either way, 📎 <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile?.name}</button> will be attached. (Click to view.)</p>
-                    {previewUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
-                        className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
-                    )}
-                  </div>
-                );
-              })()}
-
-              {attachFile && !pending && (
-                <div className="mt-2">
-                  <p className="flex items-center gap-1.5 text-xs text-ink-2">
-                    <Icon name="file" size={12} />
-                    <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile.name}</button>
-                    — will be attached to the expense
-                  </p>
-                  {previewUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={previewUrl} alt="Invoice preview" onClick={openLocalFile}
-                      className="mt-2 max-h-40 w-auto rounded-md border border-hairline cursor-zoom-in" />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* ── What for ── */}
           <section className="rounded-lg border border-hairline bg-paper-2/30 p-3 space-y-3">
             {/* What for — a simple note by default; switch to line items for a
                 multi-line bill. Both feed the category + the saved description. */}
-            {!showItems ? (
-              <FormField label="What for? (short note)" htmlFor="description">
-                <Input id="description" placeholder="e.g. Team lunch · cab to client · courier · office snacks" {...register("description")} />
-              </FormField>
-            ) : !isPayroll ? (
+            {/* R-1744: the note stays on screen with line items too — a bill read fills it
+                ("Google Cloud India — Workspace — Oct 2026") and it is saved as the description. */}
+            <FormField label="What for? (short note)" htmlFor="description" hint={<AiMark field="description" on={!!aiFilled.description} />}>
+              <Input id="description" placeholder="e.g. Team lunch · cab to client · courier · office snacks" {...register("description", { onChange: () => clearAi("description") })} />
+            </FormField>
+            {!showItems ? null : !isPayroll ? (
               <div className="rounded-md border border-hairline bg-paper/60 p-2.5">
                 <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">
                   Items — category per item{isForeign ? ` · amounts in ${currency}` : ""}
@@ -1207,10 +1357,11 @@ export function AddExpenseDialog({
                         {/* Amount = qty×price (auto), editable; negatives allowed for credit lines */}
                         <Input aria-label="Amount" wrapperClassName="col-span-4 sm:col-span-3" className="text-right font-medium" type="number" step="any" placeholder={`Amount ${isForeign ? currency : "₹"}`}
                           value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} />
+                        <div className="col-span-12 sm:col-span-4 flex items-center gap-1 min-w-0">
                         <select aria-label="Category"
-                          className="col-span-12 sm:col-span-4 h-9 rounded-md border border-hairline bg-paper px-2 text-[13px] text-ink"
+                          className="h-9 w-full min-w-0 rounded-md border border-hairline bg-paper px-2 text-[13px] text-ink"
                           value={l.category || headerCategory}
-                          onChange={(e) => setLine(i, { category: e.target.value })}
+                          onChange={(e) => setLine(i, { category: e.target.value, aiCat: false })}
                         >
                           {/* R-1729: the header category can be empty now — say so instead of
                               showing the first category as if it were chosen. */}
@@ -1219,6 +1370,8 @@ export function AddExpenseDialog({
                             .filter((c) => c !== "Salaries")
                             .map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        <AiMark field={`line-${i}-category`} on={!!l.aiCat} />
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1257,6 +1410,17 @@ export function AddExpenseDialog({
               </div>
             )}
 
+            {/* R-1744: a foreign bill with no GST — offer reverse charge; one click ticks it. */}
+            {rcmHint && isForeign && !rcm && (
+              <button
+                type="button"
+                onClick={() => { setRcm(true); setRcmEdited(true); setRcmHint(false); }}
+                className="inline-flex items-center gap-1 rounded-full border border-amber/50 bg-amber-soft/40 px-2.5 py-1 text-xs font-medium text-amber-ink hover:bg-amber-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+              >
+                <Icon name="sparkles" size={11} /> Foreign vendor, no GST — reverse charge?
+              </button>
+            )}
+
             {/* ── More: GST, TDS, reverse charge (R-1729). Opens by itself when the entry needs
                 one of them — a GST invoice, a foreign bill, reverse charge or a recorded TDS — so
                 no tax rule is ever hidden; otherwise one click away. ── */}
@@ -1277,20 +1441,24 @@ export function AddExpenseDialog({
               </button>
               {showMore && (
                 <div id="expense-more" className="space-y-3 border-t border-hairline p-2.5">
-                  {isGstBill && (
+                  {/* R-1744: a foreign bill shows its currency and rate even without GST (an AWS bill
+                      read by the AI is "Non-GST bill" + USD — the rate is needed to save). */}
+                  {(isGstBill || isForeign) && (
                     <>
                       <div className="grid grid-cols-12 gap-3">
-                        <FormField label="Currency" htmlFor="currency" className="col-span-4 sm:col-span-3">
-                          <Select value={currency} onValueChange={(v) => { setCurrency(v); if (v === "INR") setFxError(null); }}>
+                        <FormField label="Currency" htmlFor="currency" className="col-span-4 sm:col-span-3" hint={<AiMark field="currency" on={!!aiFilled.currency} />}>
+                          <Select value={currency} onValueChange={(v) => { setCurrency(v); clearAi("currency"); if (v === "INR") setFxError(null); }}>
                             <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {CURRENCY_OPTIONS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </FormField>
-                        <FormField label={`${itemiseActive ? "GST" : "of which GST"} (${cur})`} htmlFor="gst_paid" className="col-span-8 sm:col-span-4">
-                          <Input id="gst_paid" type="number" min={0} step="any" {...register("gst_paid")} />
+                        {isGstBill && (
+                        <FormField label={`${itemiseActive ? "GST" : "of which GST"} (${cur})`} htmlFor="gst_paid" className="col-span-8 sm:col-span-4" hint={<AiMark field="gst_paid" on={!!aiFilled.gst_paid} />}>
+                          <Input id="gst_paid" type="number" min={0} step="any" {...register("gst_paid", { onChange: () => clearAi("gst_paid") })} />
                         </FormField>
+                        )}
                       </div>
                       {isForeign && (
                         <div className="grid grid-cols-2 gap-3 items-end">
@@ -1304,12 +1472,12 @@ export function AddExpenseDialog({
                           )}
                         </div>
                       )}
-                      {!isForeign && (
+                      {!isForeign && isGstBill && (
                         <p className="text-xs text-ink-3">GST is the input tax credit portion of the amount above — claimable in your GST return.</p>
                       )}
-                      {/* Bill no — only a GST invoice has a number worth tracking (dedup). */}
-                      <FormField label="Bill / invoice no. (optional)" htmlFor="bill_no">
-                        <Input id="bill_no" placeholder="e.g. INV-2026-0042" value={billNo} onChange={(e) => setBillNo(e.target.value)} />
+                      {/* Bill no — a GST or foreign invoice has a number worth tracking (dedup). */}
+                      <FormField label="Bill / invoice no. (optional)" htmlFor="bill_no" hint={<AiMark field="bill_no" on={!!aiFilled.bill_no} />}>
+                        <Input id="bill_no" placeholder="e.g. INV-2026-0042" value={billNo} onChange={(e) => { setBillNo(e.target.value); clearAi("bill_no"); }} />
                         <p className="text-xs text-ink-3 mt-1">
                           Items of different categories on one invoice? Make a <b>separate entry</b> for each category with the <b>same bill no.</b> — they count as parts of one invoice (no duplicate warning).
                         </p>
@@ -1375,23 +1543,23 @@ export function AddExpenseDialog({
 
           {/* ── Paid already, or still to pay? ── */}
           <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Paid already?</p>
+            <p className="flex items-center gap-1.5 text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1.5">Paid already? <AiMark field="paid" on={!!aiFilled.paid} /></p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-              <button type="button" onClick={() => { setPaid(true); setReimburse(false); }}
+              <button type="button" onClick={() => { setPaid(true); setReimburse(false); clearAi("paid"); }}
                 className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                   paid && !reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
                 <span className="font-medium">Yes, paid</span>
                 <span className="block text-xs text-ink-3">The company paid (cash/UPI/bank)</span>
               </button>
               {!isEdit && (
-                <button type="button" onClick={() => { setReimburse(true); }}
+                <button type="button" onClick={() => { setReimburse(true); clearAi("paid"); }}
                   className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                     reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
                   <span className="font-medium">Someone else paid</span>
                   <span className="block text-xs text-ink-3">Reimbursement — the company pays them back</span>
                 </button>
               )}
-              <button type="button" onClick={() => { setPaid(false); setReimburse(false); }}
+              <button type="button" onClick={() => { setPaid(false); setReimburse(false); clearAi("paid"); }}
                 className={cn("rounded-md border px-3 py-2 text-sm text-left transition-colors",
                   !paid && !reimburse ? "border-amber bg-amber-soft/60 text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2")}>
                 <span className="font-medium">Not yet</span>
@@ -1410,8 +1578,8 @@ export function AddExpenseDialog({
               </p>
             </FormField>
           ) : paid ? (
-            <FormField label="Paid by" htmlFor="payment_method">
-              <Select value={watch("payment_method")} onValueChange={(v) => setValue("payment_method", v)}>
+            <FormField label="Paid by" htmlFor="payment_method" hint={<AiMark field="payment_method" on={!!aiFilled.payment_method} />}>
+              <Select value={watch("payment_method")} onValueChange={(v) => { setValue("payment_method", v); clearAi("payment_method"); }}>
                 <SelectTrigger id="payment_method"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PAYMENT_METHODS.map((m) => (

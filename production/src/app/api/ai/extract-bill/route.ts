@@ -51,7 +51,8 @@ export async function POST(request: NextRequest) {
   const gemini = await resolveGeminiConfig(supabase, me?.tenant_id ?? null);
   if (!gemini.apiKey) {
     return NextResponse.json(
-      { error: "AI reading isn't set up. Add your Gemini key in Settings → Integrations → AI, or fill the bill by hand." },
+      /* R-1744: `code` lets the Add expense form say plainly that AI is off and stay manual. */
+      { error: "AI reading isn't set up. Add your Gemini key in Settings → Integrations → AI, or fill the bill by hand.", code: "ai_not_configured" },
       { status: 400 },
     );
   }
