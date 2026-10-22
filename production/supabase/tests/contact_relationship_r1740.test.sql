@@ -1,10 +1,14 @@
 -- R-1740: contacts.relationship_type + closeness, and the one-time mapping of the old
 -- contacts.relationship values. Run in ONE rolled-back transaction WITH the migration:
---   begin; <migration> <this file> rollback;
+--   begin; <migration> <this file>   (the file's own rollback; at the end undoes both)
 -- The mapping is exercised by re-running the migration's own UPDATE over rows written the
 -- pre-R-1740 way (relationship set, relationship_type left at its default).
 -- Every check raises on FAIL; exit 0 = pass. Without the migration it fails at the first
 -- insert (column relationship_type does not exist).
+-- The file wraps itself in begin; ... rollback; (scripts/test-sql.mjs refuses any test that
+-- does not roll back), so its rows never stay behind on the database it runs against.
+begin;
+
 do $$
 declare
   v_tenant uuid := (select id from public.tenants order by created_at limit 1);
@@ -75,3 +79,5 @@ begin
 
   raise notice 'R-1740 contact relationship: all checks passed';
 end $$;
+
+rollback;
