@@ -127,6 +127,18 @@ describe("R-1733 Hinglish guard has no gaps", () => {
     expect(hinglishHits("<p>\n  20 se zyada fields nahi ho sakte.\n</p>")).not.toEqual([]);
   });
 
+  /* R-1752 (22 Oct 2026, Pardeep: the public website is English too): src/site is scanned, with
+     no allow-list. Before this card the Ads landing page dictionary (lp-copy.ts) had 116 Hinglish
+     lines the guard never saw. */
+  it("scans the public website src/site too, and no site file is allowed by design", () => {
+    const files = uiSourceFiles(process.cwd());
+    expect(files).toContain("src/site/components/lp/lp-copy.ts");
+    expect(files).toContain("src/site/components/home/HomeV2.tsx");
+    expect(files.filter((f) => f.startsWith("src/site/")).length).toBeGreaterThan(60);
+    expect(HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test("src/site/components/lp/lp-copy.ts"))).toBe(false);
+    expect([...scanHinglish(process.cwd()).keys()].filter((f) => f.startsWith("src/site/"))).toEqual([]);
+  });
+
   it("files allowed by design are AI help / prompts / keyword matchers only", () => {
     for (const f of ["src/lib/tax/itr.ts", "src/lib/queries/bank.ts", "src/lib/api/with-route.ts", "src/lib/leads/lead-contacts.ts"])
       expect(HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test(f)), f).toBe(false);

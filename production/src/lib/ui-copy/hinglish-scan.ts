@@ -102,10 +102,10 @@ function walk(dir: string, out: string[]): void {
   }
 }
 
-/** Every UI source file under src/app, src/components and src/lib, as "src/..." paths. */
+/** Every UI source file under src/app, src/components, src/lib and (R-1752) the public website src/site, as "src/..." paths. */
 export function uiSourceFiles(root: string): string[] {
   const out: string[] = [];
-  for (const d of ["src/app", "src/components", "src/lib"]) walk(join(root, d), out);
+  for (const d of ["src/app", "src/components", "src/lib", "src/site"]) walk(join(root, d), out);
   return out
     .map((p) => relative(root, p).replace(/\\/g, "/"))
     .filter((f) => !HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test(f)))
