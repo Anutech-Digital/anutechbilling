@@ -48,8 +48,9 @@ describe("case 1 — customer has an email: Save & send emails it", () => {
 
   it("the builder saves a DRAFT first and emails via sendQuoteEmail (route flips to sent)", () => {
     const src = readFileSync(join(process.cwd(), "src/components/features/quotes/quote-builder.tsx"), "utf8");
-    // main button + Ctrl+Enter go through the send-now path, not a bare status flip
-    expect(src).toMatch(/onClick=\{\(\) => handleSubmit\("sent", "send-now"\)\}/);
+    // Send ▾ → Send via email + Ctrl+Enter go through the send-now path, not a bare status flip
+    // (R-1726: the main button became one Send menu; with no address the item opens the email sheet).
+    expect(src).toMatch(/onSelect=\{\(\) => handleSubmit\("sent", sendPlan === "mark-sent" \? "email" : "send-now"\)\}/);
     expect(src).toMatch(/handleSubmitRef\.current\("sent", "send-now"\)/);
     expect(src).not.toMatch(/void handleSubmit\("sent"\);/);
     expect(src).toMatch(/plan === "email" \|\| plan === "needs-approval" \? "draft" : status/);

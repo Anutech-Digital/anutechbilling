@@ -55,6 +55,7 @@ import { ActivityTimeline, type TimelineEvent } from "@/components/shared/activi
 import { MarginPill, computeMargin } from "@/components/features/margin-pill";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { payIntent } from "./pay-intent";
+import { quotePrimaryAction, variantFor, isClosedForSending } from "./primary-action";
 import { QuotePreviewDialog } from "@/components/features/quotes/quote-preview-dialog";
 import { quoteContact } from "@/lib/quotes/quote-contact";
 import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-voucher-dialog";
@@ -746,6 +747,24 @@ export default function QuoteDetailPage() {
   );
   const priorDueText = renewalSub ? priorTermDueText(renewalSub) : null;
 
+  /* R-1726 (+R-1724): ONE orange button — the right next step for this state. Every button
+     below takes its variant from this; see ./primary-action.ts for the table. */
+  const closedQuote = isClosedForSending({ status: quote.status, supersededBy: quote.superseded_by });
+  const receiptTarget = receivedPayments[receivedPayments.length - 1] ?? null;
+  const primary = quotePrimaryAction({
+    status: quote.status,
+    supersededBy: quote.superseded_by,
+    invoiceId: quote.invoice_id,
+    paymentStatus: quote.payment_status,
+    money,
+    invoiceBalance: Math.max(0, total - totalReceivedSoFar),
+    hasReceivedPayment: receiptTarget !== null && !!me,
+    mayRecordMoney,
+    gstBlocked: !!gstBlock,
+    orphan: isOrphan(orphan),
+    customerCopyBlocked: !!customerBlock,
+  });
+
   /* Margin comes from the LINE ITEMS, not from quotes.total_cost.
      The column is an aggregate written at save time and at least one writer forgot
      it: Q-2026-9778 stores total_cost = 0 while its single line carries ₹19,800, so
@@ -984,8 +1003,10 @@ export default function QuoteDetailPage() {
           <Button icon="file" onClick={() => setPreviewOpen(true)}>
             Preview
           </Button>
+          {/* R-1724: a closed quote (rejected / expired / replaced) is not sent again — Duplicate is its next step. */}
+          {!closedQuote && (
           <Button
-            variant="primary"
+            variant={variantFor(primary, "send_whatsapp")}
             icon="whatsapp"
             loading={sharingWa}
             disabled={!!customerBlock}
@@ -994,6 +1015,7 @@ export default function QuoteDetailPage() {
           >
             Send on WhatsApp
           </Button>
+          )}
           <Button
             icon="download"
             loading={downloadingPdf}
@@ -1047,6 +1069,7 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="file" size={15} /> Proforma Invoice PDF
               </DropdownMenuItem>
+              {!closedQuote && (
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 disabled={!!customerBlock}
@@ -1054,6 +1077,8 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="mail" size={15} /> {quote.status === "sent" ? "Resend via email" : "Send via email"}
               </DropdownMenuItem>
+              )}
+              {!closedQuote && (
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
                 disabled={!!customerBlock}
@@ -1061,6 +1086,7 @@ export default function QuoteDetailPage() {
               >
                 <Icon name="whatsapp" size={15} /> Send via WhatsApp automation (Cloud API)
               </DropdownMenuItem>
+              )}
               {revise.ok && (
                 <DropdownMenuItem
                   className="gap-2.5 py-2 cursor-pointer"
@@ -1271,7 +1297,7 @@ export default function QuoteDetailPage() {
                   </Button>
                 )}
                 <Button
-                  variant="primary"
+                  variant="default"
                   icon="send"
                   loading={sendQuote.isPending}
                   disabled={!!sendGate && !sendGate.allowed}
@@ -1338,7 +1364,7 @@ export default function QuoteDetailPage() {
                   or not one had. The parenthetical is what made it wrong, so it goes when
                   money exists; the button's job — recording the STATUS decision — does
                   not change. */}
-              <Button variant="primary" icon="check_circle" loading={markAccepted.isPending} onClick={() => markAccepted.mutate()}>
+              <Button variant={variantFor(primary, "mark_accepted")} icon="check_circle" loading={markAccepted.isPending} onClick={() => markAccepted.mutate()}>
                 {totalReceivedSoFar > 0 ? "Mark accepted" : "Mark accepted (no payment yet)"}
               </Button>
             </div>
@@ -1387,7 +1413,7 @@ export default function QuoteDetailPage() {
               <span className="text-ink">{orphanNote(orphan)}</span>
             </div>
             <Button
-              variant="primary"
+              variant={variantFor(primary, "rebuild_subscription")}
               icon="refresh"
               loading={recreateSub.isPending}
               onClick={() => setConfirm({
@@ -1411,7 +1437,7 @@ export default function QuoteDetailPage() {
               <div className="font-semibold text-amber-ink">⚠ {gstBlock.title}</div>
               <div className="text-xs mt-0.5">{gstBlock.body}</div>
             </div>
-            <Button asChild variant="primary" icon="settings">
+            <Button asChild variant={variantFor(primary, "fix_gst")} icon="settings">
               <Link href={gstBlock.href as never}>{gstBlock.label}</Link>
             </Button>
           </div>
@@ -1458,7 +1484,7 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
               {!quote.superseded_by && (
-                <Button asChild variant="default" icon="copy">
+                <Button asChild variant={variantFor(primary, "duplicate")} icon="copy">
                   <Link href={duplicateQuoteHref(quote) as never}>Duplicate</Link>
                 </Button>
               )}
@@ -1497,7 +1523,7 @@ export default function QuoteDetailPage() {
               {/* R-885: generate_invoice is owner / manager / accountant / billing. */}
               {money.canGenerateInvoice && mayRecordMoney && (
                 <Button
-                  variant={money.canRecordPayment ? "default" : "primary"}
+                  variant={variantFor(primary, "generate_invoice")}
                   icon="receipt"
                   loading={generateInvoice.isPending}
                   disabled={!!gstBlock}
@@ -1537,8 +1563,16 @@ export default function QuoteDetailPage() {
               )}
 
               {money.canRecordPayment && mayRecordMoney && (
-                <Button variant="primary" icon="rupee" onClick={() => setPaymentOpen(true)}>
+                <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
                   {money.recordLabel}
+                </Button>
+              )}
+
+              {/* R-1726: paid with nothing left to do here (per-period billing) — the receipt.
+                  Once an invoice exists the invoice row below carries this button instead. */}
+              {primary === "send_receipt" && receiptTarget && money.stage !== "invoiced" && (
+                <Button variant={variantFor(primary, "send_receipt")} icon="send" onClick={() => setReceiptPayment(receiptTarget)}>
+                  Send receipt
                 </Button>
               )}
             </div>
@@ -1581,7 +1615,7 @@ export default function QuoteDetailPage() {
               </div>
               <div className="flex gap-2">
                 {hasBalance && mayRecordMoney && (
-                  <Button variant="primary" icon="rupee" onClick={() => setPaymentOpen(true)}>
+                  <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={() => setPaymentOpen(true)}>
                     {nothingPaid ? "Record payment" : "Record balance payment"}
                   </Button>
                 )}
@@ -1595,7 +1629,14 @@ export default function QuoteDetailPage() {
                     invoices page's copy-link). This screen was the odd one out, which is
                     also why it read as a bug rather than a missing feature.
                     §24: when a destination exists, the button goes there. */}
-                <Button asChild variant={hasBalance ? "ghost" : "primary"} icon="receipt">
+                {/* R-1726: paid in full → the next step is the customer's receipt (the same
+                    Receipt Voucher dialog as the payment row's Receipt button). */}
+                {primary === "send_receipt" && receiptTarget && (
+                  <Button variant={variantFor(primary, "send_receipt")} icon="send" onClick={() => setReceiptPayment(receiptTarget)}>
+                    Send receipt
+                  </Button>
+                )}
+                <Button asChild variant={variantFor(primary, "view_invoice", hasBalance ? "ghost" : "default")} icon="receipt">
                   <Link
                     href={
                       quote.invoice_id
