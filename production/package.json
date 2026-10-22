@@ -43,6 +43,7 @@
     "test:isolation:mutation": "node scripts/isolation-mutation.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.133.0",
     "@fontsource-variable/archivo": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",

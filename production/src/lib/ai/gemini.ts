@@ -18,11 +18,23 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
+import { anthropicEnvKey, anthropicModel, claudeJson, isClaudeKey, resolveAiProvider, type AiProvider } from "./claude";
 
 export interface GeminiConfig {
-  /** Usable API key, or null when neither tenant nor env has a valid one. */
+  /**
+   * Key of the AI that runs (R-1759: Claude or Gemini), or null when no AI key exists.
+   * Callers pass it straight to geminiJson, which sends a Claude key to Claude.
+   */
   apiKey: string | null;
+  /** Model of the AI that runs. */
   model: string;
+  /** R-1759: which AI runs — env AI_PROVIDER, else whichever key exists (both → gemini). */
+  provider: AiProvider | null;
+  /** The Gemini key (workspace key wins over env), also when Claude runs — the Gemini key test uses it. */
+  geminiKey: string | null;
+  geminiModel: string;
+  /** True when the Gemini key is this workspace's own (Settings → Integrations), not the server's. */
+  tenantGeminiKey: boolean;
 }
 
 /**
@@ -83,6 +95,7 @@ export async function resolveGeminiConfig(
 ): Promise<GeminiConfig> {
   let key = valid(process.env.GEMINI_API_KEY);
   let model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+  let tenantGeminiKey = false;
 
   if (tenantId) {
     try {
@@ -93,14 +106,19 @@ export async function resolveGeminiConfig(
         .maybeSingle();
       // Stored encrypted since the vault landed; plaintext rows pass through.
       const tenantKey = valid(decryptTenantSecrets(data)?.gemini_api_key);
-      if (tenantKey) key = tenantKey;           // tenant key wins over env
+      if (tenantKey) { key = tenantKey; tenantGeminiKey = true; }   // tenant key wins over env
       if (data?.gemini_model?.trim()) model = data.gemini_model.trim();
     } catch {
       // fall back to env on any read error
     }
   }
 
-  return { apiKey: key, model };
+  /* R-1759: the workspace's Gemini key matters only when Gemini runs; Claude has a server key only. */
+  const claudeKey = anthropicEnvKey();
+  const provider = resolveAiProvider({ choice: process.env.AI_PROVIDER, hasGemini: Boolean(key), hasClaude: Boolean(claudeKey) });
+  return provider === "claude"
+    ? { apiKey: claudeKey, model: anthropicModel(), provider, geminiKey: key, geminiModel: model, tenantGeminiKey }
+    : { apiKey: key, model, provider, geminiKey: key, geminiModel: model, tenantGeminiKey };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,14 +237,8 @@ function failureReason(status: number, body: string): string {
   return `Gemini returned HTTP ${status}${msg ? ` — ${msg}` : ""}.`;
 }
 
-/**
- * Call Gemini and parse a JSON response.
- *
- * Returns null on EVERY failure path — timeout, HTTP error, unparseable body,
- * open breaker. Callers already treat null as "use the deterministic stub", so
- * no AI failure can break a core flow. This never throws.
- */
-export async function geminiJson<T>(args: {
+/** Arguments of geminiJson — the same for Gemini and Claude (R-1759). */
+export interface GeminiJsonArgs {
   apiKey: string;
   model: string;
   /**
@@ -270,10 +282,64 @@ export async function geminiJson<T>(args: {
   fallbackModel?: string;
   /** Internal. Set on the single retry so it cannot recurse — see the 5xx branch below. */
   __isRetry?: boolean;
-}): Promise<T | null> {
+}
+
+/** HTTP codes after which the OTHER provider is worth one try (R-1759): key, project, quota/cap, overloaded. */
+function geminiSwitchable(code: string): boolean {
+  return code === "breaker" || /^(400|401|403|429|5\d\d)$/.test(code);
+}
+
+/**
+ * Call the AI and parse a JSON response. R-1759: a Claude key (ANTHROPIC_API_KEY, handed out by
+ * resolveGeminiConfig when Claude runs) goes to Claude; any other key goes to Gemini. When the
+ * chosen one fails on key / permission / quota / overload and the OTHER one has a server key,
+ * the other is asked once — so a Gemini spending cap no longer stops bill reading.
+ *
+ * Returns null on EVERY failure path — timeout, HTTP error, unparseable body,
+ * open breaker. Callers already treat null as "use the deterministic stub", so
+ * no AI failure can break a core flow. This never throws.
+ */
+export async function geminiJson<T>(args: GeminiJsonArgs): Promise<T | null> {
+  if (isClaudeKey(args.apiKey)) {
+    const r = await claudeJson<T>(args);
+    if (r.ok) return r.value;
+    const geminiKey = valid(process.env.GEMINI_API_KEY);
+    if (r.switchable && geminiKey) {
+      console.warn(`[${args.label}] claude ${r.code} → trying gemini`);
+      let geminiWhy = "";
+      const v = await geminiDirect<T>({
+        ...args, apiKey: geminiKey, model: process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL,
+        onFailure: (why) => { geminiWhy = why; },
+      });
+      if (v !== null) return v;
+      args.onFailure?.(`${r.reason} Gemini was tried instead and also failed: ${geminiWhy || "no reason given"}`);
+      return null;
+    }
+    args.onFailure?.(r.reason);
+    return null;
+  }
+
+  let failCode = "";
+  let geminiWhy = "";
+  const v = await geminiDirect<T>({ ...args, onFailure: (why) => { geminiWhy = why; }, __fail: (code) => { failCode = code; } });
+  if (v !== null) return v;
+  const claudeKey = anthropicEnvKey();
+  if (claudeKey && geminiSwitchable(failCode)) {
+    console.warn(`[${args.label}] gemini ${failCode} → trying claude`);
+    const r = await claudeJson<T>({ ...args, apiKey: claudeKey, model: anthropicModel() });
+    if (r.ok) return r.value;
+    args.onFailure?.(`${geminiWhy} Claude was tried instead and also failed: ${r.reason}`);
+    return null;
+  }
+  if (geminiWhy) args.onFailure?.(geminiWhy);
+  return null;
+}
+
+async function geminiDirect<T>(args: GeminiJsonArgs & { __fail?: (code: string) => void }): Promise<T | null> {
   const now = Date.now();
   if (breakerOpen(now)) {
     console.warn(`[${args.label}] Gemini circuit breaker open — using stub`);
+    args.__fail?.("breaker");
     args.onFailure?.("Gemini failed repeatedly just now, so calls are paused for a minute. It retries on its own.");
     return null;
   }
@@ -354,15 +420,16 @@ export async function geminiJson<T>(args: {
            breaker fire on transient noise, which is the opposite of what it is for. */
         console.warn(`[${args.label}] retrying once after HTTP ${res.status}`);
         await new Promise((r) => setTimeout(r, 900));
-        return geminiJson<T>({ ...args, __isRetry: true });
+        return geminiDirect<T>({ ...args, __isRetry: true });
       }
       /* Overloaded twice → ask the opt-in fallback model once. Its call records the outcome,
          so this logical call still counts as ONE breaker failure at most. */
       if (res.status === 503 && args.__isRetry && args.fallbackModel && args.fallbackModel !== args.model) {
         console.warn(`[${args.label}] ${args.model} overloaded twice — asking ${args.fallbackModel}`);
-        return geminiJson<T>({ ...args, model: args.fallbackModel, fallbackModel: undefined, __isRetry: true });
+        return geminiDirect<T>({ ...args, model: args.fallbackModel, fallbackModel: undefined, __isRetry: true });
       }
       recordFailure(now);
+      args.__fail?.(String(res.status));
       args.onFailure?.(failureReason(res.status, body));
       return null;
     }
@@ -409,7 +476,7 @@ export async function geminiJson<T>(args: {
          failure ginni chahiye, warna 3 ka threshold do call me hi trip kar jata hai. */
       console.warn(`[${args.label}] retrying once after ${why}`);
       await new Promise((r) => setTimeout(r, 900));
-      return geminiJson<T>({ ...args, __isRetry: true });
+      return geminiDirect<T>({ ...args, __isRetry: true });
     }
 
     console.error(`[${args.label}] Gemini call failed — ${why}`);
@@ -441,6 +508,16 @@ export async function geminiJson<T>(args: {
  * (AI Lead Finder) records it on the run, where the owner reads it. Same breaker as geminiJson.
  */
 export async function geminiGroundedText(args: { apiKey: string; model: string; system: string; user: string; temperature?: number; timeoutMs?: number; label: string }): Promise<string | null> {
+  /* R-1759: web search stays on Gemini (Google Search grounding). When Claude runs, the
+     server's Gemini key is used for this one call if there is one; otherwise a clear reason —
+     the Lead Finder shows it on the run instead of "found no companies". */
+  if (isClaudeKey(args.apiKey)) {
+    const geminiKey = valid(process.env.GEMINI_API_KEY);
+    if (!geminiKey) {
+      throw new Error("Web search for the Lead Finder needs Gemini, and AI is running on Claude with no server Gemini key. Set GEMINI_API_KEY on the server, or set AI_PROVIDER=gemini.");
+    }
+    args = { ...args, apiKey: geminiKey, model: process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL };
+  }
   const now = Date.now();
   if (breakerOpen(now)) throw new Error("Gemini is failing repeatedly, so calls are paused for a minute. Please try again shortly.");
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:generateContent?key=${args.apiKey}`, {

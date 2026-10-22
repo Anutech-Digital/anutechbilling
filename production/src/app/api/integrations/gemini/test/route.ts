@@ -33,7 +33,8 @@ export async function POST() {
   if (me.role !== "owner") return NextResponse.json({ ok: false, error: "Owner only" }, { status: 403 });
 
   const admin = createAdminClient();
-  const { apiKey, model } = await resolveGeminiConfig(admin, me.tenant_id);
+  /* R-1759: this tests the GEMINI key even when AI runs on Claude — never send the Claude key to Google. */
+  const { geminiKey: apiKey, geminiModel: model } = await resolveGeminiConfig(admin, me.tenant_id);
   if (!apiKey) {
     return NextResponse.json({ ok: false, error: "No Gemini key configured (tenant or env)." }, { status: 400 });
   }

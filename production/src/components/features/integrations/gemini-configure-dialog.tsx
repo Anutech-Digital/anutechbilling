@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { formatDate } from "@/lib/utils";
-import { geminiStatusText } from "@/lib/ai/gemini-status-text";
+import { geminiStatusText, CLAUDE_STATUS_DETAIL } from "@/lib/ai/gemini-status-text";
 
 interface Props {
   open: boolean;
@@ -48,6 +48,9 @@ interface GeminiStatus {
   key_mask:     string | null;
   model:        string;
   updated_at:   string | null;
+  /** R-1759: which AI runs, and its one-line label ("AI is using: Claude (server key)"). */
+  ai_provider?: "claude" | "gemini" | null;
+  ai_using?:    string;
 }
 
 function useGeminiStatus() {
@@ -64,6 +67,8 @@ function useGeminiStatus() {
 
 export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
   const { data: status, isLoading } = useGeminiStatus();
+  /* R-1759: Claude runs on the server key — the dialog says so and never shows "Stub" then. */
+  const onClaude = status?.ai_provider === "claude";
   const qc = useQueryClient();
 
   const [apiKey, setApiKey]   = React.useState("");
@@ -174,15 +179,19 @@ export default function GeminiConfigureDialog({ open, onOpenChange }: Props) {
             <div className="flex items-center justify-between rounded-md border border-hairline bg-paper-2/40 px-3 py-2">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-ink">Current state</p>
+                {/* R-1759: which AI actually runs — never a key. */}
+                {status?.ai_using && <p className="text-2xs font-medium text-ink-2">{status.ai_using}</p>}
                 {/* R-1425: the shared-key line says what "shared" costs — not truncated, it is
                     the one line that explains why AI can pause. Copy in lib/ai/gemini-status-text.ts. */}
                 <p className={status?.configured ? "text-2xs text-ink-3 truncate" : "text-2xs text-ink-3"}>
                   {status?.configured
                     ? <>Configured · key {status.key_mask} · model {status.model} · saved {status.updated_at ? formatDate(status.updated_at) : "—"}</>
-                    : geminiStatusText({ configured: false, envFallback: Boolean(status?.env_fallback) }).detail}
+                    : onClaude
+                      ? CLAUDE_STATUS_DETAIL
+                      : geminiStatusText({ configured: false, envFallback: Boolean(status?.env_fallback) }).detail}
                 </p>
               </div>
-              {status?.configured
+              {status?.configured || onClaude
                 ? <Badge kind="success" dot>Live</Badge>
                 : status?.env_fallback
                   ? <Badge kind="info" dot>Shared</Badge>

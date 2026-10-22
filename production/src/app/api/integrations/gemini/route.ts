@@ -15,6 +15,8 @@ import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { trySealTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { maskSecret } from "@/lib/crypto/vault";
+import { resolveGeminiConfig } from "@/lib/ai/gemini";
+import { aiUsingLine } from "@/lib/ai/gemini-status-text";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -75,11 +77,15 @@ export async function GET() {
 
   // A global env key (Cloud Run) means AI works even without a tenant key.
   const envFallback = Boolean(process.env.GEMINI_API_KEY?.trim() && process.env.GEMINI_API_KEY!.trim().length >= 10);
+  // R-1759: which AI actually runs (Claude or Gemini, env AI_PROVIDER) — one line, never a key.
+  const ai = await resolveGeminiConfig(admin, r.tenantId);
 
   return NextResponse.json({
     ok:           true,
     configured:   Boolean(data?.gemini_api_key),
     env_fallback: envFallback,
+    ai_provider:  ai.provider,
+    ai_using:     aiUsingLine({ provider: ai.provider, tenantGeminiKey: ai.tenantGeminiKey }),
     key_mask:     r.isOwner ? maskSecret(data?.gemini_api_key) : null,
     can_manage:   r.isOwner,
     model:        data?.gemini_model ?? DEFAULT_MODEL,
