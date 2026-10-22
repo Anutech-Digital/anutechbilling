@@ -6,9 +6,15 @@
  *   POST { action: "step" }           → reads the next part from Zoho (≤ ~40 requests, paced
  *                                       under Zoho's 100 a minute); call again until "ready".
  *   POST { action: "dry_run" }        → counts + problems (nothing written).
- *   POST { action: "import" }         → zoho_books_import_apply — one transaction, as the
- *                                       signed-in person (their tenant, their role).
- *   POST { action: "undo", run_id, reason } → zoho_books_import_undo.
+ *   POST { action: "import" }         → R-1760: ONE PART of the import, as the signed-in person
+ *                                       (their tenant, their role). The first call freezes the
+ *                                       plan (zoho_books_import_begin); every call applies the
+ *                                       next ≤150 rows (zoho_books_import_step) in its own
+ *                                       transaction. Call again until done — the same call is
+ *                                       "Continue import" after an error. (One call for the
+ *                                       whole plan met the role's 8 s statement timeout.)
+ *   POST { action: "undo", run_id, reason } → zoho_books_import_undo — removes what fits in one
+ *                                       call; call again until result.done.
  *
  * Read-only at Zoho, chosen organization only. Owner / manager / accountant. The tenant always
  * comes from the signed-in user's own row — never from the request.
@@ -22,6 +28,7 @@ import { buildImportPlan, summarisePlan } from "@/lib/integrations/zoho-books/im
 import {
   ALLOWED_MONTHS, DEFAULT_MONTHS, loadPlanInputs, readRuns, sinceFor, startRun, supabaseScanStore, type RunRow,
 } from "@/lib/integrations/zoho-books/import-store";
+import { IMPORT_PART_ROWS, type ImportProgress } from "@/lib/integrations/zoho-books/import-parts";
 import { createClient } from "@/lib/supabase/server";
 import { istToday } from "@/lib/dates/ist";
 
@@ -47,6 +54,11 @@ function progressOf(r: RunRow | null) {
     imported_at: r.imported_at,
     result: r.result,
     undone_at: r.undone_at,
+    /* R-1760: the import in parts */
+    import_stage: r.import_stage ?? null,
+    import_offset: r.import_offset ?? 0,
+    import_totals: (r.import_tally?.totals as ImportProgress["totals"] | undefined) ?? null,
+    undo_started_at: r.undo_started_at ?? null,
   };
 }
 
@@ -104,6 +116,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     if (action === "start") {
+      /* R-1760: a half-done import keeps its run (it holds what was created, for Undo). */
+      const { open: current } = await readRuns(caller.admin, caller.tenantId);
+      if (current?.import_stage) {
+        return fail("An import from Zoho is half done. Press Continue import to finish it, or Undo import.", 409);
+      }
       const months = ALLOWED_MONTHS.includes(Number(body.months)) ? Number(body.months) : DEFAULT_MONTHS;
       const run = await startRun(caller.admin, caller.tenantId, caller.userId, conn.orgId, sinceFor(istToday(), months), months);
       return NextResponse.json({ ok: true, open: progressOf(run) });
@@ -138,21 +155,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (action === "dry_run" || action === "import") {
       if (open.phase !== "ready") return fail("Reading from Zoho is not finished yet. Continue the dry run.", 409);
-      const inputs = await loadPlanInputs(caller.admin, caller.tenantId, open.id);
-      const plan = buildImportPlan({ ...inputs, today: istToday(), since: open.since });
-      if (action === "dry_run") {
-        return NextResponse.json({ ok: true, open: progressOf(open), summary: summarisePlan(plan) });
+      if (action === "import" && open.undo_started_at) {
+        return fail("This import is being undone. Press Undo import to finish removing it.", 409);
       }
       const supabase = createClient();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any).rpc("zoho_books_import_apply", {
-        p_run_id: open.id,
-        p_customers: plan.contactRows,
-        p_subscriptions: plan.subscriptions,
-        p_invoices: plan.invoices,
-      });
-      if (error) return fail(error.message || "The import stopped. Nothing was imported.", 409);
-      return NextResponse.json({ ok: true, result: data });
+      const rpc = (fn: string, args: Record<string, unknown>) => (supabase as any).rpc(fn, args) as Promise<{ data: unknown; error: { message?: string } | null }>;
+      /* R-1760: the plan is built once, when Import is first pressed; later parts use the plan
+         frozen on the run (re-planning would count rows the earlier parts created). */
+      if (action === "dry_run" || !open.import_stage) {
+        const inputs = await loadPlanInputs(caller.admin, caller.tenantId, open.id);
+        const plan = buildImportPlan({ ...inputs, today: istToday(), since: open.since });
+        if (action === "dry_run") {
+          return NextResponse.json({ ok: true, open: progressOf(open), summary: summarisePlan(plan) });
+        }
+        const begun = await rpc("zoho_books_import_begin", {
+          p_run_id: open.id,
+          p_customers: plan.contactRows,
+          p_subscriptions: plan.subscriptions,
+          p_invoices: plan.invoices,
+        });
+        if (begun.error) return fail(begun.error.message || "The import could not start. Nothing was imported.", 409);
+      }
+      const step = await rpc("zoho_books_import_step", { p_run_id: open.id, p_limit: IMPORT_PART_ROWS });
+      if (step.error) {
+        return fail(`${step.error.message || "The import stopped."} — what was imported so far is kept. Press Continue import.`, 409);
+      }
+      const progress = step.data as ImportProgress;
+      return NextResponse.json({ ok: true, progress, done: progress.done, result: progress.done ? progress.result : null });
     }
     return fail("Unknown action.", 400);
   } catch (e) {

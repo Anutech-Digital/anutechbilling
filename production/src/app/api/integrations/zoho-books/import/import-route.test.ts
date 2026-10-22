@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   started: [] as unknown[],
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcError: null as null | { message: string },
+  rpcErrorFn: null as null | string,
+  stepData: null as unknown,
   tokenError: null as unknown,
   saved: [] as unknown[],
   dropped: 0,
@@ -46,7 +48,9 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       h.rpc.push({ fn, args });
-      return h.rpcError ? { data: null, error: h.rpcError } : { data: { batch_id: args.p_run_id ?? "x" }, error: null };
+      if (h.rpcError && (!h.rpcErrorFn || h.rpcErrorFn === fn)) return { data: null, error: h.rpcError };
+      if (fn === "zoho_books_import_step") return { data: h.stepData, error: null };
+      return { data: { batch_id: args.p_run_id ?? "x" }, error: null };
     },
   }),
 }));
@@ -62,7 +66,8 @@ beforeEach(() => {
   h.caller = owner();
   h.conn = { refreshToken: "rt", orgId: "60000001", orgName: "T-Org", connectedAt: null };
   h.runs = { open: null, lastImport: null };
-  h.started = []; h.rpc = []; h.rpcError = null; h.tokenError = null; h.saved = []; h.dropped = 0;
+  h.started = []; h.rpc = []; h.rpcError = null; h.rpcErrorFn = null; h.tokenError = null; h.saved = []; h.dropped = 0;
+  h.stepData = { run_id: "run-1", stage: "customers", offset: 150, totals: { customers: 1245, subscriptions: 1371, invoices: 246 }, done: false, result: null };
 });
 
 describe("import route", () => {
@@ -86,16 +91,41 @@ describe("import route", () => {
     expect((h.started[1] as unknown[])[5]).toBe(24);
   });
 
-  it("import: one RPC, as the signed-in person, with the plan built on the server", async () => {
-    h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "ready" }, lastImport: null };
+  it("R-1760 import: first press freezes the server-built plan (begin) and imports ONE part, as the signed-in person", async () => {
+    h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "ready", import_stage: null }, lastImport: null };
     const res = await post({ action: "import", p_customers: [{ zoho_id: "evil" }] });
     expect(res.status).toBe(200);
-    expect(h.rpc).toHaveLength(1);
-    const { fn, args } = h.rpc[0];
-    expect(fn).toBe("zoho_books_import_apply");
+    expect(h.rpc.map((r) => r.fn)).toEqual(["zoho_books_import_begin", "zoho_books_import_step"]);
+    const { args } = h.rpc[0];
     expect(args.p_run_id).toBe("run-1");
     expect((args.p_customers as Array<{ zoho_id: string }>).map((c) => c.zoho_id)).toEqual(["c1"]);
     expect(args.p_subscriptions).toEqual([expect.objectContaining({ domain: "t-alpha.in", seats: 5, mrr: 750 })]);
+    expect(h.rpc[1].args).toEqual({ p_run_id: "run-1", p_limit: 150 });
+    expect(h.rpc.some((r) => r.fn === "zoho_books_import_apply")).toBe(false);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, done: false, result: null, progress: { stage: "customers", offset: 150 } });
+  });
+
+  it("R-1760 import: later parts (and Continue import) only step — the plan is not rebuilt; done carries the result", async () => {
+    h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "ready", import_stage: "subscriptions" }, lastImport: null };
+    h.stepData = { run_id: "run-1", stage: "done", offset: 0, totals: { customers: 1245, subscriptions: 1371, invoices: 246 }, done: true,
+      result: { customers_created: 1245, subscriptions_created: 1371, invoices_imported: 246 } };
+    const res = await post({ action: "import" });
+    expect(h.rpc.map((r) => r.fn)).toEqual(["zoho_books_import_step"]);
+    expect(await res.json()).toMatchObject({ ok: true, done: true, result: { customers_created: 1245 } });
+  });
+
+  it("R-1760 import: a part that fails says what was imported is kept and to Continue; a new dry run is refused while half done", async () => {
+    h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "ready", import_stage: "subscriptions" }, lastImport: null };
+    h.rpcError = { message: "Subscription t-alpha.in has no seats, price, term or dates. Run the dry run again." };
+    h.rpcErrorFn = "zoho_books_import_step";
+    const res = await post({ action: "import" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/has no seats.*what was imported so far is kept. Press Continue import/);
+    const again = await post({ action: "start" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).error).toMatch(/half done/);
+    expect(h.started).toHaveLength(0);
   });
 
   it("dry run before reading finished → 409; organization changed → 409", async () => {

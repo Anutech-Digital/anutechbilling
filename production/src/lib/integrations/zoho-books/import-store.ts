@@ -32,7 +32,9 @@ type Db = ReturnType<typeof createAdminClientFor>;
 const loose = (admin: Db) => admin as any;
 
 export const RUN_COLS =
-  "id, org_id, since, months, phase, next_page, contacts_read, invoices_read, details_total, details_done, last_error, started_at, updated_at, scanned_at, imported_at, result, undone_at, undo_reason";
+  "id, org_id, since, months, phase, next_page, contacts_read, invoices_read, details_total, details_done, last_error, started_at, updated_at, scanned_at, imported_at, result, undone_at, undo_reason, " +
+  /* R-1760: the import in parts */
+  "import_stage, import_offset, import_tally, import_started_at, undo_started_at";
 
 export interface RunRow extends ScanRun {
   months: number;
@@ -44,6 +46,12 @@ export interface RunRow extends ScanRun {
   result: Record<string, unknown> | null;
   undone_at: string | null;
   undo_reason: string | null;
+  /** R-1760: where the import in parts stands; null = Import not pressed yet. */
+  import_stage: "customers" | "subscriptions" | "invoices" | "done" | null;
+  import_offset: number;
+  import_tally: Record<string, unknown> | null;
+  import_started_at: string | null;
+  undo_started_at: string | null;
 }
 
 /** The unfinished run (not imported) and the latest import, for this tenant only. */
@@ -58,10 +66,11 @@ export async function readRuns(admin: Db, tenantId: string): Promise<{ open: Run
   };
 }
 
-/** A new dry run: the unfinished one (and what it read) is replaced. */
+/** A new dry run: the unfinished one (and what it read) is replaced — never a half-done import (R-1760). */
 export async function startRun(admin: Db, tenantId: string, userId: string, orgId: string, since: string, months: number): Promise<RunRow> {
   const db = loose(admin);
-  const del = await db.from("zoho_books_import_runs").delete().eq("tenant_id", tenantId).is("imported_at", null);
+  const del = await db.from("zoho_books_import_runs").delete().eq("tenant_id", tenantId).is("imported_at", null)
+    .is("import_stage", null);
   if (del.error) throw new Error("Could not clear the previous dry run.");
   const { data, error } = await db.from("zoho_books_import_runs")
     .insert({ tenant_id: tenantId, org_id: orgId, since, months, started_by: userId })

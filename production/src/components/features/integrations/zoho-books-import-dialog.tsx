@@ -9,6 +9,8 @@
  *   imported         → what came in + batch id → Undo import (refused once a payment exists)
  * Subscriptions are read from the last 24 months of invoices by default (12 / 36 offered) —
  * said on screen, because older live multi-year terms are not seen.
+ * R-1760: Import (and Undo) go part by part — "Importing… 300 of 1,245 customers" — and keep
+ * calling until done; after an error the reason shows with "Continue import", which resumes.
  */
 import * as React from "react";
 import { toast } from "sonner";
@@ -19,6 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useAskText, useConfirm } from "@/components/providers/confirm-provider";
 import { formatDate, rupee } from "@/lib/utils";
+import {
+  importPercent, importProgressText, type ImportProgress, type ImportStage,
+} from "@/lib/integrations/zoho-books/import-parts";
 
 const URL_IMPORT = "/api/integrations/zoho-books/import";
 
@@ -35,6 +40,11 @@ export interface RunView {
   imported_at: string | null;
   undone_at: string | null;
   result: Record<string, unknown> | null;
+  /* R-1760: the import in parts (absent on older answers) */
+  import_stage?: ImportStage | null;
+  import_offset?: number;
+  import_totals?: ImportProgress["totals"] | null;
+  undo_started_at?: string | null;
 }
 interface ProblemGroup { code: string; label: string; blocks: boolean; count: number; examples: string[] }
 interface Summary {
@@ -83,6 +93,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   const [waitUntil, setWaitUntil] = React.useState<number | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loaded, setLoaded] = React.useState(false);
+  const [progress, setProgress] = React.useState<ImportProgress | null>(null);
   const openRef = React.useRef(open);
   openRef.current = open;
 
@@ -97,7 +108,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   }, []);
 
   React.useEffect(() => {
-    if (!open) { setReading(false); setSummary(null); setError(null); setLoaded(false); return; }
+    if (!open) { setReading(false); setSummary(null); setError(null); setLoaded(false); setProgress(null); return; }
     void load();
   }, [open, load]);
 
@@ -133,7 +144,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
 
   /* When reading finishes, show the dry run. */
   React.useEffect(() => {
-    if (open && run?.phase === "ready" && !summary && busy !== "dry") {
+    if (open && run?.phase === "ready" && !run.import_stage && !summary && busy !== "dry") {
       setReading(false);
       void loadSummary();
     }
@@ -164,19 +175,69 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
     const c = summary.counts;
     const ok = await confirm({
       title: "Import from Zoho Books?",
-      body: `${fmt(c.customersNew)} new customers, ${fmt(c.subscriptionsToImport)} live subscriptions and ${fmt(c.invoicesToImport)} open invoices come into this company in one step.\nExisting customers are not changed. Open invoices do not count as GST or revenue. You can undo the import until a payment is recorded on it.`,
+      body: `${fmt(c.customersNew)} new customers, ${fmt(c.subscriptionsToImport)} live subscriptions and ${fmt(c.invoicesToImport)} open invoices come into this company, part by part — keep this window open until it finishes.\nExisting customers are not changed. Open invoices do not count as GST or revenue. You can undo the import until a payment is recorded on it.`,
       confirmLabel: "Import",
     });
     if (!ok) return;
+    await runImport();
+  }
+
+  /* R-1760: one part per call, until done. Also "Continue import" after an error. */
+  async function runImport() {
     setBusy("import");
+    setError(null);
     try {
-      const { ok: done, data } = await post({ action: "import" });
-      if (!done) { toast.error(String(data.error ?? "The import stopped."), { description: "Nothing was imported." }); return; }
-      const r = data.result as Record<string, unknown>;
-      toast.success("Imported from Zoho Books", {
-        description: `${n(r.customers_created)} customers · ${n(r.subscriptions_created)} subscriptions · ${n(r.invoices_imported)} open invoices`,
-      });
-      setSummary(null);
+      for (let guard = 0; guard < 2000; guard++) {
+        const { ok: fine, data } = await post({ action: "import" });
+        if (!fine) {
+          setError(String(data.error ?? "The import stopped. Press Continue import."));
+          await load();
+          return;
+        }
+        const p = data.progress as ImportProgress;
+        setProgress(p);
+        if (p.done) {
+          const r = (p.result ?? {}) as Record<string, unknown>;
+          toast.success("Imported from Zoho Books", {
+            description: `${fmt(n(r.customers_created))} customers · ${fmt(n(r.subscriptions_created))} subscriptions · ${fmt(n(r.invoices_imported))} open invoices`,
+          });
+          setSummary(null);
+          setProgress(null);
+          await load();
+          return;
+        }
+      }
+    } finally { setBusy(null); }
+  }
+
+  /* R-1760: Undo removes what fits in one call; call again until done. */
+  async function runUndo(runId: string, reason: string): Promise<boolean> {
+    for (let guard = 0; guard < 200; guard++) {
+      const { ok, data } = await post({ action: "undo", run_id: runId, reason });
+      if (!ok) { toast.error(String(data.error ?? "Could not undo the import."), { description: "Press Undo import again to finish." }); return false; }
+      const r = (data.result ?? {}) as Record<string, unknown>;
+      if (r.done !== false) return true;
+    }
+    return false;
+  }
+
+  async function undoHalfDone() {
+    if (!run) return;
+    const reason = await askText({
+      title: "Undo what was imported so far?",
+      body: "Removes the customers, contacts, subscriptions and open invoices this import created so far. Customers that were already here are not touched. Then you can run a new dry run.",
+      label: "Why (goes in the activity log)",
+      confirmLabel: "Undo import",
+      danger: true,
+    });
+    if (!reason) return;
+    setBusy("undo");
+    try {
+      if (await runUndo(run.id, reason)) {
+        toast.success("Import undone");
+        setError(null);
+        setProgress(null);
+      }
       await load();
     } finally { setBusy(null); }
   }
@@ -193,14 +254,20 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
     if (!reason) return;
     setBusy("undo");
     try {
-      const { ok, data } = await post({ action: "undo", run_id: lastImport.id, reason });
-      if (!ok) { toast.error(String(data.error ?? "Could not undo the import."), { description: "Nothing was removed." }); return; }
-      toast.success("Import undone");
+      if (await runUndo(lastImport.id, reason)) toast.success("Import undone");
       await load();
     } finally { setBusy(null); }
   }
 
   const readingNow = Boolean(run && run.phase !== "ready");
+  /* R-1760: an import begun on this run (this window, or an earlier one that stopped). */
+  const halfDone = Boolean(run?.import_stage && run.import_stage !== "done");
+  const importNow: ImportProgress | null = progress
+    ?? (halfDone && run ? {
+      run_id: run.id, stage: run.import_stage ?? "customers", offset: run.import_offset ?? 0,
+      totals: run.import_totals ?? { customers: 0, subscriptions: 0, invoices: 0 }, done: false, result: null,
+    } : null);
+  const undoing = Boolean(run?.undo_started_at);
   const result = lastImport && !lastImport.undone_at ? lastImport.result : null;
   const pct = run?.phase === "details" && run.details_total > 0
     ? Math.round((run.details_done / run.details_total) * 100)
@@ -270,9 +337,29 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
             </div>
           )}
 
+          {importNow && (
+            <div className="space-y-2" data-testid="zoho-import-progress">
+              <p className="text-sm font-medium text-ink" aria-live="polite">
+                {undoing ? "Undo of this import stopped part way." : importProgressText(importNow)}
+              </p>
+              {!undoing && (
+                <div className="h-2 w-full overflow-hidden rounded bg-paper-2" role="progressbar" aria-valuenow={importPercent(importNow)} aria-valuemin={0} aria-valuemax={100} aria-label="Import progress">
+                  <div className="h-full bg-amber transition-all" style={{ width: `${importPercent(importNow)}%` }} />
+                </div>
+              )}
+              <p className="text-xs text-ink-3">
+                {busy === "import"
+                  ? "Imported in parts. Keep this window open until it finishes."
+                  : undoing
+                    ? "Press Undo import to finish removing what this import created."
+                    : "Stopped part way. What was imported so far is kept — Continue import picks up where it stopped."}
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-sm text-rose" role="alert">{error}</p>}
 
-          {summary && run?.phase === "ready" && (
+          {summary && run?.phase === "ready" && !importNow && (
             <div className="space-y-3" data-testid="zoho-dry-run">
               <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <div className="rounded-lg border border-hairline p-3">
@@ -314,10 +401,22 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
         </div>
 
         <DialogFooter>
-          {run && (
+          {run && !importNow && (
             <Button variant="ghost" onClick={startDryRun} disabled={busy !== null}>
               {run.phase === "ready" ? "Read again" : "Start again"}
             </Button>
+          )}
+          {importNow && busy === "import" && (
+            <Button variant="primary" loading disabled>Importing…</Button>
+          )}
+          {importNow && busy !== "import" && !undoing && (
+            <>
+              <Button variant="ghost" onClick={undoHalfDone} loading={busy === "undo"} disabled={busy !== null}>Undo import</Button>
+              <Button variant="primary" onClick={() => void runImport()} disabled={busy !== null}>Continue import</Button>
+            </>
+          )}
+          {importNow && busy !== "import" && undoing && (
+            <Button variant="primary" onClick={undoHalfDone} loading={busy === "undo"} disabled={busy !== null}>Undo import</Button>
           )}
           {!run && (
             <Button variant="primary" onClick={startDryRun} loading={busy === "start"} disabled={!loaded || busy !== null}>Dry run</Button>
@@ -328,7 +427,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
           {run && run.phase !== "ready" && reading && (
             <Button variant="primary" loading disabled>Reading Zoho…</Button>
           )}
-          {run?.phase === "ready" && (
+          {run?.phase === "ready" && !importNow && (
             <Button variant="primary" onClick={doImport} loading={busy === "import" || busy === "dry"}
               disabled={!summary || busy !== null || (summary.counts.customersNew + summary.counts.subscriptionsToImport + summary.counts.invoicesToImport) === 0}>
               Import
