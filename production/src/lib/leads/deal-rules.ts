@@ -130,11 +130,14 @@ export function checkBoardMove(
   if (lead.stage === to) return { ok: true };
   const name = lead.company?.trim() || "This lead";
 
-  if (lead.stage === "won") {
+  /* R-1762: a Won deal may go to Lost (the customer backed out) — the money check and the
+     lost reason follow in useChangeLeadStage, and the database refuses it with money behind it.
+     Any other move out of Won is not a board move: a mistaken accept is undone on the quote. */
+  if (lead.stage === "won" && to !== "lost") {
     return {
       ok: false,
       title: `${name} is already won`,
-      description: "Money is recorded against it — a payment, an invoice and a subscription. Raise a credit note on the invoice instead.",
+      description: "Accepted by mistake? Open the quote → Reopen. Customer backed out? Use Mark lost.",
     };
   }
 
@@ -166,6 +169,30 @@ export function checkBoardMove(
     }
   }
   return { ok: true };
+}
+
+// ── Leaving Won (R-1762) ────────────────────────────────────────────────────
+
+/** The refusal when a Won deal has money behind it — the same words the database raises
+ *  (migration 20261022120019_r1762_won_deal_undo, trigger trg_r1762_won_exit_guard). */
+export function wonMoneyRefusal(company: string | null | undefined): string {
+  const name = company?.trim() || "This deal";
+  return `${name} has a payment or invoice — refund or credit-note it first, then mark it lost.`;
+}
+
+/**
+ * May a deal leave Won? Only when none of its quotes has a received payment, a live invoice or a
+ * subscription (`hasMoney`, from the lead_has_money RPC). Deals that are not Won pass.
+ */
+export function checkWonExit(
+  lead: Pick<Lead, "stage" | "company">, to: Stage, hasMoney: boolean,
+): MoveVerdict {
+  if (lead.stage !== "won" || to === "won" || !hasMoney) return { ok: true };
+  return {
+    ok: false,
+    title: `Can't mark ${lead.company?.trim() || "this deal"} ${STAGE_LABEL[to]}`,
+    description: wonMoneyRefusal(lead.company),
+  };
 }
 
 // ── Deal value from seats × price ───────────────────────────────────────────

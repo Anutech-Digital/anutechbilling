@@ -600,7 +600,8 @@ export default function QuoteDetailPage() {
   });
 
   // Reopen — revert an accidentally-accepted quote back to 'sent'. The RPC
-  // refuses if any money has moved (invoice/payment); the customer + lead stay.
+  // refuses if any money has moved (invoice/payment). R-1762: it also moves a Won deal
+  // back to Quote when nothing else keeps it Won; the customer record stays.
   const reopenQuote = useMutation({
     mutationFn: async () => {
       const supabase = createClient();
@@ -610,6 +611,8 @@ export default function QuoteDetailPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
       qc.invalidateQueries({ queryKey: ["quotes", params.id] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["deal-history"] });
       toast.success("Quote reopened — moved back to Sent");
     },
     onError: (e) => toastError(e),
@@ -1505,7 +1508,7 @@ export default function QuoteDetailPage() {
                   loading={reopenQuote.isPending}
                   onClick={() => setConfirm({
                     title: `Reopen quote ${quote.id}?`,
-                    body: "It moves back to Sent so you can edit or re-send. The customer record stays — reverse this only if the accept was a mistake.",
+                    body: "It moves back to Sent and the deal back to Quote. The customer record stays.",
                     confirmLabel: "Reopen quote",
                     icon: "arrow_left",
                     onConfirm: () => reopenQuote.mutate(),

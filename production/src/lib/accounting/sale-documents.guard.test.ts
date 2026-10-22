@@ -63,6 +63,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
+  r1762_lead_money: "does the deal have money — any invoice that is not void blocks leaving Won",
   today_inbox: "overdue balances — includes opening invoices on purpose",
   unreconcile_bank_receipt: "money in",
   waive_late_charges: "late fee",

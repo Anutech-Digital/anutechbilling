@@ -65,9 +65,10 @@ export function LeadDetailFooter({
               >
                 Edit
               </Button>
-              {/* R-459: it always marked the lead Lost — now it says so. Hidden where Lost
-                  is not a move (already lost, or won with money behind it). */}
-              {lead.stage !== "lost" && lead.stage !== "won" && (
+              {/* R-459: it always marked the lead Lost — now it says so. R-1762: shown on a
+                  Won deal too (the customer backed out); with money behind it the click is
+                  refused with the reason (useChangeLeadStage + the database). */}
+              {lead.stage !== "lost" && (
                 <Button
                   size="sm"
                   variant="ghost"

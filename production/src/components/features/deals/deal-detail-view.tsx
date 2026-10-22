@@ -213,7 +213,7 @@ export function DealDetailView({ leadId }: { leadId: string }) {
     if (block) {
       toast.error("This deal can't be deleted", {
         description: block,
-        action: lead.stage !== "lost" && lead.stage !== "won" ? { label: "Mark lost", onClick: () => { void changeStage(lead, "lost"); } } : undefined,
+        action: lead.stage !== "lost" ? { label: "Mark lost", onClick: () => { void changeStage(lead, "lost"); } } : undefined,
       });
       return;
     }
@@ -277,7 +277,8 @@ export function DealDetailView({ leadId }: { leadId: string }) {
               }}
             >Email</Button>
             <Button icon="edit" variant="ghost" onClick={() => setEditOpen(true)}>Edit</Button>
-            {lead.stage !== "won" && lead.stage !== "lost" && (
+            {/* R-1762: on a Won deal too — refused with the reason when money is behind it. */}
+            {lead.stage !== "lost" && (
               <Button variant="ghost" onClick={() => { void changeStage(lead, "lost"); }}>Mark lost</Button>
             )}
             <Button variant="ghost" icon="trash" className="!text-rose hover:!bg-rose/10" loading={deleteLead.isPending} onClick={onDelete}>Delete</Button>

@@ -15076,6 +15076,7 @@ export type Database = {
       ist_today: { Args: never; Returns: string }
       late_fee_effective: { Args: { p_invoice_id: string }; Returns: Json }
       lead_counts: { Args: { p_filters?: Json }; Returns: Json }
+      lead_has_money: { Args: { p_lead_id: string }; Returns: boolean }
       lead_looks_like_junk: {
         Args: {
           p_company: string

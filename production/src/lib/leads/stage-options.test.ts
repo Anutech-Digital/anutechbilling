@@ -46,16 +46,19 @@ describe("the quote-first gate survives", () => {
   });
 });
 
-describe("won is not an inline edit", () => {
-  it("locks it, so a table cell cannot un-win a paid deal", () => {
-    /* Un-winning means money already recorded against the deal. That belongs in a
-       deliberate action with a confirmation, not one row from the scrollbar. */
-    expect(isStageLocked("won")).toBe(true);
-    expect(rowStageOptions("won")).toEqual(["won"]);
+describe("won goes only to lost (R-1762)", () => {
+  it("offers Lost and nothing that walks a won deal back into the pipeline", () => {
+    /* The customer backed out after accepting → Lost, with a reason; the money check (client
+       and database) refuses it when a payment, invoice or subscription exists. A mistaken
+       accept goes back to Quote from the quote's Reopen, not from here. */
+    expect(rowStageOptions("won")).toEqual(["won", "lost"]);
+    for (const s of ["new", "contact", "quote", "demo", "trial"] as Stage[]) {
+      expect(rowStageOptions("won")).not.toContain(s);
+    }
   });
 
-  it("leaves every other stage editable", () => {
-    for (const s of ALL.filter((s) => s !== "won")) expect(isStageLocked(s)).toBe(false);
+  it("leaves every stage editable", () => {
+    for (const s of ALL) expect(isStageLocked(s)).toBe(false);
   });
 });
 
