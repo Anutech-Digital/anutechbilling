@@ -33,11 +33,14 @@ const mail = vi.hoisted(() => ({ sendEmail: vi.fn(), loadOwnerAlert: vi.fn() }))
 vi.mock("@/lib/email/send", () => ({ sendEmail: mail.sendEmail }));
 vi.mock("@/lib/email/owner-alert.server", () => ({ loadOwnerAlert: mail.loadOwnerAlert }));
 
-const tables = vi.hoisted(() => ({ quotes: null as unknown, leads: null as unknown }));
+const tables = vi.hoisted(() => ({ quotes: null as unknown, leads: null as unknown, customers: null as unknown, customerEqs: [] as [string, unknown][] }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
-    from: (t: "quotes" | "leads") => ({
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: tables[t], error: null }) }) }) }),
+    from: (t: "quotes" | "leads" | "customers") => ({
+      select: () => ({ eq: (c1: string, v1: unknown) => ({ eq: (c2: string, v2: unknown) => ({ maybeSingle: async () => {
+        if (t === "customers") tables.customerEqs.push([c1, v1], [c2, v2]);
+        return { data: tables[t], error: null };
+      } }) }) }),
     }),
   }),
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
@@ -218,5 +221,33 @@ describe("R-1587: a DMS outage is heard", () => {
     expect(res.status).toBeGreaterThanOrEqual(500);
     expect(hb.pingHeartbeat).toHaveBeenCalledWith("provision-hosting", false);
     err.mockRestore();
+  });
+});
+
+describe("R-1771: the command names the ResellerOS customer, so DMS links its account by ID", () => {
+  beforeEach(() => {
+    tables.customerEqs = [];
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: { daUsername: "x" }, replayed: false });
+  });
+  it("paid quote of customer C-00007 → customer.billingCustomerId = C-00007 (read inside the row's tenant)", async () => {
+    tables.quotes = { ...(tables.quotes as object), customer_id: "cust-1" };
+    tables.customers = { id: "cust-1", customer_number: "C-00007" };
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload.customer).toMatchObject({ email: "asha@example.invalid", billingCustomerId: "C-00007" });
+    expect(tables.customerEqs).toEqual([["id", "cust-1"], ["tenant_id", "T1"]]);
+  });
+  it("no customer number yet → the customer's uuid (the id /api/v1 answers to)", async () => {
+    tables.quotes = { ...(tables.quotes as object), customer_id: "cust-1" };
+    tables.customers = { id: "cust-1", customer_number: null };
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload.customer.billingCustomerId).toBe("cust-1");
+  });
+  it("quote not linked to a customer → no field (the old email-only shape), still sent", async () => {
+    tables.customers = null;
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload.customer).not.toHaveProperty("billingCustomerId");
+    expect(cmd.payload.customer.email).toBe("asha@example.invalid");
   });
 });

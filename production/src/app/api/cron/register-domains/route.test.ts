@@ -45,9 +45,10 @@ vi.mock("@/lib/email/send", () => ({ sendEmail: mail.sendEmail }));
 vi.mock("@/lib/email/owner-alert.server", () => ({ loadOwnerAlert: mail.loadOwnerAlert }));
 
 const quoteRow = vi.hoisted(() => ({ value: null as unknown }));
+const customerRow = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: () => ({
-    from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: quoteRow.value, error: null }) }) }) }) }),
+    from: (t: string) => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: t === "customers" ? customerRow.value : quoteRow.value, error: null }) }) }) }) }),
   }),
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
 }));
@@ -242,5 +243,23 @@ describe("R-1587: a DMS outage is heard", () => {
     expect(res.status).toBeGreaterThanOrEqual(500);
     expect(hb.pingHeartbeat).toHaveBeenCalledWith("register-domains", false);
     err.mockRestore();
+  });
+});
+
+describe("R-1771: the command names the ResellerOS customer, so DMS links its account by ID", () => {
+  beforeEach(() => {
+    customerRow.value = null;
+    engine.sendEngineCommand.mockResolvedValue({ kind: "done", result: {}, replayed: true });
+  });
+  it("paid quote of customer C-00007 → payload.billingCustomerId = C-00007", async () => {
+    quoteRow.value = { id: "Q1", customer_id: "cust-1", line_items: [{ domain: "acme.in", registrant }] };
+    customerRow.value = { id: "cust-1", customer_number: "C-00007" };
+    await GET(req());
+    const cmd = engine.sendEngineCommand.mock.calls[0][0];
+    expect(cmd.payload).toMatchObject({ registrant, billingCustomerId: "C-00007", sourceRef: "Q1" });
+  });
+  it("quote not linked to a customer → no field, still sent", async () => {
+    await GET(req());
+    expect(engine.sendEngineCommand.mock.calls[0][0].payload).not.toHaveProperty("billingCustomerId");
   });
 });

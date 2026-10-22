@@ -41,6 +41,7 @@ import {
 } from "@/lib/provisioning/provisioning.server";
 import { commandsConfigured, sendEngineCommand } from "@/lib/dms-engine/commands";
 import { dmsPanelUrl } from "@/lib/dms-engine/client";
+import { billingCustomerIdFor } from "@/lib/dms-engine/billing-customer";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { errorMessage } from "@/lib/ops/fetch-all";
 import { cronAuthFailure } from "@/app/api/cron/_lib/cron-auth";
@@ -164,7 +165,7 @@ async function handle(req: Request) {
 
     const { data: quote, error: qErr } = await admin
       .from("quotes")
-      .select("id, line_items")
+      .select("id, customer_id, line_items")
       .eq("id", row.quote_id)
       .eq("tenant_id", row.tenant_id) // service-role client: this IS the tenant boundary
       .maybeSingle();
@@ -184,6 +185,11 @@ async function handle(req: Request) {
       continue;
     }
 
+    /* R-1771: the ResellerOS customer this domain is bought for, so DMS links the account
+       it files the domain under by ID, not only by the registrant's email. This command has
+       no customer block (the registrant is the domain's legal contact), so it rides at the top. */
+    const billingCustomerId = await billingCustomerIdFor(admin, row.tenant_id, (quote as { customer_id?: string | null }).customer_id);
+
     const outcome = await sendEngineCommand({
       commandId: registrationCommandId(row.id),
       command: "domain.register",
@@ -195,6 +201,7 @@ async function handle(req: Request) {
         coverRupees: coverFromPaid(Number(row.amount_paid) || 0),
         paymentMode: "live",
         sourceRef: row.quote_id,
+        ...(billingCustomerId ? { billingCustomerId } : {}),
       },
     });
 
