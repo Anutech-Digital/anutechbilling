@@ -88,7 +88,7 @@ import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { parseLineQty, parseLineRate, firstLineInputProblem, builderIsDirty } from "@/lib/quotes/line-input";
 import type { QuoteLineItem, LineCommitment, BillingCycle, Item } from "@/lib/supabase/database.types";
-import { LineAdjustControls, dropSeatsAdjustable } from "./line-adjust-controls";
+import { LineAdjustControls, LineMoreMenu, dropSeatsAdjustable } from "./line-adjust-controls";
 import {
   BILLING_CYCLE_OPTIONS, cycleInvoicesPerYear, cycleUnitLabel,
 } from "@/lib/quotes/billing";
@@ -2275,7 +2275,10 @@ function QuoteBuilderBody() {
                         </button>
                       )}
                     </div>
-                    <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <LineMoreMenu line={line} onChange={(p) => updateAdjustable(line.id, p)} />
+                      <IconButton icon="trash" aria-label="Remove line" size="sm" onClick={() => removeLine(line.id)} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block">
@@ -2328,6 +2331,8 @@ function QuoteBuilderBody() {
                   </div>
                   <LineBandNote line={line} catalog={catalog} />
                   <LineSupportToggle line={line} catalog={catalog} lineItems={lineItems} onAdd={addLine} />
+                  {/* R-1754: an optional line's chip stays visible — not folded under "More". */}
+                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                   {/* The rest is set once and rarely touched — folded so qty, rate and amount
                       lead the card (2 Oct 2026). */}
                   <details className="group rounded-md border border-hairline/70 px-2.5 py-1.5">
@@ -2388,7 +2393,6 @@ function QuoteBuilderBody() {
                         : <>Margin {lineMargin.marginPct}%</>}
                     </span>
                   </div>
-                  <LineAdjustControls line={line} onChange={(p) => updateAdjustable(line.id, p)} />
                     </div>
                   </details>
                   <div className="flex items-center justify-between border-t border-hairline pt-2">
@@ -2411,7 +2415,7 @@ function QuoteBuilderBody() {
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-28">Qty</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Rate</th>
                 <th className="text-right p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider w-36">Amount</th>
-                <th className="w-12"></th>
+                <th className="w-20"><span className="sr-only">Line actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -2613,12 +2617,16 @@ function QuoteBuilderBody() {
                       )}
                     </td>
                     <td className="p-2 text-right">
-                      <IconButton
-                        icon="trash"
-                        aria-label="Remove line"
-                        size="sm"
-                        onClick={() => removeLine(line.id)}
-                      />
+                      <div className="flex items-center justify-end gap-0.5">
+                        {/* R-1754: "Make optional for customer" lives here, not on every line. */}
+                        <LineMoreMenu line={line} onChange={(p) => updateAdjustable(line.id, p)} />
+                        <IconButton
+                          icon="trash"
+                          aria-label="Remove line"
+                          size="sm"
+                          onClick={() => removeLine(line.id)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );
