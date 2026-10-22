@@ -13,6 +13,9 @@
 --   4. Reopen one quote while another quote of the same deal is paid → the deal stays Won.
 --   5. lead_has_money: own company answers, another company / no company refused (42501).
 --   6. The Won count drops by the two undone deals.
+--   7. (follow-up 22 Oct) Mark accepted AGAIN after Reopen → the deal is Won again
+--      (accept_quote set Won only when it converted the lead; the quote keeps its customer).
+--   8. (follow-up) Mark lost from Quote with an accepted quote and no money → quote Rejected.
 
 begin;
 select set_config('request.jwt.claims', '', true);
@@ -38,14 +41,16 @@ insert into public.leads (id, tenant_id, company, stage, value, customer_id) val
   ('L-R1762-MISTAKE', 'e1762000-0000-0000-0000-0000000000a1', 'Mistake Co',   'won', 10000, 'e1762000-0000-4000-8000-0000000000c1'),
   ('L-R1762-BACKOUT', 'e1762000-0000-0000-0000-0000000000a1', 'Backout Co',   'won', 10000, 'e1762000-0000-4000-8000-0000000000c1'),
   ('L-R1762-PAID',    'e1762000-0000-0000-0000-0000000000a1', 'Paid Co',      'won', 10000, 'e1762000-0000-4000-8000-0000000000c1'),
-  ('L-R1762-UPSELL',  'e1762000-0000-0000-0000-0000000000a1', 'Upsell Co',    'won', 10000, 'e1762000-0000-4000-8000-0000000000c1');
+  ('L-R1762-UPSELL',  'e1762000-0000-0000-0000-0000000000a1', 'Upsell Co',    'won', 10000, 'e1762000-0000-4000-8000-0000000000c1'),
+  ('L-R1762-OPEN',    'e1762000-0000-0000-0000-0000000000a1', 'Open Co',      'quote', 10000, 'e1762000-0000-4000-8000-0000000000c1');
 
 insert into public.quotes (id, tenant_id, lead_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items) values
   ('Q-R1762-MISTAKE', 'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-MISTAKE', 'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb),
   ('Q-R1762-BACKOUT', 'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-BACKOUT', 'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb),
   ('Q-R1762-PAID',    'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-PAID',    'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb),
   ('Q-R1762-UP-PAID', 'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-UPSELL',  'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb),
-  ('Q-R1762-UP-NEW',  'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-UPSELL',  'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb);
+  ('Q-R1762-UP-NEW',  'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-UPSELL',  'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb),
+  ('Q-R1762-OPEN',    'e1762000-0000-0000-0000-0000000000a1', 'L-R1762-OPEN',    'e1762000-0000-4000-8000-0000000000c1', 'R1762 Cust', 11800, 10000, 18, 'accepted', 'awaiting', '[]'::jsonb);
 
 -- Money on two of them (a received payment — the trigger-free way the tests elsewhere do it).
 insert into public.payments (id, tenant_id, quote_id, customer_id, amount, method, status, received_at, created_at) values
@@ -166,6 +171,39 @@ begin
       (select count(*) from public.leads where tenant_id = 'e1762000-0000-0000-0000-0000000000a1' and stage = 'won');
   end if;
   raise notice 'PASS 6 won count dropped from 4 to 2';
+end $$;
+
+-- 7. Mark accepted again after the Reopen in step 1 (the quote kept its customer).
+select pg_temp.r1762_expect('7 re-accept after reopen', $$select public.accept_quote('Q-R1762-MISTAKE')$$, 'ok');
+do $$
+begin
+  if (select status::text from public.quotes where id = 'Q-R1762-MISTAKE') <> 'accepted' then
+    raise exception 'FAIL 7: quote not accepted again';
+  end if;
+  if (select stage::text from public.leads where id = 'L-R1762-MISTAKE') <> 'won' then
+    raise exception 'FAIL 7 re-accept: deal stayed % — accept_quote set Won only when converting the lead',
+      (select stage from public.leads where id = 'L-R1762-MISTAKE');
+  end if;
+  raise notice 'PASS 7 reopen → accept again → deal Won again';
+end $$;
+
+-- 8. Mark lost from Quote with an accepted quote and no money.
+select pg_temp.r1762_expect('8 quote→lost with accepted quote',
+  $$update public.leads set stage = 'lost', lost_reason = 'timing', lost_note = 'Next year', lost_at = now() where id = 'L-R1762-OPEN'$$, 'ok');
+do $$
+declare q record;
+begin
+  select status::text as status, payment_status::text as pay, rejected_reason, rejected_note into q
+    from public.quotes where id = 'Q-R1762-OPEN';
+  if q.status <> 'rejected' or q.pay <> 'none' or q.rejected_reason is distinct from 'timing'
+     or q.rejected_note is distinct from 'Next year' then
+    raise exception 'FAIL 8: accepted quote left on a lost deal (%, %, %, %)', q.status, q.pay, q.rejected_reason, q.rejected_note;
+  end if;
+  if not exists (select 1 from public.lead_activities
+                  where lead_id = 'L-R1762-OPEN' and detail = 'Marked Lost; accepted quote Q-R1762-OPEN rejected') then
+    raise exception 'FAIL 8: no "Marked Lost" timeline line';
+  end if;
+  raise notice 'PASS 8 quote → lost rejects the accepted quote with the reason';
 end $$;
 
 -- 5. Another company, and a login with no company.

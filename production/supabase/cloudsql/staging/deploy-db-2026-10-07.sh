@@ -184,6 +184,7 @@ MIGS=(
   "r1757zohotokencache|20261022094052_r1757_zoho_books_access_token_cache.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_token') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_expires_at')"
   "r1760zohoimportinparts|20261022113730_r1760_zoho_books_import_in_parts.sql|resellersos_migration|to_regprocedure('public.zoho_books_import_begin(uuid,jsonb,jsonb,jsonb)') is not null and to_regprocedure('public.zoho_books_import_step(uuid,integer)') is not null and exists(select 1 from pg_proc where proname = 'zoho_books_import_undo' and prosrc like '%R-1760%')"
   "r1762wonundo|20261022120019_r1762_won_deal_undo.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.lead_has_money(text)')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.reopen_quote(text)') and prosrc like '%R-1762%')"
+  "r1762reaccept|20261022125840_r1762_reaccept_wins_deal.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_quote(text)') and prosrc like '%R-1762%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_r1762_won_lost_rejects_quote()') and prosrc like '%R-1762b%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
