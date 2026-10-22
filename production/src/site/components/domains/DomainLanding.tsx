@@ -38,7 +38,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { domainSans as manrope, domainSerif as serif, domainMono as mono } from "@/lib/fonts";
 import { useCart } from "@/site/components/cart/CartProvider";
-import { searchDomains, normaliseName, domainHelpLinks, type DomainResult } from "@/site/lib/domain-search";
+import { searchDomains, normaliseName, domainHelpLinks, TEST_PRICE_LABEL, type DomainResult } from "@/site/lib/domain-search";
 import type { SiteTld } from "@/site/lib/live-tld-pricing";
 import { PRICE_AT_SEARCH, tldCell } from "@/site/lib/rate-card";
 import { HOSTING_TIERS } from "@/site/lib/data/hosting-landing-v2";
@@ -179,9 +179,11 @@ export function DomainLanding({ tlds }: { tlds: readonly SiteTld[] }) {
     /* Domain line — sku lets the server re-price + apply the bundle rule. At its FULL price
        (R-1601): the cart works out on every render whether yearly hosting makes it free, so
        removing the plan later puts the price back instead of leaving a stale ₹0. */
+    const regDetail = domainRenew != null ? `Registration, 1 year · renews ${inr(domainRenew)}` : "Registration, 1 year";
     cart.add({
       label: primary.domain,
-      detail: domainRenew != null ? `Registration, 1 year · renews ${inr(domainRenew)}` : "Registration, 1 year",
+      // R-1769: a test-list price says so in the cart and at checkout too.
+      detail: primary.testPrice ? `${TEST_PRICE_LABEL} · ${regDetail}` : regDetail,
       unitPrice: domainReg,
       unit: "year",
       cycle: "yearly",
@@ -608,6 +610,7 @@ function ResultBlock(p: {
           <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", color: C.muted, fontWeight: 600 }}>Taken</span>
           <span style={{ fontFamily: SERIF, fontSize: 22, color: C.ink }}>{primary.domain}</span>
         </div>
+        {primary.testPrice && <TestPriceNote C={C} MONO={MONO} />}
         <p style={{ padding: "16px 22px", fontSize: 14, color: C.muted, margin: 0 }}>This one is already registered. Try another spelling or a different extension — the alternates below are checked live too.</p>
         <Alternates C={C} MONO={MONO} priceMono={priceMono} alternates={alternates} onAddAlt={onAddAlt} />
       </div>
@@ -627,6 +630,7 @@ function ResultBlock(p: {
         <span style={{ fontFamily: SERIF, fontSize: 23, letterSpacing: "-0.02em", color: C.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={primary.domain}>{primary.domain}</span>
         <span style={priceMono({ fontSize: 13, color: C.success })}>{domainRenew != null ? `renews ${inr(domainRenew)}/yr` : "renewal shown at checkout"}</span>
       </div>
+      {primary.testPrice && <TestPriceNote C={C} MONO={MONO} />}
       <p style={{ padding: "16px 22px 6px", fontSize: 13.5, color: C.muted, margin: 0 }}>Pick one — you can change it any time before you pay.</p>
 
       {/* two options */}
@@ -756,6 +760,17 @@ function Alternates(p: { C: typeof C_TYPE; MONO: string; priceMono: (e?: React.C
         ))}
       </div>
     </div>
+  );
+}
+
+/* R-1769: ONE note for every price in the result block (the options, the bundle and the
+   alternates) — it only appears when the answer came from the laptop-only TEST list. */
+function TestPriceNote({ C, MONO }: { C: typeof C_TYPE; MONO: string }) {
+  return (
+    <p role="note" style={{ margin: 0, padding: "10px 22px", background: C.accSurf, borderBottom: `1px solid ${C.accBorder}`, fontSize: 13.5, color: C.accentDark, lineHeight: 1.5 }}>
+      <span style={{ fontFamily: MONO, fontSize: 11.5, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, marginRight: 8 }}>{TEST_PRICE_LABEL}</span>
+      This computer has no live domain registry, so these prices and results come from a fixed test list. The live site never shows them.
+    </p>
   );
 }
 

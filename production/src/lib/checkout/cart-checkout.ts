@@ -208,7 +208,8 @@ function repriceLine(sku: string | undefined, cycle: string | undefined, qty: nu
 }
 
 type DomainPricing =
-  | { ok: true; line: QuoteLine; firstYear: number }
+  /* testPrice: R-1769 — priced from the laptop-only TEST list (lib/domains/test-prices.ts). */
+  | { ok: true; line: QuoteLine; firstYear: number; testPrice: boolean }
   | { ok: false; reason: string };
 
 /**
@@ -290,9 +291,10 @@ async function priceDomainLines(
         ok: true,
         // The 1-year price, for the bundle: yearly hosting makes the FIRST year free only.
         firstYear: Math.round(hit.price),
+        testPrice: hit.testPrice === true,
         line: {
           id: newId(),
-          name: `Domain ${e.domain} — registration, ${e.years} year${e.years === 1 ? "" : "s"}`,
+          name: `Domain ${e.domain} — registration, ${e.years} year${e.years === 1 ? "" : "s"}${hit.testPrice ? " (TEST price)" : ""}`,
           qty: 1,
           // Whole rupees, like every other line (CLAUDE.md §13). The whole term, paid now.
           rate: term,
@@ -445,10 +447,12 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     const domainLineSet: QuoteLine[] = []; // every domain:* line, priced by priceDomainLines
     /* Each hosting line with what was typed for it, in cart order (one domain per plan). */
     const hostingItems: { line: QuoteLine; typed: string | undefined; yearly: boolean }[] = [];
+    let testPriced = false; // R-1769: any domain line priced from the laptop-only TEST list
     for (const [idx, l] of lines.entries()) {
       const dp = domainPricing.get(idx);
       if (dp) {
         if (!dp.ok) { unpriced.push(dp.reason); continue; }
+        if (dp.testPrice) testPriced = true;
         items.push(dp.line);
         domainLineSet.push(dp.line); // R-225: a coupon never discounts it
         firstYearOf.set(dp.line, dp.firstYear);
@@ -611,6 +615,15 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     }
     if (isSimulation && !simulationAllowed) {
       return NextResponse.json({ error: "Online payment isn't available yet. Please use 'Get a quote'." }, { status: 503 });
+    }
+    /* R-1769: a TEST price is only ever paid where a simulated payment is allowed. The lookup
+       already refuses the list on a deployment; this also covers a live key stored on the
+       tenant, which the lookup cannot see. Checked before any lead or quote is written. */
+    if (testPriced && !simulationAllowed) {
+      return NextResponse.json(
+        { error: "This server is showing TEST prices for domains, so the order can't be paid. Nothing was charged. Please use 'Get a quote'." },
+        { status: 503 },
+      );
     }
 
     // ── Link each hosting line to the tenant's hosting catalogue item ──────

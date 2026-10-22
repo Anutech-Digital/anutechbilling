@@ -22,7 +22,7 @@
 import { useRef, useState } from "react";
 import { useCart } from "@/site/components/cart/CartProvider";
 import { rupee } from "@/site/lib/money";
-import { searchDomains, normaliseName, type DomainResult } from "@/site/lib/domain-search";
+import { searchDomains, normaliseName, TEST_PRICE_LABEL, type DomainResult } from "@/site/lib/domain-search";
 
 type State =
   | { kind: "idle" }
@@ -58,7 +58,7 @@ export function DomainSearch() {
       sku: `domain:${r.domain.slice(r.domain.indexOf(".") + 1)}`,
       domain: r.domain,
       label: r.domain,
-      detail: `Domain registration · 1 year`,
+      detail: r.testPrice ? `${TEST_PRICE_LABEL} · Domain registration · 1 year` : `Domain registration · 1 year`,
       unitPrice: r.price,
       unit: "year",
       cycle: "yearly",
@@ -120,7 +120,10 @@ export function DomainSearch() {
               {r.available ? (
                 <>
                   {r.priceKnown ? (
-                    <span style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap" }}>{rupee(r.price)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {rupee(r.price)}
+                      {r.testPrice && <span className="mono-label" style={{ marginLeft: 6, color: "var(--accent-hover)" }}>{TEST_PRICE_LABEL}</span>}
+                    </span>
                   ) : (
                     <span className="meta">price on request</span>
                   )}
