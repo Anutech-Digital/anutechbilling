@@ -21,6 +21,7 @@
  * Whole rupees in and out (AGENTS.md §1).
  */
 import { istMonth } from "@/lib/dates/ist";
+import { invoiceIsSale } from "@/lib/accounting/sale-documents";
 import { lineCostUnknown } from "@/lib/quotes/line-cost";
 
 export interface MarginInvoice {
@@ -30,6 +31,8 @@ export interface MarginInvoice {
   taxable_value?: number | null;
   tax_amount?: number | null;
   line_items?: unknown;
+  /** R-1739: absent = our sale; an invoice imported from Zoho Books is not this month's sales. */
+  document_kind?: string | null;
 }
 
 interface Line {
@@ -90,6 +93,7 @@ export function invoiceMarginMtd(invoices: readonly MarginInvoice[], now: Date =
 
   for (const inv of invoices) {
     if (COUNTED_OUT.has(inv.status)) continue;
+    if (!invoiceIsSale(inv.document_kind)) continue;  // R-1739
     if (!inv.invoice_date || inv.invoice_date.slice(0, 7) !== month) continue;
     const lines = parseLines(inv.line_items);
     const taxable = taxableOf(inv, lines);

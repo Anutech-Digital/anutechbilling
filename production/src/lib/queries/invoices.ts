@@ -120,7 +120,7 @@ export function useQuotesAwaitingInvoice() {
 
       const firstAdvanceByQuote = new Map<string, string>();
       for (const p of payments ?? []) {
-        if (!firstAdvanceByQuote.has(p.quote_id)) {
+        if (p.quote_id && !firstAdvanceByQuote.has(p.quote_id)) {
           firstAdvanceByQuote.set(p.quote_id, p.received_at);
         }
       }

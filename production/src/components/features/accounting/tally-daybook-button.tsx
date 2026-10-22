@@ -18,6 +18,7 @@ import {
   type InvoiceForTally, type PaymentForTally, type BillForTally,
 } from "@/lib/accounting/tally-vouchers";
 import { logExport } from "@/lib/export-log";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 
 interface TallyDaybookButtonProps {
   period: LedgerPeriod;
@@ -34,8 +35,9 @@ export default function TallyDaybookButton({ period, companyName }: TallyDaybook
       const toTs = `${period.to}T23:59:59.999+05:30`;
       const fromTs = `${period.from}T00:00:00+05:30`;
       const [inv, pay, exp] = await Promise.all([
-        supabase.from("invoices")
-          .select("id, customer_name, invoice_date, status, amount, taxable_value, tax_amount, inter_state")
+        /* R-1739: an invoice imported from Zoho Books is no Sales voucher (it is in Zoho / Tally already). */
+        onlySaleInvoices(supabase.from("invoices")
+          .select("id, customer_name, invoice_date, status, amount, taxable_value, tax_amount, inter_state"))
           .gte("invoice_date", period.from).lte("invoice_date", period.to),
         supabase.from("payments")
           .select("id, receipt_voucher_no, customer_id, amount, credit_applied, received_at, method, reference")

@@ -34,12 +34,15 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
 
       if (txn.matched_to_type === "payment") {
         const { data: pay, error } = await supabase
-          .from("payments").select("id, amount, notes, quote_id").eq("id", txn.matched_to_id).maybeSingle();
+          .from("payments").select("id, amount, notes, quote_id, invoice_id").eq("id", txn.matched_to_id).maybeSingle();
         if (error) throw error;
         if (!pay) return { kind: "other" };
-        const { data: q } = await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle();
-        const invoiceId = q?.invoice_id ?? null;
-        return pay.notes === BANK_RECEIPT_NOTE
+        /* R-1739: a payment on an imported Zoho invoice carries the invoice, not a quote. */
+        const { data: q } = pay.quote_id
+          ? await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle()
+          : { data: null };
+        const invoiceId = q?.invoice_id ?? pay.invoice_id ?? null;
+        return pay.notes === BANK_RECEIPT_NOTE && pay.quote_id
           ? { kind: "bank-sale", amount: pay.amount, invoiceId, quoteId: pay.quote_id }
           : { kind: "receipt", amount: pay.amount, invoiceId };
       }

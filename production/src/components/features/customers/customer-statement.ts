@@ -20,6 +20,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 
 export type StatementLink =
   | { kind: "invoice"; invoiceId: string }
@@ -36,9 +37,12 @@ export interface StatementRow {
 }
 
 export interface StatementInput {
-  invoices: ReadonlyArray<{ id: string; invoice_date: string; amount: number | null }>;
+  /** R-1739: an invoice imported from Zoho Books (document_kind opening_invoice) is the
+   *  customer's opening balance — only what was still due when it came in (opening_balance);
+   *  its earlier Zoho receipts were never recorded here. */
+  invoices: ReadonlyArray<{ id: string; invoice_date: string; amount: number | null; document_kind?: string | null; opening_balance?: number | null }>;
   payments: ReadonlyArray<{
-    id: string; quote_id: string; amount: number | null; status: string;
+    id: string; quote_id: string | null; invoice_id?: string | null; amount: number | null; status: string;
     received_at: string; refunded_at?: string | null;
     receipt_voucher_no?: string | null; refund_voucher_no?: string | null;
   }>;
@@ -53,7 +57,12 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
   type Raw = Omit<StatementRow, "balance"> & { order: number };
   const raw: Raw[] = [];
   for (const i of input.invoices) {
-    raw.push({ date: i.invoice_date, desc: `Invoice ${i.id}`, debit: i.amount ?? 0, credit: 0, link: { kind: "invoice", invoiceId: i.id }, order: 0 });
+    const opening = isOpeningInvoice(i);
+    raw.push({
+      date: i.invoice_date,
+      desc: opening ? `Opening balance · ${i.id} (imported from Zoho Books)` : `Invoice ${i.id}`,
+      debit: opening ? i.opening_balance ?? 0 : i.amount ?? 0, credit: 0, link: { kind: "invoice", invoiceId: i.id }, order: 0,
+    });
   }
   for (const d of input.debitNotes) {
     raw.push({
@@ -64,17 +73,19 @@ export function buildCustomerStatement(input: StatementInput): { rows: Statement
   }
   for (const p of input.payments) {
     const amount = p.amount ?? 0;
+    /* R-1739: a payment on an imported Zoho invoice has no quote — it opens that invoice. */
+    const link: StatementLink = p.quote_id ? { kind: "payment", quoteId: p.quote_id } : { kind: "invoice", invoiceId: p.invoice_id ?? "" };
     const split = input.paymentSplit?.(p.id, amount) ?? null;
     raw.push({
       date: p.received_at,
       desc: `Payment received${p.receipt_voucher_no ? ` · ${p.receipt_voucher_no}` : ""}${split ? ` — ${split}` : ""}`,
-      debit: 0, credit: amount, link: { kind: "payment", quoteId: p.quote_id }, order: 2,
+      debit: 0, credit: amount, link, order: 2,
     });
     if (p.status === "refunded") {
       raw.push({
         date: p.refunded_at ?? p.received_at,
         desc: `Refund${p.refund_voucher_no ? ` · ${p.refund_voucher_no}` : ""}`,
-        debit: amount, credit: 0, link: { kind: "payment", quoteId: p.quote_id }, order: 4,
+        debit: amount, credit: 0, link, order: 4,
       });
     }
   }

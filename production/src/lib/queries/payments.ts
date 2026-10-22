@@ -15,6 +15,7 @@ import { toOpenBalanceMap, type QuoteOpenBalanceRow } from "@/lib/quotes/open-ba
 import { todayIST } from "@/lib/subscriptions/payment-due";
 import { queryKeys } from "@/lib/queries/keys";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
 
@@ -587,6 +588,8 @@ export interface MultiPayInvoiceRow {
   quote_id: string | null;
   /** R-1564: a subscription instalment (no quote of its own) — record_instalment_payment. */
   instalment?: boolean;
+  /** R-1739: imported from Zoho Books (no quote) — record_multi_invoice_payment pays it directly. */
+  document_kind?: string | null;
 }
 
 /**
@@ -604,7 +607,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
       const invoices = await fetchAllRows<MultiPayInvoiceRow>((from, to) =>
         supabase
           .from("invoices")
-          .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id")
+          .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id, document_kind")
           .eq("customer_id", customerId!)
           .not("status", "in", "(paid,void)")
           .order("invoice_date", { ascending: true })
@@ -625,7 +628,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
          quote + reference is the replay key, so the server takes one per receipt; anything
          over that instalment's due is recorded from the invoice page, where it goes to the
          next instalment by itself. */
-      const quoteless = invoices.filter((i) => !i.quote_id).map((i) => i.id);
+      const quoteless = invoices.filter((i) => !i.quote_id && !isOpeningInvoice(i)).map((i) => i.id);
       const billing: Array<{ invoice_id: string | null; subscription_id: string; term_start: string; period_index: number }> = [];
       for (let i = 0; i < quoteless.length; i += 200) {
         const { data, error } = await supabase
@@ -637,7 +640,8 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
       }
       const instalments = new Set(oldestInstalmentPerSubscription(billing));
       return invoices
-        .filter((i) => (i.quote_id ? own.has(`${i.quote_id}|${i.id}`) : instalments.has(i.id)))
+        /* R-1739: + invoices imported from Zoho Books (their payment carries the invoice). */
+        .filter((i) => isOpeningInvoice(i) || (i.quote_id ? own.has(`${i.quote_id}|${i.id}`) : instalments.has(i.id)))
         .map((i) => (instalments.has(i.id) ? { ...i, instalment: true } : i));
     },
   });

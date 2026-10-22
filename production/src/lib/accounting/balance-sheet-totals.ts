@@ -18,7 +18,7 @@ export interface BalanceSheetTotals {
   totalLiab: number;
   /** = total equity. */
   netWorth: number;
-  /** Equity jo manual equity lines ke baad sheet ko balance karne ke liye chahiye. */
+  /** Equity jo manual equity lines (aur R-1739 Opening Balance Adjustments) ke baad sheet ko balance karne ke liye chahiye. */
   retained: number;
   currentAssets: number;
   currentLiab: number;
@@ -63,7 +63,9 @@ export function balanceSheetTotals(
   const totalAssets = autoAssets + manualAssets;
   const totalLiab = autoLiab + manualLiab;
   const netWorth = totalAssets - totalLiab;
-  const retained = netWorth - manualEquity;
+  /* R-1739: Zoho se import hue khule invoices ka baaki receivables me Dr hai; uska Cr
+     "Opening Balance Adjustments" equity line hai — retained (aur Unexplained) me nahi. */
+  const retained = netWorth - manualEquity - (a?.openingBalanceAdjustments ?? 0);
 
   // Current = liquid within a year. Fixed assets, staff loans, EMI / business loans bahar.
   const currentAssets =

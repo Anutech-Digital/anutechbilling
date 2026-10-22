@@ -182,6 +182,8 @@ export function usePaymentRefundFlow({ payment: p, invoiceId, onBlocked }: {
   const [cancelAfterRefund, setCancelAfterRefund] = React.useState<{ sub: Subscription; reason: string } | null>(null);
 
   const offerCancel = async (reason: string) => {
+    /* R-1739: a payment on an imported Zoho invoice has no quote, so no subscription. */
+    if (!p.quote_id) return;
     const { data } = await createClient()
       .from("subscriptions")
       .select("*")

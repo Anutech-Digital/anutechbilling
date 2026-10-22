@@ -67,6 +67,8 @@ import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
 import { invoiceHref, legacyOpenRedirect } from "./invoice-href";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
    column they sum to 100) so the table always fits — no horizontal scroll. Clicking a
@@ -92,6 +94,9 @@ function InvoicesPageInner() {
   const canWrite     = canWriteSales(me?.role);
   /* R-885: issuing a GST invoice (generate_invoice) is owner / manager / accountant / billing. */
   const canIssue     = canWrite && canRecordMoney(me?.role);
+  /* R-1739: Import open invoices from Zoho (owner / manager / accountant). */
+  const canImportZoho = canImportOpeningInvoices(me?.role);
+  const [zohoOpen, setZohoOpen] = React.useState(false);
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
@@ -329,6 +334,9 @@ function InvoicesPageInner() {
           <p className="text-sm text-ink-3 mt-1">All GST invoices · sorted by most recent</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {canImportZoho && (
+            <Button icon="download" onClick={() => setZohoOpen(true)}>Import from Zoho</Button>
+          )}
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
           {canQuotes && (
             <Button variant="primary" icon="plus" onClick={() => router.push("/quotes" as any)}>
@@ -339,6 +347,7 @@ function InvoicesPageInner() {
       </div>
 
       {!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}
+      {zohoOpen && <ImportZohoInvoicesDialog open={zohoOpen} onOpenChange={setZohoOpen} />}
 
       {/* R-337: ₹10 Cr+ turnover — B2B invoices 25+ days old with no IRN. */}
       <EinvoiceBanner notice={irnAgeing} className="mb-4" />
@@ -929,6 +938,7 @@ function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals })
         <div className="flex items-start justify-between gap-3 mb-1.5">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xs font-semibold text-ink">{inv.id}</p>
+            {isOpeningInvoice(inv) && <Badge kind="info" size="sm" className="mt-0.5">Imported from Zoho</Badge>}
             <p className="text-sm font-medium text-ink mt-0.5 truncate">{cleanDisplayName(inv.customer_name)}</p>
           </div>
           <div className="text-right shrink-0">
@@ -1003,6 +1013,8 @@ function InvoiceRow({
   const net = netAfterNotes(inv.amount, notes);
   /* R-086: the invoice opens on its own page, /invoices/<id>, instead of a sheet. */
   const openInvoice = () => router.push(invoiceHref(inv.id) as never);
+  /* R-1739: imported from Zoho Books — no PDF, credit note or debit note here (Zoho issued it). */
+  const opening = isOpeningInvoice(inv);
 
   return (
     <>
@@ -1018,7 +1030,10 @@ function InvoiceRow({
       {/* Full invoice number (mono) + type badge — never truncated. */}
       <td className="px-3 py-2.5 align-top">
         <div className="font-mono text-[12px] font-semibold text-ink break-all leading-snug">{inv.id}</div>
-        <Badge kind={isProject ? "info" : "muted"} size="sm" className="mt-1">{isProject ? "Project" : "Subscription"}</Badge>
+        {/* R-1739: an invoice imported from Zoho Books says so wherever invoices list. */}
+        {opening
+          ? <Badge kind="info" size="sm" className="mt-1">Imported from Zoho</Badge>
+          : <Badge kind={isProject ? "info" : "muted"} size="sm" className="mt-1">{isProject ? "Project" : "Subscription"}</Badge>}
       </td>
       <td className="px-3 py-2.5 text-sm font-medium align-top" onClick={(e) => e.stopPropagation()}>
         {inv.customer_id ? (
@@ -1125,7 +1140,7 @@ function InvoiceRow({
             <DropdownMenuContent align="end" className="min-w-[13rem]">
               {/* Uniform secondary actions for every invoice. */}
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={openInvoice}>
-                <Icon name="file" size={15} /> View / download PDF
+                <Icon name="file" size={15} /> {opening ? "View" : "View / download PDF"}
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2.5 py-2 cursor-pointer"
@@ -1158,7 +1173,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                 </>
               )}
-              {canWrite && (<>
+              {canWrite && !opening && (<>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setCnOpen(true)}>
                 <Icon name="receipt" size={15} /> Issue credit note
@@ -1249,8 +1264,18 @@ function InvoiceRow({
     {expanded && (
       <tr className="bg-paper-2/30 border-b border-hairline">
         <td colSpan={8} className="px-5 py-3 space-y-3">
-          <InvoicePaymentsAccordion inv={inv} />
-          <InvoiceNotesList invoiceId={inv.id} invoiceDate={inv.invoice_date} />
+          {opening ? (
+            /* R-1739: its payments carry the invoice, not a quote — listed on its own page. */
+            <p className="text-xs text-ink-3">
+              Imported from Zoho Books — its payments are on{" "}
+              <Link href={invoiceHref(inv.id) as never} className="underline text-ink hover:text-amber-ink">the invoice page</Link>.
+            </p>
+          ) : (
+            <>
+              <InvoicePaymentsAccordion inv={inv} />
+              <InvoiceNotesList invoiceId={inv.id} invoiceDate={inv.invoice_date} />
+            </>
+          )}
         </td>
       </tr>
     )}

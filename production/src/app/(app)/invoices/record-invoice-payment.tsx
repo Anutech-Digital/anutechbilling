@@ -6,6 +6,8 @@ import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/quer
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoicePaymentRoute } from "@/lib/payments/instalment-payment";
 import type { Invoice } from "@/lib/supabase/database.types";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 
 /**
  * RecordSubscriptionPaymentContainer — Record payment from the invoice list (and the
@@ -39,6 +41,14 @@ export function RecordSubscriptionPaymentContainer({
     { loading: !invoice.quote_id && linkQ.isLoading, failed: !!linkQ.isError, data: linkQ.data },
   );
   const { data: payments } = usePaymentsByQuote(route.kind === "quote" ? quote?.id : null);
+
+  /* R-1739: an invoice imported from Zoho Books has no quote — its payment is recorded on the
+     Several-invoices sheet (record_multi_invoice_payment), opened for its customer. */
+  if (isOpeningInvoice(invoice)) {
+    return invoice.customer_id ? (
+      <MultiInvoicePaymentDialog open={open} onOpenChange={onOpenChange} customerId={invoice.customer_id} customerName={invoice.customer_name} />
+    ) : null;
+  }
 
   if (route.kind === "loading") {
     return <div className="text-3xs text-ink-3 mt-1 italic">Loading payment…</div>;

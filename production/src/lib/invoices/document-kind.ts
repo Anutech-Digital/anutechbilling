@@ -85,5 +85,6 @@ export function billOfSupplyPlace(
  * a GST return). One predicate, so every report filters the same way.
  */
 export function isTaxInvoiceRow(row: DocumentKindFields): boolean {
-  return documentKindOf(row) === "tax_invoice";
+  /* R-1739: an invoice imported from Zoho Books (opening_invoice) is no Tax Invoice of ours. */
+  return documentKindOf(row) === "tax_invoice" && row.document_kind !== "opening_invoice";
 }
