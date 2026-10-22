@@ -12,11 +12,16 @@ const h = vi.hoisted(() => ({
   started: [] as unknown[],
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcError: null as null | { message: string },
+  tokenError: null as unknown,
+  saved: [] as unknown[],
+  dropped: 0,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
   resolveZohoCaller: async () => h.caller,
   readConnection: async () => h.conn,
+  zohoAccessToken: async () => { if (h.tokenError) throw h.tokenError; return "t-access"; },
+  dropZohoAccessToken: async () => { h.dropped += 1; },
 }));
 vi.mock("@/lib/integrations/zoho-books/config", async (orig) => ({
   ...(await orig<typeof import("@/lib/integrations/zoho-books/config")>()),
@@ -25,6 +30,7 @@ vi.mock("@/lib/integrations/zoho-books/config", async (orig) => ({
 vi.mock("@/lib/integrations/zoho-books/import-store", async (orig) => ({
   ...(await orig<typeof import("@/lib/integrations/zoho-books/import-store")>()),
   readRuns: async () => h.runs,
+  supabaseScanStore: () => ({ saveRun: async (p: unknown) => { h.saved.push(p); } }),
   startRun: async (...a: unknown[]) => { h.started.push(a); return { id: "run-new", phase: "contacts", since: a[4], months: a[5] }; },
   loadPlanInputs: async () => ({
     contacts: [{ zohoId: "c1", name: "T-Alpha Pvt Ltd", gstin: null, gstTreatment: "business_none", placeOfContact: "DL",
@@ -46,6 +52,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { ZohoApiError, ZOHO_BUSY_MESSAGE } from "@/lib/integrations/zoho-books/api";
 
 const TENANT_A = "c1753000-0000-4000-8000-0000000000a1";
 const post = (body: unknown) => POST(new NextRequest("http://localhost/api/integrations/zoho-books/import", { method: "POST", body: JSON.stringify(body) }));
@@ -55,7 +62,7 @@ beforeEach(() => {
   h.caller = owner();
   h.conn = { refreshToken: "rt", orgId: "60000001", orgName: "T-Org", connectedAt: null };
   h.runs = { open: null, lastImport: null };
-  h.started = []; h.rpc = []; h.rpcError = null;
+  h.started = []; h.rpc = []; h.rpcError = null; h.tokenError = null; h.saved = []; h.dropped = 0;
 });
 
 describe("import route", () => {
@@ -107,5 +114,17 @@ describe("import route", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/cannot be undone/);
     expect(h.rpc[0]).toEqual({ fn: "zoho_books_import_undo", args: { p_run_id: "c1753000-0000-4000-8000-0000000f0001", p_reason: "T-wrong org" } });
+  });
+
+  it("R-1757: Zoho busy while getting access → a pause (rate_limited), cursor kept, no 'access has ended'", async () => {
+    h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "details" }, lastImport: null };
+    h.tokenError = new ZohoApiError(ZOHO_BUSY_MESSAGE, "busy", 429);
+    const res = await post({ action: "step" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rate_limited).toBe(true);
+    expect(JSON.stringify(body)).not.toMatch(/access has ended|Disconnect/);
+    expect(h.saved).toEqual([{ last_error: ZOHO_BUSY_MESSAGE }]);
+    expect(h.dropped).toBe(0);
   });
 });

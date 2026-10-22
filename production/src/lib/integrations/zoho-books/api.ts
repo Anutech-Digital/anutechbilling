@@ -2,7 +2,8 @@
  * R-1749 — the few Zoho calls this app makes. All READ, all server-side.
  *
  *   exchangeCode       authorization code → refresh token (once, at connect)
- *   accessToken        refresh token → short-lived access token (every use; never stored)
+ *   mintAccessToken    refresh token → short-lived access token + expiry (R-1757: cached per tenant
+ *                      by token-cache.ts — Zoho allows ~10 mints per 10 minutes)
  *   revokeToken        refresh token → revoked at Zoho (disconnect)
  *   listOrganizations  the Zoho Books organizations this login can see
  *   previewCounts      counts only: contacts, invoices (total / open), invoices carrying the
@@ -77,26 +78,62 @@ export async function exchangeCode(
   return { refreshToken, accessToken };
 }
 
-export async function accessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<string> {
+/** Zoho's token endpoint saying "too many token requests" — NOT a sign that access ended (R-1757). */
+export function isTokenRateLimit(status: number | undefined, body: Record<string, unknown>): boolean {
+  if (status === 429) return true;
+  const text = `${String(body.error ?? "")} ${String(body.error_description ?? "")}`.toLowerCase();
+  return /access denied|too many|rate limit|try again after/.test(text);
+}
+
+export const ZOHO_BUSY_MESSAGE = "Zoho is busy — wait a minute, then press Continue.";
+export const ZOHO_ACCESS_ENDED_MESSAGE =
+  "Zoho Books access has ended (it was removed in Zoho, or expired). Disconnect and connect Zoho Books again.";
+
+/**
+ * Refresh token → a new access token and how long it lives. Mint sparingly: Zoho allows only
+ * about ten per refresh token in ten minutes (R-1757). Callers go through token-cache.ts.
+ *
+ * Errors: "busy" (rate limit — wait and retry), "reconnect" (the refresh token is invalid or
+ * revoked — the ONLY case that says access has ended), "network", or "token_error" (anything
+ * else — try again, no disconnect advice).
+ */
+export async function mintAccessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<{ token: string; expiresInSec: number }> {
+  let res: Response;
   try {
-    const body = await postToken({
-      grant_type: "refresh_token",
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-      refresh_token: refreshToken,
-    }, f);
-    const t = typeof body.access_token === "string" ? body.access_token : "";
-    if (!t) throw new ZohoApiError("Zoho did not return access.", "no_access_token");
-    return t;
-  } catch (e) {
-    if (e instanceof ZohoApiError && e.code !== "network") {
-      throw new ZohoApiError(
-        "Zoho Books access has ended (it was removed in Zoho, or expired). Disconnect and connect Zoho Books again.",
-        "reconnect", e.status,
-      );
-    }
-    throw e;
+    res = await f(ZOHO_TOKEN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        refresh_token: refreshToken,
+      }).toString(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    throw new ZohoApiError("Could not reach Zoho. Check the internet connection and try again.", "network");
   }
+  const body = await readJson(res);
+  const token = typeof body.access_token === "string" ? body.access_token : "";
+  if (res.ok && !body.error && token) {
+    const exp = Number(body.expires_in ?? body.expires_in_sec ?? 3600);
+    return { token, expiresInSec: Number.isFinite(exp) && exp > 0 ? exp : 3600 };
+  }
+  if (isTokenRateLimit(res.status, body)) throw new ZohoApiError(ZOHO_BUSY_MESSAGE, "busy", 429);
+  const err = typeof body.error === "string" ? body.error : "";
+  if (err === "invalid_code" || err === "invalid_token" || err === "invalid_grant") {
+    throw new ZohoApiError(ZOHO_ACCESS_ENDED_MESSAGE, "reconnect", res.status);
+  }
+  if (err === "invalid_client" || err === "invalid_client_secret") {
+    throw new ZohoApiError("Zoho did not accept this server's Zoho Books app settings. The ResellerOS admin needs to check them.", "invalid_client", res.status);
+  }
+  throw new ZohoApiError("Zoho did not give access just now. Wait a minute, then press Continue.", "token_error", res.status);
+}
+
+/** Just the token (kept for callers that do not cache). Prefer token-cache.ts getAccessToken. */
+export async function accessToken(refreshToken: string, creds: ZohoCreds, f: Fetch = fetch): Promise<string> {
+  return (await mintAccessToken(refreshToken, creds, f)).token;
 }
 
 /** Revoke at Zoho. Returns false instead of throwing — the local copy is removed either way. */

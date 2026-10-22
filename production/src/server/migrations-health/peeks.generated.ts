@@ -153,4 +153,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r1747openingrefund", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1747%')" },
   { key: "r1749zohobooks", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_refresh_token')" },
   { key: "r1753zohobooksimport", peek: "to_regclass('public.zoho_books_import_runs') is not null and to_regclass('public.zoho_books_import_records') is not null and to_regprocedure('public.zoho_books_import_apply(uuid,jsonb,jsonb,jsonb)') is not null and to_regprocedure('public.zoho_books_import_undo(uuid,text)') is not null" },
+  { key: "r1757zohotokencache", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_token') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_expires_at')" },
 ];

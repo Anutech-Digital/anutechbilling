@@ -15,8 +15,8 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, ROLE_MESSAGE, ZOHO_BOOKS_MANAGE_ROLES, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
-import { readConnection, resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
-import { accessToken, ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
+import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { scanStep } from "@/lib/integrations/zoho-books/import-scan";
 import { buildImportPlan, summarisePlan } from "@/lib/integrations/zoho-books/import-plan";
 import {
@@ -115,10 +115,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (action === "step") {
       if (open.phase === "ready") return NextResponse.json({ ok: true, open: progressOf(open), rate_limited: false });
-      const token = await accessToken(conn.refreshToken, creds);
-      const step = await scanStep(open, { store: supabaseScanStore(caller.admin, caller.tenantId, open.id), token, maxMs: 35_000 });
+      const scanStore = supabaseScanStore(caller.admin, caller.tenantId, open.id);
+      let rateLimited = false;
+      try {
+        const token = await zohoAccessToken(caller, conn.refreshToken, creds);
+        rateLimited = (await scanStep(open, { store: scanStore, token, maxMs: 35_000 })).rateLimited;
+      } catch (e) {
+        /* R-1757: Zoho busy (token or API rate limit) is a pause, never "access has ended":
+           the cursor is kept and the dialog continues after a minute. */
+        if (e instanceof ZohoApiError && e.code === "busy") {
+          rateLimited = true;
+          await scanStore.saveRun({ last_error: e.message }).catch(() => undefined);
+        } else {
+          /* A cached token Zoho refused: drop it so Continue mints a fresh one. */
+          if (e instanceof ZohoApiError && e.status === 401) await dropZohoAccessToken(caller);
+          throw e;
+        }
+      }
       const { open: after } = await readRuns(caller.admin, caller.tenantId);
-      return NextResponse.json({ ok: true, open: progressOf(after), rate_limited: step.rateLimited });
+      return NextResponse.json({ ok: true, open: progressOf(after), rate_limited: rateLimited });
     }
 
     if (action === "dry_run" || action === "import") {

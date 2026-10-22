@@ -181,6 +181,7 @@ MIGS=(
   "r1747openingrefund|20261022044013_r1747_opening_invoice_refund.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.refund_payment(uuid,text)') and prosrc like '%R-1747%')"
   "r1749zohobooks|20261022065809_r1749_zoho_books_connection.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_refresh_token')"
   "r1753zohobooksimport|20261022080501_r1753_zoho_books_import.sql|resellersos_migration|to_regclass('public.zoho_books_import_runs') is not null and to_regclass('public.zoho_books_import_records') is not null and to_regprocedure('public.zoho_books_import_apply(uuid,jsonb,jsonb,jsonb)') is not null and to_regprocedure('public.zoho_books_import_undo(uuid,text)') is not null"
+  "r1757zohotokencache|20261022094052_r1757_zoho_books_access_token_cache.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_token') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'zoho_books_access_expires_at')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
