@@ -46,6 +46,6 @@ describe("matchTdsShortfall (R-1520)", () => {
 
   it("the line says the amount, section and rate", () => {
     const m = matchTdsShortfall({ totalInclGst: 300_900, received: 275_400, gstRatePct: 18 })!;
-    expect(tdsShortfallLine(m)).toBe("Baaki ₹25,500 shayad TDS hai (194J 10%)");
+    expect(tdsShortfallLine(m)).toBe("The remaining ₹25,500 may be TDS (194J 10%)");
   });
 });

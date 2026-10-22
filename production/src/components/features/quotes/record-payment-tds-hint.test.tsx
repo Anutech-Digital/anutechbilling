@@ -37,16 +37,16 @@ function setupSheetForm(values: Partial<RecordPaymentFormData>) {
   });
 }
 
-describe("Record payment — 'shayad TDS hai' hint (R-1520)", () => {
+describe("Record payment — 'may be TDS' hint (R-1520)", () => {
   it("shows the hint and one click sets tdsDeducted + section + rate", () => {
     const { result } = setupSheetForm({});
     const match = matchTdsShortfall({ totalInclGst: 300_900, received: 275_400, gstRatePct: 18 })!;
     render(<TdsShortfallHint match={match} onApply={() => applyTdsSuggestion(result.current, match)} />);
 
-    expect(screen.getByText(/Baaki ₹25,500 shayad TDS hai \(194J 10%\)/)).toBeTruthy();
+    expect(screen.getByText(/The remaining ₹25,500 may be TDS \(194J 10%\) — was TDS deducted\?/)).toBeTruthy();
     expect(result.current.getValues("tdsDeducted")).toBe(false); // never ticked by itself
 
-    act(() => { fireEvent.click(screen.getByRole("button", { name: /TDS deducted tick karein/ })); });
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Yes, TDS was deducted" })); });
     expect(result.current.getValues("tdsDeducted")).toBe(true);
     expect(result.current.getValues("tdsSection")).toBe("194J");
     expect(result.current.getValues("tdsRatePct")).toBe(10);

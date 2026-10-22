@@ -6,6 +6,7 @@ import {
   depositAccountLabel,
   depositAccounts,
   isBankAccountId,
+  usualDepositAccountId,
   type DepositAccount,
 } from "./deposit-accounts";
 
@@ -67,5 +68,36 @@ describe("isBankAccountId", () => {
     for (const bad of ["hdfc_primary", "cash_box", "icici_corp", "razorpay_gateway", "", null, undefined]) {
       expect(isBankAccountId(bad)).toBe(false);
     }
+  });
+});
+
+/* R-1730 — the owner's examples (21 Oct audit): "Received in" defaulted to "Not sure yet" even
+   where the usual account was obvious. Pre-select the only account, else the one this company
+   usually receives into; "Not sure yet" only when there are 2+ and none is usual. */
+describe("usualDepositAccountId (R-1730)", () => {
+  const T1: DepositAccount = { id: "a1111111-1111-4111-8111-111111111111", name: "T-B1", bank_name: "HDFC Bank", account_number_last4: "0001", account_type: "current", is_active: true };
+  const T2: DepositAccount = { id: "a2222222-2222-4222-8222-222222222222", name: "T-B2", bank_name: "HDFC Bank", account_number_last4: "0002", account_type: "current", is_active: true };
+  const T3: DepositAccount = { id: "a3333333-3333-4333-8333-333333333333", name: "T-B3", bank_name: "HDFC Bank", account_number_last4: "0003", account_type: "current", is_active: true };
+  const E2E: DepositAccount = { id: "a4444444-4444-4444-8444-444444444444", name: "E2E Bank Current A/c", bank_name: "E2E Test Bank", account_type: "current", is_active: true };
+
+  it("owner example: the company's one bank account HDFC ••0003 → pre-selected", () => {
+    expect(usualDepositAccountId([T3], "upi", [])).toBe(T3.id);
+    expect(usualDepositAccountId([T3, CASH], "bank_transfer", [])).toBe(T3.id);
+  });
+  it("several banks, one of them gets the payments → that one (most used)", () => {
+    const recent = [E2E.id, E2E.id, E2E.id, E2E.id];
+    expect(usualDepositAccountId([E2E, T1, T2, T3], "upi", recent)).toBe(E2E.id);
+    expect(usualDepositAccountId([E2E, T1, T2, T3], "upi", [T2.id, E2E.id, T2.id])).toBe(T2.id);
+  });
+  it("several banks and none usual (no history, or a tie) → '' = Not sure yet", () => {
+    expect(usualDepositAccountId([T1, T2], "upi", [])).toBe("");
+    expect(usualDepositAccountId([T1, T2], "upi", [T1.id, T2.id])).toBe("");
+  });
+  it("history pointing at a closed or cash account does not pick it for a bank method", () => {
+    expect(usualDepositAccountId([T1, T2, OLD, CASH], "upi", [OLD.id, OLD.id, CASH.id])).toBe("");
+  });
+  it("cash → the one cash account; other → nothing", () => {
+    expect(usualDepositAccountId([T1, T2, CASH], "cash", [T1.id])).toBe(CASH.id);
+    expect(usualDepositAccountId([T1], "other", [T1.id])).toBe("");
   });
 });

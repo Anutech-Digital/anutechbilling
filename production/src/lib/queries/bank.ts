@@ -105,6 +105,29 @@ export type BankTransactionInsert = Omit<
 
 // ─── Bank accounts ─────────────────────────────────────────────────────────
 
+/** R-1730: which account this company's latest payments went to (bank_account_id, newest
+ *  first, untagged skipped) — what "Received in" uses to pre-select the usual account
+ *  (lib/payments/deposit-accounts.ts usualDepositAccountId). RLS-scoped to the company.
+ *  Keyed under "payments" so every recorded payment refreshes it. A failed read means
+ *  "no history" — the sheet then falls back to Not sure yet, never blocks. */
+export function useRecentDepositTags(enabled = true) {
+  return useQuery({
+    queryKey: ["payments", "recent-deposit-tags"],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await createClient()
+        .from("payments")
+        .select("bank_account_id")
+        .not("bank_account_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) return [];
+      return (data ?? []).map((r) => r.bank_account_id as string).filter(Boolean);
+    },
+  });
+}
+
 export function useBankAccounts() {
   return useQuery({
     queryKey: ["bank_accounts"],

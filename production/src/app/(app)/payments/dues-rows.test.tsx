@@ -210,12 +210,11 @@ describe("R-1718 Balance due and Record payment read the same quote", () => {
   });
 });
 
-describe("R-1701 Record payment sheet: the amount comes before the domain", () => {
-  it("'Customer domain (optional)' sits below 'Amount received'", () => {
+describe("R-1701 → R-1730 Record payment sheet: the money first, the domain not at all", () => {
+  it("the sheet opens on the amount and has no 'Customer domain' field (it moved to Setting up)", () => {
     const src = readFileSync(path.join(process.cwd(), "src/components/features/quotes/record-payment-dialog.tsx"), "utf8");
-    const amount = src.indexOf('htmlFor="amount"');
-    const domain = src.indexOf('label="Customer domain (optional)"');
-    expect(amount).toBeGreaterThan(-1);
-    expect(domain).toBeGreaterThan(amount);
+    expect(src.indexOf('htmlFor="amount"')).toBeGreaterThan(-1);
+    expect(src).not.toMatch(/label="Customer domain/);
+    expect(src).not.toMatch(/register\("domain"\)/);
   });
 });

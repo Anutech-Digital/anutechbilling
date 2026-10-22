@@ -63,7 +63,7 @@ export function matchTdsShortfall(i: TdsShortfallInput): TdsShortfallMatch | nul
   return { ...pick, base, shortfall };
 }
 
-/** "Baaki ₹25,500 shayad TDS hai (194J 10%)" — the one wording both screens use. */
+/** "The remaining ₹25,500 may be TDS (194J 10%)" — the one wording every screen uses (English UI, R-1730). */
 export function tdsShortfallLine(m: TdsShortfallMatch): string {
-  return `Baaki ${inr(m.shortfall)} shayad TDS hai (${m.section} ${m.ratePct}%)`;
+  return `The remaining ${inr(m.shortfall)} may be TDS (${m.section} ${m.ratePct}%)`;
 }

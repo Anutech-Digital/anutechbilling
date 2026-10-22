@@ -72,7 +72,8 @@ describe("DuesPayButton", () => {
     const btn = screen.getByRole("button", { name: /Record payment/ });
     expect(btn.textContent).toContain(DUES_PAY_LABEL);
     expect(btn.getAttribute("title")).toBe(DUES_PAY_HINT);
-    expect(DUES_PAY_HINT).toBe("Customer ne paisa diya — yahan darj karo");
+    /* R-1730: English UI (rule 4) — the tooltip was Hinglish. */
+    expect(DUES_PAY_HINT).toBe("Record the money the customer paid for this subscription");
     expect(screen.queryByRole("button", { name: /^Pay$/ })).toBeNull();
   });
 

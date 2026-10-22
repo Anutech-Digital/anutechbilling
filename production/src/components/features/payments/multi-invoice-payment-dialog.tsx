@@ -21,13 +21,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import { useBankAccounts } from "@/lib/queries/bank";
 import { useCustomerOpenInvoices, useRecordMultiInvoicePayment } from "@/lib/queries/payments";
 import {
+  DEFAULT_PAYMENT_METHOD,
   PAYMENT_METHODS,
-  defaultDepositAccountId,
-  depositAccountLabel,
-  depositAccounts,
   type PaymentMethod,
 } from "@/lib/payments/deposit-accounts";
 import { paymentRefProblem } from "@/lib/forms/poka-yoke";
@@ -59,6 +56,7 @@ import {
   toRpcAllocations,
 } from "./multi-invoice-allocation";
 import { duplicateReferenceHref, duplicateReferenceOf } from "./duplicate-reference";
+import { PAYMENT_FIELD_LABELS, ReceivedInField, referenceHint, referenceLabel, referencePlaceholder, useReceivedInDefault } from "./payment-entry-fields";
 
 const lineSchema = z.object({
   invoiceId:  z.string(),
@@ -105,7 +103,7 @@ export function MultiInvoicePaymentDialog({
       customerId: fixedCustomerId ?? "",
       received: 0,
       receivedDate: istToday(),
-      method: "bank_transfer",
+      method: DEFAULT_PAYMENT_METHOD,
       bankAccountId: "",
       reference: "",
       notes: "",
@@ -124,22 +122,27 @@ export function MultiInvoicePaymentDialog({
 
   const { data: rawInvoices, isLoading: invoicesLoading, error: invoicesError } = useCustomerOpenInvoices(open ? customerId : null);
   const invoices = React.useMemo(() => openInvoicesOldestFirst(rawInvoices ?? []), [rawInvoices]);
-  const { data: bankAccounts } = useBankAccounts();
-  const receiveAccounts = React.useMemo(() => depositAccounts(bankAccounts), [bankAccounts]);
+  /* R-1730: the same "Received in" as the quote sheet — the only account, else the usual one. */
+  const { accounts: receiveAccounts, loading: accountsLoading, defaultId: usualAccountId } = useReceivedInDefault(open, method);
+  const [accountTouched, setAccountTouched] = React.useState(false);
   const record = useRecordMultiInvoicePayment();
   const router = useRouter();
 
   /* Lines follow the received amount (oldest first) until the operator types into one. */
   const [manual, setManual] = React.useState(false);
+  /* R-1730: the amount opens on what is still due (as the quote sheet does) until typed into. */
+  const [amountEdited, setAmountEdited] = React.useState(false);
 
   /* Reset when the sheet opens. */
   React.useEffect(() => {
     if (!open) return;
     reset({
-      customerId: fixedCustomerId ?? "", received: 0, receivedDate: istToday(), method: "bank_transfer",
+      customerId: fixedCustomerId ?? "", received: 0, receivedDate: istToday(), method: DEFAULT_PAYMENT_METHOD,
       bankAccountId: "", reference: "", notes: "", excessToCredit: true, lines: [],
     });
     setManual(false);
+    setAmountEdited(false);
+    setAccountTouched(false);
   }, [open, fixedCustomerId, reset]);
 
   const autoFill = React.useCallback((amount: number) => {
@@ -149,19 +152,28 @@ export function MultiInvoicePaymentDialog({
   /* Keyed on the invoices' ids + dues, not the array: a refetch with the same rows must not
      wipe what the operator typed. */
   const invoicesKey = invoices.map((i) => `${i.id}:${i.due}`).join(",");
-  React.useEffect(() => { if (open) autoFill(received); }, [open, invoicesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openDue = invoices.reduce((s, i) => s + i.due, 0);
+  React.useEffect(() => {
+    if (!open) return;
+    /* R-1730: pre-fill the open total of what the sheet was opened for (editable). */
+    if (!amountEdited && openDue > 0) {
+      setValue("received", openDue);
+      autoFill(openDue);
+    } else {
+      autoFill(received);
+    }
+  }, [open, invoicesKey]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { if (open && !manual) autoFill(received); }, [received]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  /* Pre-pick the account when the company has exactly one that fits the method (R-404). */
+  /* R-404 / R-1730: pre-pick the only / usual account for the method until the operator picks. */
   React.useEffect(() => {
-    if (!open || bankAccountId) return;
-    const pick = defaultDepositAccountId(bankAccounts, method);
-    if (pick) setValue("bankAccountId", pick);
-  }, [open, method, bankAccounts]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!open || accountTouched) return;
+    setValue("bankAccountId", usualAccountId);
+  }, [open, accountTouched, usualAccountId, setValue]);
 
   const summary = summarise(received, lines ?? [], invoices);
-  const totalDue = invoices.reduce((s, i) => s + i.due, 0);
+  const totalDue = openDue;
 
   const onValid = (d: FormData) => {
     if (summary.problem) {
@@ -252,14 +264,14 @@ export function MultiInvoicePaymentDialog({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <FormField label="Amount received (₹)" required htmlFor="mip_received">
+              <FormField label={PAYMENT_FIELD_LABELS.amount} required htmlFor="mip_received">
                 <Input id="mip_received" type="number" inputMode="numeric" min={1} step={1}
-                       error={errors.received?.message} {...register("received")} />
+                       error={errors.received?.message} {...register("received", { onChange: () => setAmountEdited(true) })} />
               </FormField>
-              <FormField label="Received on" required htmlFor="mip_receivedDate">
+              <FormField label={PAYMENT_FIELD_LABELS.receivedOn} required htmlFor="mip_receivedDate">
                 <Input id="mip_receivedDate" type="date" error={errors.receivedDate?.message} {...register("receivedDate")} />
               </FormField>
-              <FormField label="Payment method" required htmlFor="mip_method">
+              <FormField label={PAYMENT_FIELD_LABELS.method} required htmlFor="mip_method">
                 <Select value={method} onValueChange={(v) => setValue("method", v, { shouldValidate: !!errors.reference })}>
                   <SelectTrigger id="mip_method"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -267,23 +279,18 @@ export function MultiInvoicePaymentDialog({
                   </SelectContent>
                 </Select>
               </FormField>
-              <FormField label="Received in" htmlFor="mip_bank">
-                {receiveAccounts.length > 0 ? (
-                  <Select value={bankAccountId || "none"} onValueChange={(v) => setValue("bankAccountId", v === "none" ? "" : v)}>
-                    <SelectTrigger id="mip_bank"><SelectValue placeholder="Choose the account" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Not sure yet</SelectItem>
-                      {receiveAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{depositAccountLabel(a)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p id="mip_bank" className="text-xs text-ink-3">
-                    No bank account yet. <Link href="/accounting/banking" className="underline text-ink">Add one</Link> — the payment saves without it.
-                  </p>
-                )}
+              <FormField label={PAYMENT_FIELD_LABELS.receivedIn} htmlFor="mip_bank">
+                <ReceivedInField
+                  id="mip_bank"
+                  accounts={receiveAccounts}
+                  loading={accountsLoading}
+                  value={bankAccountId}
+                  onChange={(id) => { setAccountTouched(true); setValue("bankAccountId", id); }}
+                />
               </FormField>
-              <FormField label={method === "cash" ? "Reference (optional for cash)" : "UTR / cheque no. / transaction ID"} required={method !== "cash"} htmlFor="mip_reference" className="sm:col-span-2">
-                <Input id="mip_reference" placeholder="e.g. 402312345678" error={errors.reference?.message} {...register("reference")} />
+              <FormField label={referenceLabel(method)} required={method !== "cash"} htmlFor="mip_reference" className="sm:col-span-2">
+                <Input id="mip_reference" placeholder={referencePlaceholder(method)} error={errors.reference?.message} {...register("reference")} />
+                <p className="text-2xs text-ink-3 mt-1">{referenceHint(method)}</p>
               </FormField>
             </div>
 
@@ -363,7 +370,7 @@ export function MultiInvoicePaymentDialog({
                               setValue(`lines.${idx}.tds`, hint.tds);
                               setValue(`lines.${idx}.tdsSection`, hint.section);
                               setValue(`lines.${idx}.tdsRatePct`, hint.ratePct);
-                            }}>Haan, TDS lagao</Button>
+                            }}>Yes, TDS was deducted</Button>
                           </div>
                         ) : (Number(line.amount) || 0) > 0 ? (
                           <Button type="button" size="sm" variant="ghost" className="!px-0 text-xs" onClick={() => setValue(`lines.${idx}.tdsSection`, "194J")}>
@@ -398,15 +405,15 @@ export function MultiInvoicePaymentDialog({
               )}
             </div>
 
-            <FormField label="Notes (optional)" htmlFor="mip_notes">
+            <FormField label={PAYMENT_FIELD_LABELS.notes} htmlFor="mip_notes">
               <Input id="mip_notes" {...register("notes")} />
             </FormField>
           </div>
 
           <SheetFooter className="px-5 py-3 border-t border-hairline">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" variant="primary" icon="rupee" loading={record.isPending}>
-              Record {received > 0 ? rupee(received) : "payment"}
+            <Button type="submit" variant="primary" icon="check" loading={record.isPending}>
+              {PAYMENT_FIELD_LABELS.submit}
             </Button>
           </SheetFooter>
         </form>
