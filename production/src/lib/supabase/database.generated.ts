@@ -3992,6 +3992,7 @@ export type Database = {
           display_name: string | null
           domain: string | null
           group_id: string | null
+          gst_treatment: string | null
           gstin: string | null
           gstin_verification: Json | null
           gstin_verified_at: string | null
@@ -4001,6 +4002,7 @@ export type Database = {
           linked_tenant_id: string | null
           name: string
           notes: string | null
+          pan: string | null
           payment_terms_days: number | null
           pin_code: string | null
           shipping_address: Json | null
@@ -4035,6 +4037,7 @@ export type Database = {
           display_name?: string | null
           domain?: string | null
           group_id?: string | null
+          gst_treatment?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
@@ -4044,6 +4047,7 @@ export type Database = {
           linked_tenant_id?: string | null
           name: string
           notes?: string | null
+          pan?: string | null
           payment_terms_days?: number | null
           pin_code?: string | null
           shipping_address?: Json | null
@@ -4078,6 +4082,7 @@ export type Database = {
           display_name?: string | null
           domain?: string | null
           group_id?: string | null
+          gst_treatment?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
@@ -4087,6 +4092,7 @@ export type Database = {
           linked_tenant_id?: string | null
           name?: string
           notes?: string | null
+          pan?: string | null
           payment_terms_days?: number | null
           pin_code?: string | null
           shipping_address?: Json | null
@@ -6592,6 +6598,7 @@ export type Database = {
           fx_rate: number | null
           fx_source: string | null
           gst_irn: string | null
+          gst_treatment: string | null
           id: string
           import_batch_id: string | null
           inter_state: boolean | null
@@ -6634,6 +6641,7 @@ export type Database = {
           fx_rate?: number | null
           fx_source?: string | null
           gst_irn?: string | null
+          gst_treatment?: string | null
           id: string
           import_batch_id?: string | null
           inter_state?: boolean | null
@@ -6676,6 +6684,7 @@ export type Database = {
           fx_rate?: number | null
           fx_source?: string | null
           gst_irn?: string | null
+          gst_treatment?: string | null
           id?: string
           import_batch_id?: string | null
           inter_state?: boolean | null

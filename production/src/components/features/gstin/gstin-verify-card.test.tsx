@@ -55,3 +55,22 @@ describe("GstinVerifyCard — provider not configured", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+describe("R-1736: the empty-field hint names whose GSTIN it is", () => {
+  it("says customer on a customer form, supplier on the vendor form", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <GstinVerifyCard gstin="" noPersist party="customer" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/Enter the customer's GSTIN/)).toBeTruthy();
+    expect(screen.queryByText(/supplier's GSTIN/)).toBeNull();
+    cleanup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <GstinVerifyCard gstin="" noPersist />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/Enter the supplier's GSTIN/)).toBeTruthy();
+  });
+});

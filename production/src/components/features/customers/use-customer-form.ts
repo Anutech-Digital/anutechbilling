@@ -26,6 +26,10 @@ import { validateGstin, gstStateFromGstin } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
 import { stateRequiredMessage } from "@/lib/gst/gstin-state";
+import {
+  CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
+  gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
+} from "@/lib/gst/customer-gst-treatment";
 import type { GstinVerification, Customer } from "@/lib/supabase/database.types";
 
 // Schema — GSTIN optional but checksum-validated when present. State code stays
@@ -51,6 +55,13 @@ export const customerSchema = z.object({
   }),
   state:         z.string().optional(),
   state_code:    z.string().regex(/^\d{0,2}$/).optional(),
+  /* R-1736: Zoho-style GST treatment — auto-picked from country / GSTIN / type, changeable.
+     An SEZ customer is always IGST (lib/gst/place-of-supply.ts). */
+  gst_treatment: z.enum(CUSTOMER_GST_TREATMENTS).optional(),
+  /* R-1736: PAN. Filled from the GSTIN (characters 3–12) when there is one; typed otherwise. */
+  pan:           z.string().trim().optional().superRefine((v, ctx) => {
+    if (v && !isValidPan(v)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A PAN is 5 letters, 4 digits, 1 letter (e.g. AAACR5055K)" });
+  }),
   country:       z.string().optional(),
   address:       z.string().optional(),
   city:          z.string().optional(),
@@ -99,6 +110,11 @@ export const customerSchema = z.object({
      (live had 17). GSTIN or not, the state is required; a valid GSTIN supplies it by itself. */
   const stateMsg = stateRequiredMessage(data);
   if (stateMsg) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: stateMsg });
+  /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN). */
+  if (data.gst_treatment) {
+    const problem = gstTreatmentProblem({ treatment: data.gst_treatment, country: data.country, gstin: foreign ? "" : data.gstin });
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gst_treatment"], message: problem });
+  }
   // A business needs a company name; an individual needs at least a person /
   // display name (no company). Enforced here so the shared `name` field can be
   // optional for individuals.
@@ -140,8 +156,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
   const form = useForm<CustomerFormData>({
     resolver: zodResolver(customerSchema),
-    defaultValues: { country: "India", customer_type: "business" },
+    defaultValues: { country: "India", customer_type: "business", gst_treatment: "unregistered_business" },
   });
+  /* R-1736: true once the user picks a GST treatment by hand (or the saved one differs from
+     what the facts suggest) — from then on the auto-pick leaves it alone (nextGstTreatment). */
+  const treatmentManual = React.useRef(false);
   const { register, handleSubmit, reset, watch, setValue, control, formState } = form;
   const { fields: contactPersonFields, append: appendContactPerson, remove: removeContactPerson } =
     useFieldArray({ control, name: "contact_persons" });
@@ -150,7 +169,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   // wipes on close so reopening is clean.
   React.useEffect(() => {
     if (!open) {
-      reset({ country: "India", customer_type: "business" });
+      reset({ country: "India", customer_type: "business", gst_treatment: "unregistered_business" });
+      treatmentManual.current = false;
       setVerification(null);
       return;
     }
@@ -170,7 +190,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         firstName = parts[0] ?? "";
         lastName  = parts.slice(1).join(" ");
       }
+      const suggested = suggestGstTreatment({ country: customer.country, gstin: customer.gstin, customerType: customer.customer_type });
+      treatmentManual.current = !!customer.gst_treatment && customer.gst_treatment !== suggested;
       reset({
+        gst_treatment: customer.gst_treatment ?? suggested,
+        pan:           customer.pan ?? "",
         customer_type: customer.customer_type ?? "business",
         name:          customer.name ?? "",
         display_name:  customer.display_name ?? "",
@@ -207,7 +231,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       });
       setVerification(customer.gstin_verification ?? null);
     } else {
-      reset({ country: "India", customer_type: "business" });
+      reset({ country: "India", customer_type: "business", gst_treatment: "unregistered_business" });
+      treatmentManual.current = false;
       setVerification(null);
     }
   }, [open, customer, reset]);
@@ -220,6 +245,39 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     if (code) setValue("state_code", code, { shouldDirty: true });
     if (name) setValue("state",      name, { shouldDirty: true });
   }, [watchedGstin, setValue]);
+
+  /* R-1736: GST treatment follows country / GSTIN / customer type until picked by hand —
+     the same rule that backfilled existing customers (suggestGstTreatment). */
+  const watchedCountry  = watch("country");
+  const watchedType     = watch("customer_type");
+  const watchedTreatment = watch("gst_treatment");
+  const formForeign = isExportSupply(watchedCountry);
+  const suggestedTreatment = suggestGstTreatment({
+    country: watchedCountry, gstin: formForeign ? "" : watchedGstin, customerType: watchedType,
+  });
+  React.useEffect(() => {
+    const next = nextGstTreatment({ current: watchedTreatment, manual: treatmentManual.current, suggestion: suggestedTreatment });
+    if (next !== watchedTreatment) setValue("gst_treatment", next, { shouldDirty: true, shouldValidate: !!formState.isSubmitted });
+    if (next === suggestedTreatment) treatmentManual.current = false;
+  }, [suggestedTreatment, watchedTreatment, setValue, formState.isSubmitted]);
+  const onTreatmentChange = (value: CustomerGstTreatment) => {
+    treatmentManual.current = value !== suggestedTreatment;
+    setValue("gst_treatment", value, { shouldDirty: true, shouldValidate: true });
+  };
+
+  /* R-1736: PAN = GSTIN characters 3–12. Read-only while a valid GSTIN supplies it; typed
+     by hand for an unregistered customer. A PAN that only came from an old GSTIN is cleared
+     when the GSTIN goes, so a stale one is never saved. */
+  const panFromForm = formForeign ? null : panFromGstin(watchedGstin);
+  const lastDerivedPan = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (panFromForm) {
+      setValue("pan", panFromForm, { shouldDirty: true, shouldValidate: true });
+    } else if (lastDerivedPan.current && form.getValues("pan") === lastDerivedPan.current) {
+      setValue("pan", "", { shouldDirty: true });
+    }
+    lastDerivedPan.current = panFromForm;
+  }, [panFromForm, setValue, form]);
 
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
@@ -299,6 +357,10 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       gstin:         foreign ? null : (data.gstin?.trim()      || null),
       state:         data.state?.trim()         || null,
       state_code:    foreign ? null : (data.state_code?.trim() || null),
+      /* R-1736: always sent, so an edit never leaves an old treatment behind. */
+      gst_treatment: data.gst_treatment
+        ?? suggestGstTreatment({ country: data.country, gstin: foreign ? "" : data.gstin, customerType: type }),
+      pan:           foreign ? null : (panFromGstin(data.gstin) ?? (data.pan?.trim().toUpperCase() || null)),
       country:       data.country?.trim()       || "India",
       address:       data.address?.trim()       || null,
       city:          data.city?.trim()          || null,
@@ -364,11 +426,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     foreignStates,
     countryReg,
     onCountryChange,
+    /* R-1736 */
+    gstTreatment: watchedTreatment ?? suggestedTreatment,
+    gstTreatmentAuto: (watchedTreatment ?? suggestedTreatment) === suggestedTreatment,
+    gstTreatmentMeaning: gstTreatmentOption(watchedTreatment ?? suggestedTreatment)?.meaning ?? "",
+    onTreatmentChange,
+    panLocked: !!panFromForm,
     onSubmit,
     /* The state field sits on the Address tab, which may be closed — say what is missing
        instead of a Save button that silently does nothing (R-173). */
     submit: handleSubmit(onSubmit, (errs) => {
       if (errs.state?.message) toast.error("State is missing", { className: NEEDS_INPUT_CLASS, description: String(errs.state.message) });
+      if (errs.gst_treatment?.message) toast.error("Check the GST treatment", { className: NEEDS_INPUT_CLASS, description: String(errs.gst_treatment.message) });
     }),
   };
 }

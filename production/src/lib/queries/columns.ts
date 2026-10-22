@@ -10,7 +10,7 @@
  */
 
 export const CUSTOMER_COLUMNS =
-  "id, tenant_id, name, domain, gstin, state, state_code, health, contact_name, contact_title, contact_email, contact_phone, account_manager_id, since, notes, created_at, updated_at, tan, tds_default_section, tds_default_rate_pct, address, pin_code, gstin_verified_at, gstin_verification, linked_tenant_id, customer_number, country, contact_salutation, contact_first_name, contact_last_name, contact_mobile, contact_persons, payment_terms_days, shipping_address, customer_type, display_name, city, group_id, is_active, allow_pay_later, credit_limit";
+  "id, tenant_id, name, domain, gstin, state, state_code, health, contact_name, contact_title, contact_email, contact_phone, account_manager_id, since, notes, created_at, updated_at, tan, tds_default_section, tds_default_rate_pct, address, pin_code, gstin_verified_at, gstin_verification, linked_tenant_id, customer_number, country, contact_salutation, contact_first_name, contact_last_name, contact_mobile, contact_persons, payment_terms_days, shipping_address, customer_type, display_name, city, group_id, is_active, allow_pay_later, credit_limit, gst_treatment, pan";
 
 export const CONTACT_COLUMNS =
   "id, tenant_id, full_name, email, phone, company, title, source, external_id, status, promoted_to_lead_id, promoted_at, notes, tags, imported_by, created_at, updated_at, whatsapp, linkedin, instagram, facebook, twitter, website, address, city, customer_id, emails, phones, google_etag, google_synced_at, relationship, birthday, anniversary, nickname, family, role, is_primary";

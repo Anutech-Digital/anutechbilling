@@ -78,7 +78,7 @@ export async function resolveSeatTax(
 ): Promise<{ taxRatePct: number; taxLabel: string }> {
   const [{ data: customer }, { data: tenant }] = await Promise.all([
     customerId
-      ? supabase.from("customers").select("country, state_code, gstin").eq("id", customerId).maybeSingle()
+      ? supabase.from("customers").select("country, state_code, gstin, gst_treatment").eq("id", customerId).maybeSingle()
       : Promise.resolve({ data: null }),
     supabase.from("tenants").select("state_code, gstin").eq("id", tenantId).maybeSingle(),
   ]);

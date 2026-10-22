@@ -38,6 +38,15 @@ interface Props {
    *  the structured fields back into its own form (RHF setValue or local
    *  state updates). When omitted, the Fill button is hidden. */
   onFillForm?:    (v: GstinVerification) => void;
+  /** R-1736: whose GSTIN this is, for the helper text — the card is shared by the vendor
+   *  form ("supplier"), the customer forms ("customer") and Settings / Setup ("company"). */
+  party?:         "supplier" | "customer" | "company";
+}
+
+/** The empty-field hint, worded for whose GSTIN it is (R-1736). */
+export function gstinEmptyHint(party: "supplier" | "customer" | "company"): string {
+  if (party === "company") return "Enter your company's GSTIN to verify & auto-fill its details.";
+  return `Enter the ${party}'s GSTIN to verify & auto-fill their details.`;
 }
 
 function statusTone(s?: string | null): "success" | "warning" | "danger" | "muted" {
@@ -49,7 +58,7 @@ function statusTone(s?: string | null): "success" | "warning" | "danger" | "mute
 }
 
 export default function GstinVerifyCard({
-  gstin, cached, cachedAt, noPersist = false, onVerified, onFillForm,
+  gstin, cached, cachedAt, noPersist = false, onVerified, onFillForm, party = "supplier",
 }: Props) {
   const qc = useQueryClient();
   const [verifying, setVerifying] = React.useState(false);
@@ -74,15 +83,17 @@ export default function GstinVerifyCard({
   // Friendly, specific reason the Verify button is still locked — so the user
   // knows what to do instead of staring at a disabled button.
   const gstinHint = React.useMemo(() => {
-    if (!cleanGstin) return { tone: "muted" as const, text: "Enter the supplier's GSTIN to verify & auto-fill their details." };
-    if (isOidar)     return { tone: "info" as const,  text: "Foreign supplier (OIDAR) GSTIN — online GSTN verification isn't available for these. You can still save this vendor; place of supply is set to Centre Jurisdiction." };
+    if (!cleanGstin) return { tone: "muted" as const, text: gstinEmptyHint(party) };
+    if (isOidar)     return { tone: "info" as const,  text: party === "supplier"
+      ? "Foreign supplier (OIDAR) GSTIN — online GSTN verification isn't available for these. You can still save this vendor; place of supply is set to Centre Jurisdiction."
+      : "Foreign online-service (OIDAR) GSTIN — online GSTN verification isn't available for these." };
     const v = validateGstin(cleanGstin);
     if (v.ok) return null;
     if (v.reason === "length")   return { tone: "bad" as const, text: `A GSTIN is 15 characters — you've typed ${cleanGstin.length}.` };
     if (v.reason === "format")   return { tone: "bad" as const, text: "This GSTIN doesn't look right — it should be 2 digits, 5 letters, 4 digits, then 4 more characters." };
     if (v.reason === "checksum") return { tone: "bad" as const, text: "This GSTIN's check digit doesn't match — please re-check the number." };
     return { tone: "bad" as const, text: "Enter a valid GSTIN to verify." };
-  }, [cleanGstin, isOidar]);
+  }, [cleanGstin, isOidar, party]);
 
   // Staleness: if the cached verification is > 30 days old, surface a
   // gentle nudge to re-verify. (We don't auto-invalidate — GSTN status

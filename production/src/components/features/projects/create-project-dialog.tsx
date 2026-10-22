@@ -83,7 +83,7 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
     setInterState(isInterStateSupply(
       selectedCustomer.state_code,
       me?.tenantStateCode,
-      { customerGstin: selectedCustomer.gstin, sellerGstin: me?.tenantGstin },
+      { customerGstin: selectedCustomer.gstin, sellerGstin: me?.tenantGstin, treatment: selectedCustomer.gst_treatment },
     ));
   }, [selectedCustomer, me?.tenantStateCode, me?.tenantGstin, interStateTouched]);
 

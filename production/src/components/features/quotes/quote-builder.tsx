@@ -71,7 +71,7 @@ import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import { useItems } from "@/lib/queries/items";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead } from "@/lib/gst/place-of-supply";
+import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -857,7 +857,10 @@ function QuoteBuilderBody() {
     /* A customer's GSTIN proves their state — 36 of 41 GSTIN customers had no
        state_code on file, so the GSTIN prefix is the fallback (2 Oct 2026). */
     : (customerId ? (customer?.state_code || stateCodeFromGstin(customer?.gstin) || null) : (prospectStateCode || null));
-  const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin });
+  /* R-1736: the picked customer's GST treatment — an SEZ buyer is IGST even in our own state. */
+  const buyerTreatment = !isLeadMode && customerId ? (customer?.gst_treatment ?? null) : null;
+  const sezBuyer = treatmentIsAlwaysInterState(buyerTreatment);
+  const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin, treatment: buyerTreatment });
 
   // Selling gross = the (negotiated) rate × qty. This is the actual revenue and
   // what gets billed / drives MRR — so it stays the subtotal.
@@ -899,7 +902,7 @@ function QuoteBuilderBody() {
      Empty → isInterStateSupply() answered intra-state and this screen printed
      "✓ Intra-state → CGST + SGST" off that guess; payment was taken against it and the
      invoice later came out IGST. Read only once the user has loaded (no flash). */
-  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode });
+  const gstHead           = supplyHead({ isExport, buyerStateCode, sellerStateCode: currentUser?.tenantStateCode, treatment: buyerTreatment });
   const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
   const placeOfSupply     = sellerStateMissing
     ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
@@ -1984,7 +1987,7 @@ function QuoteBuilderBody() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
+                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -2039,7 +2042,7 @@ function QuoteBuilderBody() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">⚠ Inter-state → IGST {taxRate}% will apply</span>
+                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -2693,7 +2696,7 @@ function QuoteBuilderBody() {
                     : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : interState
-                      ? `Different state → IGST applicable @ ${taxRate}%`
+                      ? (sezBuyer ? `SEZ customer → IGST applicable @ ${taxRate}%` : `Different state → IGST applicable @ ${taxRate}%`)
                       : `Same state → CGST + SGST split @ ${taxRate}%`}
                 </div>
               )}

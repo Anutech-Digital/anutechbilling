@@ -159,7 +159,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const { data: customer } = quote.customer_id
     ? await supabase
         .from("customers")
-        .select("name, contact_name, contact_email, contact_phone, gstin, state_code, country")
+        .select("name, contact_name, contact_email, contact_phone, gstin, state_code, country, gst_treatment")
         .eq("id", quote.customer_id)
         .single()
     : { data: null };
