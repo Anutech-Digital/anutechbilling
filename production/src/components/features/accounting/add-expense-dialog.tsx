@@ -55,6 +55,8 @@ import { useAddReimbursement } from "@/lib/queries/reimbursements";
 import { toast } from "sonner";
 import { uploadBillAttachment } from "@/lib/queries/vendor-bills";
 import { useConfirm } from "@/components/providers/confirm-provider";
+import { buyerConfirmedNote, buyerWarningText, isBuyerMismatch, resaleProduct, type BuyerMismatch } from "@/app/api/ai/extract-bill/buyer-check";
+import { AddVendorBillDialog, BillReadWarnings, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
 import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
@@ -304,8 +306,22 @@ export function AddExpenseDialog({
     /** R-1744: "paid" only when the bill clearly says so; the method as one of PAYMENT_METHODS. */
     paidStatus?: string;
     paymentMode?: string;
+    /** R-1767: "proforma" → no GST input credit. */
+    proforma:    boolean;
+    /** R-1767: the bill is addressed to another company (the route compared it with ours). */
+    buyer:       BuyerMismatch | null;
+    /** R-1767 addition: a product we resell (reader's COGS category) → offer the COGS bill. */
+    resale:      string | null;
+    /** R-1767 addition: what the reader returned, handed to Add COGS Bill unchanged. */
+    read:        VendorBillPrefill;
   };
   const [pending, setPending] = React.useState<PendingExtract | null>(null);
+  /* R-1767: kept after "fill it in" (or "I'll fill it myself") — the bill is still attached, so
+     the warnings stay on screen and Save asks before another company's bill enters our books. */
+  const [aiBuyer, setAiBuyer] = React.useState<BuyerMismatch | null>(null);
+  const [aiProforma, setAiProforma] = React.useState(false);
+  /* R-1767 addition: set → this dialog becomes Add COGS Bill, filled from the same read. */
+  const [cogsPrefill, setCogsPrefill] = React.useState<VendorBillPrefill | null>(null);
   // Vendor GSTIN read from the invoice — saved to the Vendors master on save so
   // the supplier's tax details are captured (the expenses row itself has none).
   const [aiGstin, setAiGstin] = React.useState<string | null>(null);
@@ -347,7 +363,7 @@ export function AddExpenseDialog({
   };
 
   async function handleBillFile(file: File) {
-    setAiError(null); setAiNote(null); setPending(null);
+    setAiError(null); setAiNote(null); setPending(null); setAiBuyer(null); setAiProforma(false);
     if (!BILL_FILE.test(file.type)) { setAiError("Drop a PDF or a photo (JPG/PNG) of the bill."); return; }
     if (file.size > 8 * 1024 * 1024) { setAiError("File is too big (max 8 MB) — try a smaller photo."); return; }
     setAttachFile(file);   // keep it — attaches to the expense on save (proof)
@@ -405,6 +421,10 @@ export function AddExpenseDialog({
         itemShort:   typeof f.item_short === "string" && f.item_short ? f.item_short : undefined,
         paidStatus:  typeof f.paid_status === "string" ? f.paid_status : undefined,
         paymentMode: typeof f.payment_mode === "string" ? f.payment_mode : undefined,
+        proforma:    f.document_type === "proforma",
+        buyer:       isBuyerMismatch(f.buyer_mismatch) ? f.buyer_mismatch : null,
+        resale:      resaleProduct({ category_guess: typeof f.category_guess === "string" ? f.category_guess : null }),
+        read:        f as VendorBillPrefill,
       });
     } catch {
       setAiError("Upload failed — try again, or fill the fields yourself.");
@@ -416,6 +436,7 @@ export function AddExpenseDialog({
   // Operator confirmed the read is correct → fill the form (header + items).
   function applyExtract() {
     if (!pending) return;
+    setAiBuyer(pending.buyer); setAiProforma(pending.proforma);
     if (pending.gstin) setAiGstin(pending.gstin);
     setBillNo(pending.billNo ?? "");
     // Match the invoice's GSTIN (then name) against the Vendors master:
@@ -463,16 +484,27 @@ export function AddExpenseDialog({
       setVendorMatch(nm ? { kind: "new", name: nm } : null);
     }
     if (pending.billDate)   setValue("expense_date", pending.billDate);
-    setBillType(pending.billType);
+    /* R-1767: a PROFORMA is not a tax invoice — no GST input credit. An expense's credit needs
+       bill_type "gst" (lib/gst/itc.ts), so it starts as a non-GST bill: the GST stays inside the
+       cost, exactly like a vendor bill's proforma (lib/gst/bill-itc.ts). */
+    setBillType(pending.proforma ? "kaccha" : pending.billType);
     setCurrency(pending.currency);
     if (pending.total != null) setValue("amount", pending.total);
     setValue("gst_paid", pending.gst);
     /* R-1744: each line gets its category too — the line's own AI category, else the bill's.
        Blank only when the AI had no idea; then the operator picks (save stops until they do). */
-    setLines(pending.items.map((it) => {
+    const billLines = pending.items.map((it) => {
       const category = lineCategoryFromBill(it.category, pending.aiCategory);
       return { description: it.description, qty: it.qty, unit_price: it.unit_price, amount: it.amount, category, aiCat: Boolean(category) };
-    }));
+    });
+    /* R-1767: a proforma saves as a non-GST bill, whose itemised total is the items alone — the
+       GST actually paid would drop out of the cost. It is a real cost (no credit), so it becomes
+       its own line and the total still equals the bill. */
+    if (pending.proforma && pending.gst > 0 && billLines.length) {
+      const category = lineCategoryFromBill(undefined, pending.aiCategory);
+      billLines.push({ description: "GST on proforma (no input credit)", qty: "", unit_price: "", amount: String(pending.gst), category, aiCat: Boolean(category) });
+    }
+    setLines(billLines);
     if (pending.items.length) setShowItems(true);   // AI found line items → show them
 
     /* R-1744: the short "What for?" note — vendor — main item — month. The name the form now
@@ -514,9 +546,18 @@ export function AddExpenseDialog({
     setPending(null);
   }
 
+  /* R-1767 addition: a resale bill → Add COGS Bill, filled from THIS read and with THIS file —
+     no second upload, no second AI call. */
+  function openCogsBill() {
+    if (!pending) return;
+    setCogsPrefill({ ...pending.read, file: attachFile });
+    setPending(null);
+  }
+
   // Operator says the read is wrong / wants to enter manually → discard the
   // extraction (NO items, NO amounts auto-added), but keep the bill attached.
   function discardExtract() {
+    if (pending) { setAiBuyer(pending.buyer); setAiProforma(pending.proforma); }
     setPending(null);
     setAiFilled({}); setRcmHint(false);
     setAiNote(`OK — fill in the fields and items yourself. 📎 "${attachFile?.name ?? "bill"}" will be attached to the expense.`);
@@ -683,6 +724,21 @@ export function AddExpenseDialog({
       return;
     }
 
+    /* R-1767: another company's bill never enters our books without a clear yes — and the yes
+       is written into the comment, so the books show why it is here. */
+    let buyerNote: string | null = null;
+    if (aiBuyer) {
+      const ok = await confirm({
+        title: `Did ${aiBuyer.own_name} really pay this bill?`,
+        body: buyerWarningText(aiBuyer),
+        danger: true,
+        confirmLabel: `Yes, ${aiBuyer.own_name} paid it`,
+        cancelLabel: "No, don't save",
+      });
+      if (!ok) return;
+      buyerNote = buyerConfirmedNote(aiBuyer);
+    }
+
     // ── Someone else paid our expense → record as a REIMBURSEMENT (payable to
     //    that person). add_reimbursement books the expense + the payable together,
     //    so we do NOT also create an expense here. ──
@@ -699,7 +755,7 @@ export function AddExpenseDialog({
       }
       await addReimb.mutateAsync({
         person,
-        purpose:    values.notes?.trim() || values.description?.trim() || (values.category ?? ""),
+        purpose:    [values.notes?.trim() || values.description?.trim() || (values.category ?? ""), buyerNote].filter(Boolean).join(" "),
         category:   values.category ?? "",
         amount:     amt,
         gst:        isGstBill ? Math.round((values.gst_paid || 0) * rate) : 0,
@@ -783,8 +839,8 @@ export function AddExpenseDialog({
       /* Paid from a staff advance: the database takes it off that advance's balance and
          refuses more than is left (trigger, migration 20261001150000). */
       prepaid_advance_id: fromAdvance ? advanceId : (expense?.payment_method === EMPLOYEE_ADVANCE_METHOD ? null : expense?.prepaid_advance_id ?? null),
-      // Longer free-text comment / extra detail (optional).
-      notes: values.notes?.trim() || null,
+      // Longer free-text comment / extra detail (optional). R-1767: + the "addressed to" confirm.
+      notes: [values.notes?.trim(), buyerNote].filter(Boolean).join(" ") || null,
     };
     // Cash only leaves petty cash once actually PAID — an unpaid bill must not.
     const pettyCash = paid && values.payment_method === "cash" ? (pettyCashAccountId || null) : null;
@@ -892,6 +948,10 @@ export function AddExpenseDialog({
     onClose();
   }
 
+  /* R-1767 addition: "Record as COGS bill" — this dialog becomes Add COGS Bill (one dialog on
+     screen, never two). Closing or saving it closes the whole thing. */
+  if (cogsPrefill) return <AddVendorBillDialog prefill={cogsPrefill} onClose={onClose} />;
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       {/* R-1744: the whole dialog is a drop zone for the bill (PDF or photo). */}
@@ -984,6 +1044,9 @@ export function AddExpenseDialog({
             </div>
             {aiNote && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald"><Icon name="check_circle" size={12} className="mt-0.5 shrink-0" /> {aiNote}</p>}
             {aiError && <p className="mt-2 flex items-start gap-1.5 text-xs text-rose"><Icon name="alert" size={12} className="mt-0.5 shrink-0" /> {aiError}</p>}
+            {!pending && (aiBuyer || aiProforma) && (
+              <div className="mt-2"><BillReadWarnings buyer={aiBuyer} proforma={aiProforma} /></div>
+            )}
 
             {/* Confirmation gate — AI read something; confirm before it fills. */}
             {pending && (() => {
@@ -1002,6 +1065,13 @@ export function AddExpenseDialog({
               return (
                 <div className="mt-2.5 rounded-md border border-amber/40 bg-paper p-3">
                   <p className="text-[12px] font-medium text-ink mb-2">AI read this — is it right? The form fills only after you confirm.</p>
+                  <BillReadWarnings buyer={pending.buyer} proforma={pending.proforma} />
+                  {pending.resale && (
+                    <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
+                      <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
+                      <span>This looks like a bill for products you resell ({pending.resale}) — record it as a COGS bill.</span>
+                    </div>
+                  )}
                   {dupInReview && (
                     <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-soft/60 px-2.5 py-2 text-xs text-amber-ink">
                       <Icon name="alert" size={13} className="mt-0.5 shrink-0" />
@@ -1066,7 +1136,14 @@ export function AddExpenseDialog({
                     </div>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Yes, fill it in</Button>
+                    {pending.resale ? (
+                      <>
+                        <Button type="button" variant="primary" size="sm" icon="check" onClick={openCogsBill}>Record as COGS bill</Button>
+                        <Button type="button" variant="default" size="sm" onClick={applyExtract}>Add as expense anyway</Button>
+                      </>
+                    ) : (
+                      <Button type="button" variant="primary" size="sm" icon="check" onClick={applyExtract}>Yes, fill it in</Button>
+                    )}
                     <Button type="button" variant="default" size="sm" onClick={discardExtract}>Wrong — I&apos;ll fill it myself</Button>
                   </div>
                   <p className="mt-2 text-xs text-ink-3">Either way, 📎 <button type="button" onClick={openLocalFile} className="text-amber-ink underline hover:no-underline">{attachFile?.name}</button> will be attached. (Click to view.)</p>

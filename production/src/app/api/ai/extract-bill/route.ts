@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { sanitizeExtractedBill } from "./sanitize";
+import { billBuyerMismatch } from "./buyer-check";
 import { readBillWithGemini, READABLE_BILL_MIME } from "@/lib/ai/read-bill";
 
 const bodySchema = z.object({
@@ -70,5 +71,15 @@ export async function POST(request: NextRequest) {
   // Everything stays a suggestion the operator verifies in the form.
   const fields = sanitizeExtractedBill(ai);
 
-  return NextResponse.json({ fields, mode: "gemini" });
+  /* R-1767: is the bill addressed to US? Compared here, where the tenant is known, so both
+     dialogs read one answer. A failed tenant read just means no warning (never a false one). */
+  const { data: tenant } = me?.tenant_id
+    ? await supabase.from("tenants").select("name, gstin, gstin_verification").eq("id", me.tenant_id).maybeSingle()
+    : { data: null };
+  const verification = (tenant?.gstin_verification ?? null) as { legal_name?: string | null; trade_name?: string | null } | null;
+  const buyer_mismatch = tenant
+    ? billBuyerMismatch(fields, { name: tenant.name, gstin: tenant.gstin, legal_name: verification?.legal_name ?? null, trade_name: verification?.trade_name ?? null })
+    : null;
+
+  return NextResponse.json({ fields: { ...fields, buyer_mismatch }, mode: "gemini" });
 }
