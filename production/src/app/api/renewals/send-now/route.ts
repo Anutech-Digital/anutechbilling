@@ -142,7 +142,7 @@ export async function POST(req: Request) {
   const { data: customer } = sub.customer_id
     ? await supabase
         .from("customers")
-        .select("name, contact_name, contact_email, gstin, contact_phone, state_code")
+        .select("name, contact_name, contact_email, gstin, contact_phone, state_code, gst_treatment")
         .eq("id", sub.customer_id)
         .single()
     : { data: null };
@@ -290,7 +290,7 @@ export async function POST(req: Request) {
         taxRate:       renewalQuote.tax_rate ?? 18,
         tax:           quoteDisplayTax(renewalQuote.subtotal ?? renewalQuote.amount, renewalQuote.tax_rate ?? 18, renewalQuote.amount), // R-804
         total:         renewalQuote.amount,
-        interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
+        interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),
         validityDays:  30,
         notes:         "Renewal quote. Reply or call us with any questions.",
         isRenewal:     true,

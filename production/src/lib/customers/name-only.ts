@@ -60,6 +60,10 @@ export function nameOnlyToCustomer(r: NameOnlyCustomerRow, tenantId: string | nu
     domain: null,
     group_id: null,
     gstin: null,
+    /* R-1736: not returned by customers_name_only(); the invoice trigger still applies an SEZ
+       treatment from the real row, so a hidden treatment never changes the issued tax head. */
+    gst_treatment: null,
+    pan: null,
     gstin_verification: null,
     gstin_verified_at: null,
     health: 0,

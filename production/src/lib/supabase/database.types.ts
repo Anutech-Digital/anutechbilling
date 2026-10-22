@@ -16,6 +16,7 @@
  * Check it is current (needs local docker):   node scripts/check-db-types.mjs
  */
 import type { Database as GeneratedDatabase } from "./database.generated";
+import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -901,6 +902,8 @@ type ColumnPatches = {
     contact_persons: ContactPerson[];
     shipping_address: ShippingAddress | null;
     gstin_verification: GstinVerification | null;
+    /** R-1736: CHECK constraint; never null in practice (a trigger fills it). */
+    gst_treatment: CustomerGstTreatment | null;
   };
   items: {
     kind: "main" | "addon";
@@ -936,6 +939,8 @@ type ColumnPatches = {
   invoices: {
     adjusted_advances: InvoiceAdvanceAdjustment[];
     line_items: QuoteLineItem[] | null;
+    /** R-1736: frozen at issue; NULL = issued before R-1736. */
+    gst_treatment: CustomerGstTreatment | null;
   };
   payments: {
     method: PaymentMethod;

@@ -29,6 +29,7 @@ import {
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { rupee, formatDate } from "@/lib/utils";
 
 export type PnLDrillKind = "revenue" | "cogs" | "expenses";
@@ -85,9 +86,10 @@ function useDrilldown(kind: PnLDrillKind | null, range: { from: string; to: stri
       const supabase = createClient();
 
       if (kind === "revenue") {
-        const { data, error } = await supabase
+        /* R-1739: same rows as report_pnl — no invoice imported from Zoho Books. */
+        const { data, error } = await onlySaleInvoices(supabase
           .from("invoices")
-          .select("id, customer_name, invoice_date, amount, status")
+          .select("id, customer_name, invoice_date, amount, status"))
           .gte("invoice_date", range.from)
           .lte("invoice_date", range.to)
           .in("status", ["pending", "paid", "overdue"])

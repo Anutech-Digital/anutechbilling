@@ -22,6 +22,7 @@ import { toIstDate } from "@/lib/dates/ist";
 import { isTaxInvoiceRow } from "@/lib/invoices/document-kind";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { gstCashHeadline, gstr3bFromReport, type GstReport, type InputRow, type OutputRow } from "./cash-to-pay";
 
 type DateRange = GstPeriod;
@@ -125,9 +126,10 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
   // ── Output: invoices issued in the period ─────────────────────
   /* R-1586: every list read below pages past the gateway's 1000-row cap (fetchAllRows /
      fetchAllRowsIn, order ending on id). A quarter with 1000+ invoices used to file short. */
-  const issued = await fetchAllRows((from, to) => supabase
+  /* R-1739: onlySaleInvoices — an invoice imported from Zoho Books was filed from Zoho. */
+  const issued = await fetchAllRows((from, to) => onlySaleInvoices(supabase
     .from("invoices")
-    .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, document_kind")
+    .select("id, amount, invoice_date, customer_name, customer_id, status, taxable_value, tax_amount, tax_rate, inter_state, line_items, adjusted_advances, customer_gstin, pos_state_code, customer_country, billing_address, seller_state_code, document_kind"))
     .gte("invoice_date", range.from)
     .lte("invoice_date", range.to)
     .in("status", ["pending", "paid", "overdue"])

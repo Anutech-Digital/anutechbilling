@@ -25,6 +25,8 @@ export interface BuyerPlace {
   state_code?: string | null;
   gstin?: string | null;
   country?: string | null;
+  /** R-1736: the customer's GST treatment — an SEZ buyer is always IGST. */
+  gst_treatment?: string | null;
 }
 
 export interface QuotePlace {
@@ -56,8 +58,9 @@ export function quotePlaceOfSupply(a: {
   const raw = isExport ? null : resolveStateCode({ stateCode: buyer?.state_code, gstin: buyer?.gstin });
   // A hand-typed "6" is Haryana too — pad so the name lookup finds it.
   const posCode = raw && /^\d{1,2}$/.test(raw) ? raw.padStart(2, "0") : raw;
-  const interState = !isExport && isInterStateSupply(posCode, a.seller.state_code, { sellerGstin: a.seller.gstin });
-  const head = supplyHead({ isExport, buyerStateCode: posCode, sellerStateCode: a.seller.state_code });
+  const treatment = buyer?.gst_treatment ?? null;
+  const interState = !isExport && isInterStateSupply(posCode, a.seller.state_code, { sellerGstin: a.seller.gstin, treatment });
+  const head = supplyHead({ isExport, buyerStateCode: posCode, sellerStateCode: a.seller.state_code, treatment });
   /* R-431: with the company's own state unknown the head is unknown too — never print the
      intra-state guess ("· CGST + SGST") as if it were decided. */
   const posName = posCode ? GST_STATE_BY_CODE[posCode] : undefined;

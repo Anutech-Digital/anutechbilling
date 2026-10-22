@@ -22,6 +22,8 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { InvoiceDetail } from "../invoice-detail";
+import { OpeningInvoiceDetail } from "../opening-invoice-detail";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { invoiceIdFromParam } from "../invoice-href";
 
 export default function InvoiceDetailPage() {
@@ -87,5 +89,7 @@ export default function InvoiceDetailPage() {
     );
   }
 
+  /* R-1739: an invoice imported from Zoho Books is an open balance, not our document. */
+  if (isOpeningInvoice(invoice)) return <OpeningInvoiceDetail invoice={invoice} />;
   return <InvoiceDetail invoice={invoice} />;
 }

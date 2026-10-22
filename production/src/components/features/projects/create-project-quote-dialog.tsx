@@ -137,8 +137,8 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
     : (selectedCustomer?.state_code ?? stateCodeFromGstin(selectedCustomer?.gstin));
   React.useEffect(() => {
     if (editProject || !buyerCode || !me?.tenantStateCode) return;
-    setInterState(isInterStateSupply(buyerCode, me.tenantStateCode));
-  }, [editProject, buyerCode, me?.tenantStateCode]);
+    setInterState(isInterStateSupply(buyerCode, me.tenantStateCode, { treatment: isNewCustomer ? null : selectedCustomer?.gst_treatment }));
+  }, [editProject, buyerCode, me?.tenantStateCode, isNewCustomer, selectedCustomer?.gst_treatment]);
 
   const lineAmount = (l: LineRow) => Math.max(0, Math.round(Number(l.qty) || 0)) * Math.max(0, Math.round(Number(l.rate) || 0));
   const taxableNum = lines.reduce((s, l) => s + lineAmount(l), 0);

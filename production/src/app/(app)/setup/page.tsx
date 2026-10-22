@@ -180,6 +180,7 @@ function StepCompany({
               values to tenants in one go. */}
           <GstinVerifyCard
             gstin={data.gstin}
+            party="company"
             cached={me?.tenantGstinVerification ?? null}
             cachedAt={me?.tenantGstinVerifiedAt}
             onFillForm={(v) => {

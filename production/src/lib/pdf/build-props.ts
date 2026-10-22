@@ -165,7 +165,7 @@ export function buildInvoicePdfProps(args: {
   // never recorded one.
   const interState = invoice.inter_state ?? isInterStateSupply(
     customer?.state_code, tenant.state_code,
-    { customerGstin: customer?.gstin, sellerGstin: tenant.gstin },
+    { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
 
   return {

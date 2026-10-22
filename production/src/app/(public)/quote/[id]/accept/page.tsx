@@ -261,7 +261,7 @@ export default async function QuoteAcceptPage(props: Props) {
     quote.customer_id
       ? supabase
           .from("customers")
-          .select("gstin, state_code, country, contact_name, contact_first_name, contact_last_name")
+          .select("gstin, state_code, country, gst_treatment, contact_name, contact_first_name, contact_last_name")
           .eq("id", quote.customer_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),

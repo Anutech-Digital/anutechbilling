@@ -3992,6 +3992,7 @@ export type Database = {
           display_name: string | null
           domain: string | null
           group_id: string | null
+          gst_treatment: string | null
           gstin: string | null
           gstin_verification: Json | null
           gstin_verified_at: string | null
@@ -4001,6 +4002,7 @@ export type Database = {
           linked_tenant_id: string | null
           name: string
           notes: string | null
+          pan: string | null
           payment_terms_days: number | null
           pin_code: string | null
           shipping_address: Json | null
@@ -4035,6 +4037,7 @@ export type Database = {
           display_name?: string | null
           domain?: string | null
           group_id?: string | null
+          gst_treatment?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
@@ -4044,6 +4047,7 @@ export type Database = {
           linked_tenant_id?: string | null
           name: string
           notes?: string | null
+          pan?: string | null
           payment_terms_days?: number | null
           pin_code?: string | null
           shipping_address?: Json | null
@@ -4078,6 +4082,7 @@ export type Database = {
           display_name?: string | null
           domain?: string | null
           group_id?: string | null
+          gst_treatment?: string | null
           gstin?: string | null
           gstin_verification?: Json | null
           gstin_verified_at?: string | null
@@ -4087,6 +4092,7 @@ export type Database = {
           linked_tenant_id?: string | null
           name?: string
           notes?: string | null
+          pan?: string | null
           payment_terms_days?: number | null
           pin_code?: string | null
           shipping_address?: Json | null
@@ -6517,6 +6523,62 @@ export type Database = {
           },
         ]
       }
+      invoice_import_batches: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          file_name: string | null
+          id: string
+          remove_reason: string | null
+          removed_at: string | null
+          removed_by: string | null
+          removed_rows: number | null
+          row_count: number
+          skipped_count: number
+          source: string
+          tenant_id: string
+          total_balance: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          id?: string
+          remove_reason?: string | null
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_rows?: number | null
+          row_count?: number
+          skipped_count?: number
+          source?: string
+          tenant_id: string
+          total_balance?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          file_name?: string | null
+          id?: string
+          remove_reason?: string | null
+          removed_at?: string | null
+          removed_by?: string | null
+          removed_rows?: number | null
+          row_count?: number
+          skipped_count?: number
+          source?: string
+          tenant_id?: string
+          total_balance?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           adjusted_advances: Json
@@ -6530,16 +6592,20 @@ export type Database = {
           customer_name: string
           document_kind: string
           due_date: string | null
+          external_number: string | null
           first_advance_at: string | null
           fx_date: string | null
           fx_rate: number | null
           fx_source: string | null
           gst_irn: string | null
+          gst_treatment: string | null
           id: string
+          import_batch_id: string | null
           inter_state: boolean | null
           invoice_date: string
           line_items: Json | null
           net_payable: number | null
+          opening_balance: number | null
           overdue_days: number | null
           paid_amount: number
           paid_date: string | null
@@ -6569,16 +6635,20 @@ export type Database = {
           customer_name: string
           document_kind?: string
           due_date?: string | null
+          external_number?: string | null
           first_advance_at?: string | null
           fx_date?: string | null
           fx_rate?: number | null
           fx_source?: string | null
           gst_irn?: string | null
+          gst_treatment?: string | null
           id: string
+          import_batch_id?: string | null
           inter_state?: boolean | null
           invoice_date?: string
           line_items?: Json | null
           net_payable?: number | null
+          opening_balance?: number | null
           overdue_days?: number | null
           paid_amount?: number
           paid_date?: string | null
@@ -6608,16 +6678,20 @@ export type Database = {
           customer_name?: string
           document_kind?: string
           due_date?: string | null
+          external_number?: string | null
           first_advance_at?: string | null
           fx_date?: string | null
           fx_rate?: number | null
           fx_source?: string | null
           gst_irn?: string | null
+          gst_treatment?: string | null
           id?: string
+          import_batch_id?: string | null
           inter_state?: boolean | null
           invoice_date?: string
           line_items?: Json | null
           net_payable?: number | null
+          opening_balance?: number | null
           overdue_days?: number | null
           paid_amount?: number
           paid_date?: string | null
@@ -8432,13 +8506,14 @@ export type Database = {
           created_at: string
           credit_applied: number
           customer_id: string | null
-          gateway_fee: number | null
           gateway_fee_gst: number | null
+          gateway_fee: number | null
           gateway_refund_ids: string[] | null
           id: string
+          invoice_id: string | null
           method: string
           notes: string | null
-          quote_id: string
+          quote_id: string | null
           receipt_file_path: string | null
           receipt_voucher_no: string | null
           received_at: string
@@ -8456,13 +8531,14 @@ export type Database = {
           created_at?: string
           credit_applied?: number
           customer_id?: string | null
-          gateway_fee?: number | null
           gateway_fee_gst?: number | null
+          gateway_fee?: number | null
           gateway_refund_ids?: string[] | null
           id?: string
+          invoice_id?: string | null
           method: string
           notes?: string | null
-          quote_id: string
+          quote_id?: string | null
           receipt_file_path?: string | null
           receipt_voucher_no?: string | null
           received_at?: string
@@ -8480,13 +8556,14 @@ export type Database = {
           created_at?: string
           credit_applied?: number
           customer_id?: string | null
-          gateway_fee?: number | null
           gateway_fee_gst?: number | null
+          gateway_fee?: number | null
           gateway_refund_ids?: string[] | null
           id?: string
+          invoice_id?: string | null
           method?: string
           notes?: string | null
-          quote_id?: string
+          quote_id?: string | null
           receipt_file_path?: string | null
           receipt_voucher_no?: string | null
           received_at?: string
@@ -14896,6 +14973,13 @@ export type Database = {
         Returns: string
       }
       indian_fiscal_year: { Args: { p_date?: string }; Returns: string }
+      import_opening_invoices: {
+        Args: {
+          p_file_name?: string
+          p_rows: Json
+        }
+        Returns: Json
+      }
       invoice_cost_fill_apply: {
         Args: { p_invoice_ids: string[] }
         Returns: Json
@@ -14914,6 +14998,12 @@ export type Database = {
           rate: number
           source: string
         }[]
+      }
+      invoice_is_sale: {
+        Args: {
+          p_document_kind: string
+        }
+        Returns: boolean
       }
       invoice_line_catalog_cost: {
         Args: { p_line: Json; p_tenant: string }
@@ -15632,6 +15722,13 @@ export type Database = {
         Returns: Json
       }
       reopen_quote: { Args: { p_quote_id: string }; Returns: undefined }
+      remove_opening_invoice_import: {
+        Args: {
+          p_batch_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
       report_balance_sheet: {
         Args: { p_as_of?: string }
         Returns: {

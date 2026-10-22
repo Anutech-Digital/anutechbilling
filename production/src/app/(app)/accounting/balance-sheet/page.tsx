@@ -157,6 +157,7 @@ export default function BalanceSheetPage() {
         ["", ""],
         ["EQUITY", ""],
         ...manualEqRows.map((r): [string, number] => [r.label, r.amount]),
+        ...((auto.openingBalanceAdjustments ?? 0) !== 0 ? [["Opening Balance Adjustments (invoices imported from Zoho Books)", auto.openingBalanceAdjustments ?? 0] as [string, number]] : []),
         ...(opening ? [
           [`Owner's capital (opening, from CA, ${opening.asOf})`, opening.ownerCapital ?? 0] as [string, number],
           [`Retained earnings b/f (from CA, ${opening.asOf})`, opening.retainedEarnings ?? 0] as [string, number],
@@ -368,6 +369,10 @@ export default function BalanceSheetPage() {
                     onEdit={setEditItem}
                     onDelete={async (r) => { if (await confirm({ title: "Remove line?", body: `Remove "${r.label}" from the balance sheet?`, confirmLabel: "Remove", danger: true })) del.mutate(r.id); }}
                   />
+                  {/* R-1739: Cr side of the balances imported from Zoho Books (their Dr is in receivables). */}
+                  {(auto?.openingBalanceAdjustments ?? 0) !== 0 && (
+                    <BSLine label="Opening Balance Adjustments" hint="balance due on invoices imported from Zoho Books, as imported — account name to confirm with your CA" amount={auto?.openingBalanceAdjustments ?? 0} kind="auto" source="Zoho import" href="/invoices" />
+                  )}
                   {opening && (opening.ownerCapital ?? 0) !== 0 && (
                     <BSLine label="Owner's capital (opening)" hint={`from your CA, as at ${formatDate(opening.asOf)}`} amount={opening.ownerCapital ?? 0} kind="manual" source="Opening balances" />
                   )}

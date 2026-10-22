@@ -108,7 +108,7 @@ export const POST = withRoute({
       const { data: customer } = quote.customer_id
         ? await admin
             .from("customers")
-            .select("contact_name, contact_email, contact_phone, gstin, state_code")
+            .select("contact_name, contact_email, contact_phone, gstin, state_code, gst_treatment")
             .eq("id", quote.customer_id)
             .single()
         : { data: null };
@@ -157,7 +157,7 @@ export const POST = withRoute({
         taxRate,
         tax,
         total,
-        interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin }),
+        interState:    isInterStateSupply(customer?.state_code, tenant?.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant?.gstin, treatment: customer?.gst_treatment }),
         validityDays:  30,
         notes:         quote.notes ?? undefined,
         isRenewal:     quote.is_renewal,

@@ -16,6 +16,7 @@ import { buildInvoiceUpiQr } from "@/lib/pdf/upi-qr";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import type { Invoice, Quote, Customer } from "@/lib/supabase/database.types";
 import { readTenantUdyam } from "@/lib/compliance/udyam";
+import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,11 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   }
 
   const inv = invoice as Invoice;
+  /* R-1739: an invoice imported from Zoho Books is Zoho's document — this app never prints
+     it as its own Tax Invoice. The customer's copy is the one Zoho Books issued. */
+  if (isOpeningInvoice(inv)) {
+    return deny(409, "This invoice was imported from Zoho Books. Download its PDF from Zoho Books.");
+  }
   const [{ data: quote }, { data: customer }, { data: tenant }, udyamNumber] = await Promise.all([
     admin.from("quotes").select("*").eq("invoice_id", id).maybeSingle(),
     inv.customer_id

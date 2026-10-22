@@ -35,6 +35,7 @@ import { ComplianceProfileCard } from "@/components/features/compliance/complian
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
 import { isValidGstin, gstStateFromGstin, validateGstin, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { contactsCardState } from "@/lib/google/contacts-card-state";
@@ -78,6 +79,8 @@ const TABS: TabBarItem[] = [
      to a non-technical owner — it was to stay out until it did something. As of 22 Aug 2026
      it does: changing your own password, which had no home anywhere in the app. */
   { id: "security",      label: "Security"      },
+  /* R-1739: bringing data over from Zoho Books — open invoices (the same dialog as Invoices). */
+  { id: "import",        label: "Import"        },
 ];
 
 // ─── Field wrapper ────────────────────────────────────────────────────────────
@@ -1047,6 +1050,30 @@ function GoogleContactsIntegrationCard() {
   );
 }
 
+// ─── Import tab — R-1739 ─────────────────────────────────────────────────────
+function ImportTab() {
+  const { data: me } = useCurrentUser();
+  const [open, setOpen] = React.useState(false);
+  const allowed = canImportOpeningInvoices(me?.role);
+  return (
+    <Card className="p-5 max-w-2xl">
+      <p className="text-sm font-semibold text-ink">Open invoices from Zoho Books</p>
+      <p className="text-xs text-ink-3 mt-1">
+        Bring over what customers still owe on Zoho Books invoices (Unpaid, Overdue, Partially Paid). They show in
+        dues, aging, statements and reminders and can take payments; their GST and revenue stay in Zoho.
+      </p>
+      {allowed ? (
+        <Button className="mt-3" variant="primary" icon="download" onClick={() => setOpen(true)}>
+          Import open invoices
+        </Button>
+      ) : (
+        <p className="text-xs text-ink-2 mt-3">Only an owner, manager or accountant can import invoices.</p>
+      )}
+      {open && <ImportZohoInvoicesDialog open={open} onOpenChange={setOpen} />}
+    </Card>
+  );
+}
+
 function IntegrationsTab() {
   return (
     <>
@@ -1189,6 +1216,7 @@ function SettingsPageInner() {
       {tab === "branding"      && <BrandingTab />}
       {tab === "notifications" && <NotificationsCard />}
       {tab === "security"      && <div className="max-w-md"><ChangePasswordCard /><TwoFactorCard /></div>}
+      {tab === "import"        && <ImportTab />}
     </div>
   );
 }

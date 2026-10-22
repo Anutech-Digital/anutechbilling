@@ -19,6 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { auditInvoiceGst, type GstIssue } from "@/lib/gst/mismatch";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { isTaxInvoiceRow } from "@/lib/invoices/document-kind";
 
 export interface CustomerGstFindings {
@@ -61,11 +62,12 @@ export function useGstHealth() {
          customer past row 1000 looked like "no state on record". A failed page throws
          instead of reading as an empty customer list. */
       const [issued, customers] = await Promise.all([
-        fetchAllRows((a, b) => supabase.from("invoices")
-          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind")
+        /* R-1739: an invoice imported from Zoho Books is not a GST document of ours. */
+        fetchAllRows((a, b) => onlySaleInvoices(supabase.from("invoices")
+          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind, gst_treatment"))
           .order("id").range(a, b)),
         fetchAllRows((a, b) => supabase.from("customers")
-          .select("id, name, state_code, gstin, country")
+          .select("id, name, state_code, gstin, country, gst_treatment")
           .order("id").range(a, b)),
       ]);
       /* R-1529: a Bill of Supply carries no GST by law — auditing its 0% as a GST finding
@@ -87,11 +89,13 @@ export function useGstHealth() {
             taxAmount: inv.tax_amount ?? 0,
             taxRate: inv.tax_rate ?? 0,
             interState: Boolean(inv.inter_state),
+            gstTreatment: inv.gst_treatment,
           },
           {
             stateCode: customer?.state_code,
             gstin: customer?.gstin,
             country: customer?.country,
+            gstTreatment: customer?.gst_treatment,
           },
           seller,
         );

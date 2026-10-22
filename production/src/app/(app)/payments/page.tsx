@@ -41,6 +41,8 @@ import { useOpenSeatQuotes } from "@/lib/queries/seat-quotes";
 import { seatQuotePendingText } from "@/lib/subscriptions/seat-quotes-pending";
 import { useAllProjectPayments } from "@/lib/queries/projects";
 import { collectedInMonth } from "@/lib/company/summary";
+import { paymentDocHref, paymentDocId } from "@/lib/payments/payment-source";
+import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-invoice-dues-card";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -221,9 +223,9 @@ function PaymentsPageInner() {
     if (focus && !paymentInFocus(p, focus)) return false;   // the tile's own predicate
     if (!search.trim()) return true;
     const s = search.toLowerCase();
-    const quoteCtx = quoteById.get(p.quote_id);
+    const quoteCtx = quoteById.get(p.quote_id ?? "");
     return (
-      p.quote_id.toLowerCase().includes(s) ||
+      paymentDocId(p).toLowerCase().includes(s) ||
       (p.reference?.toLowerCase().includes(s) ?? false) ||
       p.method.toLowerCase().includes(s) ||
       (quoteCtx?.customerName.toLowerCase().includes(s) ?? false)
@@ -234,7 +236,7 @@ function PaymentsPageInner() {
      time" now comes from its pageSize. Tab counts, KPIs, "collected" and the CSV export
      still use every payment in `filtered` / `payments`; only the painting is paged. */
   const paySort = React.useMemo(
-    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id)?.customerName),
+    () => paymentSortValues<Payment>((p) => quoteById.get(p.quote_id ?? "")?.customerName),
     [quoteById],
   );
   const payColumns: DataTableColumn<Payment>[] = [
@@ -261,7 +263,7 @@ function PaymentsPageInner() {
     enabled: view !== "project",
     onOpen: (i) => {
       const p = filtered.find((x) => x.id === shownIds[i]);
-      if (p && canQuotes) router.push(`/quotes/${p.quote_id}` as never);
+      if (p && canQuotes) router.push(paymentDocHref(p) as never);
     },
   });
   const selectedRowRef = React.useRef<HTMLTableRowElement | null>(null);
@@ -314,10 +316,10 @@ function PaymentsPageInner() {
     /* R-045: gateway fee + net received, blank when not known (never a guessed zero). */
     const header = ["Date", "Customer", "Quote", "Amount", "Gateway fee", "Net received", "Method", "Reference", "Status", "Receipt Voucher"];
     const lines = filtered.map((p) => {
-      const ctx = quoteById.get(p.quote_id);
+      const ctx = quoteById.get(p.quote_id ?? "");
       const fee = paymentFeeView(p);
       return [
-        formatDate(p.received_at), ctx?.customerName ?? "", p.quote_id, String(p.amount),
+        formatDate(p.received_at), ctx?.customerName ?? "", paymentDocId(p), String(p.amount),
         fee ? String(fee.fee) : "", fee ? String(fee.net) : "",
         p.method ? paymentMethodLabel(p.method) : "", p.reference ?? "", p.status, p.receipt_voucher_no ?? "",
       ].map(esc).join(",");
@@ -619,6 +621,9 @@ function PaymentsPageInner() {
         );
       })()}
 
+      {/* R-1739: balances on invoices imported from Zoho Books (no subscription, so not above). */}
+      <OpeningInvoiceDuesCard customerId={customerFilter} canRecord={canWrite && canRecordMoney(me?.role)} />
+
       {/* Action needed — the two "close the loop" worklists (collect balance +
           generate the paid-but-uninvoiced GST invoices) merged into ONE compact
           card so they don't push the payment table down as two stacked bands. */}
@@ -656,9 +661,11 @@ function PaymentsPageInner() {
         </GeminiCard>
       )}
 
-      {/* Sticky TabBar + Search */}
+      {/* TabBar + Search — sticky on phone/tablet (cards). From xl the table shows and its
+          own column header sticks under the top bar (R-1741), so this scrolls away there —
+          two sticky bars at 56px stacked and covered the first rows. */}
       {!isLoading && payments && (
-        <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
+        <div className="sticky top-[56px] z-20 xl:static xl:z-auto bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-3">
           {focus && (
             <FocusBanner
               label={mtdProject > 0
@@ -756,12 +763,12 @@ function PaymentsPageInner() {
             cardsBelow="xl"
             pageSize={PAYMENTS_PAGE_SIZE}
             mobileCard={(p) => {
-            const ctx = quoteById.get(p.quote_id);
+            const ctx = quoteById.get(p.quote_id ?? "");
             const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
             return (
               <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
                 <MaybeQuoteLink
-                  quoteId={p.quote_id}
+                  href={paymentDocHref(p)}
                   enabled={canQuotes}
                   className="block p-3 active:bg-paper-2/50"
                 >
@@ -770,7 +777,7 @@ function PaymentsPageInner() {
                       <p className="font-medium text-ink truncate">
                         {cleanDisplayName(customer?.name ?? ctx?.customerName ?? "—")}
                       </p>
-                      <p className="font-mono text-2xs text-ink-3 mt-0.5">{p.quote_id}</p>
+                      <p className="font-mono text-2xs text-ink-3 mt-0.5">{paymentDocId(p)}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base tabular-nums text-ink">{rupee(p.amount)}</p>
@@ -829,7 +836,7 @@ function PaymentsPageInner() {
             );
             }}
             renderRow={(p) => {
-                const ctx = quoteById.get(p.quote_id);
+                const ctx = quoteById.get(p.quote_id ?? "");
                 const customer = ctx?.customerId ? customerById.get(ctx.customerId) : undefined;
                 return (
                   <PaymentRowView
@@ -948,7 +955,7 @@ function PaymentsPageInner() {
         onOpenChange={(o) => { if (!o) setEditPayment(null); }}
         payment={editPayment}
         customerName={
-          (editPayment && quoteById.get(editPayment.quote_id)?.customerName) || "Customer"
+          (editPayment && quoteById.get(editPayment.quote_id ?? "")?.customerName) || "Customer"
         }
       />
 
@@ -1055,18 +1062,19 @@ function OutstandingRowView({
 
 /** R-237: a quote link for roles that can open quotes, plain content for the rest (billing). */
 function MaybeQuoteLink({
-  quoteId,
+  href,
   enabled,
   className,
   children,
 }: {
-  quoteId: string;
+  /** R-1739: the payment's quote page, or its imported Zoho invoice (lib/payments/payment-source). */
+  href: string;
   enabled: boolean;
   className?: string;
   children: React.ReactNode;
 }) {
   return enabled ? (
-    <Link href={`/quotes/${quoteId}` as never} className={className}>{children}</Link>
+    <Link href={href as never} className={className}>{children}</Link>
   ) : (
     <div className={className}>{children}</div>
   );
@@ -1106,7 +1114,7 @@ function PaymentRowView({
   const canWrite = canWriteSales(me?.role); // R-255
   const canDelete = canDeleteMoney(me?.role); // R-718: owner / accountant only
   const openQuote = canQuotes
-    ? { label: "Open quote", onClick: () => router.push(`/quotes/${p.quote_id}` as any) }
+    ? { label: "Open quote", onClick: () => router.push(paymentDocHref(p) as any) }
     : undefined;
   const noQuoteHint = "The next step is on the quote — ask an owner or manager.";
   // When a delete is blocked (invoice issued / bank-reconciled / add-seats / etc.),
@@ -1141,7 +1149,7 @@ function PaymentRowView({
       + `If it's the only payment, the subscription + auto-created purchase order from this sale are removed too (the customer is kept).\n\n`
       + `Blocked if a GST invoice was already generated, or it's reconciled to a bank line — handle those first.`;
     if (await confirm({
-      title: `Delete this ${rupee(p.amount)} payment on ${p.quote_id}?`,
+      title: `Delete this ${rupee(p.amount)} payment on ${paymentDocId(p)}?`,
       body,
       confirmLabel: "Delete",
       danger: true,
@@ -1169,9 +1177,9 @@ function PaymentRowView({
         ? {
             role: "button",
             tabIndex: 0,
-            "aria-label": `Open quote ${p.quote_id}`,
-            onClick: () => router.push(`/quotes/${p.quote_id}` as any),
-            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(`/quotes/${p.quote_id}` as any); } },
+            "aria-label": `Open ${p.quote_id ? "quote" : "invoice"} ${paymentDocId(p)}`,
+            onClick: () => router.push(paymentDocHref(p) as any),
+            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); router.push(paymentDocHref(p) as any); } },
           }
         : {})}
       aria-selected={selected}
@@ -1210,11 +1218,11 @@ function PaymentRowView({
       <td className="px-3 py-2.5 align-top" onClick={(e) => e.stopPropagation()}>
         <div className="flex flex-col gap-1 items-start">
           {canQuotes ? (
-            <Link href={`/quotes/${p.quote_id}` as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={p.quote_id}>
-              {p.quote_id}
+            <Link href={paymentDocHref(p) as any} className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink hover:text-amber-ink" title={paymentDocId(p)}>
+              {paymentDocId(p)}
             </Link>
           ) : (
-            <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink-2">{p.quote_id}</span>
+            <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-3xs font-semibold text-ink-2">{paymentDocId(p)}</span>
           )}
           {ctx?.invoiceId && (
             <Link href={`/invoices?open=${ctx.invoiceId}` as any} className="font-mono text-3xs text-indigo-ink hover:underline" title="Open GST invoice">{ctx.invoiceId}</Link>
@@ -1249,7 +1257,7 @@ function PaymentRowView({
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
               {canQuotes && (
                 <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
-                  <Link href={`/quotes/${p.quote_id}` as any}>
+                  <Link href={paymentDocHref(p) as any}>
                     <Icon name="external" size={16} /> Open quote
                   </Link>
                 </DropdownMenuItem>
@@ -1300,7 +1308,7 @@ function PaymentRowView({
             tenantAddress={me.tenantAddress}
             tenantState={me.tenantState}
             interState={interState}
-            quoteId={p.quote_id}
+            quoteId={p.quote_id ?? undefined}
           />
         )}
         {refundFlow.element}

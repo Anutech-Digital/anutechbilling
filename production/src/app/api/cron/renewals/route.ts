@@ -209,7 +209,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   const customerIds = uniq(allSubs.map((s) => s.customer_id).filter((x): x is string => Boolean(x)));
 
   type TenantRow = { id: string; name: string; email: string | null; phone: string | null; gstin: string | null; address: string | null; grace_period_days: number | null; state_code: string | null; logo_url: string | null };
-  type CustomerRow = { id: string; name: string; contact_name: string | null; contact_email: string | null; gstin: string | null; contact_phone: string | null; state_code: string | null };
+  type CustomerRow = { id: string; name: string; contact_name: string | null; contact_email: string | null; gstin: string | null; contact_phone: string | null; state_code: string | null; gst_treatment: string | null };
 
   const tenantById = new Map<string, TenantRow>();
   const ingestByTenant = new Map<string, { google_email: string | null }[]>();
@@ -235,7 +235,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
     }
     for (const ids of chunk(customerIds, PREFETCH_CHUNK)) {
       const { data: cs, error: cErr } = await supabase.from("customers")
-        .select("id, name, contact_name, contact_email, gstin, contact_phone, state_code")
+        .select("id, name, contact_name, contact_email, gstin, contact_phone, state_code, gst_treatment")
         .in("id", ids);
       if (cErr) throw new Error(`customers: ${cErr.message}`);
       for (const c of (cs ?? []) as CustomerRow[]) customerById.set(c.id, c);
@@ -583,7 +583,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               // never a hardcoded 18% (which taxed foreign auto-renewals wrongly).
               tax:           Math.round((renewalQuote.subtotal ?? renewalQuote.amount) * (renewalQuote.tax_rate ?? 18) / 100),
               total:         renewalQuote.amount,
-              interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin }),
+              interState:    isInterStateSupply(customer?.state_code, tenant.state_code, { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: customer?.gst_treatment }),
               validityDays:  30,
               notes:         "Renewal quote — auto-generated. Reply or call us with any questions.",
               isRenewal:     true,

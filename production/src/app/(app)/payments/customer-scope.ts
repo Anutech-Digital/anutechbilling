@@ -12,7 +12,7 @@ import { cashReceived } from "@/lib/payments/cash-received";
 
 export interface ScopablePayment {
   customer_id?: string | null;
-  quote_id: string;
+  quote_id: string | null;
 }
 
 /** A payment belongs to the customer by its own customer_id, or — when that is empty
@@ -22,7 +22,7 @@ export function paymentBelongsTo(
   customerId: string,
   quoteCustomerId: (quoteId: string) => string | null | undefined,
 ): boolean {
-  return p.customer_id === customerId || quoteCustomerId(p.quote_id) === customerId;
+  return p.customer_id === customerId || (p.quote_id ? quoteCustomerId(p.quote_id) : undefined) === customerId;
 }
 
 export function scopeToCustomer<

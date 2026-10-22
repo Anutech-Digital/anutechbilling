@@ -10,6 +10,7 @@ import { toastError } from "@/lib/errors/toast-error";
 import { itcEligibility } from "@/lib/gst/itc";
 import { billItcEligibility } from "@/lib/gst/bill-itc";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { evaluateMonthClose, monthEndOf, MANUAL_STEPS, compliancePeriodKey, type MonthClose, type MonthCloseFacts } from "@/lib/accounting/month-close";
 
 function todayIso(): string {
@@ -34,7 +35,8 @@ export function useMonthClose(period: string) {
         supabase.from("salary_payments").select("tds, pf, esi, pf_employer, esi_employer, paid_status").eq("period", period),
         supabase.from("expenses").select("tds_amount").gte("expense_date", from).lte("expense_date", to).gt("tds_amount", 0),
         supabase.from("statutory_dues_payments").select("kind").eq("period", period),
-        supabase.from("invoices").select("tax_amount").gte("invoice_date", from).lte("invoice_date", to).in("status", ["pending", "paid", "overdue"]),
+        /* R-1739: an invoice imported from Zoho Books carries no GST of this month. */
+        onlySaleInvoices(supabase.from("invoices").select("tax_amount")).gte("invoice_date", from).lte("invoice_date", to).in("status", ["pending", "paid", "overdue"]),
         supabase.from("credit_notes").select("tax_amount").gte("credit_date", from).lte("credit_date", to),
         supabase.from("debit_notes").select("tax_amount").gte("debit_date", from).lte("debit_date", to),
         supabase.from("tax_payments").select("id").eq("kind", "gst").eq("period", period),

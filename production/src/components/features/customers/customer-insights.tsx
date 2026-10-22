@@ -30,6 +30,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatPhone, initials, rupee, daysBetween, cn } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
 import { receiptSplitLine } from "@/lib/accounting/tds-receipt";
 
@@ -577,6 +578,8 @@ export function CustomerDetailsGrid({ c }: { c: Customer }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
           <Field label="GSTIN" value={c.gstin} mono badge={c.gstin ? (c.gstin_verified_at ? { kind: "success", text: "verified" } : { kind: "muted", text: "unverified" }) : undefined} />
           <Field label="Place of supply" value={c.state} />
+          <Field label="GST treatment" value={gstTreatmentOption(c.gst_treatment)?.label ?? null} />
+          <Field label="PAN" value={c.pan} mono />
           <Field label="TAN" value={c.tan} mono />
           <Field label="TDS" value={tds} />
         </dl>
@@ -720,6 +723,8 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
             />
           )}
           <Field label={foreign ? "State / Province" : "Place of supply"} value={c.state} />
+          <Field label="GST treatment" value={gstTreatmentOption(c.gst_treatment)?.label ?? null} />
+          {!foreign && c.pan && <Field label="PAN" value={c.pan} mono />}
           {!foreign && c.tan && <Field label="TAN" value={c.tan} mono />}
           {!foreign && tds && <Field label="TDS" value={tds} />}
           <Field label="Payment terms" value={terms} />

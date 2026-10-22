@@ -27,6 +27,7 @@ import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
+import { GstTreatmentSelect, PanInput } from "./gst-treatment-fields";
 import { FieldPill } from "@/components/ui/field-pill";
 import {
   liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
@@ -53,6 +54,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
     contactPersonFields, appendContactPerson, removeContactPerson,
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, countryReg, onCountryChange, submit,
+    gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
   } = useCustomerForm({
     customer,
     open,
@@ -151,6 +153,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
             )}
             <GstinVerifyCard
               gstin={watchedGstin ?? ""}
+              party="customer"
               cached={verification}
               cachedAt={null}
               noPersist  /* don't save yet — customer doesn't exist; ride payload along on submit */
@@ -167,6 +170,23 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
               }}
             />
           </FormField>
+          )}
+
+          {/* R-1736: Zoho-style GST treatment — auto-picked, changeable; SEZ = always IGST. */}
+          <FormField label="GST treatment" required htmlFor="gst_treatment">
+            <GstTreatmentSelect
+              value={gstTreatment}
+              onChange={onTreatmentChange}
+              auto={gstTreatmentAuto}
+              meaning={gstTreatmentMeaning}
+              foreign={isForeign}
+              error={errors.gst_treatment?.message}
+            />
+          </FormField>
+          {!isForeign && (
+            <FormField label="PAN" htmlFor="pan">
+              <PanInput registration={register("pan")} locked={panLocked} error={errors.pan?.message} />
+            </FormField>
           )}
 
           {/* Hidden — derived from GSTIN (India only). Kept in form data so GST
