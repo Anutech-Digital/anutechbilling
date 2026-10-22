@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { paymentCustomerLookup } from "./payment-customer";
+import { paymentCustomerLookup, paymentInvoiceLookup } from "./payment-customer";
 
 const CUST = "c-tabc";
 const lookup = paymentCustomerLookup({
@@ -58,5 +58,48 @@ describe("R-1745 /payments wiring", () => {
   it("no longer reads the customer name from the quote context", () => {
     expect(page).not.toMatch(/ctx\??\.customerName/);
     expect(page).not.toMatch(/ctx\??\.customerId/);
+  });
+});
+
+/* R-1747 — which invoice is a payment on? The refund flow and the receipt voucher read it here:
+   the quote's GST invoice, else (a payment on an imported Zoho invoice) payments.invoice_id. */
+describe("R-1747 paymentInvoiceLookup", () => {
+  const invoiceOf = paymentInvoiceLookup({
+    quotes: [{ id: "Q-0101", invoice_id: "INV-TZA-27-0007" }, { id: "Q-0102", invoice_id: null }],
+    invoices: [
+      { id: "INV-000245", external_number: "INV-000245" },
+      { id: "INV-000300-TYA", external_number: "INV-000300" },
+    ],
+  });
+
+  it("owner's example: ₹15,000 on imported INV-000245 (no quote) → that invoice, opening balance", () => {
+    expect(invoiceOf({ quote_id: null, invoice_id: "INV-000245" }))
+      .toEqual({ invoiceId: "INV-000245", invoiceNumber: "INV-000245", openingBalance: true });
+  });
+
+  it("an imported invoice whose id took a company suffix shows the Zoho number", () => {
+    expect(invoiceOf({ quote_id: null, invoice_id: "INV-000300-TYA" }))
+      .toEqual({ invoiceId: "INV-000300-TYA", invoiceNumber: "INV-000300", openingBalance: true });
+  });
+
+  it("invoice row not loaded yet → still the payment's invoice id (never the quote path)", () => {
+    expect(invoiceOf({ quote_id: null, invoice_id: "INV-000999" }))
+      .toEqual({ invoiceId: "INV-000999", invoiceNumber: "INV-000999", openingBalance: true });
+  });
+
+  it("a quote payment → the quote's GST invoice, not an opening balance", () => {
+    expect(invoiceOf({ quote_id: "Q-0101", invoice_id: null }))
+      .toEqual({ invoiceId: "INV-TZA-27-0007", invoiceNumber: "INV-TZA-27-0007", openingBalance: false });
+    expect(invoiceOf({ quote_id: "Q-0102", invoice_id: null }))
+      .toEqual({ invoiceId: null, invoiceNumber: null, openingBalance: false });
+  });
+});
+
+describe("R-1747 /payments wiring", () => {
+  const page = readFileSync(join(__dirname, "../../app/(app)/payments/page.tsx"), "utf8");
+  it("the refund flow and the receipt read the invoice through paymentInvoiceLookup, not the quote context", () => {
+    expect(page).toContain("paymentInvoiceLookup(");
+    expect(page).not.toMatch(/invoiceId=\{ctx\?\.invoiceId/);
+    expect(page).toContain("openingInvoiceNumber=");
   });
 });

@@ -43,7 +43,7 @@ import { seatQuotePendingText } from "@/lib/subscriptions/seat-quotes-pending";
 import { useAllProjectPayments } from "@/lib/queries/projects";
 import { collectedInMonth } from "@/lib/company/summary";
 import { paymentDocHref, paymentDocId } from "@/lib/payments/payment-source";
-import { paymentCustomerLookup, quotelessInvoiceIds, type PaymentCustomer } from "@/lib/payments/payment-customer";
+import { paymentCustomerLookup, paymentInvoiceLookup, quotelessInvoiceIds, type PaymentCustomer, type PaymentInvoice } from "@/lib/payments/payment-customer";
 import { OpeningInvoiceDuesCard } from "@/components/features/invoices/opening-invoice-dues-card";
 import { useCustomers } from "@/lib/queries/customers";
 import { useBankAccounts } from "@/lib/queries/bank";
@@ -209,6 +209,13 @@ function PaymentsPageInner() {
   const customerOf = React.useMemo(
     () => paymentCustomerLookup({ quotes: quotes ?? [], invoices: invoiceCustomers ?? [], customers: customers ?? [] }),
     [quotes, invoiceCustomers, customers],
+  );
+  /* R-1747: which invoice a payment is on — the quote's GST invoice, else (imported Zoho invoice)
+     payments.invoice_id. The refund flow and the receipt voucher read it from here, so such a
+     payment never goes down the credit-note route or prints "Advance received against service". */
+  const invoiceOf = React.useMemo(
+    () => paymentInvoiceLookup({ quotes: quotes ?? [], invoices: invoiceCustomers ?? [] }),
+    [quotes, invoiceCustomers],
   );
 
   /* R-533: with ?customer= every number on the page is that customer's — the list, the tab
@@ -791,7 +798,6 @@ function PaymentsPageInner() {
             cardsBelow="xl"
             pageSize={PAYMENTS_PAGE_SIZE}
             mobileCard={(p) => {
-            const ctx = quoteById.get(p.quote_id ?? "");
             const who = customerOf(p);
             return (
               <div className="bg-paper border border-hairline rounded-lg overflow-hidden">
@@ -854,7 +860,8 @@ function PaymentsPageInner() {
                   {p.status === "received" && canWrite && (
                     <PaymentRefundButton
                       payment={p}
-                      invoiceId={ctx?.invoiceId ?? null}
+                      invoiceId={invoiceOf(p).invoiceId}
+                      invoiceNumber={invoiceOf(p).invoiceNumber}
                       className="flex flex-1 items-center justify-center gap-1.5 py-2 text-xs font-medium text-rose active:bg-paper-2 border-l border-hairline/60"
                     />
                   )}
@@ -872,6 +879,7 @@ function PaymentsPageInner() {
                     p={p}
                     ctx={ctx}
                     who={who}
+                    inv={invoiceOf(p)}
                     customer={who.customerId ? customerById.get(who.customerId) : undefined}
                     me={me}
                     bankLabel={p.bank_account_id ? bankNameById.get(p.bank_account_id) : undefined}
@@ -1113,6 +1121,7 @@ function PaymentRowView({
   p,
   ctx,
   who,
+  inv,
   customer,
   me,
   bankLabel,
@@ -1124,6 +1133,8 @@ function PaymentRowView({
   ctx?: { paymentStatus: string; invoiceId: string | null };
   /** R-1745: whose payment it is (lib/payments/payment-customer.ts). */
   who: PaymentCustomer;
+  /** R-1747: which invoice it is on (lib/payments/payment-customer.ts paymentInvoiceLookup). */
+  inv: PaymentInvoice;
   customer?: {
     name:           string;
     gstin:          string | null;
@@ -1166,7 +1177,8 @@ function PaymentRowView({
      it too, and it offers the partial refund of credit-note credit. */
   const refundFlow = usePaymentRefundFlow({
     payment: p,
-    invoiceId: ctx?.invoiceId ?? null,
+    invoiceId: inv.invoiceId,
+    invoiceNumber: inv.invoiceNumber,
     onBlocked: (msg) =>
       toast.error(msg, {
         description: canQuotes ? "This block is cleared on the quote or in Banking — the next step is there." : noQuoteHint,
@@ -1290,7 +1302,7 @@ function PaymentRowView({
               {canQuotes && (
                 <DropdownMenuItem asChild className="gap-2.5 py-2 cursor-pointer">
                   <Link href={paymentDocHref(p) as any}>
-                    <Icon name="external" size={16} /> Open quote
+                    <Icon name="external" size={16} /> {p.quote_id ? "Open quote" : "Open invoice"}
                   </Link>
                 </DropdownMenuItem>
               )}
@@ -1341,6 +1353,7 @@ function PaymentRowView({
             tenantState={me.tenantState}
             interState={interState}
             quoteId={p.quote_id ?? undefined}
+            openingInvoiceNumber={inv.openingBalance ? inv.invoiceNumber : undefined}
           />
         )}
         {refundFlow.element}

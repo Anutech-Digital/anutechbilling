@@ -30,6 +30,7 @@ import type { Payment } from "@/lib/supabase/database.types";
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 import { cashReceived } from "@/lib/payments/cash-received";
+import { receiptLine } from "@/lib/payments/receipt-line";
 
 /* Styles ke BANNE se pehle. `StyleSheet.create` ab hi chal jata hai, aur `PDF_FONT`
    ek `let` hai — baad me register karne par style purani value pakde rehti. */
@@ -71,6 +72,10 @@ export interface ReceiptVoucherPDFProps {
 
   /** R-523: "Received ₹A + TDS ₹B = ₹C" when the customer deducted TDS (receiptSplitLine). */
   splitLine?: string | null;
+
+  /** R-1747: the payment is on an invoice imported from Zoho Books (its number) — a plain
+   *  payment receipt against that opening balance: no advance wording, no GST split. */
+  openingInvoiceNumber?: string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -320,7 +325,10 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     gstRate = 18,
     quoteId,
     splitLine,
+    openingInvoiceNumber,
   } = props;
+  /* R-1747: one description for the screen and the PDF (lib/payments/receipt-line.ts). */
+  const line = receiptLine({ quoteId, openingInvoiceNumber });
 
   /* R-1565: the money received on THIS voucher. Advance credit applied to the payment was
      received (and receipted, with its GST) on an earlier voucher — not counted again. */
@@ -344,14 +352,14 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
     <Document
       title={`Receipt Voucher ${payment.receipt_voucher_no ?? payment.id}`}
       author={tenantName}
-      subject={`Receipt Voucher for advance received from ${customerName}`}
+      subject={line.advance ? `Receipt Voucher for advance received from ${customerName}` : `Receipt Voucher for payment received from ${customerName}`}
     >
       <Page size="A4" style={s.page}>
 
         {/* ── Title ───────────────────────────────────────────────── */}
         <View style={s.titleBar}>
           {isRenderableLogo(tenantLogo) && <Image src={tenantLogo} style={s.brandLogo} />}
-          <Text style={s.titleEyebrow}>GST-compliant advance receipt</Text>
+          <Text style={s.titleEyebrow}>{line.advance ? "GST-compliant advance receipt" : "Payment receipt"}</Text>
           <Text style={s.titleMain}>Receipt Voucher</Text>
           <Text style={s.titleId}>{payment.receipt_voucher_no ?? "(not numbered)"}</Text>
         </View>
@@ -397,16 +405,23 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
               {payment.reference ?? "—"}
             </Text>
           </View>
-          {quoteId && (
+          {openingInvoiceNumber ? (
+            <View style={s.metaCell}>
+              <Text style={s.metaLabel}>Against invoice</Text>
+              <Text style={[s.metaValue, s.metaMono, { fontSize: 9 }]}>{openingInvoiceNumber}</Text>
+            </View>
+          ) : quoteId ? (
             <View style={s.metaCell}>
               <Text style={s.metaLabel}>Against quote</Text>
               <Text style={[s.metaValue, s.metaMono, { fontSize: 9 }]}>{quoteId}</Text>
             </View>
-          )}
+          ) : null}
+          {line.advance ? (
           <View style={s.metaCell}>
             <Text style={s.metaLabel}>Place of supply</Text>
             <Text style={s.metaValue}>{placeOfSupply}</Text>
           </View>
+          ) : null}
         </View>
 
         {/* ── Breakdown ───────────────────────────────────────────── */}
@@ -421,14 +436,14 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
           <View style={s.tableRow}>
             <View style={s.tdDesc}>
               <Text style={s.lineName}>
-                Advance received against {quoteId ? `quote ${quoteId}` : "service"}
+                {line.description}
               </Text>
-              <Text style={s.lineMeta}>HSN/SAC: 998313 · Reseller services</Text>
+              {line.advance ? <Text style={s.lineMeta}>HSN/SAC: 998313 · Reseller services</Text> : null}
             </View>
-            <Text style={s.tdAmt}>{pdfRupee(taxable)}</Text>
+            <Text style={s.tdAmt}>{pdfRupee(line.advance ? taxable : received)}</Text>
           </View>
 
-          {interState ? (
+          {!line.advance ? null : interState ? (
             <View style={s.tableRow}>
               <Text style={[s.tdDesc, s.taxLine]}>IGST @ {gstRate}%</Text>
               <Text style={[s.tdAmt, { fontFamily: PDF_FONT }]}>{pdfRupee(igst)}</Text>
@@ -473,6 +488,14 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
         </Text>
 
         {/* ── GST treatment notice ────────────────────────────────── */}
+        {!line.advance ? (
+        <View style={s.gstNotice}>
+          <Text style={s.gstNoticeBody}>
+            No GST on this receipt: invoice {openingInvoiceNumber} was issued earlier and its GST was
+            charged and reported on that invoice. This receipt records the payment against its open balance.
+          </Text>
+        </View>
+        ) : (
         <View style={s.gstNotice}>
           <Text style={s.gstNoticeTitle}>GST treatment of this advance</Text>
           <Text style={s.gstNoticeBody}>
@@ -482,6 +505,7 @@ export function ReceiptVoucherPDF(props: ReceiptVoucherPDFProps) {
             and this receipt voucher will be adjusted against that invoice.
           </Text>
         </View>
+        )}
 
         {/* ── Notes ───────────────────────────────────────────────── */}
         {payment.notes && (

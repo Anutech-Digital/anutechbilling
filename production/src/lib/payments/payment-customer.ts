@@ -55,3 +55,36 @@ export function paymentCustomerLookup(lists: {
 export function quotelessInvoiceIds(payments: ReadonlyArray<PaymentSource>): string[] {
   return [...new Set(payments.filter((p) => !p.quote_id && p.invoice_id).map((p) => p.invoice_id as string))];
 }
+
+/**
+ * R-1747 — which invoice is a payment on? One answer for the refund flow and the receipt voucher.
+ *
+ * A quote payment → the quote's GST invoice (null while none is issued). A payment with no quote
+ * and payments.invoice_id set is on an invoice imported from Zoho Books (R-1739: the database
+ * allows a quote-less payment only on such an invoice) — an opening balance, which cannot take
+ * a credit note here. invoiceNumber is the number as printed in Zoho (external_number), since the
+ * stored id can carry a company suffix when the number was already taken.
+ */
+export interface PaymentInvoice {
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  openingBalance: boolean;
+}
+
+export function paymentInvoiceLookup(lists: {
+  quotes: ReadonlyArray<{ id: string; invoice_id: string | null }>;
+  invoices: ReadonlyArray<{ id: string; external_number?: string | null }>;
+}): (p: PaymentSource) => PaymentInvoice {
+  const quoteInvoice = new Map(lists.quotes.map((q) => [q.id, q.invoice_id]));
+  const numbers = new Map(lists.invoices.map((i) => [i.id, i.external_number?.trim() || null]));
+  return (p) => {
+    if (p.quote_id) {
+      const id = quoteInvoice.get(p.quote_id) ?? null;
+      return { invoiceId: id, invoiceNumber: id, openingBalance: false };
+    }
+    if (p.invoice_id) {
+      return { invoiceId: p.invoice_id, invoiceNumber: numbers.get(p.invoice_id) ?? p.invoice_id, openingBalance: true };
+    }
+    return { invoiceId: null, invoiceNumber: null, openingBalance: false };
+  };
+}
