@@ -907,7 +907,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
                   if (phone) setValue("contact_phone", commitPhone(phone), { shouldDirty: true });
                   if (c.gstin) setValue("gstin", c.gstin, { shouldDirty: true });
                 }} />
-              <p className="mt-1 text-xs text-ink-3">Upsell, zyada seats ya naya project — customer ki details khud bhar jaati hain, badal bhi sakte ho.</p>
+              <p className="mt-1 text-xs text-ink-3">Upsell, more seats or a new project — the customer details fill in automatically, and you can still change them.</p>
             </FormField>
           )}
 
@@ -931,7 +931,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
               <div className="min-w-0 flex-1 text-xs text-amber-ink leading-snug">
                 <b>{duplicateWarning(dupMatch).title}</b>
                 {" · "}{duplicateWarning(dupMatch).matched}.
-                Naya banane ke bajaye usi ko kholein? (Save phir bhi ho sakta hai.)
+                Open it instead of creating a new one? (You can still save.)
                 <button
                   type="button"
                   onClick={() => {

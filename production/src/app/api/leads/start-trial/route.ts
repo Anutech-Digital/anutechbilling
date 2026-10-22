@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
 
   if (leadErr) {
     // Raw DB text client ko nahi (S21) — server log me [route] prefix ke saath.
-    return errorResponse("[api/leads/start-trial]", "POST", new RouteError(500, "Trial shuru nahi hua — lead save nahi hui. Dobara try kariye.", leadErr.message));
+    return errorResponse("[api/leads/start-trial]", "POST", new RouteError(500, "Trial not started — the lead was not saved. Please try again.", leadErr.message));
   }
 
   // Auto-create follow-up tasks (Day 7 / 12 / 14)

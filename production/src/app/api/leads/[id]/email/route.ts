@@ -44,7 +44,7 @@ export const POST = withRoute({
   route: "api/leads/[id]/email",
   input: bodySchema,
   permission: "can_contact_customers",
-  roleHint: "Aapka role leads ko email nahi bhej sakta — workspace owner se kahiye.",
+  roleHint: "Your role cannot email leads. Ask the workspace owner.",
 }, async ({ user, tenantId, params, input }) => {
   const parsed = input;
 

@@ -71,7 +71,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
       if (lead && verdict && !verdict.ok) {
         toast.error(verdict.title, {
           description: verdict.description,
-          action: { label: "Lead kholo", onClick: () => setSelected(lead) },
+          action: { label: "Open lead", onClick: () => setSelected(lead) },
         });
       } else if (lead && lead.stage !== toStage) {
         // Dropping onto Lost opens the reason prompt first; if it's dismissed

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const schema = z.object({ profileId: z.string().min(1, "profileId chahiye.") });
+const schema = z.object({ profileId: z.string().min(1, "profileId is required.") });
 
 export const POST = withRoute(
   { route: "api/leads/finder/run", input: schema, roles: ["owner", "manager"] },

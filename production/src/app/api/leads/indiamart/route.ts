@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ROUTE = "api/leads/indiamart";
-const OWNER_ONLY = { roles: ["owner"] as const, roleHint: "Sirf workspace owner IndiaMART key save kar sakta hai — owner se kahiye." };
+const OWNER_ONLY = { roles: ["owner"] as const, roleHint: "Only the workspace owner can save the IndiaMART key. Ask the owner." };
 
 export const GET = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId, user }) => {
   const db = createAdminClientFor(user.id);
@@ -34,7 +34,7 @@ export const GET = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId,
     db.from("indiamart_sync_state").select("last_run_at, last_ok, last_error, last_imported").eq("tenant_id", tenantId).maybeSingle(),
     db.from("indiamart_lead_imports").select("query_id", { count: "exact", head: true }).eq("tenant_id", tenantId),
   ]);
-  dbFail(sec.error, "IndiaMART setting padhi nahi gayi — page refresh karke dobara try kariye.");
+  dbFail(sec.error, "Could not read the IndiaMART setting — reload the page and try again.");
 
   const stored = sec.data?.indiamart_crm_key ?? null;
   let last4: string | null = null;
@@ -66,12 +66,12 @@ export const POST = withRoute({ route: ROUTE, input: crmKeySchema, ...OWNER_ONLY
   const sealed = trySealTenantSecrets({ tenant_id: tenantId, indiamart_crm_key: input.crm_key });
   if (!sealed.ok) throw new RouteError(sealed.status, sealed.error);
   const { error } = await createAdminClientFor(user.id).from("tenant_secrets").upsert(sealed.row, { onConflict: "tenant_id" });
-  dbFail(error, "IndiaMART key save nahi hui — dobara try kariye.");
+  dbFail(error, "Could not save the IndiaMART key — please try again.");
   return { encrypted: true };
 });
 
 export const DELETE = withRoute({ route: ROUTE, ...OWNER_ONLY }, async ({ tenantId, user }) => {
   const { error } = await createAdminClientFor(user.id).from("tenant_secrets").update({ indiamart_crm_key: null }).eq("tenant_id", tenantId);
-  dbFail(error, "IndiaMART key hati nahi — dobara try kariye.");
+  dbFail(error, "Could not remove the IndiaMART key — please try again.");
   return {};
 });

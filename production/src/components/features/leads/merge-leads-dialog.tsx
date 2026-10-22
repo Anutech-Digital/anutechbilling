@@ -83,9 +83,9 @@ export function MergeLeadsDialog({
             Merge duplicate leads
           </DialogTitle>
           <p className="text-xs text-ink-3">
-            Jise <b className="text-ink-2">rakhna</b> hai use chuno. Baaki us me mil jayenge —
-            unke activities / quotes / tasks primary par shift, khaali fields bhar jayenge,
-            bada deal value rahega. <b className="text-rose">Ye undo nahi hota.</b>
+            Pick the lead to <b className="text-ink-2">keep</b>. The others merge into it —
+            their activities / quotes / tasks move to it, empty fields get filled in, and
+            the larger deal value stays. <b className="text-rose">This cannot be undone.</b>
           </p>
         </DialogHeader>
 
