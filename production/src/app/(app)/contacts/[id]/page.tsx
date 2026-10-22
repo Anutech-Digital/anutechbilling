@@ -22,6 +22,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { LeadHistoryCard } from "@/components/features/contacts/lead-history-card";
+import { RelationshipEditor } from "@/components/features/contacts/relationship-chip";
 import { initials, formatDate, cn } from "@/lib/utils";
 
 // ── Social handle → full URL. Accepts a full URL, a bare domain path, or a
@@ -138,6 +139,8 @@ export default function ContactDetailPage() {
             </p>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               <Badge kind="muted" size="sm" dot>Contact</Badge>
+              {/* R-1740: my relationship with them — click to change (same editor as on a lead / customer). */}
+              <RelationshipEditor contactId={contact.id} type={contact.relationship_type} closeness={contact.closeness} personName={contact.full_name} size="sm" />
               {contact.city && <span className="text-2xs text-ink-3 inline-flex items-center gap-1"><Icon name="globe" size={11} /> {contact.city}</span>}
               <span className="text-2xs text-ink-3">Added {formatDate(contact.created_at)}</span>
             </div>

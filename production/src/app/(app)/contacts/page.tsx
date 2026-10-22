@@ -12,7 +12,14 @@ import type { Route } from "next";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
-import { useAllContacts, contactKind, type ContactKind, type UnifiedContact } from "@/lib/queries/contacts";
+import { useAllContacts, type UnifiedContact } from "@/lib/queries/contacts";
+import {
+  BIZ_LABEL, applyFacets, asBizFacet, asRelFacet, facetCounts, isCompanyWithoutPerson,
+  type BizFacet, type RelFacet,
+} from "@/lib/contacts/relationship";
+import { ContactsFacetRows, RelationshipBusinessGrid } from "@/components/features/contacts/contacts-facets";
+import { RelationshipChip } from "@/components/features/contacts/relationship-chip";
+import { RelationshipMap } from "@/components/features/contacts/relationship-map";
 import ImportContactsDialog from "@/components/features/contacts/import-contacts-dialog";
 import { ContactForm } from "@/components/features/contacts/contact-form";
 import CampaignComposerDialog from "@/components/features/campaigns/campaign-composer-dialog";
@@ -24,7 +31,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
@@ -33,31 +39,21 @@ import { initials } from "@/lib/utils";
 import { useUrlState } from "@/lib/hooks/use-url-state";
 
 
-// Contacts are grouped by their unified "kind" (see contactKind): leads +
-// customers come from their own tables; partners / vendors / personal / other
-// are standalone contacts classified by their `relationship` field.
-const KIND_META: Record<ContactKind, { label: string; dot: TabBarItem["dot"]; badge: "success" | "warning" | "info" | "muted" }> = {
-  lead:     { label: "Leads",     dot: "amber",   badge: "warning" },
-  customer: { label: "Companies", dot: "emerald", badge: "success" },
-  partner:  { label: "Partners",  dot: "indigo",  badge: "info"    },
-  vendor:   { label: "Vendors",   dot: "slate",   badge: "muted"   },
-  employee: { label: "Employees", dot: "emerald", badge: "success" },
-  personal: { label: "Personal",  dot: "rose",    badge: "info"    },
-  other:    { label: "Not decided", dot: "slate", badge: "muted"   },
-};
-const KIND_ORDER: ContactKind[] = ["lead", "customer", "partner", "vendor", "employee", "personal", "other"];
-// Singular label for the per-row badge.
-const KIND_BADGE_LABEL: Record<ContactKind, string> = {
-  lead: "Lead", customer: "Company", partner: "Partner", vendor: "Vendor", employee: "Employee", personal: "Personal", other: "Not decided",
+// R-1740: two sides per person. BUSINESS comes from links (a lead, a customer, a vendor or
+// referral partner row) — never chosen by hand. RELATIONSHIP is mine to set (Friend ·
+// Close …). The old one-dimension "kind" tabs (Lead / Company / Partner / Vendor /
+// Employee / Personal / Not decided) mixed the two.
+const BIZ_BADGE: Record<BizFacet, "success" | "warning" | "info" | "muted"> = {
+  lead: "warning", customer: "success", vendor_partner: "info", none: "muted",
 };
 
-const CONTACT_COL_ORDER = ["select", "name", "company", "email", "phone", "source", "action"];
+const CONTACT_COL_ORDER = ["select", "name", "company", "email", "phone", "business", "relationship", "action"];
 // Fluid percentage widths (sum = 100%) so the table always fits its container
 // with no horizontal scroll — replaces the old fixed-pixel resizable columns
 // that overflowed narrow laptops. Dropped the low-value "Created" column (still
 // on the detail page) to give Email / Company readable room.
 const CONTACT_COL_WIDTHS: Record<string, string> = {
-  select: "4%", name: "20%", company: "17%", email: "23%", phone: "15%", source: "10%", action: "11%",
+  select: "4%", name: "18%", company: "14%", email: "20%", phone: "13%", business: "10%", relationship: "13%", action: "8%",
 };
 
 export default function ContactsPage() {
@@ -65,9 +61,18 @@ export default function ContactsPage() {
   const qc = useQueryClient();
   const { data: contacts, isLoading, error, refetch } = useAllContacts();
 
-  /* R-286: tab and search live in the URL — open a contact, press Back, same list. */
-  const [tab, setTab]       = useUrlState("tab", "all");
-  const [search, setSearch] = useUrlState("q");
+  /* R-286: filters and search live in the URL — open a contact, press Back, same list.
+     R-1740: ?biz=&rel= so a grid cell is a link you can share; ?view=map; ?missing=1 lists
+     the companies that have no contact person yet. */
+  const [bizParam, setBizParam] = useUrlState("biz");
+  const [relParam, setRelParam] = useUrlState("rel");
+  const [view, setView]         = useUrlState("view", "list");
+  const [missing, setMissing]   = useUrlState("missing");
+  const [search, setSearch]     = useUrlState("q");
+  const biz = asBizFacet(bizParam);
+  const rel = asRelFacet(relParam);
+  const setBiz = (v: BizFacet | "all") => setBizParam(v === "all" ? "" : v);
+  const setRel = (v: RelFacet | "all") => setRelParam(v === "all" ? "" : v);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = React.useState(false);
   const [addOpen, setAddOpen] = React.useState(false);
@@ -147,9 +152,8 @@ export default function ContactsPage() {
   // filter only ever HID the tenant's own rows. Removed 2026-08-13.
   const contactsByWorkspace = React.useMemo(() => contacts ?? [], [contacts]);
 
-  // Filter
-  const filtered = contactsByWorkspace.filter((c) => {
-    if (tab !== "all" && contactKind(c) !== tab) return false;
+  // Search first; the facets and their counts work on what the search left.
+  const searched = contactsByWorkspace.filter((c) => {
     if (search.trim()) {
       const s = search.toLowerCase();
       const inArr = (arr?: string[]) => (arr ?? []).some((v) => v.toLowerCase().includes(s));
@@ -169,23 +173,14 @@ export default function ContactsPage() {
     return true;
   });
 
-  // Counts by unified kind
-  const counts: Record<string, number> = { all: contactsByWorkspace.length };
-  for (const c of contactsByWorkspace) {
-    const k = contactKind(c);
-    counts[k] = (counts[k] ?? 0) + 1;
-  }
-  // "All" always; each kind chip only when it has members (keeps the bar clean —
-  // no empty "Vendors 0" until the owner actually adds one).
-  const tabsWithCounts: TabBarItem[] = [
-    { id: "all", label: "All", count: counts.all ?? 0 },
-    ...KIND_ORDER.filter((k) => (counts[k] ?? 0) > 0).map((k) => ({
-      id: k,
-      label: KIND_META[k].label,
-      dot: KIND_META[k].dot,
-      count: counts[k] ?? 0,
-    })),
-  ];
+  /* R-1740: counts are PEOPLE only. A company with nobody on it is not a person — it is
+     counted apart ("N companies without a contact person — add one"). */
+  const showMissing = missing === "1";
+  const counts = facetCounts(searched, { biz, rel });
+  const filtered = showMissing ? searched.filter(isCompanyWithoutPerson) : applyFacets(searched, { biz, rel });
+  const people = contactsByWorkspace.filter((c) => !isCompanyWithoutPerson(c));
+  const companiesWithoutPerson = contactsByWorkspace.length - people.length;
+  const clearFilters = () => { setBiz("all"); setRel("all"); setSearch(""); setMissing(""); };
 
   // Selection helpers
   const allFilteredSelected =
@@ -245,11 +240,11 @@ export default function ContactsPage() {
     );
   };
 
-  // KPIs
-  const totalEmails = (contacts ?? []).filter((c) => c.email).length;
-  const totalPhones = (contacts ?? []).filter((c) => c.phone).length;
-  const reachablePct = (contacts?.length ?? 0) > 0
-    ? Math.round((totalEmails / (contacts?.length ?? 1)) * 100)
+  // KPIs — over people (R-1740), so "with email" can never count a company with nobody on it.
+  const totalEmails = people.filter((c) => c.email).length;
+  const totalPhones = people.filter((c) => c.phone).length;
+  const reachablePct = people.length > 0
+    ? Math.round((totalEmails / people.length) * 100)
     : 0;
 
   return (
@@ -295,24 +290,78 @@ export default function ContactsPage() {
           showed. This strip frees that vertical space for the contacts. */}
       {!isLoading && contacts && (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-hairline bg-paper px-4 py-2.5">
-          <StatItem value={contacts.length} label="contacts" />
+          <StatItem value={people.length} label="people" />
           <StatDivider />
           <StatItem value={totalEmails} label="with email" hint={`${reachablePct}% reachable`} icon="mail" />
           <StatDivider />
           <StatItem value={totalPhones} label="with phone" hint="WhatsApp reachable" icon="whatsapp" />
-          <StatDivider />
-          <StatItem value={counts.customer ?? 0} label="companies" hint={`${counts.lead ?? 0} prospects too`} />
+          {companiesWithoutPerson > 0 && (<>
+            <StatDivider />
+            <button
+              type="button"
+              onClick={() => setMissing(showMissing ? "" : "1")}
+              aria-pressed={showMissing}
+              className="text-xs text-amber-ink hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded"
+            >
+              {companiesWithoutPerson} {companiesWithoutPerson === 1 ? "company" : "companies"} without a contact person — add one
+            </button>
+          </>)}
         </div>
       )}
 
-      {/* Filter + search */}
+      {/* Filter + search — R-1740: Business (from links) and Relationship (mine), faceted,
+          with the Relationship × Business grid beside them. */}
       {!isLoading && contacts && contacts.length > 0 && (
         <>
-          <TabBar value={tab} onChange={setTab} items={tabsWithCounts} className="overflow-y-hidden" />
+          {showMissing ? (
+            <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-hairline bg-paper px-4 py-2.5">
+              <p className="text-sm text-ink">
+                <b>Companies without a contact person.</b>{" "}
+                <span className="text-ink-3">Open one and add the person you deal with there.</span>
+              </p>
+              <Button size="sm" icon="arrow_left" onClick={() => setMissing("")}>Back to people</Button>
+            </div>
+          ) : (
+            <div className="flex gap-4 flex-wrap items-start justify-between rounded-lg border border-hairline bg-paper px-4 py-3">
+              <ContactsFacetRows counts={counts} biz={biz} rel={rel} onBiz={setBiz} onRel={setRel} />
+              <RelationshipBusinessGrid
+                grid={counts.grid}
+                biz={biz}
+                rel={rel}
+                onPick={(b, r) => {
+                  // Same cell again = clear, so the grid is also the way back.
+                  if (b === biz && r === rel) { setBiz("all"); setRel("all"); }
+                  else { setBiz(b); setRel(r); }
+                }}
+              />
+            </div>
+          )}
           <div className="flex justify-between items-center gap-3 flex-wrap">
-            <div className="text-xs text-ink-3">
-              Showing {filtered.length} of {counts.all ?? 0} contacts
-              {selected.size > 0 && ` · ${selected.size} selected`}
+            <div className="flex items-center gap-3 flex-wrap">
+              {!showMissing && (
+                <div role="group" aria-label="View" className="inline-flex rounded-md border border-hairline overflow-hidden">
+                  {(["list", "map"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      aria-pressed={view === v}
+                      onClick={() => setView(v)}
+                      className={`inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber ${
+                        view === v ? "bg-amber-soft text-amber-ink" : "bg-paper text-ink-2 hover:bg-paper-2"
+                      }`}
+                    >
+                      <Icon name={v === "list" ? "list" : "target"} size={13} />
+                      {v === "list" ? "List" : "Map"}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="text-xs text-ink-3">
+                {showMissing
+                  ? `${filtered.length} ${filtered.length === 1 ? "company" : "companies"}`
+                  : `Showing ${filtered.length} of ${people.length} people`}
+                {selected.size > 0 && ` · ${selected.size} selected`}
+              </div>
             </div>
             <div className="w-72">
               <Input
@@ -325,6 +374,11 @@ export default function ContactsPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* R-1740: the Map view — rings by closeness, colour by relationship. */}
+      {!isLoading && !error && !showMissing && view === "map" && filtered.length > 0 && (
+        <RelationshipMap people={filtered} onOpen={openContact} />
       )}
 
       {/* Error — R-1535: plain words + Try again; the raw database text goes to the console. */}
@@ -366,14 +420,14 @@ export default function ContactsPage() {
         <EmptyState
           icon="search"
           title="No contacts match"
-          body={search ? `No results for "${search}".` : `No contacts in "${tab}".`}
-          action={<Button icon="x" onClick={() => { setTab("all"); setSearch(""); }}>Clear filters</Button>}
+          body={search ? `No results for "${search}".` : "Nobody matches these filters."}
+          action={<Button icon="x" onClick={clearFilters}>Clear filters</Button>}
           compact
         />
       )}
 
       {/* Mobile card list — phones only */}
-      {!isLoading && !error && filtered.length > 0 && (
+      {!isLoading && !error && filtered.length > 0 && (showMissing || view !== "map") && (
         <ul className="md:hidden space-y-2 mb-3">
           {filtered.map((c) => (
             <li key={c.id} onClick={() => openContact(c)} className="bg-paper border border-hairline rounded-lg p-3 cursor-pointer hover:border-hairline-strong transition-colors">
@@ -385,7 +439,7 @@ export default function ContactsPage() {
                   </p>
                   {c.isCompany && c.title && <p className="text-xs text-ink-2 truncate mt-0.5">{c.title}</p>}
                   {c.company && <p className="text-xs text-ink-3 truncate mt-0.5">{c.company}</p>}
-                  {c.isCompany && !c.email && !c.phone && (
+                  {isCompanyWithoutPerson(c) && (
                     <p className="text-2xs text-ink-3 italic mt-1">No contact person yet</p>
                   )}
                   {c.email && (
@@ -407,14 +461,13 @@ export default function ContactsPage() {
                     </a>
                   )}
                 </div>
-                <div className="shrink-0">
-                  <Badge
-                    kind={KIND_META[contactKind(c)].badge}
-                    size="sm"
-                    dot
-                  >
-                    {KIND_BADGE_LABEL[contactKind(c)]}
+                <div className="shrink-0 flex flex-col items-end gap-1">
+                  <Badge kind={BIZ_BADGE[c.business ?? "none"]} size="sm" dot>
+                    {BIZ_LABEL[c.business ?? "none"]}
                   </Badge>
+                  {!isCompanyWithoutPerson(c) && (
+                    <RelationshipChip type={c.relationshipType} closeness={c.closeness} size="sm" />
+                  )}
                 </div>
               </div>
             </li>
@@ -428,7 +481,7 @@ export default function ContactsPage() {
           visible frame (reachable without scrolling the whole page down), and the
           sticky header stays put while rows scroll. table-fixed + min-w keeps the
           columns readable on narrow widths instead of crushing. */}
-      {!isLoading && !error && filtered.length > 0 && (
+      {!isLoading && !error && filtered.length > 0 && (showMissing || view !== "map") && (
         <div className="hidden md:block w-full max-w-full border border-hairline rounded-md overflow-y-auto overflow-x-hidden bg-paper flex-1 min-h-0">
           <table className="w-full table-fixed">
             <colgroup>
@@ -449,7 +502,8 @@ export default function ContactsPage() {
                 <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Company</th>
                 <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Email</th>
                 <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Phone</th>
-                <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Source</th>
+                <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Business</th>
+                <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline text-left p-3 text-xs font-semibold text-ink-3 uppercase tracking-wider">Relationship</th>
                 <th className="sticky top-0 z-10 bg-paper-2 border-b border-hairline w-20"></th>
               </tr>
             </thead>
@@ -491,7 +545,7 @@ export default function ContactsPage() {
                       </div>
                     </td>
                     <td className="p-3 text-sm text-ink-2 truncate" title={c.company}>{c.company}</td>
-                    {c.isCompany && !c.email && !c.phone ? (
+                    {isCompanyWithoutPerson(c) ? (
                       /* R-535: a company with nobody on it yet says so, instead of two dashes
                          that read like a broken person row. */
                       <td colSpan={2} className="p-3 text-xs italic text-ink-3 truncate">
@@ -511,13 +565,15 @@ export default function ContactsPage() {
                       )}
                     </td>
                     </>)}
-                    <td className="p-3">
-                      <Badge
-                        kind={KIND_META[contactKind(c)].badge}
-                        dot
-                      >
-                        {KIND_BADGE_LABEL[contactKind(c)]}
+                    <td className="p-3 truncate">
+                      <Badge kind={BIZ_BADGE[c.business ?? "none"]} dot>
+                        {BIZ_LABEL[c.business ?? "none"]}
                       </Badge>
+                    </td>
+                    <td className="p-3 truncate">
+                      {isCompanyWithoutPerson(c)
+                        ? <span className="text-xs text-ink-3">—</span>
+                        : <RelationshipChip type={c.relationshipType} closeness={c.closeness} />}
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
                       {/* Quick-reach actions — a contacts directory's core job is

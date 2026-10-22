@@ -12,6 +12,24 @@ import type { useChangeLeadStage } from "@/lib/leads/use-change-stage";
 import type { Lead } from "@/lib/supabase/database.types";
 import { STAGE_LABEL } from "@/lib/leads/stage-meta";
 import { leadTitle } from "@/lib/leads/display-name";
+import { useContact } from "@/lib/queries/contacts";
+import { RelationshipEditor } from "@/components/features/contacts/relationship-chip";
+
+/** R-1740: my relationship with the lead's person — kept on the lead's anchor contact
+ *  (leads.contact_id), so the Contacts page, the Map and this chip read one fact. */
+function LeadRelationship({ lead }: { lead: Lead }) {
+  const { data: contact } = useContact(lead.contact_id ?? undefined);
+  if (!lead.contact_id || !contact) return null;
+  return (
+    <RelationshipEditor
+      contactId={contact.id}
+      type={contact.relationship_type}
+      closeness={contact.closeness}
+      personName={lead.contact_name || contact.full_name}
+      size="sm"
+    />
+  );
+}
 
 export interface LeadDetailHeaderProps {
   lead: Lead;
@@ -72,6 +90,7 @@ export function LeadDetailHeader({ lead, stageLabel, confirm, changeStage, onClo
             <option key={s} value={s}>{STAGE_LABEL[s]}</option>
           ))}
         </select>
+        <LeadRelationship lead={lead} />
       </div>
 
       {/* Contact identity, moved up here 23 Aug 2026 out of a card at the top of

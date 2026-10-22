@@ -10,7 +10,7 @@ import { join } from "path";
 
 const PAGES: Record<string, string[]> = {
   tasks: ["tab", "assignee"],
-  contacts: ["tab", "search"],
+  contacts: ["bizParam", "relParam", "view", "missing", "search"],  // R-1740: Business / Relationship facets + Map view replaced the kind tab
   enquiries: ["folder", "query"],
   "online-orders": ["tab", "focus", "search"],
 };

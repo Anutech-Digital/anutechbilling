@@ -3109,6 +3109,7 @@ export type Database = {
           anniversary: string | null
           birthday: string | null
           city: string | null
+          closeness: string | null
           company: string | null
           created_at: string
           customer_id: string | null
@@ -3132,6 +3133,7 @@ export type Database = {
           promoted_at: string | null
           promoted_to_lead_id: string | null
           relationship: string | null
+          relationship_type: string
           role: string | null
           source: string
           status: string
@@ -3148,6 +3150,7 @@ export type Database = {
           anniversary?: string | null
           birthday?: string | null
           city?: string | null
+          closeness?: string | null
           company?: string | null
           created_at?: string
           customer_id?: string | null
@@ -3171,6 +3174,7 @@ export type Database = {
           promoted_at?: string | null
           promoted_to_lead_id?: string | null
           relationship?: string | null
+          relationship_type?: string
           role?: string | null
           source?: string
           status?: string
@@ -3187,6 +3191,7 @@ export type Database = {
           anniversary?: string | null
           birthday?: string | null
           city?: string | null
+          closeness?: string | null
           company?: string | null
           created_at?: string
           customer_id?: string | null
@@ -3210,6 +3215,7 @@ export type Database = {
           promoted_at?: string | null
           promoted_to_lead_id?: string | null
           relationship?: string | null
+          relationship_type?: string
           role?: string | null
           source?: string
           status?: string
