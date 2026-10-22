@@ -1,17 +1,20 @@
 "use client";
 
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
-import { cn } from "@/lib/utils";
 import { IconButton } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { useConfirm } from "@/components/providers/confirm-provider";
+import { SEAT_LINE_OPTIONAL_CONFIRM } from "@/lib/quotes/optional-line";
 
 // ============================================================
-// LineAdjustControls — what the CUSTOMER may change on the public quote page.
+// What the CUSTOMER may change on the public quote page.
 //
 // Off by default, and that default is the point: a quote where the buyer can edit
 // anything is an order form the seller has not seen. The reseller opts each line in,
@@ -26,10 +29,14 @@ import {
 //
 // R-1754 (owner, 22 Oct 2026): the "Customer can ☐ add / remove" box no longer sits on
 // every line. Most lines are required — the box was noise, and a stray tick let a buyer drop
-// a required line and pay less. "Make optional for customer" now lives in the line's ⋯ menu
-// (LineMoreMenu). A line that IS optional shows a chip saying so, with its "Starts ticked /
-// unticked" choice next to it. The data (optional, included_by_default) and the public Accept
-// page are unchanged, so a quote that already has optional lines opens with the chip showing.
+// a required line and pay less. "Make optional for customer" lives in the line's ⋯ menu.
+//
+// R-1755 (owner, 22 Oct 2026): the big "Optional · customer can remove" chip and its
+// "Starts Ticked | Unticked" switch took space in the description column. Now an optional line
+// shows a one-word "Optional" tag right after its name (OptionalTag), and "Starts ticked for the
+// customer" + "Make required" sit in the same ⋯ menu. Making a plan / seat line optional asks
+// first (lib/quotes/optional-line.ts) — a second plan may be an optional extra, but the buyer
+// can then drop those seats. Data (optional, included_by_default) and the Accept page unchanged.
 // ============================================================
 
 /** Patch that makes a line optional (starts unticked, the safe default) or required again. */
@@ -40,52 +47,57 @@ export function optionalPatch(makeOptional: boolean, line: QuoteLineItem): Parti
     : { optional: undefined, included_by_default: undefined };
 }
 
-/** The chip on an optional line. Renders nothing on a required line. */
-export function LineAdjustControls({ line, onChange }: {
-  line: QuoteLineItem;
-  onChange: (patch: Partial<QuoteLineItem>) => void;
-}) {
+/** The one-word tag after an optional line's name. Renders nothing on a required line. */
+export function OptionalTag({ line }: { line: Pick<QuoteLineItem, "optional" | "included_by_default"> }) {
   if (!line.optional) return null;
-  const ticked = !!line.included_by_default;
-  const seg = (on: boolean) => cn(
-    "px-1.5 py-0.5 text-2xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber",
-    on ? "bg-amber-soft text-amber-ink" : "bg-paper text-ink-3 hover:bg-paper-2",
-  );
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs">
-      <span className="inline-flex items-center rounded-full border border-amber/40 bg-amber-soft px-2 py-0.5 font-semibold text-amber-ink">
-        Optional · customer can remove
-      </span>
-      <span className="inline-flex items-center gap-1 text-ink-3">
-        <span id={`starts-${line.id}`}>Starts</span>
-        <span role="group" aria-labelledby={`starts-${line.id}`} className="inline-flex overflow-hidden rounded border border-hairline">
-          <button type="button" aria-pressed={ticked} className={seg(ticked)}
-            onClick={() => onChange({ included_by_default: true })}>Ticked</button>
-          <button type="button" aria-pressed={!ticked} className={cn(seg(!ticked), "border-l border-hairline")}
-            onClick={() => onChange({ included_by_default: undefined })}>Unticked</button>
-        </span>
-      </span>
-    </div>
+    <span
+      className="ml-1.5 inline-flex items-center rounded border border-amber/40 bg-amber-soft px-1 py-px align-middle text-3xs font-semibold text-amber-ink"
+      title={line.included_by_default
+        ? "The customer can remove this line. It starts ticked."
+        : "The customer can add this line. It starts unticked."}
+    >
+      Optional
+    </span>
   );
 }
 
-/** The line's ⋯ menu: where a line is made optional for the customer, or required again. */
-export function LineMoreMenu({ line, onChange }: {
+/**
+ * The line's ⋯ menu: make the line optional for the customer (asking first on a plan / seat
+ * line — `confirmOptional`), choose whether it starts ticked, or make it required again.
+ */
+export function LineMoreMenu({ line, onChange, confirmOptional = false }: {
   line: QuoteLineItem;
   onChange: (patch: Partial<QuoteLineItem>) => void;
+  /** A plan / seat line (optionalNeedsConfirm): warn before the customer may drop it. */
+  confirmOptional?: boolean;
 }) {
+  const confirm = useConfirm();
+  const makeOptional = async () => {
+    if (confirmOptional && !(await confirm({ ...SEAT_LINE_OPTIONAL_CONFIRM }))) return;
+    onChange(optionalPatch(true, line));
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <IconButton icon="more_h" aria-label={`More options for ${line.name}`} size="sm" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[14rem]">
+      <DropdownMenuContent align="end" className="min-w-[15rem]">
         {line.optional ? (
-          <DropdownMenuItem onSelect={() => onChange(optionalPatch(false, line))}>
-            Make required
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuCheckboxItem
+              checked={!!line.included_by_default}
+              onCheckedChange={(on) => onChange({ included_by_default: on === true ? true : undefined })}
+            >
+              Starts ticked for the customer
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onChange(optionalPatch(false, line))}>
+              Make required
+            </DropdownMenuItem>
+          </>
         ) : (
-          <DropdownMenuItem onSelect={() => onChange(optionalPatch(true, line))}>
+          <DropdownMenuItem onSelect={() => { void makeOptional(); }}>
             Make optional for customer
           </DropdownMenuItem>
         )}
