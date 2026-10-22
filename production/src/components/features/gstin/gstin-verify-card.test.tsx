@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
+import { toast } from "sonner";
 import GstinVerifyCard from "./gstin-verify-card";
 
 const GSTIN = "07AAACR5055K1Z9";
@@ -41,6 +42,11 @@ describe("GstinVerifyCard — provider not configured", () => {
     expect(onVerified).not.toHaveBeenCalled();
     expect(onFillForm).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /Fill form from GST/ })).toBeNull();
+    /* R-1743 (§24 / R-311): the toast carries a description — what to do next. */
+    expect(toast.error).toHaveBeenCalledWith(
+      "GSTN verification is not set up.",
+      expect.objectContaining({ description: expect.stringMatching(/GST certificate/) }),
+    );
   });
 
   it("mock answer (laptop) still reaches the host", async () => {

@@ -117,7 +117,7 @@ export default function GstinVerifyCard({
       /* R-1734: no GSTN provider on this server — say so next to the button and fill nothing. */
       if (json?.code === "provider_not_configured") {
         setNotSetUp(json.error ?? "GSTN verification is not set up — enter the details from the GST certificate.");
-        toast.error(json.error ?? "GSTN verification is not set up.");
+        toast.error("GSTN verification is not set up.", { description: "Enter the details from the GST certificate. You can still save the GSTIN." });
         return;
       }
       setNotSetUp(null);

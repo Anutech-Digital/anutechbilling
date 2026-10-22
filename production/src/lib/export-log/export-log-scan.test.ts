@@ -35,6 +35,7 @@ const ALLOW: Record<string, string> = {
   // empty sample templates for the importers — no data in them
   "components/features/customers/import-customers-dialog.tsx": "sample CSV template, no data",
   "components/features/leads/import-csv-dialog.tsx": "sample CSV template, no data",
+  "components/features/invoices/import-zoho-invoices-dialog.tsx": "sample CSV template (constant SAMPLE_ZOHO_INVOICE_CSV), no tenant data",
   // OWNER TO ADD logExport (docs/CROSS-TEAM-REQUESTS.md, R-1006) — remove the line once done
   "app/(app)/customers/page.tsx": "R-1006 pending: Billing (Abhishek) — CSV built by hand at the bulk export",
   "app/(app)/invoices/page.tsx": "R-1006 pending: Billing (Abhishek) — selected-invoices CSV",
