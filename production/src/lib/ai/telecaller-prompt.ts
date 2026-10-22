@@ -172,6 +172,16 @@ function personaBlock(sellerName: string): string {
     "- Say numbers the way people say them: 'bees users', 'paanch log' — not digit by digit.",
     "- Use their name at most once or twice in the whole call, not in every line.",
     "- Never read out lists or options ('option one, option two'). Ask one simple question.",
+    "- Keep every reply SHORT — one sentence, at most two, about fifteen words. Long sentences",
+    "  make the voice stumble and the customer lose track.",
+    "- Never say an email address, a website, or a long plan name aloud. Say the product's",
+    "  family name only ('Google Workspace'), and only once or twice in the whole call.",
+    "- Write Hindi words in Devanagari script (for example: 'अच्छा, आपकी टीम में कितने लोग",
+    "  हैं?') and English product names in English letters. The voice reads Devanagari",
+    "  naturally; Hindi typed in English letters comes out broken. Prices from the MONEY list",
+    "  are written exactly as given there.",
+    "- Introduce yourself only by the name you were given, and the company only by the name",
+    "  you were given. Never use another name.",
     "- No long apologies, no 'as an AI', no 'I understand your concern'. Warm, brief, done.",
     "- If they ask where we got their number: say it is from a business listing, and offer to",
     "  take them off our list if they prefer. If they say yes, confirm it and end the call.",
@@ -292,6 +302,31 @@ function boundaryBlock(): string {
  * product the team cold-calls for — and every other product the plain version. No figures here:
  * prices only ever come from the catalogue block (see the header and the price-literal test).
  */
+/**
+ * Names as a person says them on the phone (Abhishek, 22 Oct 2026: the voice stumbled on
+ * "ANUTECH DIGITAL PVT LTD" and "Google Workspace Business Starter"). The company without its
+ * legal suffix, the product as its family name.
+ */
+export function spokenCompany(name: string): string {
+  const s = name
+    .replace(/\b(private|pvt\.?)\s*(limited|ltd\.?)\b/gi, "")
+    .replace(/\b(limited|ltd\.?|llp|inc\.?)\b/gi, "")
+    .replace(/[.,\s]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const base = s || name.trim();
+  /* ALL CAPS reads as letters to some voices — "ANUTECH" → "Anutech". */
+  return base === base.toUpperCase() ? base.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : base;
+}
+
+export function spokenProduct(product: string | null): string | null {
+  if (!product) return null;
+  if (/google\s*workspace|g\s*suite/i.test(product)) return "Google Workspace";
+  if (/microsoft|office/i.test(product)) return "Microsoft 365";
+  if (/zoho/i.test(product)) return "Zoho Mail";
+  return product.trim();
+}
+
 function pitchBlock(product: string | null): string {
   const isWorkspace = !product || /google\s*workspace|g\s*suite/i.test(product);
   const common = [
@@ -308,7 +343,7 @@ function pitchBlock(product: string | null): string {
     return [
       "THE PITCH",
       "- After they say it is a good moment, ask what they use for office email today.",
-      `- Then one line on how ${product} helps a business like theirs, and ask how many people`,
+      `- Then one line on how ${spokenProduct(product)} helps a business like theirs, and ask how many people`,
       "  in their team would use it.",
       ...common,
     ].join("\n");
@@ -319,7 +354,7 @@ function pitchBlock(product: string | null): string {
     "what they told you.",
     "",
     "Opening line after they say it is a good moment:",
-    "  'Hum businesses ko company ke naam wala email dete hain — jaise aapkanaam@aapkicompany.com —",
+    "  'Hum businesses ko apni company ke naam wala email dete hain —",
     "  Google ka, bilkul Gmail jaisa chalta hai. Abhi office ka email kaunsa use karte hain?'",
     "",
     "Then, depending on their answer:",
@@ -343,7 +378,7 @@ function pitchBlock(product: string | null): string {
 }
 
 function coldCallBlock(product: string | null, callback = false): string {
-  const what = product?.trim() || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
+  const what = spokenProduct(product) || "business email and cloud workspace (Google Workspace, Microsoft 365 or Zoho)";
   if (callback) {
     return [
       "WHY YOU ARE CALLING",
@@ -386,7 +421,7 @@ export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecal
   const { callType, sellerName, catalogue } = args;
 
   const systemPrompt = [
-    personaBlock(sellerName),
+    personaBlock(spokenCompany(sellerName)),
     "",
     args.coldCall ? coldCallBlock(args.coldCall.product, args.coldCall.callback) : objectiveBlock(callType),
     "",
@@ -410,7 +445,7 @@ export function buildTelecallPrompt(args: BuildTelecallPromptArgs): BuiltTelecal
     current_plan: args.currentPlan?.trim() || "",
     seat_count: args.seats !== null && args.seats > 0 ? String(args.seats) : "",
     agent_name: TELECALLER_NAME,
-    company_name: sellerName,
+    company_name: spokenCompany(sellerName),
   };
 
   const authorisedFigures = catalogue.map((c) => Math.round(c.msrpPerSeatPerYear));
