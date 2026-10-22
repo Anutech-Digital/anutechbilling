@@ -70,8 +70,8 @@ import { canOpenQuotes } from "@/lib/quotes/access";
 import { COPY } from "@/lib/copy";
 import { useCustomerContacts } from "@/lib/queries/contacts";
 import { PrimaryContactLine } from "@/components/features/customers/primary-contact-line";
-import { RelationshipEditor } from "@/components/features/contacts/relationship-chip";
-import { pickCompanyRelationship } from "@/lib/contacts/relationship";
+/* R-1740: my relationship with this company's best-known person — saves to that contact. */
+import { CustomerRelationshipChip } from "@/components/features/contacts/relationship-chip";
 import { txnHref, primaryContactOf } from "@/components/features/customers/customer-links";
 import { buildCustomerStatement, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
@@ -206,9 +206,6 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const c = customer;
   /* R-1522: the primary contact PERSON, or null — never the company name (customer-links.ts). */
   const primaryContact = primaryContactOf(c, contactRows);
-  /* R-1740: my relationship with this company's people — the best-known one (primary wins
-     a tie). The chip saves to that person's contact, like on a lead or the contact page. */
-  const relPerson = pickCompanyRelationship(contactRows ?? []);
   const allSubs = subs ?? [];
   const allInvoices = invoices ?? [];
   const allQuotes = quotes ?? [];
@@ -413,18 +410,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                 the company name — name · designation · phone · email, tap to call / mail.
                 Never the company name again as if it were a person. */}
             <PrimaryContactLine contact={primaryContact} onAddContact={canWrite ? startAddContact : undefined} />
-            {relPerson && (
-              <div className="mt-1">
-                <RelationshipEditor
-                  contactId={relPerson.id}
-                  type={relPerson.relationship_type}
-                  closeness={relPerson.closeness}
-                  personName={relPerson.full_name}
-                  size="sm"
-                  canEdit={canWrite}
-                />
-              </div>
-            )}
+            <CustomerRelationshipChip people={contactRows} canEdit={canWrite} />
             {c.domain && (
               <p className="mt-0.5 text-sm text-ink-3">
                 <span className="font-mono text-xs">{c.domain}</span>

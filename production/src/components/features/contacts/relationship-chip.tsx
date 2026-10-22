@@ -16,10 +16,31 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   CLOSENESS, CLOSENESS_LABEL, GROUP_LABEL, RELATIONSHIP_OPTION_GROUPS, TYPE_LABEL,
-  asCloseness, asRelationshipType, relationshipLabel, relationshipTone,
+  asCloseness, asRelationshipType, pickCompanyRelationship, relationshipLabel, relationshipTone,
   type Closeness, type RelationshipTone, type RelationshipType,
 } from "@/lib/contacts/relationship";
-import { useSetContactRelationship } from "@/lib/queries/contacts";
+import { useSetContactRelationship, type Contact } from "@/lib/queries/contacts";
+
+/**
+ * The customer header chip: my relationship with the company's best-known person (primary
+ * wins a tie), from the rows useCustomerContacts returns. Nobody on the company → nothing.
+ */
+export function CustomerRelationshipChip({ people, canEdit }: { people: Contact[] | undefined; canEdit: boolean }) {
+  const person = pickCompanyRelationship(people ?? []);
+  if (!person) return null;
+  return (
+    <div className="mt-1">
+      <RelationshipEditor
+        contactId={person.id}
+        type={person.relationship_type}
+        closeness={person.closeness}
+        personName={person.full_name}
+        size="sm"
+        canEdit={canEdit}
+      />
+    </div>
+  );
+}
 
 export const TONE_CLASS: Record<RelationshipTone, string> = {
   pink: "bg-rose-soft text-rose-ink",
